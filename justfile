@@ -34,7 +34,7 @@ coverage := uv_run + " coverage"
 publish:
     rm -rf build dist
     uv build
-    uv publish --token `uvx python -c "import configparser, pathlib; c = configparser.ConfigParser(); c.read(pathlib.Path('~/.pypirc').expanduser()); print(c['pypi']['password'])"`
+    uv publish --token `uvx python -c "import configparser, pathlib; c = configparser.ConfigParser(); c.read(pathlib.Path('.pypirc').expanduser()); print(c['pypi']['password'])"`
     git tag v`uvx python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"`
     git push --tags
 
