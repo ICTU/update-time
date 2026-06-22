@@ -76,7 +76,7 @@ class Logger:
 
     def path(self, path: Path) -> None:
         """Log working on path."""
-        self._log(self.log.info, "Updating %s", path.relative_to(Path.cwd()))
+        self._log(self.log.info, "Checking if there are updates for %s", path.relative_to(Path.cwd()))
 
     def expected_node_base_image(self, dockerfile: Path) -> None:
         """Log missing Node base image."""

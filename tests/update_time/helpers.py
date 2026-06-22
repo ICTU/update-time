@@ -75,4 +75,4 @@ def assert_new_version_logged(
 
 def assert_path_logged(mock_info: Mock, relative_path: object) -> None:
     """Assert that the file being updated was logged as info."""
-    mock_info.assert_called_with("Updating %s", relative_path, stacklevel=ANY)
+    mock_info.assert_called_with("Checking if there are updates for %s", relative_path, stacklevel=ANY)
