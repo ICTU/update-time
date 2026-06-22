@@ -1,10 +1,10 @@
 [build-system]
-build-backend = "setuptools.build_meta"
-requires = [ "setuptools<81" ]
+build-backend = "uv_build"
+requires = [ "uv-build>=0.11.23,<0.12" ]
 
 [project]
 name = "update-time"
-version = "0.0.1"
+version = "0.0.2"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = [ "LICENSE" ]
@@ -31,7 +31,7 @@ dependencies = [
 urls.Changelog = "https://github.com/ICTU/update-time/blob/main/CHANGELOG.md"
 urls.Issues = "https://github.com/ICTU/update-time/issues"
 urls.Repository = "https://github.com/ICTU/update-time"
-scripts.update-time = "update:update_dependencies"
+scripts.update-time = "update_time.update:update_dependencies"
 
 [dependency-groups]
 dev = [
