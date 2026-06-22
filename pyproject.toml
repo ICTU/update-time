@@ -1,0 +1,87 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = [ "setuptools<81" ]
+
+[project]
+name = "update-time"
+version = "0.0.1"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = [ "LICENSE" ]
+authors = [ { name = "Quality-time team", email = "quality-time@ictu.nl" } ]
+requires-python = ">=3.14"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: 3.16",
+    "Topic :: Software Development",
+]
+dependencies = [
+    "packaging==26.2",
+    "requests==2.34.2",
+    "rich==15.0.0",
+]
+urls.Changelog = "https://github.com/ICTU/update-time/blob/main/CHANGELOG.md"
+urls.Issues = "https://github.com/ICTU/update-time/issues"
+urls.Repository = "https://github.com/ICTU/update-time"
+scripts.update-time = "update:update_dependencies"
+
+[dependency-groups]
+dev = [
+    "archunitpython==1.1.1",
+    "bandit==1.9.4",
+    "codespell==2.4.2",
+    "coverage==7.14.1",
+    "fixit==2.2.1",
+    "mypy==2.1.0",
+    "pip-audit==2.10.1",
+    "pyproject-fmt==2.24.1",
+    "ruff==0.15.17",
+    "troml==0.4.1",
+    "ty==0.0.49",
+    "types-requests==2.33.0.20260518",
+    "vulture==2.16",
+    "yamllint==1.38.0",
+]
+
+[tool.setuptools]
+packages.find.where = [ "src" ]
+
+[tool.uv]
+override-dependencies = [
+    "msgpack==1.2.1"
+]  # GHSA-6v7p-g79w-8964: MessagePack for Python: Out-of-bounds read / crash on Unpacker reuse after a caught error
+exclude-newer = "7 days"
+exclude-newer-package = { msgpack = false }
+
+[tool.ruff]
+line-length = 120
+src = [
+    "src",
+]
+lint.select = [
+    "ALL",
+]
+lint.ignore = [
+    "ANN201", # https://docs.astral.sh/ruff/rules/missing-return-type-undocumented-public-function/ - too many untyped return values atm to turn this rule on
+    "COM812", # https://docs.astral.sh/ruff/rules/missing-trailing-comma/ - this rule may cause conflicts when used with the ruff formatter
+    "D203",   # https://docs.astral.sh/ruff/rules/one-blank-line-before-class/ - prevent warning: `one-blank-line-before-class` (D203) and `no-blank-line-before-class` (D211) are incompatible. Ignoring `one-blank-line-before-class`
+    "D213",   # https://docs.astral.sh/ruff/rules/multi-line-summary-second-line/ - prevent warning: `multi-line-summary-first-line` (D212) and `multi-line-summary-second-line` (D213) are incompatible. Ignoring `multi-line-summary-second-line`
+    "ISC001", # https://docs.astral.sh/ruff/rules/single-line-implicit-string-concatenation/ - this rule may cause conflicts when used with the ruff formatter
+    "PT",     # https://docs.astral.sh/ruff/rules/#flake8-pytest-style-pt - pytest isn't used
+    "TC006",  # https://docs.astral.sh/ruff/rules/runtime-cast-value/ - the rule claims it's often necessary to quote the first argument passed to cast(), but that's not the case in this code base
+]
+lint.per-file-ignores.".vulture-whitelist.py" = [
+    "ALL",
+]
+
+[tool.pyproject-fmt]
+indent = 4
+keep_full_version = true  # Don't remove trailing zero's from version specifiers

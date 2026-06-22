@@ -1,0 +1,56 @@
+---
+publiccodeYmlVersion: 0.5.0
+name: Update-time
+url: https://github.com/ICTU/update-time.git
+landingURL: https://github.com/ICTU/update-time
+softwareVersion: 0.0.0
+releaseDate: 2026-06-22
+platforms:
+  - mac
+  - linux
+categories:
+  - application-development
+  - compliance-management
+  - it-development
+  - it-management
+  - it-security
+organisation:
+  name: ICTU
+  uri: https://www.ictu.nl
+fundedBy:
+  - name: ICTU
+    uri: https://www.ictu.nl
+usedBy:
+  - ICTU
+developmentStatus: beta
+softwareType: standalone/desktop
+description:
+  en:
+    shortDescription: Update-time is an automated system for updating software
+      dependencies.
+    longDescription: >
+      Update-time scans a locally checked out source code repository and
+      updates third-party dependencies. It supports Python, JavaScript and
+      manifest images.
+    features:
+      - Shows changelogs of updates where possible.
+      - Updates Python dependencies in pyproject.toml files.
+      - Updates JavaScript and TypeScript  dependencies in package.json files.
+      - Updates manifest images in Dockerfiles.
+      - Updates manifest images in Docker composition.
+      - Updates manifest images in Helm charts.
+      - Updates manifest images in GitHub Action workflows.
+      - Updates manifest images in CircleCI workflows.
+legal:
+  license: Apache-2.0
+  mainCopyrightOwner: ICTU
+maintenance:
+  type: community
+  contacts:
+    - name: Quality-time team
+      email: quality-time@ictu.nl
+      affiliation: ICTU
+localisation:
+  localisationReady: false
+  availableLanguages:
+    - en
