@@ -66,22 +66,24 @@ class Tag:
 
 
 def get_latest_tag(image: str, current_tag: str) -> DependencyVersion:
-    """Find the latest compatible tag for an image. Keeps the same non-numerical parts while upgrading the version."""
+    """Find the latest compatible tag for an image. Keeps the same non-numerical parts while upgrading the version.
+
+    Returns the digest of the resulting tag, including when the current version is already the latest, so that
+    unpinned references can be pinned without bumping their version.
+    """
     current = Tag(name=current_tag)
     if current.version is None:
         # Can't determine a newer tag if the tag doesn't contain a valid version
         return DependencyVersion(version=current_tag)
-    latest_version = current.version
-    sha = ""
-    published: datetime | None = None
+    best: Tag | None = None
     for tag in _get_available_tags(image):
-        if tag.is_eligible_as_update_of(current):
-            tag_version = cast("Version", tag.version)
-            if tag_version > latest_version:
-                latest_version = tag_version
-                sha = tag.digest
-                published = tag.last_pushed
-    return DependencyVersion(version=current.with_version(latest_version).name, sha=sha, published=published)
+        eligible = tag.is_eligible_as_update_of(current) and cast("Version", tag.version) >= current.version
+        if eligible and (best is None or cast("Version", tag.version) > cast("Version", best.version)):
+            best = tag
+    if best is None:
+        return DependencyVersion(version=current_tag)
+    name = current.with_version(cast("Version", best.version)).name
+    return DependencyVersion(version=name, sha=best.digest, published=best.last_pushed)
 
 
 @cache

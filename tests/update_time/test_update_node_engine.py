@@ -6,7 +6,8 @@ from unittest.mock import ANY, Mock, patch
 
 from update_time.update_node_engine import update_node_engines
 
-from .helpers import assert_new_version_logged, assert_path_logged, mock_path
+from .assertions import assert_new_version_logged, assert_path_logged, assert_success
+from .helpers import mock_path
 
 
 @patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
@@ -29,7 +30,7 @@ class UpdateNodeEnginesTest(unittest.TestCase):
         """Test that the package.json is not written if there is no new Node version."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
-        self.assertEqual(0, update_node_engines())
+        assert_success(update_node_engines())
         assert_path_logged(mock_info, mock_package_json.relative_to())
         mock_warning.assert_not_called()
         mock_error.assert_not_called()
@@ -41,7 +42,7 @@ class UpdateNodeEnginesTest(unittest.TestCase):
         """Test that the package.json is updated if there is a new Node version."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
-        self.assertEqual(0, update_node_engines())
+        assert_success(update_node_engines())
         assert_path_logged(mock_info, mock_package_json.relative_to())
         assert_new_version_logged(mock_warning, "node", "19", once=True)
         mock_error.assert_not_called()
@@ -51,7 +52,7 @@ class UpdateNodeEnginesTest(unittest.TestCase):
         """Test that the package.json is skipped if it has no Node engine."""
         mock_package_json = self.create_package_json("{}")
         mock_glob.return_value = [mock_package_json]
-        self.assertEqual(0, update_node_engines())
+        assert_success(update_node_engines())
         mock_info.assert_not_called()
         mock_warning.assert_not_called()
         mock_error.assert_not_called()
@@ -94,7 +95,7 @@ class UpdateNodeEnginesTest(unittest.TestCase):
         mock_glob.side_effect = lambda pattern: iter(
             [mock_package_json] if pattern == "package.json" else [Path("/Dockerfile"), fallback_dockerfile]
         )
-        self.assertEqual(0, update_node_engines())
+        assert_success(update_node_engines())
         assert_path_logged(mock_info, mock_package_json.relative_to())
         assert_new_version_logged(mock_warning, "node", "20", once=True)
         mock_error.assert_not_called()

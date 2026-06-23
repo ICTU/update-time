@@ -62,6 +62,10 @@ class Logger:
             new_version += f", published: {version.published.astimezone(UTC):%Y-%m-%d %H:%M}"
         self._log(self.log.warning, "New version available for %s: %s\n%s", dependency, new_version, changes)
 
+    def pinned(self, dependency: str, version: DependencyVersion) -> None:
+        """Log that a previously unpinned reference was pinned to a digest, without changing its version."""
+        self._log(self.log.warning, "Pinned %s to %s@%s", dependency, version.version, version.sha)
+
     def invalid_version(self, dependency: str, invalid_version: str) -> None:
         """Log an invalid version."""
         self._log(self.log.error, "Got an invalid version for %s: %s", dependency, invalid_version)

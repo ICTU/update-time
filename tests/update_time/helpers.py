@@ -2,7 +2,7 @@
 
 import unittest
 from typing import TYPE_CHECKING
-from unittest.mock import ANY, Mock
+from unittest.mock import Mock
 
 from update_time.docker import _docker_hub_headers as docker_hub_headers
 from update_time.docker import _get_available_tags as docker_hub_get_available_tags
@@ -65,14 +65,14 @@ def release_json(tag_name: str, **extra: object) -> dict[str, object]:
     return {"draft": False, "prerelease": False, "tag_name": tag_name, **extra}
 
 
-def assert_new_version_logged(
-    mock_warning: Mock, dependency: str, version: str, changes: str = "No changelog available!", *, once: bool = False
-) -> None:
-    """Assert that the availability of a new version was logged as a warning for the dependency."""
-    assert_called = mock_warning.assert_called_once_with if once else mock_warning.assert_called_with
-    assert_called("New version available for %s: %s\n%s", dependency, version, changes, stacklevel=ANY)
+def docker_tag(name: str, digest: str = "", **extra: object) -> dict[str, object]:
+    """Return a Docker Hub tags endpoint result for the tag, with an optional digest and extra fields."""
+    return {"name": name, **({"digest": digest} if digest else {}), **extra}
 
 
-def assert_path_logged(mock_info: Mock, relative_path: object) -> None:
-    """Assert that the file being updated was logged as info."""
-    mock_info.assert_called_with("Checking if there are updates for %s", relative_path, stacklevel=ANY)
+def docker_hub_response(*tags: dict[str, object], next_url: str | None = None, **kwargs: object) -> Mock:
+    """Return a mock Docker Hub tags endpoint response containing the given tags, optionally paginated."""
+    json: dict[str, object] = {"results": list(tags)}
+    if next_url is not None:
+        json["next"] = next_url
+    return mock_response(json, **kwargs)
