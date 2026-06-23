@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from update_time.filesystem import glob, update_file, update_files
 from update_time.version import DependencyVersion
 
+from .assertions import assert_success
 from .helpers import mock_path, new_version_getter
 
 
@@ -43,6 +44,7 @@ class GlobTest(unittest.TestCase):
 
 
 REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"
+SHA_REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>sha256:[a-f0-9]{64}))?"
 
 
 class UpdateFileTest(unittest.TestCase):
@@ -52,7 +54,7 @@ class UpdateFileTest(unittest.TestCase):
         """Test no changes."""
         mock_file = mock_path("line1\nline2\n")
         mock_logger = Mock()
-        self.assertEqual(0, update_file(mock_file, "regexp", new_version_getter("1.1"), mock_logger))
+        assert_success(update_file(mock_file, "regexp", new_version_getter("1.1"), mock_logger))
         mock_file.write_text.assert_not_called()
         mock_logger.new_version.assert_not_called()
 
@@ -60,7 +62,7 @@ class UpdateFileTest(unittest.TestCase):
         """Test a new version."""
         mock_file = mock_path("line1\nimage: python:3.14\n")
         mock_logger = Mock()
-        self.assertEqual(0, update_file(mock_file, REGEXP, new_version_getter("3.15"), mock_logger))
+        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.15"), mock_logger))
         mock_file.write_text.assert_called_with("line1\nimage: python:3.15\n")
         mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.15"))
 
@@ -71,7 +73,7 @@ class UpdateFileTest(unittest.TestCase):
         mock_file = mock_path(f"line1\nuses: action/action@{old_sha} # v3.14\n")
         mock_logger = Mock()
         new_sha = "b" * 40
-        self.assertEqual(0, update_file(mock_file, regexp, new_version_getter("3.15", new_sha), mock_logger))
+        assert_success(update_file(mock_file, regexp, new_version_getter("3.15", new_sha), mock_logger))
         mock_file.write_text.assert_called_with(f"line1\nuses: action/action@{new_sha} # v3.15\n")
         mock_logger.new_version.assert_called_with("action/action", DependencyVersion(version="3.15", sha=new_sha))
 
@@ -79,7 +81,34 @@ class UpdateFileTest(unittest.TestCase):
         """Test that the file is not changed when the latest version equals the current version."""
         mock_file = mock_path("line1\nimage: python:3.14\n")
         mock_logger = Mock()
-        self.assertEqual(0, update_file(mock_file, REGEXP, new_version_getter("3.14"), mock_logger))
+        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.14"), mock_logger))
+        mock_file.write_text.assert_not_called()
+        mock_logger.new_version.assert_not_called()
+
+    def test_pin_unpinned_image_at_latest_version(self):
+        """Test that an unpinned image at the latest version is pinned, logging a pin rather than a new version."""
+        sha = f"sha256:{'a' * 64}"
+        mock_file = mock_path("line1\nimage: python:3.14\n")
+        mock_logger = Mock()
+        assert_success(update_file(mock_file, SHA_REGEXP, new_version_getter("3.14", sha), mock_logger))
+        mock_file.write_text.assert_called_with(f"line1\nimage: python:3.14@{sha}\n")
+        mock_logger.pinned.assert_called_with("python", DependencyVersion(version="3.14", sha=sha))
+        mock_logger.new_version.assert_not_called()
+
+    def test_pin_unpinned_image_with_new_version(self):
+        """Test that an unpinned image is pinned and bumped to the latest version at the same time."""
+        sha = f"sha256:{'a' * 64}"
+        mock_file = mock_path("line1\nimage: python:3.14\n")
+        mock_logger = Mock()
+        assert_success(update_file(mock_file, SHA_REGEXP, new_version_getter("3.15", sha), mock_logger))
+        mock_file.write_text.assert_called_with(f"line1\nimage: python:3.15@{sha}\n")
+        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.15", sha=sha))
+
+    def test_unpinned_image_left_alone_without_digest(self):
+        """Test that an unpinned image is not pinned when no digest is available."""
+        mock_file = mock_path("line1\nimage: python:3.14\n")
+        mock_logger = Mock()
+        assert_success(update_file(mock_file, SHA_REGEXP, new_version_getter("3.14"), mock_logger))
         mock_file.write_text.assert_not_called()
         mock_logger.new_version.assert_not_called()
 
@@ -91,7 +120,7 @@ class UpdateFileTest(unittest.TestCase):
         """
         mock_file = mock_path("line1\nimage: python:3.9\n")
         mock_logger = Mock()
-        self.assertEqual(0, update_file(mock_file, REGEXP, new_version_getter("3.10"), mock_logger))
+        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.10"), mock_logger))
         mock_file.write_text.assert_called_with("line1\nimage: python:3.10\n")
         mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.10"))
 
@@ -104,7 +133,7 @@ class UpdateFileTest(unittest.TestCase):
         """
         mock_file = mock_path("line1\nimage: python:3.14\n")
         mock_logger = Mock()
-        self.assertEqual(0, update_file(mock_file, REGEXP, new_version_getter("3.13"), mock_logger))
+        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.13"), mock_logger))
         mock_file.write_text.assert_called_with("line1\nimage: python:3.13\n")
         mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.13"))
 
@@ -118,8 +147,7 @@ class UpdateFilesTest(unittest.TestCase):
         mock_file = mock_path("line1\nline2\n")
         mock_glob.return_value = [mock_file]
         mock_logger = Mock()
-        self.assertEqual(
-            0,
+        assert_success(
             update_files("Dockerfile", regexp=REGEXP, get_new_version=new_version_getter("1.1"), logger=mock_logger),
         )
         mock_file.write_text.assert_not_called()
@@ -130,8 +158,7 @@ class UpdateFilesTest(unittest.TestCase):
         mock_file = mock_path("line1\nimage: python:3.14\n")
         mock_glob.return_value = [mock_file]
         mock_logger = Mock()
-        self.assertEqual(
-            0,
+        assert_success(
             update_files("config.yml", regexp=REGEXP, get_new_version=new_version_getter("3.15"), logger=mock_logger),
         )
         mock_file.write_text.assert_called_with("line1\nimage: python:3.15\n")
@@ -144,8 +171,7 @@ class UpdateFilesTest(unittest.TestCase):
         mock_glob.side_effect = [[yml_file], [yaml_file]]
         mock_logger = Mock()
         patterns = "*.yml", "*.yaml"
-        self.assertEqual(
-            0,
+        assert_success(
             update_files(*patterns, regexp=REGEXP, get_new_version=new_version_getter("3.15"), logger=mock_logger),
         )
         yml_file.write_text.assert_called_with("image: python:3.15\n")

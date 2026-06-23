@@ -31,17 +31,33 @@ def glob(*glob_patterns: str, start: Path | None = None) -> Iterator[Path]:
 def _update_line(
     line: str, regexp: str, get_new_version: Callable[[str, str], DependencyVersion], logger: Logger
 ) -> str:
-    """Update the line with the new version if any or return the line unchanged."""
-    if match := re.search(regexp, line):
-        dependency = match.group("dependency")
-        version = match.group("version")
-        latest_version = get_new_version(dependency, version)
-        if latest_version.version != version:
+    """Update the line with the new version (and digest) if any, or return the line unchanged.
+
+    When the regexp has an optional ``sha`` group that did not match, the reference is unpinned. If a digest is
+    available it is appended to pin the reference, even when the version itself is already up to date.
+    """
+    if not (match := re.search(regexp, line)):
+        return line
+    dependency = match.group("dependency")
+    version = match.group("version")
+    latest_version = get_new_version(dependency, version)
+    has_sha_group = "sha" in match.groupdict()
+    current_sha = match.group("sha") if has_sha_group else None
+    pin_unpinned = has_sha_group and current_sha is None and bool(latest_version.sha)
+    version_changed = latest_version.version != version
+    if not version_changed and not pin_unpinned:
+        return line
+    if pin_unpinned:
+        # Append the digest to a previously unpinned reference, bumping the version too if a newer one is available.
+        if version_changed:
             logger.new_version(dependency, latest_version)
-            if "sha" in match.groupdict():
-                line = line.replace(match.group("sha"), latest_version.sha)
-            return line.replace(version, latest_version.version)
-    return line
+        else:
+            logger.pinned(dependency, latest_version)
+        return line.replace(f"{dependency}:{version}", f"{dependency}:{latest_version.version}@{latest_version.sha}")
+    logger.new_version(dependency, latest_version)
+    if current_sha is not None:
+        line = line.replace(current_sha, latest_version.sha)
+    return line.replace(version, latest_version.version)
 
 
 def update_file(

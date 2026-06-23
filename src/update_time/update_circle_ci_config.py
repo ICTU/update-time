@@ -1,4 +1,9 @@
-"""CircleCI config updater script finds images and updates to the latest versions."""
+"""CircleCI config updater script finds images and updates to the latest versions.
+
+Images referenced by tag only are automatically pinned by appending the digest of the (latest) tag. The digest
+is optional in the regex but a concrete version tag is still required, so images referenced through variable
+substitution (``${VAR}``) are left untouched.
+"""
 
 import sys
 from pathlib import Path
@@ -8,7 +13,7 @@ from update_time.filesystem import YAML_GLOB_PATTERNS, update_files
 from update_time.log import get_logger
 
 LOG = get_logger("circleci")
-IMAGE_RE = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)@(?P<sha>sha256:[a-f0-9]{64})"
+IMAGE_RE = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>sha256:[a-f0-9]{64}))?"
 
 
 def update_circle_ci_config(circle_ci_dir: Path) -> int:

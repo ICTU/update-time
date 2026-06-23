@@ -9,6 +9,7 @@ import requests
 from update_time.update_github_action import get_latest_version, update_github_actions
 from update_time.version import DependencyVersion
 
+from .assertions import assert_success
 from .helpers import CacheClearingTestCase, mock_path, mock_response, release_json
 
 
@@ -88,7 +89,7 @@ class UpdateGitHubActionsTest(CacheClearingTestCase):
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
         composite_action_yaml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], [composite_action_yaml]]
-        self.assertEqual(0, update_github_actions(GITHUB_DIR))
+        assert_success(update_github_actions(GITHUB_DIR))
         workflow_yml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
         composite_action_yaml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
 
@@ -96,6 +97,47 @@ class UpdateGitHubActionsTest(CacheClearingTestCase):
         """Test that YAML files without actions are left untouched."""
         dependabot_yml = mock_path("version: 2\n")
         mock_glob.side_effect = [[dependabot_yml], []]
-        self.assertEqual(0, update_github_actions(GITHUB_DIR))
+        assert_success(update_github_actions(GITHUB_DIR))
         dependabot_yml.write_text.assert_not_called()
+        mock_get_latest_version.assert_not_called()
+
+    def test_pinned_action_up_to_date(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an already pinned action that is up to date is left unchanged."""
+        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=OLD_SHA)
+        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        assert_success(update_github_actions(GITHUB_DIR))
+        workflow_yml.write_text.assert_not_called()
+
+    def test_pin_unpinned_action(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an action referenced by version tag only is pinned to the commit SHA with a version comment."""
+        mock_get_latest_version.return_value = DependencyVersion(version="4.1.1", sha=NEW_SHA)
+        workflow_yml = mock_path("uses: actions/checkout@v4\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        assert_success(update_github_actions(GITHUB_DIR))
+        workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
+        mock_get_latest_version.assert_called_once_with("actions/checkout", "4")
+
+    def test_unpinned_action_without_sha_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an unpinned action is not changed when no commit SHA is available to pin it to."""
+        mock_get_latest_version.return_value = DependencyVersion(version="4")
+        workflow_yml = mock_path("uses: actions/checkout@v4\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        assert_success(update_github_actions(GITHUB_DIR))
+        workflow_yml.write_text.assert_not_called()
+
+    def test_branch_reference_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an action referenced by a branch (no resolvable version) is not touched."""
+        workflow_yml = mock_path("uses: actions/checkout@main\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        assert_success(update_github_actions(GITHUB_DIR))
+        workflow_yml.write_text.assert_not_called()
+        mock_get_latest_version.assert_not_called()
+
+    def test_v_prefixed_non_version_reference_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that a v-prefixed reference that isn't a version (e.g. a floating `@vnext` tag) is not touched."""
+        workflow_yml = mock_path("uses: actions/checkout@vnext\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        assert_success(update_github_actions(GITHUB_DIR))
+        workflow_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()

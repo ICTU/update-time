@@ -5,8 +5,9 @@ from unittest.mock import ANY, Mock, patch
 
 from update_time.update_jsdelivr import get_latest_version, update_jsdelivr, update_jsdelivrs
 
+from .assertions import assert_new_version_logged, assert_path_logged, assert_success
 from .fixtures import HASH1, HASH2
-from .helpers import assert_new_version_logged, assert_path_logged, mock_path, mock_response
+from .helpers import mock_path, mock_response
 
 # A flat package listing as returned by the jsDelivr API with the ?structure=flat query parameter.
 FLAT_FILES = {"default": "/dist/clipboard.min.js", "files": [{"name": "/dist/clipboard.min.js", "hash": HASH2}]}
@@ -113,7 +114,7 @@ class UpdateJsdelivrsTest(unittest.TestCase):
         ]
         mock_conf = mock_path(CONF)
         mock_glob.return_value = [mock_conf]
-        self.assertEqual(0, update_jsdelivrs())
+        assert_success(update_jsdelivrs())
         written = mock_conf.write_text.call_args.args[0]
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", written)
         self.assertIn(f'"integrity": "sha256-{HASH2}"', written)
@@ -128,7 +129,7 @@ class UpdateJsdelivrsTest(unittest.TestCase):
         ]
         mock_conf = mock_path(CONF)
         mock_glob.return_value = [mock_conf]
-        self.assertEqual(0, update_jsdelivrs())
+        assert_success(update_jsdelivrs())
         mock_conf.write_text.assert_not_called()
         assert_path_logged(mock_info, mock_conf.relative_to())
         mock_warning.assert_not_called()

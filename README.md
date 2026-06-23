@@ -44,7 +44,12 @@ Update-time runs a set of updater scripts, each responsible for one kind of depe
 | GitHub Action versions (SHA + tag) | workflow YAML files | [GitHub releases API](https://api.github.com) |
 | jsDelivr npm URLs (version + SRI hash) | Sphinx config | [npm registry](https://registry.npmjs.org) |
 
-Only versions specified with an exact match (`==` for Python, a pinned `tag@sha256:digest` for images) are updated; looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. Where available, Update-time prints the changelog entries between the current and new version so you can review what changed.
+Only versions specified with an exact match (`==` for Python, a concrete `tag` — optionally already pinned as `tag@sha256:digest` — for images) are updated; looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. Where available, Update-time prints the changelog entries between the current and new version so you can review what changed.
+
+References that are not yet pinned are pinned automatically:
+
+- **Docker images** referenced by tag only — base images in Dockerfiles (`FROM image:tag`), CircleCI images, and Docker Compose / Helm manifest images — get the `@sha256:digest` of the (latest) tag appended, so the image is reproducible. Images without a concrete version tag are ignored: references through a template (`{{ ... }}`) or variable substitution (`${VAR}`), and tagless base images such as `FROM scratch` or stage references.
+- **GitHub Actions** referenced by version tag only (e.g. `uses: actions/checkout@v4`) are pinned to the commit SHA of the latest version, with the version added as a trailing comment (e.g. `uses: actions/checkout@<sha> # v4.1.1`). Actions referenced by a branch (e.g. `@main`) are left untouched because they don't resolve to a version.
 
 ## Cooldown
 

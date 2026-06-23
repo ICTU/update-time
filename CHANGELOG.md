@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Automatically pin Docker images that are referenced by tag only — Dockerfile base images, CircleCI images, and Docker Compose / Helm manifest images — by appending the `@sha256:digest` of the (latest) tag, instead of leaving them untouched.
+- Automatically pin GitHub Actions that are referenced by version tag only (e.g. `@v4`) to the commit SHA of the latest version, adding the version as a trailing comment, instead of leaving them untouched.
+
 ### Fixed
 
 - Don't say "Updating ..." when checking whether there are any updates because there may well be no updates.

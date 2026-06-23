@@ -6,14 +6,8 @@ from unittest.mock import Mock, call, patch
 
 from update_time.update_package_json import update_package_jsons
 
-from .helpers import (
-    CacheClearingTestCase,
-    assert_new_version_logged,
-    assert_path_logged,
-    mock_path,
-    mock_response,
-    release_json,
-)
+from .assertions import assert_new_version_logged, assert_path_logged, assert_success
+from .helpers import CacheClearingTestCase, mock_path, mock_response, release_json
 
 
 @patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
@@ -42,7 +36,7 @@ class UpdatePackageJsonTest(CacheClearingTestCase):
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = [Mock(stdout="{}"), Mock(stdout="")]
-        self.assertEqual(0, update_package_jsons())
+        assert_success(update_package_jsons())
         assert_path_logged(mock_info, mock_package_json.relative_to())
         mock_warning.assert_not_called()
         self.assert_npm_called(mock_run)
@@ -67,7 +61,7 @@ class UpdatePackageJsonTest(CacheClearingTestCase):
             subprocess.CalledProcessError(cmd="", returncode=1, output='{"package": {"latest": "1.1"}}'),
             Mock(stdout=""),
         ]
-        self.assertEqual(0, update_package_jsons())
+        assert_success(update_package_jsons())
         assert_path_logged(mock_info, mock_package_json.relative_to())
         assert_new_version_logged(mock_warning, "package", "1.1, published: 2026-05-30 10:26", "Changelog")
         self.assert_npm_called(mock_run)

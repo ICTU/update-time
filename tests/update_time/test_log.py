@@ -42,6 +42,13 @@ class LoggerTests(TestCase):
         )
 
     @patch("logging.Logger.warning")
+    def test_pinned(self, mock_warning: Mock):
+        """Test that pinning a previously unpinned reference to a digest is logged."""
+        sha = f"sha256:{'a' * 64}"
+        Logger("pin").pinned("dependency", DependencyVersion("1.0", sha=sha))
+        mock_warning.assert_called_once_with("Pinned %s to %s@%s", "dependency", "1.0", sha, stacklevel=ANY)
+
+    @patch("logging.Logger.warning")
     def test_new_version_with_publication_date(self, mock_warning: Mock):
         """Test that the publication date is appended to the version when it is known."""
         published = datetime(2026, 5, 29, 13, 54, tzinfo=UTC)

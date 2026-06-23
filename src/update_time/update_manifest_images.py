@@ -8,15 +8,16 @@ from update_time.filesystem import YAML_GLOB_PATTERNS, update_files
 from update_time.log import get_logger
 
 LOG = get_logger("manifest images")
-IMAGE_RE = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)@(?P<sha>sha256:[a-f0-9]{64})"
+IMAGE_RE = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>sha256:[a-f0-9]{64}))?"
 
 
 def update_manifest_images() -> int:
     """Update the image tags and digests in the Docker Compose files and the Helm folder.
 
     Third-party images are pinned as ``tag@sha256:digest``; both the tag and digest are kept in sync. Images
-    referenced by tag only are left untouched because the regex requires a digest, so the production Helm chart
-    templates (which use ``{{ ... }}`` placeholders) and Compose lines using ``${VAR}`` substitution are ignored.
+    referenced by tag only are automatically pinned by appending the digest of the (latest) tag. The digest is
+    optional in the regex but a concrete version tag is still required, so Helm chart templates (which use
+    ``{{ ... }}`` placeholders) and Compose lines using ``${VAR}`` substitution are ignored.
     """
     results = [
         update_files("docker-compose*.yml", regexp=IMAGE_RE, get_new_version=get_latest_tag, logger=LOG),
