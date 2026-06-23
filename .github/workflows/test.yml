@@ -1,9 +1,10 @@
+---
 # This workflow will install Python dependencies, run tests and lint with a single version of Python
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
 
 name: Python application
 
-on:
+"on":
   push:
     branches: ["main"]
   pull_request:
@@ -18,6 +19,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
       - name: Read Python version
         run: |
           echo "PYTHON_VERSION=$(cat .python-version)" >> $GITHUB_ENV

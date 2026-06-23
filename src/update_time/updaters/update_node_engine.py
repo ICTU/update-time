@@ -30,8 +30,9 @@ def node_base_image_version(dockerfile: Path) -> str:
     """Return the Node base image version, or empty string if the Dockerfile is missing or its base image isn't Node."""
     if not dockerfile.exists():
         return ""
-    if match := next(re.match(NODE_IMAGE_RE, line) for line in dockerfile.read_text().splitlines()):
-        return match.group("version")
+    for line in dockerfile.read_text().splitlines():
+        if match := re.match(NODE_IMAGE_RE, line):
+            return match.group("version")
     return ""
 
 

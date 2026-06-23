@@ -54,8 +54,10 @@ class Logger:
 
     def new_version(self, dependency: str, version: DependencyVersion) -> None:
         """Log the availability of a new version, including its publication date in UTC when known."""
-        suppression_message = "Suppressing changelog already shown, see above"
-        changes = suppression_message if (dependency, version) in self.logged_changes else version.changes
+        if (dependency, version) in self.logged_changes:
+            changes = "Suppressing changelog already shown, see above"
+        else:
+            changes = version.changes or "No changelog available!"
         self.logged_changes.add((dependency, version))
         new_version = version.version
         if version.published is not None:

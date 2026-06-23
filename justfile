@@ -97,10 +97,14 @@ bandit: (py-check "bandit" f"{{uv_run}} bandit --configfile pyproject.toml --qui
 [private]
 vulture: (py-check "vulture" f"{{vulture}} {{code}} {{vulture_whitelist}}")
 
+# Run codespell to check for common misspellings.
+[private]
+codespell: (py-check "codespell" f"{{uv_run}} codespell")
+
 # Run yamllint to lint YAML files such as workflow definitions.
 [private]
 yamllint:
-    {{ start_capture() }} {{ uv_run }} yamllint -c .yamllint -f {{ when_color("colored", "auto") }} . {{ end_capture("yamllint") }}
+    {{ start_capture() }} {{ uv_run }} yamllint --strict -c .yamllint -f {{ when_color("colored", "auto") }} . {{ end_capture("yamllint") }}
 
 # Run zizmor to audit GitHub Action workflows.
 [private]
@@ -114,10 +118,7 @@ check-justfile:
 
 # Run the quality checks
 [parallel]
-check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture check-justfile yamllint
-
-# Folders to be checked for quality.
-folders_to_check := "components/api_server components/collector components/frontend components/notifier components/renderer components/shared_code docs tests/application_tests tests/feature_tests tests/shared_test_code tools/release tools/third_party tools/update_dependencies ."
+check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile yamllint zizmor
 
 # === Fix issues ===
 
@@ -139,7 +140,7 @@ fix: install-py-dependencies
 # Install Python dependencies from the lock file.
 [private]
 install-py-dependencies:
-    {{ start_capture() }} uv sync --no-progress --locked --all-extras --all-groups --reinstall-package shared-code --reinstall-package shared-test-code {{ end_capture("install-py-dependencies") }}
+    {{ start_capture() }} uv sync --no-progress --locked --all-extras --all-groups {{ end_capture("install-py-dependencies") }}
 
 # === CI ===
 

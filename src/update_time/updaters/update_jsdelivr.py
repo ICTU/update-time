@@ -13,7 +13,7 @@ from update_time.io.log import get_logger
 from update_time.sources.npmjs import get_publication_datetime
 
 LOG = get_logger("jsdelivr")
-HEADERS = {"User-Agent": "Dependency update script for Quality-time (https://github.com/ictu/quality-time)"}
+HEADERS = {"User-Agent": "Update-time dependency update tool (https://github.com/ICTU/update-time)"}
 # Match a jsDelivr npm URL together with the Subresource Integrity hash that follows it, so both stay in sync.
 JSDELIVR_RE = re.compile(
     r"https://cdn\.jsdelivr\.net/npm/(?P<dependency>[\w-]+)@(?P<version>[\d.]+)"

@@ -1,20 +1,19 @@
 """Unit tests for the Dockerfile base image update script."""
 
-import unittest
 from unittest.mock import Mock, patch
 
 from update_time.updaters.update_dockerfile_base_image import update_dockerfiles
 
 from tests.update_time.assertions import assert_new_version_logged, assert_path_logged, assert_success
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import docker_hub_response, docker_tag, mock_path
+from tests.update_time.helpers import CacheClearingTestCase, docker_hub_response, docker_tag, mock_path
 
 
 @patch("logging.Logger.warning")
 @patch("logging.Logger.info")
 @patch("pathlib.Path.rglob")
 @patch("requests.get")
-class UpdateDockerfileTest(unittest.TestCase):
+class UpdateDockerfileTest(CacheClearingTestCase):
     """Unit tests for the update Dockerfile function."""
 
     def test_no_changes(self, mock_get: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock):

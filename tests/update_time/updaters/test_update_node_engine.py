@@ -1,13 +1,12 @@
 """Unit tests for the Node engine update script."""
 
-import unittest
 from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
 from update_time.updaters.update_node_engine import update_node_engines
 
 from tests.update_time.assertions import assert_new_version_logged, assert_path_logged, assert_success
-from tests.update_time.helpers import mock_path
+from tests.update_time.helpers import CacheClearingTestCase, mock_path
 
 
 @patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
@@ -15,7 +14,7 @@ from tests.update_time.helpers import mock_path
 @patch("logging.Logger.warning")
 @patch("logging.Logger.info")
 @patch("pathlib.Path.rglob")
-class UpdateNodeEnginesTest(unittest.TestCase):
+class UpdateNodeEnginesTest(CacheClearingTestCase):
     """Unit tests for the update Node engines function."""
 
     def create_package_json(self, contents: str = '{"engines": {"node": "18" }}') -> Mock:
@@ -40,6 +39,20 @@ class UpdateNodeEnginesTest(unittest.TestCase):
     @patch("pathlib.Path.read_text", Mock(return_value="FROM node:19"))
     def test_update(self, mock_glob: Mock, mock_info: Mock, mock_warning: Mock, mock_error: Mock):
         """Test that the package.json is updated if there is a new Node version."""
+        mock_package_json = self.create_package_json()
+        mock_glob.return_value = [mock_package_json]
+        assert_success(update_node_engines())
+        assert_path_logged(mock_info, mock_package_json.relative_to())
+        assert_new_version_logged(mock_warning, "node", "19", once=True)
+        mock_error.assert_not_called()
+        mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "19" }}\n')
+
+    @patch("pathlib.Path.exists", Mock(return_value=True))
+    @patch("pathlib.Path.read_text", Mock(return_value="# syntax=docker/dockerfile:1\nARG TAG=19\nFROM node:19\n"))
+    def test_node_base_image_not_on_first_line(
+        self, mock_glob: Mock, mock_info: Mock, mock_warning: Mock, mock_error: Mock
+    ):
+        """Test that the Node base image is found even when it is not on the first line of the Dockerfile."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         assert_success(update_node_engines())

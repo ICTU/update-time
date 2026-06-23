@@ -1,13 +1,12 @@
 """Unit tests for the jsdelivr CDN URLs update script."""
 
-import unittest
 from unittest.mock import ANY, Mock, patch
 
 from update_time.updaters.update_jsdelivr import get_latest_version, update_jsdelivr, update_jsdelivrs
 
 from tests.update_time.assertions import assert_new_version_logged, assert_path_logged, assert_success
 from tests.update_time.fixtures import HASH1, HASH2
-from tests.update_time.helpers import mock_path, mock_response
+from tests.update_time.helpers import CacheClearingTestCase, mock_path, mock_response
 
 # A flat package listing as returned by the jsDelivr API with the ?structure=flat query parameter.
 FLAT_FILES = {"default": "/dist/clipboard.min.js", "files": [{"name": "/dist/clipboard.min.js", "hash": HASH2}]}
@@ -25,7 +24,7 @@ CONF = (
 
 
 @patch("requests.get")
-class GetLatestVersionTest(unittest.TestCase):
+class GetLatestVersionTest(CacheClearingTestCase):
     """Unit tests for the get latest jsdelivr version function."""
 
     def test_unchanged(self, mock_get: Mock):
@@ -69,7 +68,7 @@ class GetLatestVersionTest(unittest.TestCase):
 
 @patch("logging.Logger.warning")
 @patch("requests.get")
-class UpdateJsdelivrTest(unittest.TestCase):
+class UpdateJsdelivrTest(CacheClearingTestCase):
     """Unit tests for rewriting the version and integrity hash in the Sphinx config."""
 
     def test_new_version_and_hash(self, mock_get: Mock, mock_warning: Mock):
@@ -102,7 +101,7 @@ class UpdateJsdelivrTest(unittest.TestCase):
 @patch("logging.Logger.info")
 @patch("pathlib.Path.rglob")
 @patch("requests.get")
-class UpdateJsdelivrsTest(unittest.TestCase):
+class UpdateJsdelivrsTest(CacheClearingTestCase):
     """Unit tests for discovering and updating the Sphinx config files under docs/."""
 
     def test_changes(self, mock_get: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock):

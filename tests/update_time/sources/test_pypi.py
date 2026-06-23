@@ -5,12 +5,9 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from unittest.mock import Mock, patch
 
-from update_time.io.log import get_logger
 from update_time.sources.pypi import CHANGELOG_URL_KEYS, REPOSITORY_URL_KEYS, get_changes, get_publication_datetime
 
 from tests.update_time.helpers import CacheClearingTestCase, mock_response, release_json
-
-LOG = get_logger("test_pipy")
 
 
 @patch("requests.get")
@@ -42,14 +39,14 @@ class GetChangesTest(CacheClearingTestCase):
     def test_no_url_found(self, mock_get: Mock):
         """Test that the changes are empty if no changelog URL is returned by PyPI."""
         self.create_mock_response(mock_get, {"info": {"description": "Package-foo description"}})
-        self.assertEqual("", get_changes("package-1", "1.0", LOG))
+        self.assertEqual("", get_changes("package-1", "1.0"))
 
     def test_changelog_url_found(self, mock_get: Mock):
         """Test that the changes are returned if a changelog URL is returned by PyPI."""
         changelog = "Changelog\n## 1.1\n- Fixed foo\n"
         for key in CHANGELOG_URL_KEYS:
             self.create_mock_response(mock_get, {"info": {"project_urls": {key: "https://changes"}}}, text=changelog)
-            self.assertEqual("## 1.1\n- Fixed foo", get_changes(f"package-2-{key}", "1.1", LOG))
+            self.assertEqual("## 1.1\n- Fixed foo", get_changes(f"package-2-{key}", "1.1"))
 
     def test_changelog_url_gives_error(self, mock_get: Mock):
         """Test that changelog URLs are skipped if they result in an HTTP error."""
@@ -60,7 +57,7 @@ class GetChangesTest(CacheClearingTestCase):
                     {"info": {"description": "Package-foo description", "project_urls": {key: "https://changes"}}},
                     status_code=status_code,
                 )
-                self.assertEqual("", get_changes(f"package-3-{status_code}-{key}", "1.1", LOG))
+                self.assertEqual("", get_changes(f"package-3-{status_code}-{key}", "1.1"))
 
     def test_repository_url_found(self, mock_get: Mock):
         """Test that the changes are returned if a repository URL is returned by PyPI."""
@@ -74,13 +71,13 @@ class GetChangesTest(CacheClearingTestCase):
                 [release_json("1.1", body=changelog)],
                 {"sha": "sha"},
             )
-            self.assertEqual(changelog, get_changes(f"package-4-{key}", "1.1", LOG))
+            self.assertEqual(changelog, get_changes(f"package-4-{key}", "1.1"))
 
     def test_changelog_in_description(self, mock_get: Mock):
         """Test that the changelog from the description is returned."""
         changelog = "1.1\n- Fixed ...\n- Added ..."
         self.create_mock_response(mock_get, {"info": {"description": f"Package description\n{changelog}\n"}})
-        self.assertEqual(changelog, get_changes("package-5", "1.1", LOG))
+        self.assertEqual(changelog, get_changes("package-5", "1.1"))
 
     def test_github_url_in_description_that_has_a_changelog(self, mock_get: Mock):
         """Test that the GitHub URL in the description is used to get the changelog."""
@@ -92,7 +89,7 @@ class GetChangesTest(CacheClearingTestCase):
             [release_json("1.1", body=changelog)],
             {"sha": "sha"},
         )
-        self.assertEqual(changelog, get_changes("package-6", "1.1", LOG))
+        self.assertEqual(changelog, get_changes("package-6", "1.1"))
 
     def test_github_url_in_description_that_has_no_changelog(self, mock_get: Mock):
         """Test that the GitHub URL in the description is used to get the changelog."""
@@ -103,7 +100,7 @@ class GetChangesTest(CacheClearingTestCase):
             [release_json("1.1")],
             {"sha": "sha"},
         )
-        self.assertEqual("", get_changes("package-7", "1.1", LOG))
+        self.assertEqual("", get_changes("package-7", "1.1"))
 
 
 class GetPublicationDateTimeTest(CacheClearingTestCase):

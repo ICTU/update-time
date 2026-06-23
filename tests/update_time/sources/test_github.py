@@ -9,6 +9,7 @@ import requests
 
 from update_time.sources.github import (
     Release,
+    changes_from_release,
     get_latest_release,
     get_release,
     github_owner_and_repository,
@@ -51,6 +52,18 @@ class GitHubOwnerAndRepositoryTest(unittest.TestCase):
     def test_github_url_without_repo(self):
         """Test that a GitHub URLs returns an empty owner and repository if the repository is missing."""
         self.assertEqual(("", ""), github_owner_and_repository("https://github.com/ICTU"))
+
+    def test_npm_git_url(self):
+        """Test that an npm-style git+https URL with a .git suffix is parsed."""
+        self.assertEqual(
+            ("ICTU", "update-time"), github_owner_and_repository("git+https://github.com/ICTU/update-time.git")
+        )
+
+    def test_url_with_fragment(self):
+        """Test that a URL with a trailing fragment (as npm uses) is parsed."""
+        self.assertEqual(
+            ("ICTU", "update-time"), github_owner_and_repository("https://github.com/ICTU/update-time#readme")
+        )
 
 
 class GetLatestReleaseTest(CacheClearingTestCase):
@@ -185,3 +198,23 @@ class GetReleaseTest(CacheClearingTestCase):
             "https://api.github.com/repos/owner/repo without releases for get_release/releases?per_page=100",
             stacklevel=ANY,
         )
+
+
+class ChangesFromReleaseTest(CacheClearingTestCase):
+    """Unit tests for getting the changelog from a GitHub release."""
+
+    @patch("requests.get")
+    def test_no_owner_or_repository(self, mock_get: Mock):
+        """Test that the changes are empty, without querying GitHub, when the owner or repository is missing."""
+        self.assertEqual("", changes_from_release("", "", "any", "1.0"))
+        mock_get.assert_not_called()
+
+    @patch("requests.get", Mock(return_value=mock_response([release_json("1.1", body="Changelog")])))
+    def test_changelog(self):
+        """Test that the body of the matching release is returned."""
+        self.assertEqual("Changelog", changes_from_release("owner", "repo with changes", "any", "1.1"))
+
+    @patch("requests.get", Mock(return_value=mock_response([release_json("9.9")])))
+    def test_no_matching_release(self):
+        """Test that the changes are empty when no release matches the version."""
+        self.assertEqual("", changes_from_release("owner", "repo without matching release", "any", "1.1"))
