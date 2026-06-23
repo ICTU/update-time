@@ -144,8 +144,13 @@ install-py-dependencies:
 
 # === CI ===
 
+# Run SonarCloud prerequisites
+_sonarcloud: test
+    {{ coverage }} xml # SonarCloud needs a Cobertura compatible XML coverage report
+    {{ uv_run }} python -m xmlrunner discover --output-file build/xunit.xml  # SonarCloud needs a JUnit compatible XML report
+
 # Run everything in CI.
-_ci: test check
+_ci: _sonarcloud check
 
 # === Folders ===
 
