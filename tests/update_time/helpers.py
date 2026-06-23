@@ -4,14 +4,14 @@ import unittest
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
-from update_time.docker import _docker_hub_headers as docker_hub_headers
-from update_time.docker import _get_available_tags as docker_hub_get_available_tags
-from update_time.github import _list_releases as github_list_release
-from update_time.npmjs import get_changes as npmjs_get_changes
-from update_time.npmjs import get_publication_datetime as npmjs_get_publication_datetime
-from update_time.pypi import release_metadata as pypi_release_metadata
-from update_time.update_github_action import get_latest_version as github_get_latest_version
-from update_time.version import DependencyVersion
+from update_time.domain.version import DependencyVersion
+from update_time.sources.docker import _docker_hub_headers as docker_hub_headers
+from update_time.sources.docker import _get_available_tags as docker_hub_get_available_tags
+from update_time.sources.github import _list_releases as github_list_release
+from update_time.sources.npmjs import get_changes as npmjs_get_changes
+from update_time.sources.npmjs import get_publication_datetime as npmjs_get_publication_datetime
+from update_time.sources.pypi import release_metadata as pypi_release_metadata
+from update_time.updaters.update_github_action import get_latest_version as github_get_latest_version
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
