@@ -102,6 +102,11 @@ vulture: (py-check "vulture" f"{{vulture}} {{code}} {{vulture_whitelist}}")
 yamllint:
     {{ start_capture() }} {{ uv_run }} yamllint -c .yamllint -f {{ when_color("colored", "auto") }} . {{ end_capture("yamllint") }}
 
+# Run zizmor to audit GitHub Action workflows.
+[private]
+zizmor:
+    {{ start_capture() }} {{ uv_run }} zizmor --no-progress --quiet .github/workflows {{ end_capture("zizmor") }}
+
 # Check the justfile for correct formatting.
 [private]
 check-justfile:

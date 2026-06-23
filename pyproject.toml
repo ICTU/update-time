@@ -31,7 +31,7 @@ dependencies = [
 urls.Changelog = "https://github.com/ICTU/update-time/blob/main/CHANGELOG.md"
 urls.Issues = "https://github.com/ICTU/update-time/issues"
 urls.Repository = "https://github.com/ICTU/update-time"
-scripts.update-time = "update_time.update:update_dependencies"
+scripts.update-time = "update_time.updaters.update:update_dependencies"
 
 [dependency-groups]
 dev = [
@@ -49,6 +49,7 @@ dev = [
     "types-requests==2.33.0.20260518",
     "vulture==2.16",
     "yamllint==1.38.0",
+    "zizmor==1.25.2",
 ]
 
 [tool.setuptools]
@@ -80,6 +81,17 @@ lint.ignore = [
 ]
 lint.per-file-ignores.".vulture-whitelist.py" = [
     "ALL",
+]
+lint.isort.section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "first-party",
+    "tests",
+    "local-folder",
+]
+lint.isort.sections.tests = [
+    "tests",
 ]
 
 [tool.pyproject-fmt]
