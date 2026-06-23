@@ -4,6 +4,12 @@ All notable changes to *Update-time* will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Detect the Node base image when the `FROM node:...` line is not the first line of the Dockerfile, for example when it is preceded by comments or `ARG` directives.
+
 ## 0.0.3 - 2026-06-23
 
 ### Added

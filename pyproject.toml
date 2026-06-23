@@ -94,6 +94,9 @@ lint.isort.sections.tests = [
     "tests",
 ]
 
+[tool.codespell]
+skip = "*.lock,./.git,./.venv,./build,./dist,./htmlcov,./.mypy_cache,./.ruff_cache,./.coverage"
+
 [tool.pyproject-fmt]
 indent = 4
 keep_full_version = true  # Don't remove trailing zero's from version specifiers

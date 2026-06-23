@@ -13,14 +13,14 @@ from tests.update_time.assertions import (
     assert_success,
 )
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
-from tests.update_time.helpers import docker_hub_response, docker_tag, mock_path
+from tests.update_time.helpers import CacheClearingTestCase, docker_hub_response, docker_tag, mock_path
 
 
 @patch("logging.Logger.warning")
 @patch("logging.Logger.info")
 @patch("pathlib.Path.rglob")
 @patch("requests.get")
-class UpdateManifestImagesTest(unittest.TestCase):
+class UpdateManifestImagesTest(CacheClearingTestCase):
     """Unit tests for the update manifest images function."""
 
     def create_mock_manifest(self, mock_glob: Mock, image: str) -> Mock:

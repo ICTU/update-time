@@ -23,11 +23,6 @@ class DependencyVersion:
     """A version of a dependency."""
 
     version: str  # Arbitrary version string as returned by dependency source (PyPI, Docker Hub, GitHub releases, etc.)
-    _changes: str = ""
+    changes: str = ""  # Changelog for this version, empty when none could be found
     sha: str = ""
     published: datetime | None = None
-
-    @property
-    def changes(self) -> str:
-        """Return the changelog."""
-        return self._changes or "No changelog available!"

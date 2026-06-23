@@ -32,7 +32,7 @@ def update_package_json(package_json: Path) -> int:
 
 
 def update_package_jsons() -> int:
-    """Find all package.json files, update them, and then update them, including the package-lock.json files."""
+    """Find all package.json files and update them, including the package-lock.json files."""
     results = {update_package_json(package_json) for package_json in glob("package.json")}
     return max(results, default=0)
 

@@ -59,7 +59,7 @@ def update_pyproject_toml(pyproject_toml: Path) -> None:
     lines_with_updates = [line for line in outdated.splitlines() if " (latest: " in line]
     for line in lines_with_updates:
         package, version = parse_line_with_update(line)
-        changes = get_changes(package, version, LOG)
+        changes = get_changes(package, version)
         published = get_publication_datetime(package, version)
         dependency_version = DependencyVersion(version, changes, published=published)
         LOG.new_version(package, dependency_version)

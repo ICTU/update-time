@@ -1,15 +1,14 @@
 """npmjs unit tests."""
 
-import unittest
 from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
 from update_time.sources.npmjs import get_publication_datetime
 
-from tests.update_time.helpers import mock_response
+from tests.update_time.helpers import CacheClearingTestCase, mock_response
 
 
-class NpmjsPublicationDatetimeTest(unittest.TestCase):
+class NpmjsPublicationDatetimeTest(CacheClearingTestCase):
     """Unit tests for the npmjs publication datetime fetcher."""
 
     @patch("requests.get", Mock(return_value=mock_response({"time": {"1.0": "20260530T10:14:40.567Z"}})))

@@ -89,12 +89,12 @@ def github_to_raw(url: str) -> str:
 
 
 def github_owner_and_repository(url: str) -> tuple[str, str]:
-    """Parse the GitHub owner and repository from a URL."""
-    parsed = urlparse(url)
-    if parsed.scheme == "https" and parsed.netloc == "github.com":
+    """Parse the GitHub owner and repository from a URL, including npm-style ``git+https`` and ``.git`` URLs."""
+    parsed = urlparse(url.removeprefix("git+"))
+    if parsed.netloc == "github.com":
         path_parts = parsed.path.lstrip("/").split("/")
         if len(path_parts) > 1:
-            return path_parts[0], path_parts[1]
+            return path_parts[0], path_parts[1].removesuffix(".git")
     return "", ""
 
 
@@ -137,6 +137,14 @@ def get_release(owner: str, repository: str, package: str, version: str) -> Rele
         if tag in releases_by_tag:
             return Release.from_json(owner, repository, releases_by_tag[tag])
     return None
+
+
+def changes_from_release(owner: str, repository: str, package: str, version: str) -> str:
+    """Return the body of the GitHub release matching the package and version, or empty string if absent."""
+    if not (owner and repository):
+        return ""
+    release = get_release(owner, repository, package, version)
+    return release.body if release else ""
 
 
 def _github_headers() -> dict[str, str]:

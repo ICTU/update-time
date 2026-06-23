@@ -1,10 +1,15 @@
 """Shared test helpers."""
 
+import importlib
+import pkgutil
 import unittest
+from functools import cache
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
+import update_time
 from update_time.domain.version import DependencyVersion
+from update_time.io.log import Logger
 from update_time.sources.docker import _docker_hub_headers as docker_hub_headers
 from update_time.sources.docker import _get_available_tags as docker_hub_get_available_tags
 from update_time.sources.github import _list_releases as github_list_release
@@ -17,10 +22,22 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
 
-class CacheClearingTestCase(unittest.TestCase):
-    """Base test case that clears all functools caches before each test to prevent cross-test leakage.
+@cache
+def _module_loggers() -> tuple[Logger, ...]:
+    """Return every module-level ``LOG`` logger in the update_time package, discovered by walking it."""
+    loggers = []
+    for module_info in pkgutil.walk_packages(update_time.__path__, f"{update_time.__name__}."):
+        module = importlib.import_module(module_info.name)
+        if isinstance(log := getattr(module, "LOG", None), Logger):
+            loggers.append(log)
+    return tuple(loggers)
 
-    This is the single place where the cached functions need to be listed. Add new @cache'd functions here.
+
+class CacheClearingTestCase(unittest.TestCase):
+    """Base test case that resets global state before each test to prevent cross-test leakage.
+
+    This clears the functools caches and the loggers' changelog-suppression state. This is the single place
+    where the cached functions need to be listed. Add new @cache'd functions here.
     """
 
     CACHES = (
@@ -34,10 +51,12 @@ class CacheClearingTestCase(unittest.TestCase):
     )
 
     def setUp(self) -> None:
-        """Clear all caches so each test gets fresh results."""
+        """Clear all caches and logger state so each test gets fresh results."""
         super().setUp()
-        for cache in self.CACHES:
-            cache.cache_clear()
+        for cached_function in self.CACHES:
+            cached_function.cache_clear()
+        for logger in _module_loggers():
+            logger.logged_changes.clear()
 
 
 def new_version_getter(version: str, sha: str = "") -> Callable[[str, str], DependencyVersion]:
