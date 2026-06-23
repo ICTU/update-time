@@ -141,6 +141,11 @@ fix: install-py-dependencies
 install-py-dependencies:
     {{ start_capture() }} uv sync --no-progress --locked --all-extras --all-groups --reinstall-package shared-code --reinstall-package shared-test-code {{ end_capture("install-py-dependencies") }}
 
+# === CI ===
+
+# Run everything in CI.
+_ci: test check
+
 # === Folders ===
 
 exists(path) := path_exists(invocation_directory() + "/" + path)
