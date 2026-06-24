@@ -1,9 +1,13 @@
 """Update all dependencies by running the individual updater scripts."""
 
+import os
 import subprocess  # nosec B404
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from update_time.domain.cooldown import COOLDOWN_DAYS_ENV_VAR
+from update_time.io.cli import parse_args
 
 SRC = Path(__file__).parent
 
@@ -34,5 +38,12 @@ def update_dependencies() -> int:
     return max(results, default=0)
 
 
+def main() -> int:
+    """Parse the command-line arguments and update all dependencies."""
+    args = parse_args()
+    os.environ[COOLDOWN_DAYS_ENV_VAR] = str(args.cooldown)  # Pass the cooldown down to the updater subprocesses
+    return update_dependencies()
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(update_dependencies())
+    sys.exit(main())

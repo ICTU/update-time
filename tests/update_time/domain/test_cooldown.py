@@ -2,8 +2,23 @@
 
 import unittest
 from datetime import UTC, datetime, timedelta, timezone
+from unittest.mock import patch
 
-from update_time.domain.cooldown import COOLDOWN_DAYS, within_cooldown
+from update_time.domain.cooldown import COOLDOWN_DAYS, COOLDOWN_DAYS_ENV_VAR, cooldown_days, within_cooldown
+
+
+class CooldownDaysTest(unittest.TestCase):
+    """Unit tests for the cooldown_days helper."""
+
+    def test_default(self):
+        """Test that the cooldown defaults to the default cooldown period when the env var is not set."""
+        with patch.dict("os.environ", clear=True):
+            self.assertEqual(COOLDOWN_DAYS, cooldown_days())
+
+    def test_env_var(self):
+        """Test that the cooldown is read from the env var when set."""
+        with patch.dict("os.environ", {COOLDOWN_DAYS_ENV_VAR: "14"}):
+            self.assertEqual(14, cooldown_days())
 
 
 class WithinCooldownTest(unittest.TestCase):
@@ -12,6 +27,13 @@ class WithinCooldownTest(unittest.TestCase):
     def test_no_timestamp(self):
         """Test that a missing timestamp is not within the cooldown period."""
         self.assertFalse(within_cooldown(None))
+
+    def test_configured_cooldown(self):
+        """Test that within_cooldown honours the cooldown period from the env var."""
+        timestamp = datetime.now(UTC) - timedelta(days=COOLDOWN_DAYS + 1)
+        self.assertFalse(within_cooldown(timestamp))
+        with patch.dict("os.environ", {COOLDOWN_DAYS_ENV_VAR: str(COOLDOWN_DAYS + 2)}):
+            self.assertTrue(within_cooldown(timestamp))
 
     def test_recent_timestamp(self):
         """Test that a timestamp from within the cooldown period is reported as within cooldown."""

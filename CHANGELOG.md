@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Add a command-line interface with `-h`/`--help` and `-V`/`--version` options.
+- Add a `--cooldown` option to configure the cooldown period (in days) for Docker images and GitHub Actions, overriding the default of 7 days.
+
 ### Fixed
 
 - Detect the Node base image when the `FROM node:...` line is not the first line of the Dockerfile, for example when it is preceded by comments or `ARG` directives.

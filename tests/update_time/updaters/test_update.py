@@ -1,9 +1,11 @@
 """Unit tests for the update script that runs all updater scripts."""
 
+import os
 import unittest
 from unittest.mock import Mock, call, patch
 
-from update_time.updaters.update import PARALLEL_SCRIPTS, SEQUENTIAL_SCRIPTS, run_script, update_dependencies
+from update_time.domain.cooldown import COOLDOWN_DAYS_ENV_VAR
+from update_time.updaters.update import PARALLEL_SCRIPTS, SEQUENTIAL_SCRIPTS, main, run_script, update_dependencies
 
 
 @patch("subprocess.run")
@@ -39,3 +41,16 @@ class UpdateTest(unittest.TestCase):
         """Test that the highest exit code of all scripts is returned."""
         mock_run.return_value = Mock(returncode=1)
         self.assertEqual(1, update_dependencies())
+
+    def test_main_updates_dependencies(self, mock_run: Mock):
+        """Test that main parses the arguments and then updates the dependencies."""
+        mock_run.return_value = Mock(returncode=0)
+        with patch("sys.argv", ["update-time"]):
+            self.assertEqual(0, main())
+
+    def test_main_passes_cooldown_to_subprocesses(self, mock_run: Mock):
+        """Test that main exports the cooldown in the environment so the updater subprocesses inherit it."""
+        mock_run.return_value = Mock(returncode=0)
+        with patch.dict("os.environ", clear=True), patch("sys.argv", ["update-time", "--cooldown", "14"]):
+            main()
+            self.assertEqual("14", os.environ[COOLDOWN_DAYS_ENV_VAR])
