@@ -79,7 +79,7 @@ publish version *flags: (check-version version) check-repo test check
     pyproject.write_text(re.sub(r"(?m)^version = \".*\"$", f"version = \"{new}\"", pyproject.read_text(), count=1))
     changelog = pathlib.Path("CHANGELOG.md")
     today = datetime.date.today().isoformat()
-    changelog.write_text(changelog.read_text().replace("## [Unreleased]", f"## [Unreleased]\n\n## {new} - {today}", 1))
+    changelog.write_text(changelog.read_text().replace("## [Unreleased]", f"## [Unreleased]\n\nNo changes yet.\n\n## {new} - {today}", 1))
     ' "$new_version"
     uv lock --quiet  # Resync the lock file to the new version
     rm -rf build dist
