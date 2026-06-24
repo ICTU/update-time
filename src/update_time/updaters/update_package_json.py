@@ -14,20 +14,33 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 LOG = get_logger("package.json")
+COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
+
+
+def installed_versions(directory: Path) -> dict[str, str]:
+    """Return the installed top-level dependency versions in the given directory."""
+    npm_list = ["npm", "list", "--json", "--depth=0", *COMMON_NPM_OPTIONS]
+    dependencies = json.loads(run(npm_list, cwd=directory)).get("dependencies", {})
+    return {package: info["version"] for package, info in dependencies.items() if "version" in info}
 
 
 def update_package_json(package_json: Path) -> int:
     """Update the package.json and package-lock.json."""
     LOG.path(package_json)
-    npm_outdated = ["npm", "outdated", "--silent", "--json", "--include=dev"]
+    npm_outdated = ["npm", "outdated", "--json", *COMMON_NPM_OPTIONS]
     outdated_packages = json.loads(run(npm_outdated, cwd=package_json.parent))
-    for package, version in outdated_packages.items():
-        changes = get_changes(package, version["latest"])
-        published = get_publication_datetime(package, version["latest"])
-        package_version = DependencyVersion(version["latest"], changes, published=published)
-        LOG.new_version(package, package_version)
-    npm_update = ["npm", "update", "--save", "--silent", "--include=dev"]
+    npm_update = ["npm", "update", "--save", *COMMON_NPM_OPTIONS]
     run(npm_update, cwd=package_json.parent)
+    # npm may install an older version than "latest" (e.g. when min-release-age holds back fresh releases), so log
+    # the version that was actually installed rather than the latest one reported by npm outdated.
+    installed = installed_versions(package_json.parent)
+    for package, version in outdated_packages.items():
+        new_version = installed.get(package)
+        if new_version is not None and new_version != version.get("current"):
+            changes = get_changes(package, new_version)
+            published = get_publication_datetime(package, new_version)
+            package_version = DependencyVersion(new_version, changes, published=published)
+            LOG.new_version(package, package_version)
     return 0
 
 

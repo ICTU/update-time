@@ -4,7 +4,7 @@ import subprocess  # nosec
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
-from update_time.updaters.update_package_json import update_package_jsons
+from update_time.updaters.update_package_json import COMMON_NPM_OPTIONS, update_package_jsons
 
 from tests.update_time.assertions import assert_new_version_logged, assert_path_logged, assert_success
 from tests.update_time.helpers import CacheClearingTestCase, mock_path, mock_response, release_json
@@ -25,17 +25,20 @@ class UpdatePackageJsonTest(CacheClearingTestCase):
         return mock_package_json
 
     def assert_npm_called(self, mock_run: Mock) -> None:
-        """Assert that npm outdated and npm update have been called."""
-        npm_outdated = ["npm", "outdated", "--silent", "--json", "--include=dev"]
-        npm_update = ["npm", "update", "--save", "--silent", "--include=dev"]
+        """Assert that npm outdated, npm update, and npm list have been called."""
+        npm_outdated = ["npm", "outdated", "--json", *COMMON_NPM_OPTIONS]
+        npm_update = ["npm", "update", "--save", *COMMON_NPM_OPTIONS]
+        npm_list = ["npm", "list", "--json", "--depth=0", *COMMON_NPM_OPTIONS]
         run_kwargs = {"capture_output": True, "text": True, "check": True, "cwd": Path("/")}
-        mock_run.assert_has_calls((call(npm_outdated, **run_kwargs), call(npm_update, **run_kwargs)))
+        mock_run.assert_has_calls(
+            (call(npm_outdated, **run_kwargs), call(npm_update, **run_kwargs), call(npm_list, **run_kwargs))
+        )
 
     def test_unchanged(self, mock_run: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock):
         """Test that the package.json is not written if there are no outdated packages."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
-        mock_run.side_effect = [Mock(stdout="{}"), Mock(stdout="")]
+        mock_run.side_effect = [Mock(stdout="{}"), Mock(stdout=""), Mock(stdout='{"dependencies": {}}')]
         assert_success(update_package_jsons())
         assert_path_logged(mock_info, mock_package_json.relative_to())
         mock_warning.assert_not_called()
@@ -53,15 +56,34 @@ class UpdatePackageJsonTest(CacheClearingTestCase):
         ),
     )
     def test_update(self, mock_run: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock):
-        """Test that the package.json is updated if there are outdated packages."""
+        """Test that the installed version is logged, even when it is older than the latest version."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
-        # npm outdated results in a subprocess.CalledProcessError if there are updates:
+        # npm outdated results in a subprocess.CalledProcessError if there are updates. npm installs 1.1 rather than
+        # the latest 1.2, for example because min-release-age holds back the fresh 1.2 release:
         mock_run.side_effect = [
-            subprocess.CalledProcessError(cmd="", returncode=1, output='{"package": {"latest": "1.1"}}'),
+            subprocess.CalledProcessError(
+                cmd="", returncode=1, output='{"package": {"current": "1.0", "latest": "1.2"}}'
+            ),
             Mock(stdout=""),
+            Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
         ]
         assert_success(update_package_jsons())
         assert_path_logged(mock_info, mock_package_json.relative_to())
         assert_new_version_logged(mock_warning, "package", "1.1, published: 2026-05-30 10:26", "Changelog")
+        self.assert_npm_called(mock_run)
+
+    def test_outdated_but_not_updated(self, mock_run: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock):
+        """Test that a package is not logged when npm update did not change its installed version."""
+        mock_package_json = self.create_package_json()
+        mock_glob.return_value = [mock_package_json]
+        mock_run.side_effect = [
+            subprocess.CalledProcessError(cmd="", returncode=1, output='{"held": {"current": "1.0", "latest": "1.2"}}'),
+            Mock(stdout=""),
+            # "held" stayed at 1.0 (e.g. min-release-age held back every newer release), "untracked" has no version:
+            Mock(stdout='{"dependencies": {"held": {"version": "1.0"}, "untracked": {"missing": true}}}'),
+        ]
+        assert_success(update_package_jsons())
+        assert_path_logged(mock_info, mock_package_json.relative_to())
+        mock_warning.assert_not_called()
         self.assert_npm_called(mock_run)
