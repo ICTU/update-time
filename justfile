@@ -30,13 +30,70 @@ coverage := uv_run + " coverage"
 
 # === Build and publish ===
 
-# Build and publish the distribution packages.
-publish:
+# Check that the version is well-formed (x.y.z or vx.y.z), greater than the current version, and not already tagged.
+# Runs first, before the slow test and check recipes, so a bad version argument fails fast.
+[private]
+check-version version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    new_version="{{ version }}"; new_version="${new_version#v}"  # Accept both x.y.z and vx.y.z
+    uv run --quiet python -c '
+    import pathlib, re, sys, tomllib
+    from packaging.version import Version
+    new = sys.argv[1]
+    re.fullmatch(r"\d+\.\d+\.\d+", new) or sys.exit(f"Error: version {new!r} must be of the form x.y.z or vx.y.z")
+    current = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+    Version(new) > Version(current) or sys.exit(f"Error: new version {new} must be greater than current version {current}")
+    ' "$new_version"
+    if git rev-parse -q --verify "refs/tags/v$new_version" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/v$new_version" >/dev/null 2>&1; then
+        echo "Error: tag v$new_version already exists" >&2; exit 1
+    fi
+
+# Check that the repository is in a releasable state: on the main branch, clean, in sync with origin, and with an
+# [Unreleased] section in the changelog to roll over.
+[private]
+check-repo:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ "$(git branch --show-current)" = main ] || { echo "Error: releases must be made from the main branch" >&2; exit 1; }
+    [ -z "$(git status --porcelain)" ] || { echo "Error: the working tree has uncommitted changes; commit or stash them before releasing" >&2; exit 1; }
+    grep -q '^## \[Unreleased\]$' CHANGELOG.md || { echo "Error: CHANGELOG.md has no '## [Unreleased]' section to release" >&2; exit 1; }
+    git fetch --quiet
+    [ "$(git rev-parse @)" = "$(git rev-parse '@{u}')" ] || { echo "Error: the main branch is not in sync with origin; push or pull first" >&2; exit 1; }
+
+# Release a new version. Pass -c/--check after the version (e.g. `just publish 1.2.3 --check`) for a dry run that
+# rehearses the build and upload without committing, tagging, or pushing, and restores the working tree afterwards.
+publish version *flags: (check-version version) check-repo test check
+    #!/usr/bin/env bash
+    set -euo pipefail
+    new_version="{{ version }}"; new_version="${new_version#v}"  # Accept both x.y.z and vx.y.z
+    dry_run=false
+    case " $* " in *" -c "* | *" --check "*) dry_run=true ;; esac
+    # On a dry run, restore the files we are about to touch whenever the recipe exits:
+    [ "$dry_run" = true ] && trap 'git checkout --quiet -- pyproject.toml CHANGELOG.md uv.lock' EXIT
+    # Bump pyproject.toml and roll over the changelog's [Unreleased] section (the version was validated above):
+    uv run --quiet python -c '
+    import datetime, pathlib, re, sys
+    new = sys.argv[1]
+    pyproject = pathlib.Path("pyproject.toml")
+    pyproject.write_text(re.sub(r"(?m)^version = \".*\"$", f"version = \"{new}\"", pyproject.read_text(), count=1))
+    changelog = pathlib.Path("CHANGELOG.md")
+    today = datetime.date.today().isoformat()
+    changelog.write_text(changelog.read_text().replace("## [Unreleased]", f"## [Unreleased]\n\n## {new} - {today}", 1))
+    ' "$new_version"
+    uv lock --quiet  # Resync the lock file to the new version
     rm -rf build dist
     uv build
-    uv publish --token `uvx python -c "import configparser, pathlib; c = configparser.ConfigParser(); c.read(pathlib.Path('.pypirc').expanduser()); print(c['pypi']['password'])"`
-    git tag v`uvx python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"`
-    git push --tags
+    if [ "$dry_run" = true ]; then
+        uv publish --dry-run
+        echo "Dry run for v$new_version: build and upload validated; nothing committed, tagged, or pushed; working tree restored."
+    else
+        git commit pyproject.toml CHANGELOG.md uv.lock --message "Release v$new_version"
+        uv publish --token "$(uvx python -c "import configparser, pathlib; c = configparser.ConfigParser(); c.read(pathlib.Path('.pypirc').expanduser()); print(c['pypi']['password'])")"
+        git tag --annotate "v$new_version" --message "Release v$new_version"
+        git push --follow-tags
+        echo "Published update-time v$new_version"
+    fi
 
 # === Run tests ===
 
