@@ -31,7 +31,7 @@ dependencies = [
 urls.Changelog = "https://github.com/ICTU/update-time/blob/main/CHANGELOG.md"
 urls.Issues = "https://github.com/ICTU/update-time/issues"
 urls.Repository = "https://github.com/ICTU/update-time"
-scripts.update-time = "update_time.updaters.update:update_dependencies"
+scripts.update-time = "update_time.updaters.update:main"
 
 [dependency-groups]
 dev = [

@@ -55,7 +55,7 @@ References that are not yet pinned are pinned automatically:
 
 To avoid adopting releases that are too fresh to trust, Update-time honours a cooldown period during which newly published versions are not yet picked up. Where the cooldown comes from depends on the dependency type:
 
-- **Docker images and GitHub Actions** — Update-time enforces its own built-in cooldown of **7 days**, based on each image tag's push date and each release's publication date. This period is currently fixed in the code and not configurable.
+- **Docker images and GitHub Actions** — Update-time enforces its own cooldown, based on each image tag's push date and each release's publication date. It defaults to **7 days** and can be changed with the `--cooldown` option, for example `update-time --cooldown 14`.
 - **Python dependencies** — Update-time delegates the actual updating to [uv](https://docs.astral.sh/uv/), so the cooldown is whatever you configure for uv. Use the `exclude-newer` setting under `[tool.uv]` in your `pyproject.toml` to hold back recently released versions.
 - **npm dependencies** — Update-time delegates the actual updating to `npm`, so the cooldown is whatever you configure for npm (for example via your `.npmrc`).
 
