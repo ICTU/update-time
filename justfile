@@ -84,12 +84,14 @@ publish version *flags: (check-version version) check-repo test check
     uv lock --quiet  # Resync the lock file to the new version
     rm -rf build dist
     uv build
+    # Read the PyPI token from .pypirc; passed to uv publish in both modes so a dry run does not prompt for credentials:
+    pypi_token="$(uvx python -c "import configparser, pathlib; c = configparser.ConfigParser(); c.read(pathlib.Path('.pypirc').expanduser()); print(c['pypi']['password'])")"
     if [ "$dry_run" = true ]; then
-        uv publish --dry-run
+        uv publish --dry-run --token "$pypi_token"
         echo "Dry run for v$new_version: build and upload validated; nothing committed, tagged, or pushed; working tree restored."
     else
         git commit pyproject.toml CHANGELOG.md uv.lock --message "Release v$new_version"
-        uv publish --token "$(uvx python -c "import configparser, pathlib; c = configparser.ConfigParser(); c.read(pathlib.Path('.pypirc').expanduser()); print(c['pypi']['password'])")"
+        uv publish --token "$pypi_token"
         git tag --annotate "v$new_version" --message "Release v$new_version"
         git push --follow-tags
         echo "Published update-time v$new_version"
