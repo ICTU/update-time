@@ -923,7 +923,7 @@ wheels = [
 
 [[package]]
 name = "update-time"
-version = "0.0.5"
+version = "0.0.6"
 source = { editable = "." }
 dependencies = [
     { name = "packaging" },
