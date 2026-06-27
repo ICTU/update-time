@@ -61,6 +61,23 @@ class UpdateNodeEnginesTest(CacheClearingTestCase):
         mock_error.assert_not_called()
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "19" }}\n')
 
+    @patch("pathlib.Path.exists", Mock(return_value=True))
+    @patch("pathlib.Path.read_text", Mock(return_value="FROM node:lts AS base"))
+    def test_non_numeric_node_base_image(self, mock_glob: Mock, mock_info: Mock, mock_warning: Mock, mock_error: Mock):
+        """Test that a non-numeric Node base image tag (e.g. node:lts) is skipped with a warning, not an error."""
+        mock_package_json = self.create_package_json()
+        mock_glob.return_value = [mock_package_json]
+        assert_success(update_node_engines())
+        mock_info.assert_not_called()
+        mock_warning.assert_called_once_with(
+            "Cannot derive the Node engine version from the non-numeric base image tag 'node:%s' in %s",
+            "lts",
+            Path("/Dockerfile"),
+            stacklevel=ANY,
+        )
+        mock_error.assert_not_called()
+        mock_package_json.write_text.assert_not_called()
+
     def test_no_node_engine(self, mock_glob: Mock, mock_info: Mock, mock_warning: Mock, mock_error: Mock):
         """Test that the package.json is skipped if it has no Node engine."""
         mock_package_json = self.create_package_json("{}")
