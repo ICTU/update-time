@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Don't crash when an `image:` reference is not on Docker Hub (for example a CircleCI machine image such as `ubuntu-2204`, or an image hosted on another registry); log it and leave the reference unchanged instead.
 
 ## 0.0.5 - 2026-06-27
 

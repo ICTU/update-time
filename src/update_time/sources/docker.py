@@ -11,6 +11,9 @@ from packaging.version import InvalidVersion, Version
 
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.version import DependencyVersion
+from update_time.io.log import get_logger
+
+LOG = get_logger("docker")
 
 
 @dataclass(frozen=True)
@@ -88,13 +91,20 @@ def get_latest_tag(image: str, current_tag: str) -> DependencyVersion:
 
 @cache
 def _get_available_tags(image: str) -> list[Tag]:
-    """Fetch available tags for a Docker image from Docker Hub."""
+    """Fetch available tags for a Docker image from Docker Hub.
+
+    Images that are not on Docker Hub return a 404 (or another error): for example CircleCI machine images such
+    as ``ubuntu-2204`` and images hosted on other registries like ``registry.gitlab.com/...``. Log the response
+    and skip the image so the reference is left unchanged, rather than crashing the whole run.
+    """
     namespace, repository = image.split("/", maxsplit=1) if "/" in image else ("library", image)
     url = f"https://registry.hub.docker.com/v2/namespaces/{namespace}/repositories/{repository}/tags?page_size=100"
     tags: list[Tag] = []
     while url:
         response = requests.get(url, headers=_docker_hub_headers(), timeout=10)
-        response.raise_for_status()
+        if not response.ok:
+            LOG.response(response)
+            break
         json = response.json()
         tags.extend(Tag.from_json(result) for result in json.get("results", []))
         url = json.get("next")

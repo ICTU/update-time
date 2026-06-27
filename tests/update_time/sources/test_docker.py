@@ -29,6 +29,14 @@ class GetLatestTagTest(CacheClearingTestCase):
         mock_get.return_value = docker_hub_response()
         self.assertEqual("1.0", get_latest_tag("empty_results", "1.0").version)
 
+    @patch("logging.Logger.warning")
+    def test_image_not_on_docker_hub(self, mock_warning: Mock, mock_get: Mock):
+        """Test that an image not on Docker Hub (e.g. a CircleCI machine image) is left unchanged, not crashing."""
+        url = "https://registry.hub.docker.com/v2/namespaces/library/repositories/ubuntu-2204/tags?page_size=100"
+        mock_get.return_value = mock_response({}, ok=False, status_code=404, url=url)
+        self.assertEqual("2025.09.1", get_latest_tag("ubuntu-2204", "2025.09.1").version)
+        mock_warning.assert_called_once()
+
     def test_up_to_date(self, mock_get: Mock):
         """Test that the current tag and its digest are returned if it's up to date, so it can be pinned."""
         mock_get.return_value = docker_hub_response(docker_tag("1.0", DIGEST))
