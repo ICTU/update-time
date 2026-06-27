@@ -88,6 +88,15 @@ class Logger:
         """Log missing Node base image."""
         self._log(self.log.error, "Expected Dockerfile %s to have a Node base image", dockerfile)
 
+    def non_numeric_node_base_image(self, dockerfile: Path, tag: str) -> None:
+        """Log that the Node base image tag is not a concrete version, so the Node engine can't be derived."""
+        self._log(
+            self.log.warning,
+            "Cannot derive the Node engine version from the non-numeric base image tag 'node:%s' in %s",
+            tag,
+            dockerfile,
+        )
+
     def response(self, response: Response) -> None:
         """Log a response's status code."""
         self._log(self.log.warning, "Could not fetch %s: %s", response.url, response.status_code)

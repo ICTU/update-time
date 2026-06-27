@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Fixed
 
 - Don't crash when an `image:` reference is not on Docker Hub (for example a CircleCI machine image such as `ubuntu-2204`, or an image hosted on another registry); log it and leave the reference unchanged instead.
+- Don't report an error when a Dockerfile's Node base image uses a non-numeric tag such as `node:lts`; warn that the Node engine version can't be derived and leave the engine in the `package.json` unchanged instead of failing.
 
 ## 0.0.5 - 2026-06-27
 

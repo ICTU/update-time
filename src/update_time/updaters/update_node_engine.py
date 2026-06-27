@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 LOG = get_logger("node engine")
 NODE_IMAGE_RE = r"FROM node:(?P<version>[\d\.]+)"
+NODE_BASE_IMAGE_RE = r"FROM node:(?P<tag>\S+)"
 NODE_ENGINE_RE = r'"(?P<dependency>node)": "(?P<version>[\d\.]+)"'
 
 
@@ -27,7 +28,11 @@ def has_node_engine(package_json: Path) -> bool:
 
 
 def node_base_image_version(dockerfile: Path) -> str:
-    """Return the Node base image version, or empty string if the Dockerfile is missing or its base image isn't Node."""
+    """Return the numeric Node base image version (e.g. '22' from 'node:22-alpine').
+
+    Returns an empty string if the Dockerfile is missing, has no Node base image, or its Node base image uses a
+    non-numeric tag such as 'node:lts' (from which no concrete version can be derived).
+    """
     if not dockerfile.exists():
         return ""
     for line in dockerfile.read_text().splitlines():
@@ -36,16 +41,31 @@ def node_base_image_version(dockerfile: Path) -> str:
     return ""
 
 
+def node_base_image_tag(dockerfile: Path) -> str:
+    """Return the tag of the Node base image (e.g. '22.1.0', '22-alpine' or 'lts'), or empty string if none."""
+    if not dockerfile.exists():
+        return ""
+    for line in dockerfile.read_text().splitlines():
+        if match := re.match(NODE_BASE_IMAGE_RE, line):
+            return match.group("tag")
+    return ""
+
+
 def find_node_dockerfile(package_json: Path) -> Path:
     """Find the Dockerfile to derive the Node engine from.
 
     Prefers the Dockerfile next to the package.json; for package.json files without a local Node-base Dockerfile
-    (e.g. docs/), falls back to any other Dockerfile in the repo with a Node base image. If none is found, returns
-    the local Dockerfile path (which doesn't exist or isn't Node-based) so the caller can use it to log the error.
+    (e.g. docs/), falls back to any other Dockerfile in the repo. A Dockerfile with a numeric Node base image (the
+    one we can actually sync to) is preferred over one whose Node base image uses a non-numeric tag like 'node:lts'.
+    If no Node base image is found at all, returns the local Dockerfile path so the caller can log the error.
     """
     local_dockerfile = package_json.parent / "Dockerfile"
-    for dockerfile in [local_dockerfile, *glob("Dockerfile")]:
+    candidates = [local_dockerfile, *glob("Dockerfile")]
+    for dockerfile in candidates:
         if node_base_image_version(dockerfile):
+            return dockerfile
+    for dockerfile in candidates:
+        if node_base_image_tag(dockerfile):
             return dockerfile
     return local_dockerfile
 
@@ -55,6 +75,11 @@ def update_node_engine(package_json: Path) -> int:
     dockerfile = find_node_dockerfile(package_json)
     if version := node_base_image_version(dockerfile):
         return update_file(package_json, NODE_ENGINE_RE, lambda *_args: DependencyVersion(version=version), LOG)
+    if tag := node_base_image_tag(dockerfile):
+        # A Node base image exists but uses a non-numeric tag (e.g. 'node:lts'); we can't derive a concrete
+        # version to sync the engine to, so skip without failing the run.
+        LOG.non_numeric_node_base_image(dockerfile, tag)
+        return 0
     LOG.expected_node_base_image(dockerfile)
     return 1
 
