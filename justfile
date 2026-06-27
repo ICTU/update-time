@@ -201,6 +201,14 @@ fix: install-py-dependencies
 install-py-dependencies:
     {{ start_capture() }} uv sync --no-progress --locked --all-extras --all-groups {{ end_capture("install-py-dependencies") }}
 
+# === Update dependencies ===
+
+# Update direct and indirect dependencies. Set GITHUB_TOKEN, DOCKER_HUB_USERNAME, and DOCKER_HUB_TOKEN to prevent hitting rate limits.
+update-dependencies:
+    {{ uv_run }} src/update_time/updaters/update.py
+
+alias update-deps := update-dependencies
+
 # === CI ===
 
 # Run SonarCloud prerequisites
