@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Add support for updating Docker images (tag + digest) in GitLab CI (`.gitlab-ci.yml`) files. Closes [#20](https://github.com/ICTU/update-time/issues/20).
+
 ## 0.0.4 - 2026-06-24
 
 ### Added
