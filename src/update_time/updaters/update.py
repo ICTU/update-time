@@ -17,6 +17,7 @@ PARALLEL_SCRIPTS = (
     "pyproject_toml",
     "github_action",
     "circle_ci_config",
+    "gitlab_ci_config",
     "manifest_images",
     "jsdelivr",
 )

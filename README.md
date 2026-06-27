@@ -1,6 +1,6 @@
 # Update-time - it's time to update your dependencies
 
-Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for dependencies and updates them to their latest versions. It looks at the files you already have — `pyproject.toml`, `package.json`, Dockerfiles, GitHub Actions workflows, CircleCI configs, Docker Compose and Helm manifests, and jsDelivr URLs — and rewrites the pinned versions in place. To avoid adopting freshly published releases that may still be buggy, it applies a cooldown period (see [Cooldown](#cooldown) below).
+Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for dependencies and updates them to their latest versions. It looks at the files you already have — `pyproject.toml`, `package.json`, Dockerfiles, GitHub Actions workflows, CircleCI configs, GitLab CI configs, Docker Compose and Helm manifests, and jsDelivr URLs — and rewrites the pinned versions in place. To avoid adopting freshly published releases that may still be buggy, it applies a cooldown period (see [Cooldown](#cooldown) below).
 
 ## Usage
 
@@ -40,6 +40,7 @@ Update-time runs a set of updater scripts, each responsible for one kind of depe
 | Node engine version | `package.json` | the Node base image in the project's Dockerfile |
 | Dockerfile base images (tag + digest) | `Dockerfile` | [Docker Hub](https://hub.docker.com) |
 | CircleCI images (tag + digest) | CircleCI YAML configs | [Docker Hub](https://hub.docker.com) |
+| GitLab CI images (tag + digest) | `.gitlab-ci.yml` | [Docker Hub](https://hub.docker.com) |
 | Docker Compose and Helm images (tag + digest) | Compose files and Helm folder | [Docker Hub](https://hub.docker.com) |
 | GitHub Action versions (SHA + tag) | workflow YAML files | [GitHub releases API](https://api.github.com) |
 | jsDelivr npm URLs (version + SRI hash) | Sphinx config | [npm registry](https://registry.npmjs.org) |
@@ -48,7 +49,7 @@ Only versions specified with an exact match (`==` for Python, a concrete `tag` �
 
 References that are not yet pinned are pinned automatically:
 
-- **Docker images** referenced by tag only — base images in Dockerfiles (`FROM image:tag`), CircleCI images, and Docker Compose / Helm manifest images — get the `@sha256:digest` of the (latest) tag appended, so the image is reproducible. Images without a concrete version tag are ignored: references through a template (`{{ ... }}`) or variable substitution (`${VAR}`), and tagless base images such as `FROM scratch` or stage references.
+- **Docker images** referenced by tag only — base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, and Docker Compose / Helm manifest images — get the `@sha256:digest` of the (latest) tag appended, so the image is reproducible. Images without a concrete version tag are ignored: references through a template (`{{ ... }}`) or variable substitution (`${VAR}`), and tagless base images such as `FROM scratch` or stage references.
 - **GitHub Actions** referenced by version tag only (e.g. `uses: actions/checkout@v4`) are pinned to the commit SHA of the latest version, with the version added as a trailing comment (e.g. `uses: actions/checkout@<sha> # v4.1.1`). Actions referenced by a branch (e.g. `@main`) are left untouched because they don't resolve to a version.
 
 ## Cooldown
