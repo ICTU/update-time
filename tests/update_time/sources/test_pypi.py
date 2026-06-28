@@ -5,7 +5,13 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from unittest.mock import Mock, patch
 
-from update_time.sources.pypi import CHANGELOG_URL_KEYS, REPOSITORY_URL_KEYS, get_changes, get_publication_datetime
+from update_time.sources.pypi import (
+    CHANGELOG_URL_KEYS,
+    REPOSITORY_URL_KEYS,
+    get_changes,
+    get_latest_version,
+    get_publication_datetime,
+)
 
 from tests.update_time.helpers import CacheClearingTestCase, mock_response, release_json
 
@@ -126,3 +132,67 @@ class GetPublicationDateTimeTest(CacheClearingTestCase):
         )
         published = datetime(2026, 5, 30, 12, 0, 3, 678901, tzinfo=UTC)
         self.assertEqual(published, get_publication_datetime("package", "1.0"))
+
+
+@patch("requests.get")
+class GetLatestVersionTest(CacheClearingTestCase):
+    """Unit tests for getting the latest version from PyPI."""
+
+    OLD = "2020-01-01T00:00:00.000000Z"  # Well outside the cooldown window.
+
+    def versions(self, *versions: str) -> Mock:
+        """Return a mock Index API response listing the given version strings."""
+        return mock_response({"versions": list(versions)})
+
+    def release(self, upload_time: str = OLD, *, yanked: bool = False) -> Mock:
+        """Return a mock per-version metadata response (with an empty changelog)."""
+        urls = [{"upload_time_iso_8601": upload_time}] if upload_time else []
+        return mock_response({"info": {"description": "", "yanked": yanked}, "urls": urls})
+
+    def test_invalid_current_version(self, mock_get: Mock):
+        """Test that an invalid current version is returned unchanged without querying PyPI."""
+        self.assertEqual("not a version", get_latest_version("package", "not a version").version)
+        mock_get.assert_not_called()
+
+    def test_no_newer_version(self, mock_get: Mock):
+        """Test that the current version is returned when it is already the latest."""
+        mock_get.side_effect = [self.versions("1.0")]
+        self.assertEqual("1.0", get_latest_version("no_newer", "1.0").version)
+
+    def test_new_version(self, mock_get: Mock):
+        """Test that the latest version is returned, with its publication date."""
+        mock_get.side_effect = [self.versions("1.0", "1.1"), self.release()]
+        latest = get_latest_version("new_version", "1.0")
+        self.assertEqual("1.1", latest.version)
+        self.assertEqual(datetime(2020, 1, 1, tzinfo=UTC), latest.published)
+
+    def test_highest_version(self, mock_get: Mock):
+        """Test that the highest of multiple newer versions is returned."""
+        mock_get.side_effect = [self.versions("1.0", "1.2", "1.1"), self.release()]
+        self.assertEqual("1.2", get_latest_version("highest", "1.0").version)
+
+    def test_prerelease_ignored(self, mock_get: Mock):
+        """Test that pre-releases are ignored without fetching their metadata."""
+        mock_get.side_effect = [self.versions("1.0", "2.0b1")]
+        self.assertEqual("1.0", get_latest_version("prerelease", "1.0").version)
+
+    def test_yanked_release_ignored(self, mock_get: Mock):
+        """Test that yanked releases are ignored."""
+        mock_get.side_effect = [self.versions("1.0", "1.1"), self.release(yanked=True)]
+        self.assertEqual("1.0", get_latest_version("yanked", "1.0").version)
+
+    def test_release_without_files_ignored(self, mock_get: Mock):
+        """Test that releases without distribution files are ignored."""
+        mock_get.side_effect = [self.versions("1.0", "1.1"), self.release(upload_time="")]
+        self.assertEqual("1.0", get_latest_version("no_files", "1.0").version)
+
+    def test_invalid_release_ignored(self, mock_get: Mock):
+        """Test that releases with an invalid version are ignored without fetching their metadata."""
+        mock_get.side_effect = [self.versions("1.0", "not-a-version")]
+        self.assertEqual("1.0", get_latest_version("invalid_release", "1.0").version)
+
+    def test_release_within_cooldown_ignored(self, mock_get: Mock):
+        """Test that a release published within the cooldown period is held back."""
+        recent = datetime.now(UTC).isoformat()
+        mock_get.side_effect = [self.versions("1.0", "1.1"), self.release(recent)]
+        self.assertEqual("1.0", get_latest_version("cooldown", "1.0").version)
