@@ -15,6 +15,7 @@ SRC = Path(__file__).parent
 PARALLEL_SCRIPTS = (
     "dockerfile_base_image",
     "pyproject_toml",
+    "requirements_txt",
     "github_action",
     "circle_ci_config",
     "gitlab_ci_config",

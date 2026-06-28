@@ -3,11 +3,14 @@
 import re
 from datetime import datetime
 from functools import cache
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import requests
+from packaging.version import Version
 
 from update_time.domain.changelog import get_version_changes_from_changelog
+from update_time.domain.cooldown import within_cooldown
+from update_time.domain.version import DependencyVersion, is_valid
 from update_time.io.log import get_logger
 from update_time.sources.github import changes_from_release, github_owner_and_repository, github_to_raw
 
@@ -17,18 +20,26 @@ CHANGELOG_URL_KEYS = {"changes", "changelog", "release notes"}
 REPOSITORY_URL_KEYS = {"repository", "source", "homepage"}
 
 
+class Distribution(TypedDict):
+    """A distribution file uploaded for a PyPI release."""
+
+    upload_time_iso_8601: str
+    yanked: NotRequired[bool]
+
+
 class Info(TypedDict):
     """PyPI release info."""
 
     description: str
     project_urls: dict[str, str]
+    yanked: NotRequired[bool]
 
 
 class Release(TypedDict):
     """PyPI release metadata."""
 
     info: Info
-    urls: list[dict[str, str]]
+    urls: list[Distribution]
 
 
 @cache
@@ -37,6 +48,53 @@ def release_metadata(package: str, version: str) -> Release:
     response = requests.get(f"https://pypi.org/pypi/{package}/{version}/json", timeout=10)
     response.raise_for_status()
     return response.json()
+
+
+@cache
+def project_versions(package: str) -> list[str]:
+    """Get all version strings of a package from PyPI's Index API.
+
+    Uses the Index (Simple) API rather than the project JSON API's ``releases`` key, which is deprecated. See
+    https://docs.pypi.org/api/json/ and https://docs.pypi.org/api/index-api/.
+    """
+    headers = {"Accept": "application/vnd.pypi.simple.v1+json"}
+    response = requests.get(f"https://pypi.org/simple/{package}/", headers=headers, timeout=10)
+    response.raise_for_status()
+    return response.json().get("versions", [])
+
+
+def release_datetime(urls: list[Distribution]) -> datetime | None:
+    """Return the latest upload datetime of a release's distribution files, or None if there are none."""
+    return datetime.fromisoformat(max(url["upload_time_iso_8601"] for url in urls)) if urls else None
+
+
+def get_latest_version(package: str, current_version: str) -> DependencyVersion:
+    """Return the latest stable release of the package that is available outside the cooldown window.
+
+    Pre-releases, dev-releases, yanked releases, and releases still within the cooldown period are ignored.
+    Returns the current version unchanged when it is invalid or already the latest eligible version.
+    """
+    if not is_valid(current_version):
+        return DependencyVersion(version=current_version)
+    current = Version(current_version)
+    newer = sorted(
+        (
+            version
+            for release in project_versions(package)
+            if is_valid(release) and (version := Version(release)) > current
+        ),
+        reverse=True,
+    )
+    for version in newer:
+        if version.is_prerelease or version.is_devrelease:
+            continue
+        metadata = release_metadata(package, str(version))
+        published = release_datetime(metadata["urls"])
+        if metadata["info"].get("yanked") or published is None or within_cooldown(published):
+            continue
+        latest = str(version)
+        return DependencyVersion(latest, changes=get_changes(package, latest), published=published)
+    return DependencyVersion(version=current_version)
 
 
 def get_changes(package: str, version: str) -> str:

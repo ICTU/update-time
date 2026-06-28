@@ -15,6 +15,7 @@ from update_time.sources.docker import _get_available_tags as docker_hub_get_ava
 from update_time.sources.github import _list_releases as github_list_release
 from update_time.sources.npmjs import get_changes as npmjs_get_changes
 from update_time.sources.npmjs import get_publication_datetime as npmjs_get_publication_datetime
+from update_time.sources.pypi import project_versions as pypi_project_versions
 from update_time.sources.pypi import release_metadata as pypi_release_metadata
 from update_time.updaters.update_github_action import get_latest_version as github_get_latest_version
 
@@ -47,6 +48,7 @@ class CacheClearingTestCase(unittest.TestCase):
         github_list_release,
         npmjs_get_changes,
         npmjs_get_publication_datetime,
+        pypi_project_versions,
         pypi_release_metadata,
     )
 

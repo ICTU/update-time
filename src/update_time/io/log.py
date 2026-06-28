@@ -84,6 +84,10 @@ class Logger:
         """Log working on path."""
         self._log(self.log.info, "Checking if there are updates for %s", path.relative_to(Path.cwd()))
 
+    def skipped(self, path: Path, reason: str) -> None:
+        """Log that a file was skipped without being checked for updates."""
+        self._log(self.log.info, "Skipping %s: %s", path.relative_to(Path.cwd()), reason)
+
     def expected_node_base_image(self, dockerfile: Path) -> None:
         """Log missing Node base image."""
         self._log(self.log.error, "Expected Dockerfile %s to have a Node base image", dockerfile)
