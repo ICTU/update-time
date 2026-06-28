@@ -27,6 +27,7 @@ def installed_versions(directory: Path) -> dict[str, str]:
 def update_package_json(package_json: Path) -> int:
     """Update the package.json and package-lock.json."""
     LOG.path(package_json)
+    original_contents = package_json.read_text()
     npm_outdated = ["npm", "outdated", "--json", *COMMON_NPM_OPTIONS]
     outdated_packages = json.loads(run(npm_outdated, cwd=package_json.parent))
     npm_update = ["npm", "update", "--save", *COMMON_NPM_OPTIONS]
@@ -34,13 +35,19 @@ def update_package_json(package_json: Path) -> int:
     # npm may install an older version than "latest" (e.g. when min-release-age holds back fresh releases), so log
     # the version that was actually installed rather than the latest one reported by npm outdated.
     installed = installed_versions(package_json.parent)
+    updated = False
     for package, version in outdated_packages.items():
         new_version = installed.get(package)
         if new_version is not None and new_version != version.get("current"):
+            updated = True
             changes = get_changes(package, new_version)
             published = get_publication_datetime(package, new_version)
             package_version = DependencyVersion(new_version, changes, published=published)
             LOG.new_version(package, package_version)
+    # npm normalizes specs (e.g. git URLs to the github: shorthand) whenever it saves package.json. When nothing
+    # was actually updated, restore the original manifest so that reformatting doesn't produce a spurious diff.
+    if not updated and package_json.read_text() != original_contents:
+        package_json.write_text(original_contents)
     return 0
 
 
