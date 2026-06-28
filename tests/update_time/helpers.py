@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 @cache
 def _module_loggers() -> tuple[Logger, ...]:
-    """Return every module-level ``LOG`` logger in the update_time package, discovered by walking it."""
+    """Return every module-level `LOG` logger in the update_time package, discovered by walking it."""
     loggers = []
     for module_info in pkgutil.walk_packages(update_time.__path__, f"{update_time.__name__}."):
         module = importlib.import_module(module_info.name)

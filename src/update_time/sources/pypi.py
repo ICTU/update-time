@@ -54,7 +54,7 @@ def release_metadata(package: str, version: str) -> Release:
 def project_versions(package: str) -> list[str]:
     """Get all version strings of a package from PyPI's Index API.
 
-    Uses the Index (Simple) API rather than the project JSON API's ``releases`` key, which is deprecated. See
+    Uses the Index (Simple) API rather than the project JSON API's `releases` key, which is deprecated. See
     https://docs.pypi.org/api/json/ and https://docs.pypi.org/api/index-api/.
     """
     headers = {"Accept": "application/vnd.pypi.simple.v1+json"}

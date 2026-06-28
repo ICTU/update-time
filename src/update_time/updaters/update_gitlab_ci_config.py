@@ -2,10 +2,10 @@
 
 Images referenced by tag only are automatically pinned by appending the digest of the (latest) tag. The digest
 is optional in the regex but a concrete version tag is still required, so images referenced through variable
-substitution (``$VAR`` / ``${VAR}``, e.g. ``$CI_REGISTRY_IMAGE``) are left untouched.
+substitution (`$VAR` / `${VAR}`, e.g. `$CI_REGISTRY_IMAGE`) are left untouched.
 
-The default config file ``.gitlab-ci.yml`` is a dotfile at the repository root. The shared ``glob`` helper skips
-dotfiles, so the file is targeted directly with ``update_file`` instead of being discovered through globbing.
+The default config file `.gitlab-ci.yml` is a dotfile at the repository root. The shared `glob` helper skips
+dotfiles, so the file is targeted directly with `update_file` instead of being discovered through globbing.
 """
 
 import sys

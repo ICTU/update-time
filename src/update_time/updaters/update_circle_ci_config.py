@@ -2,7 +2,7 @@
 
 Images referenced by tag only are automatically pinned by appending the digest of the (latest) tag. The digest
 is optional in the regex but a concrete version tag is still required, so images referenced through variable
-substitution (``${VAR}``) are left untouched.
+substitution (`${VAR}`) are left untouched.
 """
 
 import sys

@@ -33,7 +33,7 @@ def _update_line(
 ) -> str:
     """Update the line with the new version (and digest) if any, or return the line unchanged.
 
-    When the regexp has an optional ``sha`` group that did not match, the reference is unpinned. If a digest is
+    When the regexp has an optional `sha` group that did not match, the reference is unpinned. If a digest is
     available it is appended to pin the reference, even when the version itself is already up to date.
     """
     if not (match := re.search(regexp, line)):

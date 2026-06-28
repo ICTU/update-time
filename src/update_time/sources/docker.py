@@ -94,7 +94,7 @@ def _get_available_tags(image: str) -> list[Tag]:
     """Fetch available tags for a Docker image from Docker Hub.
 
     Images that are not on Docker Hub return a 404 (or another error): for example CircleCI machine images such
-    as ``ubuntu-2204`` and images hosted on other registries like ``registry.gitlab.com/...``. Log the response
+    as `ubuntu-2204` and images hosted on other registries like `registry.gitlab.com/...`. Log the response
     and skip the image so the reference is left unchanged, rather than crashing the whole run.
     """
     namespace, repository = image.split("/", maxsplit=1) if "/" in image else ("library", image)
