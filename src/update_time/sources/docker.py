@@ -68,12 +68,31 @@ class Tag:
         return not self.within_cooldown  # Ignore tags pushed within the cooldown period
 
 
+def is_docker_hub_image(image: str) -> bool:
+    """Return whether the image reference points to Docker Hub rather than another registry.
+
+    A reference is on Docker Hub when it uses an explicit Docker Hub host (e.g. ``docker.io/library/redis``) or no
+    registry host at all. Following the rule Docker's reference parser uses to split the registry domain from the
+    image name (``splitDockerDomain`` in https://github.com/distribution/reference/blob/main/normalize.go), the
+    first path component is a registry host when it contains a ``.`` or a ``:``, equals ``localhost``, or contains
+    an uppercase character (repository namespaces must be lowercase). So ``registry.gitlab.com/...``, ``gcr.io/...``
+    and ``localhost:5000/...`` are not on Docker Hub; ``python``, ``cimg/go`` and ``docker.io/library/redis`` are.
+    """
+    host = image.split("/", maxsplit=1)[0]
+    if host.endswith("docker.io"):
+        return True
+    return "." not in host and ":" not in host and host != "localhost" and host == host.lower()
+
+
 def get_latest_tag(image: str, current_tag: str) -> DependencyVersion:
     """Find the latest compatible tag for an image. Keeps the same non-numerical parts while upgrading the version.
 
     Returns the digest of the resulting tag, including when the current version is already the latest, so that
     unpinned references can be pinned without bumping their version.
     """
+    if not is_docker_hub_image(image):
+        # Images on other registries aren't on Docker Hub; leave them unchanged without making a request.
+        return DependencyVersion(version=current_tag)
     current = Tag(name=current_tag)
     if current.version is None:
         # Can't determine a newer tag if the tag doesn't contain a valid version
@@ -93,10 +112,13 @@ def get_latest_tag(image: str, current_tag: str) -> DependencyVersion:
 def _get_available_tags(image: str) -> list[Tag]:
     """Fetch available tags for a Docker image from Docker Hub.
 
-    Images that are not on Docker Hub return a 404 (or another error): for example CircleCI machine images such
-    as `ubuntu-2204` and images hosted on other registries like `registry.gitlab.com/...`. Log the response
-    and skip the image so the reference is left unchanged, rather than crashing the whole run.
+    Some references look like Docker Hub images but aren't, e.g. CircleCI machine images such as `ubuntu-2204`
+    (other-registry images are already filtered out by `is_docker_hub_image`). These return a 404 (or another
+    error); log the response and skip the image so the reference is left unchanged, rather than crashing the run.
     """
+    host, _, remainder = image.partition("/")
+    if remainder and host.endswith("docker.io"):
+        image = remainder  # Drop the explicit Docker Hub host, e.g. docker.io/library/redis -> library/redis.
     namespace, repository = image.split("/", maxsplit=1) if "/" in image else ("library", image)
     url = f"https://registry.hub.docker.com/v2/namespaces/{namespace}/repositories/{repository}/tags?page_size=100"
     tags: list[Tag] = []
