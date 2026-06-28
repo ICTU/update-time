@@ -1,12 +1,31 @@
 """Unit tests for the Docker module."""
 
+import unittest
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, patch
 
-from update_time.sources.docker import get_latest_tag
+from update_time.sources.docker import get_latest_tag, is_docker_hub_image
 
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
 from tests.update_time.helpers import CacheClearingTestCase, docker_hub_response, docker_tag, mock_response
+
+
+class IsDockerHubImageTest(unittest.TestCase):
+    """Unit tests for distinguishing Docker Hub images from other-registry references."""
+
+    def test_docker_hub_images(self):
+        """Test that images without a registry host, or with an explicit Docker Hub host, are Docker Hub images."""
+        images = ("python", "library/ubuntu", "cimg/go", "docker.io/library/redis", "index.docker.io/org/app")
+        for image in images:
+            self.assertTrue(is_docker_hub_image(image), image)
+
+    def test_other_registry_images(self):
+        """Test that images with a registry host as their first path component are not Docker Hub images.
+
+        A host is recognised by a dot, a colon, the name `localhost`, or an uppercase character.
+        """
+        for image in ("registry.gitlab.com/group/image", "gcr.io/proj/image", "localhost:5000/i", "Host/image"):
+            self.assertFalse(is_docker_hub_image(image), image)
 
 
 @patch.dict("os.environ", {}, clear=True)
@@ -36,6 +55,17 @@ class GetLatestTagTest(CacheClearingTestCase):
         mock_get.return_value = mock_response({}, ok=False, status_code=404, url=url)
         self.assertEqual("2025.09.1", get_latest_tag("ubuntu-2204", "2025.09.1").version)
         mock_warning.assert_called_once()
+
+    def test_other_registry_image_skipped(self, mock_get: Mock):
+        """Test that an image on another registry is left unchanged without querying Docker Hub."""
+        self.assertEqual("1.0", get_latest_tag("registry.gitlab.com/group/image", "1.0").version)
+        mock_get.assert_not_called()
+
+    def test_explicit_docker_hub_host(self, mock_get: Mock):
+        """Test that an image with an explicit docker.io host is updated, querying the host-less Docker Hub URL."""
+        mock_get.return_value = docker_hub_response(docker_tag("1.1", DIGEST))
+        self.assertEqual("1.1", get_latest_tag("docker.io/library/redis", "1.0").version)
+        self.assertIn("/namespaces/library/repositories/redis/", mock_get.call_args.args[0])
 
     def test_up_to_date(self, mock_get: Mock):
         """Test that the current tag and its digest are returned if it's up to date, so it can be pinned."""
