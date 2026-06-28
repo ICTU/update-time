@@ -8,6 +8,7 @@ from pathlib import Path
 
 from update_time.domain.cooldown import COOLDOWN_DAYS_ENV_VAR
 from update_time.io.cli import parse_args
+from update_time.io.log import LOG_LEVEL_ENV_VAR
 
 SRC = Path(__file__).parent
 
@@ -43,7 +44,9 @@ def update_dependencies() -> int:
 def main() -> int:
     """Parse the command-line arguments and update all dependencies."""
     args = parse_args()
-    os.environ[COOLDOWN_DAYS_ENV_VAR] = str(args.cooldown)  # Pass the cooldown down to the updater subprocesses
+    # Pass the cooldown and log level down to the updater subprocesses via the environment.
+    os.environ[COOLDOWN_DAYS_ENV_VAR] = str(args.cooldown)
+    os.environ[LOG_LEVEL_ENV_VAR] = args.log_level
     return update_dependencies()
 
 

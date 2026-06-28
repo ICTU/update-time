@@ -6,7 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Add a `--log-level` option (`DEBUG`, `INFO`, `WARNING`, or `ERROR`; default `INFO`) to control how much is logged.
+
+### Changed
+
+- Log available new versions at the `INFO` level instead of `WARNING`, so the `WARNING` level is reserved for genuinely unexpected situations. The per-file "checking ..." progress now logs at `DEBUG`.
 
 ## 0.0.7 - 2026-06-28
 

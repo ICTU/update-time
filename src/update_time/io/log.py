@@ -1,12 +1,28 @@
 """Log helpers."""
 
 import logging
+import os
 import sys
 from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.logging import RichHandler
+
+# The log levels that can be selected on the command line, and the default. Reporting an available new version is
+# logged at INFO (it is the tool's regular output, not a problem), while genuinely unexpected situations stay at
+# WARNING and failures at ERROR. The per-file "checking ..." progress is logged at DEBUG.
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+DEFAULT_LOG_LEVEL = "INFO"
+# Private channel that passes the log level from the CLI to the updater subprocesses; not a user-facing setting
+# (use --log-level instead). The leading underscore marks it internal.
+LOG_LEVEL_ENV_VAR = "_UPDATE_TIME_LOG_LEVEL"
+
+
+def log_level() -> str:
+    """Return the configured log level."""
+    return os.environ.get(LOG_LEVEL_ENV_VAR, DEFAULT_LOG_LEVEL)
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -62,11 +78,11 @@ class Logger:
         new_version = version.version
         if version.published is not None:
             new_version += f", published: {version.published.astimezone(UTC):%Y-%m-%d %H:%M}"
-        self._log(self.log.warning, "New version available for %s: %s\n%s", dependency, new_version, changes)
+        self._log(self.log.info, "New version available for %s: %s\n%s", dependency, new_version, changes)
 
     def pinned(self, dependency: str, version: DependencyVersion) -> None:
         """Log that a previously unpinned reference was pinned to a digest, without changing its version."""
-        self._log(self.log.warning, "Pinned %s to %s@%s", dependency, version.version, version.sha)
+        self._log(self.log.info, "Pinned %s to %s@%s", dependency, version.version, version.sha)
 
     def invalid_version(self, dependency: str, invalid_version: str) -> None:
         """Log an invalid version."""
@@ -82,7 +98,7 @@ class Logger:
 
     def path(self, path: Path) -> None:
         """Log working on path."""
-        self._log(self.log.info, "Checking if there are updates for %s", path.relative_to(Path.cwd()))
+        self._log(self.log.debug, "Checking if there are updates for %s", path.relative_to(Path.cwd()))
 
     def skipped(self, path: Path, reason: str) -> None:
         """Log that a file was skipped without being checked for updates."""
@@ -112,5 +128,5 @@ class Logger:
 
 def get_logger(name: str) -> Logger:
     """Initialize a logger."""
-    logging.basicConfig(level=logging.INFO, datefmt="[%X]", format="%(message)s", handlers=[RichHandler()])
+    logging.basicConfig(level=log_level(), datefmt="[%X]", format="%(message)s", handlers=[RichHandler()])
     return Logger(name)

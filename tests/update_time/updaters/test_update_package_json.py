@@ -6,16 +6,14 @@ from unittest.mock import Mock, call, patch
 
 from update_time.updaters.update_package_json import COMMON_NPM_OPTIONS, update_package_jsons
 
-from tests.update_time.assertions import assert_new_version_logged, assert_path_logged, assert_success
-from tests.update_time.helpers import CacheClearingTestCase, mock_path, mock_response, release_json
+from tests.update_time.assertions import assert_success
+from tests.update_time.helpers import LoggingTestCase, mock_path, mock_response, release_json
 
 
 @patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
-@patch("logging.Logger.warning")
-@patch("logging.Logger.info")
 @patch("pathlib.Path.rglob")
 @patch("subprocess.run")
-class UpdatePackageJsonTest(CacheClearingTestCase):
+class UpdatePackageJsonTest(LoggingTestCase):
     """Unit tests for the update package.jsons function."""
 
     def create_package_json(self) -> Mock:
@@ -34,15 +32,16 @@ class UpdatePackageJsonTest(CacheClearingTestCase):
             (call(npm_outdated, **run_kwargs), call(npm_update, **run_kwargs), call(npm_list, **run_kwargs))
         )
 
-    def test_unchanged(self, mock_run: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock):
+    def test_unchanged(self, mock_run: Mock, mock_glob: Mock):
         """Test that the package.json is not written if there are no outdated packages."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = [Mock(stdout="{}"), Mock(stdout=""), Mock(stdout='{"dependencies": {}}')]
         assert_success(update_package_jsons())
-        assert_path_logged(mock_info, mock_package_json.relative_to())
-        mock_warning.assert_not_called()
         self.assert_npm_called(mock_run)
+        self.assert_path_logged(mock_package_json.relative_to())
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
 
     @patch(
         "requests.get",
@@ -55,7 +54,7 @@ class UpdatePackageJsonTest(CacheClearingTestCase):
             ]
         ),
     )
-    def test_update(self, mock_run: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock):
+    def test_update(self, mock_run: Mock, mock_glob: Mock):
         """Test that the installed version is logged, even when it is older than the latest version."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
@@ -69,11 +68,12 @@ class UpdatePackageJsonTest(CacheClearingTestCase):
             Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
         ]
         assert_success(update_package_jsons())
-        assert_path_logged(mock_info, mock_package_json.relative_to())
-        assert_new_version_logged(mock_warning, "package", "1.1, published: 2026-05-30 10:26", "Changelog")
         self.assert_npm_called(mock_run)
+        self.assert_path_logged(mock_package_json.relative_to())
+        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 10:26", "Changelog")
+        self.assert_no_warnings_logged()
 
-    def test_restore_git_url_dependencies(self, mock_run: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock):
+    def test_restore_git_url_dependencies(self, mock_run: Mock, mock_glob: Mock):
         """Test that git+https URLs npm normalized to the github: shorthand are restored (issue #27)."""
         original = (
             '{\n  "devDependencies": {\n'
@@ -92,10 +92,11 @@ class UpdatePackageJsonTest(CacheClearingTestCase):
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = [Mock(stdout="{}"), Mock(stdout=""), Mock(stdout='{"dependencies": {}}')]
         assert_success(update_package_jsons())
-        assert_path_logged(mock_info, mock_package_json.relative_to())
         mock_package_json.write_text.assert_called_once_with(original)
-        mock_warning.assert_not_called()
         self.assert_npm_called(mock_run)
+        self.assert_path_logged(mock_package_json.relative_to())
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
 
     @patch(
         "requests.get",
@@ -108,9 +109,7 @@ class UpdatePackageJsonTest(CacheClearingTestCase):
             ]
         ),
     )
-    def test_manifest_kept_when_a_dependency_is_updated(
-        self, mock_run: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock
-    ):
+    def test_manifest_kept_when_a_dependency_is_updated(self, mock_run: Mock, mock_glob: Mock):
         """Test that npm's manifest (including any specs it normalized) is kept when a dependency is updated."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
@@ -122,12 +121,13 @@ class UpdatePackageJsonTest(CacheClearingTestCase):
             Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
         ]
         assert_success(update_package_jsons())
-        assert_path_logged(mock_info, mock_package_json.relative_to())
-        assert_new_version_logged(mock_warning, "package", "1.1, published: 2026-05-30 10:26", "Changelog")
         mock_package_json.write_text.assert_not_called()
         self.assert_npm_called(mock_run)
+        self.assert_path_logged(mock_package_json.relative_to())
+        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 10:26", "Changelog")
+        self.assert_no_warnings_logged()
 
-    def test_outdated_but_not_updated(self, mock_run: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock):
+    def test_outdated_but_not_updated(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package is not logged when npm update did not change its installed version."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
@@ -138,6 +138,7 @@ class UpdatePackageJsonTest(CacheClearingTestCase):
             Mock(stdout='{"dependencies": {"held": {"version": "1.0"}, "untracked": {"missing": true}}}'),
         ]
         assert_success(update_package_jsons())
-        assert_path_logged(mock_info, mock_package_json.relative_to())
-        mock_warning.assert_not_called()
         self.assert_npm_called(mock_run)
+        self.assert_path_logged(mock_package_json.relative_to())
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()

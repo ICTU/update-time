@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN_DAYS_ENV_VAR
+from update_time.io.log import LOG_LEVEL_ENV_VAR
 from update_time.updaters.update import PARALLEL_SCRIPTS, SEQUENTIAL_SCRIPTS, main, run_script, update_dependencies
 
 
@@ -54,3 +55,10 @@ class UpdateTest(unittest.TestCase):
         with patch.dict("os.environ", clear=True), patch("sys.argv", ["update-time", "--cooldown", "14"]):
             main()
             self.assertEqual("14", os.environ[COOLDOWN_DAYS_ENV_VAR])
+
+    def test_main_passes_log_level_to_subprocesses(self, mock_run: Mock):
+        """Test that main exports the log level in the environment so the updater subprocesses inherit it."""
+        mock_run.return_value = Mock(returncode=0)
+        with patch.dict("os.environ", clear=True), patch("sys.argv", ["update-time", "--log-level", "debug"]):
+            main()
+            self.assertEqual("DEBUG", os.environ[LOG_LEVEL_ENV_VAR])

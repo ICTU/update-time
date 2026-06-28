@@ -5,7 +5,7 @@ import pkgutil
 import unittest
 from functools import cache
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock, patch
 
 import update_time
 from update_time.domain.version import DependencyVersion
@@ -21,6 +21,7 @@ from update_time.updaters.update_github_action import get_latest_version as gith
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
+    from pathlib import Path
 
 
 @cache
@@ -61,6 +62,63 @@ class CacheClearingTestCase(unittest.TestCase):
             logger.logged_changes.clear()
 
 
+class LoggingTestCase(CacheClearingTestCase):
+    """Base test case that mocks the logger's methods, exposed as mock_debug/info/warning/error attributes.
+
+    This spares every updater test from patching (and threading through method arguments) the log methods.
+    """
+
+    def setUp(self) -> None:
+        """Start the logger patches and register their cleanup."""
+        super().setUp()
+        self.mock_debug = self._patch_logger("debug")
+        self.mock_info = self._patch_logger("info")
+        self.mock_warning = self._patch_logger("warning")
+        self.mock_error = self._patch_logger("error")
+
+    def _patch_logger(self, method: str) -> Mock:
+        """Patch a Logger method for the duration of the test and return the mock."""
+        patcher = patch(f"logging.Logger.{method}")
+        self.addCleanup(patcher.stop)
+        return patcher.start()
+
+    NEW_VERSION_MESSAGE = "New version available for %s: %s\n%s"
+
+    def assert_new_version_logged(
+        self, dependency: str, version: str, changes: str = "No changelog available!", *, once: bool = False
+    ) -> None:
+        """Assert that the availability of a new version was logged at info level for the dependency."""
+        assert_called = self.mock_info.assert_called_once_with if once else self.mock_info.assert_called_with
+        assert_called(self.NEW_VERSION_MESSAGE, dependency, version, changes, stacklevel=ANY)
+
+    def assert_no_new_version_logged(self) -> None:
+        """Assert that no new version was logged at info level (other info-level messages are allowed)."""
+        new_version_calls = [
+            call for call in self.mock_info.call_args_list if call.args[:1] == (self.NEW_VERSION_MESSAGE,)
+        ]
+        self.assertEqual([], new_version_calls, "Expected no new version to be logged")
+
+    def assert_pinned_logged(self, dependency: str, version: str, sha: str) -> None:
+        """Assert that pinning a previously unpinned reference to a digest was logged at info level."""
+        self.mock_info.assert_called_with("Pinned %s to %s@%s", dependency, version, sha, stacklevel=ANY)
+
+    def assert_path_logged(self, path: Path) -> None:
+        """Assert that the path being checked for updates was logged at debug level."""
+        self.mock_debug.assert_called_with("Checking if there are updates for %s", path, stacklevel=ANY)
+
+    def assert_no_path_logged(self) -> None:
+        """Assert that no path being checked for updates was logged (nothing logged at debug level)."""
+        self.mock_debug.assert_not_called()
+
+    def assert_skipped_logged(self, path: Path, reason: str) -> None:
+        """Assert that skipping a file was logged at info level with the given reason."""
+        self.mock_info.assert_called_once_with("Skipping %s: %s", path, reason, stacklevel=ANY)
+
+    def assert_no_warnings_logged(self) -> None:
+        """Assert that no warnings were logged."""
+        self.mock_warning.assert_not_called()
+
+
 def new_version_getter(version: str, sha: str = "") -> Callable[[str, str], DependencyVersion]:
     """Return a new-version-getter."""
     return lambda *_args: DependencyVersion(version=version, sha=sha)
@@ -74,6 +132,11 @@ def mock_response(json: Mapping | list | None = None, **kwargs: object) -> Mock:
     response = Mock(json=Mock(return_value=json))
     response.configure_mock(**kwargs)
     return response
+
+
+# Reusable class decorator that mocks the Docker Hub auth token request made by sources.docker._docker_hub_headers
+# when DOCKER_HUB_USERNAME/DOCKER_HUB_TOKEN are set, so the image updater tests never make a real network call.
+mock_docker_hub_auth = patch("requests.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec[B105]
 
 
 def mock_path(content: str) -> Mock:

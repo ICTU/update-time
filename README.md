@@ -17,7 +17,7 @@ uv tool install update-time
 update-time
 ```
 
-Update-time has a small command-line interface. Run `update-time -h`/`--help` to see all options, `update-time -V`/`--version` to print the version, and `update-time --cooldown DAYS` to override the default cooldown period (see [Cooldown](#cooldown) below). Running `update-time` with no options in the root folder of a repository updates all supported dependencies.
+Update-time has a small command-line interface. Run `update-time -h`/`--help` to see all options, `update-time -V`/`--version` to print the version, `update-time --cooldown DAYS` to override the default cooldown period (see [Cooldown](#cooldown) below), and `update-time --log-level LEVEL` to set how much is logged (one of `DEBUG`, `INFO`, `WARNING`, `ERROR`; defaults to `INFO`). Available new versions are logged at `INFO`, so use `--log-level WARNING` to see only genuine problems, or `--log-level DEBUG` to also see which files are checked. Running `update-time` with no options in the root folder of a repository updates all supported dependencies.
 
 The recommended workflow is to run Update-time on a dedicated branch, push it, and let CI do the verification:
 

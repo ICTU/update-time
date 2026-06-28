@@ -4,9 +4,9 @@ from unittest.mock import ANY, Mock, patch
 
 from update_time.updaters.update_jsdelivr import get_latest_version, update_jsdelivr, update_jsdelivrs
 
-from tests.update_time.assertions import assert_new_version_logged, assert_path_logged, assert_success
+from tests.update_time.assertions import assert_success
 from tests.update_time.fixtures import HASH1, HASH2
-from tests.update_time.helpers import CacheClearingTestCase, mock_path, mock_response
+from tests.update_time.helpers import LoggingTestCase, mock_path, mock_response
 
 # A flat package listing as returned by the jsDelivr API with the ?structure=flat query parameter.
 FLAT_FILES = {"default": "/dist/clipboard.min.js", "files": [{"name": "/dist/clipboard.min.js", "hash": HASH2}]}
@@ -24,7 +24,7 @@ CONF = (
 
 
 @patch("requests.get")
-class GetLatestVersionTest(CacheClearingTestCase):
+class GetLatestVersionTest(LoggingTestCase):
     """Unit tests for the get latest jsdelivr version function."""
 
     def test_unchanged(self, mock_get: Mock):
@@ -58,20 +58,18 @@ class GetLatestVersionTest(CacheClearingTestCase):
         self.assertEqual("1.0", latest_version.version)
         self.assertEqual("", latest_version.sha)
 
-    @patch("logging.Logger.error")
-    def test_invalid_version(self, mock_error: Mock, mock_get: Mock):
+    def test_invalid_version(self, mock_get: Mock):
         """Test that an invalid latest version is logged and ignored."""
         mock_get.side_effect = [mock_response({}), mock_response({"time": {"1.0": "20260530T10:14:40.567Z"}})]
         self.assertEqual("1.0", get_latest_version("clipboard", "1.0").version)
-        mock_error.assert_called_once_with("Got an invalid version for %s: %s", "clipboard", "''", stacklevel=ANY)
+        self.mock_error.assert_called_once_with("Got an invalid version for %s: %s", "clipboard", "''", stacklevel=ANY)
 
 
-@patch("logging.Logger.warning")
 @patch("requests.get")
-class UpdateJsdelivrTest(CacheClearingTestCase):
+class UpdateJsdelivrTest(LoggingTestCase):
     """Unit tests for rewriting the version and integrity hash in the Sphinx config."""
 
-    def test_new_version_and_hash(self, mock_get: Mock, mock_warning: Mock):
+    def test_new_version_and_hash(self, mock_get: Mock):
         """Test that both the version and the integrity hash are updated on a bump."""
         mock_get.side_effect = [
             mock_response({"tags": {"latest": "2.0.12"}}),
@@ -83,28 +81,26 @@ class UpdateJsdelivrTest(CacheClearingTestCase):
         self.assertIn(f'"integrity": "sha256-{HASH2}"', new_content)
         self.assertNotIn("2.0.11", new_content)
         self.assertNotIn(HASH1, new_content)
-        assert_new_version_logged(
-            mock_warning, "clipboard", "2.0.12, published: 2026-05-30 10:14", "No changelog available!"
-        )
+        self.assert_new_version_logged("clipboard", "2.0.12, published: 2026-05-30 10:14", "No changelog available!")
+        self.assert_no_warnings_logged()
 
-    def test_unchanged(self, mock_get: Mock, mock_warning: Mock):
+    def test_unchanged(self, mock_get: Mock):
         """Test that the content is unchanged if there is no new version."""
         mock_get.side_effect = [
             mock_response({"tags": {"latest": "2.0.11"}}),
             mock_response({"time": {"2.0.11": "20260530T10:14:40.567Z"}}),
         ]
         self.assertEqual(CONF, update_jsdelivr(CONF))
-        mock_warning.assert_not_called()
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
 
 
-@patch("logging.Logger.warning")
-@patch("logging.Logger.info")
 @patch("pathlib.Path.rglob")
 @patch("requests.get")
-class UpdateJsdelivrsTest(CacheClearingTestCase):
+class UpdateJsdelivrsTest(LoggingTestCase):
     """Unit tests for discovering and updating the Sphinx config files under docs/."""
 
-    def test_changes(self, mock_get: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock):
+    def test_changes(self, mock_get: Mock, mock_glob: Mock):
         """Test that a discovered Sphinx config is updated when a new version is available."""
         mock_get.side_effect = [
             mock_response({"tags": {"latest": "2.0.12"}}),
@@ -117,10 +113,11 @@ class UpdateJsdelivrsTest(CacheClearingTestCase):
         written = mock_conf.write_text.call_args.args[0]
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", written)
         self.assertIn(f'"integrity": "sha256-{HASH2}"', written)
-        assert_path_logged(mock_info, mock_conf.relative_to())
-        assert_new_version_logged(mock_warning, "clipboard", ANY, ANY)
+        self.assert_path_logged(mock_conf.relative_to())
+        self.assert_new_version_logged("clipboard", ANY, ANY)
+        self.assert_no_warnings_logged()
 
-    def test_no_changes(self, mock_get: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock):
+    def test_no_changes(self, mock_get: Mock, mock_glob: Mock):
         """Test that a discovered Sphinx config is not rewritten when there is no new version."""
         mock_get.side_effect = [
             mock_response({"tags": {"latest": "2.0.11"}}),
@@ -130,5 +127,6 @@ class UpdateJsdelivrsTest(CacheClearingTestCase):
         mock_glob.return_value = [mock_conf]
         assert_success(update_jsdelivrs())
         mock_conf.write_text.assert_not_called()
-        assert_path_logged(mock_info, mock_conf.relative_to())
-        mock_warning.assert_not_called()
+        self.assert_path_logged(mock_conf.relative_to())
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
