@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from update_time.domain.cooldown import COOLDOWN_DAYS
 from update_time.io.cli import parse_args
+from update_time.io.log import DEFAULT_LOG_LEVEL
 
 
 class CommandLineInterfaceTest(unittest.TestCase):
@@ -54,3 +55,25 @@ class CommandLineInterfaceTest(unittest.TestCase):
             parse_args()
         self.assertEqual(2, cm.exception.code)
         self.assertIn("-1 is not a non-negative integer", stderr.getvalue())
+
+    def test_default_log_level(self):
+        """Test that the log level defaults to the default log level."""
+        with patch("sys.argv", ["update-time"]):
+            self.assertEqual(DEFAULT_LOG_LEVEL, parse_args().log_level)
+
+    def test_log_level(self):
+        """Test that the --log-level option sets the log level, upper-casing the value."""
+        with patch("sys.argv", ["update-time", "--log-level", "debug"]):
+            self.assertEqual("DEBUG", parse_args().log_level)
+
+    def test_invalid_log_level(self):
+        """Test that an invalid --log-level is rejected."""
+        stderr = io.StringIO()
+        with (
+            patch("sys.argv", ["update-time", "--log-level", "verbose"]),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as cm,
+        ):
+            parse_args()
+        self.assertEqual(2, cm.exception.code)
+        self.assertIn("invalid choice", stderr.getvalue())

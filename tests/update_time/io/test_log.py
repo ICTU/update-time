@@ -16,16 +16,16 @@ from tests.update_time.helpers import new_version_getter
 class LoggerTests(TestCase):
     """Unit tests for the logger class."""
 
-    @patch("logging.Logger.warning")
-    def test_suppress_repeated_changelog(self, mock_warning: Mock):
+    @patch("logging.Logger.info")
+    def test_suppress_repeated_changelog(self, mock_info: Mock):
         """Test that a repeated changelog is suppressed."""
         logger = Logger("suppress changelog")
         logger.new_version("dependency", DependencyVersion("1.0", "Changelog"))
-        mock_warning.assert_called_once_with(
+        mock_info.assert_called_once_with(
             "New version available for %s: %s\n%s", "dependency", "1.0", "Changelog", stacklevel=ANY
         )
         logger.new_version("dependency", DependencyVersion("1.0", "Changelog"))
-        mock_warning.assert_called_with(
+        mock_info.assert_called_with(
             "New version available for %s: %s\n%s",
             "dependency",
             "1.0",
@@ -33,27 +33,33 @@ class LoggerTests(TestCase):
             stacklevel=ANY,
         )
 
-    @patch("logging.Logger.warning")
-    def test_new_version_without_publication_date(self, mock_warning: Mock):
+    @patch("logging.Logger.info")
+    def test_new_version_without_publication_date(self, mock_info: Mock):
         """Test that the version is logged without a publication date when it is unknown."""
         Logger("no date").new_version("dependency", DependencyVersion("1.0", "Changelog"))
-        mock_warning.assert_called_once_with(
+        mock_info.assert_called_once_with(
             "New version available for %s: %s\n%s", "dependency", "1.0", "Changelog", stacklevel=ANY
         )
 
-    @patch("logging.Logger.warning")
-    def test_pinned(self, mock_warning: Mock):
+    @patch("logging.Logger.info")
+    def test_pinned(self, mock_info: Mock):
         """Test that pinning a previously unpinned reference to a digest is logged."""
         sha = f"sha256:{'a' * 64}"
         Logger("pin").pinned("dependency", DependencyVersion("1.0", sha=sha))
-        mock_warning.assert_called_once_with("Pinned %s to %s@%s", "dependency", "1.0", sha, stacklevel=ANY)
+        mock_info.assert_called_once_with("Pinned %s to %s@%s", "dependency", "1.0", sha, stacklevel=ANY)
 
-    @patch("logging.Logger.warning")
-    def test_new_version_with_publication_date(self, mock_warning: Mock):
+    @patch("logging.Logger.debug")
+    def test_path_logged_at_debug(self, mock_debug: Mock):
+        """Test that the per-file 'checking for updates' progress is logged at debug level."""
+        Logger("path").path(Path.cwd() / "config.yml")
+        mock_debug.assert_called_once_with("Checking if there are updates for %s", Path("config.yml"), stacklevel=ANY)
+
+    @patch("logging.Logger.info")
+    def test_new_version_with_publication_date(self, mock_info: Mock):
         """Test that the publication date is appended to the version when it is known."""
         published = datetime(2026, 5, 29, 13, 54, tzinfo=UTC)
         Logger("date").new_version("dependency", DependencyVersion("1.0", "Changelog", published=published))
-        mock_warning.assert_called_once_with(
+        mock_info.assert_called_once_with(
             "New version available for %s: %s\n%s",
             "dependency",
             "1.0, published: 2026-05-29 13:54",
@@ -61,12 +67,12 @@ class LoggerTests(TestCase):
             stacklevel=ANY,
         )
 
-    @patch("logging.Logger.warning")
-    def test_publication_date_is_logged_in_utc(self, mock_warning: Mock):
+    @patch("logging.Logger.info")
+    def test_publication_date_is_logged_in_utc(self, mock_info: Mock):
         """Test that a non-UTC publication date is converted to UTC before logging."""
         published = datetime(2026, 5, 29, 15, 54, tzinfo=timezone(timedelta(hours=2)))
         Logger("utc").new_version("dependency", DependencyVersion("1.0", published=published))
-        mock_warning.assert_called_once_with(
+        mock_info.assert_called_once_with(
             "New version available for %s: %s\n%s",
             "dependency",
             "1.0, published: 2026-05-29 13:54",
@@ -81,7 +87,7 @@ class LogOriginTests(TestCase):
     def test_direct_call_is_attributed_to_the_caller(self):
         """Test that a log method called directly reports the calling line as its origin."""
         logger = Logger("origin direct")
-        with self.assertLogs(logger.log, level="INFO") as captured:
+        with self.assertLogs(logger.log, level="DEBUG") as captured:
             logger.path(Path.cwd())
         self.assertEqual("test_log.py", Path(captured.records[0].pathname).name)
 
@@ -92,7 +98,7 @@ class LogOriginTests(TestCase):
             (Path(directory) / "config.yml").write_text("dependency: 1.0\n")
             with (
                 patch("pathlib.Path.cwd", Mock(return_value=Path(directory))),
-                self.assertLogs(logger.log, level="INFO") as captured,
+                self.assertLogs(logger.log, level="DEBUG") as captured,
             ):
                 filesystem.update_files(
                     "*.yml",

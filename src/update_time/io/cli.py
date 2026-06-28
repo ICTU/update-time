@@ -4,6 +4,7 @@ import argparse
 from importlib.metadata import version
 
 from update_time.domain.cooldown import COOLDOWN_DAYS
+from update_time.io.log import DEFAULT_LOG_LEVEL, LOG_LEVELS
 
 
 def non_negative_int(value: str) -> int:
@@ -31,5 +32,13 @@ def parse_args() -> argparse.Namespace:
         metavar="DAYS",
         help="number of days to hold back newly published Docker image and GitHub Action versions; Python and npm "
         "cooldowns are configured via uv and npm instead (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str.upper,
+        choices=LOG_LEVELS,
+        default=DEFAULT_LOG_LEVEL,
+        help="the minimum severity of messages to log; available new versions are logged at INFO (default: "
+        "%(default)s)",
     )
     return parser.parse_args()
