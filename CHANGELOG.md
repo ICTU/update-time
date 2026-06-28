@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.8 - 2026-06-28
+
 ### Added
 
 - Add a `--log-level` option (`DEBUG`, `INFO`, `WARNING`, or `ERROR`; default `INFO`) to control how much is logged.
