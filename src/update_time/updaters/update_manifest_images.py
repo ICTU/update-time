@@ -14,10 +14,10 @@ IMAGE_RE = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<
 def update_manifest_images() -> int:
     """Update the image tags and digests in the Docker Compose files and the Helm folder.
 
-    Third-party images are pinned as ``tag@sha256:digest``; both the tag and digest are kept in sync. Images
+    Third-party images are pinned as `tag@sha256:digest`; both the tag and digest are kept in sync. Images
     referenced by tag only are automatically pinned by appending the digest of the (latest) tag. The digest is
     optional in the regex but a concrete version tag is still required, so Helm chart templates (which use
-    ``{{ ... }}`` placeholders) and Compose lines using ``${VAR}`` substitution are ignored.
+    `{{ ... }}` placeholders) and Compose lines using `${VAR}` substitution are ignored.
     """
     results = [
         update_files("docker-compose*.yml", regexp=IMAGE_RE, get_new_version=get_latest_tag, logger=LOG),
