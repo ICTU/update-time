@@ -73,6 +73,60 @@ class UpdatePackageJsonTest(CacheClearingTestCase):
         assert_new_version_logged(mock_warning, "package", "1.1, published: 2026-05-30 10:26", "Changelog")
         self.assert_npm_called(mock_run)
 
+    def test_restore_git_url_dependencies(self, mock_run: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock):
+        """Test that git+https URLs npm normalized to the github: shorthand are restored (issue #27)."""
+        original = (
+            '{\n  "devDependencies": {\n'
+            '    "bats": "git+https://github.com/calj/bats.git",\n'
+            '    "bats-assert": "git+https://github.com/ztombol/bats-assert.git#v0.3.0"\n'
+            "  }\n}\n"
+        )
+        normalized = (
+            '{\n  "devDependencies": {\n'
+            '    "bats": "github:calj/bats",\n'
+            '    "bats-assert": "github:ztombol/bats-assert#v0.3.0"\n'
+            "  }\n}\n"
+        )
+        mock_package_json = self.create_package_json()
+        mock_package_json.read_text = Mock(side_effect=[original, normalized])
+        mock_glob.return_value = [mock_package_json]
+        mock_run.side_effect = [Mock(stdout="{}"), Mock(stdout=""), Mock(stdout='{"dependencies": {}}')]
+        assert_success(update_package_jsons())
+        assert_path_logged(mock_info, mock_package_json.relative_to())
+        mock_package_json.write_text.assert_called_once_with(original)
+        mock_warning.assert_not_called()
+        self.assert_npm_called(mock_run)
+
+    @patch(
+        "requests.get",
+        Mock(
+            side_effect=[
+                mock_response({"repository": {"url": "https://github.com/package/1.1"}}),
+                mock_response([release_json("v1.1", body="Changelog")]),
+                mock_response({"time": {"1.1": "20260530T10:26:45.543Z"}}),
+                mock_response({"sha": "sha"}),
+            ]
+        ),
+    )
+    def test_manifest_kept_when_a_dependency_is_updated(
+        self, mock_run: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock
+    ):
+        """Test that npm's manifest (including any specs it normalized) is kept when a dependency is updated."""
+        mock_package_json = self.create_package_json()
+        mock_glob.return_value = [mock_package_json]
+        mock_run.side_effect = [
+            subprocess.CalledProcessError(
+                cmd="", returncode=1, output='{"package": {"current": "1.0", "latest": "1.1"}}'
+            ),
+            Mock(stdout=""),
+            Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
+        ]
+        assert_success(update_package_jsons())
+        assert_path_logged(mock_info, mock_package_json.relative_to())
+        assert_new_version_logged(mock_warning, "package", "1.1, published: 2026-05-30 10:26", "Changelog")
+        mock_package_json.write_text.assert_not_called()
+        self.assert_npm_called(mock_run)
+
     def test_outdated_but_not_updated(self, mock_run: Mock, mock_glob: Mock, mock_info: Mock, mock_warning: Mock):
         """Test that a package is not logged when npm update did not change its installed version."""
         mock_package_json = self.create_package_json()
