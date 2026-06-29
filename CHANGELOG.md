@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.10 - 2026-06-29
+
 ### Added
 
 - Apply Update-time's cooldown (the `--cooldown` value, default 7 days) to `pyproject.toml` dependency updates by passing it to uv's `exclude-newer` option, so freshly published releases are held back for both the `pyproject.toml` pins and the `uv.lock`. If the project already sets `exclude-newer` under `[tool.uv]` (or the `UV_EXCLUDE_NEWER` environment variable is set), Update-time leaves it untouched. Closes [#36](https://github.com/ICTU/update-time/issues/36).
