@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Fixed
 
 - Don't warn about CircleCI machine-executor images (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`). These are not Docker Hub images and have no registry to query; they are now recognised by parsing the CircleCI YAML and left unchanged, instead of being looked up on Docker Hub and logged as unfetchable on every run.
+- Skip `package.json` files managed by a package manager other than npm (pnpm, yarn, bun) instead of running npm against them. Running npm on, for example, a pnpm project would write a stray `package-lock.json` and leave `pnpm-lock.yaml` out of sync. The package manager is detected from the `packageManager` field or a sibling lockfile; only npm projects (and projects with no manager indicator) are updated.
+- Skip `pyproject.toml` files managed by a Python dependency manager other than uv (Poetry, PDM) instead of running uv against them, which would write a stray `uv.lock` alongside the real lockfile. The manager is detected from a `[tool.poetry]`/`[tool.pdm]` section or a sibling lockfile; only uv projects (and projects with no manager indicator) are updated.
 
 ## 0.0.10 - 2026-06-29
 

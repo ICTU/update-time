@@ -19,6 +19,23 @@ COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
 # npm config keys that hold back fresh releases. If the project sets either, we leave its cooldown alone (and
 # `min-release-age` can't be combined with `before`, so a project-level `before` also means we add nothing).
 NPM_COOLDOWN_CONFIG = ("min-release-age", "before")
+# Lockfiles that signal a non-npm package manager. Running npm on such a project would mishandle it (e.g. write a
+# stray package-lock.json and ignore the real lockfile), so those package.json files are skipped for now.
+NON_NPM_LOCKFILES = {"pnpm-lock.yaml": "pnpm", "yarn.lock": "yarn", "bun.lockb": "bun"}
+
+
+def package_manager(package_json: Path) -> str:
+    """Return the project's package manager (npm, pnpm, yarn, bun), defaulting to npm.
+
+    The corepack `packageManager` field (e.g. `"pnpm@9.15.0"`) is authoritative; otherwise a sibling lockfile is
+    used as a fallback signal.
+    """
+    if declared := json.loads(package_json.read_text()).get("packageManager", ""):
+        return declared.split("@", maxsplit=1)[0]
+    for lockfile, manager in NON_NPM_LOCKFILES.items():
+        if (package_json.parent / lockfile).exists():
+            return manager
+    return "npm"
 
 
 def cooldown_options(directory: Path) -> list[str]:
@@ -41,6 +58,9 @@ def installed_versions(directory: Path) -> dict[str, str]:
 
 def update_package_json(package_json: Path) -> int:
     """Update the package.json and package-lock.json."""
+    if (manager := package_manager(package_json)) != "npm":
+        LOG.skipped(package_json, f"{manager} is not supported, only npm")
+        return 0
     LOG.path(package_json)
     original_contents = package_json.read_text()
     cooldown = cooldown_options(package_json.parent)

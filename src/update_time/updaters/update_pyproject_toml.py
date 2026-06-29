@@ -22,6 +22,25 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 LOG = get_logger("pyproject.toml")
+# Signals that a pyproject.toml is managed by a tool other than uv. Running uv on such a project would mishandle it
+# (e.g. write a stray uv.lock alongside the real lockfile), so those files are skipped for now.
+NON_UV_TOOL_SECTIONS = ("poetry", "pdm")  # `[tool.poetry]` / `[tool.pdm]`
+NON_UV_LOCKFILES = {"poetry.lock": "poetry", "pdm.lock": "pdm"}
+
+
+def python_manager(pyproject_toml: Path) -> str:
+    """Return the project's Python dependency manager (uv, poetry, pdm), defaulting to uv.
+
+    A `[tool.poetry]`/`[tool.pdm]` section is authoritative; otherwise a sibling lockfile is used as a fallback.
+    """
+    tool = tomllib.loads(pyproject_toml.read_text()).get("tool", {})
+    for section in NON_UV_TOOL_SECTIONS:
+        if section in tool:
+            return section
+    for lockfile, manager in NON_UV_LOCKFILES.items():
+        if (pyproject_toml.parent / lockfile).exists():
+            return manager
+    return "uv"
 
 
 def exclude_newer_options(pyproject_toml: Path) -> list[str]:
@@ -99,8 +118,13 @@ def update_uv_lock(pyproject_toml: Path) -> None:
 
 
 def update_pyproject_tomls() -> int:
-    """Find all pyproject.toml files, update them, and then update the uv.lock files."""
-    files = list(glob("pyproject.toml"))
+    """Find all uv-managed pyproject.toml files, update them, and then update the uv.lock files."""
+    files = []
+    for pyproject_toml in glob("pyproject.toml"):
+        if (manager := python_manager(pyproject_toml)) == "uv":
+            files.append(pyproject_toml)
+        else:
+            LOG.skipped(pyproject_toml, f"{manager} is not supported, only uv")
     for pyproject_toml in files:
         update_pyproject_toml(pyproject_toml)
     for pyproject_toml in files:

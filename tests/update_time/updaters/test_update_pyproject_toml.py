@@ -188,3 +188,26 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_exclude_newer(run, expected=False)
         get.assert_not_called()
         self.assert_no_warnings_logged()
+
+    def test_skip_non_uv_tool_section(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a pyproject.toml with a non-uv tool section (e.g. [tool.poetry]) is skipped without running uv."""
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0") + '\n[tool.poetry]\nname = "x"\n')
+        glob.return_value = [mock_pyproject_toml]
+        assert_success(update_pyproject_tomls())
+        run.assert_not_called()
+        get.assert_not_called()
+        mock_pyproject_toml.write_text.assert_not_called()
+        self.assert_skipped_logged(mock_pyproject_toml, "poetry is not supported, only uv")
+        self.assert_no_warnings_logged()
+
+    @patch("pathlib.Path.exists", Mock(return_value=True))
+    def test_skip_non_uv_lockfile(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a pyproject.toml with a non-uv lockfile (e.g. poetry.lock) is skipped without running uv."""
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
+        glob.return_value = [mock_pyproject_toml]
+        assert_success(update_pyproject_tomls())
+        run.assert_not_called()
+        get.assert_not_called()
+        mock_pyproject_toml.write_text.assert_not_called()
+        self.assert_skipped_logged(mock_pyproject_toml, "poetry is not supported, only uv")
+        self.assert_no_warnings_logged()

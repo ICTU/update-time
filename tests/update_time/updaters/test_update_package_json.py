@@ -19,9 +19,9 @@ COOLDOWN_OPTION = f"--min-release-age={COOLDOWN_DAYS}"  # the cooldown npm optio
 class UpdatePackageJsonTest(LoggingTestCase):
     """Unit tests for the update package.jsons function."""
 
-    def create_package_json(self) -> Mock:
+    def create_package_json(self, contents: str = "{}") -> Mock:
         """Create a mock package.json file."""
-        return mock_path("{}", parent=Path("/"))
+        return mock_path(contents, parent=Path("/"))
 
     def npm_runs(self, *results: object) -> list:
         """Prepend the two `npm config get` cooldown probes (both unset) to the given npm command results.
@@ -97,7 +97,8 @@ class UpdatePackageJsonTest(LoggingTestCase):
             "  }\n}\n"
         )
         mock_package_json = self.create_package_json()
-        mock_package_json.read_text = Mock(side_effect=[original, normalized])
+        # Three reads: package_manager detection, the original snapshot, then the npm-normalized contents.
+        mock_package_json.read_text = Mock(side_effect=[original, original, normalized])
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = self.npm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout='{"dependencies": {}}'))
         assert_success(update_package_jsons())
@@ -166,4 +167,25 @@ class UpdatePackageJsonTest(LoggingTestCase):
         assert_success(update_package_jsons())
         self.assert_npm_called(mock_run, cooldown=False)
         self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+    def test_skip_non_npm_package_manager(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a package.json with a non-npm `packageManager` field is skipped without running npm."""
+        mock_package_json = self.create_package_json('{"packageManager": "pnpm@9.15.0"}')
+        mock_glob.return_value = [mock_package_json]
+        assert_success(update_package_jsons())
+        mock_run.assert_not_called()
+        mock_package_json.write_text.assert_not_called()
+        self.assert_skipped_logged(mock_package_json, "pnpm is not supported, only npm")
+        self.assert_no_warnings_logged()
+
+    @patch("pathlib.Path.exists", Mock(return_value=True))
+    def test_skip_non_npm_lockfile(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a package.json with a non-npm lockfile (e.g. pnpm-lock.yaml) is skipped without running npm."""
+        mock_package_json = self.create_package_json()
+        mock_glob.return_value = [mock_package_json]
+        assert_success(update_package_jsons())
+        mock_run.assert_not_called()
+        mock_package_json.write_text.assert_not_called()
+        self.assert_skipped_logged(mock_package_json, "pnpm is not supported, only npm")
         self.assert_no_warnings_logged()
