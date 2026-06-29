@@ -54,5 +54,10 @@ def update_requirements_txts() -> int:
     return max(results, default=0)
 
 
+def main() -> int:  # pragma: no cover
+    """Update the dependencies in the repository's requirements files."""
+    return update_requirements_txts()
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(update_requirements_txts())
+    sys.exit(main())

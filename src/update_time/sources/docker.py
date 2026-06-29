@@ -11,7 +11,7 @@ import requests
 from packaging.version import InvalidVersion, Version
 
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.version import DependencyVersion
+from update_time.domain.version import DependencyName, DependencyVersion, VersionString
 from update_time.io.log import get_logger
 
 LOG = get_logger("docker")
@@ -106,7 +106,7 @@ def is_docker_hub_image(image: str) -> bool:
     return "." not in host and ":" not in host and host != "localhost" and host == host.lower()
 
 
-def get_latest_tag(image: str, current_tag: str) -> DependencyVersion:
+def get_latest_tag(image: DependencyName, current_tag: VersionString) -> DependencyVersion:
     """Find the latest compatible tag for an image. Keeps the same non-numerical parts while upgrading the version.
 
     Returns the digest of the resulting tag, including when the current version is already the latest, so that

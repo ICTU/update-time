@@ -13,7 +13,7 @@ from pathlib import Path
 
 from packaging.version import Version
 
-from update_time.domain.version import DependencyVersion, is_valid
+from update_time.domain.version import DependencyName, DependencyVersion, VersionString, is_valid
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
 from update_time.io.log import get_logger
 from update_time.sources.github import get_latest_release
@@ -29,7 +29,7 @@ ACTION_RE = re.compile(
 
 
 @cache
-def get_latest_version(action: str, current_version_string: str) -> DependencyVersion:
+def get_latest_version(action: DependencyName, current_version_string: VersionString) -> DependencyVersion:
     """Fetch the latest version for the action."""
     owner, repository, *_path = action.split("/")
     release = get_latest_release(owner, repository)
@@ -72,5 +72,10 @@ def update_github_actions(github_dir: Path) -> int:
     return 0
 
 
+def main() -> int:  # pragma: no cover
+    """Update the GitHub Actions in the repository's workflows."""
+    return update_github_actions(Path.cwd() / ".github")
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(update_github_actions(Path.cwd() / ".github"))
+    sys.exit(main())

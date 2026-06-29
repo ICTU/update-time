@@ -108,5 +108,10 @@ def update_pyproject_tomls() -> int:
     return 0
 
 
+def main() -> int:  # pragma: no cover
+    """Update the dependencies in the repository's pyproject.toml files."""
+    return update_pyproject_tomls()
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(update_pyproject_tomls())
+    sys.exit(main())

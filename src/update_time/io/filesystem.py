@@ -5,9 +5,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Iterator
 
-    from update_time.domain.version import DependencyVersion
+    from update_time.domain.version import NewVersionGetter
     from update_time.io.log import Logger
 
 YAML_GLOB_PATTERNS = ("*.yml", "*.yaml")
@@ -28,9 +28,7 @@ def glob(*glob_patterns: str, start: Path | None = None) -> Iterator[Path]:
             yield path
 
 
-def _update_line(
-    line: str, regexp: str, get_new_version: Callable[[str, str], DependencyVersion], logger: Logger, path: Path
-) -> str:
+def _update_line(line: str, regexp: str, get_new_version: NewVersionGetter, logger: Logger, path: Path) -> str:
     """Update the line with the new version (and digest) if any, or return the line unchanged.
 
     When the regexp has an optional `sha` group that did not match, the reference is unpinned. If a digest is
@@ -60,9 +58,7 @@ def _update_line(
     return line.replace(version, latest_version.version)
 
 
-def update_file(
-    path: Path, regexp: str, get_new_version: Callable[[str, str], DependencyVersion], logger: Logger
-) -> int:
+def update_file(path: Path, regexp: str, get_new_version: NewVersionGetter, logger: Logger) -> int:
     """Update the lines in the file and write back the file if the new lines are different from the old lines."""
     logger.path(path)
     old_lines = path.read_text().splitlines()
@@ -75,7 +71,7 @@ def update_file(
 def update_files(
     *glob_patterns: str,
     regexp: str,
-    get_new_version: Callable[[str, str], DependencyVersion],
+    get_new_version: NewVersionGetter,
     logger: Logger,
     start: Path | None = None,
 ) -> int:

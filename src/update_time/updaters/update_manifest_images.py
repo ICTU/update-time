@@ -28,5 +28,10 @@ def update_manifest_images() -> int:
     return max(results)
 
 
+def main() -> int:  # pragma: no cover
+    """Update the images in the repository's Docker Compose and Helm manifests."""
+    return update_manifest_images()
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(update_manifest_images())
+    sys.exit(main())
