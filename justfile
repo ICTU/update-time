@@ -94,7 +94,7 @@ publish version *flags: (check-version version) check-repo test check
         uv publish --token "$pypi_token"
         git tag --annotate "v$new_version" --message "Release v$new_version"
         git push --follow-tags
-        echo "Published update-time v$new_version"
+        echo "Published Update-time v$new_version"
     fi
 
 # === Run tests ===
