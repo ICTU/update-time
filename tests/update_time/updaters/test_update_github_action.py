@@ -88,12 +88,12 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         assert_success(update_github_actions(GITHUB_DIR))
         workflow_yml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
         composite_action_yaml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
-        self.assert_path_logged(composite_action_yaml.relative_to())
+        self.assert_path_logged(composite_action_yaml)
         self.assert_new_version_logged(
+            composite_action_yaml,
             "action/action",
             "1.1",
             "Suppressing changelog already shown, see above",
-            path=composite_action_yaml.relative_to(),
         )
         self.assert_no_warnings_logged()
 
@@ -104,7 +104,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         assert_success(update_github_actions(GITHUB_DIR))
         dependabot_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_path_logged(dependabot_yml.relative_to())
+        self.assert_path_logged(dependabot_yml)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -115,7 +115,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         assert_success(update_github_actions(GITHUB_DIR))
         workflow_yml.write_text.assert_not_called()
-        self.assert_path_logged(workflow_yml.relative_to())
+        self.assert_path_logged(workflow_yml)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -127,8 +127,8 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         assert_success(update_github_actions(GITHUB_DIR))
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
         mock_get_latest_version.assert_called_once_with("actions/checkout", "4")
-        self.assert_path_logged(workflow_yml.relative_to())
-        self.assert_pinned_logged("actions/checkout", "4.1.1", NEW_SHA, path=workflow_yml.relative_to())
+        self.assert_path_logged(workflow_yml)
+        self.assert_pinned_logged(workflow_yml, "actions/checkout", "4.1.1", NEW_SHA)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -139,7 +139,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         assert_success(update_github_actions(GITHUB_DIR))
         workflow_yml.write_text.assert_not_called()
-        self.assert_path_logged(workflow_yml.relative_to())
+        self.assert_path_logged(workflow_yml)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -150,7 +150,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         assert_success(update_github_actions(GITHUB_DIR))
         workflow_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_path_logged(workflow_yml.relative_to())
+        self.assert_path_logged(workflow_yml)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -161,6 +161,6 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         assert_success(update_github_actions(GITHUB_DIR))
         workflow_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_path_logged(workflow_yml.relative_to())
+        self.assert_path_logged(workflow_yml)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()

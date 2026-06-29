@@ -77,13 +77,14 @@ class UpdateJsdelivrTest(LoggingTestCase):
             mock_response(FLAT_FILES),
             mock_response({"time": {"2.0.12": "20260530T10:14:40.567Z"}}),
         ]
-        new_content = update_jsdelivr(CONF, Path.cwd() / "docs" / "conf.py")
+        conf_py = Path.cwd() / "docs" / "conf.py"
+        new_content = update_jsdelivr(CONF, conf_py)
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", new_content)
         self.assertIn(f'"integrity": "sha256-{HASH2}"', new_content)
         self.assertNotIn("2.0.11", new_content)
         self.assertNotIn(HASH1, new_content)
         self.assert_new_version_logged(
-            "clipboard", "2.0.12, published: 2026-05-30 10:14", "No changelog available!", path=Path("docs/conf.py")
+            conf_py, "clipboard", "2.0.12, published: 2026-05-30 10:14", "No changelog available!"
         )
         self.assert_no_warnings_logged()
 
@@ -116,8 +117,8 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         written = mock_conf.write_text.call_args.args[0]
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", written)
         self.assertIn(f'"integrity": "sha256-{HASH2}"', written)
-        self.assert_path_logged(mock_conf.relative_to())
-        self.assert_new_version_logged("clipboard", ANY, ANY, path=mock_conf.relative_to())
+        self.assert_path_logged(mock_conf)
+        self.assert_new_version_logged(mock_conf, "clipboard", ANY, ANY)
         self.assert_no_warnings_logged()
 
     def test_no_changes(self, mock_get: Mock, mock_glob: Mock):
@@ -130,6 +131,6 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         mock_glob.return_value = [mock_conf]
         assert_success(update_jsdelivrs())
         mock_conf.write_text.assert_not_called()
-        self.assert_path_logged(mock_conf.relative_to())
+        self.assert_path_logged(mock_conf)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()

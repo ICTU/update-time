@@ -22,7 +22,7 @@ class UpdateDockerfileTest(LoggingTestCase):
         mock_glob.return_value = [mock_dockerfile]
         assert_success(update_dockerfiles())
         mock_dockerfile.write_text.assert_not_called()
-        self.assert_path_logged(mock_dockerfile.relative_to())
+        self.assert_path_logged(mock_dockerfile)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -33,8 +33,8 @@ class UpdateDockerfileTest(LoggingTestCase):
         mock_glob.return_value = [mock_dockerfile]
         assert_success(update_dockerfiles())
         mock_dockerfile.write_text.assert_called_with(f"FROM python:3.15@{DIGEST2}\n")
-        self.assert_path_logged(mock_dockerfile.relative_to())
-        self.assert_new_version_logged("python", "3.15", path=mock_dockerfile.relative_to())
+        self.assert_path_logged(mock_dockerfile)
+        self.assert_new_version_logged(mock_dockerfile, "python", "3.15")
         self.assert_no_warnings_logged()
 
     def test_pin_unpinned_base_image(self, mock_get: Mock, mock_glob: Mock):
@@ -44,8 +44,8 @@ class UpdateDockerfileTest(LoggingTestCase):
         mock_glob.return_value = [mock_dockerfile]
         assert_success(update_dockerfiles())
         mock_dockerfile.write_text.assert_called_with(f"FROM golang:1.22@{DIGEST2}\n")
-        self.assert_path_logged(mock_dockerfile.relative_to())
-        self.assert_new_version_logged("golang", "1.22", path=mock_dockerfile.relative_to())
+        self.assert_path_logged(mock_dockerfile)
+        self.assert_new_version_logged(mock_dockerfile, "golang", "1.22")
         self.assert_no_warnings_logged()
 
     def test_stage_alias_is_preserved_when_pinning(self, mock_get: Mock, mock_glob: Mock):
@@ -55,6 +55,6 @@ class UpdateDockerfileTest(LoggingTestCase):
         mock_glob.return_value = [mock_dockerfile]
         assert_success(update_dockerfiles())
         mock_dockerfile.write_text.assert_called_with(f"FROM ruby:3.4@{DIGEST2} AS build\n")
-        self.assert_path_logged(mock_dockerfile.relative_to())
-        self.assert_new_version_logged("ruby", "3.4", path=mock_dockerfile.relative_to())
+        self.assert_path_logged(mock_dockerfile)
+        self.assert_new_version_logged(mock_dockerfile, "ruby", "3.4")
         self.assert_no_warnings_logged()

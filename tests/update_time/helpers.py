@@ -4,6 +4,7 @@ import importlib
 import pkgutil
 import unittest
 from functools import cache
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import ANY, Mock, patch
 
@@ -23,7 +24,6 @@ from update_time.updaters.update_github_action import get_latest_version as gith
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
-    from pathlib import Path
 
 
 @cache
@@ -89,17 +89,15 @@ class LoggingTestCase(CacheClearingTestCase):
     NEW_VERSION_MESSAGE = "New version available for %s in %s: %s\n%s"
 
     def assert_new_version_logged(
-        self,
-        dependency: str,
-        version: str,
-        changes: str = "No changelog available!",
-        *,
-        path: object = ANY,
-        once: bool = False,
+        self, path: Path, dependency: str, version: str, changes: str = "No changelog available!", *, once: bool = False
     ) -> None:
-        """Assert that the availability of a new version was logged at info level for the dependency in the file."""
+        """Assert that the availability of a new version was logged at info level for the dependency in the file.
+
+        Pass the file `path` as it was given to the updater; it is made relative to the working directory here, the
+        same way the logger renders it.
+        """
         assert_called = self.mock_info.assert_called_once_with if once else self.mock_info.assert_called_with
-        assert_called(self.NEW_VERSION_MESSAGE, dependency, path, version, changes, stacklevel=ANY)
+        assert_called(self.NEW_VERSION_MESSAGE, dependency, self._relative(path), version, changes, stacklevel=ANY)
 
     def assert_no_new_version_logged(self) -> None:
         """Assert that no new version was logged at info level (other info-level messages are allowed)."""
@@ -108,13 +106,14 @@ class LoggingTestCase(CacheClearingTestCase):
         ]
         self.assertEqual([], new_version_calls, "Expected no new version to be logged")
 
-    def assert_pinned_logged(self, dependency: str, version: str, sha: str, *, path: object = ANY) -> None:
+    def assert_pinned_logged(self, path: Path, dependency: str, version: str, sha: str) -> None:
         """Assert that pinning a previously unpinned reference to a digest was logged at info level for the file."""
-        self.mock_info.assert_called_with("Pinned %s in %s to %s@%s", dependency, path, version, sha, stacklevel=ANY)
+        message = "Pinned %s in %s to %s@%s"
+        self.mock_info.assert_called_with(message, dependency, self._relative(path), version, sha, stacklevel=ANY)
 
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged at debug level."""
-        self.mock_debug.assert_called_with("Checking if there are updates for %s", path, stacklevel=ANY)
+        self.mock_debug.assert_called_with("Checking if there are updates for %s", self._relative(path), stacklevel=ANY)
 
     def assert_no_path_logged(self) -> None:
         """Assert that no path being checked for updates was logged (nothing logged at debug level)."""
@@ -122,7 +121,12 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_skipped_logged(self, path: Path, reason: str) -> None:
         """Assert that skipping a file was logged at info level with the given reason."""
-        self.mock_info.assert_called_once_with("Skipping %s: %s", path, reason, stacklevel=ANY)
+        self.mock_info.assert_called_once_with("Skipping %s: %s", self._relative(path), reason, stacklevel=ANY)
+
+    @staticmethod
+    def _relative(path: Path) -> Path:
+        """Make the file path relative to the working directory, the same way the logger renders it."""
+        return path.relative_to(Path.cwd())
 
     def assert_no_warnings_logged(self) -> None:
         """Assert that no warnings were logged."""

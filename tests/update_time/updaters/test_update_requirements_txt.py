@@ -42,7 +42,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = self.pypi("1.0")
         assert_success(update_requirements_txts())
         requirements_txt.write_text.assert_not_called()
-        self.assert_path_logged(requirements_txt.relative_to())
+        self.assert_path_logged(requirements_txt)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -53,8 +53,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = self.pypi("1.0", "1.1", bump=True)
         assert_success(update_requirements_txts())
         requirements_txt.write_text.assert_called_once_with("flask==1.1\n")
-        self.assert_path_logged(requirements_txt.relative_to())
-        self.assert_new_version_logged("flask", PUBLISHED, path=requirements_txt.relative_to())
+        self.assert_path_logged(requirements_txt)
+        self.assert_new_version_logged(requirements_txt, "flask", PUBLISHED)
         self.assert_no_warnings_logged()
 
     def test_preserves_extras_marker_and_comment(self, mock_rglob: Mock, mock_get: Mock):
@@ -64,8 +64,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = self.pypi("1.0", "1.1", bump=True)
         assert_success(update_requirements_txts())
         requirements_txt.write_text.assert_called_once_with('flask[async]==1.1 ; python_version < "3.12"  # keep\n')
-        self.assert_path_logged(requirements_txt.relative_to())
-        self.assert_new_version_logged("flask", PUBLISHED, path=requirements_txt.relative_to())
+        self.assert_path_logged(requirements_txt)
+        self.assert_new_version_logged(requirements_txt, "flask", PUBLISHED)
         self.assert_no_warnings_logged()
 
     def test_spaces_around_equals_preserved(self, mock_rglob: Mock, mock_get: Mock):
@@ -75,10 +75,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = self.pypi("2020.4.5.1", "2020.4.5.2", bump=True)
         assert_success(update_requirements_txts())
         requirements_txt.write_text.assert_called_once_with("certifi == 2020.4.5.2          # used by requests\n")
-        self.assert_path_logged(requirements_txt.relative_to())
-        self.assert_new_version_logged(
-            "certifi", "2020.4.5.2, published: 2020-01-01 00:00", path=requirements_txt.relative_to()
-        )
+        self.assert_path_logged(requirements_txt)
+        self.assert_new_version_logged(requirements_txt, "certifi", "2020.4.5.2, published: 2020-01-01 00:00")
         self.assert_no_warnings_logged()
 
     def test_loose_specifiers_untouched(self, mock_rglob: Mock, mock_get: Mock):
@@ -91,7 +89,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         assert_success(update_requirements_txts())
         requirements_txt.write_text.assert_not_called()
         mock_get.assert_not_called()
-        self.assert_path_logged(requirements_txt.relative_to())
+        self.assert_path_logged(requirements_txt)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -103,7 +101,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = self.pypi("1.0", "1.1", bump=True, upload_time=recent)
         assert_success(update_requirements_txts())
         requirements_txt.write_text.assert_not_called()
-        self.assert_path_logged(requirements_txt.relative_to())
+        self.assert_path_logged(requirements_txt)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -114,7 +112,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         assert_success(update_requirements_txts())
         requirements_txt.write_text.assert_not_called()
         mock_get.assert_not_called()
-        self.assert_skipped_logged(requirements_txt.relative_to(), "compiled or hash-pinned requirements file")
+        self.assert_skipped_logged(requirements_txt, "compiled or hash-pinned requirements file")
         self.assert_no_path_logged()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -126,7 +124,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         assert_success(update_requirements_txts())
         requirements_txt.write_text.assert_not_called()
         mock_get.assert_not_called()
-        self.assert_skipped_logged(requirements_txt.relative_to(), "compiled or hash-pinned requirements file")
+        self.assert_skipped_logged(requirements_txt, "compiled or hash-pinned requirements file")
         self.assert_no_path_logged()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -138,7 +136,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         assert_success(update_requirements_txts())
         requirements_txt.write_text.assert_not_called()
         mock_get.assert_not_called()
-        self.assert_skipped_logged(requirements_txt.relative_to(), "compiled or hash-pinned requirements file")
+        self.assert_skipped_logged(requirements_txt, "compiled or hash-pinned requirements file")
         self.assert_no_path_logged()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()

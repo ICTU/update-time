@@ -25,7 +25,7 @@ class UpdateCircleCIConfigTest(LoggingTestCase):
         mock_glob.side_effect = [[config_yml], []]
         assert_success(update_circle_ci_config(CIRCLE_CI_DIR))
         config_yml.write_text.assert_not_called()
-        self.assert_path_logged(config_yml.relative_to())
+        self.assert_path_logged(config_yml)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -36,8 +36,8 @@ class UpdateCircleCIConfigTest(LoggingTestCase):
         mock_glob.side_effect = [[config_yml], []]
         assert_success(update_circle_ci_config(CIRCLE_CI_DIR))
         config_yml.write_text.assert_called_with(f"image: cimg/py:3.14.2@{DIGEST2}\n")
-        self.assert_path_logged(config_yml.relative_to())
-        self.assert_new_version_logged("cimg/py", "3.14.2", path=config_yml.relative_to())
+        self.assert_path_logged(config_yml)
+        self.assert_new_version_logged(config_yml, "cimg/py", "3.14.2")
         self.assert_no_warnings_logged()
 
     def test_multiple_files(self, mock_glob: Mock, mock_get: Mock):
@@ -50,9 +50,9 @@ class UpdateCircleCIConfigTest(LoggingTestCase):
         config_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         continue_yaml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         self.assertEqual(2, self.mock_info.call_count)
-        self.assert_path_logged(continue_yaml.relative_to())
+        self.assert_path_logged(continue_yaml)
         self.assert_new_version_logged(
-            "cimg/go", "1.26.2", "Suppressing changelog already shown, see above", path=continue_yaml.relative_to()
+            continue_yaml, "cimg/go", "1.26.2", "Suppressing changelog already shown, see above"
         )
         self.assert_no_warnings_logged()
 
@@ -63,8 +63,8 @@ class UpdateCircleCIConfigTest(LoggingTestCase):
         mock_glob.side_effect = [[config_yml], []]
         assert_success(update_circle_ci_config(CIRCLE_CI_DIR))
         config_yml.write_text.assert_called_with(f"image: cimg/rust:1.76@{DIGEST2}\n")
-        self.assert_path_logged(config_yml.relative_to())
-        self.assert_new_version_logged("cimg/rust", "1.76", path=config_yml.relative_to())
+        self.assert_path_logged(config_yml)
+        self.assert_new_version_logged(config_yml, "cimg/rust", "1.76")
         self.assert_no_warnings_logged()
 
     def test_machine_executor_alias_ignored(self, mock_glob: Mock, mock_get: Mock):
@@ -74,6 +74,6 @@ class UpdateCircleCIConfigTest(LoggingTestCase):
         mock_glob.side_effect = [[config_yml], []]
         assert_success(update_circle_ci_config(CIRCLE_CI_DIR))
         config_yml.write_text.assert_not_called()
-        self.assert_path_logged(config_yml.relative_to())
+        self.assert_path_logged(config_yml)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
