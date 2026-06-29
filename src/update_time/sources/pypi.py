@@ -77,17 +77,12 @@ def get_latest_version(package: str, current_version: str) -> DependencyVersion:
     if not is_valid(current_version):
         return DependencyVersion(version=current_version)
     current = Version(current_version)
-    newer = sorted(
-        (
-            version
-            for release in project_versions(package)
-            if is_valid(release) and (version := Version(release)) > current
-        ),
-        reverse=True,
-    )
-    for version in newer:
-        if version.is_prerelease or version.is_devrelease:
-            continue
+    versions = [Version(release) for release in project_versions(package) if is_valid(release)]
+    candidates = [
+        version for version in versions if version > current and not version.is_prerelease and not version.is_devrelease
+    ]
+    candidates.sort(reverse=True)
+    for version in candidates:
         metadata = release_metadata(package, str(version))
         published = release_datetime(metadata["urls"])
         if metadata["info"].get("yanked") or published is None or within_cooldown(published):
