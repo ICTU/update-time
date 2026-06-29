@@ -124,7 +124,7 @@ def update_pyproject_tomls() -> int:
         if (manager := python_manager(pyproject_toml)) == "uv":
             files.append(pyproject_toml)
         else:
-            LOG.skipped(pyproject_toml, f"{manager} is not supported, only uv")
+            LOG.unsupported_package_manager(pyproject_toml, manager, "uv")
     for pyproject_toml in files:
         update_pyproject_toml(pyproject_toml)
     for pyproject_toml in files:

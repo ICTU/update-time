@@ -176,8 +176,8 @@ class UpdatePackageJsonTest(LoggingTestCase):
         assert_success(update_package_jsons())
         mock_run.assert_not_called()
         mock_package_json.write_text.assert_not_called()
-        self.assert_skipped_logged(mock_package_json, "pnpm is not supported, only npm")
-        self.assert_no_warnings_logged()
+        self.assert_unsupported_package_manager_logged(mock_package_json, "pnpm", "npm")
+        self.assert_no_new_version_logged()
 
     @patch("pathlib.Path.exists", Mock(return_value=True))
     def test_skip_non_npm_lockfile(self, mock_run: Mock, mock_glob: Mock):
@@ -187,5 +187,5 @@ class UpdatePackageJsonTest(LoggingTestCase):
         assert_success(update_package_jsons())
         mock_run.assert_not_called()
         mock_package_json.write_text.assert_not_called()
-        self.assert_skipped_logged(mock_package_json, "pnpm is not supported, only npm")
-        self.assert_no_warnings_logged()
+        self.assert_unsupported_package_manager_logged(mock_package_json, "pnpm", "npm")
+        self.assert_no_new_version_logged()

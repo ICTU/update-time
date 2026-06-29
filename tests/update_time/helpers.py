@@ -120,8 +120,13 @@ class LoggingTestCase(CacheClearingTestCase):
         self.mock_debug.assert_not_called()
 
     def assert_skipped_logged(self, path: Path, reason: str) -> None:
-        """Assert that skipping a file was logged at info level with the given reason."""
+        """Assert that deliberately skipping a file was logged at info level with the given reason."""
         self.mock_info.assert_called_once_with("Skipping %s: %s", self._relative(path), reason, stacklevel=ANY)
+
+    def assert_unsupported_package_manager_logged(self, path: Path, manager: str, supported: str) -> None:
+        """Assert that an unsupported package manager was logged as a warning for the file."""
+        message = "Skipping %s: %s is not supported, only %s"
+        self.mock_warning.assert_called_once_with(message, self._relative(path), manager, supported, stacklevel=ANY)
 
     @staticmethod
     def _relative(path: Path) -> Path:
