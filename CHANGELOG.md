@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Apply Update-time's cooldown (the `--cooldown` value, default 7 days) to npm dependency updates via npm's `min-release-age` option, so freshly published npm releases are held back like Docker images, GitHub Actions, and `requirements.txt` dependencies already are. If the project already configures a cooldown in its `.npmrc` (`min-release-age` or `before`), Update-time leaves it untouched. npm applies `min-release-age` from version 11.10.0 onwards; older npm versions ignore the option and update without a cooldown. Closes [#37](https://github.com/ICTU/update-time/issues/37).
+
 ### Fixed
 
 - Include the file being updated in the "New version available" and "Pinned" messages (e.g. "New version available for humanize in docs/requirements.txt: 4.15.0" and "Pinned redis in docker-compose.yml to 7.2.0@sha256:..."), so it is clear which file the change applies to now that the per-file "Checking ..." progress is logged at `DEBUG`.

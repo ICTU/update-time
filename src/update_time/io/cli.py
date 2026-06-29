@@ -30,8 +30,8 @@ def parse_args() -> argparse.Namespace:
         type=non_negative_int,
         default=COOLDOWN_DAYS,
         metavar="DAYS",
-        help="number of days to hold back newly published Docker image and GitHub Action versions; Python and npm "
-        "cooldowns are configured via uv and npm instead (default: %(default)s)",
+        help="number of days to hold back newly published Docker image, GitHub Action, requirements.txt, and npm "
+        "versions; the pyproject.toml cooldown is configured via uv instead (default: %(default)s)",
     )
     parser.add_argument(
         "--log-level",
