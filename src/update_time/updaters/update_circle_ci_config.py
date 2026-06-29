@@ -16,7 +16,7 @@ import yaml
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob, update_file
 from update_time.io.log import get_logger
-from update_time.sources.docker import IMAGE_REFERENCE, get_latest_tag
+from update_time.sources.oci import IMAGE_REFERENCE, get_latest_tag
 
 LOG = get_logger("circleci")
 IMAGE_RE = rf"image: {IMAGE_REFERENCE}"

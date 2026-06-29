@@ -13,7 +13,7 @@ from pathlib import Path
 
 from update_time.io.filesystem import update_file
 from update_time.io.log import get_logger
-from update_time.sources.docker import IMAGE_REFERENCE, get_latest_tag
+from update_time.sources.oci import IMAGE_REFERENCE, get_latest_tag
 
 LOG = get_logger("gitlab ci")
 IMAGE_RE = rf"image: {IMAGE_REFERENCE}"
