@@ -6,7 +6,7 @@ from update_time.updaters.update_gitlab_ci_config import update_gitlab_ci_config
 
 from tests.update_time.assertions import assert_success
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import LoggingTestCase, docker_hub_response, docker_tag, mock_docker_hub_auth, mock_path
+from tests.update_time.helpers import LoggingTestCase, docker_tag, mock_docker_hub_auth, mock_docker_registry, mock_path
 
 
 @patch("requests.get")
@@ -16,7 +16,7 @@ class UpdateGitLabCIConfigTest(LoggingTestCase):
 
     def test_no_changes(self, mock_get: Mock):
         """Test that an image already on the latest pinned tag is left unchanged."""
-        mock_get.return_value = docker_hub_response()
+        mock_get.side_effect = mock_docker_registry()
         config = mock_path(f"image: python:3.14@{DIGEST}\n")
         assert_success(update_gitlab_ci_config(config))
         config.write_text.assert_not_called()
@@ -26,7 +26,7 @@ class UpdateGitLabCIConfigTest(LoggingTestCase):
 
     def test_changes(self, mock_get: Mock):
         """Test that the image tag and digest are bumped when a newer version is available."""
-        mock_get.return_value = docker_hub_response(docker_tag("3.14.2", DIGEST2))
+        mock_get.side_effect = mock_docker_registry(docker_tag("3.14.2", DIGEST2))
         config = mock_path(f"image: python:3.14.1@{DIGEST1}\n")
         assert_success(update_gitlab_ci_config(config))
         config.write_text.assert_called_with(f"image: python:3.14.2@{DIGEST2}\n")
@@ -36,7 +36,7 @@ class UpdateGitLabCIConfigTest(LoggingTestCase):
 
     def test_pin_unpinned_image(self, mock_get: Mock):
         """Test that an image referenced by tag only is automatically pinned with the latest tag and digest."""
-        mock_get.return_value = docker_hub_response(docker_tag("1.76", DIGEST2))
+        mock_get.side_effect = mock_docker_registry(docker_tag("1.76", DIGEST2))
         config = mock_path("image: rust:1.75\n")
         assert_success(update_gitlab_ci_config(config))
         config.write_text.assert_called_with(f"image: rust:1.76@{DIGEST2}\n")
@@ -46,7 +46,7 @@ class UpdateGitLabCIConfigTest(LoggingTestCase):
 
     def test_variable_reference_ignored(self, mock_get: Mock):
         """Test that an image referenced through variable substitution is not modified."""
-        mock_get.return_value = docker_hub_response(docker_tag("3.14.2", DIGEST))
+        mock_get.side_effect = mock_docker_registry(docker_tag("3.14.2", DIGEST))
         config = mock_path("image: $CI_REGISTRY_IMAGE:${CI_COMMIT_TAG}\n")
         assert_success(update_gitlab_ci_config(config))
         config.write_text.assert_not_called()

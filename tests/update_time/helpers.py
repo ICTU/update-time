@@ -4,14 +4,16 @@ import importlib
 import pkgutil
 import unittest
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import ANY, Mock, patch
 
 import update_time
 from update_time.domain.version import DependencyVersion
 from update_time.io.log import Logger
 from update_time.sources.docker import _docker_hub_headers as docker_hub_headers
-from update_time.sources.docker import _get_available_tags as docker_hub_get_available_tags
+from update_time.sources.docker import _get_tag as docker_get_tag
+from update_time.sources.docker import _oci_token as docker_oci_token
+from update_time.sources.docker import _tag_names as docker_tag_names
 from update_time.sources.github import _list_releases as github_list_release
 from update_time.sources.npmjs import get_changes as npmjs_get_changes
 from update_time.sources.npmjs import get_publication_datetime as npmjs_get_publication_datetime
@@ -43,8 +45,10 @@ class CacheClearingTestCase(unittest.TestCase):
     """
 
     CACHES = (
-        docker_hub_get_available_tags,
+        docker_get_tag,
         docker_hub_headers,
+        docker_oci_token,
+        docker_tag_names,
         github_get_latest_version,
         github_list_release,
         npmjs_get_changes,
@@ -150,13 +154,31 @@ def release_json(tag_name: str, **extra: object) -> dict[str, object]:
 
 
 def docker_tag(name: str, digest: str = "", **extra: object) -> dict[str, object]:
-    """Return a Docker Hub tags endpoint result for the tag, with an optional digest and extra fields."""
+    """Return a single-tag Docker Hub API result for the tag, with an optional digest and extra fields."""
     return {"name": name, **({"digest": digest} if digest else {}), **extra}
 
 
-def docker_hub_response(*tags: dict[str, object], next_url: str | None = None, **kwargs: object) -> Mock:
-    """Return a mock Docker Hub tags endpoint response containing the given tags, optionally paginated."""
-    json: dict[str, object] = {"results": list(tags)}
-    if next_url is not None:
-        json["next"] = next_url
-    return mock_response(json, **kwargs)
+def mock_docker_registry(
+    *tags: dict[str, object], names: list[str] | None = None, list_ok: bool = True
+) -> Callable[..., Mock]:
+    """Return a requests.get side effect that mimics the OCI tag listing and Docker Hub per-tag metadata endpoints.
+
+    The OCI anonymous token request returns a token, the OCI `tags/list` request returns the tag names (the names
+    of the given tags unless overridden), and a per-tag request returns that tag's metadata (or a 404 if unknown).
+    """
+    by_name = {cast("str", tag["name"]): tag for tag in tags}
+    tag_names = list(by_name) if names is None else names
+
+    def get(url: str, *_args: object, **_kwargs: object) -> Mock:
+        if "auth.docker.io" in url:
+            return mock_response({"token": "token"})  # nosec[B105]
+        if "/tags/list" in url:
+            return mock_response(
+                {"tags": tag_names}, ok=list_ok, status_code=200 if list_ok else 404, url=url, headers={}
+            )
+        name = url.rsplit("/tags/", maxsplit=1)[-1]
+        if name in by_name:
+            return mock_response(by_name[name])
+        return mock_response({}, ok=False, status_code=404, url=url)
+
+    return get

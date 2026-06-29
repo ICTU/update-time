@@ -10,7 +10,7 @@ from tests.update_time.assertions import (
     assert_success,
 )
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
-from tests.update_time.helpers import LoggingTestCase, docker_hub_response, docker_tag, mock_docker_hub_auth, mock_path
+from tests.update_time.helpers import LoggingTestCase, docker_tag, mock_docker_hub_auth, mock_docker_registry, mock_path
 
 
 @patch("pathlib.Path.rglob")
@@ -31,7 +31,7 @@ class UpdateManifestImagesTest(LoggingTestCase):
 
     def test_no_changes(self, mock_get: Mock, mock_glob: Mock):
         """Test no changes are made when no newer tag is available."""
-        mock_get.return_value = docker_hub_response()
+        mock_get.side_effect = mock_docker_registry()
         mock_manifest = self.create_mock_manifest(mock_glob, f"mongo-express:1.0.2@{DIGEST}")
         assert_success(update_manifest_images())
         mock_manifest.write_text.assert_not_called()
@@ -41,7 +41,7 @@ class UpdateManifestImagesTest(LoggingTestCase):
 
     def test_changes(self, mock_get: Mock, mock_glob: Mock):
         """Test the image tag and digest are bumped when a newer version is available."""
-        mock_get.return_value = docker_hub_response(docker_tag("149.0.3", DIGEST2))
+        mock_get.side_effect = mock_docker_registry(docker_tag("149.0.3", DIGEST2))
         mock_manifest = self.create_mock_manifest(mock_glob, f"selenium/standalone-firefox:149.0.2@{DIGEST1}")
         assert_success(update_manifest_images())
         mock_manifest.write_text.assert_called_with(f"    image: selenium/standalone-firefox:149.0.3@{DIGEST2}\n")
@@ -51,7 +51,7 @@ class UpdateManifestImagesTest(LoggingTestCase):
 
     def test_pin_unpinned_image(self, mock_get: Mock, mock_glob: Mock):
         """Test that an image referenced by tag only is automatically pinned with the latest tag and digest."""
-        mock_get.return_value = docker_hub_response(docker_tag("11.1.0", DIGEST2))
+        mock_get.side_effect = mock_docker_registry(docker_tag("11.1.0", DIGEST2))
         mock_manifest = self.create_mock_manifest(mock_glob, "grafana/grafana:11.0.0")
         assert_success(update_manifest_images())
         mock_manifest.write_text.assert_called_with(f"    image: grafana/grafana:11.1.0@{DIGEST2}\n")
@@ -61,7 +61,7 @@ class UpdateManifestImagesTest(LoggingTestCase):
 
     def test_pin_unpinned_image_already_at_latest(self, mock_get: Mock, mock_glob: Mock):
         """Test that an unpinned image that is already at the latest version is still pinned with its digest."""
-        mock_get.return_value = docker_hub_response(docker_tag("7.2.0", DIGEST3))
+        mock_get.side_effect = mock_docker_registry(docker_tag("7.2.0", DIGEST3))
         mock_manifest = self.create_mock_manifest(mock_glob, "redis:7.2.0")
         assert_success(update_manifest_images())
         mock_manifest.write_text.assert_called_with(f"    image: redis:7.2.0@{DIGEST3}\n")
@@ -71,7 +71,7 @@ class UpdateManifestImagesTest(LoggingTestCase):
 
     def test_variable_substitution_ignored(self, mock_get: Mock, mock_glob: Mock):
         """Test that image tags using ${...} substitution are not modified."""
-        mock_get.return_value = docker_hub_response(docker_tag("999.0", DIGEST))
+        mock_get.side_effect = mock_docker_registry(docker_tag("999.0", DIGEST))
         mock_manifest = self.create_mock_manifest(mock_glob, "ictu/quality-time_proxy:${QUALITY_TIME_VERSION}")
         assert_success(update_manifest_images())
         mock_manifest.write_text.assert_not_called()
