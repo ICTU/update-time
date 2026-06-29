@@ -13,10 +13,10 @@ from pathlib import Path
 
 from update_time.io.filesystem import update_file
 from update_time.io.log import get_logger
-from update_time.sources.docker import get_latest_tag
+from update_time.sources.docker import IMAGE_REFERENCE, get_latest_tag
 
 LOG = get_logger("gitlab ci")
-IMAGE_RE = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>sha256:[a-f0-9]{64}))?"
+IMAGE_RE = rf"image: {IMAGE_REFERENCE}"
 
 
 def update_gitlab_ci_config(gitlab_ci_config: Path) -> int:

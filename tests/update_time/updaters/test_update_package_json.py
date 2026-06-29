@@ -18,9 +18,7 @@ class UpdatePackageJsonTest(LoggingTestCase):
 
     def create_package_json(self) -> Mock:
         """Create a mock package.json file."""
-        mock_package_json = mock_path("{}")
-        mock_package_json.parent = Path("/")
-        return mock_package_json
+        return mock_path("{}", parent=Path("/"))
 
     def assert_npm_called(self, mock_run: Mock) -> None:
         """Assert that npm outdated, npm update, and npm list have been called."""

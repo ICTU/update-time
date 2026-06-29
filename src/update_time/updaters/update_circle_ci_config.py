@@ -10,10 +10,10 @@ from pathlib import Path
 
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, update_files
 from update_time.io.log import get_logger
-from update_time.sources.docker import get_latest_tag
+from update_time.sources.docker import IMAGE_REFERENCE, get_latest_tag
 
 LOG = get_logger("circleci")
-IMAGE_RE = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>sha256:[a-f0-9]{64}))?"
+IMAGE_RE = rf"image: {IMAGE_REFERENCE}"
 
 
 def update_circle_ci_config(circle_ci_dir: Path) -> int:
