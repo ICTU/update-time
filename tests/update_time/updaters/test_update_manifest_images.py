@@ -46,7 +46,7 @@ class UpdateManifestImagesTest(LoggingTestCase):
         assert_success(update_manifest_images())
         mock_manifest.write_text.assert_called_with(f"    image: selenium/standalone-firefox:149.0.3@{DIGEST2}\n")
         self.assert_path_logged(mock_manifest.relative_to())
-        self.assert_new_version_logged("selenium/standalone-firefox", "149.0.3")
+        self.assert_new_version_logged("selenium/standalone-firefox", "149.0.3", path=mock_manifest.relative_to())
         self.assert_no_warnings_logged()
 
     def test_pin_unpinned_image(self, mock_get: Mock, mock_glob: Mock):
@@ -56,7 +56,7 @@ class UpdateManifestImagesTest(LoggingTestCase):
         assert_success(update_manifest_images())
         mock_manifest.write_text.assert_called_with(f"    image: grafana/grafana:11.1.0@{DIGEST2}\n")
         self.assert_path_logged(mock_manifest.relative_to())
-        self.assert_new_version_logged("grafana/grafana", "11.1.0")
+        self.assert_new_version_logged("grafana/grafana", "11.1.0", path=mock_manifest.relative_to())
         self.assert_no_warnings_logged()
 
     def test_pin_unpinned_image_already_at_latest(self, mock_get: Mock, mock_glob: Mock):
@@ -66,7 +66,7 @@ class UpdateManifestImagesTest(LoggingTestCase):
         assert_success(update_manifest_images())
         mock_manifest.write_text.assert_called_with(f"    image: redis:7.2.0@{DIGEST3}\n")
         self.assert_path_logged(mock_manifest.relative_to())
-        self.assert_pinned_logged("redis", "7.2.0", DIGEST3)
+        self.assert_pinned_logged("redis", "7.2.0", DIGEST3, path=mock_manifest.relative_to())
         self.assert_no_warnings_logged()
 
     def test_variable_substitution_ignored(self, mock_get: Mock, mock_glob: Mock):

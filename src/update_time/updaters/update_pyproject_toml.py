@@ -62,7 +62,7 @@ def update_pyproject_toml(pyproject_toml: Path) -> None:
         changes = get_changes(package, version)
         published = get_publication_datetime(package, version)
         dependency_version = DependencyVersion(version, changes, published=published)
-        LOG.new_version(package, dependency_version)
+        LOG.new_version(package, dependency_version, pyproject_toml)
     latest_versions = Versions(dict(parse_line_with_update(line) for line in lines_with_updates))
     package_spec = re.compile(r'"(?P<name>[A-Za-z0-9_.\-]+)==(?P<version>[A-Za-z0-9_.\-]+)"')
     current_pyproject_toml = pyproject_toml.read_text()

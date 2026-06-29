@@ -70,7 +70,9 @@ class UpdatePackageJsonTest(LoggingTestCase):
         assert_success(update_package_jsons())
         self.assert_npm_called(mock_run)
         self.assert_path_logged(mock_package_json.relative_to())
-        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 10:26", "Changelog")
+        self.assert_new_version_logged(
+            "package", "1.1, published: 2026-05-30 10:26", "Changelog", path=mock_package_json.relative_to()
+        )
         self.assert_no_warnings_logged()
 
     def test_restore_git_url_dependencies(self, mock_run: Mock, mock_glob: Mock):
@@ -124,7 +126,9 @@ class UpdatePackageJsonTest(LoggingTestCase):
         mock_package_json.write_text.assert_not_called()
         self.assert_npm_called(mock_run)
         self.assert_path_logged(mock_package_json.relative_to())
-        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 10:26", "Changelog")
+        self.assert_new_version_logged(
+            "package", "1.1, published: 2026-05-30 10:26", "Changelog", path=mock_package_json.relative_to()
+        )
         self.assert_no_warnings_logged()
 
     def test_outdated_but_not_updated(self, mock_run: Mock, mock_glob: Mock):

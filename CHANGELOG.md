@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Include the file being updated in the "New version available" and "Pinned" messages (e.g. "New version available for humanize in docs/requirements.txt: 4.15.0" and "Pinned redis in docker-compose.yml to 7.2.0@sha256:..."), so it is clear which file the change applies to now that the per-file "Checking ..." progress is logged at `DEBUG`.
 
 ## 0.0.9 - 2026-06-29
 
@@ -22,7 +24,7 @@ No changes yet.
 
 ### Changed
 
-- Log available new versions at the `INFO` level instead of `WARNING`, so the `WARNING` level is reserved for genuinely unexpected situations. The per-file "checking ..." progress now logs at `DEBUG`.
+- Log available new versions at the `INFO` level instead of `WARNING`, so the `WARNING` level is reserved for genuinely unexpected situations. The per-file "Checking ..." progress now logs at `DEBUG`.
 
 ## 0.0.7 - 2026-06-28
 
