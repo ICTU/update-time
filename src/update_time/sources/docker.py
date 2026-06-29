@@ -123,11 +123,9 @@ def get_latest_tag(image: str, current_tag: str) -> DependencyVersion:
     if current.version is None:
         # Can't determine a newer tag if the tag doesn't contain a valid version
         return DependencyVersion(version=current_tag)
-    candidates = sorted(
-        (tag for name in _tag_names(image) if (tag := Tag(name=name)).is_candidate_for(current)),
-        key=lambda tag: cast("Version", tag.version),
-        reverse=True,
-    )
+    tags = [Tag(name=name) for name in _tag_names(image)]
+    candidates = [tag for tag in tags if tag.is_candidate_for(current)]
+    candidates.sort(key=lambda tag: cast("Version", tag.version), reverse=True)
     for candidate in candidates:
         latest = _get_tag(image, candidate.name)
         if latest is not None and latest.is_eligible:
