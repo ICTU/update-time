@@ -5,10 +5,13 @@ Note: This script only considers matching versions ("==") for upgrading. Version
 "package<=max version" as version spec.
 """
 
+import os
 import re
 import sys
+import tomllib
 from typing import TYPE_CHECKING
 
+from update_time.domain.cooldown import cooldown_days
 from update_time.domain.version import DependencyVersion
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
@@ -19,6 +22,22 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 LOG = get_logger("pyproject.toml")
+
+
+def exclude_newer_options(pyproject_toml: Path) -> list[str]:
+    """Return the uv option that applies Update-time's cooldown, or nothing if the project configures its own.
+
+    uv's `exclude-newer` is a publish-date cutoff that works as a cooldown (it accepts a relative duration such as
+    `7 days`). uv reads its own cutoff from the `UV_EXCLUDE_NEWER` environment variable or `[tool.uv]` in the
+    pyproject.toml; when either is set, that wins and Update-time adds nothing. The option is passed to both `uv
+    tree --outdated` and `uv lock --upgrade` so the reported and the locked versions agree.
+    """
+    if os.environ.get("UV_EXCLUDE_NEWER"):
+        return []
+    config = tomllib.loads(pyproject_toml.read_text())
+    if "exclude-newer" in config.get("tool", {}).get("uv", {}):
+        return []
+    return ["--exclude-newer", f"{cooldown_days()} days"]
 
 
 class Versions:
@@ -44,16 +63,17 @@ def parse_line_with_update(line: str) -> tuple[str, str]:
 def update_pyproject_toml(pyproject_toml: Path) -> None:
     """Update the pyproject.toml file with latest version of dependencies."""
     LOG.path(pyproject_toml)
+    # `uv tree --outdated` only honors the cooldown (exclude-newer) when not run with `--frozen`, so it is omitted.
     uv_tree = [
         "uv",
         "tree",
         "--directory",
         str(pyproject_toml.parent),
-        "--frozen",
         "--quiet",
         "--depth=1",
         "--all-groups",
         "--outdated",
+        *exclude_newer_options(pyproject_toml),
     ]
     outdated = run(uv_tree)
     lines_with_updates = [line for line in outdated.splitlines() if " (latest: " in line]
@@ -74,7 +94,8 @@ def update_pyproject_toml(pyproject_toml: Path) -> None:
 def update_uv_lock(pyproject_toml: Path) -> None:
     """Update the uv.lock file for the pyproject.toml."""
     LOG.path(pyproject_toml.parent / "uv.lock")
-    run(["uv", "lock", "--directory", str(pyproject_toml.parent), "--upgrade", "--quiet", "--no-progress"])
+    uv_lock = ["uv", "lock", "--directory", str(pyproject_toml.parent), "--upgrade", "--quiet", "--no-progress"]
+    run([*uv_lock, *exclude_newer_options(pyproject_toml)])
 
 
 def update_pyproject_tomls() -> int:

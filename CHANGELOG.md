@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Added
 
+- Apply Update-time's cooldown (the `--cooldown` value, default 7 days) to `pyproject.toml` dependency updates by passing it to uv's `exclude-newer` option, so freshly published releases are held back for both the `pyproject.toml` pins and the `uv.lock`. If the project already sets `exclude-newer` under `[tool.uv]` (or the `UV_EXCLUDE_NEWER` environment variable is set), Update-time leaves it untouched. Closes [#36](https://github.com/ICTU/update-time/issues/36).
 - Apply Update-time's cooldown (the `--cooldown` value, default 7 days) to npm dependency updates via npm's `min-release-age` option, so freshly published npm releases are held back like Docker images, GitHub Actions, and `requirements.txt` dependencies already are. If the project already configures a cooldown in its `.npmrc` (`min-release-age` or `before`), Update-time leaves it untouched. npm applies `min-release-age` from version 11.10.0 onwards; older npm versions ignore the option and update without a cooldown. Closes [#37](https://github.com/ICTU/update-time/issues/37).
 
 ### Fixed

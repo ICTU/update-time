@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 from unittest.mock import Mock, patch
 
+from update_time.domain.cooldown import COOLDOWN_DAYS
 from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 
 from tests.update_time.assertions import assert_success
@@ -11,6 +12,14 @@ from tests.update_time.helpers import LoggingTestCase, mock_path, mock_response,
 
 if TYPE_CHECKING:
     from update_time.sources.pypi import Release
+
+EXCLUDE_NEWER = ["--exclude-newer", f"{COOLDOWN_DAYS} days"]  # the uv cooldown option Update-time adds by default
+
+
+def pyproject(spec: str, *, exclude_newer: bool = False) -> str:
+    """Return a minimal valid pyproject.toml pinning the given dependency, optionally with its own uv cooldown."""
+    contents = f'[project]\ndependencies = ["{spec}"]\n'
+    return contents + '\n[tool.uv]\nexclude-newer = "2024-01-01"\n' if exclude_newer else contents
 
 
 @patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
@@ -45,18 +54,31 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         update = f" (latest: {latest})" if latest else ""
         return Mock(stdout=f"| {package}{update}\n")
 
+    def assert_exclude_newer(self, run: Mock, *, expected: bool) -> None:
+        """Assert the uv tree and uv lock commands carry (or omit) Update-time's exclude-newer cooldown option."""
+        commands = [call.args[0] for call in run.call_args_list]
+        uv_tree = next(command for command in commands if command[:2] == ["uv", "tree"])
+        uv_lock = next(command for command in commands if command[:2] == ["uv", "lock"])
+        self.assertNotIn("--frozen", uv_tree)  # --frozen would make uv tree --outdated ignore the cooldown
+        for command in (uv_tree, uv_lock):
+            if expected:
+                self.assertEqual(EXCLUDE_NEWER, command[-2:])
+            else:
+                self.assertNotIn("--exclude-newer", command)
+
     def test_update(self, run: Mock, get: Mock, glob: Mock):
-        """Test updating a pyproject.toml."""
+        """Test updating a pyproject.toml, with Update-time's cooldown passed to uv."""
         run.return_value = self.mock_update_on_stdout("package", "v1.1")
         get.return_value = mock_response(
             {"info": {"description": "Package"}, "urls": [{"upload_time_iso_8601": "2026-05-30T12:08:53.123321Z"}]}
         )
-        mock_pyproject_toml = self.create_pyproject_toml('"package==1.0"\n')
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
         glob.return_value = [mock_pyproject_toml]
         assert_success(update_pyproject_tomls())
-        mock_pyproject_toml.write_text.assert_called_with('"package==1.1"\n')
+        mock_pyproject_toml.write_text.assert_called_with(pyproject("package==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(mock_pyproject_toml, "package", "1.1, published: 2026-05-30 12:08")
+        self.assert_exclude_newer(run, expected=True)
         self.assert_no_warnings_logged()
 
     def test_update_with_changelog(self, run: Mock, get: Mock, glob: Mock):
@@ -66,10 +88,10 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             mock_response(self.pypi_metadata()),
             Mock(headers={"Content-Type": "text"}, text=self.changelog),
         ]
-        mock_pyproject_toml = self.create_pyproject_toml('"package_with_changelog==1.0"\n')
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_with_changelog==1.0"))
         glob.return_value = [mock_pyproject_toml]
         assert_success(update_pyproject_tomls())
-        mock_pyproject_toml.write_text.assert_called_with('"package_with_changelog==1.1"\n')
+        mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_changelog==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
             mock_pyproject_toml,
@@ -87,10 +109,10 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             Mock(text=self.changelog, headers={"Content-Type": "text/html"}),
             mock_response([{"tag_name": "v1.1"}]),
         ]
-        mock_pyproject_toml = self.create_pyproject_toml('"package_with_html_changelog==1.0"\n')
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_with_html_changelog==1.0"))
         glob.return_value = [mock_pyproject_toml]
         assert_success(update_pyproject_tomls())
-        mock_pyproject_toml.write_text.assert_called_with('"package_with_html_changelog==1.1"\n')
+        mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_html_changelog==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
             mock_pyproject_toml, "package_with_html_changelog", "1.1, published: 2026-05-30 12:07"
@@ -105,10 +127,10 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             mock_response([release_json("v1.1", body=self.changelog)]),
             mock_response({"sha": "sha"}),
         ]
-        mock_pyproject_toml = self.create_pyproject_toml('"package_with_github_releases==1.0"\n')
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_with_github_releases==1.0"))
         glob.return_value = [mock_pyproject_toml]
         assert_success(update_pyproject_tomls())
-        mock_pyproject_toml.write_text.assert_called_with('"package_with_github_releases==1.1"\n')
+        mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_github_releases==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
             mock_pyproject_toml,
@@ -122,10 +144,10 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         """Test updating a pyproject.toml without a GitHub URL."""
         run.return_value = self.mock_update_on_stdout("package_without_github_releases", "v1.1")
         get.return_value = mock_response(self.pypi_metadata(changelog_url="", repository="https://gitlab.com/org/repo"))
-        mock_pyproject_toml = self.create_pyproject_toml('"package_without_github_releases==1.0"\n')
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_without_github_releases==1.0"))
         glob.return_value = [mock_pyproject_toml]
         assert_success(update_pyproject_tomls())
-        mock_pyproject_toml.write_text.assert_called_with('"package_without_github_releases==1.1"\n')
+        mock_pyproject_toml.write_text.assert_called_with(pyproject("package_without_github_releases==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
             mock_pyproject_toml,
@@ -137,11 +159,32 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
     def test_unchanged(self, run: Mock, get: Mock, glob: Mock):
         """Test that the pyproject.toml is not written if there are no changes."""
         run.return_value = self.mock_update_on_stdout("package")
-        mock_pyproject_toml = self.create_pyproject_toml('"package==1.0"\n')
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
         glob.return_value = [mock_pyproject_toml]
         assert_success(update_pyproject_tomls())
         mock_pyproject_toml.write_text.assert_not_called()
         get.assert_not_called()
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+    def test_project_exclude_newer_respected(self, run: Mock, get: Mock, glob: Mock):
+        """Test that no cooldown option is added when the pyproject.toml sets its own uv exclude-newer."""
+        run.return_value = self.mock_update_on_stdout("package")
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0", exclude_newer=True))
+        glob.return_value = [mock_pyproject_toml]
+        assert_success(update_pyproject_tomls())
+        self.assert_exclude_newer(run, expected=False)
+        get.assert_not_called()
+        self.assert_no_warnings_logged()
+
+    @patch.dict("os.environ", {"UV_EXCLUDE_NEWER": "2024-01-01"})
+    def test_uv_exclude_newer_env_respected(self, run: Mock, get: Mock, glob: Mock):
+        """Test that no cooldown option is added when the UV_EXCLUDE_NEWER environment variable is set."""
+        run.return_value = self.mock_update_on_stdout("package")
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
+        glob.return_value = [mock_pyproject_toml]
+        assert_success(update_pyproject_tomls())
+        self.assert_exclude_newer(run, expected=False)
+        get.assert_not_called()
         self.assert_no_warnings_logged()
