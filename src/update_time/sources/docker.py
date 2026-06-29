@@ -1,6 +1,7 @@
 """Get the latest available tags from Docker Hub."""
 
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cache
@@ -14,6 +15,12 @@ from update_time.domain.version import DependencyVersion
 from update_time.io.log import get_logger
 
 LOG = get_logger("docker")
+
+# Listing tag names is done via the OCI registry's lightweight names-only endpoint (a single request returns every
+# tag name), after which only the chosen tag's metadata (digest and push date) is fetched from the Docker Hub API.
+OCI_REGISTRY = "https://registry-1.docker.io"
+OCI_AUTH_URL = "https://auth.docker.io/token"
+DOCKER_HUB_REGISTRY = "https://registry.hub.docker.com"
 
 
 @dataclass(frozen=True)
@@ -55,28 +62,38 @@ class Tag:
         name = f"{version}-{self.suffix}" if self.suffix else str(version)
         return Tag(name=name)
 
-    def is_eligible_as_update_of(self, current: Tag) -> bool:
-        """Return whether this tag is eligible as an update of the current tag."""
+    def is_candidate_for(self, current: Tag) -> bool:
+        """Return whether this tag (known by name only) is a possible update of the current tag.
+
+        These are the checks that can be made from the tag name alone, used to narrow the set of tags whose
+        metadata (digest and push date) is worth fetching.
+        """
         if self.version is None:
             return False  # Ignore tags if the version is not valid
-        if not self.digest:
-            return False  # Ignore tags without digest
         if self.version.is_prerelease:
             return False  # Ignore tags if the version is a prerelease
         if self.suffix != current.suffix:
             return False  # Ignore tags with a different suffix because we don't want to change e.g. fat to slim
-        return not self.within_cooldown  # Ignore tags pushed within the cooldown period
+        return cast("Version", current.version) <= self.version  # Ignore tags older than the current tag
+
+    @property
+    def is_eligible(self) -> bool:
+        """Return whether this tag (with metadata fetched) can be used: it has a digest and is past the cooldown.
+
+        The name-only checks have already been made by `is_candidate_for` before the metadata was fetched.
+        """
+        return bool(self.digest) and not self.within_cooldown
 
 
 def is_docker_hub_image(image: str) -> bool:
     """Return whether the image reference points to Docker Hub rather than another registry.
 
-    A reference is on Docker Hub when it uses an explicit Docker Hub host (e.g. ``docker.io/library/redis``) or no
+    A reference is on Docker Hub when it uses an explicit Docker Hub host (e.g. `docker.io/library/redis`) or no
     registry host at all. Following the rule Docker's reference parser uses to split the registry domain from the
-    image name (``splitDockerDomain`` in https://github.com/distribution/reference/blob/main/normalize.go), the
-    first path component is a registry host when it contains a ``.`` or a ``:``, equals ``localhost``, or contains
-    an uppercase character (repository namespaces must be lowercase). So ``registry.gitlab.com/...``, ``gcr.io/...``
-    and ``localhost:5000/...`` are not on Docker Hub; ``python``, ``cimg/go`` and ``docker.io/library/redis`` are.
+    image name (`splitDockerDomain` in https://github.com/distribution/reference/blob/main/normalize.go), the
+    first path component is a registry host when it contains a `.` or a `:`, equals `localhost`, or contains
+    an uppercase character (repository namespaces must be lowercase). So `registry.gitlab.com/...`, `gcr.io/...`
+    and `localhost:5000/...` are not on Docker Hub; `python`, `cimg/go` and `docker.io/library/redis` are.
     """
     host = image.split("/", maxsplit=1)[0]
     if host.endswith("docker.io"):
@@ -89,6 +106,10 @@ def get_latest_tag(image: str, current_tag: str) -> DependencyVersion:
 
     Returns the digest of the resulting tag, including when the current version is already the latest, so that
     unpinned references can be pinned without bumping their version.
+
+    Lists all tag names in one request, then fetches metadata for the highest candidate versions until one is
+    eligible (it has a digest and was pushed before the cooldown). Normally that's the very first fetch; only
+    versions newer than the latest eligible one (those still within the cooldown) are fetched and skipped.
     """
     if not is_docker_hub_image(image):
         # Images on other registries aren't on Docker Hub; leave them unchanged without making a request.
@@ -97,46 +118,94 @@ def get_latest_tag(image: str, current_tag: str) -> DependencyVersion:
     if current.version is None:
         # Can't determine a newer tag if the tag doesn't contain a valid version
         return DependencyVersion(version=current_tag)
-    best: Tag | None = None
-    for tag in _get_available_tags(image):
-        eligible = tag.is_eligible_as_update_of(current) and cast("Version", tag.version) >= current.version
-        if eligible and (best is None or cast("Version", tag.version) > cast("Version", best.version)):
-            best = tag
-    if best is None:
-        return DependencyVersion(version=current_tag)
-    name = current.with_version(cast("Version", best.version)).name
-    return DependencyVersion(version=name, sha=best.digest, published=best.last_pushed)
+    candidates = sorted(
+        (tag for name in _tag_names(image) if (tag := Tag(name=name)).is_candidate_for(current)),
+        key=lambda tag: cast("Version", tag.version),
+        reverse=True,
+    )
+    for candidate in candidates:
+        latest = _get_tag(image, candidate.name)
+        if latest is not None and latest.is_eligible:
+            name = current.with_version(cast("Version", latest.version)).name
+            return DependencyVersion(version=name, sha=latest.digest, published=latest.last_pushed)
+    return DependencyVersion(version=current_tag)
+
+
+def _repository(image: str) -> str:
+    """Return the `namespace/repository` path for an image, e.g. `node` -> `library/node`."""
+    host, _, remainder = image.partition("/")
+    if remainder and host.endswith("docker.io"):
+        image = remainder  # Drop the explicit Docker Hub host, e.g. docker.io/library/redis -> library/redis.
+    return image if "/" in image else f"library/{image}"
 
 
 @cache
-def _get_available_tags(image: str) -> list[Tag]:
-    """Fetch available tags for a Docker image from Docker Hub.
+def _tag_names(image: str) -> list[str]:
+    """Fetch all tag names for a Docker image from the OCI registry's names-only listing.
 
     Some references look like Docker Hub images but aren't, e.g. CircleCI machine images such as `ubuntu-2204`
     (other-registry images are already filtered out by `is_docker_hub_image`). These return a 404 (or another
     error); log the response and skip the image so the reference is left unchanged, rather than crashing the run.
     """
-    host, _, remainder = image.partition("/")
-    if remainder and host.endswith("docker.io"):
-        image = remainder  # Drop the explicit Docker Hub host, e.g. docker.io/library/redis -> library/redis.
-    namespace, repository = image.split("/", maxsplit=1) if "/" in image else ("library", image)
-    url = f"https://registry.hub.docker.com/v2/namespaces/{namespace}/repositories/{repository}/tags?page_size=100"
-    tags: list[Tag] = []
+    repository = _repository(image)
+    headers = {"Authorization": f"Bearer {_oci_token(repository)}"}
+    url: str | None = f"{OCI_REGISTRY}/v2/{repository}/tags/list?n=1000"
+    names: list[str] = []
     while url:
-        response = requests.get(url, headers=_docker_hub_headers(), timeout=10)
+        response = requests.get(url, headers=headers, timeout=10)
         if not response.ok:
             LOG.response(response)
             break
-        json = response.json()
-        tags.extend(Tag.from_json(result) for result in json.get("results", []))
-        url = json.get("next")
-    return tags
+        names.extend(response.json().get("tags") or [])
+        url = _next_page_url(response)
+    return names
+
+
+def _next_page_url(response: requests.Response) -> str | None:
+    """Return the URL of the next page of tag names from the response's Link header, if any."""
+    if match := re.search(r'<([^>]+)>\s*;\s*rel="next"', response.headers.get("Link", "")):
+        path = match.group(1)
+        return f"{OCI_REGISTRY}{path}" if path.startswith("/") else path
+    return None
+
+
+@cache
+def _oci_token(repository: str) -> str:
+    """Return a pull token for the OCI registry's tag-listing endpoint.
+
+    Authenticates with the DOCKER_HUB_USERNAME/DOCKER_HUB_TOKEN credentials when set (for a higher rate limit),
+    like the per-tag metadata requests do; otherwise an anonymous token is requested.
+    """
+    url = f"{OCI_AUTH_URL}?service=registry.docker.io&scope=repository:{repository}:pull"
+    response = requests.get(url, timeout=10, auth=_docker_hub_credentials())
+    response.raise_for_status()
+    return response.json()["token"]
+
+
+@cache
+def _get_tag(image: str, name: str) -> Tag | None:
+    """Fetch a single tag's metadata (digest and push date) from the Docker Hub API, or None if it can't be found."""
+    namespace, repository = _repository(image).split("/", maxsplit=1)
+    url = f"{DOCKER_HUB_REGISTRY}/v2/namespaces/{namespace}/repositories/{repository}/tags/{name}"
+    response = requests.get(url, headers=_docker_hub_headers(), timeout=10)
+    if not response.ok:
+        LOG.response(response)
+        return None
+    return Tag.from_json(response.json())
+
+
+def _docker_hub_credentials() -> tuple[str, str] | None:
+    """Return the (username, token) Docker Hub credentials if both DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN are set."""
+    username = os.environ.get("DOCKER_HUB_USERNAME")
+    token = os.environ.get("DOCKER_HUB_TOKEN")
+    return (username, token) if username and token else None
 
 
 @cache
 def _docker_hub_headers() -> dict[str, str]:
     """Return Docker Hub API request headers with bearer token if DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN are set."""
-    if (token := os.environ.get("DOCKER_HUB_TOKEN")) and (username := os.environ.get("DOCKER_HUB_USERNAME")):
+    if credentials := _docker_hub_credentials():
+        username, token = credentials
         url = "https://hub.docker.com/v2/auth/token"
         response = requests.post(url, timeout=10, json={"identifier": username, "secret": token})
         response.raise_for_status()
