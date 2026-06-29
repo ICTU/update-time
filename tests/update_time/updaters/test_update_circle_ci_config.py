@@ -77,3 +77,24 @@ class UpdateCircleCIConfigTest(LoggingTestCase):
         self.assert_path_logged(config_yml)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
+
+    def test_machine_image_skipped(self, mock_glob: Mock, mock_get: Mock):
+        """Test that a machine-executor image is left unchanged and not looked up on Docker Hub (no warning)."""
+        config_yml = mock_path("jobs:\n  build:\n    machine:\n      image: ubuntu-2204:2024.01.1\n")
+        mock_glob.side_effect = [[config_yml], []]
+        assert_success(update_circle_ci_config(CIRCLE_CI_DIR))
+        config_yml.write_text.assert_not_called()
+        mock_get.assert_not_called()  # the machine image is recognised by parsing the YAML, not by querying Docker Hub
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+    def test_docker_image_with_auth_before_image(self, mock_glob: Mock, mock_get: Mock):
+        """Test that a Docker image is updated even when its list item lists `auth:` before `image:`."""
+        mock_get.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST2))
+        config = "jobs:\n  build:\n    docker:\n      - auth:\n          username: u\n        image: cimg/python:3.13\n"
+        config_yml = mock_path(config)
+        mock_glob.side_effect = [[config_yml], []]
+        assert_success(update_circle_ci_config(CIRCLE_CI_DIR))
+        config_yml.write_text.assert_called_with(config.replace("cimg/python:3.13", f"cimg/python:3.14@{DIGEST2}"))
+        self.assert_new_version_logged(config_yml, "cimg/python", "3.14")
+        self.assert_no_warnings_logged()
