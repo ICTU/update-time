@@ -10,7 +10,7 @@ from packaging.version import Version
 
 from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.version import DependencyVersion, is_valid
+from update_time.domain.version import DependencyName, DependencyVersion, VersionString, is_valid
 from update_time.io.log import get_logger
 from update_time.sources.github import changes_from_release, github_owner_and_repository, github_to_raw
 
@@ -68,7 +68,7 @@ def release_datetime(urls: list[Distribution]) -> datetime | None:
     return datetime.fromisoformat(max(url["upload_time_iso_8601"] for url in urls)) if urls else None
 
 
-def get_latest_version(package: str, current_version: str) -> DependencyVersion:
+def get_latest_version(package: DependencyName, current_version: VersionString) -> DependencyVersion:
     """Return the latest stable release of the package that is available outside the cooldown window.
 
     Pre-releases, dev-releases, yanked releases, and releases still within the cooldown period are ignored.

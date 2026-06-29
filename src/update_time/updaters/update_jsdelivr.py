@@ -7,7 +7,7 @@ from pathlib import Path
 import requests
 from packaging.version import InvalidVersion, Version
 
-from update_time.domain.version import DependencyVersion
+from update_time.domain.version import DependencyName, DependencyVersion, VersionString
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.sources.npmjs import get_publication_datetime
@@ -22,7 +22,7 @@ JSDELIVR_RE = re.compile(
 )
 
 
-def get_latest_version(dependency: str, current_version_string: str) -> DependencyVersion:
+def get_latest_version(dependency: DependencyName, current_version_string: VersionString) -> DependencyVersion:
     """Fetch the latest version and matching integrity hash for the dependency."""
     current_version = Version(current_version_string)
     latest_version = _get_latest_version(dependency, current_version)
@@ -80,5 +80,10 @@ def update_jsdelivrs() -> int:
     return 0
 
 
+def main() -> int:  # pragma: no cover
+    """Update the jsDelivr URLs in the repository's Sphinx configuration."""
+    return update_jsdelivrs()
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(update_jsdelivrs())
+    sys.exit(main())

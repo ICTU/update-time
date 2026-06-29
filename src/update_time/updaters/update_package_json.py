@@ -73,5 +73,10 @@ def update_package_jsons() -> int:
     return max(results, default=0)
 
 
+def main() -> int:  # pragma: no cover
+    """Update the dependencies in the repository's package.json files."""
+    return update_package_jsons()
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(update_package_jsons())
+    sys.exit(main())

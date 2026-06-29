@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from update_time.domain.version import DependencyVersion
+from update_time.domain.version import DependencyName, DependencyVersion, VersionString
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob, update_file
 from update_time.io.log import get_logger
 from update_time.sources.docker import IMAGE_REFERENCE, get_latest_tag
@@ -41,7 +41,7 @@ def update_circle_ci_yaml(config_file: Path) -> int:
     """Update the Docker images in a single CircleCI YAML file, leaving machine-executor images unchanged."""
     machine = machine_images(yaml.safe_load(config_file.read_text()))
 
-    def get_new_version(dependency: str, version: str) -> DependencyVersion:
+    def get_new_version(dependency: DependencyName, version: VersionString) -> DependencyVersion:
         if f"{dependency}:{version}" in machine:
             return DependencyVersion(version=version)  # Leave machine images unchanged; they aren't on a registry
         return get_latest_tag(dependency, version)
@@ -55,5 +55,10 @@ def update_circle_ci_config(circle_ci_dir: Path) -> int:
     return max(results, default=0)
 
 
+def main() -> int:  # pragma: no cover
+    """Update the images in the repository's CircleCI configuration."""
+    return update_circle_ci_config(Path.cwd() / ".circleci")
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(update_circle_ci_config(Path.cwd() / ".circleci"))
+    sys.exit(main())

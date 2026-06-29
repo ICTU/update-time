@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import ANY, Mock, patch
 
 import update_time
-from update_time.domain.version import DependencyVersion
+from update_time.domain.version import DependencyVersion, NewVersionGetter, VersionString
 from update_time.io.log import Logger
 from update_time.sources.docker import _docker_hub_headers as docker_hub_headers
 from update_time.sources.docker import _get_tag as docker_get_tag
@@ -133,7 +133,7 @@ class LoggingTestCase(CacheClearingTestCase):
         self.mock_warning.assert_not_called()
 
 
-def new_version_getter(version: str, sha: str = "") -> Callable[[str, str], DependencyVersion]:
+def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGetter:
     """Return a new-version-getter."""
     return lambda *_args: DependencyVersion(version=version, sha=sha)
 

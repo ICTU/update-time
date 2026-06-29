@@ -20,5 +20,10 @@ def update_dockerfiles() -> int:
     return update_files("Dockerfile", regexp=IMAGE_RE, get_new_version=get_latest_tag, logger=LOG)
 
 
+def main() -> int:  # pragma: no cover
+    """Update the base images in the repository's Dockerfiles."""
+    return update_dockerfiles()
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(update_dockerfiles())
+    sys.exit(main())

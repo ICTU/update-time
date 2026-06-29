@@ -90,5 +90,10 @@ def update_node_engines() -> int:
     return max(results, default=0)
 
 
+def main() -> int:  # pragma: no cover
+    """Update the Node engines in the repository's package.json files."""
+    return update_node_engines()
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(update_node_engines())
+    sys.exit(main())

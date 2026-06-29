@@ -26,5 +26,10 @@ def update_gitlab_ci_config(gitlab_ci_config: Path) -> int:
     return update_file(gitlab_ci_config, IMAGE_RE, get_latest_tag, LOG)
 
 
+def main() -> int:  # pragma: no cover
+    """Update the images in the repository's GitLab CI configuration."""
+    return update_gitlab_ci_config(Path.cwd() / ".gitlab-ci.yml")
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(update_gitlab_ci_config(Path.cwd() / ".gitlab-ci.yml"))
+    sys.exit(main())
