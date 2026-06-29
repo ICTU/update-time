@@ -59,7 +59,7 @@ def installed_versions(directory: Path) -> dict[str, str]:
 def update_package_json(package_json: Path) -> int:
     """Update the package.json and package-lock.json."""
     if (manager := package_manager(package_json)) != "npm":
-        LOG.skipped(package_json, f"{manager} is not supported, only npm")
+        LOG.unsupported_package_manager(package_json, manager, "npm")
         return 0
     LOG.path(package_json)
     original_contents = package_json.read_text()

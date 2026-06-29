@@ -197,8 +197,8 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         run.assert_not_called()
         get.assert_not_called()
         mock_pyproject_toml.write_text.assert_not_called()
-        self.assert_skipped_logged(mock_pyproject_toml, "poetry is not supported, only uv")
-        self.assert_no_warnings_logged()
+        self.assert_unsupported_package_manager_logged(mock_pyproject_toml, "poetry", "uv")
+        self.assert_no_new_version_logged()
 
     @patch("pathlib.Path.exists", Mock(return_value=True))
     def test_skip_non_uv_lockfile(self, run: Mock, get: Mock, glob: Mock):
@@ -209,5 +209,5 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         run.assert_not_called()
         get.assert_not_called()
         mock_pyproject_toml.write_text.assert_not_called()
-        self.assert_skipped_logged(mock_pyproject_toml, "poetry is not supported, only uv")
-        self.assert_no_warnings_logged()
+        self.assert_unsupported_package_manager_logged(mock_pyproject_toml, "poetry", "uv")
+        self.assert_no_new_version_logged()

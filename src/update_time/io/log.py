@@ -105,8 +105,13 @@ class Logger:
         self._log(self.log.debug, "Checking if there are updates for %s", path.relative_to(Path.cwd()))
 
     def skipped(self, path: Path, reason: str) -> None:
-        """Log that a file was skipped without being checked for updates."""
+        """Log that a file was deliberately skipped without being checked for updates."""
         self._log(self.log.info, "Skipping %s: %s", path.relative_to(Path.cwd()), reason)
+
+    def unsupported_package_manager(self, path: Path, manager: str, supported: str) -> None:
+        """Warn that a file is managed by an unsupported package manager, so its dependencies are left unchanged."""
+        message = "Skipping %s: %s is not supported, only %s"
+        self._log(self.log.warning, message, path.relative_to(Path.cwd()), manager, supported)
 
     def expected_node_base_image(self, dockerfile: Path) -> None:
         """Log missing Node base image."""
