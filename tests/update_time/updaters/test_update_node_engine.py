@@ -16,9 +16,7 @@ class UpdateNodeEnginesTest(LoggingTestCase):
 
     def create_package_json(self, contents: str = '{"engines": {"node": "18" }}') -> Mock:
         """Create a mock package.json file."""
-        mock_package_json = mock_path(contents)
-        mock_package_json.parent = Path("/")
-        return mock_package_json
+        return mock_path(contents, parent=Path("/"))
 
     @patch("pathlib.Path.exists", Mock(return_value=True))
     @patch("pathlib.Path.read_text", Mock(return_value="FROM node:18"))

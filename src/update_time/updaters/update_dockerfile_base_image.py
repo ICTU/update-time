@@ -9,10 +9,10 @@ import sys
 
 from update_time.io.filesystem import update_files
 from update_time.io.log import get_logger
-from update_time.sources.docker import get_latest_tag
+from update_time.sources.docker import IMAGE_REFERENCE, get_latest_tag
 
 LOG = get_logger("dockerfile")
-IMAGE_RE = r"FROM (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>sha256:[a-f0-9]{64}))?"
+IMAGE_RE = rf"FROM {IMAGE_REFERENCE}"
 
 
 def update_dockerfiles() -> int:

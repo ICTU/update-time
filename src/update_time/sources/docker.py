@@ -16,6 +16,11 @@ from update_time.io.log import get_logger
 
 LOG = get_logger("docker")
 
+# A Docker image reference as it appears in files: `dependency:version` with an optional `@sha256:digest`. Updaters
+# prefix this with the keyword that introduces the reference in their file format (e.g. `FROM ` or `image: `). The
+# digest is optional but a concrete version tag is required, so references through a variable (`${VAR}`) don't match.
+IMAGE_REFERENCE = r"(?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>sha256:[a-f0-9]{64}))?"
+
 # Listing tag names is done via the OCI registry's lightweight names-only endpoint (a single request returns every
 # tag name), after which only the chosen tag's metadata (digest and push date) is fetched from the Docker Hub API.
 OCI_REGISTRY = "https://registry-1.docker.io"

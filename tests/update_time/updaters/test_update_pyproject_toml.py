@@ -38,9 +38,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     def create_pyproject_toml(self, contents: str) -> Mock:
         """Create a mock pyproject.toml file."""
-        mock_pyproject_toml = mock_path(contents)
-        mock_pyproject_toml.parent = Path("/")
-        return mock_pyproject_toml
+        return mock_path(contents, parent=Path("/"))
 
     def mock_update_on_stdout(self, package: str, latest: str = "") -> Mock:
         """Mock stdout with optional package update."""

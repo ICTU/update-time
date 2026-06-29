@@ -153,9 +153,12 @@ def mock_response(json: Mapping | list | None = None, **kwargs: object) -> Mock:
 mock_docker_hub_auth = patch("requests.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec[B105]
 
 
-def mock_path(content: str) -> Mock:
-    """Return a mock Path with the given text content and a no-op relative_to()."""
-    return Mock(relative_to=Mock(return_value=Mock(parts=[])), read_text=Mock(return_value=content))
+def mock_path(content: str, parent: Path | None = None) -> Mock:
+    """Return a mock Path with the given text content, an optional parent, and a no-op relative_to()."""
+    path = Mock(relative_to=Mock(return_value=Mock(parts=[])), read_text=Mock(return_value=content))
+    if parent is not None:
+        path.parent = parent
+    return path
 
 
 def release_json(tag_name: str, **extra: object) -> dict[str, object]:
