@@ -57,7 +57,7 @@ In `requirements.txt` files only exact `==` pins are updated. The following are 
 
 References that are not yet pinned are pinned automatically:
 
-- **Docker images** referenced by tag only — base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, and Docker Compose / Helm manifest images — get the `@sha256:digest` of the (latest) tag appended, so the image is reproducible. Images without a concrete version tag are ignored: references through a template (`{{ ... }}`) or variable substitution (`${VAR}`), and tagless base images such as `FROM scratch` or stage references.
+- **Docker images** referenced by tag only — base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, and Docker Compose / Helm manifest images — get the `@sha256:digest` of the (latest) tag appended, so the image is reproducible. Images without a concrete version tag are ignored: references through a template (`{{ ... }}`) or variable substitution (`${VAR}`), and tagless base images such as `FROM scratch` or stage references. CircleCI machine-executor images (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) are also left alone, since they are not Docker Hub images.
 - **GitHub Actions** referenced by version tag only (e.g. `uses: actions/checkout@v4`) are pinned to the commit SHA of the latest version, with the version added as a trailing comment (e.g. `uses: actions/checkout@<sha> # v4.1.1`). Actions referenced by a branch (e.g. `@main`) are left untouched because they don't resolve to a version.
 
 ## Cooldown
