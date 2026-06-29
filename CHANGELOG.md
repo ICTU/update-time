@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.9 - 2026-06-29
+
 ### Changed
 
 - Resolve the latest Docker Hub tag by listing tag names once (via the registry's names-only endpoint) and then fetching metadata only for the chosen tag, instead of paginating through every tag's full metadata. For heavily-tagged images such as `node` (~9,000 tags) this cuts the number of requests per image from ~90 to a handful. Closes [#34](https://github.com/ICTU/update-time/issues/34).
