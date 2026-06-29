@@ -89,7 +89,12 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
         composite_action_yaml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
         self.assert_path_logged(composite_action_yaml.relative_to())
-        self.assert_new_version_logged("action/action", "1.1", "Suppressing changelog already shown, see above")
+        self.assert_new_version_logged(
+            "action/action",
+            "1.1",
+            "Suppressing changelog already shown, see above",
+            path=composite_action_yaml.relative_to(),
+        )
         self.assert_no_warnings_logged()
 
     def test_file_without_actions(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -123,7 +128,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
         mock_get_latest_version.assert_called_once_with("actions/checkout", "4")
         self.assert_path_logged(workflow_yml.relative_to())
-        self.assert_pinned_logged("actions/checkout", "4.1.1", NEW_SHA)
+        self.assert_pinned_logged("actions/checkout", "4.1.1", NEW_SHA, path=workflow_yml.relative_to())
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 

@@ -43,7 +43,7 @@ def update_package_json(package_json: Path) -> int:
             changes = get_changes(package, new_version)
             published = get_publication_datetime(package, new_version)
             package_version = DependencyVersion(new_version, changes, published=published)
-            LOG.new_version(package, package_version)
+            LOG.new_version(package, package_version, package_json)
     # npm normalizes specs (e.g. git URLs to the github: shorthand) whenever it saves package.json. When nothing
     # was actually updated, restore the original manifest so that reformatting doesn't produce a spurious diff.
     if not updated and package_json.read_text() != original_contents:

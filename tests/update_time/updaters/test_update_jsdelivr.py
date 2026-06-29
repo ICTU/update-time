@@ -1,5 +1,6 @@
 """Unit tests for the jsdelivr CDN URLs update script."""
 
+from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
 from update_time.updaters.update_jsdelivr import get_latest_version, update_jsdelivr, update_jsdelivrs
@@ -76,12 +77,14 @@ class UpdateJsdelivrTest(LoggingTestCase):
             mock_response(FLAT_FILES),
             mock_response({"time": {"2.0.12": "20260530T10:14:40.567Z"}}),
         ]
-        new_content = update_jsdelivr(CONF)
+        new_content = update_jsdelivr(CONF, Path.cwd() / "docs" / "conf.py")
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", new_content)
         self.assertIn(f'"integrity": "sha256-{HASH2}"', new_content)
         self.assertNotIn("2.0.11", new_content)
         self.assertNotIn(HASH1, new_content)
-        self.assert_new_version_logged("clipboard", "2.0.12, published: 2026-05-30 10:14", "No changelog available!")
+        self.assert_new_version_logged(
+            "clipboard", "2.0.12, published: 2026-05-30 10:14", "No changelog available!", path=Path("docs/conf.py")
+        )
         self.assert_no_warnings_logged()
 
     def test_unchanged(self, mock_get: Mock):
@@ -90,7 +93,7 @@ class UpdateJsdelivrTest(LoggingTestCase):
             mock_response({"tags": {"latest": "2.0.11"}}),
             mock_response({"time": {"2.0.11": "20260530T10:14:40.567Z"}}),
         ]
-        self.assertEqual(CONF, update_jsdelivr(CONF))
+        self.assertEqual(CONF, update_jsdelivr(CONF, Path.cwd() / "docs" / "conf.py"))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -114,7 +117,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", written)
         self.assertIn(f'"integrity": "sha256-{HASH2}"', written)
         self.assert_path_logged(mock_conf.relative_to())
-        self.assert_new_version_logged("clipboard", ANY, ANY)
+        self.assert_new_version_logged("clipboard", ANY, ANY, path=mock_conf.relative_to())
         self.assert_no_warnings_logged()
 
     def test_no_changes(self, mock_get: Mock, mock_glob: Mock):

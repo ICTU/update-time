@@ -29,7 +29,7 @@ def glob(*glob_patterns: str, start: Path | None = None) -> Iterator[Path]:
 
 
 def _update_line(
-    line: str, regexp: str, get_new_version: Callable[[str, str], DependencyVersion], logger: Logger
+    line: str, regexp: str, get_new_version: Callable[[str, str], DependencyVersion], logger: Logger, path: Path
 ) -> str:
     """Update the line with the new version (and digest) if any, or return the line unchanged.
 
@@ -50,11 +50,11 @@ def _update_line(
     if pin_unpinned:
         # Append the digest to a previously unpinned reference, bumping the version too if a newer one is available.
         if version_changed:
-            logger.new_version(dependency, latest_version)
+            logger.new_version(dependency, latest_version, path)
         else:
-            logger.pinned(dependency, latest_version)
+            logger.pinned(dependency, latest_version, path)
         return line.replace(f"{dependency}:{version}", f"{dependency}:{latest_version.version}@{latest_version.sha}")
-    logger.new_version(dependency, latest_version)
+    logger.new_version(dependency, latest_version, path)
     if current_sha is not None:
         line = line.replace(current_sha, latest_version.sha)
     return line.replace(version, latest_version.version)
@@ -66,7 +66,7 @@ def update_file(
     """Update the lines in the file and write back the file if the new lines are different from the old lines."""
     logger.path(path)
     old_lines = path.read_text().splitlines()
-    new_lines = [_update_line(line, regexp, get_new_version, logger) for line in old_lines]
+    new_lines = [_update_line(line, regexp, get_new_version, logger, path) for line in old_lines]
     if old_lines != new_lines:
         path.write_text("\n".join(new_lines) + "\n")
     return 0

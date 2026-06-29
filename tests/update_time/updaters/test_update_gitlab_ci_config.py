@@ -31,7 +31,7 @@ class UpdateGitLabCIConfigTest(LoggingTestCase):
         assert_success(update_gitlab_ci_config(config))
         config.write_text.assert_called_with(f"image: python:3.14.2@{DIGEST2}\n")
         self.assert_path_logged(config.relative_to())
-        self.assert_new_version_logged("python", "3.14.2")
+        self.assert_new_version_logged("python", "3.14.2", path=config.relative_to())
         self.assert_no_warnings_logged()
 
     def test_pin_unpinned_image(self, mock_get: Mock):
@@ -41,7 +41,7 @@ class UpdateGitLabCIConfigTest(LoggingTestCase):
         assert_success(update_gitlab_ci_config(config))
         config.write_text.assert_called_with(f"image: rust:1.76@{DIGEST2}\n")
         self.assert_path_logged(config.relative_to())
-        self.assert_new_version_logged("rust", "1.76")
+        self.assert_new_version_logged("rust", "1.76", path=config.relative_to())
         self.assert_no_warnings_logged()
 
     def test_variable_reference_ignored(self, mock_get: Mock):

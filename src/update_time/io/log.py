@@ -68,8 +68,8 @@ class Logger:
         """Emit a log record, attributing it to the updater that triggered it rather than a helper."""
         log_method(msg, *args, stacklevel=_caller_stacklevel())
 
-    def new_version(self, dependency: str, version: DependencyVersion) -> None:
-        """Log the availability of a new version, including its publication date in UTC when known."""
+    def new_version(self, dependency: str, version: DependencyVersion, path: Path) -> None:
+        """Log the availability of a new version for a dependency in a file, with its UTC publication date if known."""
         if (dependency, version) in self.logged_changes:
             changes = "Suppressing changelog already shown, see above"
         else:
@@ -78,11 +78,15 @@ class Logger:
         new_version = version.version
         if version.published is not None:
             new_version += f", published: {version.published.astimezone(UTC):%Y-%m-%d %H:%M}"
-        self._log(self.log.info, "New version available for %s: %s\n%s", dependency, new_version, changes)
+        relative_path = path.relative_to(Path.cwd())
+        self._log(
+            self.log.info, "New version available for %s in %s: %s\n%s", dependency, relative_path, new_version, changes
+        )
 
-    def pinned(self, dependency: str, version: DependencyVersion) -> None:
-        """Log that a previously unpinned reference was pinned to a digest, without changing its version."""
-        self._log(self.log.info, "Pinned %s to %s@%s", dependency, version.version, version.sha)
+    def pinned(self, dependency: str, version: DependencyVersion, path: Path) -> None:
+        """Log that a previously unpinned reference in a file was pinned to a digest, without changing its version."""
+        relative_path = path.relative_to(Path.cwd())
+        self._log(self.log.info, "Pinned %s in %s to %s@%s", dependency, relative_path, version.version, version.sha)
 
     def invalid_version(self, dependency: str, invalid_version: str) -> None:
         """Log an invalid version."""

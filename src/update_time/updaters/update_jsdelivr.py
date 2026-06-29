@@ -55,7 +55,7 @@ def _get_integrity_hash(dependency: str, version: Version) -> str:
     return f"sha256-{file_hash}"
 
 
-def update_jsdelivr(content: str) -> str:
+def update_jsdelivr(content: str, path: Path) -> str:
     """Update the version and integrity hash of all jsDelivr URLs in the content."""
 
     def replace(match: re.Match[str]) -> str:
@@ -63,7 +63,7 @@ def update_jsdelivr(content: str) -> str:
         latest_version = get_latest_version(dependency, version)
         if latest_version.version == version:
             return match.group(0)
-        LOG.new_version(dependency, latest_version)
+        LOG.new_version(dependency, latest_version, path)
         return match.group(0).replace(version, latest_version.version).replace(match.group("sha"), latest_version.sha)
 
     return JSDELIVR_RE.sub(replace, content)
@@ -74,7 +74,7 @@ def update_jsdelivrs() -> int:
     for sphinx_config_py in glob("conf.py", start=Path.cwd() / "docs"):
         LOG.path(sphinx_config_py)
         old_content = sphinx_config_py.read_text()
-        new_content = update_jsdelivr(old_content)
+        new_content = update_jsdelivr(old_content, sphinx_config_py)
         if new_content != old_content:
             sphinx_config_py.write_text(new_content)
     return 0

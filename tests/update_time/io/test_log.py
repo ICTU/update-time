@@ -20,14 +20,21 @@ class LoggerTests(TestCase):
     def test_suppress_repeated_changelog(self, mock_info: Mock):
         """Test that a repeated changelog is suppressed."""
         logger = Logger("suppress changelog")
-        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"))
+        path = Path.cwd() / "pyproject.toml"
+        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), path)
         mock_info.assert_called_once_with(
-            "New version available for %s: %s\n%s", "dependency", "1.0", "Changelog", stacklevel=ANY
-        )
-        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"))
-        mock_info.assert_called_with(
-            "New version available for %s: %s\n%s",
+            "New version available for %s in %s: %s\n%s",
             "dependency",
+            Path("pyproject.toml"),
+            "1.0",
+            "Changelog",
+            stacklevel=ANY,
+        )
+        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), path)
+        mock_info.assert_called_with(
+            "New version available for %s in %s: %s\n%s",
+            "dependency",
+            Path("pyproject.toml"),
             "1.0",
             "Suppressing changelog already shown, see above",
             stacklevel=ANY,
@@ -36,17 +43,24 @@ class LoggerTests(TestCase):
     @patch("logging.Logger.info")
     def test_new_version_without_publication_date(self, mock_info: Mock):
         """Test that the version is logged without a publication date when it is unknown."""
-        Logger("no date").new_version("dependency", DependencyVersion("1.0", "Changelog"))
+        Logger("no date").new_version("dependency", DependencyVersion("1.0", "Changelog"), Path.cwd() / "a.txt")
         mock_info.assert_called_once_with(
-            "New version available for %s: %s\n%s", "dependency", "1.0", "Changelog", stacklevel=ANY
+            "New version available for %s in %s: %s\n%s",
+            "dependency",
+            Path("a.txt"),
+            "1.0",
+            "Changelog",
+            stacklevel=ANY,
         )
 
     @patch("logging.Logger.info")
     def test_pinned(self, mock_info: Mock):
         """Test that pinning a previously unpinned reference to a digest is logged."""
         sha = f"sha256:{'a' * 64}"
-        Logger("pin").pinned("dependency", DependencyVersion("1.0", sha=sha))
-        mock_info.assert_called_once_with("Pinned %s to %s@%s", "dependency", "1.0", sha, stacklevel=ANY)
+        Logger("pin").pinned("dependency", DependencyVersion("1.0", sha=sha), Path.cwd() / "Dockerfile")
+        mock_info.assert_called_once_with(
+            "Pinned %s in %s to %s@%s", "dependency", Path("Dockerfile"), "1.0", sha, stacklevel=ANY
+        )
 
     @patch("logging.Logger.debug")
     def test_path_logged_at_debug(self, mock_debug: Mock):
@@ -58,10 +72,12 @@ class LoggerTests(TestCase):
     def test_new_version_with_publication_date(self, mock_info: Mock):
         """Test that the publication date is appended to the version when it is known."""
         published = datetime(2026, 5, 29, 13, 54, tzinfo=UTC)
-        Logger("date").new_version("dependency", DependencyVersion("1.0", "Changelog", published=published))
+        version = DependencyVersion("1.0", "Changelog", published=published)
+        Logger("date").new_version("dependency", version, Path.cwd() / "a.txt")
         mock_info.assert_called_once_with(
-            "New version available for %s: %s\n%s",
+            "New version available for %s in %s: %s\n%s",
             "dependency",
+            Path("a.txt"),
             "1.0, published: 2026-05-29 13:54",
             "Changelog",
             stacklevel=ANY,
@@ -71,10 +87,11 @@ class LoggerTests(TestCase):
     def test_publication_date_is_logged_in_utc(self, mock_info: Mock):
         """Test that a non-UTC publication date is converted to UTC before logging."""
         published = datetime(2026, 5, 29, 15, 54, tzinfo=timezone(timedelta(hours=2)))
-        Logger("utc").new_version("dependency", DependencyVersion("1.0", published=published))
+        Logger("utc").new_version("dependency", DependencyVersion("1.0", published=published), Path.cwd() / "a.txt")
         mock_info.assert_called_once_with(
-            "New version available for %s: %s\n%s",
+            "New version available for %s in %s: %s\n%s",
             "dependency",
+            Path("a.txt"),
             "1.0, published: 2026-05-29 13:54",
             "No changelog available!",
             stacklevel=ANY,

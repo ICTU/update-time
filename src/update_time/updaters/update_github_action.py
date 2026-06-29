@@ -8,7 +8,7 @@ If an environment variable GITHUB_TOKEN is set, the script will use it to increa
 
 import re
 import sys
-from functools import cache
+from functools import cache, partial
 from pathlib import Path
 
 from packaging.version import Version
@@ -42,7 +42,7 @@ def get_latest_version(action: str, current_version_string: str) -> DependencyVe
     return DependencyVersion(str(latest_version), release.body, release.commit_sha, published=release.published_at)
 
 
-def _update_action(match: re.Match[str]) -> str:
+def _update_action(match: re.Match[str], path: Path) -> str:
     """Pin or update a single `uses:` reference to the latest version's commit SHA, or leave it unchanged."""
     dependency = match.group("dependency")
     current_sha = match.group("sha")
@@ -53,9 +53,9 @@ def _update_action(match: re.Match[str]) -> str:
     if not latest.sha:
         return match.group(0)  # Can't (re)pin without a commit SHA
     if current_sha is None:
-        LOG.pinned(dependency, latest)
+        LOG.pinned(dependency, latest, path)
     elif latest.version != current_version:
-        LOG.new_version(dependency, latest)
+        LOG.new_version(dependency, latest, path)
     else:
         return match.group(0)  # Already pinned and up to date
     return f"uses: {dependency}@{latest.sha} # v{latest.version}"
@@ -66,7 +66,7 @@ def update_github_actions(github_dir: Path) -> int:
     for yaml_file in glob(*YAML_GLOB_PATTERNS, start=github_dir):
         LOG.path(yaml_file)
         old_content = yaml_file.read_text()
-        new_content = ACTION_RE.sub(_update_action, old_content)
+        new_content = ACTION_RE.sub(partial(_update_action, path=yaml_file), old_content)
         if new_content != old_content:
             yaml_file.write_text(new_content)
     return 0

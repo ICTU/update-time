@@ -64,7 +64,7 @@ class UpdateFileTest(unittest.TestCase):
         mock_logger = Mock()
         assert_success(update_file(mock_file, REGEXP, new_version_getter("3.15"), mock_logger))
         mock_file.write_text.assert_called_with("line1\nimage: python:3.15\n")
-        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.15"))
+        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.15"), mock_file)
 
     def test_new_version_with_sha(self):
         """Test a new version with a sha."""
@@ -75,7 +75,9 @@ class UpdateFileTest(unittest.TestCase):
         new_sha = "b" * 40
         assert_success(update_file(mock_file, regexp, new_version_getter("3.15", new_sha), mock_logger))
         mock_file.write_text.assert_called_with(f"line1\nuses: action/action@{new_sha} # v3.15\n")
-        mock_logger.new_version.assert_called_with("action/action", DependencyVersion(version="3.15", sha=new_sha))
+        mock_logger.new_version.assert_called_with(
+            "action/action", DependencyVersion(version="3.15", sha=new_sha), mock_file
+        )
 
     def test_unchanged_version(self):
         """Test that the file is not changed when the latest version equals the current version."""
@@ -92,7 +94,7 @@ class UpdateFileTest(unittest.TestCase):
         mock_logger = Mock()
         assert_success(update_file(mock_file, SHA_REGEXP, new_version_getter("3.14", sha), mock_logger))
         mock_file.write_text.assert_called_with(f"line1\nimage: python:3.14@{sha}\n")
-        mock_logger.pinned.assert_called_with("python", DependencyVersion(version="3.14", sha=sha))
+        mock_logger.pinned.assert_called_with("python", DependencyVersion(version="3.14", sha=sha), mock_file)
         mock_logger.new_version.assert_not_called()
 
     def test_pin_unpinned_image_with_new_version(self):
@@ -102,7 +104,7 @@ class UpdateFileTest(unittest.TestCase):
         mock_logger = Mock()
         assert_success(update_file(mock_file, SHA_REGEXP, new_version_getter("3.15", sha), mock_logger))
         mock_file.write_text.assert_called_with(f"line1\nimage: python:3.15@{sha}\n")
-        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.15", sha=sha))
+        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.15", sha=sha), mock_file)
 
     def test_unpinned_image_left_alone_without_digest(self):
         """Test that an unpinned image is not pinned when no digest is available."""
@@ -122,7 +124,7 @@ class UpdateFileTest(unittest.TestCase):
         mock_logger = Mock()
         assert_success(update_file(mock_file, REGEXP, new_version_getter("3.10"), mock_logger))
         mock_file.write_text.assert_called_with("line1\nimage: python:3.10\n")
-        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.10"))
+        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.10"), mock_file)
 
     def test_version_from_source_is_applied_even_when_lower(self):
         """Test that _update_line applies any differing version get_new_version returns, trusting the source.
@@ -135,7 +137,7 @@ class UpdateFileTest(unittest.TestCase):
         mock_logger = Mock()
         assert_success(update_file(mock_file, REGEXP, new_version_getter("3.13"), mock_logger))
         mock_file.write_text.assert_called_with("line1\nimage: python:3.13\n")
-        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.13"))
+        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.13"), mock_file)
 
 
 @patch("pathlib.Path.glob")
@@ -162,7 +164,7 @@ class UpdateFilesTest(unittest.TestCase):
             update_files("config.yml", regexp=REGEXP, get_new_version=new_version_getter("3.15"), logger=mock_logger),
         )
         mock_file.write_text.assert_called_with("line1\nimage: python:3.15\n")
-        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.15"))
+        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.15"), mock_file)
 
     def test_multiple_patterns(self, mock_glob: Mock):
         """Test that files matching any of multiple glob patterns are updated."""
