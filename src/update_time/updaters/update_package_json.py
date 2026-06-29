@@ -4,6 +4,7 @@ import json
 import sys
 from typing import TYPE_CHECKING
 
+from update_time.domain.cooldown import cooldown_days
 from update_time.domain.version import DependencyVersion
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
@@ -15,6 +16,20 @@ if TYPE_CHECKING:
 
 LOG = get_logger("package.json")
 COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
+# npm config keys that hold back fresh releases. If the project sets either, we leave its cooldown alone (and
+# `min-release-age` can't be combined with `before`, so a project-level `before` also means we add nothing).
+NPM_COOLDOWN_CONFIG = ("min-release-age", "before")
+
+
+def cooldown_options(directory: Path) -> list[str]:
+    """Return the npm option that applies Update-time's cooldown, or nothing if the project configures its own.
+
+    npm's `min-release-age` is measured in days, like our cooldown. `npm config get` reports the effective value
+    from the whole .npmrc cascade (returning `null` when unset), so a project that sets its own cutoff wins.
+    """
+    if any(run(["npm", "config", "get", key], cwd=directory).strip() != "null" for key in NPM_COOLDOWN_CONFIG):
+        return []
+    return [f"--min-release-age={cooldown_days()}"]
 
 
 def installed_versions(directory: Path) -> dict[str, str]:
@@ -28,9 +43,10 @@ def update_package_json(package_json: Path) -> int:
     """Update the package.json and package-lock.json."""
     LOG.path(package_json)
     original_contents = package_json.read_text()
-    npm_outdated = ["npm", "outdated", "--json", *COMMON_NPM_OPTIONS]
+    cooldown = cooldown_options(package_json.parent)
+    npm_outdated = ["npm", "outdated", "--json", *COMMON_NPM_OPTIONS, *cooldown]
     outdated_packages = json.loads(run(npm_outdated, cwd=package_json.parent))
-    npm_update = ["npm", "update", "--save", *COMMON_NPM_OPTIONS]
+    npm_update = ["npm", "update", "--save", *COMMON_NPM_OPTIONS, *cooldown]
     run(npm_update, cwd=package_json.parent)
     # npm may install an older version than "latest" (e.g. when min-release-age holds back fresh releases), so log
     # the version that was actually installed rather than the latest one reported by npm outdated.

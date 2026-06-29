@@ -65,10 +65,10 @@ References that are not yet pinned are pinned automatically:
 To avoid adopting releases that are too fresh to trust, Update-time honours a cooldown period during which newly published versions are not yet picked up. Where the cooldown comes from depends on the dependency type:
 
 - **Docker images, GitHub Actions, and `requirements.txt` dependencies** — Update-time enforces its own cooldown, based on each image tag's push date and each release's publication date. It defaults to **7 days** and can be changed with the `--cooldown` option, for example `update-time --cooldown 14`.
+- **npm dependencies** — Update-time passes the same cooldown to `npm` via npm's `min-release-age` option (also measured in days), which npm added in 11.10.0. Older npm versions ignore the option, so updates still run but without a cooldown. If your project already configures a cooldown in its `.npmrc` (`min-release-age` or `before`), Update-time leaves that in place instead of overriding it.
 - **`pyproject.toml` dependencies** — Update-time delegates the actual updating to [uv](https://docs.astral.sh/uv/), so the cooldown is whatever you configure for uv. Use the `exclude-newer` setting under `[tool.uv]` in your `pyproject.toml` to hold back recently released versions.
-- **npm dependencies** — Update-time delegates the actual updating to `npm`, so the cooldown is whatever you configure for npm (for example via your `.npmrc`).
 
-Because `pyproject.toml` and npm updates are delegated, the built-in 7-day cooldown does **not** apply to them; configure those tools directly if you want a cooldown there. (Hand-written `requirements.txt` dependencies are updated directly against PyPI, so they *do* use Update-time's built-in cooldown.)
+Because `pyproject.toml` updates are delegated to uv, the built-in cooldown does **not** apply to them; configure `exclude-newer` if you want a cooldown there.
 
 ## Point of contact
 
