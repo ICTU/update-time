@@ -57,10 +57,8 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         glob.return_value = [mock_pyproject_toml]
         assert_success(update_pyproject_tomls())
         mock_pyproject_toml.write_text.assert_called_with('"package==1.1"\n')
-        self.assert_path_logged(Path("uv.lock"))
-        self.assert_new_version_logged(
-            "package", "1.1, published: 2026-05-30 12:08", path=mock_pyproject_toml.relative_to()
-        )
+        self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
+        self.assert_new_version_logged(mock_pyproject_toml, "package", "1.1, published: 2026-05-30 12:08")
         self.assert_no_warnings_logged()
 
     def test_update_with_changelog(self, run: Mock, get: Mock, glob: Mock):
@@ -74,12 +72,12 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         glob.return_value = [mock_pyproject_toml]
         assert_success(update_pyproject_tomls())
         mock_pyproject_toml.write_text.assert_called_with('"package_with_changelog==1.1"\n')
-        self.assert_path_logged(Path("uv.lock"))
+        self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
+            mock_pyproject_toml,
             "package_with_changelog",
             "1.1, published: 2026-05-30 12:07",
             self.changelog,
-            path=mock_pyproject_toml.relative_to(),
         )
         self.assert_no_warnings_logged()
 
@@ -95,9 +93,9 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         glob.return_value = [mock_pyproject_toml]
         assert_success(update_pyproject_tomls())
         mock_pyproject_toml.write_text.assert_called_with('"package_with_html_changelog==1.1"\n')
-        self.assert_path_logged(Path("uv.lock"))
+        self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
-            "package_with_html_changelog", "1.1, published: 2026-05-30 12:07", path=mock_pyproject_toml.relative_to()
+            mock_pyproject_toml, "package_with_html_changelog", "1.1, published: 2026-05-30 12:07"
         )
         self.assert_no_warnings_logged()
 
@@ -113,12 +111,12 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         glob.return_value = [mock_pyproject_toml]
         assert_success(update_pyproject_tomls())
         mock_pyproject_toml.write_text.assert_called_with('"package_with_github_releases==1.1"\n')
-        self.assert_path_logged(Path("uv.lock"))
+        self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
+            mock_pyproject_toml,
             "package_with_github_releases",
             "1.1, published: 2026-05-30 12:07",
             self.changelog,
-            path=mock_pyproject_toml.relative_to(),
         )
         self.assert_no_warnings_logged()
 
@@ -130,11 +128,11 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         glob.return_value = [mock_pyproject_toml]
         assert_success(update_pyproject_tomls())
         mock_pyproject_toml.write_text.assert_called_with('"package_without_github_releases==1.1"\n')
-        self.assert_path_logged(Path("uv.lock"))
+        self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
+            mock_pyproject_toml,
             "package_without_github_releases",
             "1.1, published: 2026-05-30 12:07",
-            path=mock_pyproject_toml.relative_to(),
         )
         self.assert_no_warnings_logged()
 
@@ -146,6 +144,6 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         assert_success(update_pyproject_tomls())
         mock_pyproject_toml.write_text.assert_not_called()
         get.assert_not_called()
-        self.assert_path_logged(Path("uv.lock"))
+        self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
