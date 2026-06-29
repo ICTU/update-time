@@ -10,7 +10,7 @@ from update_time.updaters.update_package_json import COMMON_NPM_OPTIONS, update_
 from tests.update_time.assertions import assert_success
 from tests.update_time.helpers import LoggingTestCase, mock_path, mock_response, release_json
 
-COOLDOWN_OPTION = f"--min-release-age={COOLDOWN_DAYS}"  # the cooldown npm option update-time adds by default
+COOLDOWN_OPTION = f"--min-release-age={COOLDOWN_DAYS}"  # the cooldown npm option Update-time adds by default
 
 
 @patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
@@ -26,7 +26,7 @@ class UpdatePackageJsonTest(LoggingTestCase):
     def npm_runs(self, *results: object) -> list:
         """Prepend the two `npm config get` cooldown probes (both unset) to the given npm command results.
 
-        Both probes return `null`, so update-time finds no project cooldown and adds its own to outdated/update.
+        Both probes return `null`, so Update-time finds no project cooldown and adds its own to outdated/update.
         """
         return [Mock(stdout="null\n"), Mock(stdout="null\n"), *results]
 
@@ -156,7 +156,7 @@ class UpdatePackageJsonTest(LoggingTestCase):
         """Test that no cooldown option is added when the project's npm config already sets one."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
-        # The first cooldown probe (min-release-age) returns a value, so update-time adds no cooldown of its own:
+        # The first cooldown probe (min-release-age) returns a value, so Update-time adds no cooldown of its own:
         mock_run.side_effect = [
             Mock(stdout="14\n"),
             Mock(stdout="{}"),
