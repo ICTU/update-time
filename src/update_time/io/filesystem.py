@@ -36,6 +36,19 @@ def glob(*glob_patterns: str, start: Path | None = None) -> Iterator[Path]:
             yield path
 
 
+def _replace_groups(line: str, match: re.Match[str], replacements: dict[str, str]) -> str:
+    """Replace the named groups within the matched region of the line, leaving the rest of the line untouched.
+
+    Only the spans the regex captured are rewritten, so a version or digest that also occurs elsewhere on the line
+    (e.g. the `18` in `FROM node:18 AS build-18`) is left alone. Groups are replaced right-to-left so that an
+    earlier replacement doesn't shift the spans of the groups still to be replaced.
+    """
+    for group in sorted(replacements, key=match.start, reverse=True):
+        start, end = match.span(group)
+        line = line[:start] + replacements[group] + line[end:]
+    return line
+
+
 def _update_line(line: str, regexp: str, get_new_version: NewVersionGetter, logger: Logger, path: Path) -> str:
     """Update the line with the new version (and digest) if any, or return the line unchanged.
 
@@ -59,11 +72,12 @@ def _update_line(line: str, regexp: str, get_new_version: NewVersionGetter, logg
             logger.new_version(dependency, latest_version, path)
         else:
             logger.pinned(dependency, latest_version, path)
-        return line.replace(f"{dependency}:{version}", f"{dependency}:{latest_version.version}@{latest_version.sha}")
+        return _replace_groups(line, match, {"version": f"{latest_version.version}@{latest_version.sha}"})
     logger.new_version(dependency, latest_version, path)
+    replacements = {"version": latest_version.version}
     if current_sha is not None:
-        line = line.replace(current_sha, latest_version.sha)
-    return line.replace(version, latest_version.version)
+        replacements["sha"] = latest_version.sha
+    return _replace_groups(line, match, replacements)
 
 
 def _is_pinned(line: str, previous_line: str) -> bool:

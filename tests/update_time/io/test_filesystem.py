@@ -139,6 +139,17 @@ class UpdateFileTest(unittest.TestCase):
         mock_file.write_text.assert_called_with("line1\nimage: python:3.13\n")
         mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.13"), mock_file)
 
+    def test_version_replaced_only_within_the_match(self):
+        """Test that the version is rewritten only where the regexp matched it, not elsewhere on the line.
+
+        A whole-line replace would also rewrite the `18` in the `build-18` stage alias; only the matched span should.
+        """
+        mock_file = mock_path("image: node:18 AS build-18\n")
+        mock_logger = Mock()
+        assert_success(update_file(mock_file, REGEXP, new_version_getter("20"), mock_logger))
+        mock_file.write_text.assert_called_with("image: node:20 AS build-18\n")
+        mock_logger.new_version.assert_called_with("node", DependencyVersion(version="20"), mock_file)
+
     def test_inline_ignore_marker_pins_line(self):
         """Test that an inline `# update-time: ignore` comment leaves the line untouched, looking up no version."""
         get_new_version = Mock()

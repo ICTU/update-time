@@ -139,6 +139,14 @@ class Logger:
         """Log a request timeout."""
         self._log(self.log.warning, "Timeout while fetching %s", url)
 
+    def command_not_found(self, command: list[str]) -> None:
+        """Log that a command could not be run because its executable is not installed."""
+        self._log(self.log.error, "Could not run %s: is %s installed?", " ".join(command), command[0])
+
+    def command_failed(self, command: list[str], stderr: str) -> None:
+        """Log that a command failed, including the standard error it produced."""
+        self._log(self.log.warning, "Error running %s:\n%s", " ".join(command), stderr.rstrip())
+
 
 def get_logger(name: str) -> Logger:
     """Initialize a logger."""

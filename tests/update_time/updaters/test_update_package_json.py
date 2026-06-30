@@ -153,6 +153,17 @@ class UpdatePackageJsonTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
+    def test_empty_npm_output(self, mock_run: Mock, mock_glob: Mock):
+        """Test that empty npm output (e.g. from a failed command) is treated as no data rather than crashing."""
+        mock_package_json = self.create_package_json()
+        mock_glob.return_value = [mock_package_json]
+        # npm outdated and npm list both return nothing, as a failed command does (its failure is logged by `run`):
+        mock_run.side_effect = self.npm_runs(Mock(stdout=""), Mock(stdout=""), Mock(stdout=""))
+        assert_success(update_package_jsons())
+        self.assert_npm_called(mock_run)
+        mock_package_json.write_text.assert_not_called()
+        self.assert_no_new_version_logged()
+
     def test_project_cooldown_respected(self, mock_run: Mock, mock_glob: Mock):
         """Test that no cooldown option is added when the project's npm config already sets one."""
         mock_package_json = self.create_package_json()
