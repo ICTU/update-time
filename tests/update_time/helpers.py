@@ -119,6 +119,11 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that no path being checked for updates was logged (nothing logged at debug level)."""
         self.mock_debug.assert_not_called()
 
+    def assert_ignored_logged(self, dependency: str, path: Path) -> None:
+        """Assert that ignoring a reference (via the update-time: ignore marker) was logged at debug level."""
+        message = "Ignoring updates for %s in %s (update-time: ignore)"
+        self.mock_debug.assert_called_with(message, dependency, self._relative(path), stacklevel=ANY)
+
     def assert_skipped_logged(self, path: Path, reason: str) -> None:
         """Assert that deliberately skipping a file was logged at info level with the given reason."""
         self.mock_info.assert_called_once_with("Skipping %s: %s", self._relative(path), reason, stacklevel=ANY)

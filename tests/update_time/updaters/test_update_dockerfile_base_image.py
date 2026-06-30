@@ -65,6 +65,17 @@ class UpdateDockerfileTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_new_version_logged(mock_dockerfile, "ruby", "3.4")
         self.assert_no_warnings_logged()
 
+    def test_ignore_marker_leaves_base_image_untouched(self, mock_glob: Mock):
+        """Test that a FROM line pinned by a preceding `# update-time: ignore` comment is not updated or queried."""
+        mock_dockerfile = mock_path("# update-time: ignore\nFROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim\n")
+        mock_glob.return_value = [mock_dockerfile]
+        assert_success(update_dockerfiles())
+        mock_dockerfile.write_text.assert_not_called()
+        self.requests.assert_not_called()
+        self.assert_ignored_logged("ghcr.io/astral-sh/uv", mock_dockerfile)
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
     def test_label_prefixed_base_image_bumped_and_pinned(self, mock_glob: Mock):
         """Test that a label-prefixed base image (ghcr.io/astral-sh/uv:python3.12-...) is bumped and pinned."""
         self.requests.side_effect = mock_docker_registry(docker_tag("python3.13-bookworm-slim", DIGEST2))

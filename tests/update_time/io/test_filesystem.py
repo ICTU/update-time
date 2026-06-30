@@ -139,6 +139,37 @@ class UpdateFileTest(unittest.TestCase):
         mock_file.write_text.assert_called_with("line1\nimage: python:3.13\n")
         mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.13"), mock_file)
 
+    def test_inline_ignore_marker_pins_line(self):
+        """Test that an inline `# update-time: ignore` comment leaves the line untouched, looking up no version."""
+        get_new_version = Mock()
+        mock_logger = Mock()
+        mock_file = mock_path("image: python:3.14  # update-time: ignore\n")
+        assert_success(update_file(mock_file, REGEXP, get_new_version, mock_logger))
+        mock_file.write_text.assert_not_called()
+        get_new_version.assert_not_called()
+        mock_logger.ignored.assert_called_once_with("python", mock_file)
+
+    def test_preceding_ignore_marker_pins_next_line(self):
+        """Test that a standalone `# update-time: ignore` comment pins the reference on the line below it.
+
+        The marker comment itself carries no reference, so only the pinned reference below it is logged as ignored.
+        """
+        get_new_version = Mock()
+        mock_logger = Mock()
+        mock_file = mock_path("# update-time: ignore\nimage: python:3.14\n")
+        assert_success(update_file(mock_file, REGEXP, get_new_version, mock_logger))
+        mock_file.write_text.assert_not_called()
+        get_new_version.assert_not_called()
+        mock_logger.ignored.assert_called_once_with("python", mock_file)
+
+    def test_inline_marker_does_not_pin_following_line(self):
+        """Test that an inline marker pins only its own line, not the reference on the line below it."""
+        mock_logger = Mock()
+        mock_file = mock_path("image: a:3.14  # update-time: ignore\nimage: b:3.14\n")
+        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.15"), mock_logger))
+        mock_file.write_text.assert_called_with("image: a:3.14  # update-time: ignore\nimage: b:3.15\n")
+        mock_logger.ignored.assert_called_once_with("a", mock_file)
+
 
 @patch("pathlib.Path.glob")
 class UpdateFilesTest(unittest.TestCase):

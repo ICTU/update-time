@@ -14,7 +14,7 @@ from pathlib import Path
 from packaging.version import Version
 
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString, is_valid
-from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
+from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob, updated_lines
 from update_time.io.log import get_logger
 from update_time.sources.github import get_latest_release
 
@@ -66,7 +66,10 @@ def update_github_actions(github_dir: Path) -> int:
     for yaml_file in glob(*YAML_GLOB_PATTERNS, start=github_dir):
         LOG.path(yaml_file)
         old_content = yaml_file.read_text()
-        new_content = ACTION_RE.sub(partial(_update_action, path=yaml_file), old_content)
+        # Rewrite per line (keeping line endings) so an `# update-time: ignore` marker can pin a single `uses:`.
+        update_line = partial(ACTION_RE.sub, partial(_update_action, path=yaml_file))
+        new_lines = updated_lines(old_content.splitlines(keepends=True), ACTION_RE, update_line, LOG, yaml_file)
+        new_content = "".join(new_lines)
         if new_content != old_content:
             yaml_file.write_text(new_content)
     return 0
