@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.12 - 2026-06-30
+
 ### Changed
 
 - Log an unsupported package manager (pnpm/yarn/bun for `package.json`, Poetry/PDM for `pyproject.toml`) at the `WARNING` level instead of `INFO`, so the skipped dependency set stands out — for example when running with `--log-level WARNING`.
