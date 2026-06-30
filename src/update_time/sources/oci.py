@@ -8,7 +8,7 @@ mcr.microsoft.com, quay.io, ...) by listing tag names, discovering the registry'
 
 import re
 from dataclasses import dataclass
-from functools import cache
+from functools import cache, cached_property
 from typing import TYPE_CHECKING, cast
 
 import requests
@@ -60,6 +60,11 @@ class Tag:
     digest: str = ""
     last_pushed: datetime | None = None
 
+    @cached_property
+    def _match(self) -> re.Match[str] | None:
+        """Parse the tag name into its prefix, version, and suffix once, or None when the tag has no version."""
+        return _TAG.match(self.name)
+
     @property
     def prefix(self) -> str:
         """Return the non-numeric label before the version (e.g. 'python' in 'python3.12-slim'), or '' if none.
@@ -67,16 +72,15 @@ class Tag:
         Language/runtime images prefix the version with a label. The prefix is kept when bumping and must match
         between the current tag and a candidate, so e.g. `python3.x` is never replaced by `pypy3.x`.
         """
-        match = _TAG.match(self.name)
-        return match.group("prefix") if match else ""
+        return self._match.group("prefix") if self._match else ""
 
-    @property
+    @cached_property
     def version(self) -> Version | None:
         """Return the parsed version, or None if the tag does not contain a valid version.
 
         A leading label prefix (e.g. the `python` in `python3.12`) is stripped before parsing the version.
         """
-        if not (match := _TAG.match(self.name)):
+        if not (match := self._match):
             return None
         try:
             return Version(match.group("version"))
@@ -90,8 +94,7 @@ class Tag:
         Only meaningful for a tag that has a version (it's compared between a candidate and the current tag, both of
         which have one); a tag without a version doesn't match and the suffix is reported as empty.
         """
-        match = _TAG.match(self.name)
-        return match.group("suffix") if match else ""
+        return self._match.group("suffix") if self._match else ""
 
     @property
     def within_cooldown(self) -> bool:
