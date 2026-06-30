@@ -5,10 +5,9 @@ from pathlib import Path
 
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, update_files
 from update_time.io.log import get_logger
-from update_time.sources.oci import IMAGE_REFERENCE, get_latest_tag
+from update_time.sources.oci import YAML_IMAGE_REFERENCE, get_latest_tag
 
 LOG = get_logger("manifest images")
-IMAGE_RE = rf"image: {IMAGE_REFERENCE}"
 
 
 def update_manifest_images() -> int:
@@ -20,9 +19,13 @@ def update_manifest_images() -> int:
     `{{ ... }}` placeholders) and Compose lines using `${VAR}` substitution are ignored.
     """
     results = [
-        update_files("docker-compose*.yml", regexp=IMAGE_RE, get_new_version=get_latest_tag, logger=LOG),
+        update_files("docker-compose*.yml", regexp=YAML_IMAGE_REFERENCE, get_new_version=get_latest_tag, logger=LOG),
         update_files(
-            *YAML_GLOB_PATTERNS, regexp=IMAGE_RE, get_new_version=get_latest_tag, logger=LOG, start=Path.cwd() / "helm"
+            *YAML_GLOB_PATTERNS,
+            regexp=YAML_IMAGE_REFERENCE,
+            get_new_version=get_latest_tag,
+            logger=LOG,
+            start=Path.cwd() / "helm",
         ),
     ]
     return max(results)
