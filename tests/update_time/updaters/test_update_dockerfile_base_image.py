@@ -64,3 +64,13 @@ class UpdateDockerfileTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_path_logged(mock_dockerfile)
         self.assert_new_version_logged(mock_dockerfile, "ruby", "3.4")
         self.assert_no_warnings_logged()
+
+    def test_label_prefixed_base_image_bumped_and_pinned(self, mock_glob: Mock):
+        """Test that a label-prefixed base image (ghcr.io/astral-sh/uv:python3.12-...) is bumped and pinned."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("python3.13-bookworm-slim", DIGEST2))
+        mock_dockerfile = mock_path("FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim\n")
+        mock_glob.return_value = [mock_dockerfile]
+        assert_success(update_dockerfiles())
+        mock_dockerfile.write_text.assert_called_with(f"FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim@{DIGEST2}\n")
+        self.assert_new_version_logged(mock_dockerfile, "ghcr.io/astral-sh/uv", "python3.13-bookworm-slim")
+        self.assert_no_warnings_logged()

@@ -42,6 +42,12 @@ MANIFEST_MEDIA_TYPES = (
     "application/vnd.docker.distribution.manifest.v2+json",
 )
 
+# The structure of an image tag: an optional non-numeric label prefix, a version, and an optional suffix, e.g.
+# `python3.12-bookworm-slim` -> prefix `python`, version `3.12`, suffix `bookworm-slim`. Prefix and version both
+# exclude `-`, so the version ends where the suffix begins; numeric-leading tags (`3.12-slim`) get an empty prefix.
+# Tags without a version (e.g. `bookworm-slim`) don't match at all; `version` still validates the match with packaging.
+_TAG = re.compile(r"(?P<prefix>[^\d-]*)(?P<version>\d[^-]*)-?(?P<suffix>.*)$")
+
 
 @dataclass(frozen=True)
 class Tag:
@@ -52,18 +58,37 @@ class Tag:
     last_pushed: datetime | None = None
 
     @property
+    def prefix(self) -> str:
+        """Return the non-numeric label before the version (e.g. 'python' in 'python3.12-slim'), or '' if none.
+
+        Language/runtime images prefix the version with a label. The prefix is kept when bumping and must match
+        between the current tag and a candidate, so e.g. `python3.x` is never replaced by `pypy3.x`.
+        """
+        match = _TAG.match(self.name)
+        return match.group("prefix") if match else ""
+
+    @property
     def version(self) -> Version | None:
-        """Return the parsed version, or None if the tag does not contain a valid version."""
-        version_string = self.name.split("-", maxsplit=1)[0]
+        """Return the parsed version, or None if the tag does not contain a valid version.
+
+        A leading label prefix (e.g. the `python` in `python3.12`) is stripped before parsing the version.
+        """
+        if not (match := _TAG.match(self.name)):
+            return None
         try:
-            return Version(version_string)
+            return Version(match.group("version"))
         except InvalidVersion:
             return None
 
     @property
     def suffix(self) -> str:
-        """Return the non-version suffix of the tag (e.g., 'slim' in '3.12-slim'), or empty string if none."""
-        return self.name.split("-", maxsplit=1)[1] if "-" in self.name else ""
+        """Return the non-version suffix of the tag (e.g., 'slim' in '3.12-slim'), or empty string if none.
+
+        Only meaningful for a tag that has a version (it's compared between a candidate and the current tag, both of
+        which have one); a tag without a version doesn't match and the suffix is reported as empty.
+        """
+        match = _TAG.match(self.name)
+        return match.group("suffix") if match else ""
 
     @property
     def within_cooldown(self) -> bool:
@@ -74,8 +99,10 @@ class Tag:
         return within_cooldown(self.last_pushed)
 
     def with_version(self, version: Version) -> Tag:
-        """Return a new Tag with the same suffix but the given version."""
-        name = f"{version}-{self.suffix}" if self.suffix else str(version)
+        """Return a new Tag with the same prefix and suffix but the given version."""
+        name = f"{self.prefix}{version}"
+        if self.suffix:
+            name += f"-{self.suffix}"
         return Tag(name=name)
 
     def is_candidate_for(self, current: Tag) -> bool:
@@ -88,6 +115,8 @@ class Tag:
             return False  # Ignore tags if the version is not valid
         if self.version.is_prerelease:
             return False  # Ignore tags if the version is a prerelease
+        if self.prefix != current.prefix:
+            return False  # Ignore tags with a different prefix so e.g. python3.x isn't replaced by pypy3.x
         if self.suffix != current.suffix:
             return False  # Ignore tags with a different suffix because we don't want to change e.g. fat to slim
         return cast("Version", current.version) <= self.version  # Ignore tags older than the current tag
