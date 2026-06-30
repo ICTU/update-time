@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Resolve image versions on registries other than Docker Hub (e.g. `ghcr.io`, `mcr.microsoft.com`, `gcr.io`, `quay.io`), wherever the existing updaters find image references (Dockerfiles, Docker Compose / Helm manifests, CircleCI, GitLab CI). The registry host is taken from the reference, auth is auto-discovered via the OCI `WWW-Authenticate` challenge (anonymous when the registry doesn't require it, Docker Hub credentials for Docker Hub when set), and the digest to pin is read from the image's OCI manifest. This reverses the earlier "skip non-Docker Hub images" behavior; references that genuinely don't resolve (CircleCI machine images, `${VAR}` substitutions, private images we can't authenticate for) are still left unchanged. Note that the cooldown still only applies to Docker Hub, because the OCI protocol exposes no publication date. Closes [#48](https://github.com/ICTU/update-time/issues/48).
+- Update image tags whose version carries a non-numeric label prefix, such as `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` (bumped to `python3.13-bookworm-slim` and digest-pinned). The label prefix (e.g. `python`) and the suffix (e.g. `bookworm-slim`) are preserved, and a prefix never crosses to a different one (e.g. `python` is not replaced by `pypy`). Previously these tags were left unchanged because the version couldn't be parsed. Closes [#55](https://github.com/ICTU/update-time/issues/55).
 
 ## 0.0.11 - 2026-06-29
 

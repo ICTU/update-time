@@ -130,8 +130,8 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
         mock_warning.assert_called_once()
 
     def test_invalid_new_tag(self):
-        """Test that invalid new tags are ignored."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("invalid", DIGEST))
+        """Test that a tag whose version part can't be parsed (e.g. 1.2.invalid) is ignored."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.2.invalid", DIGEST))
         self.assertEqual("1.3", get_latest_tag("invalid_new_tag", "1.3").version)
 
     def test_prerelease(self):
@@ -143,6 +143,30 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
         """Test that tags for different suffixes are ignored."""
         self.requests.side_effect = mock_docker_registry(docker_tag("1.4-windows", DIGEST))
         self.assertEqual("1.3", get_latest_tag("different_suffix", "1.3").version)
+
+    def test_label_prefixed_version(self):
+        """Test that a label-prefixed tag (e.g. python3.12-...) is bumped with the prefix and suffix kept."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("python3.13-bookworm-slim", DIGEST))
+        latest = get_latest_tag("ghcr.io/astral-sh/uv", "python3.12-bookworm-slim")
+        self.assertEqual("python3.13-bookworm-slim", latest.version)
+        self.assertEqual(DIGEST, latest.sha)
+
+    def test_label_prefix_not_crossed(self):
+        """Test that a python-prefixed tag is not replaced by a higher pypy-prefixed tag."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("pypy3.99-bookworm-slim", DIGEST))
+        self.assertEqual(
+            "python3.12-bookworm-slim", get_latest_tag("ghcr.io/astral-sh/uv", "python3.12-bookworm-slim").version
+        )
+
+    def test_version_prefix_preserved(self):
+        """Test that a 'v'-prefixed tag keeps its 'v' when bumped (v3.12 -> v3.13, not 3.13)."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("v3.13", DIGEST))
+        self.assertEqual("v3.13", get_latest_tag("prefixed", "v3.12").version)
+
+    def test_rolling_tag_without_version(self):
+        """Test that a rolling tag without a version (e.g. bookworm-slim) is left unchanged, querying nothing."""
+        self.assertEqual("bookworm-slim", get_latest_tag("rolling", "bookworm-slim").version)
+        self.requests.assert_not_called()
 
     def test_within_cooldown(self):
         """Test that tags pushed within the cooldown period are ignored."""
