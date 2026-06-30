@@ -132,6 +132,28 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
+    def test_inline_ignore_marker_pins_action(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an inline `# update-time: ignore` comment leaves the action untouched, looking up no version."""
+        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        assert_success(update_github_actions(GITHUB_DIR))
+        workflow_yml.write_text.assert_not_called()
+        mock_get_latest_version.assert_not_called()
+        self.assert_ignored_logged("action/action", workflow_yml)
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+    def test_preceding_ignore_marker_pins_action(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that a standalone `# update-time: ignore` comment pins the action on the line below it."""
+        workflow_yml = mock_path(f"# update-time: ignore\nuses: action/action@{OLD_SHA} # v1.0\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        assert_success(update_github_actions(GITHUB_DIR))
+        workflow_yml.write_text.assert_not_called()
+        mock_get_latest_version.assert_not_called()
+        self.assert_ignored_logged("action/action", workflow_yml)
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
     def test_unpinned_action_without_sha_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an unpinned action is not changed when no commit SHA is available to pin it to."""
         mock_get_latest_version.return_value = DependencyVersion(version="4")

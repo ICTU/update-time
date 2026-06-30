@@ -104,6 +104,11 @@ class Logger:
         """Log working on path."""
         self._log(self.log.debug, "Checking if there are updates for %s", path.relative_to(Path.cwd()))
 
+    def ignored(self, dependency: str, path: Path) -> None:
+        """Log that a reference was left unchanged because of an `# update-time: ignore` marker."""
+        message = "Ignoring updates for %s in %s (update-time: ignore)"
+        self._log(self.log.debug, message, dependency, path.relative_to(Path.cwd()))
+
     def skipped(self, path: Path, reason: str) -> None:
         """Log that a file was deliberately skipped without being checked for updates."""
         self._log(self.log.info, "Skipping %s: %s", path.relative_to(Path.cwd()), reason)

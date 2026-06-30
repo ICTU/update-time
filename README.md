@@ -60,6 +60,35 @@ References that are not yet pinned are pinned automatically:
 - **Docker images** referenced by tag only — base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, and Docker Compose / Helm manifest images — get the `@sha256:digest` of the (latest) tag appended, so the image is reproducible. The image's registry is taken from the reference, so images on Docker Hub and on other OCI registries (`ghcr.io`, `mcr.microsoft.com`, …) are both resolved; the cooldown, however, only applies to Docker Hub, since the OCI protocol exposes no publication date. Images without a concrete version tag are ignored: references through a template (`{{ ... }}`) or variable substitution (`${VAR}`), and tagless base images such as `FROM scratch` or stage references. CircleCI machine-executor images (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) are also left alone, since they are not registry images.
 - **GitHub Actions** referenced by version tag only (e.g. `uses: actions/checkout@v4`) are pinned to the commit SHA of the latest version, with the version added as a trailing comment (e.g. `uses: actions/checkout@<sha> # v4.1.1`). Actions referenced by a branch (e.g. `@main`) are left untouched because they don't resolve to a version.
 
+## Excluding a reference from updates
+
+To stop Update-time from changing a specific reference — because of a known incompatibility, a deferred migration, or to keep something reproducible — add an `# update-time: ignore` comment (all lower-case). The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
+
+The marker can be placed two ways:
+
+- **Inline**, on the reference's own line (in YAML files and `requirements.txt`):
+
+  ```yaml
+  image: python:3.12  # update-time: ignore
+  ```
+
+  ```text
+  humanize==4.15.0  # update-time: ignore
+  ```
+
+- **On the line directly above** the reference. Use this form in Dockerfiles, which don't allow inline comments:
+
+  ```dockerfile
+  # update-time: ignore
+  FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  ```
+
+This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, and `requirements.txt` files. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it.
+
+Run with `--log-level DEBUG` to see each ignored reference logged — a quick way to confirm a marker is recognised. Since the marker is case-sensitive, a typo (or wrong case) simply produces no such log and the reference is updated as usual.
+
+For `pyproject.toml` and `package.json` — which are updated through uv and npm rather than line by line — the marker does not apply. Opt a dependency out there by pinning it with a maximum or non-`==` version specifier instead (for example `package<=3.12`).
+
 ## Cooldown
 
 To avoid adopting releases that are too fresh to trust, Update-time honours a cooldown period during which newly published versions are not yet picked up. It defaults to **7 days** and can be changed with the `--cooldown` option, for example `update-time --cooldown 14`. How the cooldown is applied depends on the dependency type:
