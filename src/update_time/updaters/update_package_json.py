@@ -49,10 +49,20 @@ def cooldown_options(directory: Path) -> list[str]:
     return [f"--min-release-age={cooldown_days()}"]
 
 
+def run_json(command: list[str], cwd: Path) -> dict:
+    """Run a command that emits JSON and return the parsed object, or an empty dict when it produced no output.
+
+    A failed command can return empty output (see `run`, which already logs the failure); treat that as "no data"
+    rather than crashing on `json.loads("")`.
+    """
+    output = run(command, cwd=cwd)
+    return json.loads(output) if output.strip() else {}
+
+
 def installed_versions(directory: Path) -> dict[str, str]:
     """Return the installed top-level dependency versions in the given directory."""
     npm_list = ["npm", "list", "--json", "--depth=0", *COMMON_NPM_OPTIONS]
-    dependencies = json.loads(run(npm_list, cwd=directory)).get("dependencies", {})
+    dependencies = run_json(npm_list, directory).get("dependencies", {})
     return {package: info["version"] for package, info in dependencies.items() if "version" in info}
 
 
@@ -65,7 +75,7 @@ def update_package_json(package_json: Path) -> int:
     original_contents = package_json.read_text()
     cooldown = cooldown_options(package_json.parent)
     npm_outdated = ["npm", "outdated", "--json", *COMMON_NPM_OPTIONS, *cooldown]
-    outdated_packages = json.loads(run(npm_outdated, cwd=package_json.parent))
+    outdated_packages = run_json(npm_outdated, package_json.parent)
     npm_update = ["npm", "update", "--save", *COMMON_NPM_OPTIONS, *cooldown]
     run(npm_update, cwd=package_json.parent)
     # npm may install an older version than "latest" (e.g. when min-release-age holds back fresh releases), so log
