@@ -29,6 +29,9 @@ LOG = get_logger("oci")
 # digest is optional but a concrete version tag is required, so references through a variable (`${VAR}`) don't match.
 IMAGE_REFERENCE = r"(?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>sha256:[a-f0-9]{64}))?"
 
+# The same reference under a YAML `image:` key, shared by the CircleCI, GitLab CI, Docker Compose, and Helm updaters.
+YAML_IMAGE_REFERENCE = rf"image: {IMAGE_REFERENCE}"
+
 # Image references without a registry host are on Docker Hub, whose OCI registry host differs from the user-facing
 # `docker.io` alias and whose images live under an implicit `library/` namespace.
 DOCKER_HUB_OCI_HOST = "registry-1.docker.io"

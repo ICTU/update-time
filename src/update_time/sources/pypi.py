@@ -118,11 +118,9 @@ def get_changes(package: str, version: str) -> str:
     )
 
 
-def get_publication_datetime(package: str, version: str) -> datetime:
-    """Return the datetime that the version of the package was published."""
-    urls = release_metadata(package, version)["urls"]
-    upload_time = max(url["upload_time_iso_8601"] for url in urls)
-    return datetime.fromisoformat(upload_time)
+def get_publication_datetime(package: str, version: str) -> datetime | None:
+    """Return the datetime the version of the package was published, or None if it has no distribution files."""
+    return release_datetime(release_metadata(package, version)["urls"])
 
 
 def changelog_from_url(url: str, version: str) -> str:

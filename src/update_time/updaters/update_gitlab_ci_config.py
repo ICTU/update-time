@@ -13,17 +13,16 @@ from pathlib import Path
 
 from update_time.io.filesystem import update_file
 from update_time.io.log import get_logger
-from update_time.sources.oci import IMAGE_REFERENCE, get_latest_tag
+from update_time.sources.oci import YAML_IMAGE_REFERENCE, get_latest_tag
 
 LOG = get_logger("gitlab ci")
-IMAGE_RE = rf"image: {IMAGE_REFERENCE}"
 
 
 def update_gitlab_ci_config(gitlab_ci_config: Path) -> int:
     """Update the images in the GitLab CI configuration file, if it exists."""
     if not gitlab_ci_config.exists():
         return 0
-    return update_file(gitlab_ci_config, IMAGE_RE, get_latest_tag, LOG)
+    return update_file(gitlab_ci_config, YAML_IMAGE_REFERENCE, get_latest_tag, LOG)
 
 
 def main() -> int:  # pragma: no cover

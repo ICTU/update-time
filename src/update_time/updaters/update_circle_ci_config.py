@@ -16,10 +16,9 @@ import yaml
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob, update_file
 from update_time.io.log import get_logger
-from update_time.sources.oci import IMAGE_REFERENCE, get_latest_tag
+from update_time.sources.oci import YAML_IMAGE_REFERENCE, get_latest_tag
 
 LOG = get_logger("circleci")
-IMAGE_RE = rf"image: {IMAGE_REFERENCE}"
 
 
 def machine_images(config: object) -> set[str]:
@@ -46,7 +45,7 @@ def update_circle_ci_yaml(config_file: Path) -> int:
             return DependencyVersion(version=version)  # Leave machine images unchanged; they aren't on a registry
         return get_latest_tag(dependency, version)
 
-    return update_file(config_file, IMAGE_RE, get_new_version, LOG)
+    return update_file(config_file, YAML_IMAGE_REFERENCE, get_new_version, LOG)
 
 
 def update_circle_ci_config(circle_ci_dir: Path) -> int:
