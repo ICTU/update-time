@@ -11,13 +11,13 @@ from unittest.mock import ANY, Mock, patch
 import update_time
 from update_time.domain.version import DependencyVersion, NewVersionGetter, VersionString
 from update_time.io.log import Logger
-from update_time.sources.docker import _docker_hub_headers as docker_hub_headers
-from update_time.sources.docker import _get_tag as docker_get_tag
-from update_time.sources.docker import _oci_token as docker_oci_token
-from update_time.sources.docker import _tag_names as docker_tag_names
+from update_time.sources.docker_hub import api_headers as docker_hub_headers
 from update_time.sources.github import _list_releases as github_list_release
 from update_time.sources.npmjs import get_changes as npmjs_get_changes
 from update_time.sources.npmjs import get_publication_datetime as npmjs_get_publication_datetime
+from update_time.sources.oci import _get_tag as oci_get_tag
+from update_time.sources.oci import _registry_token as oci_registry_token
+from update_time.sources.oci import _tag_names as oci_tag_names
 from update_time.sources.pypi import project_versions as pypi_project_versions
 from update_time.sources.pypi import release_metadata as pypi_release_metadata
 from update_time.updaters.update_github_action import get_latest_version as github_get_latest_version
@@ -45,10 +45,10 @@ class CacheClearingTestCase(unittest.TestCase):
     """
 
     CACHES = (
-        docker_get_tag,
         docker_hub_headers,
-        docker_oci_token,
-        docker_tag_names,
+        oci_get_tag,
+        oci_registry_token,
+        oci_tag_names,
         github_get_latest_version,
         github_list_release,
         npmjs_get_changes,
@@ -138,6 +138,24 @@ class LoggingTestCase(CacheClearingTestCase):
         self.mock_warning.assert_not_called()
 
 
+class RegistryRequestsMixin(unittest.TestCase):
+    """Mix in to patch requests.get and requests.head with one shared mock, exposed as `self.requests`.
+
+    The OCI client resolves a digest with HEAD and does everything else (auth probe, token, tag listing, push date)
+    with GET. Routing both verbs through a single mock lets a test install one `mock_docker_registry` dispatcher via
+    `self.requests.side_effect` and assert against one `self.requests.call_args_list`.
+    """
+
+    def setUp(self) -> None:
+        """Patch requests.get and requests.head with a single shared mock for the duration of the test."""
+        super().setUp()
+        self.requests = Mock()
+        for target in ("requests.get", "requests.head"):
+            patcher = patch(target, self.requests)
+            self.addCleanup(patcher.stop)
+            patcher.start()
+
+
 def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGetter:
     """Return a new-version-getter."""
     return lambda *_args: DependencyVersion(version=version, sha=sha)
@@ -153,7 +171,7 @@ def mock_response(json: Mapping | list | None = None, **kwargs: object) -> Mock:
     return response
 
 
-# Reusable class decorator that mocks the Docker Hub auth token request made by sources.docker._docker_hub_headers
+# Reusable class decorator that mocks the Docker Hub auth token request made by sources.docker_hub.api_headers
 # when DOCKER_HUB_USERNAME/DOCKER_HUB_TOKEN are set, so the image updater tests never make a real network call.
 mock_docker_hub_auth = patch("requests.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec[B105]
 
@@ -179,24 +197,36 @@ def docker_tag(name: str, digest: str = "", **extra: object) -> dict[str, object
 def mock_docker_registry(
     *tags: dict[str, object], names: list[str] | None = None, list_ok: bool = True
 ) -> Callable[..., Mock]:
-    """Return a requests.get side effect that mimics the OCI tag listing and Docker Hub per-tag metadata endpoints.
+    """Return a requests.get/.head side effect that mimics an OCI registry plus Docker Hub's per-tag metadata.
 
-    The OCI anonymous token request returns a token, the OCI `tags/list` request returns the tag names (the names
-    of the given tags unless overridden), and a per-tag request returns that tag's metadata (or a 404 if unknown).
+    It models the full flow: the `/v2/` probe answers the OCI auth challenge pointing at the registry's token
+    endpoint, the token request returns a token, `tags/list` returns the tag names (the names of the given tags
+    unless overridden), a manifest `HEAD` returns the tag's digest in the `Docker-Content-Digest` header (or a 404
+    if unknown), and Docker Hub's proprietary per-tag request returns that tag's push date (or a 404 if unknown).
+    The same callable is assigned to both `requests.get` and `requests.head`; it routes purely on the URL.
     """
     by_name = {cast("str", tag["name"]): tag for tag in tags}
     tag_names = list(by_name) if names is None else names
 
     def get(url: str, *_args: object, **_kwargs: object) -> Mock:
-        if "auth.docker.io" in url:
+        if url.endswith("/v2/"):  # OCI auth challenge probe: point the client at the registry's token endpoint.
+            host = url.removeprefix("https://").split("/", maxsplit=1)[0]
+            realm = "https://auth.docker.io/token" if host == "registry-1.docker.io" else f"https://{host}/token"
+            challenge = f'Bearer realm="{realm}",service="{host}"'
+            return mock_response({}, ok=False, status_code=401, headers={"WWW-Authenticate": challenge})
+        if "/token" in url and "/v2/" not in url:  # Token endpoint discovered from the challenge.
             return mock_response({"token": "token"})  # nosec[B105]
         if "/tags/list" in url:
             return mock_response(
                 {"tags": tag_names}, ok=list_ok, status_code=200 if list_ok else 404, url=url, headers={}
             )
-        name = url.rsplit("/tags/", maxsplit=1)[-1]
-        if name in by_name:
-            return mock_response(by_name[name])
-        return mock_response({}, ok=False, status_code=404, url=url)
+        if "/manifests/" in url:  # Manifest HEAD: the digest is returned in the Docker-Content-Digest header.
+            tag = by_name.get(url.rsplit("/manifests/", maxsplit=1)[-1])
+            if tag is None:
+                return mock_response({}, ok=False, status_code=404, url=url)
+            digest = cast("str", tag.get("digest", ""))
+            return mock_response({}, headers={"Docker-Content-Digest": digest} if digest else {})
+        # Docker Hub proprietary per-tag metadata (the push date); only reached for a tag that resolved a digest.
+        return mock_response(by_name.get(url.rsplit("/tags/", maxsplit=1)[-1], {}))
 
     return get

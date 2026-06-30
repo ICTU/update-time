@@ -1,0 +1,220 @@
+"""Unit tests for the OCI registry module."""
+
+import unittest
+from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock, patch
+
+from update_time.sources.oci import get_latest_tag, is_docker_hub_image
+
+from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
+from tests.update_time.helpers import (
+    CacheClearingTestCase,
+    RegistryRequestsMixin,
+    docker_tag,
+    mock_docker_registry,
+    mock_response,
+)
+
+
+class IsDockerHubImageTest(unittest.TestCase):
+    """Unit tests for distinguishing Docker Hub images from other-registry references."""
+
+    def test_docker_hub_images(self):
+        """Test that images without a registry host, or with an explicit Docker Hub host, are Docker Hub images."""
+        images = ("python", "library/ubuntu", "cimg/go", "docker.io/library/redis", "index.docker.io/org/app")
+        for image in images:
+            self.assertTrue(is_docker_hub_image(image), image)
+
+    def test_other_registry_images(self):
+        """Test that images with a registry host as their first path component are not Docker Hub images.
+
+        A host is recognised by a dot, a colon, the name `localhost`, or an uppercase character.
+        """
+        for image in ("registry.gitlab.com/group/image", "gcr.io/proj/image", "localhost:5000/i", "Host/image"):
+            self.assertFalse(is_docker_hub_image(image), image)
+
+
+@patch.dict("os.environ", {}, clear=True)
+class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
+    """Unit tests for getting the latest tag."""
+
+    def test_invalid_current_tag(self):
+        """Test that the current tag is returned without querying a registry if it's not a valid version."""
+        self.assertEqual("invalid version", get_latest_tag("image", "invalid version").version)
+        self.requests.assert_not_called()
+
+    def test_no_tags(self):
+        """Test that the current tag is returned if the image has no tags."""
+        self.requests.side_effect = mock_docker_registry()
+        self.assertEqual("1.0", get_latest_tag("no_tags", "1.0").version)
+
+    @patch("logging.Logger.warning")
+    def test_image_not_resolvable(self, mock_warning: Mock):
+        """Test that a reference that doesn't resolve (e.g. a CircleCI machine image) is left unchanged, not crash."""
+        self.requests.side_effect = mock_docker_registry(list_ok=False)
+        self.assertEqual("2025.09.1", get_latest_tag("ubuntu-2204", "2025.09.1").version)
+        mock_warning.assert_called_once()
+
+    def test_other_registry_image_resolved(self):
+        """Test that an image on a registry other than Docker Hub is resolved against that registry's host."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.1", DIGEST))
+        latest = get_latest_tag("registry.gitlab.com/group/image", "1.0")
+        self.assertEqual("1.1", latest.version)
+        self.assertEqual(DIGEST, latest.sha)
+        self.assertIsNone(latest.published)  # No push date (and so no cooldown) outside Docker Hub.
+        self.assertTrue(any("registry.gitlab.com" in call.args[0] for call in self.requests.call_args_list))
+
+    def test_explicit_docker_hub_host(self):
+        """Test that an image with an explicit docker.io host is updated, querying the host-less Docker Hub URL."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.1", DIGEST))
+        self.assertEqual("1.1", get_latest_tag("docker.io/library/redis", "1.0").version)
+        self.assertIn("/namespaces/library/repositories/redis/", self.requests.call_args.args[0])
+
+    def test_up_to_date(self):
+        """Test that the current tag and its digest are returned if it's up to date, so it can be pinned."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.0", DIGEST))
+        latest = get_latest_tag("up_to_date", "1.0")
+        self.assertEqual("1.0", latest.version)
+        self.assertEqual(DIGEST, latest.sha)
+
+    def test_newer(self):
+        """Test that the current tag is returned if it's newer than the newest tag available."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.0", DIGEST))
+        self.assertEqual("1.1", get_latest_tag("newer", "1.1").version)
+
+    def test_new_version_available(self):
+        """Test that the new tag is returned if it's newer, without a publication date when the push date is unknown."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("2.1", DIGEST))
+        latest = get_latest_tag("new_version_available", "1.2")
+        self.assertEqual("2.1", latest.version)
+        self.assertIsNone(latest.published)
+
+    def test_multiple_new_versions_available(self):
+        """Test that the newest tag is returned if multiple newer tags are available."""
+        self.requests.side_effect = mock_docker_registry(
+            docker_tag("2.2", DIGEST2), docker_tag("2.1", DIGEST1), docker_tag("2.3", DIGEST3)
+        )
+        self.assertEqual("2.3", get_latest_tag("new_versions_available", "1.2").version)
+
+    def test_ignore_tags_without_digest(self):
+        """Test that tags without digests are ignored, falling back to the next-highest version."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("2.2", DIGEST), docker_tag("2.3"))
+        self.assertEqual("2.2", get_latest_tag("ignore_tags_without_digest", "1.2").version)
+
+    def test_tag_names_paginated(self):
+        """Test that the newest tag is returned even if the tag names listing is paginated."""
+        next_link = '</v2/library/pagination/tags/list?last=2.1>; rel="next"'
+
+        def dispatch(url: str, *_args: object, **_kwargs: object) -> Mock:
+            if url.endswith("/v2/"):
+                challenge = 'Bearer realm="https://auth.docker.io/token",service="registry.docker.io"'
+                return mock_response({}, ok=False, status_code=401, headers={"WWW-Authenticate": challenge})
+            if "auth.docker.io" in url:
+                return mock_response({"token": "token"})  # nosec[B105]
+            if "/tags/list" in url and "last=" not in url:
+                return mock_response({"tags": ["2.1"]}, ok=True, headers={"Link": next_link})
+            if "/tags/list" in url:
+                return mock_response({"tags": ["2.2"]}, ok=True, headers={})
+            if "/manifests/" in url:
+                return mock_response({}, headers={"Docker-Content-Digest": DIGEST2})
+            return mock_response({})  # Docker Hub push date endpoint: no push date, so no cooldown.
+
+        self.requests.side_effect = dispatch
+        self.assertEqual("2.2", get_latest_tag("pagination", "1.2").version)
+
+    @patch("logging.Logger.warning")
+    def test_tag_manifest_not_found(self, mock_warning: Mock):
+        """Test that a listed tag whose manifest can't be fetched is skipped, leaving the current tag unchanged."""
+        self.requests.side_effect = mock_docker_registry(names=["2.2"])
+        self.assertEqual("1.2", get_latest_tag("manifest_not_found", "1.2").version)
+        mock_warning.assert_called_once()
+
+    def test_invalid_new_tag(self):
+        """Test that invalid new tags are ignored."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("invalid", DIGEST))
+        self.assertEqual("1.3", get_latest_tag("invalid_new_tag", "1.3").version)
+
+    def test_prerelease(self):
+        """Test that prerelease tags are ignored."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.4a1", DIGEST))
+        self.assertEqual("1.3", get_latest_tag("prerelease", "1.3").version)
+
+    def test_different_suffix(self):
+        """Test that tags for different suffixes are ignored."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.4-windows", DIGEST))
+        self.assertEqual("1.3", get_latest_tag("different_suffix", "1.3").version)
+
+    def test_within_cooldown(self):
+        """Test that tags pushed within the cooldown period are ignored."""
+        recent = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.4", DIGEST, tag_last_pushed=recent))
+        self.assertEqual("1.3", get_latest_tag("within_cooldown", "1.3").version)
+
+    def test_outside_cooldown(self):
+        """Test that tags pushed before the cooldown are considered, with the push date as publication date."""
+        old = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.4", DIGEST, tag_last_pushed=old))
+        latest = get_latest_tag("outside_cooldown", "1.3")
+        self.assertEqual("1.4", latest.version)
+        self.assertEqual(datetime.fromisoformat(old), latest.published)
+
+    @patch.dict("os.environ", {"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
+    @patch("requests.post")
+    def test_user_bearer_token(self, mock_post: Mock):
+        """Test that the credentials are used for both the per-tag metadata and the OCI registry token requests."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("2.1", DIGEST))
+        self.assertEqual("2.1", get_latest_tag("new_version_available_with_credentials", "1.2").version)
+        mock_post.assert_called_once_with(
+            "https://hub.docker.com/v2/auth/token",
+            timeout=10,
+            json={"identifier": "joe_doe", "secret": "pat123"},  # nosec
+        )
+        token_call = next(call for call in self.requests.call_args_list if "auth.docker.io" in call.args[0])
+        self.assertEqual(("joe_doe", "pat123"), token_call.kwargs["auth"])  # nosec
+
+    def test_anonymous_registry_token_without_credentials(self):
+        """Test that an anonymous registry token is requested (no basic auth) when no credentials are set."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("2.1", DIGEST))
+        get_latest_tag("new_version_available", "1.2")
+        token_call = next(call for call in self.requests.call_args_list if "auth.docker.io" in call.args[0])
+        self.assertIsNone(token_call.kwargs["auth"])
+
+    def test_registry_without_auth_challenge(self):
+        """Test that a registry that doesn't challenge for auth (e.g. mcr.microsoft.com) is queried without a token."""
+
+        def dispatch(url: str, *_args: object, **_kwargs: object) -> Mock:
+            if url.endswith("/v2/"):
+                return mock_response({}, ok=True, status_code=200, headers={})  # No auth challenge: anonymous.
+            if "/tags/list" in url:
+                return mock_response({"tags": ["1.1"]}, ok=True, headers={})
+            return mock_response({}, headers={"Docker-Content-Digest": DIGEST})
+
+        self.requests.side_effect = dispatch
+        latest = get_latest_tag("mcr.microsoft.com/dotnet/sdk", "1.0")
+        self.assertEqual("1.1", latest.version)
+        self.assertEqual(DIGEST, latest.sha)
+        tags_call = next(call for call in self.requests.call_args_list if "/tags/list" in call.args[0])
+        self.assertEqual({}, tags_call.kwargs["headers"])  # No Authorization header for an anonymous registry.
+
+    @patch("logging.Logger.warning")
+    def test_push_date_unavailable(self, mock_warning: Mock):
+        """Test that a Docker Hub tag whose push date can't be fetched is still usable, just without a cooldown."""
+
+        def dispatch(url: str, *_args: object, **_kwargs: object) -> Mock:
+            if url.endswith("/v2/"):
+                challenge = 'Bearer realm="https://auth.docker.io/token",service="registry.docker.io"'
+                return mock_response({}, ok=False, status_code=401, headers={"WWW-Authenticate": challenge})
+            if "auth.docker.io" in url:
+                return mock_response({"token": "token"})  # nosec[B105]
+            if "/tags/list" in url:
+                return mock_response({"tags": ["1.1"]}, ok=True, headers={})
+            if "/manifests/" in url:
+                return mock_response({}, headers={"Docker-Content-Digest": DIGEST})
+            return mock_response({}, ok=False, status_code=404, url=url)  # Push date endpoint unavailable.
+
+        self.requests.side_effect = dispatch
+        latest = get_latest_tag("push_date_unavailable", "1.0")
+        self.assertEqual("1.1", latest.version)
+        self.assertEqual(DIGEST, latest.sha)
+        self.assertIsNone(latest.published)
+        mock_warning.assert_called_once()  # The unavailable push date is logged.

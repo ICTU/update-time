@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 type DependencyName = str
 type VersionString = str
 # The contract every updater binds and every source implements: given a dependency and its current version, return
-# the latest version to use. Implemented by e.g. sources.docker.get_latest_tag and sources.pypi.get_latest_version.
+# the latest version to use. Implemented by e.g. sources.oci.get_latest_tag and sources.pypi.get_latest_version.
 type NewVersionGetter = Callable[[DependencyName, VersionString], DependencyVersion]
 
 

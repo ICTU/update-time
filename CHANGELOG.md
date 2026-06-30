@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 - Log an unsupported package manager (pnpm/yarn/bun for `package.json`, Poetry/PDM for `pyproject.toml`) at the `WARNING` level instead of `INFO`, so the skipped dependency set stands out — for example when running with `--log-level WARNING`.
 
+### Added
+
+- Resolve image versions on registries other than Docker Hub (e.g. `ghcr.io`, `mcr.microsoft.com`, `gcr.io`, `quay.io`), wherever the existing updaters find image references (Dockerfiles, Docker Compose / Helm manifests, CircleCI, GitLab CI). The registry host is taken from the reference, auth is auto-discovered via the OCI `WWW-Authenticate` challenge (anonymous when the registry doesn't require it, Docker Hub credentials for Docker Hub when set), and the digest to pin is read from the image's OCI manifest. This reverses the earlier "skip non-Docker Hub images" behavior; references that genuinely don't resolve (CircleCI machine images, `${VAR}` substitutions, private images we can't authenticate for) are still left unchanged. Note that the cooldown still only applies to Docker Hub, because the OCI protocol exposes no publication date. Closes [#48](https://github.com/ICTU/update-time/issues/48).
+
 ## 0.0.11 - 2026-06-29
 
 ### Fixed
