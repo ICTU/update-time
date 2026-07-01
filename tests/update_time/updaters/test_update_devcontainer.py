@@ -10,83 +10,63 @@ from update_time.updaters.update_devcontainer import (
     update_devcontainers,
 )
 
+from tests.update_time import helpers
 from tests.update_time.assertions import assert_success
-from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
-from tests.update_time.helpers import (
-    LoggingTestCase,
-    RegistryRequestsMixin,
-    docker_tag,
-    mock_docker_hub_auth,
-    mock_docker_registry,
-    mock_path,
-)
+from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST3
+from tests.update_time.helpers import docker_tag, mock_docker_hub_auth, mock_docker_registry, mock_path
 
 
-@patch("update_time.updaters.update_devcontainer.glob")
 @mock_docker_hub_auth
-class UpdateDevcontainerTest(RegistryRequestsMixin, LoggingTestCase):
+class UpdateDevcontainerTest(helpers.ImageUpdaterTestMixin):
     """Unit tests for the update devcontainer function."""
 
-    def create_devcontainer(self, mock_glob: Mock, contents: str) -> Mock:
-        """Create a mock devcontainer.json file and register it as the glob's single discovered file."""
-        mock_devcontainer = mock_path(contents)
-        mock_glob.return_value = [mock_devcontainer]
-        return mock_devcontainer
+    def reference(self, image: str) -> str:
+        """Return a devcontainer `"image"` value for the image."""
+        return f'"image": "{image}"\n'
 
-    def test_image_updated_and_pinned(self, mock_glob: Mock):
-        """Test that the base image tag is bumped and pinned with its digest."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("1.1", DIGEST2))
-        devcontainer = self.create_devcontainer(
-            mock_glob, '  "image": "mcr.microsoft.com/devcontainers/typescript-node:1.0"\n'
-        )
-        assert_success(update_devcontainers())
-        devcontainer.write_text.assert_called_once_with(
-            f'  "image": "mcr.microsoft.com/devcontainers/typescript-node:1.1@{DIGEST2}"\n'
-        )
-        self.assert_new_version_logged(devcontainer, "mcr.microsoft.com/devcontainers/typescript-node", "1.1")
-        self.assert_no_warnings_logged()
+    def run_updater(self, mock_file: Mock) -> int:
+        """Run the devcontainer updater with the mock file as the only discovered devcontainer.json."""
+        with patch("update_time.updaters.update_devcontainer.glob", return_value=[mock_file]):
+            return update_devcontainers()
 
-    def test_feature_updated_and_pinned(self, mock_glob: Mock):
+    def test_feature_updated_and_pinned(self):
         """Test that a feature key (an OCI reference) is bumped and pinned with its digest."""
         self.requests.side_effect = mock_docker_registry(docker_tag("2.1", DIGEST1))
-        devcontainer = self.create_devcontainer(mock_glob, '    "ghcr.io/devcontainers/features/node:1": {}\n')
-        assert_success(update_devcontainers())
+        devcontainer = mock_path('    "ghcr.io/devcontainers/features/node:1": {}\n')
+        assert_success(self.run_updater(devcontainer))
         devcontainer.write_text.assert_called_once_with(
             f'    "ghcr.io/devcontainers/features/node:2.1@{DIGEST1}": {{}}\n'
         )
         self.assert_new_version_logged(devcontainer, "ghcr.io/devcontainers/features/node", "2.1")
         self.assert_no_warnings_logged()
 
-    def test_feature_pinned_when_already_latest(self, mock_glob: Mock):
+    def test_feature_pinned_when_already_latest(self):
         """Test that an unpinned feature that is already at the latest version is still pinned with its digest."""
         self.requests.side_effect = mock_docker_registry(docker_tag("2", DIGEST3))
-        devcontainer = self.create_devcontainer(mock_glob, '    "ghcr.io/devcontainers/features/node:2": {}\n')
-        assert_success(update_devcontainers())
+        devcontainer = mock_path('    "ghcr.io/devcontainers/features/node:2": {}\n')
+        assert_success(self.run_updater(devcontainer))
         devcontainer.write_text.assert_called_once_with(
             f'    "ghcr.io/devcontainers/features/node:2@{DIGEST3}": {{}}\n'
         )
         self.assert_pinned_logged(devcontainer, "ghcr.io/devcontainers/features/node", "2", DIGEST3)
         self.assert_no_warnings_logged()
 
-    def test_untagged_image_left_alone(self, mock_glob: Mock):
+    def test_untagged_image_left_alone(self):
         """Test that an image without a version tag is left unchanged (there is no version to resolve)."""
         self.requests.side_effect = mock_docker_registry(docker_tag("1.1", DIGEST))
-        devcontainer = self.create_devcontainer(
-            mock_glob, '  "image": "mcr.microsoft.com/devcontainers/typescript-node"\n'
-        )
-        assert_success(update_devcontainers())
+        devcontainer = mock_path('  "image": "mcr.microsoft.com/devcontainers/typescript-node"\n')
+        assert_success(self.run_updater(devcontainer))
         devcontainer.write_text.assert_not_called()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    def test_non_image_references_left_alone(self, mock_glob: Mock):
+    def test_non_image_references_left_alone(self):
         """Test that Dockerfile builds, ports, and other `name:version`-looking values are not treated as images."""
         self.requests.side_effect = mock_docker_registry(docker_tag("9.9", DIGEST))
-        devcontainer = self.create_devcontainer(
-            mock_glob,
-            '  "build": { "dockerfile": "Dockerfile" },\n  "appPort": "3000:3000",\n  "forwardPorts": [3000]\n',
+        devcontainer = mock_path(
+            '  "build": { "dockerfile": "Dockerfile" },\n  "appPort": "3000:3000",\n  "forwardPorts": [3000]\n'
         )
-        assert_success(update_devcontainers())
+        assert_success(self.run_updater(devcontainer))
         devcontainer.write_text.assert_not_called()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()

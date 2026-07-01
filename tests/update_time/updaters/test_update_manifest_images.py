@@ -6,80 +6,38 @@ from unittest.mock import Mock, patch
 from update_time.io.filesystem import YAML_GLOB_PATTERNS
 from update_time.updaters.update_manifest_images import update_manifest_images
 
-from tests.update_time.assertions import (
-    assert_success,
-)
-from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
-from tests.update_time.helpers import (
-    LoggingTestCase,
-    RegistryRequestsMixin,
-    docker_tag,
-    mock_docker_hub_auth,
-    mock_docker_registry,
-    mock_path,
-)
+from tests.update_time import helpers
+from tests.update_time.assertions import assert_success
+from tests.update_time.fixtures import DIGEST
+from tests.update_time.helpers import docker_tag, mock_docker_hub_auth, mock_docker_registry, mock_path
 
 
-@patch("pathlib.Path.rglob")
 @mock_docker_hub_auth
-class UpdateManifestImagesTest(RegistryRequestsMixin, LoggingTestCase):
+class UpdateManifestImagesTest(helpers.ImageUpdaterTestMixin):
     """Unit tests for the update manifest images function."""
 
-    def create_mock_manifest(self, mock_glob: Mock, image: str) -> Mock:
-        """Create a mock manifest file with one image line and register it with the path glob mock.
+    def reference(self, image: str) -> str:
+        """Return a Docker Compose / Helm `image:` line for the image."""
+        return f"image: {image}\n"
 
-        update_manifest_images globs multiple patterns, so rglob is called once per pattern. A real file matches
-        only one glob, so return the mock for the Compose pattern only to avoid processing the same file twice.
+    def run_updater(self, mock_file: Mock) -> int:
+        """Run the manifest updater with the mock file as the only Docker Compose file.
+
+        update_manifest_images globs the Compose pattern and then the Helm YAML patterns; returning the file for the
+        Compose pattern only (and nothing for the Helm ones) processes it exactly once.
         """
-        mock_manifest = mock_path(f"    image: {image}\n")
-        mock_glob.side_effect = lambda pattern: [mock_manifest] if pattern == "docker-compose*.yml" else []
-        return mock_manifest
 
-    def test_no_changes(self, mock_glob: Mock):
-        """Test no changes are made when no newer tag is available."""
-        self.requests.side_effect = mock_docker_registry()
-        mock_manifest = self.create_mock_manifest(mock_glob, f"mongo-express:1.0.2@{DIGEST}")
-        assert_success(update_manifest_images())
-        mock_manifest.write_text.assert_not_called()
-        self.assert_path_logged(mock_manifest)
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
+        def rglob(pattern: str) -> list[Mock]:
+            return [mock_file] if pattern == "docker-compose*.yml" else []
 
-    def test_changes(self, mock_glob: Mock):
-        """Test the image tag and digest are bumped when a newer version is available."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("149.0.3", DIGEST2))
-        mock_manifest = self.create_mock_manifest(mock_glob, f"selenium/standalone-firefox:149.0.2@{DIGEST1}")
-        assert_success(update_manifest_images())
-        mock_manifest.write_text.assert_called_with(f"    image: selenium/standalone-firefox:149.0.3@{DIGEST2}\n")
-        self.assert_path_logged(mock_manifest)
-        self.assert_new_version_logged(mock_manifest, "selenium/standalone-firefox", "149.0.3")
-        self.assert_no_warnings_logged()
+        with patch("pathlib.Path.rglob", side_effect=rglob):
+            return update_manifest_images()
 
-    def test_pin_unpinned_image(self, mock_glob: Mock):
-        """Test that an image referenced by tag only is automatically pinned with the latest tag and digest."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("11.1.0", DIGEST2))
-        mock_manifest = self.create_mock_manifest(mock_glob, "grafana/grafana:11.0.0")
-        assert_success(update_manifest_images())
-        mock_manifest.write_text.assert_called_with(f"    image: grafana/grafana:11.1.0@{DIGEST2}\n")
-        self.assert_path_logged(mock_manifest)
-        self.assert_new_version_logged(mock_manifest, "grafana/grafana", "11.1.0")
-        self.assert_no_warnings_logged()
-
-    def test_pin_unpinned_image_already_at_latest(self, mock_glob: Mock):
-        """Test that an unpinned image that is already at the latest version is still pinned with its digest."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("7.2.0", DIGEST3))
-        mock_manifest = self.create_mock_manifest(mock_glob, "redis:7.2.0")
-        assert_success(update_manifest_images())
-        mock_manifest.write_text.assert_called_with(f"    image: redis:7.2.0@{DIGEST3}\n")
-        self.assert_path_logged(mock_manifest)
-        self.assert_pinned_logged(mock_manifest, "redis", "7.2.0", DIGEST3)
-        self.assert_no_warnings_logged()
-
-    def test_variable_substitution_ignored(self, mock_glob: Mock):
+    def test_variable_substitution_ignored(self):
         """Test that image tags using ${...} substitution are not modified."""
         self.requests.side_effect = mock_docker_registry(docker_tag("999.0", DIGEST))
-        mock_manifest = self.create_mock_manifest(mock_glob, "ictu/quality-time_proxy:${QUALITY_TIME_VERSION}")
-        assert_success(update_manifest_images())
+        mock_manifest = mock_path(self.reference("ictu/quality-time_proxy:${QUALITY_TIME_VERSION}"))
+        assert_success(self.run_updater(mock_manifest))
         mock_manifest.write_text.assert_not_called()
         self.assert_path_logged(mock_manifest)
         self.assert_no_new_version_logged()
