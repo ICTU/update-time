@@ -88,10 +88,6 @@ class Logger:
         relative_path = path.relative_to(Path.cwd())
         self._log(self.log.info, "Pinned %s in %s to %s@%s", dependency, relative_path, version.version, version.sha)
 
-    def invalid_version(self, dependency: str, invalid_version: str) -> None:
-        """Log an invalid version."""
-        self._log(self.log.error, "Got an invalid version for %s: %s", dependency, invalid_version)
-
     def no_version(self, dependency: str) -> None:
         """Log no version found."""
         self._log(self.log.error, "No valid version found for %s", dependency)

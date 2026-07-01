@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
         default=COOLDOWN_DAYS,
         metavar="DAYS",
         help="number of days to hold back newly published Docker image, GitHub Action, requirements.txt, npm, pnpm, "
-        "and pyproject.toml versions (default: %(default)s)",
+        "pyproject.toml, and jsDelivr versions (default: %(default)s)",
     )
     parser.add_argument(
         "--log-level",

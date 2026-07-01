@@ -1,19 +1,29 @@
-"""Updater script for jsdelivr CDN URLs (limited to NPM packages in the Sphinx config at the moment)."""
+"""Updater script for jsdelivr CDN URLs (limited to NPM packages in the Sphinx config at the moment).
+
+Like the pypi and oci sources, this honours Update-time's cooldown: a version published within the cooldown window
+is held back, so a freshly published (and possibly compromised) npm release isn't adopted immediately.
+"""
 
 import re
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import requests
-from packaging.version import InvalidVersion, Version
+from packaging.version import Version
 
-from update_time.domain.version import DependencyName, DependencyVersion, VersionString
+from update_time.domain.cooldown import within_cooldown
+from update_time.domain.version import DependencyName, DependencyVersion, VersionString, is_valid
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.sources.npmjs import get_publication_datetime
 
+if TYPE_CHECKING:
+    from datetime import datetime
+
 LOG = get_logger("jsdelivr")
 HEADERS = {"User-Agent": "Update-time dependency update tool (https://github.com/ICTU/update-time)"}
+JSDELIVR_PACKAGE_API = "https://data.jsdelivr.com/v1/packages/npm"
 # Match a jsDelivr npm URL together with the Subresource Integrity hash that follows it, so both stay in sync.
 JSDELIVR_RE = re.compile(
     r"https://cdn\.jsdelivr\.net/npm/(?P<dependency>[\w-]+)@(?P<version>[\d.]+)"
@@ -23,31 +33,48 @@ JSDELIVR_RE = re.compile(
 
 
 def get_latest_version(dependency: DependencyName, current_version_string: VersionString) -> DependencyVersion:
-    """Fetch the latest version and matching integrity hash for the dependency."""
+    """Return the latest jsDelivr version published outside the cooldown, with its integrity hash.
+
+    Mirrors the pypi and oci sources: walk the available versions newest-first and pick the first one published
+    outside the cooldown window. Pre-releases, invalid versions, and versions the npm registry has no publication
+    date for (e.g. present on jsDelivr but not yet mirrored) are skipped. Returns the current version unchanged when
+    it is invalid or already the newest eligible version.
+    """
+    if not is_valid(current_version_string):
+        return DependencyVersion(version=current_version_string)
     current_version = Version(current_version_string)
-    latest_version = _get_latest_version(dependency, current_version)
-    integrity = _get_integrity_hash(dependency, latest_version) if latest_version > current_version else ""
-    published = get_publication_datetime(dependency, str(latest_version))
-    return DependencyVersion(version=str(latest_version), sha=integrity, published=published)
+    for version in _candidate_versions(dependency, current_version):
+        if (published := _publication_datetime(dependency, version)) and not within_cooldown(published):
+            return DependencyVersion(str(version), sha=_get_integrity_hash(dependency, version), published=published)
+    return DependencyVersion(version=current_version_string)
 
 
-def _get_latest_version(dependency: str, current_version: Version) -> Version:
-    """Fetch the latest released version of the dependency from jsDelivr."""
-    url = f"https://data.jsdelivr.com/v1/packages/npm/{dependency}"
-    response = requests.get(url, headers=HEADERS, timeout=10)
+def _candidate_versions(dependency: str, current_version: Version) -> list[Version]:
+    """Return the dependency's stable versions newer than the current one, newest first."""
+    response = requests.get(f"{JSDELIVR_PACKAGE_API}/{dependency}", headers=HEADERS, timeout=10)
     response.raise_for_status()
-    latest_tag = response.json().get("tags", {}).get("latest", "")
+    versions = [
+        Version(entry["version"]) for entry in response.json().get("versions", []) if is_valid(entry["version"])
+    ]
+    newer = [version for version in versions if version > current_version and not version.is_prerelease]
+    return sorted(newer, reverse=True)
+
+
+def _publication_datetime(dependency: str, version: Version) -> datetime | None:
+    """Return the version's npm publication date, or None when the npm registry doesn't list it yet.
+
+    A version can be on jsDelivr before the npm registry reports its release date; treat that as unknown (and so, in
+    the caller, as too fresh to adopt) rather than crashing.
+    """
     try:
-        latest_version = Version(latest_tag)
-    except InvalidVersion:
-        LOG.invalid_version(dependency, f"'{latest_tag}'")
-        latest_version = Version("0.0.0")
-    return max(latest_version, current_version)
+        return get_publication_datetime(dependency, str(version))
+    except KeyError:
+        return None
 
 
 def _get_integrity_hash(dependency: str, version: Version) -> str:
     """Fetch the Subresource Integrity hash of the dependency's default file from jsDelivr."""
-    url = f"https://data.jsdelivr.com/v1/packages/npm/{dependency}@{version}?structure=flat"
+    url = f"{JSDELIVR_PACKAGE_API}/{dependency}@{version}?structure=flat"
     response = requests.get(url, headers=HEADERS, timeout=10)
     response.raise_for_status()
     json = response.json()
