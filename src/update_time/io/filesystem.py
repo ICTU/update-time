@@ -22,18 +22,14 @@ _IGNORE_MARKER = re.compile(r"#\s*update-time:\s*ignore\b")
 
 
 def _named_hidden_parts(glob_pattern: str) -> set[str]:
-    """Return the literal hidden (dot-prefixed) path segments a glob pattern names, e.g. `.devcontainer`.
+    """Return the hidden (dot-prefixed) path segments a glob pattern names, e.g. `.devcontainer`.
 
-    Hidden folders and files are skipped by default (see `glob`), but a pattern that names one literally (like
+    Hidden folders and files are skipped by default (see `glob`), but a pattern that names one (like
     `.devcontainer/devcontainer.json` or `.github/workflows/*.yml`) is asking for it, so it should be visited.
-    A segment containing a glob wildcard doesn't name a specific folder and so grants no such exception.
+    A wildcard segment such as `.*` needs no special handling: these are compared to real path segments by exact
+    equality, which a wildcard never satisfies, so including it grants no exception anyway.
     """
-    wildcards = ("*", "?", "[")
-    return {
-        part
-        for part in Path(glob_pattern).parts
-        if part.startswith(".") and not any(wildcard in part for wildcard in wildcards)
-    }
+    return {part for part in Path(glob_pattern).parts if part.startswith(".")}
 
 
 def glob(*glob_patterns: str, start: Path | None = None) -> Iterator[Path]:

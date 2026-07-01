@@ -20,9 +20,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="update-time",
         description="Scan the current repository for pinned dependencies and update them to their latest versions, "
-        "rewriting the pinned versions in place. Looks at pyproject.toml, package.json, Dockerfiles, GitHub Actions "
-        "workflows, CircleCI configs, Docker Compose and Helm manifests, and jsDelivr URLs. A cooldown period holds "
-        "back releases that are too fresh to trust.",
+        "rewriting the pinned versions in place. Looks at pyproject.toml, requirements.txt, package.json, Dockerfiles, "
+        "GitHub Actions workflows, CircleCI configs, GitLab CI configs, Docker Compose and Helm manifests, "
+        "devcontainer configs, and jsDelivr URLs. A cooldown period holds back releases that are too fresh to trust.",
     )
     parser.add_argument("-V", "--version", action="version", version=f"v{version('update-time')}")
     parser.add_argument(
@@ -30,8 +30,8 @@ def parse_args() -> argparse.Namespace:
         type=non_negative_int,
         default=COOLDOWN_DAYS,
         metavar="DAYS",
-        help="number of days to hold back newly published Docker image, GitHub Action, requirements.txt, npm, and "
-        "pyproject.toml versions (default: %(default)s)",
+        help="number of days to hold back newly published Docker image, GitHub Action, requirements.txt, npm, pnpm, "
+        "and pyproject.toml versions (default: %(default)s)",
     )
     parser.add_argument(
         "--log-level",
