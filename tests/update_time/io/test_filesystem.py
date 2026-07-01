@@ -42,6 +42,22 @@ class GlobTest(unittest.TestCase):
         mock_glob.return_value = [Path(folder) / "file.txt" for folder in folders_that_should_be_ignored]
         self.assertEqual([], list(glob("*.txt")))
 
+    def test_hidden_folder_named_in_pattern_is_visited(self, mock_glob: Mock):
+        """Test that a hidden folder named literally in the pattern is visited, not skipped as a hidden folder."""
+        files = [Path("/.devcontainer/devcontainer.json"), Path("/pkg/.devcontainer/devcontainer.json")]
+        mock_glob.return_value = files
+        self.assertEqual(files, list(glob(".devcontainer/devcontainer.json")))
+
+    def test_hidden_file_named_in_pattern_is_visited(self, mock_glob: Mock):
+        """Test that a top-level hidden file named literally in the pattern is visited."""
+        mock_glob.return_value = [Path("/.devcontainer.json")]
+        self.assertEqual([Path("/.devcontainer.json")], list(glob(".devcontainer.json")))
+
+    def test_hidden_folder_not_named_in_pattern_is_still_skipped(self, mock_glob: Mock):
+        """Test that hidden folders the pattern does not name are still skipped, even next to one it does."""
+        mock_glob.return_value = [Path("/.git/.devcontainer/devcontainer.json")]
+        self.assertEqual([], list(glob(".devcontainer/devcontainer.json")))
+
 
 REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"
 SHA_REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>sha256:[a-f0-9]{64}))?"
