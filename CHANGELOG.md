@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Update `package.json` files managed by [pnpm](https://pnpm.io) using pnpm, instead of skipping them. The package manager is detected from the corepack `packageManager` field or a sibling `pnpm-lock.yaml`, and pnpm updates both `package.json` and `pnpm-lock.yaml` without ever writing a stray `package-lock.json`. Update-time's cooldown (the `--cooldown` value, default 7 days) is applied via pnpm's `minimumReleaseAge` setting (measured in minutes); if the project already configures `minimumReleaseAge`, Update-time leaves it untouched. yarn and bun are still skipped with a warning. Closes [#47](https://github.com/ICTU/update-time/issues/47).
+- Update the base `image` and each `features` entry in `.devcontainer/devcontainer.json` and `.devcontainer.json`, bumping each OCI reference to its latest compatible tag and pinning it with the tag's digest. The references are resolved on any OCI registry (`ghcr.io`, `mcr.microsoft.com`, Docker Hub, …); since the OCI protocol exposes no publication date, the cooldown is not enforced for registries other than Docker Hub. Devcontainers that build from a `dockerfile` or `dockerComposeFile` are left to the Dockerfile and Compose updaters. The file is edited line by line, so its comments and trailing commas are preserved. Closes [#49](https://github.com/ICTU/update-time/issues/49).
+
+### Fixed
+
+- Resolve images on registries that reject a host-prefixed repository path, such as `mcr.microsoft.com`. The registry host is now dropped from the repository path for every registry (not only Docker Hub), so `mcr.microsoft.com/devcontainers/typescript-node` is queried as `.../v2/devcontainers/typescript-node/...` instead of a doubled path that returned a 404. This affected any such image reference, wherever the updaters find one.
 
 ## 0.0.12 - 2026-06-30
 
