@@ -120,8 +120,8 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         """Test that a Node base image elsewhere in the repo is used when the package.json has no local Dockerfile."""
         mock_package_json = self.create_package_json()
         fallback_dockerfile = mock_path("FROM node:20")
-        # Two rglob calls: glob("package.json") returns the package.json; glob("Dockerfile") returns the local path
-        # (which we want skipped via the `continue` branch) plus the fallback Dockerfile.
+        # glob("package.json") returns the package.json; the Dockerfile patterns each return the local path (skipped
+        # via the `continue` branch, as it doesn't exist here) plus the fallback Dockerfile found elsewhere.
         mock_glob.side_effect = lambda pattern: iter(
             [mock_package_json] if pattern == "package.json" else [Path("/Dockerfile"), fallback_dockerfile]
         )

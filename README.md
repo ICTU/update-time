@@ -41,7 +41,7 @@ Update-time runs a set of updater scripts, each responsible for one kind of depe
 | Python dependencies pinned with `==` | hand-written `requirements*.txt`, `requirements/*.txt` | [PyPI](https://pypi.org) |
 | npm and pnpm dependencies | `package.json` (and `package-lock.json` / `pnpm-lock.yaml`) | [npm registry](https://registry.npmjs.org) |
 | Node engine version | `package.json` | the Node base image in the project's Dockerfile |
-| Dockerfile base images (tag + digest) | `Dockerfile` | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) |
+| Dockerfile base images (tag + digest) | `Dockerfile`, `*.Dockerfile`, `Dockerfile.*` | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) |
 | CircleCI images (tag + digest) | CircleCI YAML configs | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) |
 | GitLab CI images (tag + digest) | `.gitlab-ci.yml` | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) |
 | Docker Compose and Helm images (tag + digest) | Compose files and Helm folder | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) |

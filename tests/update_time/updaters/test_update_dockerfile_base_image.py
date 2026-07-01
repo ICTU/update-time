@@ -2,6 +2,7 @@
 
 from unittest.mock import Mock, patch
 
+from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS
 from update_time.updaters.update_dockerfile_base_image import update_dockerfiles
 
 from tests.update_time import helpers
@@ -19,9 +20,23 @@ class UpdateDockerfileTest(helpers.ImageUpdaterTestMixin):
         return f"FROM {image}\n"
 
     def run_updater(self, mock_file: Mock) -> int:
-        """Run the Dockerfile updater with the mock file as the only discovered Dockerfile."""
-        with patch("pathlib.Path.rglob", return_value=[mock_file]):
+        """Run the Dockerfile updater with the mock file as the only discovered Dockerfile.
+
+        The updater globs several Dockerfile patterns; return the file for the exact `Dockerfile` one only, so it is
+        processed exactly once.
+        """
+
+        def rglob(pattern: str) -> list[Mock]:
+            return [mock_file] if pattern == "Dockerfile" else []
+
+        with patch("pathlib.Path.rglob", side_effect=rglob):
             return update_dockerfiles()
+
+    def test_alternate_filenames_are_scanned(self):
+        """Test that `*.Dockerfile` and `Dockerfile.*` files are scanned, not only an exact `Dockerfile`."""
+        with patch("update_time.updaters.update_dockerfile_base_image.update_files", return_value=0) as update_files:
+            update_dockerfiles()
+        self.assertEqual(DOCKERFILE_GLOB_PATTERNS, update_files.call_args.args)
 
     def test_stage_alias_is_preserved_when_pinning(self):
         """Test that a multi-stage `FROM image:tag AS name` alias is kept intact when the image is pinned."""
