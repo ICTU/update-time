@@ -21,6 +21,7 @@ PARALLEL_SCRIPTS = (
     "circle_ci_config",
     "gitlab_ci_config",
     "manifest_images",
+    "devcontainer",
     "jsdelivr",
 )
 # node_engine and package_json both rewrite the package.json files, so they run sequentially (after the

@@ -196,11 +196,19 @@ def _registry_host(image: str) -> str:
 
 
 def _repository(image: str) -> str:
-    """Return the `namespace/repository` path for an image, e.g. `node` -> `library/node`."""
+    """Return the `namespace/repository` path for an image, relative to its registry host.
+
+    The repository path in the registry API is host-relative, so an explicit registry host is dropped, e.g.
+    `ghcr.io/devcontainers/features/node` -> `devcontainers/features/node` and `docker.io/library/redis` ->
+    `library/redis`. Dropping it for every registry (not just Docker Hub) matters because strict registries such as
+    `mcr.microsoft.com` return a 404 for a host-prefixed path. A hostless reference is on Docker Hub, where a
+    single-segment name lives under the implicit `library/` namespace (`node` -> `library/node`).
+    """
     host, remainder = _split_domain(image)
-    if host and host.endswith("docker.io"):
-        image = remainder  # Drop the explicit Docker Hub host, e.g. docker.io/library/redis -> library/redis.
-    return image if "/" in image else f"library/{image}"
+    path = image if host is None else remainder
+    if host is None or host.endswith("docker.io"):
+        return path if "/" in path else f"library/{path}"
+    return path
 
 
 def _credentials(image: str) -> tuple[str, str] | None:
