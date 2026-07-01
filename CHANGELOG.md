@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Fixed
 
 - Resolve images on registries that reject a host-prefixed repository path, such as `mcr.microsoft.com`. The registry host is now dropped from the repository path for every registry (not only Docker Hub), so `mcr.microsoft.com/devcontainers/typescript-node` is queried as `.../v2/devcontainers/typescript-node/...` instead of a doubled path that returned a 404. This affected any such image reference, wherever the updaters find one.
+- Apply the cooldown to jsDelivr npm URLs, which previously adopted a freshly published version immediately. Update-time now walks the available versions newest-first and picks the latest one published outside the cooldown window (using the npm registry's publication dates), consistent with the other version sources. Closes [#68](https://github.com/ICTU/update-time/issues/68).
 
 ## 0.0.12 - 2026-06-30
 
