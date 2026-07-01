@@ -12,9 +12,8 @@ comments and trailing commas (which devcontainer.json allows, and plain JSON for
 """
 
 import sys
-from pathlib import Path
 
-from update_time.io.filesystem import update_file
+from update_time.io.filesystem import glob, update_file
 from update_time.io.log import get_logger
 from update_time.sources.oci import IMAGE_REFERENCE, get_latest_tag
 
@@ -27,22 +26,15 @@ IMAGE_RE = rf'"image":\s*"{IMAGE_REFERENCE}"'
 # happens to look like `name:version` (e.g. `"appPort": "3000:3000"`) are not matched.
 FEATURE_RE = rf'"{IMAGE_REFERENCE}":\s*{{'
 
-# Standard devcontainer.json locations, relative to the repository root: a top-level file, the conventional
-# `.devcontainer/` folder, and per-configuration subfolders under it. The shared `glob` skips dot-paths (like
-# `.devcontainer`), so these are discovered explicitly here instead.
+# Standard devcontainer.json locations: a top-level file, the conventional `.devcontainer/` folder, and
+# per-configuration subfolders under it. `glob` visits these dot-paths because they are named in the patterns.
 DEVCONTAINER_GLOBS = (".devcontainer.json", ".devcontainer/devcontainer.json", ".devcontainer/*/devcontainer.json")
-
-
-def devcontainer_jsons() -> list[Path]:
-    """Return the repository's devcontainer.json files, in a stable order."""
-    root = Path.cwd()
-    return sorted({path for pattern in DEVCONTAINER_GLOBS for path in root.glob(pattern)})
 
 
 def update_devcontainers() -> int:
     """Update the base image and feature references in the repository's devcontainer.json files."""
     results = [0]
-    for devcontainer in devcontainer_jsons():
+    for devcontainer in glob(*DEVCONTAINER_GLOBS):
         results.append(update_file(devcontainer, IMAGE_RE, get_latest_tag, LOG))
         results.append(update_file(devcontainer, FEATURE_RE, get_latest_tag, LOG))
     return max(results)

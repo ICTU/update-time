@@ -1,7 +1,6 @@
 """Unit tests for the devcontainer update script."""
 
 import unittest
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 from update_time.updaters.update_devcontainer import (
@@ -23,20 +22,15 @@ from tests.update_time.helpers import (
 )
 
 
-@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
-@patch("pathlib.Path.glob")
+@patch("update_time.updaters.update_devcontainer.glob")
 @mock_docker_hub_auth
 class UpdateDevcontainerTest(RegistryRequestsMixin, LoggingTestCase):
     """Unit tests for the update devcontainer function."""
 
     def create_devcontainer(self, mock_glob: Mock, contents: str) -> Mock:
-        """Create a mock devcontainer.json file, discovered via the `.devcontainer/devcontainer.json` glob.
-
-        Returning it for a single glob pattern (and nothing for the others) avoids processing the same file twice.
-        """
+        """Create a mock devcontainer.json file and register it as the glob's single discovered file."""
         mock_devcontainer = mock_path(contents)
-        pattern = ".devcontainer/devcontainer.json"
-        mock_glob.side_effect = lambda glob: [mock_devcontainer] if glob == pattern else []
+        mock_glob.return_value = [mock_devcontainer]
         return mock_devcontainer
 
     def test_image_updated_and_pinned(self, mock_glob: Mock):
@@ -98,23 +92,21 @@ class UpdateDevcontainerTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_no_warnings_logged()
 
 
-@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
-@patch("pathlib.Path.glob")
 class ScannedDevcontainersTest(unittest.TestCase):
     """Unit tests for which devcontainer files are scanned and which references are updated in them."""
 
+    @patch("update_time.updaters.update_devcontainer.glob")
     def test_standard_locations_are_scanned(self, mock_glob: Mock):
         """Test that the top-level, `.devcontainer/`, and per-configuration subfolder locations are all scanned."""
         mock_glob.return_value = []
         update_devcontainers()
-        scanned = [call.args[0] for call in mock_glob.call_args_list]
-        self.assertEqual(list(DEVCONTAINER_GLOBS), scanned)
+        mock_glob.assert_called_once_with(*DEVCONTAINER_GLOBS)
 
     @patch("update_time.updaters.update_devcontainer.update_file", return_value=0)
-    def test_image_and_features_are_updated(self, mock_update_file: Mock, mock_glob: Mock):
+    @patch("update_time.updaters.update_devcontainer.glob")
+    def test_image_and_features_are_updated(self, mock_glob: Mock, mock_update_file: Mock):
         """Test that each devcontainer.json is scanned for both its image and its feature references."""
-        devcontainer = mock_path("{}")
-        mock_glob.side_effect = lambda glob: [devcontainer] if glob == ".devcontainer.json" else []
+        mock_glob.return_value = [mock_path("{}")]
         update_devcontainers()
         regexes = [call.args[1] for call in mock_update_file.call_args_list]
         self.assertEqual([IMAGE_RE, FEATURE_RE], regexes)

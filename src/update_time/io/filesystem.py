@@ -21,15 +21,37 @@ YAML_GLOB_PATTERNS = ("*.yml", "*.yaml")
 _IGNORE_MARKER = re.compile(r"#\s*update-time:\s*ignore\b")
 
 
+def _named_hidden_parts(glob_pattern: str) -> set[str]:
+    """Return the literal hidden (dot-prefixed) path segments a glob pattern names, e.g. `.devcontainer`.
+
+    Hidden folders and files are skipped by default (see `glob`), but a pattern that names one literally (like
+    `.devcontainer/devcontainer.json` or `.github/workflows/*.yml`) is asking for it, so it should be visited.
+    A segment containing a glob wildcard doesn't name a specific folder and so grants no such exception.
+    """
+    wildcards = ("*", "?", "[")
+    return {
+        part
+        for part in Path(glob_pattern).parts
+        if part.startswith(".") and not any(wildcard in part for wildcard in wildcards)
+    }
+
+
 def glob(*glob_patterns: str, start: Path | None = None) -> Iterator[Path]:
-    """Return an iterator over all paths matching any of the given glob patterns."""
+    """Return an iterator over all paths matching any of the given glob patterns.
+
+    Hidden folders and files (dot-prefixed, e.g. `.git`, `.venv`) and build-output folders are skipped, so a broad
+    pattern like `*.yml` doesn't reach into them. A hidden folder or file named literally in the pattern itself is
+    the exception: `glob(".devcontainer/devcontainer.json")` visits `.devcontainer`, so callers can target hidden
+    locations directly instead of working around the default skip.
+    """
     if start is None:
         start = Path.cwd()
     path_parts_to_ignore = {"build", "node_modules", "__pycache__"}
     for glob_pattern in glob_patterns:
+        named_hidden = _named_hidden_parts(glob_pattern)
         for path in start.rglob(glob_pattern):
             relative_path = path.relative_to(start)
-            if any(part.startswith(".") for part in relative_path.parts):
+            if any(part.startswith(".") and part not in named_hidden for part in relative_path.parts):
                 continue
             if any(part in path_parts_to_ignore for part in relative_path.parts):
                 continue
