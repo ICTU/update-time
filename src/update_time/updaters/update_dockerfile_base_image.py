@@ -7,7 +7,7 @@ digest is optional in the regex but a concrete version tag is still required, so
 
 import sys
 
-from update_time.io.filesystem import update_files
+from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, update_files
 from update_time.io.log import get_logger
 from update_time.sources.oci import IMAGE_REFERENCE, get_latest_tag
 
@@ -17,7 +17,7 @@ IMAGE_RE = rf"FROM {IMAGE_REFERENCE}"
 
 def update_dockerfiles() -> int:
     """Update the base image of Dockerfiles."""
-    return update_files("Dockerfile", regexp=IMAGE_RE, get_new_version=get_latest_tag, logger=LOG)
+    return update_files(*DOCKERFILE_GLOB_PATTERNS, regexp=IMAGE_RE, get_new_version=get_latest_tag, logger=LOG)
 
 
 def main() -> int:  # pragma: no cover

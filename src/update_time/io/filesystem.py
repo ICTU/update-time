@@ -13,6 +13,10 @@ if TYPE_CHECKING:
     from update_time.io.log import Logger
 
 YAML_GLOB_PATTERNS = ("*.yml", "*.yaml")
+# Dockerfiles are conventionally named `Dockerfile`, or `<purpose>.Dockerfile` / `Dockerfile.<purpose>` when a
+# project has more than one (e.g. `python.Dockerfile`, `Dockerfile.dev`). The three patterns don't overlap for any
+# realistic name, so a file is discovered once. Shared by the base-image and Node-engine updaters.
+DOCKERFILE_GLOB_PATTERNS = ("Dockerfile", "*.Dockerfile", "Dockerfile.*")
 
 # An `# update-time: ignore` comment pins a reference so it is left unchanged. It works inline on the reference's
 # own line (valid in YAML and requirements) or as a standalone comment on the line directly above it (the form
