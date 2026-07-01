@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Update `package.json` files managed by [pnpm](https://pnpm.io) using pnpm, instead of skipping them. The package manager is detected from the corepack `packageManager` field or a sibling `pnpm-lock.yaml`, and pnpm updates both `package.json` and `pnpm-lock.yaml` without ever writing a stray `package-lock.json`. Update-time's cooldown (the `--cooldown` value, default 7 days) is applied via pnpm's `minimumReleaseAge` setting (measured in minutes); if the project already configures `minimumReleaseAge`, Update-time leaves it untouched. yarn and bun are still skipped with a warning. Closes [#47](https://github.com/ICTU/update-time/issues/47).
 
 ## 0.0.12 - 2026-06-30
 

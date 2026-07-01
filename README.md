@@ -39,7 +39,7 @@ Update-time runs a set of updater scripts, each responsible for one kind of depe
 | ---------- | ----- | ------ |
 | Python dependencies pinned with `==` | `pyproject.toml` | [PyPI](https://pypi.org) |
 | Python dependencies pinned with `==` | hand-written `requirements*.txt`, `requirements/*.txt` | [PyPI](https://pypi.org) |
-| npm dependencies | `package.json` (and `package-lock.json`) | [npm registry](https://registry.npmjs.org) |
+| npm and pnpm dependencies | `package.json` (and `package-lock.json` / `pnpm-lock.yaml`) | [npm registry](https://registry.npmjs.org) |
 | Node engine version | `package.json` | the Node base image in the project's Dockerfile |
 | Dockerfile base images (tag + digest) | `Dockerfile` | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) |
 | CircleCI images (tag + digest) | CircleCI YAML configs | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) |
@@ -87,7 +87,7 @@ This works for every reference Update-time rewrites line by line: Dockerfiles, D
 
 Run with `--log-level DEBUG` to see each ignored reference logged — a quick way to confirm a marker is recognised. Since the marker is case-sensitive, a typo (or wrong case) simply produces no such log and the reference is updated as usual.
 
-For `pyproject.toml` and `package.json` — which are updated through uv and npm rather than line by line — the marker does not apply. Opt a dependency out there by pinning it with a maximum or non-`==` version specifier instead (for example `package<=3.12`).
+For `pyproject.toml` and `package.json` — which are updated through uv, npm, and pnpm rather than line by line — the marker does not apply. Opt a dependency out there by pinning it with a maximum or non-`==` version specifier instead (for example `package<=3.12`).
 
 ## Cooldown
 
@@ -95,6 +95,7 @@ To avoid adopting releases that are too fresh to trust, Update-time honours a co
 
 - **Docker images, GitHub Actions, and `requirements.txt` dependencies** — Update-time enforces the cooldown itself, based on each image tag's push date and each release's publication date.
 - **npm dependencies** — Update-time passes the cooldown to `npm` via npm's `min-release-age` option (also measured in days), which npm added in 11.10.0; older npm versions ignore the option, so updates still run but without a cooldown. If your project already configures a cooldown in its `.npmrc` (`min-release-age` or `before`), Update-time leaves that in place instead of overriding it.
+- **pnpm dependencies** — Update-time passes the cooldown to `pnpm` via pnpm's `minimumReleaseAge` setting, converting the value to minutes (pnpm measures the age in minutes rather than days). If your project already configures `minimumReleaseAge` (in `pnpm-workspace.yaml`), Update-time leaves that in place instead of overriding it.
 - **`pyproject.toml` dependencies** — Update-time passes the cooldown to [uv](https://docs.astral.sh/uv/) via uv's `exclude-newer` setting. If your `pyproject.toml` already sets `exclude-newer` under `[tool.uv]`, or the `UV_EXCLUDE_NEWER` environment variable is set, Update-time leaves that in place instead of overriding it.
 
 ## Point of contact
