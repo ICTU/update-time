@@ -11,8 +11,9 @@ from tests.update_time.assertions import assert_success
 from tests.update_time.fixtures import HASH1, HASH2
 from tests.update_time.helpers import LoggingTestCase, mock_path, mock_response
 
-# A flat package listing as returned by the jsDelivr API with the ?structure=flat query parameter.
-FLAT_FILES = {"default": "/dist/clipboard.min.js", "files": [{"name": "/dist/clipboard.min.js", "hash": HASH2}]}
+# The file referenced in the jsDelivr URL, and a flat package listing as returned by the API with ?structure=flat.
+FILENAME = "/dist/clipboard.min.js"
+FLAT_FILES = {"default": FILENAME, "files": [{"name": FILENAME, "hash": HASH2}]}
 
 # npm publication dates, relative to now so the cooldown decision is independent of the wall clock.
 ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN_DAYS + 1)).isoformat()  # comfortably past the cooldown
@@ -47,7 +48,7 @@ class GetLatestVersionTest(LoggingTestCase):
     def test_unchanged_when_current_is_newest(self, mock_get: Mock):
         """Test that no newer version keeps the current version and fetches no integrity hash."""
         mock_get.side_effect = [jsdelivr_versions("1.0", "0.9")]
-        latest_version = get_latest_version("clipboard", "1.0")
+        latest_version = get_latest_version("clipboard", "1.0", FILENAME)
         self.assertEqual("1.0", latest_version.version)
         self.assertEqual("", latest_version.sha)
 
@@ -58,7 +59,7 @@ class GetLatestVersionTest(LoggingTestCase):
             npm_registry({"1.1": ELIGIBLE}),
             mock_response(FLAT_FILES),
         ]
-        latest_version = get_latest_version("clipboard", "1.0")
+        latest_version = get_latest_version("clipboard", "1.0", FILENAME)
         self.assertEqual("1.1", latest_version.version)
         self.assertEqual(f"sha256-{HASH2}", latest_version.sha)
 
@@ -70,31 +71,61 @@ class GetLatestVersionTest(LoggingTestCase):
             npm_registry({"1.5": ELIGIBLE}),  # eligible, chosen
             mock_response(FLAT_FILES),
         ]
-        latest_version = get_latest_version("clipboard", "1.0")
+        latest_version = get_latest_version("clipboard", "1.0", FILENAME)
         self.assertEqual("1.5", latest_version.version)
         self.assertEqual(f"sha256-{HASH2}", latest_version.sha)
 
     def test_all_newer_versions_within_cooldown(self, mock_get: Mock):
         """Test that the current version is kept when every newer version is still within the cooldown."""
         mock_get.side_effect = [jsdelivr_versions("2.0", "1.0"), npm_registry({"2.0": FRESH})]
-        latest_version = get_latest_version("clipboard", "1.0")
+        latest_version = get_latest_version("clipboard", "1.0", FILENAME)
         self.assertEqual("1.0", latest_version.version)
         self.assertEqual("", latest_version.sha)
 
     def test_prerelease_ignored(self, mock_get: Mock):
         """Test that a newer pre-release is not adopted (and no publication date is looked up for it)."""
         mock_get.side_effect = [jsdelivr_versions("2.0.0-rc.1", "1.0")]
-        self.assertEqual("1.0", get_latest_version("clipboard", "1.0").version)
+        self.assertEqual("1.0", get_latest_version("clipboard", "1.0", FILENAME).version)
 
     def test_version_without_publication_date_skipped(self, mock_get: Mock):
         """Test that a version the npm registry has no release date for yet is treated as too fresh and skipped."""
         mock_get.side_effect = [jsdelivr_versions("1.1", "1.0"), npm_registry({})]
-        self.assertEqual("1.0", get_latest_version("clipboard", "1.0").version)
+        self.assertEqual("1.0", get_latest_version("clipboard", "1.0", FILENAME).version)
 
     def test_unparsable_current_version_left_alone(self, mock_get: Mock):
         """Test that an unparsable current version (e.g. a trailing dot) is left unchanged, querying nothing."""
-        self.assertEqual("1.", get_latest_version("clipboard", "1.").version)
+        self.assertEqual("1.", get_latest_version("clipboard", "1.", FILENAME).version)
         mock_get.assert_not_called()
+
+    def test_hashes_referenced_file_not_package_default(self, mock_get: Mock):
+        """Test that the referenced file's hash is used, even when the package default isn't a listed file."""
+        flat = {
+            "default": "/es5/node-main.min.js",  # not in files (jsDelivr's default isn't always listed)
+            "files": [{"name": "/es5/tex-mml-chtml.js", "hash": HASH2}, {"name": "/es5/other.js", "hash": HASH1}],
+        }
+        mock_get.side_effect = [
+            jsdelivr_versions("3.3.0", "3.2.2"),
+            npm_registry({"3.3.0": ELIGIBLE}),
+            mock_response(flat),
+        ]
+        latest_version = get_latest_version("mathjax", "3.2.2", "/es5/tex-mml-chtml.js")
+        self.assertEqual("3.3.0", latest_version.version)
+        self.assertEqual(f"sha256-{HASH2}", latest_version.sha)  # from the referenced file, not the unlisted default
+
+    def test_missing_referenced_file_hash_left_unchanged(self, mock_get: Mock):
+        """Test that a version whose referenced file has no listed hash is left unchanged, and the reason is logged."""
+        flat = {"default": FILENAME, "files": [{"name": "/other.js", "hash": HASH1}]}  # FILENAME is absent
+        mock_get.side_effect = [jsdelivr_versions("1.1", "1.0"), npm_registry({"1.1": ELIGIBLE}), mock_response(flat)]
+        latest_version = get_latest_version("clipboard", "1.0", FILENAME)
+        self.assertEqual("1.0", latest_version.version)
+        self.assertEqual("", latest_version.sha)
+        self.mock_warning.assert_called_once_with(
+            "Could not resolve the integrity hash for %s %s (%s), leaving it unchanged",
+            "clipboard",
+            "1.1",
+            FILENAME,
+            stacklevel=ANY,
+        )
 
 
 @patch("requests.get")

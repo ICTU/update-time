@@ -96,6 +96,11 @@ class Logger:
         """Log that no commit SHA could be fetched for an otherwise-eligible release."""
         self._log(self.log.error, "Could not fetch commit SHA for %s %s: %s", dependency, version, url)
 
+    def no_integrity_hash(self, dependency: str, version: str, filename: str) -> None:
+        """Warn that a jsDelivr file's integrity hash couldn't be resolved, so the reference is left unchanged."""
+        message = "Could not resolve the integrity hash for %s %s (%s), leaving it unchanged"
+        self._log(self.log.warning, message, dependency, version, filename)
+
     def path(self, path: Path) -> None:
         """Log working on path."""
         self._log(self.log.debug, "Checking if there are updates for %s", path.relative_to(Path.cwd()))

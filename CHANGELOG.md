@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 - Resolve images on registries that reject a host-prefixed repository path, such as `mcr.microsoft.com`. The registry host is now dropped from the repository path for every registry (not only Docker Hub), so `mcr.microsoft.com/devcontainers/typescript-node` is queried as `.../v2/devcontainers/typescript-node/...` instead of a doubled path that returned a 404. This affected any such image reference, wherever the updaters find one.
 - Apply the cooldown to jsDelivr npm URLs, which previously adopted a freshly published version immediately. Update-time now walks the available versions newest-first and picks the latest one published outside the cooldown window (using the npm registry's publication dates), consistent with the other version sources. Closes [#68](https://github.com/ICTU/update-time/issues/68).
+- Compute the jsDelivr Subresource Integrity hash for the file referenced in the URL rather than the package's default entry point. The previous behavior crashed on packages whose default file jsDelivr doesn't list (e.g. `mathjax`), and could have written a hash that didn't match the referenced file. When the referenced file's hash can't be resolved (for example because it no longer exists in the newer version), the reference is now left unchanged and a warning is logged instead of crashing. Closes [#69](https://github.com/ICTU/update-time/issues/69).
 
 ## 0.0.12 - 2026-06-30
 
