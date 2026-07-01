@@ -49,7 +49,10 @@ MANIFEST_MEDIA_TYPES = (
 # `python3.12-bookworm-slim` -> prefix `python`, version `3.12`, suffix `bookworm-slim`. Prefix and version both
 # exclude `-`, so the version ends where the suffix begins; numeric-leading tags (`3.12-slim`) get an empty prefix.
 # Tags without a version (e.g. `bookworm-slim`) don't match at all; `version` still validates the match with packaging.
-_TAG = re.compile(r"(?P<prefix>[^\d-]*)(?P<version>\d[^-]*)-?(?P<suffix>.*)$")
+# The prefix and version classes are possessive (`*+`) so the engine never backtracks across them: neither can give
+# back characters to salvage a failing match (a non-digit before `\d`, or a dash inside the version), which keeps
+# matching linear.
+_TAG = re.compile(r"(?P<prefix>[^\d-]*+)(?P<version>\d[^-]*+)-?(?P<suffix>.*)$")
 
 
 @dataclass(frozen=True)
@@ -152,6 +155,11 @@ def _split_domain(image: str) -> tuple[str | None, str]:
     return None, image
 
 
+def _is_docker_hub_host(host: str | None) -> bool:
+    """Return whether an OCI registry host is Docker Hub's, including a hostless reference (host None)."""
+    return host is None or host.endswith("docker.io")
+
+
 def is_docker_hub_image(image: str) -> bool:
     """Return whether the image reference points to Docker Hub rather than another registry.
 
@@ -160,7 +168,7 @@ def is_docker_hub_image(image: str) -> bool:
     Hub; `python`, `cimg/go` and `docker.io/library/redis` are.
     """
     host, _ = _split_domain(image)
-    return host is None or host.endswith("docker.io")
+    return _is_docker_hub_host(host)
 
 
 def get_latest_tag(image: DependencyName, current_tag: VersionString) -> DependencyVersion:
@@ -192,7 +200,8 @@ def get_latest_tag(image: DependencyName, current_tag: VersionString) -> Depende
 def _registry_host(image: str) -> str:
     """Return the OCI registry API host for an image reference, defaulting to Docker Hub's registry."""
     host, _ = _split_domain(image)
-    return DOCKER_HUB_OCI_HOST if host is None or host.endswith("docker.io") else host
+    # In the else branch `_is_docker_hub_host` was False, so `host` is a real (non-None) registry host.
+    return DOCKER_HUB_OCI_HOST if _is_docker_hub_host(host) else cast("str", host)
 
 
 def _repository(image: str) -> str:
@@ -206,7 +215,7 @@ def _repository(image: str) -> str:
     """
     host, remainder = _split_domain(image)
     path = image if host is None else remainder
-    if host is None or host.endswith("docker.io"):
+    if _is_docker_hub_host(host):
         return path if "/" in path else f"library/{path}"
     return path
 
@@ -301,7 +310,8 @@ def _registry_token(host: str, repository: str, credentials: tuple[str, str] | N
     challenge = probe.headers.get("WWW-Authenticate", "")
     if probe.status_code != requests.codes.unauthorized or not challenge.lower().startswith("bearer "):
         return None  # Anonymous registry (or an unexpected response): proceed without a token.
-    params = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
+    # Possessive quantifiers (`++`/`*+`) so the key and value scans never backtrack, keeping parsing linear.
+    params = dict(re.findall(r'(\w++)="([^"]*+)"', challenge))
     realm = params.pop("realm", "")
     params["scope"] = f"repository:{repository}:pull"
     response = requests.get(realm, params=params, timeout=10, auth=credentials)

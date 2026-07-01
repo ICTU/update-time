@@ -129,11 +129,11 @@ def run_json(command: list[str], cwd: Path) -> dict | list:
     return json.loads(output) if output.strip() else {}
 
 
-def update_package_json(package_json: Path) -> int:
+def update_package_json(package_json: Path) -> None:
     """Update the package.json and its lockfile using the project's package manager."""
     if (manager := SUPPORTED_MANAGERS.get(name := package_manager(package_json))) is None:
         LOG.unsupported_package_manager(package_json, name, "npm and pnpm")
-        return 0
+        return
     LOG.path(package_json)
     original_contents = package_json.read_text()
     cooldown = cooldown_options(manager, package_json.parent)
@@ -157,13 +157,13 @@ def update_package_json(package_json: Path) -> int:
     # produce a spurious diff.
     if not updated and package_json.read_text() != original_contents:
         package_json.write_text(original_contents)
-    return 0
 
 
 def update_package_jsons() -> int:
     """Find all package.json files and update them, including their lockfiles."""
-    results = {update_package_json(package_json) for package_json in glob("package.json")}
-    return max(results, default=0)
+    for package_json in glob("package.json"):
+        update_package_json(package_json)
+    return 0
 
 
 def main() -> int:  # pragma: no cover
