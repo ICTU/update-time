@@ -22,6 +22,9 @@ from update_time.sources.pypi import project_versions as pypi_project_versions
 from update_time.sources.pypi import release_metadata as pypi_release_metadata
 from update_time.updaters.update_github_action import get_latest_version as github_get_latest_version
 
+from tests.update_time.assertions import assert_success
+from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
@@ -235,3 +238,58 @@ def mock_docker_registry(
         return mock_response(by_name.get(url.rsplit("/tags/", maxsplit=1)[-1], {}))
 
     return get
+
+
+class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
+    """Shared tests for the updaters that rewrite `image:tag[@digest]` references via `update_file`/`get_latest_tag`.
+
+    All these updaters do the same thing to a reference (leave it when already latest, bump the tag and digest, pin a
+    tag-only reference); they differ only in how a reference is written in their file format and how the file is
+    discovered. A concrete suite supplies those two through `reference` and `run_updater`, inherits the common cases
+    below, and adds its own format-specific tests (stage aliases, machine images, features, variable substitution).
+    """
+
+    def reference(self, image: str) -> str:
+        """Return `image` embedded in the file format the updater rewrites (e.g. `FROM {image}` and a newline)."""
+        raise NotImplementedError
+
+    def run_updater(self, mock_file: Mock) -> int:
+        """Discover `mock_file`, run the updater, and return its exit code."""
+        raise NotImplementedError
+
+    def test_no_changes(self) -> None:
+        """Test that an image already at the latest pinned tag is left unchanged."""
+        self.requests.side_effect = mock_docker_registry()
+        mock_file = mock_path(self.reference(f"python:3.14@{DIGEST}"))
+        assert_success(self.run_updater(mock_file))
+        mock_file.write_text.assert_not_called()
+        self.assert_path_logged(mock_file)
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+    def test_bumped(self) -> None:
+        """Test that the image tag and digest are bumped when a newer version is available."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        mock_file = mock_path(self.reference(f"python:3.14@{DIGEST1}"))
+        assert_success(self.run_updater(mock_file))
+        mock_file.write_text.assert_called_once_with(self.reference(f"python:3.15@{DIGEST2}"))
+        self.assert_new_version_logged(mock_file, "python", "3.15")
+        self.assert_no_warnings_logged()
+
+    def test_pin_unpinned_image(self) -> None:
+        """Test that an image referenced by tag only is pinned with the latest tag and digest."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        mock_file = mock_path(self.reference("python:3.14"))
+        assert_success(self.run_updater(mock_file))
+        mock_file.write_text.assert_called_once_with(self.reference(f"python:3.15@{DIGEST2}"))
+        self.assert_new_version_logged(mock_file, "python", "3.15")
+        self.assert_no_warnings_logged()
+
+    def test_pin_unpinned_image_already_at_latest(self) -> None:
+        """Test that an unpinned image already at the latest version is still pinned with its digest."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST3))
+        mock_file = mock_path(self.reference("python:3.14"))
+        assert_success(self.run_updater(mock_file))
+        mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14@{DIGEST3}"))
+        self.assert_pinned_logged(mock_file, "python", "3.14", DIGEST3)
+        self.assert_no_warnings_logged()
