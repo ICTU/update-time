@@ -24,28 +24,35 @@ if TYPE_CHECKING:
 LOG = get_logger("jsdelivr")
 HEADERS = {"User-Agent": "Update-time dependency update tool (https://github.com/ICTU/update-time)"}
 JSDELIVR_PACKAGE_API = "https://data.jsdelivr.com/v1/packages/npm"
-# Match a jsDelivr npm URL together with the Subresource Integrity hash that follows it, so both stay in sync.
+# Match a jsDelivr npm URL together with the Subresource Integrity hash that follows it, so both stay in sync. The
+# file path after the version is captured so its (instead of the package default's) integrity hash is what gets updated.
 JSDELIVR_RE = re.compile(
-    r"https://cdn\.jsdelivr\.net/npm/(?P<dependency>[\w-]+)@(?P<version>[\d.]+)"
+    r"https://cdn\.jsdelivr\.net/npm/(?P<dependency>[\w-]+)@(?P<version>[\d.]+)(?P<filename>/[^\"]*)"
     r".*?\"integrity\": \"(?P<sha>sha\d+-[A-Za-z0-9+/=]+)\"",
     re.DOTALL,
 )
 
 
-def get_latest_version(dependency: DependencyName, current_version_string: VersionString) -> DependencyVersion:
-    """Return the latest jsDelivr version published outside the cooldown, with its integrity hash.
+def get_latest_version(
+    dependency: DependencyName, current_version_string: VersionString, filename: str
+) -> DependencyVersion:
+    """Return the latest jsDelivr version published outside the cooldown, with the referenced file's integrity hash.
 
     Mirrors the pypi and oci sources: walk the available versions newest-first and pick the first one published
     outside the cooldown window. Pre-releases, invalid versions, and versions the npm registry has no publication
     date for (e.g. present on jsDelivr but not yet mirrored) are skipped. Returns the current version unchanged when
-    it is invalid or already the newest eligible version.
+    it is invalid, already the newest eligible version, or the referenced file's integrity hash can't be resolved
+    (updating the version without a matching hash would break the Subresource Integrity check).
     """
     if not is_valid(current_version_string):
         return DependencyVersion(version=current_version_string)
     current_version = Version(current_version_string)
     for version in _candidate_versions(dependency, current_version):
         if (published := _publication_datetime(dependency, version)) and not within_cooldown(published):
-            return DependencyVersion(str(version), sha=_get_integrity_hash(dependency, version), published=published)
+            if integrity := _get_integrity_hash(dependency, version, filename):
+                return DependencyVersion(str(version), sha=integrity, published=published)
+            LOG.no_integrity_hash(dependency, str(version), filename)
+            return DependencyVersion(version=current_version_string)
     return DependencyVersion(version=current_version_string)
 
 
@@ -72,22 +79,25 @@ def _publication_datetime(dependency: str, version: Version) -> datetime | None:
         return None
 
 
-def _get_integrity_hash(dependency: str, version: Version) -> str:
-    """Fetch the Subresource Integrity hash of the dependency's default file from jsDelivr."""
+def _get_integrity_hash(dependency: str, version: Version, filename: str) -> str:
+    """Return the Subresource Integrity hash of the referenced file at the version, or "" if it isn't listed.
+
+    The hash must match the file referenced in the URL, not the package's default entry point (which jsDelivr does
+    not always list as a hashable file). An empty string signals the caller to leave the reference unchanged.
+    """
     url = f"{JSDELIVR_PACKAGE_API}/{dependency}@{version}?structure=flat"
     response = requests.get(url, headers=HEADERS, timeout=10)
     response.raise_for_status()
-    json = response.json()
-    file_hash = next(file["hash"] for file in json["files"] if file["name"] == json["default"])
-    return f"sha256-{file_hash}"
+    hashes = {entry["name"]: entry["hash"] for entry in response.json()["files"]}
+    return f"sha256-{hashes[filename]}" if filename in hashes else ""
 
 
 def update_jsdelivr(content: str, path: Path) -> str:
     """Update the version and integrity hash of all jsDelivr URLs in the content."""
 
     def replace(match: re.Match[str]) -> str:
-        dependency, version = match.group("dependency"), match.group("version")
-        latest_version = get_latest_version(dependency, version)
+        dependency, version, filename = match.group("dependency"), match.group("version"), match.group("filename")
+        latest_version = get_latest_version(dependency, version, filename)
         if latest_version.version == version:
             return match.group(0)
         LOG.new_version(dependency, latest_version, path)
