@@ -19,6 +19,8 @@ update-time
 
 Update-time has a small command-line interface. Run `update-time -h`/`--help` to see all options, `update-time -V`/`--version` to print the version, `update-time --cooldown DAYS` to override the default cooldown period (see [Cooldown](#cooldown) below), and `update-time --log-level LEVEL` to set how much is logged (one of `DEBUG`, `INFO`, `WARNING`, `ERROR`; defaults to `INFO`). Available new versions are logged at `INFO`, so use `--log-level WARNING` to see only genuine problems, or `--log-level DEBUG` to also see which files are checked. Running `update-time` with no options in the root folder of a repository updates all supported dependencies.
 
+Update-time exits with status `0` when it ran (whether or not it changed any files), `2` when the command-line arguments are invalid, and a non-zero status when an updater could not complete. The exit status does not indicate whether anything was updated — inspect the diff (or the `INFO`-level log) for that.
+
 The recommended workflow is to run Update-time on a dedicated branch, push it, and let CI do the verification:
 
 1. Create a branch for the updates.
@@ -67,7 +69,7 @@ To stop Update-time from changing a specific reference — because of a known in
 
 The marker can be placed two ways:
 
-- **Inline**, on the reference's own line (in YAML files and `requirements.txt`):
+- **Inline**, on the reference's own line (in YAML files, `requirements.txt`, and — with a `//` comment — `devcontainer.json`):
 
   ```yaml
   image: python:3.12  # update-time: ignore
@@ -77,6 +79,10 @@ The marker can be placed two ways:
   humanize==4.15.0  # update-time: ignore
   ```
 
+  ```jsonc
+  "ghcr.io/devcontainers/features/node:1": {}  // update-time: ignore
+  ```
+
 - **On the line directly above** the reference. Use this form in Dockerfiles, which don't allow inline comments:
 
   ```dockerfile
@@ -84,11 +90,11 @@ The marker can be placed two ways:
   FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   ```
 
-This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, and `requirements.txt` files. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it.
+This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, `devcontainer.json` files, and `requirements.txt` files. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it.
 
-Run with `--log-level DEBUG` to see each ignored reference logged — a quick way to confirm a marker is recognised. Since the marker is case-sensitive, a typo (or wrong case) simply produces no such log and the reference is updated as usual.
+Run with `--log-level DEBUG` to see each ignored reference logged and confirm a marker is recognised. Since the marker is case-sensitive, a typo (or wrong case) simply produces no such log and the reference is updated as usual.
 
-For `pyproject.toml` and `package.json` — which are updated through uv, npm, and pnpm rather than line by line — the marker does not apply. Opt a dependency out there by pinning it with a maximum or non-`==` version specifier instead (for example `package<=3.12`).
+For `pyproject.toml` and `package.json` — which are updated through uv, npm, and pnpm rather than line by line — the marker does not apply. Opt a dependency out there by pinning it with a maximum or non-`==` version specifier instead (for example `package<=3.12`). The marker likewise has no effect on jsDelivr URLs, which are rewritten through a whole-file substitution rather than the line-by-line engine; there is currently no way to exclude a specific jsDelivr URL from updates.
 
 ## Cooldown
 

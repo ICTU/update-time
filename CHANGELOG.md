@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Recognise the `update-time: ignore` marker in `.devcontainer/devcontainer.json` and `.devcontainer.json`. Since these files are JSONC, the marker is written in a `//` comment (`// update-time: ignore`), either inline on the reference's line or as a standalone comment on the line directly above it.
+
 ### Fixed
 
 - Stop logging routine `npm`/`pnpm outdated` (and `list`) output as a failure. These commands exit non-zero as a normal "there are updates" signal, and pnpm additionally prints deprecation `[WARN]`s to stderr (e.g. `The "pnpm" field in package.json is no longer read by pnpm`) — which Update-time surfaced as a misleading `WARNING Error running ...` on every run, wrongly suggesting the update had failed. Their stderr is now logged only when the command produced no usable output (a genuine failure), and the message reads `<command> wrote to stderr: ...` — neutral about severity, since the tool's own output already labels it (`[ERROR]`, `[WARN]`, a notice, …). Action commands (`npm`/`pnpm update`, `uv lock`) still warn when they actually fail.

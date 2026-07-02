@@ -21,9 +21,9 @@ if TYPE_CHECKING:
 
 # An `# update-time: ignore` comment pins a reference so it is left unchanged. It works inline on the reference's
 # own line (valid in YAML and requirements) or as a standalone comment on the line directly above it (the form
-# Dockerfiles need, as they reject inline comments). `#` is the comment character in every format we update;
-# trailing text after `ignore` (a reason) is allowed.
-_IGNORE_MARKER = re.compile(r"#\s*update-time:\s*ignore\b")
+# Dockerfiles need, as they reject inline comments). The comment lead is `#` in most formats we update, or `//` in
+# devcontainer.json (which is JSONC); trailing text after `ignore` (a reason) is allowed.
+_IGNORE_MARKER = re.compile(r"(?:#|//)\s*update-time:\s*ignore\b")
 
 
 def rewrite_match(match: re.Match[str], replacements: dict[str, str]) -> str:
@@ -82,11 +82,11 @@ def _is_pinned(line: str, previous_line: str) -> bool:
 
     The marker pins a line either inline (`image: …  # update-time: ignore`) or as a standalone comment on the line
     directly above it (the form Dockerfiles need, since they reject inline comments). Requiring the preceding line
-    to start with `#` keeps an inline marker from also pinning the line below it.
+    to start with a comment lead (`#`, or `//`) keeps an inline marker from also pinning the line below it.
     """
     if _IGNORE_MARKER.search(line):
         return True
-    return previous_line.lstrip().startswith("#") and bool(_IGNORE_MARKER.search(previous_line))
+    return previous_line.lstrip().startswith(("#", "//")) and bool(_IGNORE_MARKER.search(previous_line))
 
 
 def updated_lines(
