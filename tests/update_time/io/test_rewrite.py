@@ -152,3 +152,19 @@ class UpdateReferencesTest(unittest.TestCase):
         new_lines = self.rewrite(lines, REGEXP, new_version_getter("3.15"))
         self.assertEqual(["image: a:3.14  # update-time: ignore", "image: b:3.15"], new_lines)
         self.logger.ignored.assert_called_once_with("a", self.path)
+
+    def test_inline_slash_slash_marker_pins_line(self):
+        """Test that a `//`-style ignore marker (as JSONC/devcontainer.json uses) also pins a line inline."""
+        get_new_version = Mock()
+        lines = ["image: python:3.14  // update-time: ignore"]
+        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        get_new_version.assert_not_called()
+        self.logger.ignored.assert_called_once_with("python", self.path)
+
+    def test_preceding_slash_slash_marker_pins_next_line(self):
+        """Test that a standalone `//` marker comment pins the reference on the line below it."""
+        get_new_version = Mock()
+        lines = ["// update-time: ignore", "image: python:3.14"]
+        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        get_new_version.assert_not_called()
+        self.logger.ignored.assert_called_once_with("python", self.path)
