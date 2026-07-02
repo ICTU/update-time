@@ -144,9 +144,15 @@ class Logger:
         """Log that a command could not be run because its executable is not installed."""
         self._log(self.log.error, "Could not run %s: is %s installed?", " ".join(command), command[0])
 
-    def command_failed(self, command: list[str], stderr: str) -> None:
-        """Log that a command failed, including the standard error it produced."""
-        self._log(self.log.warning, "Error running %s:\n%s", " ".join(command), stderr.rstrip())
+    def command_stderr(self, command: list[str], stderr: str) -> None:
+        """Log, at warning level, that a command wrote to stderr, including what it wrote.
+
+        The message stays neutral about severity because the tool decides that: its stderr may be an `[ERROR]`, a
+        `[WARN]`, or just a notice (e.g. a pnpm deprecation). The warning level is Update-time's own view — this is
+        only logged when the command failed or produced nothing usable (see `run`/`run_json`), so it is worth
+        surfacing whatever the tool called it.
+        """
+        self._log(self.log.warning, "%s wrote to stderr:\n%s", " ".join(command), stderr.rstrip())
 
 
 def get_logger(name: str) -> Logger:

@@ -9,7 +9,7 @@ from update_time.domain.cooldown import cooldown_days
 from update_time.domain.version import DependencyVersion
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
-from update_time.io.process import run
+from update_time.io.process import run, run_json
 from update_time.sources.npmjs import get_changes, get_publication_datetime
 
 if TYPE_CHECKING:
@@ -117,16 +117,6 @@ def cooldown_options(manager: PackageManager, directory: Path) -> list[str]:
     if any(value != manager.cooldown_unset for value in config):
         return []
     return [manager.cooldown_option(cooldown_days())]
-
-
-def run_json(command: list[str], cwd: Path) -> dict | list:
-    """Run a command that emits JSON and return the parsed value, or an empty dict when it produced no output.
-
-    A failed command can return empty output (see `run`, which already logs the failure); treat that as "no data"
-    rather than crashing on `json.loads("")`.
-    """
-    output = run(command, cwd=cwd)
-    return json.loads(output) if output.strip() else {}
 
 
 def update_package_json(package_json: Path) -> None:
