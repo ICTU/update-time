@@ -10,13 +10,25 @@ from update_time.sources.github import changes_from_release, github_owner_and_re
 LOG = get_logger("npmjs")
 
 
+def _repository_url(metadata: dict) -> str:
+    """Return the repository URL from npm package metadata, tolerating a missing field or the string shorthand.
+
+    npm's `repository` may be an object (`{"url": ...}`), a string shorthand (`"github:org/repo"`, a git URL), or
+    absent. Any resulting string is handed to `github_owner_and_repository`, which resolves the ones it recognizes.
+    """
+    repository = metadata.get("repository", "")
+    if isinstance(repository, dict):
+        return repository.get("url", "")
+    return repository if isinstance(repository, str) else ""
+
+
 @cache
 def get_changes(package: str, version: str) -> str:
-    """Return the changelog for the package and version, or empty string if it can't be fetched."""
+    """Return the changelog for the package and version, or empty string if it can't be fetched or found."""
     response = fetch(f"https://registry.npmjs.org/{package}/{version}", LOG)
     if response is None:
         return ""
-    owner, repository = github_owner_and_repository(response.json()["repository"]["url"])
+    owner, repository = github_owner_and_repository(_repository_url(response.json()))
     return changes_from_release(owner, repository, package, version)
 
 
