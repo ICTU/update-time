@@ -9,7 +9,7 @@ from update_time.domain.cooldown import cooldown_days
 from update_time.domain.version import DependencyVersion
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
-from update_time.io.process import run, run_json
+from update_time.io.process import run
 from update_time.sources.npmjs import get_changes, get_publication_datetime
 
 if TYPE_CHECKING:
@@ -113,7 +113,7 @@ def cooldown_options(manager: PackageManager, directory: Path) -> list[str]:
     `<manager> config get` reports the effective value from the whole config cascade (an unset key reads back as
     the manager's own sentinel), so a project that sets its own cutoff wins and we add nothing.
     """
-    config = (run([*manager.config_get, key], cwd=directory).strip() for key in manager.cooldown_config_keys)
+    config = (run([*manager.config_get, key], cwd=directory).stdout.strip() for key in manager.cooldown_config_keys)
     if any(value != manager.cooldown_unset for value in config):
         return []
     return [manager.cooldown_option(cooldown_days())]
@@ -127,12 +127,15 @@ def update_package_json(package_json: Path) -> None:
     LOG.path(package_json)
     original_contents = package_json.read_text()
     cooldown = cooldown_options(manager, package_json.parent)
-    outdated = run_json([*manager.outdated, *cooldown], package_json.parent)
-    outdated_packages = outdated if isinstance(outdated, dict) else {}
+    outdated = run([*manager.outdated, *cooldown], package_json.parent)
+    if not outdated.ok:
+        return  # The outdated check failed (e.g. the registry is unreachable); update and list would fail too.
+    parsed = outdated.json
+    outdated_packages = parsed if isinstance(parsed, dict) else {}
     run([*manager.update, *cooldown], cwd=package_json.parent)
     # The manager may install an older version than "latest" (e.g. when the cooldown holds back fresh releases), so
     # log the version that was actually installed rather than the latest one reported by the outdated command.
-    installed = manager.installed_versions(run_json(manager.installed, package_json.parent))
+    installed = manager.installed_versions(run(manager.installed, package_json.parent).json)
     updated = False
     for package, version in outdated_packages.items():
         new_version = installed.get(package)

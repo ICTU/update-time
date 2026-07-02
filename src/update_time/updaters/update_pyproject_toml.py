@@ -79,8 +79,12 @@ def parse_line_with_update(line: str) -> tuple[str, str]:
     return fields[1], fields[-1].lstrip("v").rstrip(")")
 
 
-def update_pyproject_toml(pyproject_toml: Path) -> None:
-    """Update the pyproject.toml file with latest version of dependencies."""
+def update_pyproject_toml(pyproject_toml: Path) -> bool:
+    """Update the pyproject.toml with the latest dependency versions; return whether `uv tree` succeeded.
+
+    When `uv tree` fails (e.g. the registry is unreachable) nothing can be determined to update, and re-locking
+    would fail the same way, so the caller skips the lockfile update for this file rather than trying it in vain.
+    """
     LOG.path(pyproject_toml)
     # `uv tree --outdated` only honors the cooldown (exclude-newer) when not run with `--frozen`, so it is omitted.
     uv_tree = [
@@ -95,7 +99,9 @@ def update_pyproject_toml(pyproject_toml: Path) -> None:
         *exclude_newer_options(pyproject_toml),
     ]
     outdated = run(uv_tree)
-    lines_with_updates = [line for line in outdated.splitlines() if " (latest: " in line]
+    if not outdated.ok:
+        return False
+    lines_with_updates = [line for line in outdated.stdout.splitlines() if " (latest: " in line]
     for line in lines_with_updates:
         package, version = parse_line_with_update(line)
         changes = get_changes(package, version)
@@ -108,6 +114,7 @@ def update_pyproject_toml(pyproject_toml: Path) -> None:
     updated_pyproject_toml = package_spec.sub(latest_versions.get_package_spec, current_pyproject_toml)
     if updated_pyproject_toml != current_pyproject_toml:
         pyproject_toml.write_text(updated_pyproject_toml)
+    return True
 
 
 def update_uv_lock(pyproject_toml: Path) -> None:
@@ -125,9 +132,10 @@ def update_pyproject_tomls() -> int:
             files.append(pyproject_toml)
         else:
             LOG.unsupported_package_manager(pyproject_toml, manager, "uv")
-    for pyproject_toml in files:
-        update_pyproject_toml(pyproject_toml)
-    for pyproject_toml in files:
+    # Update every pyproject.toml first, then lock (a uv workspace shares one lockfile, so all member manifests
+    # must be bumped before locking). Skip the lockfile update for files whose `uv tree` failed: it would fail too.
+    updated = [pyproject_toml for pyproject_toml in files if update_pyproject_toml(pyproject_toml)]
+    for pyproject_toml in updated:
         update_uv_lock(pyproject_toml)
     return 0
 

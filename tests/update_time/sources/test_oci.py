@@ -4,7 +4,9 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, patch
 
-from update_time.sources.oci import get_latest_tag, is_docker_hub_image
+import requests
+
+from update_time.sources.oci import _registry_token, get_latest_tag, is_docker_hub_image
 
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
 from tests.update_time.helpers import (
@@ -113,7 +115,8 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
 
     def test_tag_names_paginated(self):
         """Test that the newest tag is returned even if the tag names listing is paginated."""
-        next_link = '</v2/library/pagination/tags/list?last=2.1>; rel="next"'
+        # The first page's Link header (as requests parses it) points at a relative next-page URL.
+        next_page = {"next": {"url": "/v2/library/pagination/tags/list?last=2.1", "rel": "next"}}
 
         def dispatch(url: str, *_args: object, **_kwargs: object) -> Mock:
             if url.endswith("/v2/"):
@@ -122,9 +125,9 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
             if "auth.docker.io" in url:
                 return mock_response({"token": "token"})  # nosec[B105]
             if "/tags/list" in url and "last=" not in url:
-                return mock_response({"tags": ["2.1"]}, ok=True, headers={"Link": next_link})
+                return mock_response({"tags": ["2.1"]}, ok=True, links=next_page, url=url)
             if "/tags/list" in url:
-                return mock_response({"tags": ["2.2"]}, ok=True, headers={})
+                return mock_response({"tags": ["2.2"]}, ok=True)
             if "/manifests/" in url:
                 return mock_response({}, headers={"Docker-Content-Digest": DIGEST2})
             return mock_response({})  # Docker Hub push date endpoint: no push date, so no cooldown.
@@ -252,3 +255,24 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
         self.assertEqual(DIGEST, latest.sha)
         self.assertIsNone(latest.published)
         mock_warning.assert_called_once()  # The unavailable push date is logged.
+
+
+class RegistryTokenTest(CacheClearingTestCase):
+    """Unit tests for discovering and fetching a registry pull token."""
+
+    @patch("logging.Logger.warning", Mock())
+    @patch("requests.get", Mock(side_effect=requests.exceptions.ConnectionError))
+    def test_probe_network_error(self):
+        """Test that a network error probing the registry yields no token (anonymous) instead of crashing."""
+        self.assertIsNone(_registry_token("ghcr.io", "owner/repo"))
+
+    @patch("logging.Logger.warning", Mock())
+    @patch("requests.get")
+    def test_token_request_failure(self, mock_get: Mock):
+        """Test that a failed token request (after a valid auth challenge) yields no token instead of crashing."""
+        challenge = 'Bearer realm="https://ghcr.io/token",service="ghcr.io"'
+        mock_get.side_effect = [
+            mock_response({}, ok=False, status_code=401, headers={"WWW-Authenticate": challenge}),  # auth probe
+            mock_response({}, ok=False),  # token endpoint fails
+        ]
+        self.assertIsNone(_registry_token("ghcr.io", "owner/repo"))

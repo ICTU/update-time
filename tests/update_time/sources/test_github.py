@@ -1,5 +1,6 @@
 """GitHub unit tests."""
 
+import logging
 import unittest
 from datetime import UTC, datetime, timedelta
 from typing import cast
@@ -69,6 +70,19 @@ class GitHubOwnerAndRepositoryTest(unittest.TestCase):
 class GetLatestReleaseTest(CacheClearingTestCase):
     """Unit tests for getting the latest release for a GitHub repo."""
 
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Silence the 'no valid version' error that the release-filtering tests trigger by design.
+
+        The tests that assert on that error patch the logger explicitly, which keeps working while disabled.
+        """
+        logging.disable(logging.CRITICAL)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        """Re-enable logging for the rest of the suite."""
+        logging.disable(logging.NOTSET)
+
     @patch("requests.get")
     def test_get_latest_release(self, mock_get: Mock):
         """Test getting the latest release."""
@@ -77,14 +91,25 @@ class GetLatestReleaseTest(CacheClearingTestCase):
         self.assertEqual(Release(owner="owner", repository="repository", tag_name="1.0"), release)
         self.assertEqual("sha", cast("Release", release).commit_sha)
 
+    @patch("logging.Logger.error")
     @patch("logging.Logger.warning")
     @patch("requests.get")
-    def test_get_latest_release_when_repo_has_no_releases(self, mock_get: Mock, mock_warning: Mock):
-        """Test getting the latest release when the repository has no releases."""
-        mock_get.return_value = Mock(raise_for_status=Mock(side_effect=requests.exceptions.HTTPError))
-        self.assertIsNone(get_latest_release("owner", "repository without releases"))
+    def test_no_error_when_releases_cannot_be_fetched(self, mock_get: Mock, mock_warning: Mock, mock_error: Mock):
+        """Test that an unreachable repo logs only the fetch warning, not a redundant 'no valid version' error."""
+        mock_get.return_value = mock_response([], ok=False)
+        self.assertIsNone(get_latest_release("owner", "unreachable repository"))
         mock_warning.assert_called_once_with(
             "Could not fetch %s: %s", mock_get().url, mock_get().status_code, stacklevel=ANY
+        )
+        mock_error.assert_not_called()
+
+    @patch("logging.Logger.error")
+    @patch("requests.get", Mock(return_value=mock_response([])))
+    def test_no_version_error_when_repo_has_no_releases(self, mock_error: Mock):
+        """Test that a reachable repo with no eligible releases logs a 'no valid version' error."""
+        self.assertIsNone(get_latest_release("owner", "repository without releases"))
+        mock_error.assert_called_once_with(
+            "No valid version found for %s", "owner/repository without releases", stacklevel=ANY
         )
 
     @patch("requests.get", Mock(return_value=mock_response([release_json("1.0", draft=True)])))
@@ -108,7 +133,7 @@ class GetLatestReleaseTest(CacheClearingTestCase):
         """Test that reading commit_sha returns an empty string and logs an error when the commits endpoint fails."""
         mock_get.side_effect = [
             mock_response([release_json("1.0")]),
-            Mock(raise_for_status=Mock(side_effect=requests.exceptions.HTTPError)),
+            mock_response({}, ok=False),
         ]
         release = get_latest_release("owner", "repository 2")
         self.assertIsNotNone(release)
@@ -181,7 +206,7 @@ class GetReleaseTest(CacheClearingTestCase):
     @patch("requests.get")
     def test_repo_without_releases(self, mock_get: Mock, mock_warning: Mock):
         """Test that None is returned when the repository can't be reached."""
-        mock_get.return_value = Mock(raise_for_status=Mock(side_effect=requests.exceptions.HTTPError))
+        mock_get.return_value = mock_response([], ok=False)
         self.assertIsNone(get_release("owner", "repo without releases for get_release", "any", "1.0"))
         mock_warning.assert_called_once_with(
             "Could not fetch %s: %s", mock_get().url, mock_get().status_code, stacklevel=ANY

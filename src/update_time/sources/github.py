@@ -6,11 +6,11 @@ from datetime import datetime
 from functools import cache, cached_property
 from urllib.parse import urlparse
 
-import requests
 from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.version import is_valid
+from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 
 LOG = get_logger("github")
@@ -62,10 +62,8 @@ class Release:
         """Fetch the commit SHA for this release's tag, or None if the commits endpoint can't be reached."""
         dependency = f"{self.owner}/{self.repository}"
         commits_url = f"https://api.github.com/repos/{dependency}/commits/{self.tag_name}"
-        response = requests.get(commits_url, headers=_github_headers(), timeout=10)
-        try:
-            response.raise_for_status()
-        except requests.exceptions.HTTPError:
+        response = fetch(commits_url, LOG, headers=_github_headers(), require_ok=False)
+        if response is None or not response.ok:
             LOG.no_commit_sha(
                 dependency, self.tag_name, f"https://github.com/{dependency}/releases/tag/{self.tag_name}"
             )
@@ -99,29 +97,32 @@ def github_owner_and_repository(url: str) -> tuple[str, str]:
 
 
 @cache
-def _list_releases(owner: str, repository: str) -> tuple[dict, ...]:
-    """Fetch the GitHub releases for a repo. Returns an empty tuple when the repo can't be reached."""
+def _list_releases(owner: str, repository: str) -> tuple[dict, ...] | None:
+    """Fetch the GitHub releases for a repo, or None when they couldn't be fetched.
+
+    An empty tuple means the repo was reached but has no releases; None means the fetch itself failed (already
+    logged by `fetch`). Distinguishing the two lets callers avoid reporting a network problem a second time.
+    """
     releases_url = f"https://api.github.com/repos/{owner}/{repository}/releases?per_page=100"
-    try:
-        response = requests.get(releases_url, headers=_github_headers(), timeout=10)
-    except requests.exceptions.Timeout:
-        LOG.timeout(releases_url)
-        return ()
-    try:
-        response.raise_for_status()
-    except requests.exceptions.HTTPError:
-        LOG.response(response)
-        return ()
-    return tuple(response.json())
+    response = fetch(releases_url, LOG, headers=_github_headers())
+    return tuple(response.json()) if response is not None else None
 
 
 def get_latest_release(owner: str, repository: str) -> Release | None:
-    """Get the latest eligible release from the GitHub releases API.
+    """Get the latest eligible release from the GitHub releases API, or None if there is none.
 
-    Don't use the latest release endpoint, but rather get recent releases and weed out invalid versions.
+    Don't use the latest release endpoint, but rather get recent releases and weed out invalid versions. When the
+    releases were fetched but none is eligible, that's logged as "no valid version"; a fetch failure is left to
+    `fetch`'s own warning, so a network problem isn't reported twice.
     """
-    candidates = (Release.from_json(owner, repository, release) for release in _list_releases(owner, repository))
-    return next((r for r in candidates if r.is_eligible), None)
+    releases = _list_releases(owner, repository)
+    if releases is None:
+        return None  # Couldn't reach GitHub; the fetch already logged a warning.
+    candidates = (Release.from_json(owner, repository, release) for release in releases)
+    latest = next((r for r in candidates if r.is_eligible), None)
+    if latest is None:
+        LOG.no_version(f"{owner}/{repository}")
+    return latest
 
 
 def get_release(owner: str, repository: str, package: str, version: str) -> Release | None:
@@ -132,7 +133,7 @@ def get_release(owner: str, repository: str, package: str, version: str) -> Rele
     2. `v<version>` (e.g. `v25.0.4`)
     3. `<version>` (e.g. `25.0.4`)
     """
-    releases_by_tag = {release.get("tag_name"): release for release in _list_releases(owner, repository)}
+    releases_by_tag = {release.get("tag_name"): release for release in (_list_releases(owner, repository) or ())}
     for tag in (f"{package}-v{version}", f"v{version}", version):
         if tag in releases_by_tag:
             return Release.from_json(owner, repository, releases_by_tag[tag])

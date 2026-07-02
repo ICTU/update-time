@@ -165,6 +165,22 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         mock_package_json.write_text.assert_not_called()
         self.assert_no_new_version_logged()
 
+    def test_outdated_failure_skips_update_and_list(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a failed outdated check (e.g. offline) skips the futile update and list, logging only itself."""
+        mock_package_json = self.create_package_json()
+        mock_glob.return_value = [mock_package_json]
+        # `npm outdated` fails with no output (as an offline registry does); a normal non-zero exit still has JSON.
+        mock_run.side_effect = self.npm_runs(
+            subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr="error: offline"),
+        )
+        assert_success(update_package_jsons())
+        commands = [call.args[0][:2] for call in mock_run.call_args_list]
+        self.assertIn(["npm", "outdated"], commands)
+        self.assertNotIn(["npm", "update"], commands)  # skipped because outdated failed
+        self.assertNotIn(["npm", "list"], commands)  # skipped because outdated failed
+        mock_package_json.write_text.assert_not_called()
+        self.mock_warning.assert_called_once()  # only the outdated failure is surfaced
+
     def test_project_cooldown_respected(self, mock_run: Mock, mock_glob: Mock):
         """Test that no cooldown option is added when the project's npm config already sets one."""
         mock_package_json = self.create_package_json()

@@ -5,12 +5,12 @@ from datetime import datetime
 from functools import cache
 from typing import NotRequired, TypedDict
 
-import requests
 from packaging.version import Version
 
 from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString, is_valid
+from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.sources.github import changes_from_release, github_owner_and_repository, github_to_raw
 
@@ -43,24 +43,22 @@ class Release(TypedDict):
 
 
 @cache
-def release_metadata(package: str, version: str) -> Release:
-    """Get the release metadata from PyPI."""
-    response = requests.get(f"https://pypi.org/pypi/{package}/{version}/json", timeout=10)
-    response.raise_for_status()
-    return response.json()
+def release_metadata(package: str, version: str) -> Release | None:
+    """Get the release metadata from PyPI, or None if it can't be fetched."""
+    response = fetch(f"https://pypi.org/pypi/{package}/{version}/json", LOG)
+    return response.json() if response is not None else None
 
 
 @cache
 def project_versions(package: str) -> list[str]:
-    """Get all version strings of a package from PyPI's Index API.
+    """Get all version strings of a package from PyPI's Index API, or an empty list if they can't be fetched.
 
     Uses the Index (Simple) API rather than the project JSON API's `releases` key, which is deprecated. See
     https://docs.pypi.org/api/json/ and https://docs.pypi.org/api/index-api/.
     """
     headers = {"Accept": "application/vnd.pypi.simple.v1+json"}
-    response = requests.get(f"https://pypi.org/simple/{package}/", headers=headers, timeout=10)
-    response.raise_for_status()
-    return response.json().get("versions", [])
+    response = fetch(f"https://pypi.org/simple/{package}/", LOG, headers=headers)
+    return response.json().get("versions", []) if response is not None else []
 
 
 def release_datetime(urls: list[Distribution]) -> datetime | None:
@@ -84,6 +82,8 @@ def get_latest_version(package: DependencyName, current_version: VersionString) 
     candidates.sort(reverse=True)
     for version in candidates:
         metadata = release_metadata(package, str(version))
+        if metadata is None:
+            continue
         published = release_datetime(metadata["urls"])
         if metadata["info"].get("yanked") or published is None or within_cooldown(published):
             continue
@@ -102,7 +102,10 @@ def get_changes(package: str, version: str) -> str:
     - Check for a changelog in the package description
     - Check for a GitHub URL in the package description and use that to find GitHub releases
     """
-    info = release_metadata(package, version)["info"]
+    metadata = release_metadata(package, version)
+    if metadata is None:
+        return ""
+    info = metadata["info"]
     urls = info.get("project_urls", {})
     for url_key, url in urls.items():
         if url_key.lower() in CHANGELOG_URL_KEYS and (changelog := changelog_from_url(url, version)):
@@ -119,15 +122,15 @@ def get_changes(package: str, version: str) -> str:
 
 
 def get_publication_datetime(package: str, version: str) -> datetime | None:
-    """Return the datetime the version of the package was published, or None if it has no distribution files."""
-    return release_datetime(release_metadata(package, version)["urls"])
+    """Return the datetime the version was published, or None if it can't be fetched or has no distribution files."""
+    metadata = release_metadata(package, version)
+    return release_datetime(metadata["urls"]) if metadata is not None else None
 
 
 def changelog_from_url(url: str, version: str) -> str:
     """Get the changelog from the URL."""
-    changelog_response = requests.get(github_to_raw(url), timeout=10)
-    if not changelog_response.ok:
-        LOG.response(changelog_response)
+    changelog_response = fetch(github_to_raw(url), LOG)
+    if changelog_response is None:
         return ""
     if changelog_response.headers["Content-Type"].startswith("text/html"):
         return ""

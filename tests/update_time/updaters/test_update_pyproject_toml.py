@@ -1,5 +1,6 @@
 """Unit tests for the pyproject.toml update script."""
 
+import subprocess  # nosec
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 from unittest.mock import Mock, patch
@@ -167,6 +168,19 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
+
+    def test_uv_lock_skipped_when_uv_tree_fails(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a failed uv tree (e.g. offline) skips the futile uv lock, logging only uv tree's failure."""
+        run.side_effect = subprocess.CalledProcessError(cmd="", returncode=2, output="", stderr="error: offline")
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
+        glob.return_value = [mock_pyproject_toml]
+        assert_success(update_pyproject_tomls())
+        commands = [call.args[0][:2] for call in run.call_args_list]
+        self.assertIn(["uv", "tree"], commands)
+        self.assertNotIn(["uv", "lock"], commands)  # uv lock is skipped because uv tree failed
+        mock_pyproject_toml.write_text.assert_not_called()
+        get.assert_not_called()
+        self.mock_warning.assert_called_once()  # uv tree's stderr is surfaced
 
     def test_project_exclude_newer_respected(self, run: Mock, get: Mock, glob: Mock):
         """Test that no cooldown option is added when the pyproject.toml sets its own uv exclude-newer."""

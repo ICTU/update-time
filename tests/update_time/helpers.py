@@ -175,6 +175,7 @@ def mock_response(json: Mapping | list | None = None, **kwargs: object) -> Mock:
     Extra response attributes (text, status_code, headers, ...) can be set via keyword arguments.
     """
     response = Mock(json=Mock(return_value=json))
+    response.links = {}  # requests parses the Link header into `.links`; default to none, override per test.
     response.configure_mock(**kwargs)
     return response
 

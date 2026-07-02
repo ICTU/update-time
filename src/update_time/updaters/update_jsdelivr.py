@@ -9,11 +9,11 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import requests
 from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString, is_valid
+from update_time.io.fetch import fetch
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.sources.npmjs import get_publication_datetime
@@ -58,8 +58,9 @@ def get_latest_version(
 
 def _candidate_versions(dependency: str, current_version: Version) -> list[Version]:
     """Return the dependency's stable versions newer than the current one, newest first."""
-    response = requests.get(f"{JSDELIVR_PACKAGE_API}/{dependency}", headers=HEADERS, timeout=10)
-    response.raise_for_status()
+    response = fetch(f"{JSDELIVR_PACKAGE_API}/{dependency}", LOG, headers=HEADERS)
+    if response is None:
+        return []
     versions = [
         Version(entry["version"]) for entry in response.json().get("versions", []) if is_valid(entry["version"])
     ]
@@ -86,8 +87,9 @@ def _get_integrity_hash(dependency: str, version: Version, filename: str) -> str
     not always list as a hashable file). An empty string signals the caller to leave the reference unchanged.
     """
     url = f"{JSDELIVR_PACKAGE_API}/{dependency}@{version}?structure=flat"
-    response = requests.get(url, headers=HEADERS, timeout=10)
-    response.raise_for_status()
+    response = fetch(url, LOG, headers=HEADERS)
+    if response is None:
+        return ""
     hashes = {entry["name"]: entry["hash"] for entry in response.json()["files"]}
     return f"sha256-{hashes[filename]}" if filename in hashes else ""
 

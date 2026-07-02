@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 from update_time.sources.pypi import (
     CHANGELOG_URL_KEYS,
     REPOSITORY_URL_KEYS,
+    changelog_from_url,
     get_changes,
     get_latest_version,
     get_publication_datetime,
@@ -108,6 +109,11 @@ class GetChangesTest(CacheClearingTestCase):
         )
         self.assertEqual("", get_changes("package-7", "1.1"))
 
+    def test_changelog_url_unreachable(self, mock_get: Mock):
+        """Test that an unreachable changelog URL yields an empty changelog instead of crashing."""
+        self.create_mock_response(mock_get, status_code=HTTPStatus.NOT_FOUND)
+        self.assertEqual("", changelog_from_url("https://changes", "1.0"))
+
 
 class GetPublicationDateTimeTest(CacheClearingTestCase):
     """Unit tests for getting the publication date time of releases."""
@@ -185,6 +191,12 @@ class GetLatestVersionTest(CacheClearingTestCase):
         """Test that releases without distribution files are ignored."""
         mock_get.side_effect = [self.versions("1.0", "1.1"), self.release(upload_time="")]
         self.assertEqual("1.0", get_latest_version("no_files", "1.0").version)
+
+    @patch("logging.Logger.warning", Mock())
+    def test_release_metadata_unavailable_ignored(self, mock_get: Mock):
+        """Test that a candidate whose metadata can't be fetched is skipped instead of crashing the run."""
+        mock_get.side_effect = [self.versions("1.0", "1.1"), mock_response(ok=False)]
+        self.assertEqual("1.0", get_latest_version("metadata_error", "1.0").version)
 
     def test_invalid_release_ignored(self, mock_get: Mock):
         """Test that releases with an invalid version are ignored without fetching their metadata."""
