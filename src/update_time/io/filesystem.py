@@ -58,17 +58,24 @@ def glob(*glob_patterns: str, start: Path | None = None) -> Iterator[Path]:
             yield path
 
 
-def _replace_groups(line: str, match: re.Match[str], replacements: dict[str, str]) -> str:
-    """Replace the named groups within the matched region of the line, leaving the rest of the line untouched.
+def rewrite_match(match: re.Match[str], replacements: dict[str, str]) -> str:
+    """Return the matched text with the named groups replaced, leaving the rest of the match untouched.
 
-    Only the spans the regex captured are rewritten, so a version or digest that also occurs elsewhere on the line
-    (e.g. the `18` in `FROM node:18 AS build-18`) is left alone. Groups are replaced right-to-left so that an
-    earlier replacement doesn't shift the spans of the groups still to be replaced.
+    Only the spans the regex captured are rewritten, so a value that also occurs elsewhere within the match — the
+    `18` in `FROM node:18 AS build-18`, or a version that reappears in the span a multi-line jsDelivr match covers —
+    is left alone. Groups are replaced right-to-left so an earlier replacement doesn't shift the spans still to come.
     """
+    text = match.group(0)
+    offset = match.start()
     for group in sorted(replacements, key=match.start, reverse=True):
         start, end = match.span(group)
-        line = line[:start] + replacements[group] + line[end:]
-    return line
+        text = text[: start - offset] + replacements[group] + text[end - offset :]
+    return text
+
+
+def _replace_groups(line: str, match: re.Match[str], replacements: dict[str, str]) -> str:
+    """Replace the named groups within the matched region of the line, leaving the rest of the line untouched."""
+    return line[: match.start()] + rewrite_match(match, replacements) + line[match.end() :]
 
 
 def _update_line(line: str, regexp: str, get_new_version: NewVersionGetter, logger: Logger, path: Path) -> str:
