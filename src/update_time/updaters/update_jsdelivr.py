@@ -14,7 +14,7 @@ from packaging.version import Version
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString, is_valid
 from update_time.io.fetch import fetch
-from update_time.io.filesystem import glob
+from update_time.io.filesystem import glob, rewrite_match
 from update_time.io.log import get_logger
 from update_time.sources.npmjs import get_publication_datetime
 
@@ -103,7 +103,7 @@ def update_jsdelivr(content: str, path: Path) -> str:
         if latest_version.version == version:
             return match.group(0)
         LOG.new_version(dependency, latest_version, path)
-        return match.group(0).replace(version, latest_version.version).replace(match.group("sha"), latest_version.sha)
+        return rewrite_match(match, {"version": latest_version.version, "sha": latest_version.sha})
 
     return JSDELIVR_RE.sub(replace, content)
 
