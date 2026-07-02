@@ -33,9 +33,12 @@ if TYPE_CHECKING:
     from update_time.domain.version import DependencyVersion
 
 # Files that wrap or dispatch logging on behalf of the updaters. Frames in these files are skipped when
-# determining a log record's origin, so the reported origin is the updater that triggered the log rather
-# than this wrapper or the generic file-update engine in filesystem.py.
-_HELPER_FILES = frozenset(str(path.resolve()) for path in (Path(__file__), Path(__file__).with_name("filesystem.py")))
+# determining a log record's origin, so the reported origin is the updater that triggered the log rather than this
+# wrapper or the generic file-finding (filesystem.py) and reference-rewriting (rewrite.py) engines.
+_HELPER_FILES = frozenset(
+    str(path.resolve())
+    for path in (Path(__file__), Path(__file__).with_name("filesystem.py"), Path(__file__).with_name("rewrite.py"))
+)
 
 
 def _caller_stacklevel() -> int:
