@@ -60,142 +60,26 @@ class GlobTest(unittest.TestCase):
 
 
 REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"
-SHA_REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>sha256:[a-f0-9]{64}))?"
 
 
 class UpdateFileTest(unittest.TestCase):
-    """Unit tests for the update file function."""
+    """Unit tests for reading, rewriting, and writing back a single file.
 
-    def test_no_changes(self):
-        """Test no changes."""
-        mock_file = mock_path("line1\nline2\n")
-        mock_logger = Mock()
-        assert_success(update_file(mock_file, "regexp", new_version_getter("1.1"), mock_logger))
+    The rewriting itself is covered by the reference-rewriting engine's own tests (test_rewrite); these check that
+    `update_file` reads the file, joins the rewritten lines back with a trailing newline, and only writes on change.
+    """
+
+    def test_writes_the_updated_file_when_a_reference_changed(self):
+        """Test that the file is written back, with a trailing newline, when a reference was updated."""
+        mock_file = mock_path("line1\nimage: python:3.14\n")
+        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.15"), Mock()))
+        mock_file.write_text.assert_called_once_with("line1\nimage: python:3.15\n")
+
+    def test_does_not_write_when_nothing_changed(self):
+        """Test that the file is not written when no reference was updated."""
+        mock_file = mock_path("line1\nimage: python:3.14\n")
+        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.14"), Mock()))
         mock_file.write_text.assert_not_called()
-        mock_logger.new_version.assert_not_called()
-
-    def test_new_version(self):
-        """Test a new version."""
-        mock_file = mock_path("line1\nimage: python:3.14\n")
-        mock_logger = Mock()
-        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.15"), mock_logger))
-        mock_file.write_text.assert_called_with("line1\nimage: python:3.15\n")
-        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.15"), mock_file)
-
-    def test_new_version_with_sha(self):
-        """Test a new version with a sha."""
-        old_sha = "a" * 40
-        regexp = r"uses: (?P<dependency>[\w\d\./-]+)@(?P<sha>[a-f0-9]{40}) # v?(?P<version>[\d\w\.\-]+)"
-        mock_file = mock_path(f"line1\nuses: action/action@{old_sha} # v3.14\n")
-        mock_logger = Mock()
-        new_sha = "b" * 40
-        assert_success(update_file(mock_file, regexp, new_version_getter("3.15", new_sha), mock_logger))
-        mock_file.write_text.assert_called_with(f"line1\nuses: action/action@{new_sha} # v3.15\n")
-        mock_logger.new_version.assert_called_with(
-            "action/action", DependencyVersion(version="3.15", sha=new_sha), mock_file
-        )
-
-    def test_unchanged_version(self):
-        """Test that the file is not changed when the latest version equals the current version."""
-        mock_file = mock_path("line1\nimage: python:3.14\n")
-        mock_logger = Mock()
-        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.14"), mock_logger))
-        mock_file.write_text.assert_not_called()
-        mock_logger.new_version.assert_not_called()
-
-    def test_pin_unpinned_image_at_latest_version(self):
-        """Test that an unpinned image at the latest version is pinned, logging a pin rather than a new version."""
-        sha = f"sha256:{'a' * 64}"
-        mock_file = mock_path("line1\nimage: python:3.14\n")
-        mock_logger = Mock()
-        assert_success(update_file(mock_file, SHA_REGEXP, new_version_getter("3.14", sha), mock_logger))
-        mock_file.write_text.assert_called_with(f"line1\nimage: python:3.14@{sha}\n")
-        mock_logger.pinned.assert_called_with("python", DependencyVersion(version="3.14", sha=sha), mock_file)
-        mock_logger.new_version.assert_not_called()
-
-    def test_pin_unpinned_image_with_new_version(self):
-        """Test that an unpinned image is pinned and bumped to the latest version at the same time."""
-        sha = f"sha256:{'a' * 64}"
-        mock_file = mock_path("line1\nimage: python:3.14\n")
-        mock_logger = Mock()
-        assert_success(update_file(mock_file, SHA_REGEXP, new_version_getter("3.15", sha), mock_logger))
-        mock_file.write_text.assert_called_with(f"line1\nimage: python:3.15@{sha}\n")
-        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.15", sha=sha), mock_file)
-
-    def test_unpinned_image_left_alone_without_digest(self):
-        """Test that an unpinned image is not pinned when no digest is available."""
-        mock_file = mock_path("line1\nimage: python:3.14\n")
-        mock_logger = Mock()
-        assert_success(update_file(mock_file, SHA_REGEXP, new_version_getter("3.14"), mock_logger))
-        mock_file.write_text.assert_not_called()
-        mock_logger.new_version.assert_not_called()
-
-    def test_new_version_sorting_lower_than_current(self):
-        """Test the regression where a newer version sorts lexicographically lower than the current one.
-
-        get_new_version returns the highest version (compared as a packaging.Version), so e.g. "3.10" must be
-        applied over "3.9" even though the string "3.10" < "3.9".
-        """
-        mock_file = mock_path("line1\nimage: python:3.9\n")
-        mock_logger = Mock()
-        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.10"), mock_logger))
-        mock_file.write_text.assert_called_with("line1\nimage: python:3.10\n")
-        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.10"), mock_file)
-
-    def test_version_from_source_is_applied_even_when_lower(self):
-        """Test that _update_line applies any differing version get_new_version returns, trusting the source.
-
-        _update_line no longer guards against downgrades itself; the source functions decide the target version
-        (the real ones return the maximum). This lets, for example, update_node_engine sync the package.json Node
-        version down to a downgraded Docker base image.
-        """
-        mock_file = mock_path("line1\nimage: python:3.14\n")
-        mock_logger = Mock()
-        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.13"), mock_logger))
-        mock_file.write_text.assert_called_with("line1\nimage: python:3.13\n")
-        mock_logger.new_version.assert_called_with("python", DependencyVersion(version="3.13"), mock_file)
-
-    def test_version_replaced_only_within_the_match(self):
-        """Test that the version is rewritten only where the regexp matched it, not elsewhere on the line.
-
-        A whole-line replace would also rewrite the `18` in the `build-18` stage alias; only the matched span should.
-        """
-        mock_file = mock_path("image: node:18 AS build-18\n")
-        mock_logger = Mock()
-        assert_success(update_file(mock_file, REGEXP, new_version_getter("20"), mock_logger))
-        mock_file.write_text.assert_called_with("image: node:20 AS build-18\n")
-        mock_logger.new_version.assert_called_with("node", DependencyVersion(version="20"), mock_file)
-
-    def test_inline_ignore_marker_pins_line(self):
-        """Test that an inline `# update-time: ignore` comment leaves the line untouched, looking up no version."""
-        get_new_version = Mock()
-        mock_logger = Mock()
-        mock_file = mock_path("image: python:3.14  # update-time: ignore\n")
-        assert_success(update_file(mock_file, REGEXP, get_new_version, mock_logger))
-        mock_file.write_text.assert_not_called()
-        get_new_version.assert_not_called()
-        mock_logger.ignored.assert_called_once_with("python", mock_file)
-
-    def test_preceding_ignore_marker_pins_next_line(self):
-        """Test that a standalone `# update-time: ignore` comment pins the reference on the line below it.
-
-        The marker comment itself carries no reference, so only the pinned reference below it is logged as ignored.
-        """
-        get_new_version = Mock()
-        mock_logger = Mock()
-        mock_file = mock_path("# update-time: ignore\nimage: python:3.14\n")
-        assert_success(update_file(mock_file, REGEXP, get_new_version, mock_logger))
-        mock_file.write_text.assert_not_called()
-        get_new_version.assert_not_called()
-        mock_logger.ignored.assert_called_once_with("python", mock_file)
-
-    def test_inline_marker_does_not_pin_following_line(self):
-        """Test that an inline marker pins only its own line, not the reference on the line below it."""
-        mock_logger = Mock()
-        mock_file = mock_path("image: a:3.14  # update-time: ignore\nimage: b:3.14\n")
-        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.15"), mock_logger))
-        mock_file.write_text.assert_called_with("image: a:3.14  # update-time: ignore\nimage: b:3.15\n")
-        mock_logger.ignored.assert_called_once_with("a", mock_file)
 
 
 @patch("pathlib.Path.glob")

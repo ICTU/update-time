@@ -14,8 +14,9 @@ from packaging.version import Version
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString, is_valid
 from update_time.io.fetch import fetch
-from update_time.io.filesystem import glob, rewrite_match
+from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
+from update_time.io.rewrite import rewrite_match
 from update_time.sources.npmjs import get_publication_datetime
 
 if TYPE_CHECKING:

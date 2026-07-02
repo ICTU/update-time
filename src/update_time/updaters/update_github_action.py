@@ -14,8 +14,9 @@ from pathlib import Path
 from packaging.version import Version
 
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString, is_valid
-from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob, updated_lines
+from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
 from update_time.io.log import get_logger
+from update_time.io.rewrite import updated_lines
 from update_time.sources.github import get_latest_release
 
 LOG = get_logger("github action")
