@@ -11,8 +11,7 @@ import os
 from datetime import datetime
 from functools import cache
 
-import requests
-
+from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 
 LOG = get_logger("docker hub")
@@ -34,9 +33,9 @@ def api_headers() -> dict[str, str]:
     if creds := credentials():
         username, token = creds
         url = "https://hub.docker.com/v2/auth/token"
-        response = requests.post(url, timeout=10, json={"identifier": username, "secret": token})
-        response.raise_for_status()
-        return {"Authorization": f"Bearer {response.json()['access_token']}"}
+        response = fetch(url, LOG, method="post", json={"identifier": username, "secret": token})
+        if response is not None:
+            return {"Authorization": f"Bearer {response.json()['access_token']}"}
     return {}
 
 
@@ -49,9 +48,8 @@ def last_pushed(repository: str, tag: str) -> datetime | None:
     """
     namespace, repo = repository.split("/", maxsplit=1)
     url = f"{REGISTRY}/v2/namespaces/{namespace}/repositories/{repo}/tags/{tag}"
-    response = requests.get(url, headers=api_headers(), timeout=10)
-    if not response.ok:
-        LOG.response(response)
+    response = fetch(url, LOG, headers=api_headers())
+    if response is None:
         return None
     pushed = response.json().get("tag_last_pushed")
     return datetime.fromisoformat(pushed) if pushed else None

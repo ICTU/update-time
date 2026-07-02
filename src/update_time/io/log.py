@@ -140,6 +140,10 @@ class Logger:
         """Log a request timeout."""
         self._log(self.log.warning, "Timeout while fetching %s", url)
 
+    def request_error(self, url: str, error: object) -> None:
+        """Log a network error (connection failure, too many redirects, ...) while fetching a URL."""
+        self._log(self.log.warning, "Could not fetch %s: %s", url, error)
+
     def command_not_found(self, command: list[str]) -> None:
         """Log that a command could not be run because its executable is not installed."""
         self._log(self.log.error, "Could not run %s: is %s installed?", " ".join(command), command[0])

@@ -34,7 +34,6 @@ def get_latest_version(action: DependencyName, current_version_string: VersionSt
     owner, repository, *_path = action.split("/")
     release = get_latest_release(owner, repository)
     if release is None:
-        LOG.no_version(f"{owner}/{repository}")
         return DependencyVersion(current_version_string)
     if release.commit_sha is None:
         return DependencyVersion(current_version_string)

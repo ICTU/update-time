@@ -97,6 +97,22 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual("1.", get_latest_version("clipboard", "1.", FILENAME).version)
         mock_get.assert_not_called()
 
+    def test_package_api_unreachable_keeps_current(self, mock_get: Mock):
+        """Test that an unreachable jsDelivr package API leaves the version unchanged instead of crashing."""
+        mock_get.side_effect = [mock_response(ok=False)]
+        self.assertEqual("1.0", get_latest_version("clipboard", "1.0", FILENAME).version)
+
+    def test_integrity_fetch_failure_keeps_current(self, mock_get: Mock):
+        """Test that a failed integrity-hash fetch leaves the version unchanged, so the hash can't fall out of sync."""
+        mock_get.side_effect = [
+            jsdelivr_versions("1.1", "1.0"),
+            npm_registry({"1.1": ELIGIBLE}),
+            mock_response(ok=False),  # the integrity-hash request fails
+        ]
+        latest_version = get_latest_version("clipboard", "1.0", FILENAME)
+        self.assertEqual("1.0", latest_version.version)
+        self.assertEqual("", latest_version.sha)
+
     def test_hashes_referenced_file_not_package_default(self, mock_get: Mock):
         """Test that the referenced file's hash is used, even when the package default isn't a listed file."""
         flat = {

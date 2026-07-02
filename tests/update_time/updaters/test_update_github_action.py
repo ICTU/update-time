@@ -4,8 +4,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
-import requests
-
 from update_time.domain.version import DependencyVersion
 from update_time.updaters.update_github_action import get_latest_version, update_github_actions
 
@@ -64,7 +62,7 @@ class UpdateGitHubActionTest(LoggingTestCase):
         """Test that the version is not updated when the commit SHA can't be fetched for an eligible release."""
         mock_get.side_effect = [
             mock_response([release_json("1.1")]),
-            Mock(raise_for_status=Mock(side_effect=requests.exceptions.HTTPError)),
+            mock_response({}, ok=False),
         ]
         self.assertEqual("1.0", get_latest_version("docker/no-sha-action", "1.0").version)
 

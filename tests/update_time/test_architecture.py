@@ -44,8 +44,14 @@ class LayeringTest(unittest.TestCase):
         """Test that the sources layer doesn't depend on the updaters layer above it."""
         self.assert_layer_does_not_depend_on("sources", "updaters")
 
-    def test_domain_makes_no_network_calls(self):
-        """Test that the pure domain layer does no network I/O of its own (it doesn't depend on requests)."""
-        assert_passes(
-            project_files("src/").in_folder("domain").should_not().depend_on_external_modules().matching(r"requests"),
-        )
+    def test_network_access_goes_through_io(self):
+        """Test that only the io layer touches the network directly.
+
+        Every other layer reaches the network through `io.fetch`, never by importing `requests` itself, so all HTTP
+        goes through one place with a uniform timeout, error handling, and logging. This also keeps the pure domain
+        layer free of any I/O.
+        """
+        for layer in ("domain", "sources", "updaters"):
+            with self.subTest(layer=layer):
+                rule = project_files("src/").in_folder(layer).should_not().depend_on_external_modules()
+                assert_passes(rule.matching(r"requests"))

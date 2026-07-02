@@ -9,13 +9,14 @@ mcr.microsoft.com, quay.io, ...) by listing tag names, discovering the registry'
 import re
 from dataclasses import dataclass
 from functools import cache, cached_property
+from http import HTTPStatus
 from typing import TYPE_CHECKING, cast
 
-import requests
 from packaging.version import InvalidVersion, Version
 
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString
+from update_time.io.fetch import fetch, next_page_url
 from update_time.io.log import get_logger
 from update_time.sources import docker_hub
 
@@ -242,21 +243,12 @@ def _tag_names(image: str) -> list[str]:
     url: str | None = f"https://{host}/v2/{repository}/tags/list?n=1000"
     names: list[str] = []
     while url:
-        response = requests.get(url, headers=headers, timeout=10)
-        if not response.ok:
-            LOG.response(response)
+        response = fetch(url, LOG, headers=headers)
+        if response is None:
             break
         names.extend(response.json().get("tags") or [])
-        url = _next_page_url(response, host)
+        url = next_page_url(response)
     return names
-
-
-def _next_page_url(response: requests.Response, host: str) -> str | None:
-    """Return the URL of the next page of tag names from the response's Link header, if any."""
-    if match := re.search(r'<([^>]+)>\s*;\s*rel="next"', response.headers.get("Link", "")):
-        path = match.group(1)
-        return f"https://{host}{path}" if path.startswith("/") else path
-    return None
 
 
 @cache
@@ -283,9 +275,8 @@ def _manifest_digest(image: str, tag: str) -> str:
     host = _registry_host(image)
     repository = _repository(image)
     headers = {"Accept": ", ".join(MANIFEST_MEDIA_TYPES), **_auth_headers(host, repository, _credentials(image))}
-    response = requests.head(f"https://{host}/v2/{repository}/manifests/{tag}", headers=headers, timeout=10)
-    if not response.ok:
-        LOG.response(response)
+    response = fetch(f"https://{host}/v2/{repository}/manifests/{tag}", LOG, method="head", headers=headers)
+    if response is None:
         return ""
     return response.headers.get("Docker-Content-Digest", "")
 
@@ -306,15 +297,18 @@ def _registry_token(host: str, repository: str, credentials: tuple[str, str] | N
     ...). Registries that allow anonymous access (e.g. mcr.microsoft.com) don't challenge, so None is returned and
     requests are made without a token. The given credentials, if any, authenticate the token request.
     """
-    probe = requests.get(f"https://{host}/v2/", timeout=10)
+    probe = fetch(f"https://{host}/v2/", LOG, require_ok=False)
+    if probe is None:
+        return None
     challenge = probe.headers.get("WWW-Authenticate", "")
-    if probe.status_code != requests.codes.unauthorized or not challenge.lower().startswith("bearer "):
+    if probe.status_code != HTTPStatus.UNAUTHORIZED or not challenge.lower().startswith("bearer "):
         return None  # Anonymous registry (or an unexpected response): proceed without a token.
     # Possessive quantifiers (`++`/`*+`) so the key and value scans never backtrack, keeping parsing linear.
     params = dict(re.findall(r'(\w++)="([^"]*+)"', challenge))
     realm = params.pop("realm", "")
     params["scope"] = f"repository:{repository}:pull"
-    response = requests.get(realm, params=params, timeout=10, auth=credentials)
-    response.raise_for_status()
+    response = fetch(realm, LOG, params=params, auth=credentials)
+    if response is None:
+        return None
     token = response.json()
     return token.get("token") or token.get("access_token")
