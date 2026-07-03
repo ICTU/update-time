@@ -7,6 +7,7 @@ from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from rich.console import Console
 from rich.logging import RichHandler
 
 # The log levels that can be selected on the command line, and the default. Reporting an available new version is
@@ -163,6 +164,15 @@ class Logger:
 
 
 def get_logger(name: str) -> Logger:
-    """Initialize a logger."""
-    logging.basicConfig(level=log_level(), datefmt="[%X]", format="%(message)s", handlers=[RichHandler()])
+    """Initialize a logger, configuring the root logger to send all diagnostics to stderr on the first call.
+
+    Update-time's real output is the files it rewrites in place; everything it logs — the new-version report as much
+    as the warnings and errors — is diagnostics about the run, so it all goes to stderr. That keeps stdout clean for
+    the argparse-handled `--version`/`--help` output, so e.g. `v=$(update-time -V)` isn't polluted with log lines.
+    `get_logger` is called once per module that owns a logger (an updater plus the sources it imports), so configure
+    the root logger only the first time — when it has no handlers yet — instead of building a handler on every call.
+    """
+    if not logging.getLogger().handlers:
+        handler = RichHandler(console=Console(stderr=True))
+        logging.basicConfig(level=log_level(), datefmt="[%X]", format="%(message)s", handlers=[handler])
     return Logger(name)
