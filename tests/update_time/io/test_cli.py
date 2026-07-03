@@ -56,6 +56,18 @@ class CommandLineInterfaceTest(unittest.TestCase):
         self.assertEqual(2, cm.exception.code)
         self.assertIn("-1 is not a non-negative integer", stderr.getvalue())
 
+    def test_non_integer_cooldown(self):
+        """Test that a non-integer --cooldown is rejected with a user-facing message."""
+        stderr = io.StringIO()
+        with (
+            patch("sys.argv", ["update-time", "--cooldown", "abc"]),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as cm,
+        ):
+            parse_args()
+        self.assertEqual(2, cm.exception.code)
+        self.assertIn("invalid days value: 'abc'", stderr.getvalue())
+
     def test_default_log_level(self):
         """Test that the log level defaults to the default log level."""
         with patch("sys.argv", ["update-time"]):
