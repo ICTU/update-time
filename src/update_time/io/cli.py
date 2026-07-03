@@ -7,12 +7,12 @@ from update_time.domain.cooldown import COOLDOWN_DAYS
 from update_time.io.log import DEFAULT_LOG_LEVEL, LOG_LEVELS
 
 
-def non_negative_int(value: str) -> int:
+def days(value: str) -> int:
     """Parse the value as a non-negative integer number of days."""
-    if (days := int(value)) < 0:
+    if (number := int(value)) < 0:
         message = f"{value} is not a non-negative integer"
         raise argparse.ArgumentTypeError(message)
-    return days
+    return number
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("-V", "--version", action="version", version=f"v{version('update-time')}")
     parser.add_argument(
         "--cooldown",
-        type=non_negative_int,
+        type=days,
         default=COOLDOWN_DAYS,
         metavar="DAYS",
         help="number of days to hold back newly published Docker image, GitHub Action, requirements.txt, npm, pnpm, "
