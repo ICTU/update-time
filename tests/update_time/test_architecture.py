@@ -55,3 +55,13 @@ class LayeringTest(unittest.TestCase):
             with self.subTest(layer=layer):
                 rule = project_files("src/").in_folder(layer).should_not().depend_on_external_modules()
                 assert_passes(rule.matching(r"requests"))
+
+    def test_registry_access_goes_through_sources(self):
+        """Test that updaters reach registries through the sources layer, never fetching from them directly.
+
+        `sources` own every registry/API client, so an updater fetches nothing itself: it wires a source's
+        `get_latest_*` to the file-rewriting machinery. Keeping the HTTP in `sources` is what lets a single client
+        be reused across updaters and keeps updaters as thin as each other.
+        """
+        rule = project_files("src/").in_folder("updaters").should_not().depend_on_files().with_name("fetch.py")
+        assert_passes(rule)
