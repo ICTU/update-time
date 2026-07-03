@@ -114,8 +114,14 @@ def updated_lines(
 
 
 def update_references_in_lines(
-    lines: list[str], regexp: str, get_new_version: NewVersionGetter, logger: Logger, path: Path
+    lines: list[str], *regexps: str, get_new_version: NewVersionGetter, logger: Logger, path: Path
 ) -> list[str]:
-    """Return the lines with each unpinned reference updated to its new version (and digest)."""
-    update_line = partial(_update_line, regexp=regexp, get_new_version=get_new_version, logger=logger, path=path)
-    return updated_lines(lines, regexp, update_line, logger, path)
+    """Return the lines with each unpinned reference updated to its new version (and digest).
+
+    Several regexps are applied in turn, each to the result of the previous, so a file that pins more than one kind
+    of reference (a devcontainer.json's base `image` and its `features`) is rewritten in one pass over its content.
+    """
+    for regexp in regexps:
+        update_line = partial(_update_line, regexp=regexp, get_new_version=get_new_version, logger=logger, path=path)
+        lines = updated_lines(lines, regexp, update_line, logger, path)
+    return lines

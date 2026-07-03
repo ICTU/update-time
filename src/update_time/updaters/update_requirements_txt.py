@@ -44,7 +44,7 @@ def update_requirements_txt(requirements_txt: Path) -> int:
     if is_compiled(requirements_txt, requirements_txt.read_text()):
         LOG.skipped(requirements_txt, "compiled or hash-pinned requirements file")
         return 0
-    return update_file(requirements_txt, REQUIREMENT_RE, get_latest_version, LOG)
+    return update_file(requirements_txt, REQUIREMENT_RE, get_new_version=get_latest_version, logger=LOG)
 
 
 def update_requirements_txts() -> int:

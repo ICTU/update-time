@@ -49,7 +49,9 @@ class UpdateReferencesTest(unittest.TestCase):
 
     def rewrite(self, lines: list[str], regexp: str, get_new_version: NewVersionGetter) -> list[str]:
         """Run the rewrite engine over the lines with the given regexp and new-version getter."""
-        return update_references_in_lines(lines, regexp, get_new_version, self.logger, self.path)
+        return update_references_in_lines(
+            lines, regexp, get_new_version=get_new_version, logger=self.logger, path=self.path
+        )
 
     def test_no_reference(self):
         """Test that lines without a reference are returned unchanged."""

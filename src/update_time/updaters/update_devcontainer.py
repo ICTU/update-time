@@ -33,11 +33,11 @@ DEVCONTAINER_GLOBS = (".devcontainer.json", ".devcontainer/devcontainer.json", "
 
 def update_devcontainers() -> int:
     """Update the base image and feature references in the repository's devcontainer.json files."""
-    results = [0]
-    for devcontainer in glob(*DEVCONTAINER_GLOBS):
-        results.append(update_file(devcontainer, IMAGE_RE, get_latest_tag, LOG))
-        results.append(update_file(devcontainer, FEATURE_RE, get_latest_tag, LOG))
-    return max(results)
+    results = {
+        update_file(devcontainer, IMAGE_RE, FEATURE_RE, get_new_version=get_latest_tag, logger=LOG)
+        for devcontainer in glob(*DEVCONTAINER_GLOBS)
+    }
+    return max(results, default=0)
 
 
 def main() -> int:  # pragma: no cover

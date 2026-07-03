@@ -23,7 +23,7 @@ def update_gitlab_ci_config(gitlab_ci_config: Path) -> int:
     """Update the images in the GitLab CI configuration file, if it exists."""
     if not gitlab_ci_config.exists():
         return 0
-    return update_file(gitlab_ci_config, YAML_IMAGE_REFERENCE, get_latest_tag, LOG)
+    return update_file(gitlab_ci_config, YAML_IMAGE_REFERENCE, get_new_version=get_latest_tag, logger=LOG)
 
 
 def main() -> int:  # pragma: no cover
