@@ -1,16 +1,30 @@
 """Logger unit tests."""
 
+import logging
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import ANY, Mock, patch
 
+from rich.logging import RichHandler
+
 from update_time.domain.version import DependencyVersion
 from update_time.io import filesystem
-from update_time.io.log import Logger
+from update_time.io.log import Logger, get_logger
 
 from tests.update_time.helpers import new_version_getter
+
+
+class GetLoggerTests(TestCase):
+    """Unit tests for how get_logger configures the root logger."""
+
+    def test_diagnostics_are_sent_to_stderr(self):
+        """Test that the root logger sends all diagnostics to stderr, keeping stdout clean for --version/--help."""
+        get_logger("stderr")  # Ensure the root logger has been configured.
+        rich_handlers = [handler for handler in logging.getLogger().handlers if isinstance(handler, RichHandler)]
+        self.assertTrue(rich_handlers)
+        self.assertTrue(all(handler.console.stderr for handler in rich_handlers))
 
 
 class LoggerTests(TestCase):
