@@ -41,4 +41,9 @@ def parse_args() -> argparse.Namespace:
         help="the minimum severity of messages to log; available new versions are logged at INFO (default: "
         "%(default)s)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="run even when not inside a git repository (changes are made in place and cannot be reverted)",
+    )
     return parser.parse_args()

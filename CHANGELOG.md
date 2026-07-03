@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Recognise the `update-time: ignore` marker in `.devcontainer/devcontainer.json` and `.devcontainer.json`. Since these files are JSONC, the marker is written in a `//` comment (`// update-time: ignore`), either inline on the reference's line or as a standalone comment on the line directly above it.
+- Refuse to run outside a git repository so in-place rewrites have a git safety net; pass `--force` to override the refusal.
 
 ### Fixed
 

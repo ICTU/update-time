@@ -8,9 +8,13 @@ from pathlib import Path
 
 from update_time.domain.cooldown import COOLDOWN_DAYS_ENV_VAR
 from update_time.io.cli import parse_args
-from update_time.io.log import LOG_LEVEL_ENV_VAR
+from update_time.io.log import LOG_LEVEL_ENV_VAR, get_logger
 
 SRC = Path(__file__).parent
+GIT_REPOSITORY_REFUSAL_MESSAGE = (
+    "Refusing to run: not inside a git repository. Update-time rewrites files in place; "
+    "run it inside a repository so changes can be reverted, or pass --force to run anyway."
+)
 
 # These scripts update different files, so they can run concurrently.
 PARALLEL_SCRIPTS = (
@@ -43,12 +47,21 @@ def update_dependencies() -> int:
     return max(results, default=0)
 
 
+def is_inside_git_repository(start: Path | None = None) -> bool:
+    """Return whether start is inside a git repository."""
+    current = (start or Path.cwd()).resolve()
+    return any((directory / ".git").exists() for directory in (current, *current.parents))
+
+
 def main() -> int:
     """Parse the command-line arguments and update all dependencies."""
     args = parse_args()
     # Pass the cooldown and log level down to the updater subprocesses via the environment.
     os.environ[COOLDOWN_DAYS_ENV_VAR] = str(args.cooldown)
     os.environ[LOG_LEVEL_ENV_VAR] = args.log_level
+    if not args.force and not is_inside_git_repository():
+        get_logger("update").log.error(GIT_REPOSITORY_REFUSAL_MESSAGE)
+        return 1
     return update_dependencies()
 
 

@@ -77,3 +77,13 @@ class CommandLineInterfaceTest(unittest.TestCase):
             parse_args()
         self.assertEqual(2, cm.exception.code)
         self.assertIn("invalid choice", stderr.getvalue())
+
+    def test_default_force(self):
+        """Test that force defaults to false."""
+        with patch("sys.argv", ["update-time"]):
+            self.assertFalse(parse_args().force)
+
+    def test_force(self):
+        """Test that the --force option sets force to true."""
+        with patch("sys.argv", ["update-time", "--force"]):
+            self.assertTrue(parse_args().force)
