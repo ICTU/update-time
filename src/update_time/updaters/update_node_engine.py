@@ -77,7 +77,9 @@ def update_node_engine(package_json: Path) -> int:
     """Update the Node engine version based on the Docker base image."""
     dockerfile = find_node_dockerfile(package_json)
     if version := node_base_image_version(dockerfile):
-        return update_file(package_json, NODE_ENGINE_RE, lambda *_args: DependencyVersion(version=version), LOG)
+        return update_file(
+            package_json, NODE_ENGINE_RE, get_new_version=lambda *_args: DependencyVersion(version=version), logger=LOG
+        )
     if tag := node_base_image_tag(dockerfile):
         # A Node base image exists but uses a non-numeric tag (e.g. 'node:lts'); we can't derive a concrete
         # version to sync the engine to, so skip without failing the run.

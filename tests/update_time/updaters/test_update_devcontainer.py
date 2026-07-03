@@ -1,7 +1,7 @@
 """Unit tests for the devcontainer update script."""
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from update_time.updaters.update_devcontainer import (
     DEVCONTAINER_GLOBS,
@@ -85,8 +85,8 @@ class ScannedDevcontainersTest(unittest.TestCase):
     @patch("update_time.updaters.update_devcontainer.update_file", return_value=0)
     @patch("update_time.updaters.update_devcontainer.glob")
     def test_image_and_features_are_updated(self, mock_glob: Mock, mock_update_file: Mock):
-        """Test that each devcontainer.json is scanned for both its image and its feature references."""
-        mock_glob.return_value = [mock_path("{}")]
+        """Test that each devcontainer.json is scanned for both its image and its feature references in one pass."""
+        mock_file = mock_path("{}")
+        mock_glob.return_value = [mock_file]
         update_devcontainers()
-        regexes = [call.args[1] for call in mock_update_file.call_args_list]
-        self.assertEqual([IMAGE_RE, FEATURE_RE], regexes)
+        mock_update_file.assert_called_once_with(mock_file, IMAGE_RE, FEATURE_RE, get_new_version=ANY, logger=ANY)

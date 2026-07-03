@@ -72,14 +72,24 @@ class UpdateFileTest(unittest.TestCase):
     def test_writes_the_updated_file_when_a_reference_changed(self):
         """Test that the file is written back, with a trailing newline, when a reference was updated."""
         mock_file = mock_path("line1\nimage: python:3.14\n")
-        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.15"), Mock()))
+        assert_success(update_file(mock_file, REGEXP, get_new_version=new_version_getter("3.15"), logger=Mock()))
         mock_file.write_text.assert_called_once_with("line1\nimage: python:3.15\n")
 
     def test_does_not_write_when_nothing_changed(self):
         """Test that the file is not written when no reference was updated."""
         mock_file = mock_path("line1\nimage: python:3.14\n")
-        assert_success(update_file(mock_file, REGEXP, new_version_getter("3.14"), Mock()))
+        assert_success(update_file(mock_file, REGEXP, get_new_version=new_version_getter("3.14"), logger=Mock()))
         mock_file.write_text.assert_not_called()
+
+    def test_multiple_regexps_applied_in_one_pass(self):
+        """Test that several regexps are applied to the same content, reading and writing the file once."""
+        mount_regexp = r"mount: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"
+        mock_file = mock_path("image: python:3.14\nmount: redis:1.0\n")
+        assert_success(
+            update_file(mock_file, REGEXP, mount_regexp, get_new_version=new_version_getter("9.9"), logger=Mock())
+        )
+        mock_file.read_text.assert_called_once_with()
+        mock_file.write_text.assert_called_once_with("image: python:9.9\nmount: redis:9.9\n")
 
 
 @patch("pathlib.Path.glob")

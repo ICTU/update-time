@@ -51,11 +51,17 @@ def glob(*glob_patterns: str, start: Path | None = None) -> Iterator[Path]:
             yield path
 
 
-def update_file(path: Path, regexp: str, get_new_version: NewVersionGetter, logger: Logger) -> int:
-    """Update the references in the file and write it back if the new lines differ from the old lines."""
+def update_file(path: Path, *regexps: str, get_new_version: NewVersionGetter, logger: Logger) -> int:
+    """Update the references in the file and write it back if the new lines differ from the old lines.
+
+    Multiple regexps are applied in turn to the same content, so a file that pins more than one kind of reference (a
+    devcontainer.json's base `image` and its `features`) is read and written once, not once per regexp.
+    """
     logger.path(path)
     old_lines = path.read_text().splitlines()
-    new_lines = update_references_in_lines(old_lines, regexp, get_new_version, logger, path)
+    new_lines = update_references_in_lines(
+        old_lines, *regexps, get_new_version=get_new_version, logger=logger, path=path
+    )
     if old_lines != new_lines:
         path.write_text("\n".join(new_lines) + "\n")
     return 0
@@ -69,5 +75,8 @@ def update_files(
     start: Path | None = None,
 ) -> int:
     """Update the files using the regexp to find the current version and get_new_version to find new versions."""
-    results = {update_file(path, regexp, get_new_version, logger) for path in glob(*glob_patterns, start=start)}
+    results = {
+        update_file(path, regexp, get_new_version=get_new_version, logger=logger)
+        for path in glob(*glob_patterns, start=start)
+    }
     return max(results, default=0)

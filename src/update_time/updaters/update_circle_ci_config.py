@@ -45,7 +45,7 @@ def update_circle_ci_yaml(config_file: Path) -> int:
             return DependencyVersion(version=version)  # Leave machine images unchanged; they aren't on a registry
         return get_latest_tag(dependency, version)
 
-    return update_file(config_file, YAML_IMAGE_REFERENCE, get_new_version, LOG)
+    return update_file(config_file, YAML_IMAGE_REFERENCE, get_new_version=get_new_version, logger=LOG)
 
 
 def update_circle_ci_config(circle_ci_dir: Path) -> int:
