@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, cast
 from packaging.version import InvalidVersion, Version
 
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.version import DependencyName, DependencyVersion, VersionString
+from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible
 from update_time.io.fetch import fetch, next_page_url
 from update_time.io.log import get_logger
 from update_time.sources import docker_hub
@@ -190,12 +190,16 @@ def get_latest_tag(image: DependencyName, current_tag: VersionString) -> Depende
     tags = [Tag(name=name) for name in _tag_names(image)]
     candidates = [tag for tag in tags if tag.is_candidate_for(current)]
     candidates.sort(key=lambda tag: cast("Version", tag.version), reverse=True)
-    for candidate in candidates:
-        latest = _get_tag(image, candidate.name)
-        if latest is not None and latest.is_eligible:
-            name = current.with_version(cast("Version", latest.version)).name
-            return DependencyVersion(version=name, sha=latest.digest, published=latest.last_pushed)
-    return DependencyVersion(version=current_tag)
+    return first_eligible(candidates, lambda candidate: _eligible_tag(image, current, candidate), current_tag)
+
+
+def _eligible_tag(image: str, current: Tag, candidate: Tag) -> DependencyVersion | None:
+    """Resolve the candidate's digest and push date and return it when eligible, or None when it isn't."""
+    latest = _get_tag(image, candidate.name)
+    if latest is None or not latest.is_eligible:
+        return None
+    name = current.with_version(cast("Version", latest.version)).name
+    return DependencyVersion(version=name, sha=latest.digest, published=latest.last_pushed)
 
 
 def _registry_host(image: str) -> str:

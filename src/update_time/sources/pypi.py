@@ -9,7 +9,7 @@ from packaging.version import Version
 
 from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.version import DependencyName, DependencyVersion, VersionString, is_valid
+from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.sources.github import changes_from_release, github_owner_and_repository, github_to_raw
@@ -80,16 +80,19 @@ def get_latest_version(package: DependencyName, current_version: VersionString) 
         version for version in versions if version > current and not version.is_prerelease and not version.is_devrelease
     ]
     candidates.sort(reverse=True)
-    for version in candidates:
-        metadata = release_metadata(package, str(version))
-        if metadata is None:
-            continue
-        published = release_datetime(metadata["urls"])
-        if metadata["info"].get("yanked") or published is None or within_cooldown(published):
-            continue
-        latest = str(version)
-        return DependencyVersion(latest, changes=get_changes(package, latest), published=published)
-    return DependencyVersion(version=current_version)
+    return first_eligible(candidates, lambda version: _eligible_release(package, version), current_version)
+
+
+def _eligible_release(package: str, version: Version) -> DependencyVersion | None:
+    """Return the release as a DependencyVersion when it's eligible, or None when it's yanked or too fresh."""
+    metadata = release_metadata(package, str(version))
+    if metadata is None:
+        return None
+    published = release_datetime(metadata["urls"])
+    if metadata["info"].get("yanked") or published is None or within_cooldown(published):
+        return None
+    latest = str(version)
+    return DependencyVersion(latest, changes=get_changes(package, latest), published=published)
 
 
 def get_changes(package: str, version: str) -> str:

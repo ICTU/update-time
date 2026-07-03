@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.version import DependencyName, DependencyVersion, VersionString, is_valid
+from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
 from update_time.io.fetch import fetch
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
@@ -48,12 +48,29 @@ def get_latest_version(
     if not is_valid(current_version_string):
         return DependencyVersion(version=current_version_string)
     current_version = Version(current_version_string)
-    for version in _candidate_versions(dependency, current_version):
-        if (published := _publication_datetime(dependency, version)) and not within_cooldown(published):
-            if integrity := _get_integrity_hash(dependency, version, filename):
-                return DependencyVersion(str(version), sha=integrity, published=published)
-            LOG.no_integrity_hash(dependency, str(version), filename)
-            return DependencyVersion(version=current_version_string)
+    candidates = _candidate_versions(dependency, current_version)
+    return first_eligible(
+        candidates,
+        lambda version: _eligible_version(dependency, version, filename, current_version_string),
+        current_version_string,
+    )
+
+
+def _eligible_version(
+    dependency: str, version: Version, filename: str, current_version_string: VersionString
+) -> DependencyVersion | None:
+    """Return the version with its integrity hash when it's past the cooldown, or None when it's still too fresh.
+
+    A version that is past the cooldown but whose referenced file has no integrity hash ends the walk: it returns
+    the current version unchanged rather than skipping to an older one, since bumping without a matching hash would
+    break the Subresource Integrity check.
+    """
+    published = _publication_datetime(dependency, version)
+    if published is None or within_cooldown(published):
+        return None
+    if integrity := _get_integrity_hash(dependency, version, filename):
+        return DependencyVersion(str(version), sha=integrity, published=published)
+    LOG.no_integrity_hash(dependency, str(version), filename)
     return DependencyVersion(version=current_version_string)
 
 
