@@ -2,6 +2,7 @@
 
 import argparse
 from importlib.metadata import version
+from pathlib import Path
 
 from update_time.domain.cooldown import COOLDOWN_DAYS
 from update_time.io.log import DEFAULT_LOG_LEVEL, LOG_LEVELS
@@ -15,6 +16,14 @@ def days(value: str) -> int:
     return number
 
 
+def directory(value: str) -> Path:
+    """Parse the value as the path to an existing directory."""
+    if not (path := Path(value)).is_dir():
+        message = f"{value} is not an existing directory"
+        raise argparse.ArgumentTypeError(message)
+    return path
+
+
 def parse_args() -> argparse.Namespace:
     """Parse the command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -25,6 +34,15 @@ def parse_args() -> argparse.Namespace:
         "devcontainer configs, and jsDelivr URLs. A cooldown period holds back releases that are too fresh to trust.",
     )
     parser.add_argument("-V", "--version", action="version", version=f"v{version('update-time')}")
+    parser.add_argument(
+        "path",
+        nargs="?",
+        type=directory,
+        default=Path(),
+        metavar="PATH",
+        help="the directory to scan for dependencies to update; paths in the log are reported relative to it "
+        "(default: the current directory)",
+    )
     parser.add_argument(
         "--cooldown",
         type=days,

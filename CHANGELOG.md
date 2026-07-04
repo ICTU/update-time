@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Accept an optional positional `PATH` argument (`update-time ../other-project`) that scopes the run to the given directory, so you no longer have to `cd` into a checkout before running Update-time. `PATH` defaults to the current directory, leaving existing invocations unchanged, and paths in the log are reported relative to it. A `PATH` that does not exist or is not a directory is rejected with exit status `2`. Closes [#86](https://github.com/ICTU/update-time/issues/86).
+
 ### Fixed
 
 - Keep uv-managed projects reproducible after an update: `uv sync --locked` no longer fails with "Resolving despite existing lockfile due to removal of global exclude newer". Update-time used to pass its cooldown to uv only on the command line (`--exclude-newer`), which uv bakes into `uv.lock` and then treats as removed on a later `uv sync --locked` run that doesn't repeat the flag, forcing a re-resolve. Update-time now writes the cooldown into `[tool.uv] exclude-newer` in the project's `pyproject.toml` instead (relative form, e.g. `exclude-newer = "7 days"`, tagged with a `managed by Update-time` comment), so uv reads the same cooldown on every command and the lockfile stays reproducible. In a uv workspace the setting is written once to the workspace root. Update-time keeps its own commented value in step with `--cooldown` but never changes a value you set yourself (or the `UV_EXCLUDE_NEWER` environment variable); remove the marker comment to take ownership of the line. Because the value now lives in `[tool.uv]`, the cooldown applies to every uv command in the project, not just Update-time's runs. Closes [#94](https://github.com/ICTU/update-time/issues/94).

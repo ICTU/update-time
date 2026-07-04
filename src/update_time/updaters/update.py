@@ -46,6 +46,8 @@ def update_dependencies() -> int:
 def main() -> int:
     """Parse the command-line arguments and update all dependencies."""
     args = parse_args()
+    # Scope the whole run to the requested directory; everything downstream keys off the current working directory.
+    os.chdir(args.path)
     # Pass the cooldown and log level down to the updater subprocesses via the environment.
     os.environ[COOLDOWN_DAYS_ENV_VAR] = str(args.cooldown)
     os.environ[LOG_LEVEL_ENV_VAR] = args.log_level
