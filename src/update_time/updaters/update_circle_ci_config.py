@@ -11,9 +11,8 @@ Docker Hub and have no registry to query, so they are detected by parsing the YA
 import sys
 from pathlib import Path
 
-import yaml
-
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString
+from update_time.file_formats import yaml as yaml_format
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob, update_file
 from update_time.io.log import get_logger
 from update_time.sources.oci import YAML_IMAGE_REFERENCE, get_latest_tag
@@ -38,7 +37,7 @@ def machine_images(config: object) -> set[str]:
 
 def update_circle_ci_yaml(config_file: Path) -> int:
     """Update the Docker images in a single CircleCI YAML file, leaving machine-executor images unchanged."""
-    machine = machine_images(yaml.safe_load(config_file.read_text()))
+    machine = machine_images(yaml_format.read(config_file))
 
     def get_new_version(dependency: DependencyName, version: VersionString) -> DependencyVersion:
         if f"{dependency}:{version}" in machine:

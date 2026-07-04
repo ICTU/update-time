@@ -136,6 +136,11 @@ class LoggingTestCase(CacheClearingTestCase):
         message = "Skipping %s: %s is not supported, only %s"
         self.mock_warning.assert_called_once_with(message, self._relative(path), manager, supported, stacklevel=ANY)
 
+    def assert_invalid_pyproject_toml_logged(self, path: Path) -> None:
+        """Assert that an unparsable pyproject.toml was logged as a warning for the file."""
+        message = "Skipping %s: it is not valid TOML"
+        self.mock_warning.assert_called_once_with(message, self._relative(path), stacklevel=ANY)
+
     @staticmethod
     def _relative(path: Path) -> Path:
         """Make the file path relative to the working directory, the same way the logger renders it."""

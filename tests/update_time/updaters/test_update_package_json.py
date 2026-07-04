@@ -1,11 +1,12 @@
-"""Unit tests for the package.json update script."""
+"""Unit tests for the package.json updater (discovery and orchestration of the node package managers)."""
 
 import subprocess  # nosec
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN_DAYS
-from update_time.updaters.update_package_json import COMMON_NPM_OPTIONS, update_package_jsons
+from update_time.package_managers.node import COMMON_NPM_OPTIONS
+from update_time.updaters.update_package_json import update_package_jsons
 
 from tests.update_time.assertions import assert_success
 from tests.update_time.helpers import LoggingTestCase, mock_path, mock_response, release_json
