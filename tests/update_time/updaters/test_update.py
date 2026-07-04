@@ -2,6 +2,7 @@
 
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN_DAYS_ENV_VAR
@@ -43,12 +44,14 @@ class UpdateTest(unittest.TestCase):
         mock_run.return_value = Mock(returncode=1)
         self.assertEqual(1, update_dependencies())
 
+    @patch("os.chdir", Mock())
     def test_main_updates_dependencies(self, mock_run: Mock):
         """Test that main parses the arguments and then updates the dependencies."""
         mock_run.return_value = Mock(returncode=0)
         with patch("sys.argv", ["update-time"]):
             self.assertEqual(0, main())
 
+    @patch("os.chdir", Mock())
     def test_main_passes_cooldown_to_subprocesses(self, mock_run: Mock):
         """Test that main exports the cooldown in the environment so the updater subprocesses inherit it."""
         mock_run.return_value = Mock(returncode=0)
@@ -56,9 +59,27 @@ class UpdateTest(unittest.TestCase):
             main()
             self.assertEqual("14", os.environ[COOLDOWN_DAYS_ENV_VAR])
 
+    @patch("os.chdir", Mock())
     def test_main_passes_log_level_to_subprocesses(self, mock_run: Mock):
         """Test that main exports the log level in the environment so the updater subprocesses inherit it."""
         mock_run.return_value = Mock(returncode=0)
         with patch.dict("os.environ", clear=True), patch("sys.argv", ["update-time", "--log-level", "debug"]):
             main()
             self.assertEqual("DEBUG", os.environ[LOG_LEVEL_ENV_VAR])
+
+    @patch("os.chdir")
+    def test_main_changes_to_the_default_directory(self, mock_chdir: Mock, mock_run: Mock):
+        """Test that main changes to the current directory when no path is given."""
+        mock_run.return_value = Mock(returncode=0)
+        with patch("sys.argv", ["update-time"]):
+            main()
+        mock_chdir.assert_called_once_with(Path())
+
+    @patch("pathlib.Path.is_dir", Mock(return_value=True))
+    @patch("os.chdir")
+    def test_main_changes_to_the_given_directory(self, mock_chdir: Mock, mock_run: Mock):
+        """Test that main changes to the given path before spawning the updater subprocesses."""
+        mock_run.return_value = Mock(returncode=0)
+        with patch("sys.argv", ["update-time", "some-directory"]):
+            main()
+        mock_chdir.assert_called_once_with(Path("some-directory"))

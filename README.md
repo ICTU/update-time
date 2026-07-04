@@ -19,6 +19,8 @@ update-time
 
 Update-time has a small command-line interface. Run `update-time -h`/`--help` to see all options, `update-time -V`/`--version` to print the version, `update-time --cooldown DAYS` to override the default cooldown period (see [Cooldown](#cooldown) below), and `update-time --log-level LEVEL` to set how much is logged (one of `DEBUG`, `INFO`, `WARNING`, `ERROR`; defaults to `INFO`). Available new versions are logged at `INFO`, so use `--log-level WARNING` to see only genuine problems, or `--log-level DEBUG` to also see which files are checked. All logging goes to standard error, leaving standard output for the `--version` and `--help` text. Running `update-time` with no options in the root folder of a repository updates all supported dependencies.
 
+By default Update-time scans the current directory. Pass a positional `PATH` to scan another directory instead — `update-time ../other-project` — without having to `cd` there first. `PATH` defaults to the current directory, so existing invocations are unchanged, and the paths in the log are reported relative to it. If `PATH` does not exist or is not a directory, Update-time exits with status `2`.
+
 Update-time exits with status `0` when it ran (whether or not it changed any files), `2` when the command-line arguments are invalid, and a non-zero status when an updater could not complete. The exit status does not indicate whether anything was updated — inspect the diff (or the `INFO`-level log) for that.
 
 The recommended workflow is to run Update-time on a dedicated branch, push it, and let CI do the verification:

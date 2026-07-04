@@ -4,7 +4,8 @@ import contextlib
 import io
 import unittest
 from importlib.metadata import version
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN_DAYS
 from update_time.io.cli import parse_args
@@ -67,6 +68,30 @@ class CommandLineInterfaceTest(unittest.TestCase):
             parse_args()
         self.assertEqual(2, cm.exception.code)
         self.assertIn("invalid days value: 'abc'", stderr.getvalue())
+
+    def test_default_path(self):
+        """Test that the path defaults to the current directory."""
+        with patch("sys.argv", ["update-time"]):
+            self.assertEqual(Path(), parse_args().path)
+
+    @patch("pathlib.Path.is_dir", Mock(return_value=True))
+    def test_path(self):
+        """Test that a positional path argument is parsed as a directory."""
+        with patch("sys.argv", ["update-time", "some-directory"]):
+            self.assertEqual(Path("some-directory"), parse_args().path)
+
+    @patch("pathlib.Path.is_dir", Mock(return_value=False))
+    def test_path_that_is_not_a_directory(self):
+        """Test that a path that is not an existing directory is rejected with a user-facing message."""
+        stderr = io.StringIO()
+        with (
+            patch("sys.argv", ["update-time", "no-such-directory"]),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as cm,
+        ):
+            parse_args()
+        self.assertEqual(2, cm.exception.code)
+        self.assertIn("no-such-directory is not an existing directory", stderr.getvalue())
 
     def test_default_log_level(self):
         """Test that the log level defaults to the default log level."""
