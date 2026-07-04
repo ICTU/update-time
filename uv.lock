@@ -939,6 +939,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "requests" },
     { name = "rich" },
+    { name = "tomlkit" },
 ]
 
 [package.dev-dependencies]
@@ -968,6 +969,7 @@ requires-dist = [
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "requests", specifier = "==2.34.2" },
     { name = "rich", specifier = "==15.0.0" },
+    { name = "tomlkit", specifier = "==0.15.0" },
 ]
 
 [package.metadata.requires-dev]

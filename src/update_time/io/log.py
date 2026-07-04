@@ -100,6 +100,18 @@ class Logger:
         """Log that no commit SHA could be fetched for an otherwise-eligible release."""
         self._log(self.log.error, "Could not fetch commit SHA for %s %s: %s", dependency, version, url)
 
+    def configured_uv_cooldown(self, path: Path, cooldown: str) -> None:
+        """Log that Update-time wrote its cooldown into the project's uv configuration.
+
+        The path is a workspace root, which can sit above the current directory (when Update-time runs inside a
+        member), so fall back to the absolute path when it can't be made relative to the working directory.
+        """
+        try:
+            location = path.relative_to(Path.cwd())
+        except ValueError:
+            location = path
+        self._log(self.log.info, "Set uv exclude-newer to %r in %s to apply the cooldown", cooldown, location)
+
     def no_integrity_hash(self, dependency: str, version: str, filename: str) -> None:
         """Warn that a jsDelivr file's integrity hash couldn't be resolved, so the reference is left unchanged."""
         message = "Could not resolve the integrity hash for %s %s (%s), leaving it unchanged"
