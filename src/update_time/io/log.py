@@ -135,6 +135,10 @@ class Logger:
         message = "Skipping %s: %s is not supported, only %s"
         self._log(self.log.warning, message, path.relative_to(Path.cwd()), manager, supported)
 
+    def invalid_pyproject_toml(self, path: Path) -> None:
+        """Warn that a pyproject.toml can't be parsed as TOML, so it is skipped rather than crashing the run."""
+        self._log(self.log.warning, "Skipping %s: it is not valid TOML", path.relative_to(Path.cwd()))
+
     def expected_node_base_image(self, dockerfile: Path) -> None:
         """Log missing Node base image."""
         self._log(self.log.error, "Expected Dockerfile %s to have a Node base image", dockerfile)

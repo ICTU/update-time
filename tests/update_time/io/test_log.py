@@ -97,6 +97,13 @@ class LoggerTests(TestCase):
         message = "Set uv exclude-newer to %r in %s to apply the cooldown"
         mock_info.assert_called_once_with(message, "7 days", outside, stacklevel=ANY)
 
+    @patch("logging.Logger.warning")
+    def test_invalid_pyproject_toml(self, mock_warning: Mock):
+        """Test that an unparsable pyproject.toml is logged as a warning."""
+        Logger("toml").invalid_pyproject_toml(Path.cwd() / "pyproject.toml")
+        message = "Skipping %s: it is not valid TOML"
+        mock_warning.assert_called_once_with(message, Path("pyproject.toml"), stacklevel=ANY)
+
     @patch("logging.Logger.info")
     def test_new_version_with_publication_date(self, mock_info: Mock):
         """Test that the publication date is appended to the version when it is known."""

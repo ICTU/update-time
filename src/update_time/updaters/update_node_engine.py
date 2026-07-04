@@ -3,12 +3,12 @@
 Note: this script does not update package-lock.json.
 """
 
-import json
 import re
 import sys
 from typing import TYPE_CHECKING
 
 from update_time.domain.version import DependencyVersion
+from update_time.file_formats import package_json as package_json_format
 from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, glob, update_file
 from update_time.io.log import get_logger
 
@@ -23,7 +23,7 @@ NODE_ENGINE_RE = r'"(?P<dependency>node)": "(?P<version>[\d\.]+)"'
 
 def has_node_engine(package_json: Path) -> bool:
     """Return whether the package.json file contains a Node engine."""
-    package_json_contents = json.loads(package_json.read_text())
+    package_json_contents = package_json_format.read(package_json)
     return "engines" in package_json_contents and "node" in package_json_contents["engines"]
 
 
