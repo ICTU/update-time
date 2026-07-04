@@ -83,6 +83,21 @@ class LoggerTests(TestCase):
         mock_debug.assert_called_once_with("Checking if there are updates for %s", Path("config.yml"), stacklevel=ANY)
 
     @patch("logging.Logger.info")
+    def test_configured_uv_cooldown(self, mock_info: Mock):
+        """Test that writing the cooldown into a project's uv config is logged, relative to the working directory."""
+        Logger("cooldown").configured_uv_cooldown(Path.cwd() / "pyproject.toml", "7 days")
+        message = "Set uv exclude-newer to %r in %s to apply the cooldown"
+        mock_info.assert_called_once_with(message, "7 days", Path("pyproject.toml"), stacklevel=ANY)
+
+    @patch("logging.Logger.info")
+    def test_configured_uv_cooldown_outside_working_directory(self, mock_info: Mock):
+        """Test that a workspace root outside the working directory is logged as its absolute path, not crashing."""
+        outside = Path("/elsewhere/pyproject.toml")
+        Logger("cooldown").configured_uv_cooldown(outside, "7 days")
+        message = "Set uv exclude-newer to %r in %s to apply the cooldown"
+        mock_info.assert_called_once_with(message, "7 days", outside, stacklevel=ANY)
+
+    @patch("logging.Logger.info")
     def test_new_version_with_publication_date(self, mock_info: Mock):
         """Test that the publication date is appended to the version when it is known."""
         published = datetime(2026, 5, 29, 13, 54, tzinfo=UTC)
