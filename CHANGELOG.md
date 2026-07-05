@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Accept an optional positional `PATH` argument (`update-time ../other-project`) that scopes the run to the given directory, so you no longer have to `cd` into a checkout before running Update-time. `PATH` defaults to the current directory, leaving existing invocations unchanged, and paths in the log are reported relative to it. A `PATH` that does not exist or is not a directory is rejected with exit status `2`. Closes [#86](https://github.com/ICTU/update-time/issues/86).
+- Add a `--exclude-path` option that takes a comma-separated list of directories, relative to the scan root, to exclude from the walk (`update-time --exclude-path vendor,packages/legacy`); every file under an excluded directory is skipped by every updater. This helps when several repositories are checked out under a shared root, or for a vendored or generated subtree you don't want touched. The directories are matched by relative path, not by name (`--exclude-path vendor` excludes `vendor/` but not `sub/vendor/`), and extend the always-ignored `build`, `node_modules`, `__pycache__`, and hidden folders rather than replacing them. A listed directory that doesn't exist is logged at `WARNING` rather than failing the run, while an absolute path or one that escapes the scan root (`../…`) is rejected with exit status `2`. Closes [#84](https://github.com/ICTU/update-time/issues/84).
 
 ### Fixed
 

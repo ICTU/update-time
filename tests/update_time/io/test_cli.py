@@ -114,3 +114,43 @@ class CommandLineInterfaceTest(unittest.TestCase):
             parse_args()
         self.assertEqual(2, cm.exception.code)
         self.assertIn("invalid choice", stderr.getvalue())
+
+    def test_default_exclude_path(self):
+        """Test that no paths are excluded by default."""
+        with patch("sys.argv", ["update-time"]):
+            self.assertEqual([], parse_args().exclude_path)
+
+    def test_exclude_path(self):
+        """Test that a comma-separated --exclude-path is parsed into a list of relative paths."""
+        with patch("sys.argv", ["update-time", "--exclude-path", "vendor,packages/legacy"]):
+            self.assertEqual([Path("vendor"), Path("packages/legacy")], parse_args().exclude_path)
+
+    def test_exclude_path_normalises_entries(self):
+        """Test that --exclude-path entries are stripped of surrounding whitespace and trailing separators."""
+        with patch("sys.argv", ["update-time", "--exclude-path", " vendor/ , packages/legacy/ "]):
+            self.assertEqual([Path("vendor"), Path("packages/legacy")], parse_args().exclude_path)
+
+    def test_exclude_path_ignores_empty_entries(self):
+        """Test that empty entries in --exclude-path (e.g. from a trailing comma) are dropped."""
+        with patch("sys.argv", ["update-time", "--exclude-path", "vendor,"]):
+            self.assertEqual([Path("vendor")], parse_args().exclude_path)
+
+    def assert_rejected_exclude_path(self, value: str, expected_message: str) -> None:
+        """Assert that the given --exclude-path value is rejected with exit status 2 and the expected message."""
+        stderr = io.StringIO()
+        with (
+            patch("sys.argv", ["update-time", "--exclude-path", value]),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as cm,
+        ):
+            parse_args()
+        self.assertEqual(2, cm.exception.code)
+        self.assertIn(expected_message, stderr.getvalue())
+
+    def test_absolute_exclude_path_is_rejected(self):
+        """Test that an absolute --exclude-path is rejected: the option narrows the tree, it can't redirect it."""
+        self.assert_rejected_exclude_path("/etc", "/etc is not a relative path")
+
+    def test_escaping_exclude_path_is_rejected(self):
+        """Test that a --exclude-path escaping the scan root (../…) is rejected."""
+        self.assert_rejected_exclude_path("../sibling", "../sibling is outside the scan root")

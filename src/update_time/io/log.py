@@ -126,6 +126,14 @@ class Logger:
         message = "Ignoring updates for %s in %s (update-time: ignore)"
         self._log(self.log.debug, message, dependency, path.relative_to(Path.cwd()))
 
+    def excluded_path(self, path: Path) -> None:
+        """Log that a directory passed to `--exclude-path` is held back from the scan."""
+        self._log(self.log.debug, "Excluding %s from the scan (--exclude-path)", path)
+
+    def missing_excluded_path(self, path: Path) -> None:
+        """Warn that a directory passed to `--exclude-path` does not exist, so it excludes nothing."""
+        self._log(self.log.warning, "Path %s passed to --exclude-path does not exist", path)
+
     def skipped(self, path: Path, reason: str) -> None:
         """Log that a file was deliberately skipped without being checked for updates."""
         self._log(self.log.info, "Skipping %s: %s", path.relative_to(Path.cwd()), reason)

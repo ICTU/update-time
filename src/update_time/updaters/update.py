@@ -8,7 +8,8 @@ from pathlib import Path
 
 from update_time.domain.cooldown import COOLDOWN_DAYS_ENV_VAR
 from update_time.io.cli import parse_args
-from update_time.io.log import LOG_LEVEL_ENV_VAR
+from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR
+from update_time.io.log import LOG_LEVEL_ENV_VAR, get_logger
 
 SRC = Path(__file__).parent
 
@@ -43,6 +44,26 @@ def update_dependencies() -> int:
     return max(results, default=0)
 
 
+def configure_excluded_paths(paths: list[Path]) -> None:
+    """Pass the excluded directories down to the updater subprocesses and log them once for the whole run.
+
+    The walk runs inside each subprocess, so the excluded set travels through the environment (like the cooldown and
+    log level). Logging happens here, in the parent, so each excluded path is reported once rather than once per
+    subprocess. Existence is checked relative to the scan root (the parent has already chdir'd there); a path that
+    does not exist is not an error — layouts vary between checkouts — but it is surfaced at WARNING and left out of
+    the environment, so what is passed down reflects what is actually held back.
+    """
+    logger = get_logger(__name__)
+    existing = []
+    for path in paths:
+        if path.exists():
+            logger.excluded_path(path)
+            existing.append(path)
+        else:
+            logger.missing_excluded_path(path)
+    os.environ[EXCLUDE_PATHS_ENV_VAR] = ",".join(str(path) for path in existing)
+
+
 def main() -> int:
     """Parse the command-line arguments and update all dependencies."""
     args = parse_args()
@@ -51,6 +72,7 @@ def main() -> int:
     # Pass the cooldown and log level down to the updater subprocesses via the environment.
     os.environ[COOLDOWN_DAYS_ENV_VAR] = str(args.cooldown)
     os.environ[LOG_LEVEL_ENV_VAR] = args.log_level
+    configure_excluded_paths(args.exclude_path)
     return update_dependencies()
 
 

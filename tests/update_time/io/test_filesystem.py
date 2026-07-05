@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from update_time.domain.version import DependencyVersion
-from update_time.io.filesystem import glob, update_file, update_files
+from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR, excluded_paths, glob, update_file, update_files
 
 from tests.update_time.assertions import assert_success
 from tests.update_time.helpers import mock_path, new_version_getter
@@ -57,6 +57,43 @@ class GlobTest(unittest.TestCase):
         """Test that hidden folders the pattern does not name are still skipped, even next to one it does."""
         mock_glob.return_value = [Path("/.git/.devcontainer/devcontainer.json")]
         self.assertEqual([], list(glob(".devcontainer/devcontainer.json")))
+
+    @patch.dict("os.environ", {EXCLUDE_PATHS_ENV_VAR: "vendor"})
+    def test_excluded_folder_is_skipped(self, mock_glob: Mock):
+        """Test that files under a directory passed to --exclude-path are skipped."""
+        mock_glob.return_value = [Path("/vendor/file.txt"), Path("/src/file.txt")]
+        self.assertEqual([Path("/src/file.txt")], list(glob("*.txt")))
+
+    @patch.dict("os.environ", {EXCLUDE_PATHS_ENV_VAR: "vendor"})
+    def test_excluded_folder_matches_by_prefix_not_by_name(self, mock_glob: Mock):
+        """Test that --exclude-path matches a relative path prefix, not a folder name anywhere in the tree."""
+        mock_glob.return_value = [Path("/vendor/file.txt"), Path("/src/vendor/file.txt")]
+        self.assertEqual([Path("/src/vendor/file.txt")], list(glob("*.txt")))
+
+    @patch.dict("os.environ", {EXCLUDE_PATHS_ENV_VAR: "vendor,packages/legacy"})
+    def test_multiple_excluded_folders_are_skipped(self, mock_glob: Mock):
+        """Test that every directory in a comma-separated --exclude-path list is skipped."""
+        mock_glob.return_value = [Path("/vendor/a.txt"), Path("/packages/legacy/b.txt"), Path("/packages/kept/c.txt")]
+        self.assertEqual([Path("/packages/kept/c.txt")], list(glob("*.txt")))
+
+
+class ExcludedPathsTest(unittest.TestCase):
+    """Unit tests for reading the excluded paths from the environment."""
+
+    def test_no_excluded_paths(self):
+        """Test that no excluded paths are returned when the environment variable is not set."""
+        with patch.dict("os.environ", clear=True):
+            self.assertEqual([], excluded_paths())
+
+    def test_empty_excluded_paths(self):
+        """Test that an empty environment variable yields no excluded paths."""
+        with patch.dict("os.environ", {EXCLUDE_PATHS_ENV_VAR: ""}):
+            self.assertEqual([], excluded_paths())
+
+    def test_excluded_paths(self):
+        """Test that the comma-separated excluded paths are parsed into a list of paths."""
+        with patch.dict("os.environ", {EXCLUDE_PATHS_ENV_VAR: "vendor,packages/legacy"}):
+            self.assertEqual([Path("vendor"), Path("packages/legacy")], excluded_paths())
 
 
 REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"
