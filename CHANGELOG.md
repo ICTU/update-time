@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.15 - 2026-07-05
+
 ### Added
 
 - Accept an optional positional `PATH` argument (`update-time ../other-project`) that scopes the run to the given directory, so you no longer have to `cd` into a checkout before running Update-time. `PATH` defaults to the current directory, leaving existing invocations unchanged, and paths in the log are reported relative to it. A `PATH` that does not exist or is not a directory is rejected with exit status `2`. Closes [#86](https://github.com/ICTU/update-time/issues/86).
