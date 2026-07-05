@@ -12,78 +12,78 @@ No changes yet.
 
 ### Added
 
-- Accept an optional positional `PATH` argument (`update-time ../other-project`) that scopes the run to the given directory, so you no longer have to `cd` into a checkout before running Update-time. `PATH` defaults to the current directory, leaving existing invocations unchanged, and paths in the log are reported relative to it. A `PATH` that does not exist or is not a directory is rejected with exit status `2`. Closes [#86](https://github.com/ICTU/update-time/issues/86).
-- Add a `--exclude-path` option that takes a comma-separated list of directories, relative to the scan root, to exclude from the walk (`update-time --exclude-path vendor,packages/legacy`); every file under an excluded directory is skipped by every updater. This helps when several repositories are checked out under a shared root, or for a vendored or generated subtree you don't want touched. The directories are matched by relative path, not by name (`--exclude-path vendor` excludes `vendor/` but not `sub/vendor/`), and extend the always-ignored `build`, `node_modules`, `__pycache__`, and hidden folders rather than replacing them. A listed directory that doesn't exist is logged at `WARNING` rather than failing the run, while an absolute path or one that escapes the scan root (`../…`) is rejected with exit status `2`. Closes [#84](https://github.com/ICTU/update-time/issues/84).
+- Accept an optional positional `PATH` argument to scan a directory other than the current one (`update-time ../other-project`), instead of having to `cd` there first. Closes [#86](https://github.com/ICTU/update-time/issues/86).
+- Add a `--exclude-path` option to exclude a comma-separated list of directories, relative to the scan root, from the walk (`update-time --exclude-path vendor,packages/legacy`). Closes [#84](https://github.com/ICTU/update-time/issues/84).
 
 ### Fixed
 
-- Keep uv-managed projects reproducible after an update: `uv sync --locked` no longer fails with "Resolving despite existing lockfile due to removal of global exclude newer". Update-time used to pass its cooldown to uv only on the command line (`--exclude-newer`), which uv bakes into `uv.lock` and then treats as removed on a later `uv sync --locked` run that doesn't repeat the flag, forcing a re-resolve. Update-time now writes the cooldown into `[tool.uv] exclude-newer` in the project's `pyproject.toml` instead (relative form, e.g. `exclude-newer = "7 days"`, tagged with a `managed by Update-time` comment), so uv reads the same cooldown on every command and the lockfile stays reproducible. In a uv workspace the setting is written once to the workspace root. Update-time keeps its own commented value in step with `--cooldown` but never changes a value you set yourself (or the `UV_EXCLUDE_NEWER` environment variable); remove the marker comment to take ownership of the line. Because the value now lives in `[tool.uv]`, the cooldown applies to every uv command in the project, not just Update-time's runs. Closes [#94](https://github.com/ICTU/update-time/issues/94).
+- Keep uv-managed projects reproducible after an update: `uv sync --locked` no longer fails with "Resolving despite existing lockfile due to removal of global exclude newer". Update-time now writes its cooldown into `[tool.uv] exclude-newer` in `pyproject.toml` instead of passing it to uv only on the command line, so uv applies the same cooldown on every command. Closes [#94](https://github.com/ICTU/update-time/issues/94).
 
 ## 0.0.14 - 2026-07-03
 
 ### Added
 
-- Recognise the `update-time: ignore` marker in `.devcontainer/devcontainer.json` and `.devcontainer.json`. Since these files are JSONC, the marker is written in a `//` comment (`// update-time: ignore`), either inline on the reference's line or as a standalone comment on the line directly above it.
+- Recognise the `update-time: ignore` marker in `.devcontainer/devcontainer.json` and `.devcontainer.json`, written as a `//` comment since these files are JSONC.
 
 ### Changed
 
-- Send all diagnostics — the new-version report as well as warnings and errors — to standard error instead of standard output. Update-time's real output is the files it rewrites in place, so nothing it logs belongs on stdout; keeping stdout empty makes the whole run redirectable in one stream (`update-time 2> run.log`) and leaves stdout clean for the `--version`/`--help` output, so e.g. `update-time -V` can be captured without log lines mixed in.
+- Send all diagnostics — the new-version report as well as warnings and errors — to standard error instead of standard output, so stdout stays clean for the `--version`/`--help` output and the whole run is redirectable in one stream (`update-time 2> run.log`).
 
 ### Fixed
 
-- Report a user-facing error for a non-integer `--cooldown` value. The message previously leaked an internal identifier (`invalid non_negative_int value: 'abc'`); it now reads `invalid days value: 'abc'`.
-- Stop logging routine `npm`/`pnpm outdated` (and `list`) output as a failure. These commands exit non-zero as a normal "there are updates" signal, and pnpm additionally prints deprecation `[WARN]`s to stderr (e.g. `The "pnpm" field in package.json is no longer read by pnpm`) — which Update-time surfaced as a misleading `WARNING Error running ...` on every run, wrongly suggesting the update had failed. Their stderr is now logged only when the command produced no usable output (a genuine failure), and the message reads `<command> wrote to stderr: ...` — neutral about severity, since the tool's own output already labels it (`[ERROR]`, `[WARN]`, a notice, …). Action commands (`npm`/`pnpm update`, `uv lock`) still warn when they actually fail.
+- Report a user-facing error for a non-integer `--cooldown` value; the message now reads `invalid days value: 'abc'` instead of leaking an internal identifier.
+- Stop logging routine `npm`/`pnpm outdated` (and `list`) output as a failure. These commands exit non-zero as a normal "there are updates" signal, and pnpm additionally prints deprecation warnings to stderr, which Update-time surfaced as a misleading `WARNING Error running ...` on every run. Their stderr is now logged only on a genuine failure (when the command produced no usable output); action commands (`npm`/`pnpm update`, `uv lock`) still warn when they actually fail.
 
 ## 0.0.13 - 2026-07-02
 
 ### Added
 
-- Update `package.json` files managed by [pnpm](https://pnpm.io) using pnpm, instead of skipping them. The package manager is detected from the corepack `packageManager` field or a sibling `pnpm-lock.yaml`, and pnpm updates both `package.json` and `pnpm-lock.yaml` without ever writing a stray `package-lock.json`. Update-time's cooldown (the `--cooldown` value, default 7 days) is applied via pnpm's `minimumReleaseAge` setting (measured in minutes); if the project already configures `minimumReleaseAge`, Update-time leaves it untouched. yarn and bun are still skipped with a warning. Closes [#47](https://github.com/ICTU/update-time/issues/47).
-- Update the base `image` and each `features` entry in `.devcontainer/devcontainer.json` and `.devcontainer.json`, bumping each OCI reference to its latest compatible tag and pinning it with the tag's digest. The references are resolved on any OCI registry (`ghcr.io`, `mcr.microsoft.com`, Docker Hub, …); since the OCI protocol exposes no publication date, the cooldown is not enforced for registries other than Docker Hub. Devcontainers that build from a `dockerfile` or `dockerComposeFile` are left to the Dockerfile and Compose updaters. The file is edited line by line, so its comments and trailing commas are preserved. Closes [#49](https://github.com/ICTU/update-time/issues/49).
-- Update Dockerfiles named `*.Dockerfile` or `Dockerfile.*` (e.g. `python.Dockerfile`, `Dockerfile.dev`), not only files named exactly `Dockerfile`. This applies to both the base-image updater and the Dockerfile the Node-engine updater reads the Node version from.
+- Update `package.json` files managed by [pnpm](https://pnpm.io) using pnpm, instead of skipping them, keeping both `package.json` and `pnpm-lock.yaml` in sync. The cooldown is applied via pnpm's `minimumReleaseAge`; yarn and bun are still skipped with a warning. Closes [#47](https://github.com/ICTU/update-time/issues/47).
+- Update the base `image` and each `features` entry in `.devcontainer/devcontainer.json` and `.devcontainer.json`, bumping each OCI reference to its latest tag and pinning it with the digest. Devcontainers that build from a `dockerfile` or `dockerComposeFile` are left to the Dockerfile and Compose updaters. Closes [#49](https://github.com/ICTU/update-time/issues/49).
+- Update Dockerfiles named `*.Dockerfile` or `Dockerfile.*` (e.g. `python.Dockerfile`, `Dockerfile.dev`), not only files named exactly `Dockerfile`.
 
 ### Fixed
 
-- Resolve images on registries that reject a host-prefixed repository path, such as `mcr.microsoft.com`. The registry host is now dropped from the repository path for every registry (not only Docker Hub), so `mcr.microsoft.com/devcontainers/typescript-node` is queried as `.../v2/devcontainers/typescript-node/...` instead of a doubled path that returned a 404. This affected any such image reference, wherever the updaters find one.
-- Apply the cooldown to jsDelivr npm URLs, which previously adopted a freshly published version immediately. Update-time now walks the available versions newest-first and picks the latest one published outside the cooldown window (using the npm registry's publication dates), consistent with the other version sources. Closes [#68](https://github.com/ICTU/update-time/issues/68).
-- Compute the jsDelivr Subresource Integrity hash for the file referenced in the URL rather than the package's default entry point. The previous behavior crashed on packages whose default file jsDelivr doesn't list (e.g. `mathjax`), and could have written a hash that didn't match the referenced file. When the referenced file's hash can't be resolved (for example because it no longer exists in the newer version), the reference is now left unchanged and a warning is logged instead of crashing. Closes [#69](https://github.com/ICTU/update-time/issues/69).
+- Resolve images on registries that reject a host-prefixed repository path, such as `mcr.microsoft.com`, which previously returned a 404. The registry host is now dropped from the repository path for every registry.
+- Apply the cooldown to jsDelivr npm URLs, which previously adopted a freshly published version immediately; Update-time now picks the latest version published outside the cooldown window. Closes [#68](https://github.com/ICTU/update-time/issues/68).
+- Compute the jsDelivr Subresource Integrity hash for the file referenced in the URL rather than the package's default entry point, which previously crashed on packages whose default file jsDelivr doesn't list (e.g. `mathjax`). When the referenced file's hash can't be resolved, the reference is left unchanged and a warning is logged instead of crashing. Closes [#69](https://github.com/ICTU/update-time/issues/69).
 
 ## 0.0.12 - 2026-06-30
 
 ### Changed
 
-- Log an unsupported package manager (pnpm/yarn/bun for `package.json`, Poetry/PDM for `pyproject.toml`) at the `WARNING` level instead of `INFO`, so the skipped dependency set stands out — for example when running with `--log-level WARNING`.
+- Log an unsupported package manager (pnpm/yarn/bun for `package.json`, Poetry/PDM for `pyproject.toml`) at the `WARNING` level instead of `INFO`, so the skipped dependency set stands out.
 
 ### Added
 
-- Resolve image versions on registries other than Docker Hub (e.g. `ghcr.io`, `mcr.microsoft.com`, `gcr.io`, `quay.io`), wherever the existing updaters find image references (Dockerfiles, Docker Compose / Helm manifests, CircleCI, GitLab CI). The registry host is taken from the reference, auth is auto-discovered via the OCI `WWW-Authenticate` challenge (anonymous when the registry doesn't require it, Docker Hub credentials for Docker Hub when set), and the digest to pin is read from the image's OCI manifest. This reverses the earlier "skip non-Docker Hub images" behavior; references that genuinely don't resolve (CircleCI machine images, `${VAR}` substitutions, private images we can't authenticate for) are still left unchanged. Note that the cooldown still only applies to Docker Hub, because the OCI protocol exposes no publication date. Closes [#48](https://github.com/ICTU/update-time/issues/48).
-- Update image tags whose version carries a non-numeric label prefix, such as `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` (bumped to `python3.13-bookworm-slim` and digest-pinned). The label prefix (e.g. `python`) and the suffix (e.g. `bookworm-slim`) are preserved, and a prefix never crosses to a different one (e.g. `python` is not replaced by `pypy`). Previously these tags were left unchanged because the version couldn't be parsed. Closes [#55](https://github.com/ICTU/update-time/issues/55).
-- Leave a reference unchanged when its line carries an `# update-time: ignore` comment, so an update can be pinned deliberately (a known incompatibility, a deferred migration, reproducibility). It works across the line-based updaters (Dockerfiles, Docker Compose / Helm manifests, CircleCI, GitLab CI, GitHub Actions, `requirements.txt`), either inline on the reference's line (valid in YAML and requirements) or as a standalone comment on the line directly above it — the form to use in Dockerfiles, which reject inline comments. A pinned line is left untouched and triggers no registry or source lookup, and each ignored reference is logged at the `DEBUG` level so you can confirm a marker is recognised. Closes [#56](https://github.com/ICTU/update-time/issues/56).
+- Resolve image versions on registries other than Docker Hub (e.g. `ghcr.io`, `mcr.microsoft.com`, `gcr.io`, `quay.io`), wherever the updaters find image references (Dockerfiles, Docker Compose / Helm manifests, CircleCI, GitLab CI). This reverses the earlier "skip non-Docker Hub images" behavior. The cooldown still only applies to Docker Hub, because the OCI protocol exposes no publication date. Closes [#48](https://github.com/ICTU/update-time/issues/48).
+- Update image tags whose version carries a non-numeric label prefix, such as `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` (bumped to `python3.13-bookworm-slim` and digest-pinned), preserving the prefix and suffix. Previously these tags were left unchanged. Closes [#55](https://github.com/ICTU/update-time/issues/55).
+- Leave a reference unchanged when its line carries an `# update-time: ignore` comment, so an update can be pinned deliberately. It works across the line-based updaters (Dockerfiles, Docker Compose / Helm manifests, CircleCI, GitLab CI, GitHub Actions, `requirements.txt`), inline or as a comment on the line directly above, and each ignored reference is logged at `DEBUG`. Closes [#56](https://github.com/ICTU/update-time/issues/56).
 
 ## 0.0.11 - 2026-06-29
 
 ### Fixed
 
-- Don't warn about CircleCI machine-executor images (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`). These are not Docker Hub images and have no registry to query; they are now recognised by parsing the CircleCI YAML and left unchanged, instead of being looked up on Docker Hub and logged as unfetchable on every run.
-- Skip `package.json` files managed by a package manager other than npm (pnpm, yarn, bun) instead of running npm against them. Running npm on, for example, a pnpm project would write a stray `package-lock.json` and leave `pnpm-lock.yaml` out of sync. The package manager is detected from the `packageManager` field or a sibling lockfile; only npm projects (and projects with no manager indicator) are updated.
-- Skip `pyproject.toml` files managed by a Python dependency manager other than uv (Poetry, PDM) instead of running uv against them, which would write a stray `uv.lock` alongside the real lockfile. The manager is detected from a `[tool.poetry]`/`[tool.pdm]` section or a sibling lockfile; only uv projects (and projects with no manager indicator) are updated.
+- Don't warn about CircleCI machine-executor images (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`). These have no registry to query and are now recognised and left unchanged, instead of being looked up on Docker Hub and logged as unfetchable on every run.
+- Skip `package.json` files managed by a package manager other than npm (pnpm, yarn, bun) instead of running npm against them, which would write a stray `package-lock.json` and leave the real lockfile out of sync.
+- Skip `pyproject.toml` files managed by a Python dependency manager other than uv (Poetry, PDM) instead of running uv against them, which would write a stray `uv.lock` alongside the real lockfile.
 
 ## 0.0.10 - 2026-06-29
 
 ### Added
 
-- Apply Update-time's cooldown (the `--cooldown` value, default 7 days) to `pyproject.toml` dependency updates by passing it to uv's `exclude-newer` option, so freshly published releases are held back for both the `pyproject.toml` pins and the `uv.lock`. If the project already sets `exclude-newer` under `[tool.uv]` (or the `UV_EXCLUDE_NEWER` environment variable is set), Update-time leaves it untouched. Closes [#36](https://github.com/ICTU/update-time/issues/36).
-- Apply Update-time's cooldown (the `--cooldown` value, default 7 days) to npm dependency updates via npm's `min-release-age` option, so freshly published npm releases are held back like Docker images, GitHub Actions, and `requirements.txt` dependencies already are. If the project already configures a cooldown in its `.npmrc` (`min-release-age` or `before`), Update-time leaves it untouched. npm applies `min-release-age` from version 11.10.0 onwards; older npm versions ignore the option and update without a cooldown. Closes [#37](https://github.com/ICTU/update-time/issues/37).
+- Apply Update-time's cooldown to `pyproject.toml` dependency updates via uv's `exclude-newer`, so freshly published releases are held back for both the pins and the `uv.lock`. If the project already sets `exclude-newer` (or the `UV_EXCLUDE_NEWER` environment variable), Update-time leaves it untouched. Closes [#36](https://github.com/ICTU/update-time/issues/36).
+- Apply Update-time's cooldown to npm dependency updates via npm's `min-release-age`. If the project already configures a cooldown in its `.npmrc`, Update-time leaves it untouched. npm applies the option from version 11.10.0 onwards; older versions update without a cooldown. Closes [#37](https://github.com/ICTU/update-time/issues/37).
 
 ### Fixed
 
-- Include the file being updated in the "New version available" and "Pinned" messages (e.g. "New version available for humanize in docs/requirements.txt: 4.15.0" and "Pinned redis in docker-compose.yml to 7.2.0@sha256:..."), so it is clear which file the change applies to now that the per-file "Checking ..." progress is logged at `DEBUG`.
+- Include the file being updated in the "New version available" and "Pinned" messages, so it is clear which file each change applies to.
 
 ## 0.0.9 - 2026-06-29
 
 ### Changed
 
-- Resolve the latest Docker Hub tag by listing tag names once (via the registry's names-only endpoint) and then fetching metadata only for the chosen tag, instead of paginating through every tag's full metadata. For heavily-tagged images such as `node` (~9,000 tags) this cuts the number of requests per image from ~90 to a handful. Closes [#34](https://github.com/ICTU/update-time/issues/34).
+- Resolve the latest Docker Hub tag by listing tag names once and fetching metadata only for the chosen tag, instead of paginating through every tag's metadata. For heavily-tagged images such as `node` (~9,000 tags) this cuts the requests per image from ~90 to a handful. Closes [#34](https://github.com/ICTU/update-time/issues/34).
 
 ## 0.0.8 - 2026-06-28
 
@@ -103,7 +103,7 @@ No changes yet.
 
 ### Changed
 
-- Skip image references hosted on registries other than Docker Hub (e.g. `registry.gitlab.com/...`, `gcr.io/...`, `ghcr.io/...`) up front instead of querying Docker Hub and logging a 404 for each on every run. Images referenced with an explicit Docker Hub host (`docker.io/...`, `index.docker.io/...`) are recognised and updated. Closes [#24](https://github.com/ICTU/update-time/issues/24).
+- Skip image references hosted on registries other than Docker Hub up front instead of querying Docker Hub and logging a 404 for each on every run. Images referenced with an explicit Docker Hub host (`docker.io/...`, `index.docker.io/...`) are updated. Closes [#24](https://github.com/ICTU/update-time/issues/24).
 
 ### Fixed
 
