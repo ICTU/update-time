@@ -17,7 +17,14 @@ from update_time.sources.github import (
     github_to_raw,
 )
 
-from tests.update_time.helpers import CacheClearingTestCase, mock_response, release_json
+from tests.update_time.helpers import CacheClearingTestCase, commits_json, mock_response, release_json
+
+
+def assert_fetch_warning(mock_warning: Mock, mock_get: Mock) -> None:
+    """Assert that exactly one 'could not fetch' warning was logged for the mocked response's URL and status."""
+    mock_warning.assert_called_once_with(
+        "Could not fetch %s: %s", mock_get().url, mock_get().status_code, stacklevel=ANY
+    )
 
 
 class GitHubURLtoRawTest(unittest.TestCase):
@@ -29,12 +36,12 @@ class GitHubURLtoRawTest(unittest.TestCase):
         self.assertEqual(non_github_url, github_to_raw(non_github_url))
 
     def test_github_url_with_blob(self):
-        """Test that GitHub URLs are changed."""
+        """Test that a GitHub blob URL is rewritten to its raw URL, dropping the `/blob` segment."""
         github_url = "https://github.com/user/repo/blob/example.md"
         self.assertEqual("https://raw.githubusercontent.com/user/repo/example.md", github_to_raw(github_url))
 
     def test_github_url_without_blob(self):
-        """Test that GitHub URLs are changed."""
+        """Test that a GitHub URL without a `/blob` segment is rewritten to its raw URL."""
         github_url = "https://github.com/user/repo/example.md"
         self.assertEqual("https://raw.githubusercontent.com/user/repo/example.md", github_to_raw(github_url))
 
@@ -47,11 +54,11 @@ class GitHubOwnerAndRepositoryTest(unittest.TestCase):
         self.assertEqual(("", ""), github_owner_and_repository("https://example.org"))
 
     def test_github_url(self):
-        """Test that a GitHub URLs returns an owner and repository."""
+        """Test that a GitHub URL returns an owner and repository."""
         self.assertEqual(("ICTU", "quality-time"), github_owner_and_repository("https://github.com/ICTU/quality-time"))
 
     def test_github_url_without_repo(self):
-        """Test that a GitHub URLs returns an empty owner and repository if the repository is missing."""
+        """Test that a GitHub URL returns an empty owner and repository if the repository is missing."""
         self.assertEqual(("", ""), github_owner_and_repository("https://github.com/ICTU"))
 
     def test_npm_git_url(self):
@@ -86,7 +93,7 @@ class GetLatestReleaseTest(CacheClearingTestCase):
     @patch("requests.get")
     def test_get_latest_release(self, mock_get: Mock):
         """Test getting the latest release."""
-        mock_get.side_effect = [mock_response([release_json("1.0")]), mock_response({"sha": "sha"})]
+        mock_get.side_effect = [mock_response([release_json("1.0")]), mock_response(commits_json())]
         release = get_latest_release("owner", "repository")
         self.assertEqual(Release(owner="owner", repository="repository", tag_name="1.0"), release)
         self.assertEqual("sha", cast("Release", release).commit_sha)
@@ -98,9 +105,7 @@ class GetLatestReleaseTest(CacheClearingTestCase):
         """Test that an unreachable repo logs only the fetch warning, not a redundant 'no valid version' error."""
         mock_get.return_value = mock_response([], ok=False)
         self.assertIsNone(get_latest_release("owner", "unreachable repository"))
-        mock_warning.assert_called_once_with(
-            "Could not fetch %s: %s", mock_get().url, mock_get().status_code, stacklevel=ANY
-        )
+        assert_fetch_warning(mock_warning, mock_get)
         mock_error.assert_not_called()
 
     @patch("logging.Logger.error")
@@ -185,6 +190,23 @@ class GetReleaseTest(CacheClearingTestCase):
         self.assertEqual("puppeteer-core-v25.0.4", cast("Release", release).tag_name)
         self.assertEqual("Changelog", cast("Release", release).body)
 
+    @patch("requests.get")
+    def test_monorepo_tag_takes_precedence(self, mock_get: Mock):
+        """Test that the package-prefixed tag wins over the v-prefixed and bare tags for the same version.
+
+        The competing tags are listed before the package-prefixed one, so matching by list order rather than by
+        specificity would pick the wrong release.
+        """
+        mock_get.return_value = mock_response(
+            [
+                release_json("25.0.4"),
+                release_json("v25.0.4"),
+                release_json("puppeteer-core-v25.0.4"),
+            ]
+        )
+        release = get_release("puppeteer", "monorepo", "puppeteer-core", "25.0.4")
+        self.assertEqual("puppeteer-core-v25.0.4", cast("Release", release).tag_name)
+
     @patch("requests.get", Mock(return_value=mock_response([release_json("v1.2.3")])))
     def test_v_prefix_tag_match(self):
         """Test finding a release whose tag is the version prefixed with 'v'."""
@@ -208,9 +230,7 @@ class GetReleaseTest(CacheClearingTestCase):
         """Test that None is returned when the repository can't be reached."""
         mock_get.return_value = mock_response([], ok=False)
         self.assertIsNone(get_release("owner", "repo without releases for get_release", "any", "1.0"))
-        mock_warning.assert_called_once_with(
-            "Could not fetch %s: %s", mock_get().url, mock_get().status_code, stacklevel=ANY
-        )
+        assert_fetch_warning(mock_warning, mock_get)
 
     @patch("logging.Logger.warning")
     @patch("requests.get")

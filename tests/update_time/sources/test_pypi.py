@@ -14,7 +14,7 @@ from update_time.sources.pypi import (
     get_publication_datetime,
 )
 
-from tests.update_time.helpers import CacheClearingTestCase, mock_response, release_json
+from tests.update_time.helpers import CacheClearingTestCase, commits_json, mock_response, release_json
 
 
 @patch("requests.get")
@@ -34,13 +34,15 @@ class GetChangesTest(CacheClearingTestCase):
     def create_mock_response(
         self, mock_get: Mock, *json: dict | list, text: str = "", status_code: int = HTTPStatus.OK
     ) -> None:
-        """Create a mock response for the mock requests.get method with the JSON result."""
-        response = Mock()
+        """Point the mock requests.get at one response whose successive `.json()` calls return the given payloads.
+
+        The changelog heuristics make several requests off one release (the PyPI metadata, then a changelog URL or
+        GitHub releases); the shared response returns the next JSON payload on each `.json()` and the same text and
+        status for all of them.
+        """
+        ok = status_code < HTTPStatus.BAD_REQUEST
+        response = mock_response(text=text, status_code=status_code, ok=ok, headers={"Content-Type": "text/text"})
         response.json.side_effect = list(json)
-        response.text = text
-        response.status_code = status_code
-        response.ok = status_code < HTTPStatus.BAD_REQUEST
-        response.headers = {"Content-Type": "text/text"}
         mock_get.return_value = response
 
     def test_no_url_found(self, mock_get: Mock):
@@ -76,7 +78,7 @@ class GetChangesTest(CacheClearingTestCase):
                 mock_get,
                 {"info": {"project_urls": {"docs": docs, key: repo}}},
                 [release_json("1.1", body=changelog)],
-                {"sha": "sha"},
+                commits_json(),
             )
             self.assertEqual(changelog, get_changes(f"package-4-{key}", "1.1"))
 
@@ -94,7 +96,7 @@ class GetChangesTest(CacheClearingTestCase):
             mock_get,
             {"info": {"description": f"Package description\n{github_url}\n"}},
             [release_json("1.1", body=changelog)],
-            {"sha": "sha"},
+            commits_json(),
         )
         self.assertEqual(changelog, get_changes("package-6", "1.1"))
 
@@ -105,7 +107,7 @@ class GetChangesTest(CacheClearingTestCase):
             mock_get,
             {"info": {"description": f"Package description\n{github_url}\n"}},
             [release_json("1.1")],
-            {"sha": "sha"},
+            commits_json(),
         )
         self.assertEqual("", get_changes("package-7", "1.1"))
 
@@ -142,7 +144,13 @@ class GetPublicationDateTimeTest(CacheClearingTestCase):
 
 @patch("requests.get")
 class GetLatestVersionTest(CacheClearingTestCase):
-    """Unit tests for getting the latest version from PyPI."""
+    """Unit tests for getting the latest version from PyPI.
+
+    `get_latest_version` makes its requests in a fixed order, so each test's `mock_get.side_effect` mirrors it:
+    first the Index API (the version list), then — newest-first — one per-version metadata request per candidate,
+    stopping at the first eligible release. A test supplies only as many responses as reaching its expected version
+    requires.
+    """
 
     OLD = "2020-01-01T00:00:00.000000Z"  # Well outside the cooldown window.
 

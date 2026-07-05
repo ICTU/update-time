@@ -15,6 +15,25 @@ class ApiHeadersTest(CacheClearingTestCase):
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual({}, api_headers())
 
+    @patch("requests.post")
+    def test_no_headers_with_incomplete_credentials(self, mock_post: Mock):
+        """Test that no header is built, and no token requested, when only one of the two credentials is set."""
+        with patch.dict("os.environ", {"DOCKER_HUB_USERNAME": "joe_doe"}, clear=True):  # nosec
+            self.assertEqual({}, api_headers())
+        mock_post.assert_not_called()  # Both credentials are required, so the token endpoint is never called.
+
+    @patch.dict("os.environ", {"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
+    @patch("requests.post")
+    def test_bearer_token_header_when_credentials_are_configured(self, mock_post: Mock):
+        """Test that a bearer token is fetched with the credentials and returned as the Authorization header."""
+        mock_post.return_value = mock_response({"access_token": "token"})  # nosec
+        self.assertEqual({"Authorization": "Bearer token"}, api_headers())
+        mock_post.assert_called_once_with(
+            "https://hub.docker.com/v2/auth/token",
+            timeout=10,
+            json={"identifier": "joe_doe", "secret": "pat123"},  # nosec
+        )
+
     @patch.dict("os.environ", {"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
     @patch("logging.Logger.warning", Mock())
     @patch("requests.post", Mock(return_value=mock_response(ok=False)))

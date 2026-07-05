@@ -29,10 +29,11 @@ class GetChangeFromChangelogTest(unittest.TestCase):
         self.assertEqual(v1_change, get_version_changes_from_changelog(changelog, "1.0"))
 
     def test_max_length(self):
-        """Test the max length."""
+        """Test that a change longer than max_length lines is truncated to that many lines, with a `...` indicator."""
         v1_change = "## Version 1.0\n\n- Fixed ...\n- Changed ..."
         text_after_v1 = "# Some other header\n\n- Some bullet point.\n"
         changelog = f"Changelog\n\n{v1_change}\n\n{text_after_v1}"
+        # max_length counts lines: the first 3 lines are kept and a `...` line marks where the rest was cut.
         expected_v1_change = "## Version 1.0\n\n- Fixed ...\n..."
         self.assertEqual(expected_v1_change, get_version_changes_from_changelog(changelog, "1.0", max_length=3))
 

@@ -7,6 +7,7 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import ANY, Mock, patch
+from urllib.parse import parse_qs, urlparse
 
 import update_time
 from update_time.domain.version import DependencyVersion, NewVersionGetter, VersionString
@@ -203,13 +204,55 @@ def release_json(tag_name: str, **extra: object) -> dict[str, object]:
     return {"draft": False, "prerelease": False, "tag_name": tag_name, **extra}
 
 
+def commits_json(sha: str = "sha") -> dict[str, str]:
+    """Return a GitHub commits API result carrying a release tag's commit SHA."""
+    return {"sha": sha}
+
+
 def docker_tag(name: str, digest: str = "", **extra: object) -> dict[str, object]:
     """Return a single-tag Docker Hub API result for the tag, with an optional digest and extra fields."""
     return {"name": name, **({"digest": digest} if digest else {}), **extra}
 
 
+def _probe_response(url: str, *, challenge: bool) -> Mock:
+    """Answer the OCI `/v2/` auth probe: a `401` challenge pointing at the token endpoint, or `200` when anonymous."""
+    if not challenge:  # Anonymous registry: no challenge, so the client proceeds without a token.
+        return mock_response({}, ok=True, status_code=200, headers={})
+    host = url.removeprefix("https://").split("/", maxsplit=1)[0]
+    realm = "https://auth.docker.io/token" if host == "registry-1.docker.io" else f"https://{host}/token"
+    bearer = f'Bearer realm="{realm}",service="{host}"'
+    return mock_response({}, ok=False, status_code=401, headers={"WWW-Authenticate": bearer})
+
+
+def _tags_list_response(url: str, tag_names: list[str], *, list_ok: bool, page_size: int | None) -> Mock:
+    """Answer `tags/list`: a 404 when `list_ok` is false, else the names — one `page_size` page (with a next link)."""
+    if not list_ok:
+        return mock_response({"tags": tag_names}, ok=False, status_code=404, url=url, headers={})
+    if page_size is None:
+        return mock_response({"tags": tag_names}, ok=True, status_code=200, url=url, headers={})
+    last = parse_qs(urlparse(url).query).get("last", [None])[0]  # The name the previous page ended on, if any.
+    start = tag_names.index(last) + 1 if last in tag_names else 0
+    page = tag_names[start : start + page_size]
+    links = {"next": {"url": f"?last={page[-1]}", "rel": "next"}} if start + page_size < len(tag_names) else {}
+    return mock_response({"tags": page}, ok=True, status_code=200, url=url, links=links, headers={})
+
+
+def _manifest_response(url: str, by_name: dict[str, dict[str, object]]) -> Mock:
+    """Answer a manifest `HEAD`: the tag's digest in the `Docker-Content-Digest` header, or a 404 if unknown."""
+    tag = by_name.get(url.rsplit("/manifests/", maxsplit=1)[-1])
+    if tag is None:
+        return mock_response({}, ok=False, status_code=404, url=url)
+    digest = cast("str", tag.get("digest", ""))
+    return mock_response({}, headers={"Docker-Content-Digest": digest} if digest else {})
+
+
 def mock_docker_registry(
-    *tags: dict[str, object], names: list[str] | None = None, list_ok: bool = True
+    *tags: dict[str, object],
+    names: list[str] | None = None,
+    list_ok: bool = True,
+    challenge: bool = True,
+    push_date_ok: bool = True,
+    page_size: int | None = None,
 ) -> Callable[..., Mock]:
     """Return a requests.get/.head side effect that mimics an OCI registry plus Docker Hub's per-tag metadata.
 
@@ -218,29 +261,30 @@ def mock_docker_registry(
     unless overridden), a manifest `HEAD` returns the tag's digest in the `Docker-Content-Digest` header (or a 404
     if unknown), and Docker Hub's proprietary per-tag request returns that tag's push date (or a 404 if unknown).
     The same callable is assigned to both `requests.get` and `requests.head`; it routes purely on the URL.
+
+    Knobs for the less common flows:
+    - `list_ok=False` makes the tag listing 404 (an unresolvable reference, e.g. a CircleCI machine image).
+    - `challenge=False` makes the `/v2/` probe answer `200` without a `WWW-Authenticate` header, modelling an
+      anonymous registry that isn't queried with a token (e.g. mcr.microsoft.com).
+    - `push_date_ok=False` makes Docker Hub's per-tag push-date request 404, so the tag resolves without a cooldown.
+    - `page_size` splits the tag listing into pages of that many names, each linking to the next via the `Link`
+      header (as the OCI spec and `next_page_url` expect), to model a paginated listing.
     """
     by_name = {cast("str", tag["name"]): tag for tag in tags}
     tag_names = list(by_name) if names is None else names
 
     def get(url: str, *_args: object, **_kwargs: object) -> Mock:
-        if url.endswith("/v2/"):  # OCI auth challenge probe: point the client at the registry's token endpoint.
-            host = url.removeprefix("https://").split("/", maxsplit=1)[0]
-            realm = "https://auth.docker.io/token" if host == "registry-1.docker.io" else f"https://{host}/token"
-            challenge = f'Bearer realm="{realm}",service="{host}"'
-            return mock_response({}, ok=False, status_code=401, headers={"WWW-Authenticate": challenge})
+        if url.endswith("/v2/"):  # OCI auth challenge probe.
+            return _probe_response(url, challenge=challenge)
         if "/token" in url and "/v2/" not in url:  # Token endpoint discovered from the challenge.
             return mock_response({"token": "token"})  # nosec[B105]
         if "/tags/list" in url:
-            return mock_response(
-                {"tags": tag_names}, ok=list_ok, status_code=200 if list_ok else 404, url=url, headers={}
-            )
-        if "/manifests/" in url:  # Manifest HEAD: the digest is returned in the Docker-Content-Digest header.
-            tag = by_name.get(url.rsplit("/manifests/", maxsplit=1)[-1])
-            if tag is None:
-                return mock_response({}, ok=False, status_code=404, url=url)
-            digest = cast("str", tag.get("digest", ""))
-            return mock_response({}, headers={"Docker-Content-Digest": digest} if digest else {})
+            return _tags_list_response(url, tag_names, list_ok=list_ok, page_size=page_size)
+        if "/manifests/" in url:
+            return _manifest_response(url, by_name)
         # Docker Hub proprietary per-tag metadata (the push date); only reached for a tag that resolved a digest.
+        if not push_date_ok:
+            return mock_response({}, ok=False, status_code=404, url=url)
         return mock_response(by_name.get(url.rsplit("/tags/", maxsplit=1)[-1], {}))
 
     return get

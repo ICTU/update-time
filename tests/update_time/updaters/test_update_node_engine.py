@@ -120,14 +120,35 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         """Test that a Node base image elsewhere in the repo is used when the package.json has no local Dockerfile."""
         mock_package_json = self.create_package_json()
         fallback_dockerfile = mock_path("FROM node:20")
-        # glob("package.json") returns the package.json; the Dockerfile patterns each return the local path (skipped
-        # via the `continue` branch, as it doesn't exist here) plus the fallback Dockerfile found elsewhere.
-        mock_glob.side_effect = lambda pattern, **_kwargs: iter(
-            [mock_package_json] if pattern == "package.json" else [Path("/Dockerfile"), fallback_dockerfile]
-        )
+
+        def rglob(pattern: str, **_kwargs: object) -> list[Mock]:
+            # The package.json glob finds the manifest; the Dockerfile globs find only the fallback elsewhere in the
+            # repo. The local Dockerfile next to the package.json doesn't exist here, so find_node_dockerfile skips it.
+            return [mock_package_json] if pattern == "package.json" else [fallback_dockerfile]
+
+        mock_glob.side_effect = rglob
         assert_success(update_node_engines())
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "20" }}\n')
         self.assert_path_logged(mock_package_json)
         self.assert_new_version_logged(mock_package_json, "node", "20", once=True)
         self.assert_no_warnings_logged()
+        self.mock_error.assert_not_called()
+
+    @patch("pathlib.Path.exists", Mock(return_value=False))
+    def test_numeric_dockerfile_preferred_over_non_numeric(self, mock_glob: Mock):
+        """Test that a Dockerfile with a numeric Node tag wins over one with a non-numeric tag (e.g. node:lts)."""
+        mock_package_json = self.create_package_json()
+        non_numeric_dockerfile = mock_path("FROM node:lts")
+        numeric_dockerfile = mock_path("FROM node:20")
+
+        def rglob(pattern: str, **_kwargs: object) -> list[Mock]:
+            # The non-numeric Dockerfile is listed first, so a naive "first Node base image" match would pick node:lts
+            # and warn; the numeric-tag preference must skip past it to the syncable node:20.
+            return [mock_package_json] if pattern == "package.json" else [non_numeric_dockerfile, numeric_dockerfile]
+
+        mock_glob.side_effect = rglob
+        assert_success(update_node_engines())
+        mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "20" }}\n')
+        self.assert_new_version_logged(mock_package_json, "node", "20", once=True)
+        self.assert_no_warnings_logged()  # node:lts is passed over, so it is never warned about.
         self.mock_error.assert_not_called()

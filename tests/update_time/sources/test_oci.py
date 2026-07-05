@@ -115,24 +115,9 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
 
     def test_tag_names_paginated(self):
         """Test that the newest tag is returned even if the tag names listing is paginated."""
-        # The first page's Link header (as requests parses it) points at a relative next-page URL.
-        next_page = {"next": {"url": "/v2/library/pagination/tags/list?last=2.1", "rel": "next"}}
-
-        def dispatch(url: str, *_args: object, **_kwargs: object) -> Mock:
-            if url.endswith("/v2/"):
-                challenge = 'Bearer realm="https://auth.docker.io/token",service="registry.docker.io"'
-                return mock_response({}, ok=False, status_code=401, headers={"WWW-Authenticate": challenge})
-            if "auth.docker.io" in url:
-                return mock_response({"token": "token"})  # nosec[B105]
-            if "/tags/list" in url and "last=" not in url:
-                return mock_response({"tags": ["2.1"]}, ok=True, links=next_page, url=url)
-            if "/tags/list" in url:
-                return mock_response({"tags": ["2.2"]}, ok=True)
-            if "/manifests/" in url:
-                return mock_response({}, headers={"Docker-Content-Digest": DIGEST2})
-            return mock_response({})  # Docker Hub push date endpoint: no push date, so no cooldown.
-
-        self.requests.side_effect = dispatch
+        self.requests.side_effect = mock_docker_registry(
+            docker_tag("2.1", DIGEST1), docker_tag("2.2", DIGEST2), page_size=1
+        )
         self.assertEqual("2.2", get_latest_tag("pagination", "1.2").version)
 
     @patch("logging.Logger.warning")
@@ -218,15 +203,7 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
 
     def test_registry_without_auth_challenge(self):
         """Test that a registry that doesn't challenge for auth (e.g. mcr.microsoft.com) is queried without a token."""
-
-        def dispatch(url: str, *_args: object, **_kwargs: object) -> Mock:
-            if url.endswith("/v2/"):
-                return mock_response({}, ok=True, status_code=200, headers={})  # No auth challenge: anonymous.
-            if "/tags/list" in url:
-                return mock_response({"tags": ["1.1"]}, ok=True, headers={})
-            return mock_response({}, headers={"Docker-Content-Digest": DIGEST})
-
-        self.requests.side_effect = dispatch
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.1", DIGEST), challenge=False)
         latest = get_latest_tag("mcr.microsoft.com/dotnet/sdk", "1.0")
         self.assertEqual("1.1", latest.version)
         self.assertEqual(DIGEST, latest.sha)
@@ -236,20 +213,7 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
     @patch("logging.Logger.warning")
     def test_push_date_unavailable(self, mock_warning: Mock):
         """Test that a Docker Hub tag whose push date can't be fetched is still usable, just without a cooldown."""
-
-        def dispatch(url: str, *_args: object, **_kwargs: object) -> Mock:
-            if url.endswith("/v2/"):
-                challenge = 'Bearer realm="https://auth.docker.io/token",service="registry.docker.io"'
-                return mock_response({}, ok=False, status_code=401, headers={"WWW-Authenticate": challenge})
-            if "auth.docker.io" in url:
-                return mock_response({"token": "token"})  # nosec[B105]
-            if "/tags/list" in url:
-                return mock_response({"tags": ["1.1"]}, ok=True, headers={})
-            if "/manifests/" in url:
-                return mock_response({}, headers={"Docker-Content-Digest": DIGEST})
-            return mock_response({}, ok=False, status_code=404, url=url)  # Push date endpoint unavailable.
-
-        self.requests.side_effect = dispatch
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.1", DIGEST), push_date_ok=False)
         latest = get_latest_tag("push_date_unavailable", "1.0")
         self.assertEqual("1.1", latest.version)
         self.assertEqual(DIGEST, latest.sha)

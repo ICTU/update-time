@@ -23,6 +23,16 @@ class NpmjsPublicationDatetimeTest(CacheClearingTestCase):
         """Test that an unreachable registry yields no publication date instead of crashing."""
         self.assertIsNone(get_publication_datetime("package", "1.0"))
 
+    @patch("requests.get", Mock(return_value=mock_response({"time": {}})))
+    def test_get_publication_datetime_for_unlisted_version(self):
+        """Test that a version the registry doesn't list raises KeyError.
+
+        Callers that may ask for a version outside the registry's `time` map (e.g. the jsdelivr updater) rely on
+        this and catch it, so the contract is pinned here at the source that owns it.
+        """
+        with self.assertRaises(KeyError):
+            get_publication_datetime("package", "9.9")
+
     @patch("logging.Logger.warning", Mock())
     @patch("requests.get", Mock(return_value=mock_response(ok=False)))
     def test_get_changes_when_unreachable(self):

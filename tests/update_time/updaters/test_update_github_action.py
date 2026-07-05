@@ -4,53 +4,58 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
-from update_time.domain.version import DependencyVersion
+from update_time.domain.version import DependencyVersion, VersionString
 from update_time.updaters.update_github_action import get_latest_version, update_github_actions
 
 from tests.update_time.assertions import assert_success
-from tests.update_time.helpers import LoggingTestCase, mock_path, mock_response, release_json
+from tests.update_time.helpers import LoggingTestCase, commits_json, mock_path, mock_response, release_json
 
 
 @patch("requests.get")
 class UpdateGitHubActionTest(LoggingTestCase):
     """Unit tests for the get latest GitHub Action version function."""
 
+    def assert_version(self, latest_version: DependencyVersion, version: VersionString, changes: str, sha: str):
+        """Assert that the version has the given attributes."""
+        self.assertEqual(version, latest_version.version)
+        self.assertEqual(changes, latest_version.changes)
+        self.assertEqual(sha, latest_version.sha)  # The commit SHA is what _update_action pins to.
+
     def test_unchanged(self, mock_get: Mock):
         """Test an unchanged version."""
         mock_get.side_effect = [
             mock_response([release_json("1.0", body="changelog")]),
-            mock_response({"sha": "sha"}),
+            mock_response(commits_json()),
         ]
         latest_version = get_latest_version("docker/docker", "1.0")
-        self.assertEqual("1.0", latest_version.version)
-        self.assertEqual("changelog", latest_version.changes)
+        self.assert_version(latest_version, "1.0", "changelog", "sha")
 
     def test_newer(self, mock_get: Mock):
         """Test an newer version."""
         mock_get.side_effect = [
             mock_response([release_json("1.1", body="changelog")]),
-            mock_response({"sha": "sha"}),
+            mock_response(commits_json()),
         ]
         latest_version = get_latest_version("docker/hub", "1.0")
-        self.assertEqual("1.1", latest_version.version)
-        self.assertEqual("changelog", latest_version.changes)
+        self.assert_version(latest_version, "1.1", "changelog", "sha")
 
     def test_publication_date(self, mock_get: Mock):
         """Test that the release's publication date is captured."""
         published = (datetime.now(UTC) - timedelta(days=10)).isoformat()
         mock_get.side_effect = [
             mock_response([release_json("1.1", published_at=published)]),
-            mock_response({"sha": "sha"}),
+            mock_response(commits_json()),
         ]
         self.assertEqual(datetime.fromisoformat(published), get_latest_version("docker/dated", "1.0").published)
 
     def test_older(self, mock_get: Mock):
-        """Test an older version."""
+        """Test that the current version is kept when the latest release is older, still carrying its commit SHA."""
         mock_get.side_effect = [
             mock_response([release_json("0.9")]),
-            mock_response({"sha": "sha"}),
+            mock_response(commits_json()),
         ]
-        self.assertEqual("1.0", get_latest_version("github/action", "1.0").version)
+        latest_version = get_latest_version("github/action", "1.0")
+        self.assert_version(latest_version, "1.0", "", "sha")  # release_json("0.9") has no body.
 
     def test_no_version(self, mock_get: Mock):
         """Test that an error is logged and the current version kept when there is no valid release."""
@@ -64,7 +69,9 @@ class UpdateGitHubActionTest(LoggingTestCase):
             mock_response([release_json("1.1")]),
             mock_response({}, ok=False),
         ]
-        self.assertEqual("1.0", get_latest_version("docker/no-sha-action", "1.0").version)
+        latest_version = get_latest_version("docker/no-sha-action", "1.0")
+        # No SHA means _update_action leaves the reference alone; no changelog is attached either:
+        self.assert_version(latest_version, "1.0", "", "")
 
 
 GITHUB_DIR = Path("/repo/.github")
