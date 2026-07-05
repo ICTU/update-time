@@ -27,7 +27,7 @@ class UpdateManifestImagesTest(helpers.ImageUpdaterTestMixin):
         Compose pattern only (and nothing for the Helm ones) processes it exactly once.
         """
 
-        def rglob(pattern: str) -> list[Mock]:
+        def rglob(pattern: str, *, case_sensitive: bool | None = None) -> list[Mock]:  # noqa: ARG001
             return [mock_file] if pattern == "docker-compose*.yml" else []
 
         with patch("pathlib.Path.rglob", side_effect=rglob):

@@ -26,7 +26,7 @@ class UpdateDockerfileTest(helpers.ImageUpdaterTestMixin):
         processed exactly once.
         """
 
-        def rglob(pattern: str) -> list[Mock]:
+        def rglob(pattern: str, *, case_sensitive: bool | None = None) -> list[Mock]:  # noqa: ARG001
             return [mock_file] if pattern == "Dockerfile" else []
 
         with patch("pathlib.Path.rglob", side_effect=rglob):
