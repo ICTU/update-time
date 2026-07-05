@@ -100,23 +100,12 @@ REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"
 
 
 class UpdateFileTest(unittest.TestCase):
-    """Unit tests for reading, rewriting, and writing back a single file.
+    """Unit tests for `update_file`'s single-pass read/rewrite/write of one file.
 
-    The rewriting itself is covered by the reference-rewriting engine's own tests (test_rewrite); these check that
-    `update_file` reads the file, joins the rewritten lines back with a trailing newline, and only writes on change.
+    The write-vs-no-write decision and the reference rewriting itself are covered by `UpdateFilesTest` (which wraps
+    `update_file`) and the reference-rewriting engine's own tests (test_rewrite). What's unique here is that several
+    regexps are applied to the same content in a single read and a single write, with a trailing newline.
     """
-
-    def test_writes_the_updated_file_when_a_reference_changed(self):
-        """Test that the file is written back, with a trailing newline, when a reference was updated."""
-        mock_file = mock_path("line1\nimage: python:3.14\n")
-        assert_success(update_file(mock_file, REGEXP, get_new_version=new_version_getter("3.15"), logger=Mock()))
-        mock_file.write_text.assert_called_once_with("line1\nimage: python:3.15\n")
-
-    def test_does_not_write_when_nothing_changed(self):
-        """Test that the file is not written when no reference was updated."""
-        mock_file = mock_path("line1\nimage: python:3.14\n")
-        assert_success(update_file(mock_file, REGEXP, get_new_version=new_version_getter("3.14"), logger=Mock()))
-        mock_file.write_text.assert_not_called()
 
     def test_multiple_regexps_applied_in_one_pass(self):
         """Test that several regexps are applied to the same content, reading and writing the file once."""

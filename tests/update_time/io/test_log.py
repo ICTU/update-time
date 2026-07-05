@@ -15,6 +15,8 @@ from update_time.io.log import Logger, get_logger
 
 from tests.update_time.helpers import new_version_getter
 
+NEW_VERSION_MESSAGE = "New version available for %s in %s: %s\n%s"  # the format Logger.new_version logs at INFO
+
 
 class GetLoggerTests(TestCase):
     """Unit tests for how get_logger configures the root logger."""
@@ -37,7 +39,7 @@ class LoggerTests(TestCase):
         path = Path.cwd() / "pyproject.toml"
         logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), path)
         mock_info.assert_called_once_with(
-            "New version available for %s in %s: %s\n%s",
+            NEW_VERSION_MESSAGE,
             "dependency",
             Path("pyproject.toml"),
             "1.0",
@@ -46,7 +48,7 @@ class LoggerTests(TestCase):
         )
         logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), path)
         mock_info.assert_called_with(
-            "New version available for %s in %s: %s\n%s",
+            NEW_VERSION_MESSAGE,
             "dependency",
             Path("pyproject.toml"),
             "1.0",
@@ -59,7 +61,7 @@ class LoggerTests(TestCase):
         """Test that the version is logged without a publication date when it is unknown."""
         Logger("no date").new_version("dependency", DependencyVersion("1.0", "Changelog"), Path.cwd() / "a.txt")
         mock_info.assert_called_once_with(
-            "New version available for %s in %s: %s\n%s",
+            NEW_VERSION_MESSAGE,
             "dependency",
             Path("a.txt"),
             "1.0",
@@ -125,7 +127,7 @@ class LoggerTests(TestCase):
         version = DependencyVersion("1.0", "Changelog", published=published)
         Logger("date").new_version("dependency", version, Path.cwd() / "a.txt")
         mock_info.assert_called_once_with(
-            "New version available for %s in %s: %s\n%s",
+            NEW_VERSION_MESSAGE,
             "dependency",
             Path("a.txt"),
             "1.0, published: 2026-05-29 13:54",
@@ -139,7 +141,7 @@ class LoggerTests(TestCase):
         published = datetime(2026, 5, 29, 15, 54, tzinfo=timezone(timedelta(hours=2)))
         Logger("utc").new_version("dependency", DependencyVersion("1.0", published=published), Path.cwd() / "a.txt")
         mock_info.assert_called_once_with(
-            "New version available for %s in %s: %s\n%s",
+            NEW_VERSION_MESSAGE,
             "dependency",
             Path("a.txt"),
             "1.0, published: 2026-05-29 13:54",

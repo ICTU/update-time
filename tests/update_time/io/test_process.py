@@ -24,6 +24,12 @@ class RunTests(TestCase):
         self.assertEqual((["tool", "list"],), mock_run.call_args.args)
         self.assertEqual(Path("/dir"), mock_run.call_args.kwargs["cwd"])
 
+    def test_cwd_defaults_to_none(self, mock_run: Mock):
+        """Test that no working directory is forwarded (cwd=None) when the caller doesn't specify one."""
+        mock_run.return_value = Mock(stdout="", stderr="")
+        run(["tool", "list"])
+        self.assertIsNone(mock_run.call_args.kwargs["cwd"])
+
     def test_json_is_parsed(self, mock_run: Mock):
         """Test that stdout is parsed as JSON on demand."""
         mock_run.return_value = Mock(stdout='{"a": 1}', stderr="")

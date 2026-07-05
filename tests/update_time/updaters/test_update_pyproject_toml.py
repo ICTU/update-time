@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 
 from tests.update_time.assertions import assert_success
-from tests.update_time.helpers import LoggingTestCase, mock_path, mock_response, release_json
+from tests.update_time.helpers import LoggingTestCase, commits_json, mock_path, mock_response, release_json
 
 if TYPE_CHECKING:
     from update_time.sources.pypi import Release
@@ -122,7 +122,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         get.side_effect = [
             mock_response(self.pypi_metadata(changelog_url="")),
             mock_response([release_json("v1.1", body=self.changelog)]),
-            mock_response({"sha": "sha"}),
+            mock_response(commits_json()),
         ]
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_with_github_releases==1.0"))
         glob.return_value = [mock_pyproject_toml]

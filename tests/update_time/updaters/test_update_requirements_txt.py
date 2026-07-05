@@ -20,11 +20,16 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     """Unit tests for the update requirements.txt function."""
 
     def requirements_file(self, contents: str, *, sibling_in: bool = False) -> Mock:
-        """Return a mock requirements file, optionally with a sibling .in source file present."""
+        """Return a mock requirements file, optionally with a sibling `.in` source file present.
+
+        `is_compiled` treats a file as compiled when `(path.parent / f"{path.stem}.in").exists()`, so model the
+        parent's `/` as returning that sibling `.in` file, whose `exists()` reflects `sibling_in`.
+        """
         requirements_txt = mock_path(contents)
-        requirements_txt.stem = "requirements"
+        requirements_txt.stem = "requirements"  # so the sibling checked for is `requirements.in`
+        sibling_in_file = Mock(exists=Mock(return_value=sibling_in))
         requirements_txt.parent = MagicMock()
-        requirements_txt.parent.__truediv__.return_value = Mock(exists=Mock(return_value=sibling_in))
+        requirements_txt.parent.__truediv__.return_value = sibling_in_file
         return requirements_txt
 
     def pypi(self, *versions: str, bump: bool = False, upload_time: str = OLD) -> list:
