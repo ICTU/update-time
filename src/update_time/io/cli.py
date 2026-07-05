@@ -1,6 +1,7 @@
 """Command-line interface."""
 
 import argparse
+import os
 from importlib.metadata import version
 from pathlib import Path
 
@@ -22,6 +23,27 @@ def directory(value: str) -> Path:
         message = f"{value} is not an existing directory"
         raise argparse.ArgumentTypeError(message)
     return path
+
+
+def exclude_paths(value: str) -> list[Path]:
+    """Parse a comma-separated list of directories to exclude from the walk, each relative to the scan root.
+
+    Entries are normalised (trailing separators and redundant `.`/`..` segments collapsed). An absolute path, or one
+    that escapes the scan root (`../…`), is rejected: the option only narrows the tree, it can't redirect the walk.
+    """
+    paths = []
+    for entry in value.split(","):
+        if not (stripped := entry.strip()):
+            continue
+        if (path := Path(stripped)).is_absolute():
+            message = f"{stripped} is not a relative path"
+            raise argparse.ArgumentTypeError(message)
+        normalized = Path(os.path.normpath(path))
+        if normalized.parts and normalized.parts[0] == "..":
+            message = f"{stripped} is outside the scan root"
+            raise argparse.ArgumentTypeError(message)
+        paths.append(normalized)
+    return paths
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,6 +72,15 @@ def parse_args() -> argparse.Namespace:
         metavar="DAYS",
         help="number of days to hold back newly published Docker image, GitHub Action, requirements.txt, npm, pnpm, "
         "pyproject.toml, and jsDelivr versions (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--exclude-path",
+        type=exclude_paths,
+        default=[],
+        metavar="PATHS",
+        help="comma-separated list of directories, relative to the scan root, to exclude from the walk (e.g. "
+        "vendor,packages/legacy); every file under an excluded directory is skipped, on top of the always-ignored "
+        "build, node_modules, __pycache__, and hidden folders",
     )
     parser.add_argument(
         "--log-level",

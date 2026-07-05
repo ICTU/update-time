@@ -104,6 +104,20 @@ class LoggerTests(TestCase):
         message = "Skipping %s: it is not valid TOML"
         mock_warning.assert_called_once_with(message, Path("pyproject.toml"), stacklevel=ANY)
 
+    @patch("logging.Logger.debug")
+    def test_excluded_path_logged_at_debug(self, mock_debug: Mock):
+        """Test that a directory held back by --exclude-path is logged at debug level."""
+        Logger("exclude").excluded_path(Path("vendor"))
+        message = "Excluding %s from the scan (--exclude-path)"
+        mock_debug.assert_called_once_with(message, Path("vendor"), stacklevel=ANY)
+
+    @patch("logging.Logger.warning")
+    def test_missing_excluded_path_logged_at_warning(self, mock_warning: Mock):
+        """Test that a non-existing --exclude-path directory is logged as a warning, not an error."""
+        Logger("exclude").missing_excluded_path(Path("vendor"))
+        message = "Path %s passed to --exclude-path does not exist"
+        mock_warning.assert_called_once_with(message, Path("vendor"), stacklevel=ANY)
+
     @patch("logging.Logger.info")
     def test_new_version_with_publication_date(self, mock_info: Mock):
         """Test that the publication date is appended to the version when it is known."""
