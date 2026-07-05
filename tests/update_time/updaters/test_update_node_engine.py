@@ -122,7 +122,7 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         fallback_dockerfile = mock_path("FROM node:20")
         # glob("package.json") returns the package.json; the Dockerfile patterns each return the local path (skipped
         # via the `continue` branch, as it doesn't exist here) plus the fallback Dockerfile found elsewhere.
-        mock_glob.side_effect = lambda pattern: iter(
+        mock_glob.side_effect = lambda pattern, **_kwargs: iter(
             [mock_package_json] if pattern == "package.json" else [Path("/Dockerfile"), fallback_dockerfile]
         )
         assert_success(update_node_engines())

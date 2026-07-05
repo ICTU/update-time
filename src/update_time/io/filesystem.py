@@ -29,7 +29,7 @@ def _named_hidden_parts(glob_pattern: str) -> set[str]:
     return {part for part in Path(glob_pattern).parts if part.startswith(".")}
 
 
-def glob(*glob_patterns: str, start: Path | None = None) -> Iterator[Path]:
+def glob(*glob_patterns: str, start: Path | None = None, case_sensitive: bool | None = None) -> Iterator[Path]:
     """Return an iterator over all paths matching any of the given glob patterns.
 
     Hidden folders and files (dot-prefixed, e.g. `.git`, `.venv`) and build-output folders are skipped, so a broad
@@ -42,7 +42,7 @@ def glob(*glob_patterns: str, start: Path | None = None) -> Iterator[Path]:
     path_parts_to_ignore = {"build", "node_modules", "__pycache__"}
     for glob_pattern in glob_patterns:
         named_hidden = _named_hidden_parts(glob_pattern)
-        for path in start.rglob(glob_pattern):
+        for path in start.rglob(glob_pattern, case_sensitive=case_sensitive):
             relative_path = path.relative_to(start)
             if any(part.startswith(".") and part not in named_hidden for part in relative_path.parts):
                 continue
@@ -73,10 +73,11 @@ def update_files(
     get_new_version: NewVersionGetter,
     logger: Logger,
     start: Path | None = None,
+    case_sensitive: bool | None = None,
 ) -> int:
     """Update the files using the regexp to find the current version and get_new_version to find new versions."""
     results = {
         update_file(path, regexp, get_new_version=get_new_version, logger=logger)
-        for path in glob(*glob_patterns, start=start)
+        for path in glob(*glob_patterns, start=start, case_sensitive=case_sensitive)
     }
     return max(results, default=0)

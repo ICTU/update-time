@@ -17,7 +17,9 @@ IMAGE_RE = rf"FROM {IMAGE_REFERENCE}"
 
 def update_dockerfiles() -> int:
     """Update the base image of Dockerfiles."""
-    return update_files(*DOCKERFILE_GLOB_PATTERNS, regexp=IMAGE_RE, get_new_version=get_latest_tag, logger=LOG)
+    return update_files(
+        *DOCKERFILE_GLOB_PATTERNS, regexp=IMAGE_RE, get_new_version=get_latest_tag, logger=LOG, case_sensitive=False
+    )
 
 
 def main() -> int:  # pragma: no cover
