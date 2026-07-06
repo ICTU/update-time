@@ -34,12 +34,9 @@ def get_latest_version(action: DependencyName, current_version_string: VersionSt
     """Fetch the latest version for the action."""
     owner, repository, *_path = action.split("/")
     release = get_latest_release(owner, repository)
-    if release is None:
+    if release is None or release.commit_sha is None or release.version < Version(current_version_string):
         return DependencyVersion(current_version_string)
-    if release.commit_sha is None:
-        return DependencyVersion(current_version_string)
-    latest_version = max(release.version, Version(current_version_string))
-    return DependencyVersion(str(latest_version), release.body, release.commit_sha, published=release.published_at)
+    return DependencyVersion(str(release.version), release.body, release.commit_sha, published=release.published_at)
 
 
 def _update_action(match: re.Match[str], path: Path) -> str:

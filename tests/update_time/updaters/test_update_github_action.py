@@ -10,6 +10,9 @@ from update_time.updaters.update_github_action import get_latest_version, update
 from tests.update_time.assertions import assert_success
 from tests.update_time.helpers import LoggingTestCase, commits_json, mock_path, mock_response, release_json
 
+OLD_SHA = "a" * 40
+NEW_SHA = "b" * 40
+
 
 @patch("requests.get")
 class UpdateGitHubActionTest(LoggingTestCase):
@@ -25,37 +28,37 @@ class UpdateGitHubActionTest(LoggingTestCase):
         """Test an unchanged version."""
         mock_get.side_effect = [
             mock_response([release_json("1.0", body="changelog")]),
-            mock_response(commits_json()),
+            mock_response(commits_json(sha=NEW_SHA)),
         ]
         latest_version = get_latest_version("docker/docker", "1.0")
-        self.assert_version(latest_version, "1.0", "changelog", "sha")
+        self.assert_version(latest_version, "1.0", "changelog", NEW_SHA)
 
     def test_newer(self, mock_get: Mock):
         """Test an newer version."""
         mock_get.side_effect = [
             mock_response([release_json("1.1", body="changelog")]),
-            mock_response(commits_json()),
+            mock_response(commits_json(sha=NEW_SHA)),
         ]
         latest_version = get_latest_version("docker/hub", "1.0")
-        self.assert_version(latest_version, "1.1", "changelog", "sha")
+        self.assert_version(latest_version, "1.1", "changelog", NEW_SHA)
 
     def test_publication_date(self, mock_get: Mock):
         """Test that the release's publication date is captured."""
         published = (datetime.now(UTC) - timedelta(days=10)).isoformat()
         mock_get.side_effect = [
             mock_response([release_json("1.1", published_at=published)]),
-            mock_response(commits_json()),
+            mock_response(commits_json(sha=NEW_SHA)),
         ]
         self.assertEqual(datetime.fromisoformat(published), get_latest_version("docker/dated", "1.0").published)
 
     def test_older(self, mock_get: Mock):
-        """Test that the current version is kept when the latest release is older, still carrying its commit SHA."""
+        """Test that the current version is kept when the latest release is older, including the current commit SHA."""
         mock_get.side_effect = [
             mock_response([release_json("0.9")]),
-            mock_response(commits_json()),
+            mock_response(commits_json(sha=OLD_SHA)),
         ]
         latest_version = get_latest_version("github/action", "1.0")
-        self.assert_version(latest_version, "1.0", "", "sha")  # release_json("0.9") has no body.
+        self.assert_version(latest_version, "1.0", "", "")
 
     def test_no_version(self, mock_get: Mock):
         """Test that an error is logged and the current version kept when there is no valid release."""
@@ -75,8 +78,6 @@ class UpdateGitHubActionTest(LoggingTestCase):
 
 
 GITHUB_DIR = Path("/repo/.github")
-OLD_SHA = "a" * 40
-NEW_SHA = "b" * 40
 
 
 @patch("update_time.updaters.update_github_action.get_latest_version")
@@ -132,6 +133,19 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         assert_success(update_github_actions(GITHUB_DIR))
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
         mock_get_latest_version.assert_called_once_with("actions/checkout", "4")
+        self.assert_path_logged(workflow_yml)
+        self.assert_pinned_logged(workflow_yml, "actions/checkout", "4.1.1", NEW_SHA)
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+    def test_pin_unpinned_action_already_at_latest(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an unpinned action already at the latest release is still pinned to that release's commit SHA."""
+        mock_get_latest_version.return_value = DependencyVersion(version="4.1.1", sha=NEW_SHA)
+        workflow_yml = mock_path("uses: actions/checkout@v4.1.1\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        assert_success(update_github_actions(GITHUB_DIR))
+        workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
+        mock_get_latest_version.assert_called_once_with("actions/checkout", "4.1.1")
         self.assert_path_logged(workflow_yml)
         self.assert_pinned_logged(workflow_yml, "actions/checkout", "4.1.1", NEW_SHA)
         self.assert_no_new_version_logged()

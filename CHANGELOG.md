@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- In the pathological case where an unpinned `uses:` reference in a GitHub Actions workflow was newer than the repo's latest eligible release, the reference would get pinned to the newer version with the older release's commit SHA. Closes [#104](https://github.com/ICTU/update-time/issues/104).
 
 ## 0.0.15 - 2026-07-05
 
