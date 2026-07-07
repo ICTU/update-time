@@ -55,6 +55,10 @@ MANIFEST_MEDIA_TYPES = (
 # matching linear.
 _TAG = re.compile(r"(?P<prefix>[^\d-]*+)(?P<version>\d[^-]*+)-?(?P<suffix>.*)$")
 
+# A version lower than any real version, used as the sortable version of a tag (or, via `_suffix_tag`, a suffix) that
+# has no valid version, so versions can always be compared and ordered uniformly (a missing one sorts as lowest).
+_LOWEST_VERSION = Version("0")
+
 
 @dataclass(frozen=True)
 class Tag:
@@ -92,6 +96,15 @@ class Tag:
             return None
 
     @property
+    def sortable_version(self) -> Version:
+        """Return the tag's version, or the lowest sentinel when it has none, for ordering and comparison.
+
+        Unlike `version` this is never None, so tags (and, via `_suffix_tag`, their suffixes) compare and sort
+        uniformly; a tag without a valid version sorts and compares as the lowest.
+        """
+        return self.version or _LOWEST_VERSION
+
+    @property
     def suffix(self) -> str:
         """Return the non-version suffix of the tag (e.g., 'slim' in '3.12-slim'), or empty string if none.
 
@@ -99,6 +112,39 @@ class Tag:
         which have one); a tag without a version doesn't match and the suffix is reported as empty.
         """
         return self._match.group("suffix") if self._match else ""
+
+    @cached_property
+    def _suffix_tag(self) -> Tag:
+        """Parse the suffix as a tag in its own right: it has the same shape (a label, a version, a remainder).
+
+        This gives the suffix a second, independent version axis, e.g. the `3.23` in `alpine3.23`. Only the parsed
+        parts (its `prefix`, `version`, and `suffix`) are used; the nested tag's digest and push date are never
+        resolved, because a suffix is not a pullable image.
+        """
+        return Tag(name=self.suffix)
+
+    @property
+    def suffix_label(self) -> tuple[str, str]:
+        """Return the non-version part of the suffix, which must match exactly to prevent variant drift.
+
+        The two strings are the parts of the suffix around its embedded version: the label before it and the
+        remainder after it (`alpine3.19-slim` -> `('alpine', 'slim')`, `alpine3.23` -> `('alpine', '')`). Returning
+        them as a pair keeps them comparable without a separator that could collide. Keeping the label fixed is what
+        stops `alpine` from being replaced by another variant, exactly as the exact-suffix check did before. A suffix
+        without an embedded version has no version to strip, so its whole string is the label (and the second string
+        is empty), and the check reduces to today's exact-suffix match (`slim` still only matches `slim`).
+        """
+        if self._suffix_tag.version is None:
+            return (self.suffix, "")
+        return (self._suffix_tag.prefix, self._suffix_tag.suffix)
+
+    @property
+    def sortable_suffix_version(self) -> Version:
+        """Return the embedded suffix version, or the lowest sentinel when the suffix has none, for ordering.
+
+        The suffix is a tag in its own right, so this is simply its `sortable_version`.
+        """
+        return self._suffix_tag.sortable_version
 
     @property
     def within_cooldown(self) -> bool:
@@ -108,12 +154,30 @@ class Tag:
         """
         return within_cooldown(self.last_pushed)
 
-    def with_version(self, version: Version) -> Tag:
-        """Return a new Tag with the same prefix and suffix but the given version."""
+    def with_version(self, version: Version, suffix: str) -> Tag:
+        """Return a new Tag with this tag's prefix, the given main version, and the given suffix.
+
+        The suffix comes from the resolved candidate, so a bumped embedded suffix version (`alpine3.23` ->
+        `alpine3.24`) is carried through rather than the current suffix being reattached verbatim.
+        """
         name = f"{self.prefix}{version}"
-        if self.suffix:
-            name += f"-{self.suffix}"
+        if suffix:
+            name += f"-{suffix}"
         return Tag(name=name)
+
+    def is_newer_or_equal(self, tag: Tag) -> bool:
+        """Return whether this tag is at least as new as `tag` on every version axis.
+
+        A tag's version axes are its main version and, recursively, the version embedded in its suffix (`alpine3.23`),
+        so this compares `sortable_version` at each level and descends into the suffix until neither side has one.
+        Equal counts (a tag is always at least as new as itself). Labels are compared separately by `is_candidate_for`;
+        matching labels already pin any deeper suffix remainder, so the levels below the embedded version are equal.
+        """
+        if tag.sortable_version > self.sortable_version:
+            return False  # This version axis would go down.
+        if not (self.suffix or tag.suffix):
+            return True  # Neither side has a suffix, so there is no deeper version axis to compare.
+        return self._suffix_tag.is_newer_or_equal(tag._suffix_tag)
 
     def is_candidate_for(self, current: Tag) -> bool:
         """Return whether this tag (known by name only) is a possible update of the current tag.
@@ -127,9 +191,9 @@ class Tag:
             return False  # Ignore tags if the version is a prerelease
         if self.prefix != current.prefix:
             return False  # Ignore tags with a different prefix so e.g. python3.x isn't replaced by pypy3.x
-        if self.suffix != current.suffix:
-            return False  # Ignore tags with a different suffix because we don't want to change e.g. fat to slim
-        return cast("Version", current.version) <= self.version  # Ignore tags older than the current tag
+        if self.suffix_label != current.suffix_label:
+            return False  # Ignore tags whose suffix label differs so we don't change e.g. fat to slim, or alpine to fat
+        return self.is_newer_or_equal(current)
 
     @property
     def is_eligible(self) -> bool:
@@ -189,7 +253,7 @@ def get_latest_tag(image: DependencyName, current_tag: VersionString) -> Depende
         return DependencyVersion(version=current_tag)
     tags = [Tag(name=name) for name in _tag_names(image)]
     candidates = [tag for tag in tags if tag.is_candidate_for(current)]
-    candidates.sort(key=lambda tag: cast("Version", tag.version), reverse=True)
+    candidates.sort(key=lambda tag: (tag.sortable_version, tag.sortable_suffix_version), reverse=True)
     return first_eligible(candidates, lambda candidate: _eligible_tag(image, current, candidate), current_tag)
 
 
@@ -198,7 +262,7 @@ def _eligible_tag(image: str, current: Tag, candidate: Tag) -> DependencyVersion
     latest = _get_tag(image, candidate.name)
     if latest is None or not latest.is_eligible:
         return None
-    name = current.with_version(cast("Version", latest.version)).name
+    name = current.with_version(cast("Version", latest.version), latest.suffix).name
     return DependencyVersion(version=name, sha=latest.digest, published=latest.last_pushed)
 
 

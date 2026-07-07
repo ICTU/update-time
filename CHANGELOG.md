@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Upgrade a version number embedded in an image tag's suffix. A pin such as `python:3.14.6-alpine3.23` now advances its `alpine3.23` to a newer `alpine3.24` (on its own or together with a bump of the main version, e.g. to `3.15.0-alpine3.24`) instead of keeping the suffix version forever. The suffix label is still never crossed (`alpine` stays `alpine`, `slim` never becomes `fat`) and neither version axis is ever downgraded. Closes [#107](https://github.com/ICTU/update-time/issues/107).
+
 ### Fixed
 
 - In the pathological case where an unpinned `uses:` reference in a GitHub Actions workflow was newer than the repo's latest eligible release, the reference would get pinned to the newer version with the older release's commit SHA. Closes [#104](https://github.com/ICTU/update-time/issues/104).
