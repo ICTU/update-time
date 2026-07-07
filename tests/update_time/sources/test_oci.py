@@ -142,6 +142,39 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
         self.requests.side_effect = mock_docker_registry(docker_tag("1.4-windows", DIGEST))
         self.assertEqual("1.3", get_latest_tag("different_suffix", "1.3").version)
 
+    def test_suffix_embedded_version_bumped(self):
+        """Test that a version embedded in the suffix is upgraded while its label is kept (alpine3.23 -> alpine3.24)."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.14.6-alpine3.24", DIGEST))
+        latest = get_latest_tag("python", "3.14.6-alpine3.23")
+        self.assertEqual("3.14.6-alpine3.24", latest.version)
+        self.assertEqual(DIGEST, latest.sha)
+
+    def test_suffix_and_main_version_bumped_together(self):
+        """Test that both the main version and the embedded suffix version advance together to the newest tag."""
+        self.requests.side_effect = mock_docker_registry(
+            docker_tag("3.14.6-alpine3.23", DIGEST1),
+            docker_tag("3.14.6-alpine3.24", DIGEST2),
+            docker_tag("3.15.0-alpine3.24", DIGEST3),
+        )
+        latest = get_latest_tag("python", "3.14.6-alpine3.23")
+        self.assertEqual("3.15.0-alpine3.24", latest.version)
+        self.assertEqual(DIGEST3, latest.sha)
+
+    def test_suffix_version_not_downgraded(self):
+        """Test that a newer main version is not adopted when it would downgrade the embedded suffix version."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15.0-alpine3.22", DIGEST))
+        self.assertEqual("3.14.6-alpine3.23", get_latest_tag("python", "3.14.6-alpine3.23").version)
+
+    def test_suffix_label_not_crossed(self):
+        """Test that a versioned suffix label is never crossed (alpine is not replaced by a newer debian)."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15.0-debian12", DIGEST))
+        self.assertEqual("3.14.6-alpine3.23", get_latest_tag("python", "3.14.6-alpine3.23").version)
+
+    def test_invalid_suffix_version(self):
+        """Test that a suffix with an unparsable embedded version is treated as an unversioned (whole) label."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15.0-alpine3.2.invalid", DIGEST))
+        self.assertEqual("3.14.6-alpine3.23", get_latest_tag("python", "3.14.6-alpine3.23").version)
+
     def test_label_prefixed_version(self):
         """Test that a label-prefixed tag (e.g. python3.12-...) is bumped with the prefix and suffix kept."""
         self.requests.side_effect = mock_docker_registry(docker_tag("python3.13-bookworm-slim", DIGEST))
