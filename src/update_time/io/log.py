@@ -68,9 +68,24 @@ class Logger:
         self.log = logging.getLogger(name)
         self.logged_changes: set[tuple[str, DependencyVersion]] = set()
 
-    def _log(self, log_method: Callable[..., None], msg: str, *args: object) -> None:
+    @staticmethod
+    def _log(log_method: Callable[..., None], msg: str, *args: object) -> None:
         """Emit a log record, attributing it to the updater that triggered it rather than a helper."""
         log_method(msg, *args, stacklevel=_caller_stacklevel())
+
+    @staticmethod
+    def _relative(path: Path) -> Path:
+        """Render a path relative to the working directory, or its absolute self when it sits outside it.
+
+        Most logged paths are files under the scan root (which is the working directory), but some — such as a uv
+        workspace root above the current member — are not, so fall back to the absolute path rather than raising.
+        """
+        try:
+            return path.relative_to(Path.cwd())
+        except ValueError:
+            return path
+
+    # --- Source results: resolving a dependency's latest version and digest ---
 
     def new_version(self, dependency: str, version: DependencyVersion, path: Path) -> None:
         """Log the availability of a new version for a dependency in a file, with its UTC publication date if known."""
@@ -82,15 +97,13 @@ class Logger:
         new_version = version.version
         if version.published is not None:
             new_version += f", published: {version.published.astimezone(UTC):%Y-%m-%d %H:%M}"
-        relative_path = path.relative_to(Path.cwd())
-        self._log(
-            self.log.info, "New version available for %s in %s: %s\n%s", dependency, relative_path, new_version, changes
-        )
+        message = "New version available for %s in %s: %s\n%s"
+        self._log(self.log.info, message, dependency, self._relative(path), new_version, changes)
 
     def pinned(self, dependency: str, version: DependencyVersion, path: Path) -> None:
         """Log that a previously unpinned reference in a file was pinned to a digest, without changing its version."""
-        relative_path = path.relative_to(Path.cwd())
-        self._log(self.log.info, "Pinned %s in %s to %s@%s", dependency, relative_path, version.version, version.sha)
+        message = "Pinned %s in %s to %s@%s"
+        self._log(self.log.info, message, dependency, self._relative(path), version.version, version.sha)
 
     def digest_drift(self, dependency: str, version: str, current_sha: str, new_sha: str, path: Path) -> None:
         """Warn that an already-pinned tag now resolves to a different digest, and that the pin was left unchanged.
@@ -103,7 +116,7 @@ class Logger:
             "Digest drift for %s:%s in %s: pinned to %s but the registry now serves %s; the pin was left unchanged,"
             " verify the change is expected before updating the pin"
         )
-        self._log(self.log.warning, message, dependency, version, path.relative_to(Path.cwd()), current_sha, new_sha)
+        self._log(self.log.warning, message, dependency, version, self._relative(path), current_sha, new_sha)
 
     def no_version(self, dependency: str) -> None:
         """Log no version found."""
@@ -113,31 +126,21 @@ class Logger:
         """Log that no commit SHA could be fetched for an otherwise-eligible release."""
         self._log(self.log.error, "Could not fetch commit SHA for %s %s: %s", dependency, version, url)
 
-    def configured_uv_cooldown(self, path: Path, cooldown: str) -> None:
-        """Log that Update-time wrote its cooldown into the project's uv configuration.
-
-        The path is a workspace root, which can sit above the current directory (when Update-time runs inside a
-        member), so fall back to the absolute path when it can't be made relative to the working directory.
-        """
-        try:
-            location = path.relative_to(Path.cwd())
-        except ValueError:
-            location = path
-        self._log(self.log.info, "Set uv exclude-newer to %r in %s to apply the cooldown", cooldown, location)
-
     def no_integrity_hash(self, dependency: str, version: str, filename: str) -> None:
         """Warn that a jsDelivr file's integrity hash couldn't be resolved, so the reference is left unchanged."""
         message = "Could not resolve the integrity hash for %s %s (%s), leaving it unchanged"
         self._log(self.log.warning, message, dependency, version, filename)
 
+    # --- File scanning and selection ---
+
     def path(self, path: Path) -> None:
         """Log working on path."""
-        self._log(self.log.debug, "Checking if there are updates for %s", path.relative_to(Path.cwd()))
+        self._log(self.log.debug, "Checking if there are updates for %s", self._relative(path))
 
     def ignored(self, dependency: str, path: Path) -> None:
         """Log that a reference was left unchanged because of an `# update-time: ignore` marker."""
         message = "Ignoring updates for %s in %s (update-time: ignore)"
-        self._log(self.log.debug, message, dependency, path.relative_to(Path.cwd()))
+        self._log(self.log.debug, message, dependency, self._relative(path))
 
     def excluded_path(self, path: Path) -> None:
         """Log that a directory passed to `--exclude-path` is held back from the scan."""
@@ -149,16 +152,27 @@ class Logger:
 
     def skipped(self, path: Path, reason: str) -> None:
         """Log that a file was deliberately skipped without being checked for updates."""
-        self._log(self.log.info, "Skipping %s: %s", path.relative_to(Path.cwd()), reason)
+        self._log(self.log.info, "Skipping %s: %s", self._relative(path), reason)
+
+    # --- Updater-specific diagnostics ---
+
+    def configured_uv_cooldown(self, path: Path, cooldown: str) -> None:
+        """Log that Update-time wrote its cooldown into the project's uv configuration.
+
+        The path is a workspace root, which can sit above the current directory (when Update-time runs inside a
+        member), so fall back to the absolute path when it can't be made relative to the working directory.
+        """
+        message = "Set uv exclude-newer to %r in %s to apply the cooldown"
+        self._log(self.log.info, message, cooldown, self._relative(path))
 
     def unsupported_package_manager(self, path: Path, manager: str, supported: str) -> None:
         """Warn that a file is managed by an unsupported package manager, so its dependencies are left unchanged."""
         message = "Skipping %s: %s is not supported, only %s"
-        self._log(self.log.warning, message, path.relative_to(Path.cwd()), manager, supported)
+        self._log(self.log.warning, message, self._relative(path), manager, supported)
 
     def invalid_pyproject_toml(self, path: Path) -> None:
         """Warn that a pyproject.toml can't be parsed as TOML, so it is skipped rather than crashing the run."""
-        self._log(self.log.warning, "Skipping %s: it is not valid TOML", path.relative_to(Path.cwd()))
+        self._log(self.log.warning, "Skipping %s: it is not valid TOML", self._relative(path))
 
     def expected_node_base_image(self, dockerfile: Path) -> None:
         """Log missing Node base image."""
@@ -166,12 +180,10 @@ class Logger:
 
     def non_numeric_node_base_image(self, dockerfile: Path, tag: str) -> None:
         """Log that the Node base image tag is not a concrete version, so the Node engine can't be derived."""
-        self._log(
-            self.log.warning,
-            "Cannot derive the Node engine version from the non-numeric base image tag 'node:%s' in %s",
-            tag,
-            dockerfile,
-        )
+        message = "Cannot derive the Node engine version from the non-numeric base image tag 'node:%s' in %s"
+        self._log(self.log.warning, message, tag, dockerfile)
+
+    # --- HTTP fetching ---
 
     def response(self, response: Response) -> None:
         """Log a response's status code."""
@@ -184,6 +196,8 @@ class Logger:
     def request_error(self, url: str, error: object) -> None:
         """Log a network error (connection failure, too many redirects, ...) while fetching a URL."""
         self._log(self.log.warning, "Could not fetch %s: %s", url, error)
+
+    # --- External commands ---
 
     def command_not_found(self, command: list[str]) -> None:
         """Log that a command could not be run because its executable is not installed."""
