@@ -36,6 +36,14 @@ class DependencyVersion:
     sha: str = ""
     published: datetime | None = None
 
+    def digest_differs_from(self, sha: str) -> bool:
+        """Return whether this version resolved a digest that differs from an already-pinned one.
+
+        Used to detect a re-pushed tag: when the version is unchanged, a differing digest means the tag was rebuilt
+        under the same name. A version without a resolved digest never counts as differing (nothing to compare).
+        """
+        return bool(self.sha) and self.sha != sha
+
 
 def first_eligible[Candidate](
     candidates: Iterable[Candidate],

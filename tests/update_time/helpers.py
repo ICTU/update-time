@@ -115,6 +115,18 @@ class LoggingTestCase(CacheClearingTestCase):
         message = "Pinned %s in %s to %s@%s"
         self.mock_info.assert_called_with(message, dependency, self._relative(path), version, sha, stacklevel=ANY)
 
+    def assert_digest_drift_logged(
+        self, path: Path, dependency: str, version: str, current_sha: str, new_sha: str
+    ) -> None:
+        """Assert that a re-pushed tag's digest drift was logged as a single warning for the file."""
+        message = (
+            "Digest drift for %s:%s in %s: pinned to %s but the registry now serves %s; the pin was left unchanged,"
+            " verify the change is expected before updating the pin"
+        )
+        self.mock_warning.assert_called_once_with(
+            message, dependency, version, self._relative(path), current_sha, new_sha, stacklevel=ANY
+        )
+
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged at debug level."""
         self.mock_debug.assert_called_with("Checking if there are updates for %s", self._relative(path), stacklevel=ANY)
@@ -325,6 +337,15 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.15@{DIGEST2}"))
         self.assert_new_version_logged(mock_file, "python", "3.15")
         self.assert_no_warnings_logged()
+
+    def test_digest_drift_warned_not_repinned(self) -> None:
+        """Test that a pinned image whose tag was re-pushed with a different digest is warned about, not rewritten."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST2))
+        mock_file = mock_path(self.reference(f"python:3.14@{DIGEST1}"))
+        assert_success(self.run_updater(mock_file))
+        mock_file.write_text.assert_not_called()
+        self.assert_digest_drift_logged(mock_file, "python", "3.14", DIGEST1, DIGEST2)
+        self.assert_no_new_version_logged()
 
     def test_pin_unpinned_image(self) -> None:
         """Test that an image referenced by tag only is pinned with the latest tag and digest."""

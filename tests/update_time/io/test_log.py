@@ -78,6 +78,19 @@ class LoggerTests(TestCase):
             "Pinned %s in %s to %s@%s", "dependency", Path("Dockerfile"), "1.0", sha, stacklevel=ANY
         )
 
+    @patch("logging.Logger.warning")
+    def test_digest_drift(self, mock_warning: Mock):
+        """Test that a re-pushed tag whose digest changed under an unchanged pin is warned about at warning level."""
+        old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
+        Logger("drift").digest_drift("dependency", "3.14", old_sha, new_sha, Path.cwd() / "Dockerfile")
+        message = (
+            "Digest drift for %s:%s in %s: pinned to %s but the registry now serves %s; the pin was left unchanged,"
+            " verify the change is expected before updating the pin"
+        )
+        mock_warning.assert_called_once_with(
+            message, "dependency", "3.14", Path("Dockerfile"), old_sha, new_sha, stacklevel=ANY
+        )
+
     @patch("logging.Logger.debug")
     def test_path_logged_at_debug(self, mock_debug: Mock):
         """Test that the per-file 'checking for updates' progress is logged at debug level."""
