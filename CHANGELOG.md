@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Upgrade a version number embedded in an image tag's suffix. A pin such as `python:3.14.6-alpine3.23` now advances its `alpine3.23` to a newer `alpine3.24` (on its own or together with a bump of the main version, e.g. to `3.15.0-alpine3.24`) instead of keeping the suffix version forever. The suffix label is still never crossed (`alpine` stays `alpine`, `slim` never becomes `fat`) and neither version axis is ever downgraded. Closes [#107](https://github.com/ICTU/update-time/issues/107).
+- Warn when an already-pinned image tag has been re-pushed with a different digest. If a reference such as `python:3.14.6@sha256:…` is already at the latest version but the registry now serves a different digest for that tag, Update-time logs a warning and leaves the pin unchanged, rather than silently adopting the new digest. This keeps a digest pin immutable — a re-pushed (possibly malicious) digest is surfaced for review instead of being committed as a routine update. Closes [#110](https://github.com/ICTU/update-time/issues/110).
 
 ### Fixed
 

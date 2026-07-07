@@ -50,7 +50,9 @@ def _update_line(line: str, regexp: str, get_new_version: NewVersionGetter, logg
     """Update the line with the new version (and digest) if any, or return the line unchanged.
 
     When the regexp has an optional `sha` group that did not match, the reference is unpinned. If a digest is
-    available it is appended to pin the reference, even when the version itself is already up to date.
+    available it is appended to pin the reference, even when the version itself is already up to date. When the
+    reference is already pinned and only its digest changed at the registry (a re-pushed tag), the drift is warned
+    about but the pin is left unchanged, so a re-pushed digest is never silently adopted.
     """
     if not (match := re.search(regexp, line)):
         return line
@@ -62,6 +64,9 @@ def _update_line(line: str, regexp: str, get_new_version: NewVersionGetter, logg
     pin_unpinned = has_sha_group and current_sha is None and bool(latest_version.sha)
     version_changed = latest_version.version != version
     if not version_changed and not pin_unpinned:
+        if current_sha is not None and latest_version.digest_differs_from(current_sha):
+            # The tag was re-pushed with a different digest; warn but leave the immutable pin unchanged.
+            logger.digest_drift(dependency, version, current_sha, latest_version.sha, path)
         return line
     if pin_unpinned:
         # Append the digest to a previously unpinned reference, bumping the version too if a newer one is available.

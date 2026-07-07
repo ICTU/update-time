@@ -92,6 +92,19 @@ class Logger:
         relative_path = path.relative_to(Path.cwd())
         self._log(self.log.info, "Pinned %s in %s to %s@%s", dependency, relative_path, version.version, version.sha)
 
+    def digest_drift(self, dependency: str, version: str, current_sha: str, new_sha: str, path: Path) -> None:
+        """Warn that an already-pinned tag now resolves to a different digest, and that the pin was left unchanged.
+
+        The tag was re-pushed (rebuilt) under the same name, so its pinned digest no longer matches what the registry
+        serves. Update-time deliberately does not update the pin: silently adopting a re-pushed digest would defeat
+        the immutability a digest pin exists to provide. The drift is surfaced instead, so it can be reviewed.
+        """
+        message = (
+            "Digest drift for %s:%s in %s: pinned to %s but the registry now serves %s; the pin was left unchanged,"
+            " verify the change is expected before updating the pin"
+        )
+        self._log(self.log.warning, message, dependency, version, path.relative_to(Path.cwd()), current_sha, new_sha)
+
     def no_version(self, dependency: str) -> None:
         """Log no version found."""
         self._log(self.log.error, "No valid version found for %s", dependency)

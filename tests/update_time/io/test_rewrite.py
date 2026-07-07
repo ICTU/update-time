@@ -89,6 +89,23 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assertEqual(["line1", f"image: python:3.14@{sha}"], new_lines)
         self.logger.pinned.assert_called_with("python", DependencyVersion(version="3.14", sha=sha), self.path)
         self.logger.new_version.assert_not_called()
+        self.logger.digest_drift.assert_not_called()  # An unpinned reference has no pinned digest to drift from.
+
+    def test_digest_drift_warns_without_rewriting(self):
+        """Test that a pinned reference whose digest changed at the registry is warned about, not rewritten."""
+        old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
+        lines = [f"image: python:3.14@{old_sha}"]
+        self.assertEqual(lines, self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", new_sha)))
+        self.logger.digest_drift.assert_called_once_with("python", "3.14", old_sha, new_sha, self.path)
+        self.logger.new_version.assert_not_called()
+        self.logger.pinned.assert_not_called()
+
+    def test_matching_digest_not_warned(self):
+        """Test that a pinned reference whose digest is unchanged is left alone, without a drift warning."""
+        sha = f"sha256:{'a' * 64}"
+        lines = [f"image: python:3.14@{sha}"]
+        self.assertEqual(lines, self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", sha)))
+        self.logger.digest_drift.assert_not_called()
 
     def test_pin_unpinned_with_new_version(self):
         """Test that an unpinned reference is pinned and bumped to the latest version at the same time."""
