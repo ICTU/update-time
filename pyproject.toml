@@ -37,7 +37,7 @@ scripts.update-time = "update_time.updaters.update:main"
 
 [dependency-groups]
 dev = [
-    "archunitpython==1.2.0",
+    "archunitpython==1.2.1",
     "bandit==1.9.4",
     "codespell==2.4.2",
     "coverage==7.14.3",
