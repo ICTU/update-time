@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.16 - 2026-07-07
+
 ### Added
 
 - Upgrade a version number embedded in an image tag's suffix. A pin such as `python:3.14.6-alpine3.23` now advances its `alpine3.23` to a newer `alpine3.24` (on its own or together with a bump of the main version, e.g. to `3.15.0-alpine3.24`) instead of keeping the suffix version forever. The suffix label is still never crossed (`alpine` stays `alpine`, `slim` never becomes `fat`) and neither version axis is ever downgraded. Closes [#107](https://github.com/ICTU/update-time/issues/107).
