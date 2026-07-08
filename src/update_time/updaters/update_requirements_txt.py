@@ -27,6 +27,12 @@ LOG = get_logger("requirements.txt")
 REQUIREMENT_RE = (
     r"^(?P<dependency>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*==\s*(?P<version>[A-Za-z0-9][A-Za-z0-9._!+-]*)"
 )
+# Requirements files follow the flat conventions `requirements.txt`, `requirements-<purpose>.txt` (e.g.
+# `requirements-dev.txt`) and `<purpose>-requirements.txt` (e.g. `dev-requirements.txt`), plus a nested
+# `requirements/` directory. The purpose is hyphen-separated on both sides for symmetry, and matching is
+# restricted to the `.txt` extension, so unrelated files such as `constraints.txt`, `requirements.in`, or an
+# arbitrary `requirementsfoo.txt` are not picked up.
+REQUIREMENTS_GLOB_PATTERNS = ("requirements.txt", "requirements-*.txt", "*-requirements.txt", "requirements/*.txt")
 
 
 def update_requirements_txt(requirements_txt: Path) -> int:
@@ -39,7 +45,7 @@ def update_requirements_txt(requirements_txt: Path) -> int:
 
 def update_requirements_txts() -> int:
     """Find all requirements files and update the exact pins in them."""
-    requirements_files = set(glob("requirements*.txt")) | set(glob("requirements/*.txt"))
+    requirements_files = set(glob(*REQUIREMENTS_GLOB_PATTERNS, case_sensitive=True))
     results = {update_requirements_txt(requirements_txt) for requirements_txt in requirements_files}
     return max(results, default=0)
 
