@@ -3,6 +3,7 @@
 import importlib
 import pkgutil
 import unittest
+from datetime import UTC, datetime, timedelta
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -10,16 +11,18 @@ from unittest.mock import ANY, Mock, patch
 from urllib.parse import parse_qs, urlparse
 
 import update_time
+from update_time.domain.staleness import STALE_AFTER_DAYS_ENV_VAR
 from update_time.domain.version import DependencyVersion, NewVersionGetter, VersionString
 from update_time.io.log import Logger
 from update_time.sources.docker_hub import api_headers as docker_hub_headers
 from update_time.sources.github import _list_releases as github_list_release
+from update_time.sources.npmjs import _package_metadata as npmjs_package_metadata
 from update_time.sources.npmjs import get_changes as npmjs_get_changes
 from update_time.sources.npmjs import get_publication_datetime as npmjs_get_publication_datetime
 from update_time.sources.oci import _get_tag as oci_get_tag
 from update_time.sources.oci import _registry_token as oci_registry_token
 from update_time.sources.oci import _tag_names as oci_tag_names
-from update_time.sources.pypi import project_versions as pypi_project_versions
+from update_time.sources.pypi import project_metadata as pypi_project_metadata
 from update_time.sources.pypi import release_metadata as pypi_release_metadata
 from update_time.updaters.update_github_action import get_latest_version as github_get_latest_version
 
@@ -57,7 +60,8 @@ class CacheClearingTestCase(unittest.TestCase):
         github_list_release,
         npmjs_get_changes,
         npmjs_get_publication_datetime,
-        pypi_project_versions,
+        npmjs_package_metadata,
+        pypi_project_metadata,
         pypi_release_metadata,
     )
 
@@ -125,6 +129,16 @@ class LoggingTestCase(CacheClearingTestCase):
         )
         self.mock_warning.assert_called_once_with(
             message, dependency, version, self._relative(path), current_sha, new_sha, stacklevel=ANY
+        )
+
+    def assert_stale_dependency_logged(self, path: Path, dependency: str, version: str) -> None:
+        """Assert that a stale dependency (its newest release too old) was warned about once for the file.
+
+        The exact age and threshold vary with the wall clock, so they are matched with ANY.
+        """
+        message = "Stale dependency %s in %s: newest release %s was published %d days ago (> %d)"
+        self.mock_warning.assert_called_once_with(
+            message, dependency, self._relative(path), version, ANY, ANY, stacklevel=ANY
         )
 
     def assert_path_logged(self, path: Path) -> None:
@@ -202,6 +216,10 @@ def mock_response(json: Mapping | list | None = None, **kwargs: object) -> Mock:
 # when DOCKER_HUB_USERNAME/DOCKER_HUB_TOKEN are set, so the image updater tests never make a real network call.
 mock_docker_hub_auth = patch("requests.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec[B105]
 
+# Reusable decorator that disables the staleness check, for update tests that focus on the update flow and would
+# otherwise trigger the staleness pass's own registry requests. The staleness pass has its own dedicated tests.
+staleness_disabled = patch.dict("os.environ", {STALE_AFTER_DAYS_ENV_VAR: "0"})
+
 
 def mock_path(content: str, parent: Path | None = None) -> Mock:
     """Return a mock Path with the given text content, an optional parent, and a no-op relative_to()."""
@@ -219,6 +237,16 @@ def release_json(tag_name: str, **extra: object) -> dict[str, object]:
 def commits_json(sha: str = "sha") -> dict[str, str]:
     """Return a GitHub commits API result carrying a release tag's commit SHA."""
     return {"sha": sha}
+
+
+def jsdelivr_versions(*version_strings: str) -> Mock:
+    """Return a mock jsDelivr package API response listing the given versions (newest first)."""
+    return mock_response({"versions": [{"version": version} for version in version_strings]})
+
+
+def npm_registry(published: dict[str, str]) -> Mock:
+    """Return a mock npm registry response mapping versions to their publication dates (its `time` map)."""
+    return mock_response({"time": published})
 
 
 def docker_tag(name: str, digest: str = "", **extra: object) -> dict[str, object]:
@@ -328,6 +356,15 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.assert_path_logged(mock_file)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
+
+    def test_stale_image_warned(self) -> None:
+        """Test that an image whose newest tag was pushed long ago is warned about as stale, without being rewritten."""
+        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST, tag_last_pushed=old))
+        mock_file = mock_path(self.reference(f"python:3.14@{DIGEST}"))
+        assert_success(self.run_updater(mock_file))
+        mock_file.write_text.assert_not_called()
+        self.assert_stale_dependency_logged(mock_file, "python", "3.14")
 
     def test_bumped(self) -> None:
         """Test that the image tag and digest are bumped when a newer version is available."""

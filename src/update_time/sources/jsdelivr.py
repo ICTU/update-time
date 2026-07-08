@@ -6,15 +6,17 @@ list and per-file Subresource Integrity hashes come from jsDelivr's package API 
 date used for the cooldown comes from the npm registry (via the `npmjs` source), because jsDelivr doesn't expose it.
 """
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
+from update_time.domain.staleness import stale_after_days
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
-from update_time.sources.npmjs import get_publication_datetime
+from update_time.sources.npmjs import get_publication_datetime, newest_publication_date
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -39,11 +41,16 @@ def get_latest_version(
         return DependencyVersion(version=current_version_string)
     current_version = Version(current_version_string)
     candidates = _candidate_versions(dependency, current_version)
-    return first_eligible(
+    latest = first_eligible(
         candidates,
         lambda version: _eligible_version(dependency, version, filename, current_version_string),
         current_version_string,
     )
+    # Attach the newest npm publication date for the staleness check. Unlike the other sources this can cost an
+    # extra npm request (when the reference is already at the newest version, so no candidate was resolved), so it
+    # is skipped when the check is disabled; `is_stale` remains the single gate on whether a warning is emitted.
+    newest_published = newest_publication_date(dependency) if stale_after_days() > 0 else None
+    return replace(latest, newest_published=newest_published)
 
 
 def _eligible_version(

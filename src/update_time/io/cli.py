@@ -6,6 +6,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 from update_time.domain.cooldown import COOLDOWN_DAYS
+from update_time.domain.staleness import STALE_AFTER_DAYS
 from update_time.io.log import DEFAULT_LOG_LEVEL, LOG_LEVELS
 
 
@@ -72,6 +73,14 @@ def parse_args() -> argparse.Namespace:
         metavar="DAYS",
         help="number of days to hold back newly published Docker image, GitHub Action, requirements.txt, npm, pnpm, "
         "pyproject.toml, and jsDelivr versions (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--stale-after",
+        type=days,
+        default=STALE_AFTER_DAYS,
+        metavar="DAYS",
+        help="warn when a dependency's newest release is older than this many days; 0 disables the check "
+        "(default: %(default)s)",
     )
     parser.add_argument(
         "--exclude-path",

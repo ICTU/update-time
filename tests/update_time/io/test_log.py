@@ -91,6 +91,27 @@ class LoggerTests(TestCase):
             message, "dependency", "3.14", Path("Dockerfile"), old_sha, new_sha, stacklevel=ANY
         )
 
+    @patch("logging.Logger.warning")
+    def test_warn_if_stale(self, mock_warning: Mock):
+        """Test that a dependency whose newest release is old is warned about at warning level."""
+        published = datetime.now(UTC) - timedelta(days=512, hours=1)
+        version = DependencyVersion("4.15.0", newest_published=published)
+        Logger("stale").warn_if_stale("humanize", version, Path.cwd() / "requirements.txt")
+        message = "Stale dependency %s in %s: newest release %s was published %d days ago (> %d)"
+        mock_warning.assert_called_once_with(
+            message, "humanize", Path("requirements.txt"), "4.15.0", 512, 365, stacklevel=ANY
+        )
+
+    @patch("logging.Logger.warning")
+    def test_warn_if_stale_does_nothing_when_not_stale(self, mock_warning: Mock):
+        """Test that nothing is logged when the newest release date is recent or unknown."""
+        recent = DependencyVersion("4.15.0", newest_published=datetime.now(UTC) - timedelta(days=1))
+        undated = DependencyVersion("4.15.0")
+        logger = Logger("stale")
+        logger.warn_if_stale("humanize", recent, Path.cwd() / "requirements.txt")
+        logger.warn_if_stale("humanize", undated, Path.cwd() / "requirements.txt")
+        mock_warning.assert_not_called()
+
     @patch("logging.Logger.debug")
     def test_path_logged_at_debug(self, mock_debug: Mock):
         """Test that the per-file 'checking for updates' progress is logged at debug level."""

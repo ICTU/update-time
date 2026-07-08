@@ -34,7 +34,8 @@ class DependencyVersion:
     version: VersionString  # Arbitrary version string as returned by a source (PyPI, Docker Hub, GitHub releases, ...)
     changes: str = ""  # Changelog for this version, empty when none could be found
     sha: str = ""
-    published: datetime | None = None
+    published: datetime | None = None  # Publication date of this (candidate) version, when known
+    newest_published: datetime | None = None  # Publication date of the dependency's newest release, for staleness
 
     def digest_differs_from(self, sha: str) -> bool:
         """Return whether this version resolved a digest that differs from an already-pinned one.

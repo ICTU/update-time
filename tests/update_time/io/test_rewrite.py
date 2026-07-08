@@ -187,3 +187,18 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
         get_new_version.assert_not_called()
         self.logger.ignored.assert_called_once_with("python", self.path)
+
+    def test_ignore_update_marker_skips_update_but_still_checks_staleness(self):
+        """Test that `ignore[update]` leaves the version unchanged but still runs the staleness check."""
+        lines = ["image: python:3.14  # update-time: ignore[update]"]
+        self.assertEqual(lines, self.rewrite(lines, REGEXP, new_version_getter("3.15")))  # version left as-is
+        self.logger.warn_if_stale.assert_called_once()  # staleness still checked
+        self.logger.ignored.assert_called_once_with("python", self.path)
+
+    def test_ignore_stale_marker_skips_staleness_but_still_updates(self):
+        """Test that `ignore[stale]` applies the update but skips the staleness check."""
+        lines = ["image: python:3.14  # update-time: ignore[stale]"]
+        new_lines = self.rewrite(lines, REGEXP, new_version_getter("3.15"))
+        self.assertEqual(["image: python:3.15  # update-time: ignore[stale]"], new_lines)  # version bumped
+        self.logger.warn_if_stale.assert_not_called()  # staleness skipped
+        self.logger.ignored.assert_not_called()  # the update is not held back, so nothing is logged as ignored

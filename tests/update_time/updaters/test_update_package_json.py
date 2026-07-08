@@ -2,6 +2,7 @@
 
 import json
 import subprocess  # nosec
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
@@ -10,7 +11,14 @@ from update_time.package_managers.node import COMMON_NPM_OPTIONS
 from update_time.updaters.update_package_json import update_package_jsons
 
 from tests.update_time.assertions import assert_success
-from tests.update_time.helpers import LoggingTestCase, commits_json, mock_path, mock_response, release_json
+from tests.update_time.helpers import (
+    LoggingTestCase,
+    commits_json,
+    mock_path,
+    mock_response,
+    release_json,
+    staleness_disabled,
+)
 
 NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN_DAYS}"  # the cooldown npm option Update-time adds by default
 PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN_DAYS * 24 * 60}"  # pnpm's, in minutes
@@ -51,6 +59,8 @@ def assert_manager_called(mock_run: Mock, outdated: list[str], update: list[str]
     mock_run.assert_has_calls((call(outdated, **run_kwargs), call(update, **run_kwargs), call(list_cmd, **run_kwargs)))
 
 
+# Staleness makes its own npm registry requests; it is disabled here and covered by StaleDependencyTest below.
+@staleness_disabled
 @patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
 @patch("pathlib.Path.rglob")
 @patch("subprocess.run")
@@ -210,6 +220,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
 
+@staleness_disabled
 @patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
 @patch("pathlib.Path.rglob")
 @patch("subprocess.run")
@@ -336,3 +347,73 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
         mock_package_json.write_text.assert_not_called()
         self.assert_unsupported_package_manager_logged(mock_package_json, "yarn", "npm and pnpm")
         self.assert_no_new_version_logged()
+
+
+@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
+@patch("pathlib.Path.rglob")
+@patch("subprocess.run")
+class StaleDependencyTest(LoggingTestCase):
+    """Unit tests for the package.json staleness check, which makes its own npm registry pass over the deps.
+
+    npm is stubbed to report no update (so the update itself makes no registry request), leaving the staleness pass
+    as the only caller of `requests.get`; its response carries the package's `latest` dist-tag and publish times.
+    """
+
+    @staticmethod
+    def stub_no_update(mock_run: Mock) -> None:
+        """Stub npm to report no updates: two unset cooldown probes, then empty outdated/update/list."""
+        mock_run.side_effect = [
+            Mock(stdout=NPM_UNSET),
+            Mock(stdout=NPM_UNSET),
+            Mock(stdout="{}"),
+            Mock(stdout=""),
+            Mock(stdout='{"dependencies": {}}'),
+        ]
+
+    @staticmethod
+    def registry_doc(latest: str, published: str) -> Mock:
+        """Mock the npm registry document with the `latest` dist-tag and that version's publish time."""
+        return mock_response({"dist-tags": {"latest": latest}, "time": {latest: published}})
+
+    def package_json(self, glob: Mock) -> Mock:
+        """Discover a single mock package.json depending on `clipboard`."""
+        package_json = mock_path('{"dependencies": {"clipboard": "^2.0.11"}}', parent=Path("/"))
+        glob.return_value = [package_json]
+        return package_json
+
+    @patch("requests.get")
+    def test_stale_dependency_warned(self, get: Mock, mock_run: Mock, glob: Mock):
+        """Test that a direct dependency whose newest release is old is warned about."""
+        self.stub_no_update(mock_run)
+        get.return_value = self.registry_doc("2.0.11", (datetime.now(UTC) - timedelta(days=512)).isoformat())
+        package_json = self.package_json(glob)
+        assert_success(update_package_jsons())
+        self.assert_stale_dependency_logged(package_json, "clipboard", "2.0.11")
+
+    @patch("requests.get")
+    def test_recent_dependency_not_warned(self, get: Mock, mock_run: Mock, glob: Mock):
+        """Test that a direct dependency whose newest release is recent is not warned about as stale."""
+        self.stub_no_update(mock_run)
+        get.return_value = self.registry_doc("2.0.11", datetime.now(UTC).isoformat())
+        self.package_json(glob)
+        assert_success(update_package_jsons())
+        self.assert_no_warnings_logged()
+
+    @patch("requests.get")
+    def test_dependency_without_release_skipped(self, get: Mock, mock_run: Mock, glob: Mock):
+        """Test that a declared dependency the registry has no release for is skipped without warning or crashing."""
+        self.stub_no_update(mock_run)
+        get.return_value = mock_response({})  # no `dist-tags`, so newest_release returns None
+        self.package_json(glob)
+        assert_success(update_package_jsons())
+        self.assert_no_warnings_logged()
+
+    @staleness_disabled
+    @patch("requests.get")
+    def test_disabled_makes_no_registry_request(self, get: Mock, mock_run: Mock, glob: Mock):
+        """Test that `--stale-after 0` skips the staleness pass entirely, so it makes no npm registry request."""
+        self.stub_no_update(mock_run)
+        self.package_json(glob)
+        assert_success(update_package_jsons())
+        get.assert_not_called()
+        self.assert_no_warnings_logged()

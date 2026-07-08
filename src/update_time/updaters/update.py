@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from update_time.domain.cooldown import COOLDOWN_DAYS_ENV_VAR
+from update_time.domain.staleness import STALE_AFTER_DAYS_ENV_VAR
 from update_time.io.cli import parse_args
 from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR
 from update_time.io.log import LOG_LEVEL_ENV_VAR, get_logger
@@ -69,8 +70,9 @@ def main() -> int:
     args = parse_args()
     # Scope the whole run to the requested directory; everything downstream keys off the current working directory.
     os.chdir(args.path)
-    # Pass the cooldown and log level down to the updater subprocesses via the environment.
+    # Pass the cooldown, staleness threshold, and log level down to the updater subprocesses via the environment.
     os.environ[COOLDOWN_DAYS_ENV_VAR] = str(args.cooldown)
+    os.environ[STALE_AFTER_DAYS_ENV_VAR] = str(args.stale_after)
     os.environ[LOG_LEVEL_ENV_VAR] = args.log_level
     configure_excluded_paths(args.exclude_path)
     return update_dependencies()

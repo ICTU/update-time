@@ -109,3 +109,23 @@ class RewritePinnedVersionsTest(unittest.TestCase):
         """Test that a pin with no known newer version is left alone and the file is not rewritten."""
         pyproject_file = self.rewrite('dependencies = ["pkg==1.0"]\n', {})
         pyproject_file.write_text.assert_not_called()
+
+
+class PinnedVersionsTest(unittest.TestCase):
+    """Unit tests for reading the exact pins from a pyproject.toml."""
+
+    def test_reads_exact_pins_across_arrays(self):
+        """Test that `==` pins are read from every dependency array."""
+        contents = (
+            "[project]\n"
+            'dependencies = ["pkg==1.0", "other>=2.0"]\n'  # only the `==` pin is returned
+            '[project.optional-dependencies]\ndocs = ["sphinx==7.4"]\n'
+            '[dependency-groups]\ndev = ["ruff==0.6.0"]\n'
+        )
+        self.assertEqual(
+            {"pkg": "1.0", "sphinx": "7.4", "ruff": "0.6.0"}, pyproject_toml.pinned_versions(mock_path(contents))
+        )
+
+    def test_no_pins(self):
+        """Test that a file with no exact pins yields an empty mapping."""
+        self.assertEqual({}, pyproject_toml.pinned_versions(mock_path('dependencies = ["pkg>=1.0"]\n')))

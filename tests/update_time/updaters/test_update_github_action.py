@@ -125,6 +125,16 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
+    def test_stale_action_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an action whose newest release is old is warned about, even when it is up to date."""
+        old = datetime.now(UTC) - timedelta(days=512)
+        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=OLD_SHA, newest_published=old)
+        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        assert_success(update_github_actions(GITHUB_DIR))
+        workflow_yml.write_text.assert_not_called()
+        self.assert_stale_dependency_logged(workflow_yml, "action/action", "1.0")
+
     def test_pin_unpinned_action(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an action referenced by version tag only is pinned to the commit SHA with a version comment."""
         mock_get_latest_version.return_value = DependencyVersion(version="4.1.1", sha=NEW_SHA)
@@ -172,6 +182,29 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_ignored_logged("action/action", workflow_yml)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
+
+    def test_ignore_update_marker_skips_repin_but_still_checks_staleness(self, mock_glob: Mock, mock_latest: Mock):
+        """Test that `ignore[update]` leaves the action's pin unchanged but still warns when it is stale."""
+        old = datetime.now(UTC) - timedelta(days=512)
+        mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA, newest_published=old)
+        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore[update]\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        assert_success(update_github_actions(GITHUB_DIR))
+        workflow_yml.write_text.assert_not_called()  # the pin is held back
+        self.assert_stale_dependency_logged(workflow_yml, "action/action", "1.1")  # but staleness is still checked
+        self.assert_ignored_logged("action/action", workflow_yml)
+
+    def test_ignore_stale_marker_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
+        """Test that `ignore[stale]` repins the action but skips the staleness check even for an old release."""
+        old = datetime.now(UTC) - timedelta(days=512)
+        mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA, newest_published=old)
+        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore[stale]\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        assert_success(update_github_actions(GITHUB_DIR))
+        workflow_yml.write_text.assert_called_once_with(
+            f"uses: action/action@{NEW_SHA} # v1.1  # update-time: ignore[stale]\n"
+        )
+        self.assert_no_warnings_logged()  # staleness skipped despite the old release
 
     def test_unpinned_action_without_sha_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an unpinned action is not changed when no commit SHA is available to pin it to."""

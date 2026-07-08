@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 from rich.console import Console
 from rich.logging import RichHandler
 
+from update_time.domain.staleness import is_stale, stale_after_days, staleness_days
+
 # The log levels that can be selected on the command line, and the default. Reporting an available new version is
 # logged at INFO (it is the tool's regular output, not a problem), while genuinely unexpected situations stay at
 # WARNING and failures at ERROR. The per-file "checking ..." progress is logged at DEBUG.
@@ -117,6 +119,18 @@ class Logger:
             " verify the change is expected before updating the pin"
         )
         self._log(self.log.warning, message, dependency, version, self._relative(path), current_sha, new_sha)
+
+    def warn_if_stale(self, dependency: str, version: DependencyVersion, path: Path) -> None:
+        """Warn if the dependency's newest release is old enough that the project may have gone quiet.
+
+        Does nothing when the newest release date is unknown or within the threshold (or the check is disabled),
+        so callers can hand off every resolved version unconditionally; `is_stale` is the single gate.
+        """
+        if (published := version.newest_published) is None or not is_stale(published):
+            return
+        message = "Stale dependency %s in %s: newest release %s was published %d days ago (> %d)"
+        days_ago, threshold = staleness_days(published), stale_after_days()
+        self._log(self.log.warning, message, dependency, self._relative(path), version.version, days_ago, threshold)
 
     def no_version(self, dependency: str) -> None:
         """Log no version found."""

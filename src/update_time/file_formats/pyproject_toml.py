@@ -82,3 +82,13 @@ def rewrite_pinned_versions(path: Path, versions: dict[str, str]) -> None:
     rewritten = _PINNED_SPEC.sub(replace, current)
     if rewritten != current:
         path.write_text(rewritten)
+
+
+def pinned_versions(path: Path) -> dict[str, str]:
+    """Return the `{name: version}` of every exact `name==version` pin in the file.
+
+    Matches the same `==` specs `rewrite_pinned_versions` rewrites (looser specifiers like `<=` are excluded),
+    across every dependency array. Duplicate names collapse to the last occurrence, which is enough for callers
+    that only need one entry per dependency (e.g. the staleness check).
+    """
+    return {match["name"]: match["version"] for match in _PINNED_SPEC.finditer(path.read_text())}
