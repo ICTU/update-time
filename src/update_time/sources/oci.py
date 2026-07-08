@@ -7,7 +7,7 @@ mcr.microsoft.com, quay.io, ...) by listing tag names, discovering the registry'
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache, cached_property
 from http import HTTPStatus
 from typing import TYPE_CHECKING, cast
@@ -254,7 +254,23 @@ def get_latest_tag(image: DependencyName, current_tag: VersionString) -> Depende
     tags = [Tag(name=name) for name in _tag_names(image)]
     candidates = [tag for tag in tags if tag.is_candidate_for(current)]
     candidates.sort(key=lambda tag: (tag.sortable_version, tag.sortable_suffix_version), reverse=True)
-    return first_eligible(candidates, lambda candidate: _eligible_tag(image, current, candidate), current_tag)
+    latest = first_eligible(candidates, lambda candidate: _eligible_tag(image, current, candidate), current_tag)
+    return replace(latest, newest_published=_newest_tag_push_date(image, candidates))
+
+
+def _newest_tag_push_date(image: str, candidates: list[Tag]) -> datetime | None:
+    """Return the push date of the newest compatible tag for the staleness check, or None.
+
+    Only Docker Hub exposes a push date (the OCI protocol doesn't), so a tag on another registry resolves to no
+    date and is never flagged as stale — the same limitation as the cooldown. Unlike the cooldown, eligibility is
+    ignored: the newest tag's date is used even if it is still within the cooldown, so a freshly re-pushed tag is
+    not reported as stale. The newest candidate was already resolved while picking the latest eligible tag, so this
+    reuses that cached result and costs no extra request; when no compatible tag is listed there is nothing to date.
+    """
+    if not candidates:
+        return None
+    resolved = _get_tag(image, candidates[0].name)
+    return resolved.last_pushed if resolved else None
 
 
 def _eligible_tag(image: str, current: Tag, candidate: Tag) -> DependencyVersion | None:

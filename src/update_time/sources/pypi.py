@@ -1,18 +1,22 @@
 """Python Package Index."""
 
 import re
-from datetime import datetime
+from dataclasses import replace
 from functools import cache
-from typing import NotRequired, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from packaging.version import Version
 
 from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import within_cooldown
+from update_time.domain.staleness import newest_datetime
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.sources.github import changes_from_release, github_owner_and_repository, github_to_raw
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 LOG = get_logger("pypi")
 
@@ -50,20 +54,38 @@ def release_metadata(package: str, version: str) -> Release | None:
 
 
 @cache
-def project_versions(package: str) -> list[str]:
-    """Get all version strings of a package from PyPI's Index API, or an empty list if they can't be fetched.
+def project_metadata(package: str) -> dict:
+    """Get the package's metadata from PyPI's Index API, or an empty dict if it can't be fetched.
 
     Uses the Index (Simple) API rather than the project JSON API's `releases` key, which is deprecated. See
-    https://docs.pypi.org/api/json/ and https://docs.pypi.org/api/index-api/.
+    https://docs.pypi.org/api/json/ and https://docs.pypi.org/api/index-api/. The response carries both the
+    available `versions` (PEP 700) and each distribution file's `upload-time` (PEP 700), so `project_versions`
+    and `newest_publication_date` share this single request.
     """
     headers = {"Accept": "application/vnd.pypi.simple.v1+json"}
     response = fetch(f"https://pypi.org/simple/{package}/", LOG, headers=headers)
-    return response.json().get("versions", []) if response is not None else []
+    return response.json() if response is not None else {}
+
+
+def project_versions(package: str) -> list[str]:
+    """Get all version strings of a package from PyPI's Index API, or an empty list if they can't be fetched."""
+    return project_metadata(package).get("versions", [])
+
+
+def newest_publication_date(package: str) -> datetime | None:
+    """Return the most recent distribution-file upload time across all of the package's releases, or None.
+
+    This is the "newest release" date the staleness check compares against: the latest moment the project
+    published anything at all. It is taken over every file (any version, including pre-releases), so a project
+    that recently shipped a pre-release or a back-ported patch still counts as active and is not flagged as stale.
+    """
+    files = project_metadata(package).get("files", [])
+    return newest_datetime(file["upload-time"] for file in files if file.get("upload-time"))
 
 
 def release_datetime(urls: list[Distribution]) -> datetime | None:
     """Return the latest upload datetime of a release's distribution files, or None if there are none."""
-    return datetime.fromisoformat(max(url["upload_time_iso_8601"] for url in urls)) if urls else None
+    return newest_datetime(url["upload_time_iso_8601"] for url in urls)
 
 
 def get_latest_version(package: DependencyName, current_version: VersionString) -> DependencyVersion:
@@ -80,7 +102,11 @@ def get_latest_version(package: DependencyName, current_version: VersionString) 
         version for version in versions if version > current and not version.is_prerelease and not version.is_devrelease
     ]
     candidates.sort(reverse=True)
-    return first_eligible(candidates, lambda version: _eligible_release(package, version), current_version)
+    latest = first_eligible(candidates, lambda version: _eligible_release(package, version), current_version)
+    # Always attach the newest release date so an already-up-to-date pin can still be flagged as stale. It rides on
+    # the Index API response fetched above, so it costs no extra request; whether it counts as stale (and whether the
+    # check is enabled at all) is decided by `is_stale` where the warning would be logged.
+    return replace(latest, newest_published=newest_publication_date(package))
 
 
 def _eligible_release(package: str, version: Version) -> DependencyVersion | None:

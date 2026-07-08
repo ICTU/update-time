@@ -17,7 +17,7 @@ uv tool install update-time
 update-time
 ```
 
-Update-time has a small command-line interface. Run `update-time -h`/`--help` to see all options, `update-time -V`/`--version` to print the version, `update-time --cooldown DAYS` to override the default cooldown period (see [Cooldown](#cooldown) below), and `update-time --log-level LEVEL` to set how much is logged (one of `DEBUG`, `INFO`, `WARNING`, `ERROR`; defaults to `INFO`). Available new versions are logged at `INFO`, so use `--log-level WARNING` to see only genuine problems, or `--log-level DEBUG` to also see which files are checked. All logging goes to standard error, leaving standard output for the `--version` and `--help` text. Running `update-time` with no options in the root folder of a repository updates all supported dependencies.
+Update-time has a small command-line interface. Run `update-time -h`/`--help` to see all options, `update-time -V`/`--version` to print the version, `update-time --cooldown DAYS` to override the default cooldown period (see [Cooldown](#cooldown) below), `update-time --stale-after DAYS` to change (or with `0` disable) the staleness warning (see [Stale dependencies](#stale-dependencies) below), and `update-time --log-level LEVEL` to set how much is logged (one of `DEBUG`, `INFO`, `WARNING`, `ERROR`; defaults to `INFO`). Available new versions are logged at `INFO`, so use `--log-level WARNING` to see only genuine problems, or `--log-level DEBUG` to also see which files are checked. All logging goes to standard error, leaving standard output for the `--version` and `--help` text. Running `update-time` with no options in the root folder of a repository updates all supported dependencies.
 
 By default Update-time scans the current directory. Pass a positional `PATH` to scan another directory instead — `update-time ../other-project` — without having to `cd` there first. `PATH` defaults to the current directory, so existing invocations are unchanged, and the paths in the log are reported relative to it. If `PATH` does not exist or is not a directory, Update-time exits with status `2`.
 
@@ -100,7 +100,17 @@ The marker can be placed two ways:
 
 This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, `devcontainer.json` files, and `requirements.txt` files. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it.
 
-Run with `--log-level DEBUG` to see each ignored reference logged and confirm a marker is recognised. Since the marker is case-sensitive, a typo (or wrong case) simply produces no such log and the reference is updated as usual.
+By default the marker holds a reference back from both version updates and the [staleness](#stale-dependencies) check. Add a bracketed scope to narrow it to just one:
+
+| Marker | Version update | Staleness warning |
+| ------ | -------------- | ----------------- |
+| `# update-time: ignore` | held back | held back |
+| `# update-time: ignore[update]` | held back | still checked |
+| `# update-time: ignore[stale]` | applied | held back |
+
+So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet, and `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
+
+Run with `--log-level DEBUG` to see each held-back update logged and confirm a marker is recognised. Since the marker is case-sensitive, a typo (or wrong case) simply produces no such log and the reference is updated as usual.
 
 For `pyproject.toml` and `package.json` — which are updated through uv, npm, and pnpm rather than line by line — the marker does not apply. Opt a dependency out there by pinning it with a maximum or non-`==` version specifier instead (for example `package<=3.12`). The marker likewise has no effect on jsDelivr URLs, which are rewritten through a whole-file substitution rather than the line-by-line engine; there is currently no way to exclude a specific jsDelivr URL from updates.
 
@@ -112,6 +122,18 @@ To avoid adopting releases that are too fresh to trust, Update-time honours a co
 - **npm dependencies** — Update-time passes the cooldown to `npm` via npm's `min-release-age` option (also measured in days), which npm added in 11.10.0; older npm versions ignore the option, so updates still run but without a cooldown. If your project already configures a cooldown in its `.npmrc` (`min-release-age` or `before`), Update-time leaves that in place instead of overriding it.
 - **pnpm dependencies** — Update-time passes the cooldown to `pnpm` via pnpm's `minimumReleaseAge` setting, converting the value to minutes (pnpm measures the age in minutes rather than days). If your project already configures `minimumReleaseAge` (in `pnpm-workspace.yaml`), Update-time leaves that in place instead of overriding it.
 - **`pyproject.toml` dependencies** — Update-time applies the cooldown through [uv](https://docs.astral.sh/uv/)'s `exclude-newer` setting, which it writes into your `pyproject.toml` under `[tool.uv]` (as a relative value such as `exclude-newer = "7 days"`, tagged with a `managed by Update-time` comment). It writes this to the workspace root, so a plain `uv sync --locked` keeps working afterwards without having to repeat the setting on the command line. Because the value lives in `[tool.uv]`, the cooldown then applies to every uv command in the project (`uv lock`, `uv add`, CI), not just to Update-time. Update-time keeps its own (commented) value in step with `--cooldown`, but never touches a value you set yourself: if your `pyproject.toml` already sets `exclude-newer` (without the marker comment), or the `UV_EXCLUDE_NEWER` environment variable is set, Update-time leaves that in place instead. Remove the marker comment to take ownership of the line and stop Update-time from changing it.
+
+## Stale dependencies
+
+Keeping a pin on the latest version doesn't help if that latest version is itself years old: the project may have been abandoned or superseded. Alongside updating, Update-time warns when a dependency's newest release is older than a threshold, so you can decide whether to keep it, replace it, or vendor it. The threshold defaults to **365 days** and is set with `--stale-after DAYS`; pass `--stale-after 0` to disable the check entirely. The warning is informational only — it never changes a file and never affects the exit status — and is logged at level `WARNING`. For example, a pin whose newest release came out well over a year ago is reported as:
+
+```console
+WARNING requirements.txt: Stale dependency humanize in docs/requirements.txt: newest release 4.15.0 was published 512 days ago (> 365)
+```
+
+The date compared against the threshold is the publication date of the dependency's *newest* release — whatever the pin currently sits at — so a project that has just published a release (even one still within the [cooldown](#cooldown) window) is never reported as stale. A reference held back with a bare `# update-time: ignore` (or `# update-time: ignore[stale]`) marker is not checked for staleness either; `# update-time: ignore[update]` holds back only the update, so its staleness is still reported (see [Excluding a reference from updates](#excluding-a-reference-from-updates)).
+
+Every kind of dependency Update-time updates is checked for staleness, except the Node engine version in `package.json`: it is derived from the project's Dockerfile rather than a registry release, so it has no publication date to compare (the Node base image it comes from is itself checked, in the Dockerfile). Two data limitations narrow the check where the date isn't available: `package.json` dependencies given as git, file, workspace, or alias references are skipped, since they don't resolve to a registry release; and image tags are only checked on Docker Hub, because the push date the check relies on isn't exposed by other registries (`ghcr.io`, `mcr.microsoft.com`, …) — the same limitation as the cooldown. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
 
 ## Point of contact
 

@@ -8,14 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Added
 
-- Discover and update requirements files named `<purpose>-requirements.txt` (e.g. `dev-requirements.txt`), in addition to the already recognized `requirements.txt`, `requirements-<purpose>.txt` (e.g. `requirements-dev.txt`), and `requirements/*.txt`. Matching is case-sensitive and limited to the `.txt` extension, so unrelated files such as `constraints.txt` or `requirements.in` are still left untouched. Closes [#114](https://github.com/ICTU/update-time/issues/114).
+- Warn when a dependency's newest release is older than a threshold, surfacing pins on abandoned or long-unmaintained projects. The threshold defaults to 365 days and is set with the new `--stale-after DAYS` option. Closes [#116](https://github.com/ICTU/update-time/issues/116).
+- Scope the `# update-time: ignore` marker with an optional `[update]` or `[stale]` suffix: `ignore[update]` holds back the version update but still warns when the dependency is stale, and `ignore[stale]` silences the staleness warning while still updating. A bare `ignore` holds back both.
+- Discover and update requirements files named `<purpose>-requirements.txt` (e.g. `dev-requirements.txt`), in addition to the already recognized `requirements.txt`, `requirements-<purpose>.txt` (e.g. `requirements-dev.txt`), and `requirements/*.txt`. Closes [#114](https://github.com/ICTU/update-time/issues/114).
 
 ## 0.0.16 - 2026-07-07
 
 ### Added
 
-- Upgrade a version number embedded in an image tag's suffix. A pin such as `python:3.14.6-alpine3.23` now advances its `alpine3.23` to a newer `alpine3.24` (on its own or together with a bump of the main version, e.g. to `3.15.0-alpine3.24`) instead of keeping the suffix version forever. The suffix label is still never crossed (`alpine` stays `alpine`, `slim` never becomes `fat`) and neither version axis is ever downgraded. Closes [#107](https://github.com/ICTU/update-time/issues/107).
-- Warn when an already-pinned image tag has been re-pushed with a different digest. If a reference such as `python:3.14.6@sha256:…` is already at the latest version but the registry now serves a different digest for that tag, Update-time logs a warning and leaves the pin unchanged, rather than silently adopting the new digest. This keeps a digest pin immutable — a re-pushed (possibly malicious) digest is surfaced for review instead of being committed as a routine update. Closes [#110](https://github.com/ICTU/update-time/issues/110).
+- Upgrade a version number embedded in an image tag's suffix. A pin such as `python:3.14.6-alpine3.23` now advances its `alpine3.23` to a newer `alpine3.24` (on its own or together with a bump of the main version, e.g. to `3.15.0-alpine3.24`) instead of keeping the suffix version forever. Closes [#107](https://github.com/ICTU/update-time/issues/107).
+- Warn when an already-pinned image tag has been re-pushed with a different digest. If a reference such as `python:3.14.6@sha256:…` is already at the latest version but the registry now serves a different digest for that tag, Update-time logs a warning and leaves the pin unchanged, rather than silently adopting the new digest. Closes [#110](https://github.com/ICTU/update-time/issues/110).
 
 ### Fixed
 

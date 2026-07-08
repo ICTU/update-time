@@ -15,6 +15,7 @@ from update_time.sources.github import (
     get_release,
     github_owner_and_repository,
     github_to_raw,
+    newest_publication_date,
 )
 
 from tests.update_time.helpers import CacheClearingTestCase, commits_json, mock_response, release_json
@@ -172,6 +173,35 @@ class GetLatestReleaseTest(CacheClearingTestCase):
             ),
             release,
         )
+
+
+class NewestPublicationDateTest(CacheClearingTestCase):
+    """Unit tests for the newest release publication date of a GitHub repo."""
+
+    @patch("requests.get")
+    def test_newest_across_releases(self, mock_get: Mock):
+        """Test that the most recent publication date wins, including pre-releases and ignoring undated releases."""
+        newest = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        older = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+        mock_get.return_value = mock_response(
+            [
+                release_json("2.0b1", prerelease=True, published_at=newest),
+                release_json("1.1", published_at=older),
+                release_json("1.0"),  # A draft-like release with no publication date is ignored.
+            ]
+        )
+        self.assertEqual(datetime.fromisoformat(newest), newest_publication_date("owner", "active"))
+
+    @patch("requests.get", Mock(return_value=mock_response([])))
+    def test_no_releases(self):
+        """Test that a repo with no releases has no newest publication date."""
+        self.assertIsNone(newest_publication_date("owner", "no releases"))
+
+    @patch("requests.get")
+    def test_fetch_failure(self, mock_get: Mock):
+        """Test that no date is returned when the releases can't be fetched."""
+        mock_get.return_value = mock_response([], ok=False)
+        self.assertIsNone(newest_publication_date("owner", "unreachable"))
 
 
 class GetReleaseTest(CacheClearingTestCase):

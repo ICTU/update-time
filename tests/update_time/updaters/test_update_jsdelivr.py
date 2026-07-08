@@ -9,7 +9,7 @@ from update_time.updaters.update_jsdelivr import update_jsdelivr, update_jsdeliv
 
 from tests.update_time.assertions import assert_success
 from tests.update_time.fixtures import HASH1, HASH2
-from tests.update_time.helpers import LoggingTestCase, mock_path, mock_response
+from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, mock_path, mock_response, npm_registry
 
 # The flat package listing as returned by the jsDelivr API with ?structure=flat, referencing the file below.
 FILENAME = "/dist/clipboard.min.js"
@@ -17,16 +17,6 @@ FLAT_FILES = {"default": FILENAME, "files": [{"name": FILENAME, "hash": HASH2}]}
 
 # An npm publication date comfortably past the cooldown, relative to now so the decision doesn't depend on the clock.
 ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN_DAYS + 1)).isoformat()
-
-
-def jsdelivr_versions(*version_strings: str) -> Mock:
-    """Return a mock jsDelivr package API response listing the given versions (newest first)."""
-    return mock_response({"versions": [{"version": version} for version in version_strings]})
-
-
-def npm_registry(published: dict[str, str]) -> Mock:
-    """Return a mock npm registry response mapping versions to their publication dates."""
-    return mock_response({"time": published})
 
 
 # The relevant part of the Sphinx config, formatted as Ruff would format it.
@@ -89,10 +79,18 @@ class UpdateJsdelivrTest(LoggingTestCase):
 
     def test_unchanged(self, mock_get: Mock):
         """Test that the content is unchanged if there is no new version."""
-        mock_get.side_effect = [jsdelivr_versions("2.0.11")]
+        mock_get.side_effect = [jsdelivr_versions("2.0.11"), npm_registry({"2.0.11": ELIGIBLE})]
         self.assertEqual(CONF, update_jsdelivr(CONF, Path.cwd() / "docs" / "conf.py"))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
+
+    def test_stale_dependency_warned(self, mock_get: Mock):
+        """Test that a jsDelivr package whose newest release is old is warned about, without rewriting the URL."""
+        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        mock_get.side_effect = [jsdelivr_versions("2.0.11"), npm_registry({"2.0.11": old})]
+        conf_py = Path.cwd() / "docs" / "conf.py"
+        self.assertEqual(CONF, update_jsdelivr(CONF, conf_py))  # no newer version, so no rewrite
+        self.assert_stale_dependency_logged(conf_py, "clipboard", "2.0.11")
 
 
 @patch("pathlib.Path.rglob")
@@ -119,7 +117,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
 
     def test_no_changes(self, mock_get: Mock, mock_glob: Mock):
         """Test that a discovered Sphinx config is not rewritten when there is no new version."""
-        mock_get.side_effect = [jsdelivr_versions("2.0.11")]
+        mock_get.side_effect = [jsdelivr_versions("2.0.11"), npm_registry({"2.0.11": ELIGIBLE})]
         mock_conf = mock_path(CONF)
         mock_glob.return_value = [mock_conf]
         assert_success(update_jsdelivrs())

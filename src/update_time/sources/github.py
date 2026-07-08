@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
+from update_time.domain.staleness import newest_datetime
 from update_time.domain.version import is_valid
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
@@ -123,6 +124,17 @@ def get_latest_release(owner: str, repository: str) -> Release | None:
     if latest is None:
         LOG.no_version(f"{owner}/{repository}")
     return latest
+
+
+def newest_publication_date(owner: str, repository: str) -> datetime | None:
+    """Return the repo's most recent release publication date, or None if it has no dated releases.
+
+    Taken over every release (including pre-releases) and ignoring cooldown eligibility, so a repo that has just
+    published anything counts as active. Drafts carry no publication date and are naturally excluded. Reuses the
+    cached releases list, so it costs no extra request on top of `get_latest_release`.
+    """
+    releases = _list_releases(owner, repository) or ()
+    return newest_datetime(release["published_at"] for release in releases if release.get("published_at"))
 
 
 def get_release(owner: str, repository: str, package: str, version: str) -> Release | None:

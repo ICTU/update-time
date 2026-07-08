@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.cooldown import cooldown_days
 from update_time.domain.version import DependencyVersion
+from update_time.file_formats.package_json import DEPENDENCY_SECTIONS
 from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.sources.npmjs import get_changes, get_publication_datetime
@@ -31,7 +32,7 @@ def _pnpm_installed_versions(listed: dict | list) -> dict[str, str]:
     """
     versions = {}
     for project in listed if isinstance(listed, list) else []:
-        for section in ("dependencies", "devDependencies", "optionalDependencies"):
+        for section in DEPENDENCY_SECTIONS:
             for package, info in project.get(section, {}).items():
                 if "version" in info:
                     versions[package] = info["version"]

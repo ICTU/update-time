@@ -3,13 +3,18 @@
 import sys
 from typing import TYPE_CHECKING
 
+from update_time.domain.staleness import warn_about_stale_dependencies
 from update_time.file_formats import package_json as package_json_format
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.package_managers import node
+from update_time.sources import npmjs
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
+
+    from update_time.domain.version import DependencyVersion
 
 LOG = get_logger("package.json")
 # Lockfiles that signal which package manager a project uses, checked when there is no corepack `packageManager`
@@ -35,12 +40,20 @@ def package_manager(package_json: Path) -> str:
 
 def update_package_jsons() -> int:
     """Find all package.json files and update each with its (supported) package manager, skipping the rest."""
+    supported = []
     for package_json in glob("package.json"):
         if (manager := node.SUPPORTED_MANAGERS.get(name := package_manager(package_json))) is None:
             LOG.unsupported_package_manager(package_json, name, "npm and pnpm")
         else:
             manager.update_package_json(package_json)
+            supported.append(package_json)
+    warn_about_stale_dependencies(supported, _newest_releases, LOG.warn_if_stale)
     return 0
+
+
+def _newest_releases(package_json: Path) -> Iterable[tuple[str, DependencyVersion | None]]:
+    """Yield each declared dependency as a (name, newest npm release | None) pair, for the staleness check."""
+    return ((name, npmjs.newest_release(name)) for name in package_json_format.dependency_names(package_json))
 
 
 def main() -> int:  # pragma: no cover

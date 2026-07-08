@@ -1,11 +1,15 @@
 """npmjs unit tests."""
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 
-from update_time.sources.npmjs import get_changes, get_publication_datetime
+from update_time.sources.npmjs import get_changes, get_publication_datetime, newest_publication_date, newest_release
 
 from tests.update_time.helpers import CacheClearingTestCase, mock_response
+
+if TYPE_CHECKING:
+    from update_time.domain.version import DependencyVersion
 
 
 class NpmjsPublicationDatetimeTest(CacheClearingTestCase):
@@ -38,6 +42,48 @@ class NpmjsPublicationDatetimeTest(CacheClearingTestCase):
     def test_get_changes_when_unreachable(self):
         """Test that an unreachable registry yields no changelog instead of crashing."""
         self.assertEqual("", get_changes("package", "1.0"))
+
+
+class NpmjsNewestPublicationDateTest(CacheClearingTestCase):
+    """Unit tests for the newest publication date across a package's versions."""
+
+    @patch("requests.get")
+    def test_newest_ignores_bookkeeping_entries(self, mock_get: Mock):
+        """Test that the newest version's date is returned, ignoring the `created`/`modified` entries."""
+        time_map = {
+            "created": "2019-01-01T00:00:00Z",
+            "modified": "2030-01-01T00:00:00Z",  # later than any version, but bookkeeping — must be ignored
+            "1.0": "2020-01-01T00:00:00Z",
+            "1.1": "2024-06-01T00:00:00Z",
+        }
+        mock_get.return_value = mock_response({"time": time_map})
+        self.assertEqual(datetime(2024, 6, 1, tzinfo=UTC), newest_publication_date("package"))
+
+    @patch("logging.Logger.warning", Mock())
+    @patch("requests.get", Mock(return_value=mock_response(ok=False)))
+    def test_unreachable(self):
+        """Test that an unreachable registry yields no date instead of crashing."""
+        self.assertIsNone(newest_publication_date("package"))
+
+
+class NpmjsNewestReleaseTest(CacheClearingTestCase):
+    """Unit tests for the newest release (version + publication date) fetcher."""
+
+    @patch("requests.get")
+    def test_newest_release(self, mock_get: Mock):
+        """Test that the `latest` dist-tag and its publication date are returned as a DependencyVersion."""
+        mock_get.return_value = mock_response(
+            {"dist-tags": {"latest": "2.0"}, "time": {"1.0": "2020-01-01T00:00:00Z", "2.0": "2024-06-01T00:00:00Z"}}
+        )
+        release = cast("DependencyVersion", newest_release("package"))
+        self.assertEqual("2.0", release.version)
+        self.assertEqual(datetime(2024, 6, 1, tzinfo=UTC), release.newest_published)
+
+    @patch("logging.Logger.warning", Mock())
+    @patch("requests.get", Mock(return_value=mock_response(ok=False)))
+    def test_no_latest_tag(self):
+        """Test that a package with no `latest` dist-tag (e.g. unreachable) yields None."""
+        self.assertIsNone(newest_release("package"))
 
 
 class GetChangesRepositoryTest(CacheClearingTestCase):

@@ -1,6 +1,7 @@
 """Unit tests for the pyproject.toml updater (discovery and orchestration of the uv package manager)."""
 
 import subprocess  # nosec
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 from unittest.mock import Mock, patch
@@ -8,7 +9,14 @@ from unittest.mock import Mock, patch
 from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 
 from tests.update_time.assertions import assert_success
-from tests.update_time.helpers import LoggingTestCase, commits_json, mock_path, mock_response, release_json
+from tests.update_time.helpers import (
+    LoggingTestCase,
+    commits_json,
+    mock_path,
+    mock_response,
+    release_json,
+    staleness_disabled,
+)
 
 if TYPE_CHECKING:
     from update_time.sources.pypi import Release
@@ -20,7 +28,9 @@ def pyproject(spec: str) -> str:
 
 
 # Persisting the cooldown into config is exercised by the uv package manager's tests; stub it out here so these tests
-# focus on the discovery/version-update flow (and don't try to write config to the mock pyproject.toml files).
+# focus on the discovery/version-update flow (and don't try to write config to the mock pyproject.toml files). The
+# staleness pass is disabled here (it makes its own PyPI requests); it has its own tests in StaleDependencyTest below.
+@staleness_disabled
 @patch("update_time.package_managers.uv.configure_cooldown", Mock())
 @patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
 @patch("pathlib.Path.rglob")
@@ -211,3 +221,52 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         mock_pyproject_toml.write_text.assert_not_called()
         self.assert_invalid_pyproject_toml_logged(mock_pyproject_toml)
         self.assert_no_new_version_logged()
+
+
+@patch("update_time.package_managers.uv.configure_cooldown", Mock())
+@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
+@patch("pathlib.Path.rglob")
+@patch("requests.get")
+@patch("subprocess.run")
+class StaleDependencyTest(LoggingTestCase):
+    """Unit tests for the pyproject.toml staleness check, which makes its own PyPI pass over the `==` pins.
+
+    uv is stubbed to report no update (`| package` with no `(latest: …)`), so the only PyPI request comes from the
+    staleness pass; its Index API response carries the newest release's file upload time.
+    """
+
+    @staticmethod
+    def simple_api(version: str, upload_time: str) -> Mock:
+        """Mock the PyPI Index API response listing one version with a distribution-file upload time."""
+        return mock_response({"versions": [version], "files": [{"upload-time": upload_time}]})
+
+    def mock_pyproject_toml(self, glob: Mock) -> Mock:
+        """Discover a single mock pyproject.toml pinning `package==1.0`."""
+        pyproject_toml = mock_path(pyproject("package==1.0"), parent=Path("/"))
+        glob.return_value = [pyproject_toml]
+        return pyproject_toml
+
+    def test_stale_dependency_warned(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a direct dependency whose newest release is old is warned about."""
+        run.return_value = Mock(stdout="| package\n")
+        get.return_value = self.simple_api("1.0", (datetime.now(UTC) - timedelta(days=512)).isoformat())
+        pyproject_toml = self.mock_pyproject_toml(glob)
+        assert_success(update_pyproject_tomls())
+        self.assert_stale_dependency_logged(pyproject_toml, "package", "1.0")
+
+    def test_recent_dependency_not_warned(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a direct dependency whose newest release is recent is not warned about as stale."""
+        run.return_value = Mock(stdout="| package\n")
+        get.return_value = self.simple_api("1.0", datetime.now(UTC).isoformat())
+        self.mock_pyproject_toml(glob)
+        assert_success(update_pyproject_tomls())
+        self.assert_no_warnings_logged()
+
+    @staleness_disabled
+    def test_disabled_makes_no_pypi_request(self, run: Mock, get: Mock, glob: Mock):
+        """Test that `--stale-after 0` skips the staleness pass entirely, so it makes no PyPI request."""
+        run.return_value = Mock(stdout="| package\n")
+        self.mock_pyproject_toml(glob)
+        assert_success(update_pyproject_tomls())
+        get.assert_not_called()
+        self.assert_no_warnings_logged()

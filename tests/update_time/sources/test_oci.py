@@ -213,6 +213,24 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
         self.assertEqual("1.4", latest.version)
         self.assertEqual(datetime.fromisoformat(old), latest.published)
 
+    def test_newest_published_ignores_cooldown(self):
+        """Test that newest_published is the newest tag's push date even when that tag is held back by the cooldown."""
+        recent = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.4", DIGEST, tag_last_pushed=recent))
+        latest = get_latest_tag("newest_published", "1.3")
+        self.assertEqual("1.3", latest.version)  # 1.4 is held back by the cooldown...
+        self.assertEqual(datetime.fromisoformat(recent), latest.newest_published)  # ...but still defines staleness.
+
+    def test_newest_published_none_for_other_registry(self):
+        """Test that no newest_published is set for non-Docker-Hub registries, which expose no push date."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("1.1", DIGEST), challenge=False)
+        self.assertIsNone(get_latest_tag("mcr.microsoft.com/dotnet/sdk", "1.0").newest_published)
+
+    def test_newest_published_none_without_candidates(self):
+        """Test that no newest_published is set when the registry lists no compatible tags to date."""
+        self.requests.side_effect = mock_docker_registry()
+        self.assertIsNone(get_latest_tag("no_tags", "1.0").newest_published)
+
     @patch.dict("os.environ", {"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
     @patch("requests.post")
     def test_user_bearer_token(self, mock_post: Mock):

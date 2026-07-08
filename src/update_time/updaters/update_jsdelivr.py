@@ -25,6 +25,7 @@ def update_jsdelivr(content: str, path: Path) -> str:
     def replace(match: re.Match[str]) -> str:
         dependency, version, filename = match.group("dependency"), match.group("version"), match.group("filename")
         latest_version = get_latest_version(dependency, version, filename)
+        LOG.warn_if_stale(dependency, latest_version, path)
         if latest_version.version == version:
             return match.group(0)
         LOG.new_version(dependency, latest_version, path)

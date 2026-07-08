@@ -4,10 +4,11 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN_DAYS
+from update_time.domain.staleness import STALE_AFTER_DAYS_ENV_VAR
 from update_time.sources.jsdelivr import get_latest_version
 
 from tests.update_time.fixtures import HASH1, HASH2
-from tests.update_time.helpers import LoggingTestCase, mock_response
+from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, mock_response, npm_registry
 
 # The file referenced in the jsDelivr URL, and a flat package listing as returned by the API with ?structure=flat.
 FILENAME = "/dist/clipboard.min.js"
@@ -16,16 +17,6 @@ FLAT_FILES = {"default": FILENAME, "files": [{"name": FILENAME, "hash": HASH2}]}
 # npm publication dates, relative to now so the cooldown decision is independent of the wall clock.
 ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN_DAYS + 1)).isoformat()  # comfortably past the cooldown
 FRESH = (datetime.now(UTC) - timedelta(days=1)).isoformat()  # still within the cooldown
-
-
-def jsdelivr_versions(*version_strings: str) -> Mock:
-    """Return a mock jsDelivr package API response listing the given versions (newest first)."""
-    return mock_response({"versions": [{"version": version} for version in version_strings]})
-
-
-def npm_registry(published: dict[str, str]) -> Mock:
-    """Return a mock npm registry response mapping versions to their publication dates."""
-    return mock_response({"time": published})
 
 
 @patch("requests.get")
@@ -40,7 +31,7 @@ class GetLatestVersionTest(LoggingTestCase):
 
     def test_unchanged_when_current_is_newest(self, mock_get: Mock):
         """Test that no newer version keeps the current version and fetches no integrity hash."""
-        mock_get.side_effect = [jsdelivr_versions("1.0", "0.9")]
+        mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": ELIGIBLE})]
         latest_version = get_latest_version("clipboard", "1.0", FILENAME)
         self.assertEqual("1.0", latest_version.version)
         self.assertEqual("", latest_version.sha)
@@ -60,8 +51,7 @@ class GetLatestVersionTest(LoggingTestCase):
         """Test that a version within the cooldown is skipped and the newest eligible older version is chosen."""
         mock_get.side_effect = [
             jsdelivr_versions("2.0", "1.5", "1.0"),
-            npm_registry({"2.0": FRESH}),  # too fresh, skipped
-            npm_registry({"1.5": ELIGIBLE}),  # eligible, chosen
+            npm_registry({"2.0": FRESH, "1.5": ELIGIBLE}),  # one registry doc: 2.0 too fresh, 1.5 eligible
             mock_response(FLAT_FILES),
         ]
         latest_version = get_latest_version("clipboard", "1.0", FILENAME)
@@ -77,7 +67,7 @@ class GetLatestVersionTest(LoggingTestCase):
 
     def test_prerelease_ignored(self, mock_get: Mock):
         """Test that a newer pre-release is not adopted (and no publication date is looked up for it)."""
-        mock_get.side_effect = [jsdelivr_versions("2.0.0-rc.1", "1.0")]
+        mock_get.side_effect = [jsdelivr_versions("2.0.0-rc.1", "1.0"), npm_registry({"1.0": ELIGIBLE})]
         self.assertEqual("1.0", get_latest_version("clipboard", "1.0", FILENAME).version)
 
     def test_version_without_publication_date_skipped(self, mock_get: Mock):
@@ -92,7 +82,7 @@ class GetLatestVersionTest(LoggingTestCase):
 
     def test_package_api_unreachable_keeps_current(self, mock_get: Mock):
         """Test that an unreachable jsDelivr package API leaves the version unchanged instead of crashing."""
-        mock_get.side_effect = [mock_response(ok=False)]
+        mock_get.side_effect = [mock_response(ok=False), npm_registry({"1.0": ELIGIBLE})]
         self.assertEqual("1.0", get_latest_version("clipboard", "1.0", FILENAME).version)
 
     def test_integrity_fetch_failure_keeps_current(self, mock_get: Mock):
@@ -135,3 +125,19 @@ class GetLatestVersionTest(LoggingTestCase):
             FILENAME,
             stacklevel=ANY,
         )
+
+    def test_newest_published_attached(self, mock_get: Mock):
+        """Test that the package's newest npm publication date is attached for the staleness check."""
+        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": old})]
+        self.assertEqual(datetime.fromisoformat(old), get_latest_version("clipboard", "1.0", FILENAME).newest_published)
+
+    def test_newest_published_skipped_when_disabled(self, mock_get: Mock):
+        """Test that the extra npm request is not made (and no date attached) when the staleness check is disabled.
+
+        Only the jsDelivr version list is provided; a second (npm) request would raise, proving it isn't made.
+        """
+        mock_get.side_effect = [jsdelivr_versions("1.0", "0.9")]
+        with patch.dict("os.environ", {STALE_AFTER_DAYS_ENV_VAR: "0"}):
+            latest_version = get_latest_version("clipboard", "1.0", FILENAME)
+        self.assertIsNone(latest_version.newest_published)
