@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Discover and update requirements files named `<purpose>-requirements.txt` (e.g. `dev-requirements.txt`), in addition to the already recognized `requirements.txt`, `requirements-<purpose>.txt` (e.g. `requirements-dev.txt`), and `requirements/*.txt`. Matching is case-sensitive and limited to the `.txt` extension, so unrelated files such as `constraints.txt` or `requirements.in` are still left untouched. Closes [#114](https://github.com/ICTU/update-time/issues/114).
 
 ## 0.0.16 - 2026-07-07
 

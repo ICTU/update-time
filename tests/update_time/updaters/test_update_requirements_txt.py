@@ -1,9 +1,11 @@
 """Unit tests for the requirements.txt update script."""
 
+import unittest
 from datetime import UTC, datetime
+from pathlib import PurePath
 from unittest.mock import MagicMock, Mock, patch
 
-from update_time.updaters.update_requirements_txt import update_requirements_txts
+from update_time.updaters.update_requirements_txt import REQUIREMENTS_GLOB_PATTERNS, update_requirements_txts
 
 from tests.update_time.assertions import (
     assert_success,
@@ -145,3 +147,37 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_no_path_logged()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
+
+
+class RequirementsGlobPatternsTest(unittest.TestCase):
+    """Unit tests for which paths the requirements glob patterns match.
+
+    `glob` uses `rglob`, which matches each path against the pattern with `PurePath.full_match`, so matching the
+    patterns directly mirrors discovery without touching the file system.
+    """
+
+    def matches(self, path: str) -> bool:
+        """Return whether any requirements glob pattern matches the path, case-sensitively (as `glob` matches)."""
+        return any(PurePath(path).full_match(pattern, case_sensitive=True) for pattern in REQUIREMENTS_GLOB_PATTERNS)
+
+    def test_recognized_flat_names(self):
+        """Test that the flat requirements naming conventions match."""
+        for name in ("requirements.txt", "requirements-dev.txt", "dev-requirements.txt"):
+            self.assertTrue(self.matches(name), name)
+
+    def test_nested_requirements_directory(self):
+        """Test that a requirements file in a nested `requirements/` directory matches."""
+        self.assertTrue(self.matches("requirements/base.txt"))
+
+    def test_unrelated_txt_files_ignored(self):
+        """Test that unrelated `.txt` files, a `requirements.in` source, and names without a hyphen do not match.
+
+        The purpose must be hyphen-separated on both sides, so `requirementsfoo.txt` and `foorequirements.txt` are
+        not treated as requirements files (only `requirements-foo.txt` / `foo-requirements.txt` are).
+        """
+        for name in ("notes.txt", "constraints.txt", "requirements.in", "requirementsfoo.txt", "foorequirements.txt"):
+            self.assertFalse(self.matches(name), name)
+
+    def test_case_sensitive(self):
+        """Test that matching is case-sensitive, so a differently-cased name does not match."""
+        self.assertFalse(self.matches("Requirements.txt"))
