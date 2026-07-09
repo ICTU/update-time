@@ -47,6 +47,24 @@ class UpdateDockerfileTest(helpers.ImageUpdaterTestMixin):
         self.assert_new_version_logged(mock_dockerfile, "ruby", "3.4")
         self.assert_no_warnings_logged()
 
+    def test_platform_flag_with_build_arg_is_preserved(self):
+        """Test that a `FROM --platform=$BUILDPLATFORM image:tag` line is updated with the flag left untouched."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        mock_dockerfile = mock_path("FROM --platform=$BUILDPLATFORM python:3.14\n")
+        assert_success(self.run_updater(mock_dockerfile))
+        mock_dockerfile.write_text.assert_called_with(f"FROM --platform=$BUILDPLATFORM python:3.15@{DIGEST2}\n")
+        self.assert_new_version_logged(mock_dockerfile, "python", "3.15")
+        self.assert_no_warnings_logged()
+
+    def test_platform_flag_with_literal_value_and_stage_alias_is_preserved(self):
+        """Test that a `FROM --platform=linux/amd64 image:tag AS name` line keeps both the flag and the stage alias."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("20", DIGEST2))
+        mock_dockerfile = mock_path("FROM --platform=linux/amd64 node:18 AS build\n")
+        assert_success(self.run_updater(mock_dockerfile))
+        mock_dockerfile.write_text.assert_called_with(f"FROM --platform=linux/amd64 node:20@{DIGEST2} AS build\n")
+        self.assert_new_version_logged(mock_dockerfile, "node", "20")
+        self.assert_no_warnings_logged()
+
     def test_ignore_marker_leaves_base_image_untouched(self):
         """Test that a FROM line pinned by a preceding `# update-time: ignore` comment is not updated or queried."""
         mock_dockerfile = mock_path("# update-time: ignore\nFROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim\n")
