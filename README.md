@@ -46,7 +46,7 @@ To raise API rate limits while updating, set the following environment variables
 
 ## What is updated
 
-Update-time runs a set of updater scripts, each responsible for one kind of dependency. The file-rewriting scripts run concurrently where it's safe to do so; `package.json` engine and dependency updates run sequentially because they touch the same files.
+Update-time updates the following types of dependencies, found in the listed files, and using the listed sources:
 
 | Dependency | Files | Source |
 | ---------- | ----- | ------ |

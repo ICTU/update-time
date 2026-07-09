@@ -58,7 +58,7 @@ No changes yet.
 ### Added
 
 - Update `package.json` files managed by [pnpm](https://pnpm.io) using pnpm, instead of skipping them, keeping both `package.json` and `pnpm-lock.yaml` in sync. The cooldown is applied via pnpm's `minimumReleaseAge`; yarn and bun are still skipped with a warning. Closes [#47](https://github.com/ICTU/update-time/issues/47).
-- Update the base `image` and each `features` entry in `.devcontainer/devcontainer.json` and `.devcontainer.json`, bumping each OCI reference to its latest tag and pinning it with the digest. Devcontainers that build from a `dockerfile` or `dockerComposeFile` are left to the Dockerfile and Compose updaters. Closes [#49](https://github.com/ICTU/update-time/issues/49).
+- Update the base `image` and each `features` entry in `.devcontainer/devcontainer.json` and `.devcontainer.json`, bumping each OCI reference to its latest tag and pinning it with the digest. Devcontainers that build from a `dockerfile` or `dockerComposeFile` are updated as part of that Dockerfile or Compose file. Closes [#49](https://github.com/ICTU/update-time/issues/49).
 - Update Dockerfiles named `*.Dockerfile` or `Dockerfile.*` (e.g. `python.Dockerfile`, `Dockerfile.dev`), not only files named exactly `Dockerfile`.
 
 ### Fixed
@@ -75,9 +75,9 @@ No changes yet.
 
 ### Added
 
-- Resolve image versions on registries other than Docker Hub (e.g. `ghcr.io`, `mcr.microsoft.com`, `gcr.io`, `quay.io`), wherever the updaters find image references (Dockerfiles, Docker Compose / Helm manifests, CircleCI, GitLab CI). This reverses the earlier "skip non-Docker Hub images" behavior. The cooldown still only applies to Docker Hub, because the OCI protocol exposes no publication date. Closes [#48](https://github.com/ICTU/update-time/issues/48).
+- Resolve image versions on registries other than Docker Hub (e.g. `ghcr.io`, `mcr.microsoft.com`, `gcr.io`, `quay.io`), wherever Update-time finds image references (Dockerfiles, Docker Compose / Helm manifests, CircleCI, GitLab CI). This reverses the earlier "skip non-Docker Hub images" behavior. The cooldown still only applies to Docker Hub, because the OCI protocol exposes no publication date. Closes [#48](https://github.com/ICTU/update-time/issues/48).
 - Update image tags whose version carries a non-numeric label prefix, such as `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` (bumped to `python3.13-bookworm-slim` and digest-pinned), preserving the prefix and suffix. Previously these tags were left unchanged. Closes [#55](https://github.com/ICTU/update-time/issues/55).
-- Leave a reference unchanged when its line carries an `# update-time: ignore` comment, so an update can be pinned deliberately. It works across the line-based updaters (Dockerfiles, Docker Compose / Helm manifests, CircleCI, GitLab CI, GitHub Actions, `requirements.txt`), inline or as a comment on the line directly above, and each ignored reference is logged at `DEBUG`. Closes [#56](https://github.com/ICTU/update-time/issues/56).
+- Leave a reference unchanged when its line carries an `# update-time: ignore` comment, so an update can be pinned deliberately. It works for Dockerfiles, Docker Compose / Helm manifests, CircleCI, GitLab CI, GitHub Actions, and `requirements.txt`, inline or as a comment on the line directly above, and each ignored reference is logged at `DEBUG`. Closes [#56](https://github.com/ICTU/update-time/issues/56).
 
 ## 0.0.11 - 2026-06-29
 
