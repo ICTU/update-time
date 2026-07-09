@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.18 - 2026-07-10
+
 ### Added
 
 - Opt in to adopting image digest drift. When an already-pinned image tag has been re-pushed under the same version, Update-time still warns by default, but a new `# update-time: allow[digest-drift]` marker (or the global `--allow-image-digest-drift` flag) now makes it adopt the new digest instead. Closes [#120](https://github.com/ICTU/update-time/issues/120).
