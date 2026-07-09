@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 from update_time.sources.docker_hub import api_headers
 
-from tests.update_time.helpers import CacheClearingTestCase, mock_response
+from tests.update_time.helpers import CacheClearingTestCase, mock_response, patch_environ
 
 
 class ApiHeadersTest(CacheClearingTestCase):
@@ -12,17 +12,17 @@ class ApiHeadersTest(CacheClearingTestCase):
 
     def test_no_headers_without_credentials(self):
         """Test that no authorization header is built when no credentials are configured."""
-        with patch.dict("os.environ", {}, clear=True):
+        with patch_environ():
             self.assertEqual({}, api_headers())
 
     @patch("requests.post")
     def test_no_headers_with_incomplete_credentials(self, mock_post: Mock):
         """Test that no header is built, and no token requested, when only one of the two credentials is set."""
-        with patch.dict("os.environ", {"DOCKER_HUB_USERNAME": "joe_doe"}, clear=True):  # nosec
+        with patch_environ({"DOCKER_HUB_USERNAME": "joe_doe"}, clear=True):  # nosec
             self.assertEqual({}, api_headers())
         mock_post.assert_not_called()  # Both credentials are required, so the token endpoint is never called.
 
-    @patch.dict("os.environ", {"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
+    @patch_environ({"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
     @patch("requests.post")
     def test_bearer_token_header_when_credentials_are_configured(self, mock_post: Mock):
         """Test that a bearer token is fetched with the credentials and returned as the Authorization header."""
@@ -34,7 +34,7 @@ class ApiHeadersTest(CacheClearingTestCase):
             json={"identifier": "joe_doe", "secret": "pat123"},  # nosec
         )
 
-    @patch.dict("os.environ", {"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
+    @patch_environ({"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
     @patch("logging.Logger.warning", Mock())
     @patch("requests.post", Mock(return_value=mock_response(ok=False)))
     def test_no_headers_when_token_request_fails(self):

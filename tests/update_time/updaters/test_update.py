@@ -10,6 +10,8 @@ from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR
 from update_time.io.log import LOG_LEVEL_ENV_VAR
 from update_time.updaters.update import PARALLEL_SCRIPTS, SEQUENTIAL_SCRIPTS, main, run_script, update_dependencies
 
+from tests.update_time.helpers import patch_environ
+
 
 @patch("subprocess.run")
 class UpdateTest(unittest.TestCase):
@@ -24,7 +26,7 @@ class UpdateTest(unittest.TestCase):
         supply the `os.chdir`, `Path.exists`, and `get_logger` patches they need via decorators or a `with` block.
         """
         mock_run.return_value = Mock(returncode=0)
-        with patch.dict("os.environ", clear=True), patch("sys.argv", ["update-time", *argv]):
+        with patch_environ(), patch("sys.argv", ["update-time", *argv]):
             main()
             return dict(os.environ)
 
@@ -93,9 +95,14 @@ class UpdateTest(unittest.TestCase):
     @patch("os.chdir", Mock())
     def test_main_leaves_non_existing_excluded_paths_out_of_the_environment(self, mock_run: Mock):
         """Test that a non-existing excluded path is warned about but not passed down to the subprocesses."""
-        with patch("pathlib.Path.exists", autospec=True, side_effect=lambda self: self == Path("vendor")):
+        mock_logger = Mock()
+        with (
+            patch("update_time.updaters.update.get_logger", Mock(return_value=mock_logger)),
+            patch("pathlib.Path.exists", autospec=True, side_effect=lambda self: self == Path("vendor")),
+        ):
             environment = self.run_main(mock_run, "--exclude-path", "vendor,missing")
         self.assertEqual("vendor", environment[EXCLUDE_PATHS_ENV_VAR])
+        mock_logger.missing_excluded_path.assert_called_once_with(Path("missing"))
 
     @patch("os.chdir", Mock())
     @patch("pathlib.Path.exists", Mock(return_value=True))

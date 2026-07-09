@@ -18,7 +18,7 @@ from update_time.sources.github import (
     newest_publication_date,
 )
 
-from tests.update_time.helpers import CacheClearingTestCase, commits_json, mock_response, release_json
+from tests.update_time.helpers import CacheClearingTestCase, commits_json, mock_response, patch_get, release_json
 
 
 def assert_fetch_warning(mock_warning: Mock, mock_get: Mock) -> None:
@@ -110,7 +110,7 @@ class GetLatestReleaseTest(CacheClearingTestCase):
         mock_error.assert_not_called()
 
     @patch("logging.Logger.error")
-    @patch("requests.get", Mock(return_value=mock_response([])))
+    @patch_get([])
     def test_no_version_error_when_repo_has_no_releases(self, mock_error: Mock):
         """Test that a reachable repo with no eligible releases logs a 'no valid version' error."""
         self.assertIsNone(get_latest_release("owner", "repository without releases"))
@@ -118,17 +118,17 @@ class GetLatestReleaseTest(CacheClearingTestCase):
             "No valid version found for %s", "owner/repository without releases", stacklevel=ANY
         )
 
-    @patch("requests.get", Mock(return_value=mock_response([release_json("1.0", draft=True)])))
+    @patch_get([release_json("1.0", draft=True)])
     def test_skip_draft_releases(self):
         """Test that draft releases are not included."""
         self.assertIsNone(get_latest_release("owner", "repository with only a draft release"))
 
-    @patch("requests.get", Mock(return_value=mock_response([release_json("1.0", prerelease=True)])))
+    @patch_get([release_json("1.0", prerelease=True)])
     def test_skip_prerelease_releases(self):
         """Test that prerelease releases are not included."""
         self.assertIsNone(get_latest_release("owner", "repository with only a prerelease release"))
 
-    @patch("requests.get", Mock(return_value=mock_response([release_json("invalid-1.0")])))
+    @patch_get([release_json("invalid-1.0")])
     def test_invalid_versions(self):
         """Test that invalid versions are not included."""
         self.assertIsNone(get_latest_release("owner", "repository with a invalid version"))
@@ -192,64 +192,52 @@ class NewestPublicationDateTest(CacheClearingTestCase):
         )
         self.assertEqual(datetime.fromisoformat(newest), newest_publication_date("owner", "active"))
 
-    @patch("requests.get", Mock(return_value=mock_response([])))
+    @patch_get([])
     def test_no_releases(self):
         """Test that a repo with no releases has no newest publication date."""
         self.assertIsNone(newest_publication_date("owner", "no releases"))
 
-    @patch("requests.get")
-    def test_fetch_failure(self, mock_get: Mock):
+    @patch_get([], ok=False)
+    @patch("logging.Logger.warning")
+    def test_fetch_failure(self, mock_warning: Mock):
         """Test that no date is returned when the releases can't be fetched."""
-        mock_get.return_value = mock_response([], ok=False)
         self.assertIsNone(newest_publication_date("owner", "unreachable"))
+        mock_warning.assert_called_once_with("Could not fetch %s: %s", ANY, ANY, stacklevel=ANY)
 
 
 class GetReleaseTest(CacheClearingTestCase):
     """Unit tests for getting a release matching a specific package and version."""
 
-    @patch("requests.get")
-    def test_monorepo_tag_match(self, mock_get: Mock):
+    @patch_get([release_json("puppeteer-v25.1.0"), release_json("puppeteer-core-v25.0.4", body="Changelog")])
+    def test_monorepo_tag_match(self):
         """Test finding a release in a monorepo where tags are prefixed with the package name."""
-        mock_get.return_value = mock_response(
-            [
-                release_json("puppeteer-v25.1.0"),
-                release_json("puppeteer-core-v25.0.4", body="Changelog"),
-            ]
-        )
         release = get_release("puppeteer", "monorepo", "puppeteer-core", "25.0.4")
         self.assertEqual("puppeteer-core-v25.0.4", cast("Release", release).tag_name)
         self.assertEqual("Changelog", cast("Release", release).body)
 
-    @patch("requests.get")
-    def test_monorepo_tag_takes_precedence(self, mock_get: Mock):
+    @patch_get([release_json("25.0.4"), release_json("v25.0.4"), release_json("puppeteer-core-v25.0.4")])
+    def test_monorepo_tag_takes_precedence(self):
         """Test that the package-prefixed tag wins over the v-prefixed and bare tags for the same version.
 
         The competing tags are listed before the package-prefixed one, so matching by list order rather than by
         specificity would pick the wrong release.
         """
-        mock_get.return_value = mock_response(
-            [
-                release_json("25.0.4"),
-                release_json("v25.0.4"),
-                release_json("puppeteer-core-v25.0.4"),
-            ]
-        )
         release = get_release("puppeteer", "monorepo", "puppeteer-core", "25.0.4")
         self.assertEqual("puppeteer-core-v25.0.4", cast("Release", release).tag_name)
 
-    @patch("requests.get", Mock(return_value=mock_response([release_json("v1.2.3")])))
+    @patch_get([release_json("v1.2.3")])
     def test_v_prefix_tag_match(self):
         """Test finding a release whose tag is the version prefixed with 'v'."""
         release = get_release("owner", "repo with v prefix", "any", "1.2.3")
         self.assertEqual("v1.2.3", cast("Release", release).tag_name)
 
-    @patch("requests.get", Mock(return_value=mock_response([release_json("1.2.3")])))
+    @patch_get([release_json("1.2.3")])
     def test_bare_version_tag_match(self):
         """Test finding a release whose tag is the bare version."""
         release = get_release("owner", "repo with bare version", "any", "1.2.3")
         self.assertEqual("1.2.3", cast("Release", release).tag_name)
 
-    @patch("requests.get", Mock(return_value=mock_response([release_json("v1.0")])))
+    @patch_get([release_json("v1.0")])
     def test_no_matching_tag(self):
         """Test that None is returned when no tag matches the requested version."""
         self.assertIsNone(get_release("owner", "repo with non matching tag", "any", "1.1"))
@@ -284,12 +272,12 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
         self.assertEqual("", changes_from_release("", "", "any", "1.0"))
         mock_get.assert_not_called()
 
-    @patch("requests.get", Mock(return_value=mock_response([release_json("1.1", body="Changelog")])))
+    @patch_get([release_json("1.1", body="Changelog")])
     def test_changelog(self):
         """Test that the body of the matching release is returned."""
         self.assertEqual("Changelog", changes_from_release("owner", "repo with changes", "any", "1.1"))
 
-    @patch("requests.get", Mock(return_value=mock_response([release_json("9.9")])))
+    @patch_get([release_json("9.9")])
     def test_no_matching_release(self):
         """Test that the changes are empty when no release matches the version."""
         self.assertEqual("", changes_from_release("owner", "repo without matching release", "any", "1.1"))

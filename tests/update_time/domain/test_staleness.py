@@ -3,7 +3,7 @@
 import unittest
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from update_time.domain.staleness import (
     STALE_AFTER_DAYS,
@@ -16,18 +16,20 @@ from update_time.domain.staleness import (
 )
 from update_time.domain.version import DependencyVersion
 
+from tests.update_time.helpers import patch_environ, staleness_disabled
+
 
 class StaleAfterDaysTest(unittest.TestCase):
     """Unit tests for the stale_after_days helper."""
 
     def test_default(self):
         """Test that the threshold defaults to the default staleness period when the env var is not set."""
-        with patch.dict("os.environ", clear=True):
+        with patch_environ():
             self.assertEqual(STALE_AFTER_DAYS, stale_after_days())
 
     def test_env_var(self):
         """Test that the threshold is read from the env var when set."""
-        with patch.dict("os.environ", {STALE_AFTER_DAYS_ENV_VAR: "30"}):
+        with patch_environ({STALE_AFTER_DAYS_ENV_VAR: "30"}):
             self.assertEqual(30, stale_after_days())
 
 
@@ -41,7 +43,7 @@ class IsStaleTest(unittest.TestCase):
     def test_disabled(self):
         """Test that a threshold of 0 disables the check, so nothing is stale."""
         old = datetime.now(UTC) - timedelta(days=STALE_AFTER_DAYS * 10)
-        with patch.dict("os.environ", {STALE_AFTER_DAYS_ENV_VAR: "0"}):
+        with staleness_disabled:
             self.assertFalse(is_stale(old))
 
     def test_old_timestamp(self):
@@ -63,7 +65,7 @@ class IsStaleTest(unittest.TestCase):
         """Test that is_stale honours the threshold from the env var."""
         timestamp = datetime.now(UTC) - timedelta(days=STALE_AFTER_DAYS + 1)
         self.assertTrue(is_stale(timestamp))
-        with patch.dict("os.environ", {STALE_AFTER_DAYS_ENV_VAR: str(STALE_AFTER_DAYS * 2)}):
+        with patch_environ({STALE_AFTER_DAYS_ENV_VAR: str(STALE_AFTER_DAYS * 2)}):
             self.assertFalse(is_stale(timestamp))
 
     def test_future_timestamp(self):
@@ -122,7 +124,7 @@ class WarnAboutStaleDependenciesTest(unittest.TestCase):
     def test_disabled(self):
         """Test that a threshold of 0 skips the pass entirely, so the resolver never runs and makes no request."""
         newest_releases = Mock(return_value=[("humanize", self.release)])
-        with patch.dict("os.environ", {STALE_AFTER_DAYS_ENV_VAR: "0"}):
+        with staleness_disabled:
             warn_about_stale_dependencies([self.file], newest_releases, self.warn)
         newest_releases.assert_not_called()
         self.warn.assert_not_called()

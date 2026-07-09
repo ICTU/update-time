@@ -5,16 +5,21 @@ from datetime import UTC, datetime
 from pathlib import PurePath
 from unittest.mock import MagicMock, Mock, patch
 
-from update_time.domain.staleness import STALE_AFTER_DAYS_ENV_VAR
 from update_time.updaters.update_requirements_txt import REQUIREMENTS_GLOB_PATTERNS, update_requirements_txts
 
 from tests.update_time.assertions import (
     assert_success,
 )
-from tests.update_time.helpers import LoggingTestCase, mock_path, mock_response
+from tests.update_time.helpers import (
+    PYPI_OLD_UPLOAD,
+    LoggingTestCase,
+    mock_path,
+    pypi_index,
+    pypi_release,
+    staleness_disabled,
+)
 
-OLD = "2020-01-01T00:00:00.000000Z"  # Well outside the cooldown window.
-PUBLISHED = "1.1, published: 2020-01-01 00:00"  # How the OLD publication date is rendered in the log.
+PUBLISHED = "1.1, published: 2020-01-01 00:00"  # How PYPI_OLD_UPLOAD is rendered in the log.
 
 
 @patch("requests.get")
@@ -35,17 +40,16 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt.parent.__truediv__.return_value = sibling_in_file
         return requirements_txt
 
-    def pypi(self, *versions: str, bump: bool = False, upload_time: str = OLD) -> list:
+    def pypi(self, *versions: str, bump: bool = False, upload_time: str = PYPI_OLD_UPLOAD) -> list:
         """Return mock PyPI responses: the Index API versions, plus per-version metadata when a bump is expected."""
-        responses = [mock_response({"versions": list(versions)})]
+        responses = [pypi_index(*versions)]
         if bump:
-            info = {"description": "", "yanked": False}
-            responses.append(mock_response({"info": info, "urls": [{"upload_time_iso_8601": upload_time}]}))
+            responses.append(pypi_release(upload_time))
         return responses
 
-    def stale_pypi(self, *versions: str, upload_time: str = OLD) -> list:
+    def stale_pypi(self, *versions: str, upload_time: str = PYPI_OLD_UPLOAD) -> list:
         """Return a mock Index API response listing the versions and a distribution file with the given upload time."""
-        return [mock_response({"versions": list(versions), "files": [{"upload-time": upload_time}]})]
+        return [pypi_index(*versions, files=[{"upload-time": upload_time}])]
 
     def test_no_change(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin already on the latest version is left unchanged."""
@@ -81,7 +85,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt = self.requirements_file("humanize==4.15.0\n")
         mock_rglob.return_value = [requirements_txt]
         mock_get.side_effect = self.stale_pypi("4.15.0")
-        with patch.dict("os.environ", {STALE_AFTER_DAYS_ENV_VAR: "0"}):
+        with staleness_disabled:
             assert_success(update_requirements_txts())
         self.assert_no_warnings_logged()
 

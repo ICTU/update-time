@@ -9,13 +9,8 @@ import requests
 from update_time.sources.oci import _registry_token, get_latest_tag, is_docker_hub_image
 
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
-from tests.update_time.helpers import (
-    CacheClearingTestCase,
-    RegistryRequestsMixin,
-    docker_tag,
-    mock_docker_registry,
-    mock_response,
-)
+from tests.update_time.helpers import CacheClearingTestCase, docker_tag, mock_response, patch_environ
+from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
 
 
 class IsDockerHubImageTest(unittest.TestCase):
@@ -36,7 +31,7 @@ class IsDockerHubImageTest(unittest.TestCase):
             self.assertFalse(is_docker_hub_image(image), image)
 
 
-@patch.dict("os.environ", {}, clear=True)
+@patch_environ()
 class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
     """Unit tests for getting the latest tag."""
 
@@ -231,7 +226,7 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
         self.requests.side_effect = mock_docker_registry()
         self.assertIsNone(get_latest_tag("no_tags", "1.0").newest_published)
 
-    @patch.dict("os.environ", {"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
+    @patch_environ({"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
     @patch("requests.post")
     def test_user_bearer_token(self, mock_post: Mock):
         """Test that the credentials are used for both the per-tag metadata and the OCI registry token requests."""
@@ -272,16 +267,15 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
         mock_warning.assert_called_once()  # The unavailable push date is logged.
 
 
+@patch("logging.Logger.warning", Mock())
 class RegistryTokenTest(CacheClearingTestCase):
     """Unit tests for discovering and fetching a registry pull token."""
 
-    @patch("logging.Logger.warning", Mock())
     @patch("requests.get", Mock(side_effect=requests.exceptions.ConnectionError))
     def test_probe_network_error(self):
         """Test that a network error probing the registry yields no token (anonymous) instead of crashing."""
         self.assertIsNone(_registry_token("ghcr.io", "owner/repo"))
 
-    @patch("logging.Logger.warning", Mock())
     @patch("requests.get")
     def test_token_request_failure(self, mock_get: Mock):
         """Test that a failed token request (after a valid auth challenge) yields no token instead of crashing."""
