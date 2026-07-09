@@ -5,16 +5,17 @@ from unittest.mock import Mock, patch
 
 from update_time.updaters.update_circle_ci_config import update_circle_ci_config
 
-from tests.update_time import helpers
+from tests.update_time import registry
 from tests.update_time.assertions import assert_success
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import docker_tag, mock_docker_hub_auth, mock_docker_registry, mock_path
+from tests.update_time.helpers import docker_tag, mock_docker_hub_auth, mock_path
+from tests.update_time.registry import mock_docker_registry
 
 CIRCLE_CI_DIR = Path("/repo/.circleci")
 
 
 @mock_docker_hub_auth
-class UpdateCircleCIConfigTest(helpers.ImageUpdaterTestMixin):
+class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
     """Unit tests for the update Circle CI config function."""
 
     def reference(self, image: str) -> str:

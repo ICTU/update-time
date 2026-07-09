@@ -3,7 +3,7 @@
 import logging
 from datetime import UTC, datetime
 from http import HTTPStatus
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from update_time.sources.pypi import (
     CHANGELOG_URL_KEYS,
@@ -15,7 +15,16 @@ from update_time.sources.pypi import (
     newest_publication_date,
 )
 
-from tests.update_time.helpers import CacheClearingTestCase, commits_json, mock_response, release_json
+from tests.update_time.helpers import (
+    PYPI_OLD_UPLOAD,
+    CacheClearingTestCase,
+    commits_json,
+    mock_response,
+    patch_get,
+    pypi_index,
+    pypi_release,
+    release_json,
+)
 
 
 @patch("requests.get")
@@ -121,24 +130,22 @@ class GetChangesTest(CacheClearingTestCase):
 class GetPublicationDateTimeTest(CacheClearingTestCase):
     """Unit tests for getting the publication date time of releases."""
 
-    @patch("requests.get")
-    def test_publication_datetime(self, mock_get: Mock):
+    @patch_get({"urls": [{"upload_time_iso_8601": "2026-05-30T12:00:03.678901Z"}]})
+    def test_publication_datetime(self):
         """Test that the publication datetime is returned."""
-        mock_get.return_value = mock_response({"urls": [{"upload_time_iso_8601": "2026-05-30T12:00:03.678901Z"}]})
         published = datetime(2026, 5, 30, 12, 0, 3, 678901, tzinfo=UTC)
         self.assertEqual(published, get_publication_datetime("package", "1.0"))
 
-    @patch("requests.get")
-    def test_max_publication_datetime(self, mock_get: Mock):
+    @patch_get(
+        {
+            "urls": [
+                {"upload_time_iso_8601": "2026-05-30T12:00:03.678901Z"},
+                {"upload_time_iso_8601": "2026-05-30T12:00:03.543210Z"},
+            ]
+        }
+    )
+    def test_max_publication_datetime(self):
         """Test that the latest publication datetime is returned if there are multiple distributions."""
-        mock_get.return_value = mock_response(
-            {
-                "urls": [
-                    {"upload_time_iso_8601": "2026-05-30T12:00:03.678901Z"},
-                    {"upload_time_iso_8601": "2026-05-30T12:00:03.543210Z"},
-                ]
-            }
-        )
         published = datetime(2026, 5, 30, 12, 0, 3, 678901, tzinfo=UTC)
         self.assertEqual(published, get_publication_datetime("package", "1.0"))
 
@@ -146,31 +153,30 @@ class GetPublicationDateTimeTest(CacheClearingTestCase):
 class NewestPublicationDateTest(CacheClearingTestCase):
     """Unit tests for the newest publication date across all of a package's releases."""
 
-    @patch("requests.get")
-    def test_no_files(self, mock_get: Mock):
+    @patch_get({"versions": ["1.0"]})
+    def test_no_files(self):
         """Test that no date is returned when the Index API lists no distribution files."""
-        mock_get.return_value = mock_response({"versions": ["1.0"]})
         self.assertIsNone(newest_publication_date("no_files"))
 
-    @patch("requests.get")
-    def test_newest_across_files(self, mock_get: Mock):
+    @patch_get(
+        {
+            "files": [
+                {"upload-time": "2020-01-01T00:00:00Z"},
+                {"upload-time": "2020-06-01T00:00:00Z"},
+                {"filename": "no-upload-time.whl"},
+            ]
+        }
+    )
+    def test_newest_across_files(self):
         """Test that the most recent upload time across all files is returned, ignoring files without one."""
-        mock_get.return_value = mock_response(
-            {
-                "files": [
-                    {"upload-time": "2020-01-01T00:00:00Z"},
-                    {"upload-time": "2020-06-01T00:00:00Z"},
-                    {"filename": "no-upload-time.whl"},
-                ]
-            }
-        )
         self.assertEqual(datetime(2020, 6, 1, tzinfo=UTC), newest_publication_date("files"))
 
-    @patch("requests.get")
-    def test_fetch_failure(self, mock_get: Mock):
+    @patch_get(ok=False)
+    @patch("logging.Logger.warning")
+    def test_fetch_failure(self, mock_warning: Mock):
         """Test that no date is returned when the Index API can't be fetched."""
-        mock_get.return_value = mock_response(ok=False)
         self.assertIsNone(newest_publication_date("error"))
+        mock_warning.assert_called_once_with("Could not fetch %s: %s", ANY, ANY, stacklevel=ANY)
 
 
 @patch("requests.get")
@@ -183,17 +189,6 @@ class GetLatestVersionTest(CacheClearingTestCase):
     requires.
     """
 
-    OLD = "2020-01-01T00:00:00.000000Z"  # Well outside the cooldown window.
-
-    def versions(self, *versions: str) -> Mock:
-        """Return a mock Index API response listing the given version strings."""
-        return mock_response({"versions": list(versions)})
-
-    def release(self, upload_time: str = OLD, *, yanked: bool = False) -> Mock:
-        """Return a mock per-version metadata response (with an empty changelog)."""
-        urls = [{"upload_time_iso_8601": upload_time}] if upload_time else []
-        return mock_response({"info": {"description": "", "yanked": yanked}, "urls": urls})
-
     def test_invalid_current_version(self, mock_get: Mock):
         """Test that an invalid current version is returned unchanged without querying PyPI."""
         self.assertEqual("not a version", get_latest_version("package", "not a version").version)
@@ -201,56 +196,56 @@ class GetLatestVersionTest(CacheClearingTestCase):
 
     def test_no_newer_version(self, mock_get: Mock):
         """Test that the current version is returned when it is already the latest."""
-        mock_get.side_effect = [self.versions("1.0")]
+        mock_get.side_effect = [pypi_index("1.0")]
         self.assertEqual("1.0", get_latest_version("no_newer", "1.0").version)
 
     def test_new_version(self, mock_get: Mock):
         """Test that the latest version is returned, with its publication date."""
-        mock_get.side_effect = [self.versions("1.0", "1.1"), self.release()]
+        mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release()]
         latest = get_latest_version("new_version", "1.0")
         self.assertEqual("1.1", latest.version)
         self.assertEqual(datetime(2020, 1, 1, tzinfo=UTC), latest.published)
 
     def test_highest_version(self, mock_get: Mock):
         """Test that the highest of multiple newer versions is returned."""
-        mock_get.side_effect = [self.versions("1.0", "1.2", "1.1"), self.release()]
+        mock_get.side_effect = [pypi_index("1.0", "1.2", "1.1"), pypi_release()]
         self.assertEqual("1.2", get_latest_version("highest", "1.0").version)
 
     def test_newest_published_attached(self, mock_get: Mock):
         """Test that the newest release date is attached, so an up-to-date pin can still be flagged as stale."""
-        mock_get.side_effect = [mock_response({"versions": ["1.0"], "files": [{"upload-time": self.OLD}]})]
+        mock_get.side_effect = [pypi_index("1.0", files=[{"upload-time": PYPI_OLD_UPLOAD}])]
         latest = get_latest_version("stale", "1.0")
         self.assertEqual("1.0", latest.version)
         self.assertEqual(datetime(2020, 1, 1, tzinfo=UTC), latest.newest_published)
 
     def test_prerelease_ignored(self, mock_get: Mock):
         """Test that pre-releases are ignored without fetching their metadata."""
-        mock_get.side_effect = [self.versions("1.0", "2.0b1")]
+        mock_get.side_effect = [pypi_index("1.0", "2.0b1")]
         self.assertEqual("1.0", get_latest_version("prerelease", "1.0").version)
 
     def test_yanked_release_ignored(self, mock_get: Mock):
         """Test that yanked releases are ignored."""
-        mock_get.side_effect = [self.versions("1.0", "1.1"), self.release(yanked=True)]
+        mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(yanked=True)]
         self.assertEqual("1.0", get_latest_version("yanked", "1.0").version)
 
     def test_release_without_files_ignored(self, mock_get: Mock):
         """Test that releases without distribution files are ignored."""
-        mock_get.side_effect = [self.versions("1.0", "1.1"), self.release(upload_time="")]
+        mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(upload_time="")]
         self.assertEqual("1.0", get_latest_version("no_files", "1.0").version)
 
     @patch("logging.Logger.warning", Mock())
     def test_release_metadata_unavailable_ignored(self, mock_get: Mock):
         """Test that a candidate whose metadata can't be fetched is skipped instead of crashing the run."""
-        mock_get.side_effect = [self.versions("1.0", "1.1"), mock_response(ok=False)]
+        mock_get.side_effect = [pypi_index("1.0", "1.1"), mock_response(ok=False)]
         self.assertEqual("1.0", get_latest_version("metadata_error", "1.0").version)
 
     def test_invalid_release_ignored(self, mock_get: Mock):
         """Test that releases with an invalid version are ignored without fetching their metadata."""
-        mock_get.side_effect = [self.versions("1.0", "not-a-version")]
+        mock_get.side_effect = [pypi_index("1.0", "not-a-version")]
         self.assertEqual("1.0", get_latest_version("invalid_release", "1.0").version)
 
     def test_release_within_cooldown_ignored(self, mock_get: Mock):
         """Test that a release published within the cooldown period is held back."""
         recent = datetime.now(UTC).isoformat()
-        mock_get.side_effect = [self.versions("1.0", "1.1"), self.release(recent)]
+        mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(recent)]
         self.assertEqual("1.0", get_latest_version("cooldown", "1.0").version)

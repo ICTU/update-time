@@ -6,14 +6,15 @@ from unittest.mock import Mock, patch
 from update_time.io.filesystem import YAML_GLOB_PATTERNS
 from update_time.updaters.update_manifest_images import update_manifest_images
 
-from tests.update_time import helpers
+from tests.update_time import registry
 from tests.update_time.assertions import assert_success
 from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import docker_tag, mock_docker_hub_auth, mock_docker_registry, mock_path
+from tests.update_time.helpers import docker_tag, mock_docker_hub_auth, mock_path
+from tests.update_time.registry import mock_docker_registry
 
 
 @mock_docker_hub_auth
-class UpdateManifestImagesTest(helpers.ImageUpdaterTestMixin):
+class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
     """Unit tests for the update manifest images function."""
 
     def reference(self, image: str) -> str:

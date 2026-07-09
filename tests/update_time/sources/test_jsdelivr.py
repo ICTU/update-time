@@ -4,11 +4,16 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN_DAYS
-from update_time.domain.staleness import STALE_AFTER_DAYS_ENV_VAR
 from update_time.sources.jsdelivr import get_latest_version
 
 from tests.update_time.fixtures import HASH1, HASH2
-from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, mock_response, npm_registry
+from tests.update_time.helpers import (
+    LoggingTestCase,
+    jsdelivr_versions,
+    mock_response,
+    npm_registry,
+    staleness_disabled,
+)
 
 # The file referenced in the jsDelivr URL, and a flat package listing as returned by the API with ?structure=flat.
 FILENAME = "/dist/clipboard.min.js"
@@ -138,6 +143,6 @@ class GetLatestVersionTest(LoggingTestCase):
         Only the jsDelivr version list is provided; a second (npm) request would raise, proving it isn't made.
         """
         mock_get.side_effect = [jsdelivr_versions("1.0", "0.9")]
-        with patch.dict("os.environ", {STALE_AFTER_DAYS_ENV_VAR: "0"}):
+        with staleness_disabled:
             latest_version = get_latest_version("clipboard", "1.0", FILENAME)
         self.assertIsNone(latest_version.newest_published)
