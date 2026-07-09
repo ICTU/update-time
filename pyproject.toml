@@ -47,7 +47,7 @@ dev = [
     "pyproject-fmt==2.25.1",
     "ruff==0.15.20",
     "troml==0.4.1",
-    "ty==0.0.55",
+    "ty==0.0.56",
     "types-pyyaml==6.0.12.20260518",
     "types-requests==2.33.0.20260518",
     "unittest-xml-reporting==4.0.0",
