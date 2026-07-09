@@ -1,6 +1,6 @@
 # Update-time - it's time to update your dependencies
 
-Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for dependencies and updates them to their latest versions. It looks at the files you already have — `pyproject.toml`, hand-written `requirements.txt` files, `package.json`, Dockerfiles, GitHub Actions workflows, CircleCI configs, GitLab CI configs, Docker Compose and Helm manifests, devcontainer configs, and jsDelivr URLs — and rewrites the pinned versions in place. To avoid adopting freshly published releases that may still be buggy, it applies a cooldown period (see [Cooldown](#cooldown) below).
+Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for [dependencies](#what-is-updated) and updates them to their latest versions. It [pins](#pinning) unpinned versions if possible. To avoid adopting freshly published releases that may still be buggy, it applies a [cooldown](#cooldown) period. And it warns you about [stale dependencies](#stale-dependencies).
 
 ## Usage
 
@@ -17,13 +17,20 @@ uv tool install update-time
 update-time
 ```
 
-Update-time has a small command-line interface. Run `update-time -h`/`--help` to see all options, `update-time -V`/`--version` to print the version, `update-time --cooldown DAYS` to override the default cooldown period (see [Cooldown](#cooldown) below), `update-time --stale-after DAYS` to change (or with `0` disable) the staleness warning (see [Stale dependencies](#stale-dependencies) below), and `update-time --log-level LEVEL` to set how much is logged (one of `DEBUG`, `INFO`, `WARNING`, `ERROR`; defaults to `INFO`). Available new versions are logged at `INFO`, so use `--log-level WARNING` to see only genuine problems, or `--log-level DEBUG` to also see which files are checked. All logging goes to standard error, leaving standard output for the `--version` and `--help` text. Running `update-time` with no options in the root folder of a repository updates all supported dependencies.
+Update-time has a small command-line interface. Run:
+- `update-time -h`/`--help` to see all options,
+- `update-time -V`/`--version` to print the version,
+- `update-time --cooldown DAYS` to override the default cooldown period (see [Cooldown](#cooldown) below),
+- `update-time --stale-after DAYS` to change (or with `0` disable) the staleness warning (see [Stale dependencies](#stale-dependencies) below), and
+- `update-time --log-level LEVEL` to set how much is logged (one of `DEBUG`, `INFO`, `WARNING`, `ERROR`; defaults to `INFO`). Available new versions are logged at `INFO`, so use `--log-level WARNING` to see only genuine problems, or `--log-level DEBUG` to also see which files are checked. All logging goes to standard error, leaving standard output for the `--version` and `--help` text.
 
-By default Update-time scans the current directory. Pass a positional `PATH` to scan another directory instead — `update-time ../other-project` — without having to `cd` there first. `PATH` defaults to the current directory, so existing invocations are unchanged, and the paths in the log are reported relative to it. If `PATH` does not exist or is not a directory, Update-time exits with status `2`.
+By default Update-time scans the current directory, recursively. This means that running `update-time` with no options in the root folder of a repository updates all supported dependencies of that repository.
 
-To hold part of the tree back from the scan, pass `--exclude-path` a comma-separated list of directories relative to the scan root — `update-time --exclude-path vendor,packages/legacy`. Every file under an excluded directory is skipped by every updater. This is useful when several repositories are checked out under a shared root, or for a vendored or generated subtree you don't want touched. The excluded directories are matched by relative path, not by name: `--exclude-path vendor` excludes `vendor/` at the root but not `sub/vendor/`. The list extends the always-ignored `build`, `node_modules`, `__pycache__`, and hidden (dot-prefixed) folders rather than replacing them. A listed directory that doesn't exist is not an error (it is logged at `WARNING`), but an absolute path, or one that escapes the scan root (`../…`), is rejected with exit status `2`. Run with `--log-level DEBUG` to see each excluded directory logged.
+To scan another directory than the current directory, pass a positional `PATH` — `update-time ../other-project`. If `PATH` does not exist or is not a directory, Update-time exits with status `2`.
 
-Update-time exits with status `0` when it ran (whether or not it changed any files), `2` when the command-line arguments are invalid, and a non-zero status when an updater could not complete. The exit status does not indicate whether anything was updated — inspect the diff (or the `INFO`-level log) for that.
+To hold part of a directory tree back from the scan, pass `--exclude-path` a comma-separated list of directories relative to the scan root — `update-time --exclude-path vendor,packages/legacy`. This may be useful when several repositories are checked out under a shared root, or for a vendored or generated subtree you don't want touched. The excluded directories are matched by relative path, not by name: `--exclude-path vendor` excludes `vendor/` at the root but not `sub/vendor/`. The list extends the always-ignored `build`, `node_modules`, `__pycache__`, and hidden (dot-prefixed) folders rather than replacing them. A listed directory that doesn't exist is not an error (it is logged at `WARNING`), but an absolute path, or one that escapes the scan root (`../…`), is rejected with exit status `2`. Run with `--log-level DEBUG` to see each excluded directory logged.
+
+Update-time exits with status `0` when it ran (whether or not it changed any files), `2` when the command-line arguments are invalid, and a non-zero status when some of the updates could not complete. The exit status does not indicate whether anything was updated — inspect the diff (or the `INFO`-level log) for that.
 
 The recommended workflow is to run Update-time on a dedicated branch, push it, and let CI do the verification:
 
@@ -43,8 +50,7 @@ Update-time runs a set of updater scripts, each responsible for one kind of depe
 
 | Dependency | Files | Source |
 | ---------- | ----- | ------ |
-| Python dependencies pinned with `==` | `pyproject.toml` | [PyPI](https://pypi.org) |
-| Python dependencies pinned with `==` | hand-written `requirements.txt`, `requirements-*.txt`, `*-requirements.txt`, `requirements/*.txt` | [PyPI](https://pypi.org) |
+| Python dependencies pinned with `==` | `pyproject.toml`, hand-written `requirements.txt`, `requirements-*.txt`, `*-requirements.txt`, `requirements/*.txt` | [PyPI](https://pypi.org) |
 | npm and pnpm dependencies | `package.json` (and `package-lock.json` / `pnpm-lock.yaml`) | [npm registry](https://registry.npmjs.org) |
 | Node engine version | `package.json` | the Node base image in the project's Dockerfile |
 | Dockerfile base images (tag + digest) | `Dockerfile`, `*.Dockerfile`, `Dockerfile.*` | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) |
@@ -57,7 +63,7 @@ Update-time runs a set of updater scripts, each responsible for one kind of depe
 
 Only versions specified with an exact match (`==` for Python, a concrete `tag` — optionally already pinned as `tag@sha256:digest` — for images) are updated; looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. Where available, Update-time prints the changelog entries between the current and new version so you can review what changed.
 
-Requirements files are discovered by name, case-sensitively: `requirements.txt`, `requirements-<purpose>.txt` (e.g. `requirements-dev.txt`), `<purpose>-requirements.txt` (e.g. `dev-requirements.txt`), and any `.txt` file in a `requirements/` directory. Unrelated files such as `constraints.txt` or `requirements.in` are not touched. In these files only exact `==` pins are updated. The following are left untouched:
+Requirements files are discovered by name, case-sensitively: `requirements.txt`, `requirements-<purpose>.txt` (e.g. `requirements-dev.txt`), `<purpose>-requirements.txt` (e.g. `dev-requirements.txt`), and any `.txt` file in a `requirements/` directory. Unrelated files such as `constraints.txt` or `requirements.in` are not touched. The following are left untouched:
 
 - **Git, VCS, and URL dependencies** (e.g. `git+https://github.com/org/repo.git@v8.0.3.0`, direct URLs, and `-e`/editable installs) — these are not registry versions, so Update-time does not bump their refs; update them manually.
 - **Compiled or hash-pinned files** — a `requirements.txt` generated by [pip-tools](https://github.com/jazzband/pip-tools) or `uv pip compile` (recognised by an autogenerated header, a sibling `.in` file, or `--hash=` lines) is skipped entirely, because bumping a single pin without recompiling its transitive dependencies and hashes would corrupt the file. Regenerate these with your compiler instead.
@@ -131,7 +137,7 @@ Keeping a pin on the latest version doesn't help if that latest version is itsel
 WARNING requirements.txt: Stale dependency humanize in docs/requirements.txt: newest release 4.15.0 was published 512 days ago (> 365)
 ```
 
-The date compared against the threshold is the publication date of the dependency's *newest* release — whatever the pin currently sits at — so a project that has just published a release (even one still within the [cooldown](#cooldown) window) is never reported as stale. A reference held back with a bare `# update-time: ignore` (or `# update-time: ignore[stale]`) marker is not checked for staleness either; `# update-time: ignore[update]` holds back only the update, so its staleness is still reported (see [Excluding a reference from updates](#excluding-a-reference-from-updates)).
+The date compared against the threshold is the publication date of the dependency's *newest* release so that a project that has just published a release (even one still within the [cooldown](#cooldown) window) is never reported as stale. A reference held back with a bare `# update-time: ignore` (or `# update-time: ignore[stale]`) marker is not checked for staleness either; `# update-time: ignore[update]` holds back only the update, so its staleness is still reported (see [Excluding a reference from updates](#excluding-a-reference-from-updates)).
 
 Every kind of dependency Update-time updates is checked for staleness, except the Node engine version in `package.json`: it is derived from the project's Dockerfile rather than a registry release, so it has no publication date to compare (the Node base image it comes from is itself checked, in the Dockerfile). Two data limitations narrow the check where the date isn't available: `package.json` dependencies given as git, file, workspace, or alias references are skipped, since they don't resolve to a registry release; and image tags are only checked on Docker Hub, because the push date the check relies on isn't exposed by other registries (`ghcr.io`, `mcr.microsoft.com`, …) — the same limitation as the cooldown. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
 
