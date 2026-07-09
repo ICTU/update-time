@@ -12,7 +12,9 @@ from update_time.io.log import get_logger
 from update_time.sources.oci import IMAGE_REFERENCE, get_latest_tag
 
 LOG = get_logger("dockerfile")
-IMAGE_RE = rf"FROM {IMAGE_REFERENCE}"
+# Allow an optional `--platform=…` flag between `FROM` and the image reference (common in multi-arch builds). The flag
+# is matched but not captured, so only the image reference is rewritten and the flag is left untouched.
+IMAGE_RE = rf"FROM (?:--platform=\S+\s+)?{IMAGE_REFERENCE}"
 
 
 def update_dockerfiles() -> int:

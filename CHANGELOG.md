@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Update and pin base images in Dockerfile `FROM` lines that carry a `--platform=…` flag (e.g. `FROM --platform=$BUILDPLATFORM python:3.14`), common in multi-arch builds. Previously such lines didn't match and were silently left un-updated and un-pinned. The `--platform=…` flag is left untouched. Closes [#90](https://github.com/ICTU/update-time/issues/90).
 
 ## 0.0.17 - 2026-07-09
 
