@@ -92,6 +92,13 @@ def parse_args() -> argparse.Namespace:
         "build, node_modules, __pycache__, and hidden folders",
     )
     parser.add_argument(
+        "--allow-image-digest-drift",
+        action="store_true",
+        help="when an already-pinned image tag has been re-pushed under the same version, adopt its new digest "
+        "instead of only warning; equivalent to marking every image reference with # update-time: "
+        "allow[digest-drift] (an # update-time: ignore marker still wins)",
+    )
+    parser.add_argument(
         "--log-level",
         type=str.upper,
         choices=LOG_LEVELS,

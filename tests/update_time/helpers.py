@@ -127,6 +127,15 @@ class LoggingTestCase(CacheClearingTestCase):
             message, dependency, version, self._relative(path), current_sha, new_sha, stacklevel=ANY
         )
 
+    def assert_adopted_drift_logged(
+        self, path: Path, dependency: str, version: str, current_sha: str, new_sha: str
+    ) -> None:
+        """Assert that adopting a re-pushed tag's new digest was logged once at info level for the file."""
+        message = "Adopted digest drift for %s:%s in %s: re-pinned from %s to %s"
+        self.mock_info.assert_called_once_with(
+            message, dependency, version, self._relative(path), current_sha, new_sha, stacklevel=ANY
+        )
+
     def assert_stale_dependency_logged(self, path: Path, dependency: str, version: str) -> None:
         """Assert that a stale dependency (its newest release too old) was warned about once for the file.
 

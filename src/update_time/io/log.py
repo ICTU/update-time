@@ -120,6 +120,17 @@ class Logger:
         )
         self._log(self.log.warning, message, dependency, version, self._relative(path), current_sha, new_sha)
 
+    def adopted_drift(self, dependency: str, version: str, current_sha: str, new_sha: str, path: Path) -> None:
+        """Log, at info level, that a re-pushed tag's new digest was adopted because the reference opted in.
+
+        The tag was re-pushed under the same name and the reference opted into adopting the drift (via an
+        `# update-time: allow[digest-drift]` marker or the `--allow-image-digest-drift` flag), so the pin is updated
+        to the new digest. Unlike `digest_drift`, this is a normal change the user asked for, so it is info, not a
+        warning.
+        """
+        message = "Adopted digest drift for %s:%s in %s: re-pinned from %s to %s"
+        self._log(self.log.info, message, dependency, version, self._relative(path), current_sha, new_sha)
+
     def warn_if_stale(self, dependency: str, version: DependencyVersion, path: Path) -> None:
         """Warn if the dependency's newest release is old enough that the project may have gone quiet.
 

@@ -11,6 +11,7 @@ from update_time.domain.staleness import STALE_AFTER_DAYS_ENV_VAR
 from update_time.io.cli import parse_args
 from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR
 from update_time.io.log import LOG_LEVEL_ENV_VAR, get_logger
+from update_time.io.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR
 
 SRC = Path(__file__).parent
 
@@ -70,10 +71,11 @@ def main() -> int:
     args = parse_args()
     # Scope the whole run to the requested directory; everything downstream keys off the current working directory.
     os.chdir(args.path)
-    # Pass the cooldown, staleness threshold, and log level down to the updater subprocesses via the environment.
+    # Pass the cooldown, staleness threshold, log level, and drift opt-in down to the subprocesses via the environment.
     os.environ[COOLDOWN_DAYS_ENV_VAR] = str(args.cooldown)
     os.environ[STALE_AFTER_DAYS_ENV_VAR] = str(args.stale_after)
     os.environ[LOG_LEVEL_ENV_VAR] = args.log_level
+    os.environ[ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR] = "1" if args.allow_image_digest_drift else "0"
     configure_excluded_paths(args.exclude_path)
     return update_dependencies()
 
