@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.17 - 2026-07-09
+
 ### Added
 
 - Warn when a dependency's newest release is older than a threshold, surfacing pins on abandoned or long-unmaintained projects. The threshold defaults to 365 days and is set with the new `--stale-after DAYS` option. Closes [#116](https://github.com/ICTU/update-time/issues/116).
