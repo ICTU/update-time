@@ -8,6 +8,7 @@ from unittest.mock import Mock, call, patch
 from update_time.domain.cooldown import COOLDOWN_DAYS_ENV_VAR
 from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR
 from update_time.io.log import LOG_LEVEL_ENV_VAR
+from update_time.io.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR
 from update_time.updaters.update import PARALLEL_SCRIPTS, SEQUENTIAL_SCRIPTS, main, run_script, update_dependencies
 
 from tests.update_time.helpers import patch_environ
@@ -78,6 +79,18 @@ class UpdateTest(unittest.TestCase):
         """Test that main exports the log level in the environment so the updater subprocesses inherit it."""
         environment = self.run_main(mock_run, "--log-level", "debug")
         self.assertEqual("DEBUG", environment[LOG_LEVEL_ENV_VAR])
+
+    @patch("os.chdir", Mock())
+    def test_main_passes_allow_image_digest_drift_off_by_default(self, mock_run: Mock):
+        """Test that main exports the drift opt-in as off when --allow-image-digest-drift is not given."""
+        environment = self.run_main(mock_run)
+        self.assertEqual("0", environment[ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR])
+
+    @patch("os.chdir", Mock())
+    def test_main_passes_allow_image_digest_drift_when_set(self, mock_run: Mock):
+        """Test that main exports the drift opt-in as on when --allow-image-digest-drift is given."""
+        environment = self.run_main(mock_run, "--allow-image-digest-drift")
+        self.assertEqual("1", environment[ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR])
 
     @patch("os.chdir", Mock())
     @patch("pathlib.Path.exists", Mock(return_value=True))

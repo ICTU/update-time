@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock
 
 from update_time.domain.version import DependencyVersion
-from update_time.io.rewrite import rewrite_match, update_references_in_lines
+from update_time.io.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR, rewrite_match, update_references_in_lines
 
-from tests.update_time.helpers import new_version_getter
+from tests.update_time.helpers import new_version_getter, patch_environ
 
 if TYPE_CHECKING:
     from update_time.domain.version import NewVersionGetter
@@ -202,3 +202,59 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assertEqual(["image: python:3.15  # update-time: ignore[stale]"], new_lines)  # version bumped
         self.logger.warn_if_stale.assert_not_called()  # staleness skipped
         self.logger.ignored.assert_not_called()  # the update is not held back, so nothing is logged as ignored
+
+    def test_allow_digest_drift_marker_adopts_new_digest(self):
+        """Test that an inline `allow[digest-drift]` marker re-pins a re-pushed tag's digest instead of warning."""
+        old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
+        lines = [f"image: python:3.14@{old_sha}  # update-time: allow[digest-drift]"]
+        new_lines = self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", new_sha))
+        self.assertEqual([f"image: python:3.14@{new_sha}  # update-time: allow[digest-drift]"], new_lines)
+        self.logger.adopted_drift.assert_called_once_with("python", "3.14", old_sha, new_sha, self.path)
+        self.logger.digest_drift.assert_not_called()
+
+    def test_allow_digest_drift_marker_above_line_adopts(self):
+        """Test that a standalone `allow[digest-drift]` comment opts the reference on the line below it in."""
+        old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
+        lines = ["# update-time: allow[digest-drift]", f"image: python:3.14@{old_sha}"]
+        new_lines = self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", new_sha))
+        self.assertEqual(["# update-time: allow[digest-drift]", f"image: python:3.14@{new_sha}"], new_lines)
+        self.logger.adopted_drift.assert_called_once_with("python", "3.14", old_sha, new_sha, self.path)
+
+    def test_allow_digest_drift_marker_is_noop_when_version_also_changed(self):
+        """Test that when the version has moved too, the normal update path runs and the marker doesn't apply."""
+        old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
+        lines = [f"image: python:3.14@{old_sha}  # update-time: allow[digest-drift]"]
+        new_lines = self.rewrite(lines, SHA_REGEXP, new_version_getter("3.15", new_sha))
+        self.assertEqual([f"image: python:3.15@{new_sha}  # update-time: allow[digest-drift]"], new_lines)
+        self.logger.new_version.assert_called_once()  # a real version bump, not a drift adoption
+        self.logger.adopted_drift.assert_not_called()
+
+    def test_ignore_wins_over_allow_digest_drift_marker(self):
+        """Test that a reference marked both `ignore` and `allow[digest-drift]` is left untouched: `ignore` wins."""
+        get_new_version = Mock()
+        old_sha = f"sha256:{'a' * 64}"
+        lines = ["# update-time: allow[digest-drift]", f"image: python:3.14@{old_sha}  # update-time: ignore"]
+        self.assertEqual(lines, self.rewrite(lines, SHA_REGEXP, get_new_version))
+        get_new_version.assert_not_called()
+        self.logger.adopted_drift.assert_not_called()
+        self.logger.digest_drift.assert_not_called()
+
+    def test_flag_adopts_digest_drift_repo_wide(self):
+        """Test that the --allow-image-digest-drift flag (via its env var) adopts drift without a per-line marker."""
+        old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
+        lines = [f"image: python:3.14@{old_sha}"]
+        with patch_environ({ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR: "1"}):
+            new_lines = self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", new_sha))
+        self.assertEqual([f"image: python:3.14@{new_sha}"], new_lines)
+        self.logger.adopted_drift.assert_called_once_with("python", "3.14", old_sha, new_sha, self.path)
+        self.logger.digest_drift.assert_not_called()
+
+    def test_ignore_wins_over_allow_digest_drift_flag(self):
+        """Test that an `ignore` marker still wins over the global --allow-image-digest-drift flag."""
+        get_new_version = Mock()
+        old_sha = f"sha256:{'a' * 64}"
+        lines = [f"image: python:3.14@{old_sha}  # update-time: ignore"]
+        with patch_environ({ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR: "1"}):
+            self.assertEqual(lines, self.rewrite(lines, SHA_REGEXP, get_new_version))
+        get_new_version.assert_not_called()
+        self.logger.adopted_drift.assert_not_called()

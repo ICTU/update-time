@@ -21,7 +21,8 @@ Update-time has a small command-line interface. Run:
 - `update-time -h`/`--help` to see all options,
 - `update-time -V`/`--version` to print the version,
 - `update-time --cooldown DAYS` to override the default cooldown period (see [Cooldown](#cooldown) below),
-- `update-time --stale-after DAYS` to change (or with `0` disable) the staleness warning (see [Stale dependencies](#stale-dependencies) below), and
+- `update-time --stale-after DAYS` to change (or with `0` disable) the staleness warning (see [Stale dependencies](#stale-dependencies) below),
+- `update-time --allow-image-digest-drift` to adopt a re-pushed image digest instead of only warning about it (see [Pinning](#pinning) below), and
 - `update-time --log-level LEVEL` to set how much is logged (one of `DEBUG`, `INFO`, `WARNING`, `ERROR`; defaults to `INFO`). Available new versions are logged at `INFO`, so use `--log-level WARNING` to see only genuine problems, or `--log-level DEBUG` to also see which files are checked. All logging goes to standard error, leaving standard output for the `--version` and `--help` text.
 
 By default Update-time scans the current directory, recursively. This means that running `update-time` with no options in the root folder of a repository updates all supported dependencies of that repository.
@@ -77,11 +78,25 @@ References that are not yet pinned are pinned automatically:
 - **Docker images** referenced by tag only — base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, Docker Compose / Helm manifest images, and devcontainer base images and features — get the `@sha256:digest` of the (latest) tag appended, so the image is reproducible. The image's registry is taken from the reference, so images on Docker Hub and on other OCI registries (`ghcr.io`, `mcr.microsoft.com`, …) are both resolved; the cooldown, however, only applies to Docker Hub, since the OCI protocol exposes no publication date. Images without a concrete version tag are ignored: references through a template (`{{ ... }}`) or variable substitution (`${VAR}`), and tagless base images such as `FROM scratch` or stage references. CircleCI machine-executor images (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) are also left alone, since they are not registry images.
 - **GitHub Actions** referenced by version tag only (e.g. `uses: actions/checkout@v4`) are pinned to the commit SHA of the latest version, with the version added as a trailing comment (e.g. `uses: actions/checkout@<sha> # v4.1.1`). Actions referenced by a branch (e.g. `@main`) are left untouched because they don't resolve to a version.
 
-## Excluding a reference from updates
+When an image reference is already pinned to a digest and only that digest has changed at the registry — the tag was re-pushed (rebuilt) under the same name and version — Update-time warns about the *digest drift* but leaves the pin unchanged by default, so a re-pushed digest is never silently adopted (which would defeat the immutability a digest pin exists to provide). To adopt the new digest instead, opt the reference in with an `# update-time: allow[digest-drift]` marker (see [Controlling updates per reference](#controlling-updates-per-reference) for placement), or pass `--allow-image-digest-drift` to opt every image reference in the scan in at once. Adopting drift is logged at `INFO`, like any other change. An `# update-time: ignore` (or `ignore[update]`) marker still wins over both, so a reference you deliberately froze is never re-pinned.
 
-To stop Update-time from changing a specific reference — because of a known incompatibility, a deferred migration, or to keep something reproducible — add an `# update-time: ignore` comment (all lower-case). The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
+## Controlling updates per reference
 
-The marker can be placed two ways:
+Comments of the form `# update-time: <directive>` let you steer what happens to an individual reference — most often to hold it back, but also to opt it into behaviour that is off by default. To stop Update-time from changing a specific reference — because of a known incompatibility, a deferred migration, or to keep something reproducible — add an `# update-time: ignore` comment (all lower-case). The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
+
+By default the marker holds a reference back from both version updates and the [staleness](#stale-dependencies) check. Add a bracketed scope to narrow it to just one:
+
+| Marker | Version update | Staleness warning |
+| ------ | -------------- | ----------------- |
+| `# update-time: ignore` | held back | held back |
+| `# update-time: ignore[update]` | held back | still checked |
+| `# update-time: ignore[stale]` | applied | held back |
+
+So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet, and `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
+
+One further marker does the opposite of holding a reference back. `# update-time: allow[digest-drift]` opts an already-digest-pinned image reference *into* adopting a re-pushed digest, so when only its digest has drifted the new digest is pinned instead of only warned about (see [Pinning](#pinning)). It follows the same placement rules as the other markers, and the global `--allow-image-digest-drift` flag applies it to every image reference at once. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.
+
+Any of these markers can be placed two ways:
 
 - **Inline**, on the reference's own line (in YAML files, `requirements.txt`, and — with a `//` comment — `devcontainer.json`):
 
@@ -106,16 +121,6 @@ The marker can be placed two ways:
 
 This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, `devcontainer.json` files, and `requirements.txt` files. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it.
 
-By default the marker holds a reference back from both version updates and the [staleness](#stale-dependencies) check. Add a bracketed scope to narrow it to just one:
-
-| Marker | Version update | Staleness warning |
-| ------ | -------------- | ----------------- |
-| `# update-time: ignore` | held back | held back |
-| `# update-time: ignore[update]` | held back | still checked |
-| `# update-time: ignore[stale]` | applied | held back |
-
-So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet, and `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
-
 Run with `--log-level DEBUG` to see each held-back update logged and confirm a marker is recognised. Since the marker is case-sensitive, a typo (or wrong case) simply produces no such log and the reference is updated as usual.
 
 For `pyproject.toml` and `package.json` — which are updated through uv, npm, and pnpm rather than line by line — the marker does not apply. Opt a dependency out there by pinning it with a maximum or non-`==` version specifier instead (for example `package<=3.12`). The marker likewise has no effect on jsDelivr URLs, which are rewritten through a whole-file substitution rather than the line-by-line engine; there is currently no way to exclude a specific jsDelivr URL from updates.
@@ -137,7 +142,7 @@ Keeping a pin on the latest version doesn't help if that latest version is itsel
 WARNING requirements.txt: Stale dependency humanize in docs/requirements.txt: newest release 4.15.0 was published 512 days ago (> 365)
 ```
 
-The date compared against the threshold is the publication date of the dependency's *newest* release so that a project that has just published a release (even one still within the [cooldown](#cooldown) window) is never reported as stale. A reference held back with a bare `# update-time: ignore` (or `# update-time: ignore[stale]`) marker is not checked for staleness either; `# update-time: ignore[update]` holds back only the update, so its staleness is still reported (see [Excluding a reference from updates](#excluding-a-reference-from-updates)).
+The date compared against the threshold is the publication date of the dependency's *newest* release so that a project that has just published a release (even one still within the [cooldown](#cooldown) window) is never reported as stale. A reference held back with a bare `# update-time: ignore` (or `# update-time: ignore[stale]`) marker is not checked for staleness either; `# update-time: ignore[update]` holds back only the update, so its staleness is still reported (see [Controlling updates per reference](#controlling-updates-per-reference)).
 
 Every kind of dependency Update-time updates is checked for staleness, except the Node engine version in `package.json`: it is derived from the project's Dockerfile rather than a registry release, so it has no publication date to compare (the Node base image it comes from is itself checked, in the Dockerfile). Two data limitations narrow the check where the date isn't available: `package.json` dependencies given as git, file, workspace, or alias references are skipped, since they don't resolve to a registry release; and image tags are only checked on Docker Hub, because the push date the check relies on isn't exposed by other registries (`ghcr.io`, `mcr.microsoft.com`, …) — the same limitation as the cooldown. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
 

@@ -7,6 +7,7 @@ ignore` marker. It's pure text processing, but it reports what it changed throug
 rather than `domain`.
 """
 
+import os
 import re
 from dataclasses import dataclass
 from itertools import pairwise
@@ -18,6 +19,27 @@ if TYPE_CHECKING:
 
     from update_time.domain.version import NewVersionGetter
     from update_time.io.log import Logger
+
+# Private channel that passes --allow-image-digest-drift from the CLI to the updater subprocesses; not a user-facing
+# setting (use --allow-image-digest-drift instead). The leading underscore marks it internal.
+ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR = "_UPDATE_TIME_ALLOW_IMAGE_DIGEST_DRIFT"
+
+
+def allow_image_digest_drift() -> bool:
+    """Return whether a re-pushed image digest should be adopted repo-wide (the --allow-image-digest-drift flag)."""
+    return os.environ.get(ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR) == "1"
+
+
+@dataclass(frozen=True)
+class Marker:
+    """The `# update-time:` directives affecting a line (see `_marker`).
+
+    `ignore_scope` is the `ignore[...]` scope: None (no marker), `""` (a bare `ignore`), `"update"`, or `"stale"`.
+    `allow_drift` is whether an `allow[digest-drift]` marker opts the reference into adopting a re-pushed digest.
+    """
+
+    ignore_scope: str | None = None
+    allow_drift: bool = False
 
 
 @dataclass(frozen=True)
@@ -32,15 +54,16 @@ class _Rewriter:
     logger: Logger
     path: Path
 
-    def update_line(self, line: str, scope: str | None) -> str:
+    def update_line(self, line: str, marker: Marker) -> str:
         """Update the line with the new version (and digest) if any, or return the line unchanged.
 
         When the regexp has an optional `sha` group that did not match, the reference is unpinned. If a digest is
         available it is appended to pin the reference, even when the version itself is already up to date. When the
         reference is already pinned and only its digest changed at the registry (a re-pushed tag), the drift is
-        warned about but the pin is left unchanged, so a re-pushed digest is never silently adopted. `scope` is the
-        reference's `# update-time: ignore[...]` scope (see `_ignore_marker`): `"update"` holds back the update,
-        `"stale"` the staleness warning.
+        warned about but the pin is left unchanged — unless the reference opted in (`marker.allow_drift` or the
+        global flag), in which case the new digest is adopted. `marker` carries the reference's `# update-time:`
+        directives (see `_marker`): an `ignore` scope of `"update"` holds back the update, `"stale"` the staleness
+        warning.
         """
         if not (match := re.search(self.regexp, line)):
             return line
@@ -48,9 +71,9 @@ class _Rewriter:
         dependency = match.group("dependency")
         version = match.group("version")
         latest_version = self.get_new_version(dependency, version)
-        if scope != "stale":
+        if marker.ignore_scope != "stale":
             logger.warn_if_stale(dependency, latest_version, path)
-        if scope == "update":
+        if marker.ignore_scope == "update":
             return line
         has_sha_group = "sha" in match.groupdict()
         current_sha = match.group("sha") if has_sha_group else None
@@ -58,6 +81,10 @@ class _Rewriter:
         version_changed = latest_version.version != version
         if not version_changed and not pin_unpinned:
             if current_sha is not None and latest_version.digest_differs_from(current_sha):
+                if marker.allow_drift or allow_image_digest_drift():
+                    # The reference opted in, so adopt the re-pushed digest instead of only warning about it.
+                    logger.adopted_drift(dependency, version, current_sha, latest_version.sha, path)
+                    return self._replace_groups(line, match, {"sha": latest_version.sha})
                 # The tag was re-pushed with a different digest; warn but leave the immutable pin unchanged.
                 logger.digest_drift(dependency, version, current_sha, latest_version.sha, path)
             return line
@@ -89,6 +116,11 @@ class _Rewriter:
 # only the update (still warning when the dependency is stale), and `ignore[stale]` skips only the staleness warning.
 _IGNORE_MARKER = re.compile(r"(?:#|//)\s*update-time:\s*ignore\b(?:\[(?P<scope>stale|update)\])?")
 
+# An `# update-time: allow[digest-drift]` comment opts a reference into adopting a re-pushed image digest: when only
+# the digest has drifted (same tag, same version, different registry digest), the new digest is pinned instead of
+# only warned about (see `_Rewriter.update_line`). It follows the same placement and comment-lead rules as `ignore`.
+_ALLOW_DRIFT_MARKER = re.compile(r"(?:#|//)\s*update-time:\s*allow\[digest-drift\]")
+
 
 def rewrite_match(match: re.Match[str], replacements: dict[str, str]) -> str:
     """Return the matched text with the named groups replaced, leaving the rest of the match untouched.
@@ -105,44 +137,47 @@ def rewrite_match(match: re.Match[str], replacements: dict[str, str]) -> str:
     return text
 
 
-def _ignore_marker(line: str, previous_line: str) -> str | None:
-    """Return the `# update-time: ignore[...]` scope affecting the line: None, `""`, `"update"`, or `"stale"`.
+def _marker(line: str, previous_line: str) -> Marker:
+    """Return the `# update-time:` directives affecting the line as a `Marker`.
 
-    None when no marker applies; `""` for a bare `ignore` (holds back both the update and the staleness warning);
-    `"update"` or `"stale"` for the scoped forms (hold back only that one). The marker is read inline on the line,
-    or from the line directly above it when that is a standalone comment (the form Dockerfiles need, since they
-    reject inline comments); requiring the preceding line to start with a comment lead (`#`, or `//`) keeps an
-    inline marker from also affecting the line below it.
+    A directive is read inline on the line, or from the line directly above it when that is a standalone comment
+    (the form Dockerfiles need, since they reject inline comments); requiring the preceding line to start with a
+    comment lead (`#`, or `//`) keeps an inline marker from also affecting the line below it. Both an `ignore[...]`
+    and an `allow[digest-drift]` directive are recognised independently, each wherever it appears (inline or above).
     """
-    marker = _IGNORE_MARKER.search(line)
-    if marker is None and previous_line.lstrip().startswith(("#", "//")):
-        marker = _IGNORE_MARKER.search(previous_line)
-    if marker is None:
-        return None
-    return marker.group("scope") or ""  # "" for a bare `ignore`, else "update" or "stale"
+    texts = [line]
+    if previous_line.lstrip().startswith(("#", "//")):
+        texts.append(previous_line)
+    ignore_scope: str | None = None
+    allow_drift = False
+    for text in texts:
+        if ignore_scope is None and (ignore := _IGNORE_MARKER.search(text)) is not None:
+            ignore_scope = ignore.group("scope") or ""  # "" for a bare `ignore`, else "update" or "stale"
+        allow_drift = allow_drift or _ALLOW_DRIFT_MARKER.search(text) is not None
+    return Marker(ignore_scope, allow_drift)
 
 
 def updated_lines(
     lines: list[str],
     regexp: str | re.Pattern[str],
-    update_line: Callable[[str, str | None], str],
+    update_line: Callable[[str, Marker], str],
     logger: Logger,
     path: Path,
 ) -> list[str]:
-    """Return the lines with `update_line` applied to each line, honouring any `# update-time: ignore[...]` marker.
+    """Return the lines with `update_line` applied to each line, honouring any `# update-time:` marker.
 
     A bare `ignore` (which holds back both the update and the staleness warning) leaves the line untouched without
-    even querying the source; a scoped marker still calls `update_line`, passing its scope so the update or the
-    staleness warning is held back. When the update is held back and the line carries a reference (matched by
-    `regexp`), that is logged at the debug level. Each line is paired with the line before it, so a standalone
-    marker comment can apply to the line below it.
+    even querying the source; a scoped marker still calls `update_line`, passing the `Marker` so the update or the
+    staleness warning is held back (and so an `allow[digest-drift]` opt-in reaches the drift branch). When the update
+    is held back and the line carries a reference (matched by `regexp`), that is logged at the debug level. Each line
+    is paired with the line before it, so a standalone marker comment can apply to the line below it.
     """
     result = []
     for previous_line, line in pairwise(["", *lines]):
-        scope = _ignore_marker(line, previous_line)
-        if scope in ("", "update") and (match := re.search(regexp, line)):
+        marker = _marker(line, previous_line)
+        if marker.ignore_scope in ("", "update") and (match := re.search(regexp, line)):
             logger.ignored(match.group("dependency"), path)
-        result.append(line if scope == "" else update_line(line, scope))
+        result.append(line if marker.ignore_scope == "" else update_line(line, marker))
     return result
 
 

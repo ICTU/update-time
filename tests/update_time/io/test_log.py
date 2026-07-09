@@ -91,6 +91,16 @@ class LoggerTests(TestCase):
             message, "dependency", "3.14", Path("Dockerfile"), old_sha, new_sha, stacklevel=ANY
         )
 
+    @patch("logging.Logger.info")
+    def test_adopted_drift(self, mock_info: Mock):
+        """Test that adopting a re-pushed tag's new digest is logged at info level, not warning."""
+        old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
+        Logger("adopt").adopted_drift("dependency", "3.14", old_sha, new_sha, Path.cwd() / "Dockerfile")
+        message = "Adopted digest drift for %s:%s in %s: re-pinned from %s to %s"
+        mock_info.assert_called_once_with(
+            message, "dependency", "3.14", Path("Dockerfile"), old_sha, new_sha, stacklevel=ANY
+        )
+
     @patch("logging.Logger.warning")
     def test_warn_if_stale(self, mock_warning: Mock):
         """Test that a dependency whose newest release is old is warned about at warning level."""

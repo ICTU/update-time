@@ -10,6 +10,7 @@ import re
 import sys
 from functools import cache, partial
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
@@ -18,6 +19,9 @@ from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
 from update_time.io.log import get_logger
 from update_time.io.rewrite import updated_lines
 from update_time.sources.github import get_latest_release, newest_publication_date
+
+if TYPE_CHECKING:
+    from update_time.io.rewrite import Marker
 
 LOG = get_logger("github action")
 # Match a `uses:` reference that is either already pinned to a commit SHA with a version comment
@@ -75,9 +79,10 @@ def update_github_actions(github_dir: Path) -> int:
         old_content = yaml_file.read_text()
 
         # Rewrite per line (keeping line endings) so an `# update-time: ignore[...]` marker can hold back a single
-        # `uses:`; the marker's scope reaches `_update_action` through the per-line substitution.
-        def update_line(line: str, scope: str | None, path: Path = yaml_file) -> str:
-            return ACTION_RE.sub(partial(_update_action, path=path, scope=scope), line)
+        # `uses:`; the marker's ignore scope reaches `_update_action` through the per-line substitution. Actions pin
+        # a commit SHA, not an image digest, so the marker's `allow_drift` opt-in does not apply here.
+        def update_line(line: str, marker: Marker, path: Path = yaml_file) -> str:
+            return ACTION_RE.sub(partial(_update_action, path=path, scope=marker.ignore_scope), line)
 
         new_lines = updated_lines(old_content.splitlines(keepends=True), ACTION_RE, update_line, LOG, yaml_file)
         new_content = "".join(new_lines)
