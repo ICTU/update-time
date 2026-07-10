@@ -12,6 +12,7 @@ reader. Run this module directly to print that text; regenerate the whole README
 
 import io
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -39,6 +40,23 @@ class _FixedTime(logging.Filter):
 def _mark(name: str) -> str:
     """Wrap a dependency name in the marker the highlighter colours, the way `Logger` does before logging."""
     return f"{_DEPENDENCY_MARKER}{name}{_DEPENDENCY_MARKER}"
+
+
+def _portable(svg: str) -> str:
+    """Make Rich's SVG render inline on GitHub, where it is embedded as an `<img>` from raw.githubusercontent.com.
+
+    Two tweaks: copy the `viewBox` size onto the `<svg>` element (Rich emits none, so a size-less SVG shows as a
+    broken image in Safari and renders tiny elsewhere), and drop each `@font-face`'s external CDN `url(...)` source
+    (loading it is blocked by the raw host's `sandbox` CSP, and some renderers reject an SVG with external resources
+    outright), leaving only the `local(...)` source so text falls back to a system monospace font.
+    """
+    match = re.search(r'viewBox="0 0 (\S+) (\S+)"', svg)
+    if match is None:  # pragma: no cover - Rich always emits a viewBox
+        message = "Rich SVG has no viewBox to size the <img> from"
+        raise ValueError(message)
+    width, height = match.groups()
+    svg = svg.replace('<svg class="rich-terminal"', f'<svg class="rich-terminal" width="{width}" height="{height}"', 1)
+    return re.sub(r",\s*url\([^)]+\)\s*format\([^)]+\)", "", svg)
 
 
 def generate() -> str:
@@ -73,8 +91,9 @@ def generate() -> str:
     )
     log.warning(Logger._MESSAGE_STALE, _mark("left-pad"), "package.json", "1.3.0", 512, 365)  # noqa: SLF001
 
-    plain_text = console.export_text(clear=False)  # capture before save_svg clears the recording
-    console.save_svg(str(_OUTPUT), title="update-time", unique_id="update-time-log")
+    plain_text = console.export_text(clear=False)  # capture before the export clears the recording
+    svg = console.export_svg(title="update-time", unique_id="update-time-log")
+    _OUTPUT.write_text(_portable(svg))
     return "\n".join(line.rstrip() for line in plain_text.splitlines())  # strip the trailing render padding
 
 
