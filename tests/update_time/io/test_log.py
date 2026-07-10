@@ -8,10 +8,11 @@ from unittest import TestCase
 from unittest.mock import ANY, Mock, patch
 
 from rich.logging import RichHandler
+from rich.text import Text
 
 from update_time.domain.version import DependencyVersion
 from update_time.io import filesystem
-from update_time.io.log import Logger, get_logger
+from update_time.io.log import Logger, LogHighlighter, get_logger
 
 from tests.update_time.helpers import new_version_getter
 
@@ -192,6 +193,25 @@ class LoggerTests(TestCase):
             "No changelog available!",
             stacklevel=ANY,
         )
+
+
+class LogHighlighterTests(TestCase):
+    """Tests that a whole sha256 digest is highlighted as one token, not fragmented by Rich's built-in rules."""
+
+    def test_digest_highlighted_as_one_token(self):
+        """Test that the full digest gets a single `repr.digest` span and no leftover fragment sub-spans inside it."""
+        digest = f"sha256:{'a4fde3b2' + 'c' * 56}"  # a realistic 64-hex-character digest
+        text = Text(f"pinned to {digest} but the registry now serves sha256:{'b' * 64}")
+        LogHighlighter().highlight(text)
+        start = text.plain.index(digest)
+        spans_in_digest = [span for span in text.spans if span.start >= start and span.end <= start + len(digest)]
+        self.assertEqual([(start, start + len(digest), "repr.digest")], spans_in_digest)
+
+    def test_version_numbers_still_highlighted(self):
+        """Test that ordinary highlighting (e.g. of a version number) is preserved for messages without a digest."""
+        text = Text("New version available: 3.14")
+        LogHighlighter().highlight(text)
+        self.assertIn("repr.number", [span.style for span in text.spans])
 
 
 class LogOriginTests(TestCase):

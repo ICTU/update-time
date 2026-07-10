@@ -2,13 +2,16 @@
 
 import logging
 import os
+import re
 import sys
 from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.console import Console
+from rich.highlighter import ReprHighlighter
 from rich.logging import RichHandler
+from rich.theme import Theme
 
 from update_time.domain.staleness import is_stale, stale_after_days, staleness_days
 
@@ -32,8 +35,30 @@ if TYPE_CHECKING:
     from types import FrameType
 
     from requests import Response
+    from rich.text import Text
 
     from update_time.domain.version import DependencyVersion
+
+
+class LogHighlighter(ReprHighlighter):
+    """Rich highlighter that colours a whole `sha256:` digest as a single token.
+
+    Rich's built-in rules otherwise match only fragments of a digest — the `256` reads as a number and a run such
+    as `a256:a4fd` reads as an IPv6 address — colouring parts of it and leaving the rest plain. Matching the full
+    digest and dropping the built-in sub-spans inside it styles the whole digest uniformly (as `repr.digest`), while
+    every other message keeps Rich's default highlighting of version numbers, paths, and the like.
+    """
+
+    _DIGEST = re.compile(r"\bsha256:[0-9a-f]{64}\b")
+
+    def highlight(self, text: Text) -> None:
+        """Apply the default highlighting, then restyle each digest as one token, dropping the fragment sub-spans."""
+        super().highlight(text)
+        for match in self._DIGEST.finditer(text.plain):
+            start, end = match.span()
+            text.spans[:] = [span for span in text.spans if span.end <= start or span.start >= end]
+            text.stylize("repr.digest", start, end)
+
 
 # Files that wrap or dispatch logging on behalf of the updaters. Frames in these files are skipped when
 # determining a log record's origin, so the reported origin is the updater that triggered the log rather than this
@@ -249,6 +274,8 @@ def get_logger(name: str) -> Logger:
     the root logger only the first time — when it has no handlers yet — instead of building a handler on every call.
     """
     if not logging.getLogger().handlers:
-        handler = RichHandler(console=Console(stderr=True))
+        # The theme adds the `repr.digest` style that `LogHighlighter` applies to a whole `sha256:` digest.
+        console = Console(stderr=True, theme=Theme({"repr.digest": "dim"}))
+        handler = RichHandler(console=console, highlighter=LogHighlighter())
         logging.basicConfig(level=log_level(), datefmt="[%X]", format="%(message)s", handlers=[handler])
     return Logger(name)
