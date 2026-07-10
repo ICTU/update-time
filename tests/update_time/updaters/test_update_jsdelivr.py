@@ -49,7 +49,7 @@ class UpdateJsdelivrTest(LoggingTestCase):
         self.assertIn(f'"integrity": "sha256-{HASH2}"', new_content)
         self.assertNotIn("2.0.11", new_content)
         self.assertNotIn(HASH1, new_content)
-        self.assert_new_version_logged(conf_py, "clipboard", ANY, Logger._NO_CHANGELOG)
+        self.assert_new_version_logged(conf_py, "clipboard", ANY, Logger.NO_CHANGELOG)
         self.assert_no_warnings_logged()
 
     def test_version_lookalike_between_url_and_hash_is_left_untouched(self, mock_get: Mock):
@@ -77,7 +77,7 @@ class UpdateJsdelivrTest(LoggingTestCase):
         self.assertIn("# do not remove 2.0.11 note", new_content)  # the lookalike is preserved
         self.assertIn(f'"integrity": "sha256-{HASH2}"', new_content)
         self.assertNotIn(HASH1, new_content)
-        self.assert_new_version_logged(Path.cwd() / "docs" / "conf.py", "clipboard", ANY, Logger._NO_CHANGELOG)
+        self.assert_new_version_logged(Path.cwd() / "docs" / "conf.py", "clipboard", ANY, Logger.NO_CHANGELOG)
 
     def test_unchanged(self, mock_get: Mock):
         """Test that the content is unchanged if there is no new version."""

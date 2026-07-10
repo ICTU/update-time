@@ -37,7 +37,7 @@ class LoggerTests(TestCase):
         """Test that a repeated changelog is suppressed."""
         logger = Logger("suppress changelog")
         path = Path.cwd() / "pyproject.toml"
-        message = Logger._MESSAGE_NEW_VERSION
+        message = Logger.MESSAGE_NEW_VERSION
         logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), path)
         mock_info.assert_called_once_with(
             message,
@@ -62,7 +62,7 @@ class LoggerTests(TestCase):
         """Test that the version is logged without a publication date when it is unknown."""
         Logger("no date").new_version("dependency", DependencyVersion("1.0", "Changelog"), Path.cwd() / "a.txt")
         mock_info.assert_called_once_with(
-            Logger._MESSAGE_NEW_VERSION,
+            Logger.MESSAGE_NEW_VERSION,
             "dependency",
             Path("a.txt"),
             "1.0",
@@ -167,7 +167,7 @@ class LoggerTests(TestCase):
         published = datetime(2026, 5, 29, 13, 54, tzinfo=UTC)
         version = DependencyVersion("1.0", "Changelog", published=published)
         Logger("date").new_version("dependency", version, Path.cwd() / "a.txt")
-        message = Logger._MESSAGE_NEW_VERSION
+        message = Logger.MESSAGE_NEW_VERSION
         mock_info.assert_called_once_with(
             message,
             "dependency",
@@ -182,8 +182,8 @@ class LoggerTests(TestCase):
         """Test that a non-UTC publication date is converted to UTC before logging."""
         published = datetime(2026, 5, 29, 15, 54, tzinfo=timezone(timedelta(hours=2)))
         Logger("utc").new_version("dependency", DependencyVersion("1.0", published=published), Path.cwd() / "a.txt")
-        message = Logger._MESSAGE_NEW_VERSION
-        changelog = Logger._NO_CHANGELOG
+        message = Logger.MESSAGE_NEW_VERSION
+        changelog = Logger.NO_CHANGELOG
         mock_info.assert_called_once_with(
             message,
             "dependency",
@@ -214,7 +214,7 @@ class LogHighlighterTests(TestCase):
 
     def test_dependency_name_highlighted_and_markers_removed(self):
         """Test that a marker-wrapped dependency name is styled as `repr.dependency` and the markers leave no trace."""
-        text = Text(Logger._MESSAGE_NEW_VERSION % ("actions/checkout", "a.txt", "1.1", "Changelog for 1.1"))
+        text = Text(Logger.MESSAGE_NEW_VERSION % ("actions/checkout", "a.txt", "1.1", "Changelog for 1.1"))
         LogHighlighter().highlight(text)
         self.assertEqual("New version available for actions/checkout in a.txt: 1.1\nChangelog for 1.1", text.plain)
         dependency_spans = [(text.plain[span.start : span.end], span.style) for span in text.spans]

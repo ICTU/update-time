@@ -12,14 +12,7 @@ Its output highlights each dependency, so a run is easy to skim:
 <summary>The same output as text</summary>
 
 ```console
-[09:14:03] INFO     New version available for humanize in docs/requirements.txt: 4.15.0
-                    See the changelog for what changed
-           INFO     Pinned python in Dockerfile to
-                    3.14.6@sha256:9f2c1e7bd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4
-           INFO     New version available for actions/checkout in .github/workflows/ci.yml: 4.3.0
-                    No changelog available!
-           WARNING  Stale dependency left-pad in package.json: newest release 1.3.0 was published
-                    512 days ago (> 365)
+@@LOG_OUTPUT@@
 ```
 
 </details>
@@ -43,45 +36,7 @@ Running `update-time -h` shows the full command-line interface:
 
 ```console
 $ update-time -h
-usage: update-time [-h] [-V] [--cooldown DAYS] [--stale-after DAYS]
-                   [--exclude-path PATHS] [--allow-image-digest-drift]
-                   [--log-level {DEBUG,INFO,WARNING,ERROR}]
-                   [PATH]
-
-Scan the current repository for pinned dependencies and update them to their
-latest versions, rewriting the pinned versions in place. Looks at
-pyproject.toml, requirements.txt, package.json, Dockerfiles, GitHub Actions
-workflows, CircleCI configs, GitLab CI configs, Docker Compose and Helm
-manifests, devcontainer configs, and jsDelivr URLs. A cooldown period holds
-back releases that are too fresh to trust.
-
-positional arguments:
-  PATH                  the directory to scan for dependencies to update;
-                        paths in the log are reported relative to it (default:
-                        the current directory)
-
-options:
-  -h, --help            show this help message and exit
-  -V, --version         show program's version number and exit
-  --cooldown DAYS       number of days to hold back newly published Docker
-                        image, GitHub Action, requirements.txt, npm, pnpm,
-                        pyproject.toml, and jsDelivr versions (default: 7)
-  --stale-after DAYS    warn when a dependency's newest release is older than
-                        this many days; 0 disables the check (default: 365)
-  --exclude-path PATHS  comma-separated list of directories, relative to the
-                        scan root, to exclude from the walk (e.g.
-                        vendor,packages/legacy); every file under an excluded
-                        directory is skipped, on top of the always-ignored
-                        build, node_modules, __pycache__, and hidden folders
-  --allow-image-digest-drift
-                        when an already-pinned image tag has been re-pushed
-                        under the same version, adopt its new digest instead
-                        of only warning; equivalent to marking every image
-                        reference with # update-time: allow[digest-drift] (an
-                        # update-time: ignore marker still wins)
-  --log-level {DEBUG,INFO,WARNING,ERROR}
-                        the minimum severity of messages to log; available new
-                        versions are logged at INFO (default: INFO)
+@@HELP_OUTPUT@@
 ```
 
 Run with no options in the root of a repository and Update-time updates all its supported dependencies, scanning recursively.
