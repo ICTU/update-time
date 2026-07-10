@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Colour a `sha256:` digest as a single token in the log output. Rich's automatic highlighting previously matched only a fragment of a digest — reading e.g. `a256:a4fd` as an IPv6 address — so the digest came out partly coloured and partly plain.
 
 ## 0.0.18 - 2026-07-10
 
@@ -16,7 +18,6 @@ No changes yet.
 
 ### Fixed
 
-- Colour a `sha256:` digest as a single token in the log output. Rich's automatic highlighting previously matched only a fragment of a digest — reading e.g. `a256:a4fd` as an IPv6 address — so the digest came out partly coloured and partly plain.
 - Update and pin base images in Dockerfile `FROM` lines that carry a `--platform=…` flag (e.g. `FROM --platform=$BUILDPLATFORM python:3.14`), common in multi-arch builds. Previously such lines didn't match and were silently left un-updated and un-pinned. The `--platform=…` flag is left untouched. Closes [#90](https://github.com/ICTU/update-time/issues/90).
 
 ## 0.0.17 - 2026-07-09
