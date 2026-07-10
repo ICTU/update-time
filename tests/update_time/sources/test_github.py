@@ -1,6 +1,5 @@
 """GitHub unit tests."""
 
-import logging
 import unittest
 from datetime import UTC, datetime, timedelta
 from typing import cast
@@ -8,6 +7,7 @@ from unittest.mock import ANY, Mock, patch
 
 import requests
 
+from update_time.io.log import Logger
 from update_time.sources.github import (
     Release,
     changes_from_release,
@@ -18,14 +18,14 @@ from update_time.sources.github import (
     newest_publication_date,
 )
 
-from tests.update_time.helpers import CacheClearingTestCase, commits_json, mock_response, patch_get, release_json
-
-
-def assert_fetch_warning(mock_warning: Mock, mock_get: Mock) -> None:
-    """Assert that exactly one 'could not fetch' warning was logged for the mocked response's URL and status."""
-    mock_warning.assert_called_once_with(
-        "Could not fetch %s: %s", mock_get().url, mock_get().status_code, stacklevel=ANY
-    )
+from tests.update_time.helpers import (
+    CacheClearingTestCase,
+    LoggingTestCase,
+    commits_json,
+    mock_response,
+    patch_get,
+    release_json,
+)
 
 
 class GitHubURLtoRawTest(unittest.TestCase):
@@ -75,21 +75,8 @@ class GitHubOwnerAndRepositoryTest(unittest.TestCase):
         )
 
 
-class GetLatestReleaseTest(CacheClearingTestCase):
+class GetLatestReleaseTest(LoggingTestCase):
     """Unit tests for getting the latest release for a GitHub repo."""
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        """Silence the 'no valid version' error that the release-filtering tests trigger by design.
-
-        The tests that assert on that error patch the logger explicitly, which keeps working while disabled.
-        """
-        logging.disable(logging.CRITICAL)
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        """Re-enable logging for the rest of the suite."""
-        logging.disable(logging.NOTSET)
 
     @patch("requests.get")
     def test_get_latest_release(self, mock_get: Mock):
@@ -99,43 +86,39 @@ class GetLatestReleaseTest(CacheClearingTestCase):
         self.assertEqual(Release(owner="owner", repository="repository", tag_name="1.0"), release)
         self.assertEqual("sha", cast("Release", release).commit_sha)
 
-    @patch("logging.Logger.error")
-    @patch("logging.Logger.warning")
     @patch("requests.get")
-    def test_no_error_when_releases_cannot_be_fetched(self, mock_get: Mock, mock_warning: Mock, mock_error: Mock):
+    def test_no_error_when_releases_cannot_be_fetched(self, mock_get: Mock):
         """Test that an unreachable repo logs only the fetch warning, not a redundant 'no valid version' error."""
         mock_get.return_value = mock_response([], ok=False)
         self.assertIsNone(get_latest_release("owner", "unreachable repository"))
-        assert_fetch_warning(mock_warning, mock_get)
-        mock_error.assert_not_called()
+        self.assert_could_not_fetch_logged(mock_get().url, mock_get().status_code)
 
-    @patch("logging.Logger.error")
     @patch_get([])
-    def test_no_version_error_when_repo_has_no_releases(self, mock_error: Mock):
+    def test_no_version_error_when_repo_has_no_releases(self):
         """Test that a reachable repo with no eligible releases logs a 'no valid version' error."""
         self.assertIsNone(get_latest_release("owner", "repository without releases"))
-        mock_error.assert_called_once_with(
-            "No valid version found for %s", "owner/repository without releases", stacklevel=ANY
-        )
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/repository without releases")
 
     @patch_get([release_json("1.0", draft=True)])
     def test_skip_draft_releases(self):
-        """Test that draft releases are not included."""
+        """Test that draft releases are not included, logging a 'no valid version' error for the reachable repo."""
         self.assertIsNone(get_latest_release("owner", "repository with only a draft release"))
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/repository with only a draft release")
 
     @patch_get([release_json("1.0", prerelease=True)])
     def test_skip_prerelease_releases(self):
-        """Test that prerelease releases are not included."""
+        """Test that prerelease releases are not included, logging a 'no valid version' error for the reachable repo."""
         self.assertIsNone(get_latest_release("owner", "repository with only a prerelease release"))
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/repository with only a prerelease release")
 
     @patch_get([release_json("invalid-1.0")])
     def test_invalid_versions(self):
-        """Test that invalid versions are not included."""
+        """Test that invalid versions are not included, logging a 'no valid version' error for the reachable repo."""
         self.assertIsNone(get_latest_release("owner", "repository with a invalid version"))
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/repository with a invalid version")
 
-    @patch("logging.Logger.error")
     @patch("requests.get")
-    def test_http_error_on_commits_endpoint(self, mock_get: Mock, mock_error: Mock):
+    def test_http_error_on_commits_endpoint(self, mock_get: Mock):
         """Test that reading commit_sha returns an empty string and logs an error when the commits endpoint fails."""
         mock_get.side_effect = [
             mock_response([release_json("1.0")]),
@@ -144,13 +127,9 @@ class GetLatestReleaseTest(CacheClearingTestCase):
         release = get_latest_release("owner", "repository 2")
         self.assertIsNotNone(release)
         self.assertIsNone(cast("Release", release).commit_sha)
-        mock_error.assert_called_once_with(
-            "Could not fetch commit SHA for %s %s: %s",
-            "owner/repository 2",
-            "1.0",
-            "https://github.com/owner/repository 2/releases/tag/1.0",
-            stacklevel=ANY,
-        )
+        message = Logger._MESSAGE_NO_COMMIT_SHA
+        url = "https://github.com/owner/repository 2/releases/tag/1.0"
+        self.assert_error_logged(message, "owner/repository 2", "1.0", url)
 
     @patch("requests.get")
     def test_skip_releases_within_cooldown(self, mock_get: Mock):
@@ -175,7 +154,7 @@ class GetLatestReleaseTest(CacheClearingTestCase):
         )
 
 
-class NewestPublicationDateTest(CacheClearingTestCase):
+class NewestPublicationDateTest(LoggingTestCase):
     """Unit tests for the newest release publication date of a GitHub repo."""
 
     @patch("requests.get")
@@ -198,14 +177,13 @@ class NewestPublicationDateTest(CacheClearingTestCase):
         self.assertIsNone(newest_publication_date("owner", "no releases"))
 
     @patch_get([], ok=False)
-    @patch("logging.Logger.warning")
-    def test_fetch_failure(self, mock_warning: Mock):
+    def test_fetch_failure(self):
         """Test that no date is returned when the releases can't be fetched."""
         self.assertIsNone(newest_publication_date("owner", "unreachable"))
-        mock_warning.assert_called_once_with("Could not fetch %s: %s", ANY, ANY, stacklevel=ANY)
+        self.assert_could_not_fetch_logged()
 
 
-class GetReleaseTest(CacheClearingTestCase):
+class GetReleaseTest(LoggingTestCase):
     """Unit tests for getting a release matching a specific package and version."""
 
     @patch_get([release_json("puppeteer-v25.1.0"), release_json("puppeteer-core-v25.0.4", body="Changelog")])
@@ -242,25 +220,20 @@ class GetReleaseTest(CacheClearingTestCase):
         """Test that None is returned when no tag matches the requested version."""
         self.assertIsNone(get_release("owner", "repo with non matching tag", "any", "1.1"))
 
-    @patch("logging.Logger.warning")
     @patch("requests.get")
-    def test_repo_without_releases(self, mock_get: Mock, mock_warning: Mock):
+    def test_repo_without_releases(self, mock_get: Mock):
         """Test that None is returned when the repository can't be reached."""
         mock_get.return_value = mock_response([], ok=False)
         self.assertIsNone(get_release("owner", "repo without releases for get_release", "any", "1.0"))
-        assert_fetch_warning(mock_warning, mock_get)
+        self.assert_could_not_fetch_logged(mock_get().url, mock_get().status_code)
 
-    @patch("logging.Logger.warning")
     @patch("requests.get")
-    def test_timeout(self, mock_get: Mock, mock_warning: Mock):
+    def test_timeout(self, mock_get: Mock):
         """Test that None is returned when the repository can't be reached."""
         mock_get.side_effect = requests.exceptions.Timeout
         self.assertIsNone(get_release("owner", "repo without releases for get_release", "any", "1.0"))
-        mock_warning.assert_called_once_with(
-            "Timeout while fetching %s",
-            "https://api.github.com/repos/owner/repo without releases for get_release/releases?per_page=100",
-            stacklevel=ANY,
-        )
+        url = "https://api.github.com/repos/owner/repo without releases for get_release/releases?per_page=100"
+        self.mock_warning.assert_called_once_with(Logger._MESSAGE_TIMEOUT, url, stacklevel=ANY)
 
 
 class ChangesFromReleaseTest(CacheClearingTestCase):

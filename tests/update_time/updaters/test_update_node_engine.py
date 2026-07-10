@@ -3,6 +3,7 @@
 from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
+from update_time.io.log import Logger
 from update_time.updaters.update_node_engine import update_node_engines
 
 from tests.update_time.assertions import assert_success
@@ -25,7 +26,6 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         assert_success(update_node_engines())
-        self.mock_error.assert_not_called()
         mock_package_json.write_text.assert_not_called()
         self.assert_path_logged(mock_package_json)
         self.assert_no_new_version_logged()
@@ -38,10 +38,9 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         assert_success(update_node_engines())
-        self.mock_error.assert_not_called()
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "19" }}\n')
         self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged(mock_package_json, "node", "19", once=True)
+        self.assert_new_version_logged(mock_package_json, "node", "19")
         self.assert_no_warnings_logged()
 
     @patch("pathlib.Path.exists", Mock(return_value=True))
@@ -51,10 +50,9 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         assert_success(update_node_engines())
-        self.mock_error.assert_not_called()
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "19" }}\n')
         self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged(mock_package_json, "node", "19", once=True)
+        self.assert_new_version_logged(mock_package_json, "node", "19")
         self.assert_no_warnings_logged()
 
     @patch("pathlib.Path.exists", Mock(return_value=True))
@@ -65,12 +63,8 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         mock_glob.return_value = [mock_package_json]
         assert_success(update_node_engines())
         self.mock_warning.assert_called_once_with(
-            "Cannot derive the Node engine version from the non-numeric base image tag 'node:%s' in %s",
-            "lts",
-            Path("/Dockerfile"),
-            stacklevel=ANY,
+            Logger._MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG, "lts", Path("/Dockerfile"), stacklevel=ANY
         )
-        self.mock_error.assert_not_called()
         mock_package_json.write_text.assert_not_called()
         self.assert_no_path_logged()
         self.assert_no_new_version_logged()
@@ -80,7 +74,6 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         mock_package_json = self.create_package_json("{}")
         mock_glob.return_value = [mock_package_json]
         assert_success(update_node_engines())
-        self.mock_error.assert_not_called()
         mock_package_json.write_text.assert_not_called()
         self.assert_no_path_logged()
         self.assert_no_new_version_logged()
@@ -92,9 +85,7 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         self.assertEqual(1, update_node_engines())
-        self.mock_error.assert_called_with(
-            "Expected Dockerfile %s to have a Node base image", Path("/Dockerfile"), stacklevel=ANY
-        )
+        self.assert_error_logged(Logger._MESSAGE_MISSING_NODE_BASE_IMAGE, Path("/Dockerfile"))
         mock_package_json.write_text.assert_not_called()
         self.assert_no_path_logged()
         self.assert_no_new_version_logged()
@@ -107,9 +98,7 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         self.assertEqual(1, update_node_engines())
-        self.mock_error.assert_called_with(
-            "Expected Dockerfile %s to have a Node base image", Path("/Dockerfile"), stacklevel=ANY
-        )
+        self.assert_error_logged(Logger._MESSAGE_MISSING_NODE_BASE_IMAGE, Path("/Dockerfile"))
         mock_package_json.write_text.assert_not_called()
         self.assert_no_path_logged()
         self.assert_no_new_version_logged()
@@ -130,9 +119,8 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         assert_success(update_node_engines())
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "20" }}\n')
         self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged(mock_package_json, "node", "20", once=True)
+        self.assert_new_version_logged(mock_package_json, "node", "20")
         self.assert_no_warnings_logged()
-        self.mock_error.assert_not_called()
 
     @patch("pathlib.Path.exists", Mock(return_value=False))
     def test_numeric_dockerfile_preferred_over_non_numeric(self, mock_glob: Mock):
@@ -149,6 +137,5 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         mock_glob.side_effect = rglob
         assert_success(update_node_engines())
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "20" }}\n')
-        self.assert_new_version_logged(mock_package_json, "node", "20", once=True)
+        self.assert_new_version_logged(mock_package_json, "node", "20")
         self.assert_no_warnings_logged()  # node:lts is passed over, so it is never warned about.
-        self.mock_error.assert_not_called()

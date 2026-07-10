@@ -4,7 +4,6 @@ import importlib
 import pkgutil
 import unittest
 from functools import cache
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
@@ -26,6 +25,7 @@ from update_time.updaters.update_github_action import get_latest_version as gith
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
     from unittest.mock import _patch, _patch_dict
 
 
@@ -71,9 +71,11 @@ class CacheClearingTestCase(unittest.TestCase):
 
 
 class LoggingTestCase(CacheClearingTestCase):
-    """Base test case that mocks the logger's methods, exposed as mock_debug/info/warning/error attributes.
+    """Base test case for any test of code that logs.
 
-    This spares every updater test from patching (and threading through method arguments) the log methods.
+    It mocks the logger's methods, exposed as mock_debug/info/warning/error attributes, and offers the assert_*_logged
+    helpers below. This spares tests from patching (and threading through method arguments) the log methods, and from
+    silencing expected diagnostics by hand.
     """
 
     def setUp(self) -> None:
@@ -83,6 +85,18 @@ class LoggingTestCase(CacheClearingTestCase):
         self.mock_info = self._patch_logger("info")
         self.mock_warning = self._patch_logger("warning")
         self.mock_error = self._patch_logger("error")
+        self._error_expected = False  # Set by assert_error_logged; tearDown fails on an error the test didn't expect.
+
+    def tearDown(self) -> None:
+        """Fail the test if an error was logged that it did not explicitly expect via assert_error_logged.
+
+        An error log almost always means something genuinely broke, and only a handful of tests expect one, so
+        'no error unless expected' is enforced by default here rather than left to each test to assert (warnings,
+        which are common and often expected, stay opt-in via assert_no_warnings_logged).
+        """
+        super().tearDown()
+        if not self._error_expected:
+            self.mock_error.assert_not_called()
 
     def _patch_logger(self, method: str) -> Mock:
         """Patch a Logger method for the duration of the test and return the mock."""
@@ -90,10 +104,13 @@ class LoggingTestCase(CacheClearingTestCase):
         self.addCleanup(patcher.stop)
         return patcher.start()
 
-    NEW_VERSION_MESSAGE = "New version available for %s in %s: %s\n%s"
+    def assert_error_logged(self, message: str, *args: object) -> None:
+        """Assert an error was logged, and mark it expected so tearDown's strict no-error check passes."""
+        self._error_expected = True
+        self.mock_error.assert_called_once_with(message, *args, stacklevel=ANY)
 
     def assert_new_version_logged(
-        self, path: Path, dependency: str, version: str, changes: str = "No changelog available!", *, once: bool = False
+        self, path: Path, dependency: str, version: str, changes: str = Logger._NO_CHANGELOG, *, once: bool = True
     ) -> None:
         """Assert that the availability of a new version was logged at info level for the dependency in the file.
 
@@ -101,39 +118,36 @@ class LoggingTestCase(CacheClearingTestCase):
         same way the logger renders it.
         """
         assert_called = self.mock_info.assert_called_once_with if once else self.mock_info.assert_called_with
-        assert_called(self.NEW_VERSION_MESSAGE, dependency, self._relative(path), version, changes, stacklevel=ANY)
+        assert_called(Logger._MESSAGE_NEW_VERSION, dependency, Logger._relative(path), version, changes, stacklevel=ANY)
 
     def assert_no_new_version_logged(self) -> None:
         """Assert that no new version was logged at info level (other info-level messages are allowed)."""
         new_version_calls = [
-            call for call in self.mock_info.call_args_list if call.args[:1] == (self.NEW_VERSION_MESSAGE,)
+            call for call in self.mock_info.call_args_list if call.args[:1] == (Logger._MESSAGE_NEW_VERSION,)
         ]
         self.assertEqual([], new_version_calls, "Expected no new version to be logged")
 
     def assert_pinned_logged(self, path: Path, dependency: str, version: str, sha: str) -> None:
         """Assert that pinning a previously unpinned reference to a digest was logged at info level for the file."""
-        message = "Pinned %s in %s to %s@%s"
-        self.mock_info.assert_called_with(message, dependency, self._relative(path), version, sha, stacklevel=ANY)
+        message = Logger._MESSAGE_PINNED
+        self.mock_info.assert_called_with(message, dependency, Logger._relative(path), version, sha, stacklevel=ANY)
 
     def assert_digest_drift_logged(
         self, path: Path, dependency: str, version: str, current_sha: str, new_sha: str
     ) -> None:
         """Assert that a re-pushed tag's digest drift was logged as a single warning for the file."""
-        message = (
-            "Digest drift for %s:%s in %s: pinned to %s but the registry now serves %s; the pin was left unchanged,"
-            " verify the change is expected before updating the pin"
-        )
+        message = Logger._MESSAGE_DIGEST_DRIFT
         self.mock_warning.assert_called_once_with(
-            message, dependency, version, self._relative(path), current_sha, new_sha, stacklevel=ANY
+            message, dependency, version, Logger._relative(path), current_sha, new_sha, stacklevel=ANY
         )
 
     def assert_adopted_drift_logged(
         self, path: Path, dependency: str, version: str, current_sha: str, new_sha: str
     ) -> None:
         """Assert that adopting a re-pushed tag's new digest was logged once at info level for the file."""
-        message = "Adopted digest drift for %s:%s in %s: re-pinned from %s to %s"
+        message = Logger._MESSAGE_ADOPTED_DIGEST_DRIFT
         self.mock_info.assert_called_once_with(
-            message, dependency, version, self._relative(path), current_sha, new_sha, stacklevel=ANY
+            message, dependency, version, Logger._relative(path), current_sha, new_sha, stacklevel=ANY
         )
 
     def assert_stale_dependency_logged(self, path: Path, dependency: str, version: str) -> None:
@@ -141,14 +155,14 @@ class LoggingTestCase(CacheClearingTestCase):
 
         The exact age and threshold vary with the wall clock, so they are matched with ANY.
         """
-        message = "Stale dependency %s in %s: newest release %s was published %d days ago (> %d)"
+        message = Logger._MESSAGE_STALE
         self.mock_warning.assert_called_once_with(
-            message, dependency, self._relative(path), version, ANY, ANY, stacklevel=ANY
+            message, dependency, Logger._relative(path), version, ANY, ANY, stacklevel=ANY
         )
 
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged at debug level."""
-        self.mock_debug.assert_called_with("Checking if there are updates for %s", self._relative(path), stacklevel=ANY)
+        self.mock_debug.assert_called_with(Logger._MESSAGE_CHECKING_PATH, Logger._relative(path), stacklevel=ANY)
 
     def assert_no_path_logged(self) -> None:
         """Assert that no path being checked for updates was logged (nothing logged at debug level)."""
@@ -156,27 +170,30 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_ignored_logged(self, dependency: str, path: Path) -> None:
         """Assert that ignoring a reference (via the update-time: ignore marker) was logged at debug level."""
-        message = "Ignoring updates for %s in %s (update-time: ignore)"
-        self.mock_debug.assert_called_with(message, dependency, self._relative(path), stacklevel=ANY)
+        self.mock_debug.assert_called_with(Logger._MESSAGE_IGNORED, dependency, Logger._relative(path), stacklevel=ANY)
 
     def assert_skipped_logged(self, path: Path, reason: str) -> None:
         """Assert that deliberately skipping a file was logged at info level with the given reason."""
-        self.mock_info.assert_called_once_with("Skipping %s: %s", self._relative(path), reason, stacklevel=ANY)
+        self.mock_info.assert_called_once_with(
+            Logger._MESSAGE_SKIP_PATH, Logger._relative(path), reason, stacklevel=ANY
+        )
 
     def assert_unsupported_package_manager_logged(self, path: Path, manager: str, supported: str) -> None:
         """Assert that an unsupported package manager was logged as a warning for the file."""
-        message = "Skipping %s: %s is not supported, only %s"
-        self.mock_warning.assert_called_once_with(message, self._relative(path), manager, supported, stacklevel=ANY)
+        message = Logger._MESSAGE_SKIP_UNSUPPORTED
+        self.mock_warning.assert_called_once_with(message, Logger._relative(path), manager, supported, stacklevel=ANY)
 
     def assert_invalid_pyproject_toml_logged(self, path: Path) -> None:
         """Assert that an unparsable pyproject.toml was logged as a warning for the file."""
-        message = "Skipping %s: it is not valid TOML"
-        self.mock_warning.assert_called_once_with(message, self._relative(path), stacklevel=ANY)
+        self.mock_warning.assert_called_once_with(Logger._MESSAGE_INVALID_TOML, Logger._relative(path), stacklevel=ANY)
 
-    @staticmethod
-    def _relative(path: Path) -> Path:
-        """Make the file path relative to the working directory, the same way the logger renders it."""
-        return path.relative_to(Path.cwd())
+    def assert_could_not_fetch_logged(self, url: object = ANY, detail: object = ANY) -> None:
+        """Assert that a single 'could not fetch' warning was logged, optionally for a given URL and status/error."""
+        self.mock_warning.assert_called_once_with(Logger._MESSAGE_COULD_NOT_FETCH, url, detail, stacklevel=ANY)
+
+    def assert_command_stderr_logged(self, command: object = ANY, stderr: object = ANY) -> None:
+        """Assert that a single 'command wrote to stderr' warning was logged, optionally for a given command/stderr."""
+        self.mock_warning.assert_called_once_with(Logger._MESSAGE_COMMAND_STDERR, command, stderr, stacklevel=ANY)
 
     def assert_no_warnings_logged(self) -> None:
         """Assert that no warnings were logged."""

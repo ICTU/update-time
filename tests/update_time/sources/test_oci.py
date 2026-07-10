@@ -2,6 +2,7 @@
 
 import unittest
 from datetime import UTC, datetime, timedelta
+from http import HTTPStatus
 from unittest.mock import Mock, patch
 
 import requests
@@ -9,7 +10,7 @@ import requests
 from update_time.sources.oci import _registry_token, get_latest_tag, is_docker_hub_image
 
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
-from tests.update_time.helpers import CacheClearingTestCase, docker_tag, mock_response, patch_environ
+from tests.update_time.helpers import LoggingTestCase, docker_tag, mock_response, patch_environ
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
 
 
@@ -32,7 +33,7 @@ class IsDockerHubImageTest(unittest.TestCase):
 
 
 @patch_environ()
-class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
+class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
     """Unit tests for getting the latest tag."""
 
     def test_invalid_current_tag(self):
@@ -45,12 +46,12 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
         self.requests.side_effect = mock_docker_registry()
         self.assertEqual("1.0", get_latest_tag("no_tags", "1.0").version)
 
-    @patch("logging.Logger.warning")
-    def test_image_not_resolvable(self, mock_warning: Mock):
+    def test_image_not_resolvable(self):
         """Test that a reference that doesn't resolve (e.g. a CircleCI machine image) is left unchanged, not crash."""
         self.requests.side_effect = mock_docker_registry(list_ok=False)
         self.assertEqual("2025.09.1", get_latest_tag("ubuntu-2204", "2025.09.1").version)
-        mock_warning.assert_called_once()
+        url = "https://registry-1.docker.io/v2/library/ubuntu-2204/tags/list?n=1000"
+        self.assert_could_not_fetch_logged(url, HTTPStatus.NOT_FOUND)
 
     def test_other_registry_image_resolved(self):
         """Test that an image on a registry other than Docker Hub is resolved against that registry's host."""
@@ -115,12 +116,12 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
         )
         self.assertEqual("2.2", get_latest_tag("pagination", "1.2").version)
 
-    @patch("logging.Logger.warning")
-    def test_tag_manifest_not_found(self, mock_warning: Mock):
+    def test_tag_manifest_not_found(self):
         """Test that a listed tag whose manifest can't be fetched is skipped, leaving the current tag unchanged."""
         self.requests.side_effect = mock_docker_registry(names=["2.2"])
         self.assertEqual("1.2", get_latest_tag("manifest_not_found", "1.2").version)
-        mock_warning.assert_called_once()
+        url = "https://registry-1.docker.io/v2/library/manifest_not_found/manifests/2.2"
+        self.assert_could_not_fetch_logged(url, HTTPStatus.NOT_FOUND)
 
     def test_invalid_new_tag(self):
         """Test that a tag whose version part can't be parsed (e.g. 1.2.invalid) is ignored."""
@@ -256,19 +257,19 @@ class GetLatestTagTest(RegistryRequestsMixin, CacheClearingTestCase):
         tags_call = next(call for call in self.requests.call_args_list if "/tags/list" in call.args[0])
         self.assertEqual({}, tags_call.kwargs["headers"])  # No Authorization header for an anonymous registry.
 
-    @patch("logging.Logger.warning")
-    def test_push_date_unavailable(self, mock_warning: Mock):
+    def test_push_date_unavailable(self):
         """Test that a Docker Hub tag whose push date can't be fetched is still usable, just without a cooldown."""
         self.requests.side_effect = mock_docker_registry(docker_tag("1.1", DIGEST), push_date_ok=False)
         latest = get_latest_tag("push_date_unavailable", "1.0")
         self.assertEqual("1.1", latest.version)
         self.assertEqual(DIGEST, latest.sha)
         self.assertIsNone(latest.published)
-        mock_warning.assert_called_once()  # The unavailable push date is logged.
+        # The unavailable push date is logged as a could-not-fetch warning for the Docker Hub tags API:
+        url = "https://registry.hub.docker.com/v2/namespaces/library/repositories/push_date_unavailable/tags/1.1"
+        self.assert_could_not_fetch_logged(url, HTTPStatus.NOT_FOUND)
 
 
-@patch("logging.Logger.warning", Mock())
-class RegistryTokenTest(CacheClearingTestCase):
+class RegistryTokenTest(LoggingTestCase):
     """Unit tests for discovering and fetching a registry pull token."""
 
     @patch("requests.get", Mock(side_effect=requests.exceptions.ConnectionError))

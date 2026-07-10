@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import ANY, Mock, patch
 
+from update_time.io.log import Logger
 from update_time.io.process import run
 
 
@@ -66,7 +67,7 @@ class RunTests(TestCase):
         result = run(["uv", "lock"])
         self.assertEqual("", result.stdout)
         self.assertFalse(result.ok)
-        mock_warning.assert_called_once_with("%s wrote to stderr:\n%s", "uv lock", "boom", stacklevel=ANY)
+        mock_warning.assert_called_once_with(Logger._MESSAGE_COMMAND_STDERR, "uv lock", "boom", stacklevel=ANY)
 
     @patch("logging.Logger.error")
     def test_missing_executable_is_logged(self, mock_error: Mock, mock_run: Mock):
@@ -75,4 +76,4 @@ class RunTests(TestCase):
         result = run(["npm", "outdated"])
         self.assertEqual("", result.stdout)
         self.assertFalse(result.ok)
-        mock_error.assert_called_once_with("Could not run %s: is %s installed?", "npm outdated", "npm", stacklevel=ANY)
+        mock_error.assert_called_once_with(Logger._MESSAGE_COMMAND_NOT_FOUND, "npm outdated", "npm", stacklevel=ANY)

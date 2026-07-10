@@ -201,7 +201,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         self.assertNotIn(["npm", "update"], commands)  # skipped because outdated failed
         self.assertNotIn(["npm", "list"], commands)  # skipped because outdated failed
         mock_package_json.write_text.assert_not_called()
-        self.mock_warning.assert_called_once()  # only the outdated failure is surfaced
+        self.assert_command_stderr_logged(stderr="error: offline")  # only the outdated failure is surfaced
 
     def test_project_cooldown_respected(self, mock_run: Mock, mock_glob: Mock):
         """Test that no cooldown option is added when the project's npm config already sets one."""

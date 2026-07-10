@@ -186,7 +186,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assertNotIn(["uv", "lock"], commands)  # uv lock is skipped because uv tree failed
         mock_pyproject_toml.write_text.assert_not_called()
         get.assert_not_called()
-        self.mock_warning.assert_called_once()  # uv tree's stderr is surfaced
+        self.assert_command_stderr_logged(stderr="error: offline")  # only uv tree's stderr is surfaced
 
     def test_skip_non_uv_tool_section(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pyproject.toml with a non-uv tool section (e.g. [tool.poetry]) is skipped without running uv."""

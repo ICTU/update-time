@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN_DAYS
+from update_time.io.log import Logger
 from update_time.sources.jsdelivr import get_latest_version
 
 from tests.update_time.fixtures import HASH1, HASH2
@@ -123,13 +124,8 @@ class GetLatestVersionTest(LoggingTestCase):
         latest_version = get_latest_version("clipboard", "1.0", FILENAME)
         self.assertEqual("1.0", latest_version.version)
         self.assertEqual("", latest_version.sha)
-        self.mock_warning.assert_called_once_with(
-            "Could not resolve the integrity hash for %s %s (%s), leaving it unchanged",
-            "clipboard",
-            "1.1",
-            FILENAME,
-            stacklevel=ANY,
-        )
+        message = Logger._MESSAGE_NO_INTEGRITY_HASH
+        self.mock_warning.assert_called_once_with(message, "clipboard", "1.1", FILENAME, stacklevel=ANY)
 
     def test_newest_published_attached(self, mock_get: Mock):
         """Test that the package's newest npm publication date is attached for the staleness check."""

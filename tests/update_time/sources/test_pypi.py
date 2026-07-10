@@ -1,9 +1,8 @@
 """Unit tests for the PyPI module."""
 
-import logging
 from datetime import UTC, datetime
 from http import HTTPStatus
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import Mock, patch
 
 from update_time.sources.pypi import (
     CHANGELOG_URL_KEYS,
@@ -18,6 +17,7 @@ from update_time.sources.pypi import (
 from tests.update_time.helpers import (
     PYPI_OLD_UPLOAD,
     CacheClearingTestCase,
+    LoggingTestCase,
     commits_json,
     mock_response,
     patch_get,
@@ -28,18 +28,8 @@ from tests.update_time.helpers import (
 
 
 @patch("requests.get")
-class GetChangesTest(CacheClearingTestCase):
+class GetChangesTest(LoggingTestCase):
     """Unit tests for getting the changes."""
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        """Override to disable logging."""
-        logging.disable(logging.CRITICAL)
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        """Override to enable logging."""
-        logging.disable(logging.NOTSET)
 
     def create_mock_response(
         self, mock_get: Mock, *json: dict | list, text: str = "", status_code: int = HTTPStatus.OK
@@ -150,7 +140,7 @@ class GetPublicationDateTimeTest(CacheClearingTestCase):
         self.assertEqual(published, get_publication_datetime("package", "1.0"))
 
 
-class NewestPublicationDateTest(CacheClearingTestCase):
+class NewestPublicationDateTest(LoggingTestCase):
     """Unit tests for the newest publication date across all of a package's releases."""
 
     @patch_get({"versions": ["1.0"]})
@@ -172,15 +162,14 @@ class NewestPublicationDateTest(CacheClearingTestCase):
         self.assertEqual(datetime(2020, 6, 1, tzinfo=UTC), newest_publication_date("files"))
 
     @patch_get(ok=False)
-    @patch("logging.Logger.warning")
-    def test_fetch_failure(self, mock_warning: Mock):
+    def test_fetch_failure(self):
         """Test that no date is returned when the Index API can't be fetched."""
         self.assertIsNone(newest_publication_date("error"))
-        mock_warning.assert_called_once_with("Could not fetch %s: %s", ANY, ANY, stacklevel=ANY)
+        self.assert_could_not_fetch_logged()
 
 
 @patch("requests.get")
-class GetLatestVersionTest(CacheClearingTestCase):
+class GetLatestVersionTest(LoggingTestCase):
     """Unit tests for getting the latest version from PyPI.
 
     `get_latest_version` makes its requests in a fixed order, so each test's `mock_get.side_effect` mirrors it:
@@ -233,7 +222,6 @@ class GetLatestVersionTest(CacheClearingTestCase):
         mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(upload_time="")]
         self.assertEqual("1.0", get_latest_version("no_files", "1.0").version)
 
-    @patch("logging.Logger.warning", Mock())
     def test_release_metadata_unavailable_ignored(self, mock_get: Mock):
         """Test that a candidate whose metadata can't be fetched is skipped instead of crashing the run."""
         mock_get.side_effect = [pypi_index("1.0", "1.1"), mock_response(ok=False)]

@@ -6,13 +6,13 @@ from unittest.mock import Mock, patch
 
 from update_time.sources.npmjs import get_changes, get_publication_datetime, newest_publication_date, newest_release
 
-from tests.update_time.helpers import CacheClearingTestCase, patch_get
+from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase, patch_get
 
 if TYPE_CHECKING:
     from update_time.domain.version import DependencyVersion
 
 
-class NpmjsPublicationDatetimeTest(CacheClearingTestCase):
+class NpmjsPublicationDatetimeTest(LoggingTestCase):
     """Unit tests for the npmjs publication datetime fetcher."""
 
     @patch_get({"time": {"1.0": "20260530T10:14:40.567Z"}})
@@ -21,7 +21,6 @@ class NpmjsPublicationDatetimeTest(CacheClearingTestCase):
         publication_datetime = datetime(2026, 5, 30, 10, 14, 40, 567000, tzinfo=UTC)
         self.assertEqual(publication_datetime, get_publication_datetime("package", "1.0"))
 
-    @patch("logging.Logger.warning", Mock())
     @patch_get(ok=False)
     def test_get_publication_datetime_when_unreachable(self):
         """Test that an unreachable registry yields no publication date instead of crashing."""
@@ -37,14 +36,13 @@ class NpmjsPublicationDatetimeTest(CacheClearingTestCase):
         with self.assertRaises(KeyError):
             get_publication_datetime("package", "9.9")
 
-    @patch("logging.Logger.warning", Mock())
     @patch_get(ok=False)
     def test_get_changes_when_unreachable(self):
         """Test that an unreachable registry yields no changelog instead of crashing."""
         self.assertEqual("", get_changes("package", "1.0"))
 
 
-class NpmjsNewestPublicationDateTest(CacheClearingTestCase):
+class NpmjsNewestPublicationDateTest(LoggingTestCase):
     """Unit tests for the newest publication date across a package's versions."""
 
     @patch_get(
@@ -61,14 +59,13 @@ class NpmjsNewestPublicationDateTest(CacheClearingTestCase):
         """Test that the newest version's date is returned, ignoring the `created`/`modified` entries."""
         self.assertEqual(datetime(2024, 6, 1, tzinfo=UTC), newest_publication_date("package"))
 
-    @patch("logging.Logger.warning", Mock())
     @patch_get(ok=False)
     def test_unreachable(self):
         """Test that an unreachable registry yields no date instead of crashing."""
         self.assertIsNone(newest_publication_date("package"))
 
 
-class NpmjsNewestReleaseTest(CacheClearingTestCase):
+class NpmjsNewestReleaseTest(LoggingTestCase):
     """Unit tests for the newest release (version + publication date) fetcher."""
 
     @patch_get({"dist-tags": {"latest": "2.0"}, "time": {"1.0": "2020-01-01T00:00:00Z", "2.0": "2024-06-01T00:00:00Z"}})
@@ -78,7 +75,6 @@ class NpmjsNewestReleaseTest(CacheClearingTestCase):
         self.assertEqual("2.0", release.version)
         self.assertEqual(datetime(2024, 6, 1, tzinfo=UTC), release.newest_published)
 
-    @patch("logging.Logger.warning", Mock())
     @patch_get(ok=False)
     def test_no_latest_tag(self):
         """Test that a package with no `latest` dist-tag (e.g. unreachable) yields None."""

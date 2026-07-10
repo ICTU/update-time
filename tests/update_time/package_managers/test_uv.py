@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import ANY, Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN_DAYS
+from update_time.io.log import Logger
 from update_time.package_managers.uv import (
     EXCLUDE_NEWER_COMMENT,
     _persist_exclude_newer,
@@ -42,8 +43,9 @@ class PersistExcludeNewerTest(LoggingTestCase):
         written = pyproject_toml.write_text.call_args.args[0]
         self.assertIn(f'exclude-newer = "{COOLDOWN_DAYS} days"', written)
         self.assertIn(EXCLUDE_NEWER_COMMENT, written)
-        message = "Set uv exclude-newer to %r in %s to apply the cooldown"
-        self.mock_info.assert_called_once_with(message, f"{COOLDOWN_DAYS} days", ANY, stacklevel=ANY)
+        self.mock_info.assert_called_once_with(
+            Logger._MESSAGE_UV_COOLDOWN, f"{COOLDOWN_DAYS} days", ANY, stacklevel=ANY
+        )
 
     def test_creates_tool_uv_section_when_absent(self):
         """Test that a `[tool.uv]` section is created when the pyproject.toml has none at all."""
