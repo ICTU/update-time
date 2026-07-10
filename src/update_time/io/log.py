@@ -147,21 +147,21 @@ class Logger:
 
     # --- Source results: resolving a dependency's latest version and digest ---
 
-    _MESSAGE_NEW_VERSION = f"New version available for {_DEPENDENCY_MARKER}%s{_DEPENDENCY_MARKER} in %s: %s\n%s"
+    MESSAGE_NEW_VERSION = f"New version available for {_DEPENDENCY_MARKER}%s{_DEPENDENCY_MARKER} in %s: %s\n%s"
     _SUPPRESSING_CHANGELOG = "Suppressing changelog already shown, see above"
-    _NO_CHANGELOG = "No changelog available!"
+    NO_CHANGELOG = "No changelog available!"
 
     def new_version(self, dependency: str, version: DependencyVersion, path: Path) -> None:
         """Log the availability of a new version for a dependency in a file, with its UTC publication date if known."""
         if (dependency, version) in self.logged_changes:
             changes = self._SUPPRESSING_CHANGELOG
         else:
-            changes = version.changes or self._NO_CHANGELOG
+            changes = version.changes or self.NO_CHANGELOG
         self.logged_changes.add((dependency, version))
         new_version = version.version
         if version.published is not None:
             new_version += f", published: {version.published.astimezone(UTC):%Y-%m-%d %H:%M}"
-        self._log(self.log.info, self._MESSAGE_NEW_VERSION, dependency, self._relative(path), new_version, changes)
+        self._log(self.log.info, self.MESSAGE_NEW_VERSION, dependency, self._relative(path), new_version, changes)
 
     _MESSAGE_PINNED = f"Pinned {_DEPENDENCY_MARKER}%s{_DEPENDENCY_MARKER} in %s to %s@%s"
 

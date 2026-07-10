@@ -209,6 +209,13 @@ update-dependencies:
 
 alias update-deps := update-dependencies
 
+# === Documentation ===
+
+# Regenerate README.md from docs/README.md.in (fills in `update-time -h` and the log output; rewrites the screenshot).
+[env("PYTHONPATH", "src")]
+readme:
+    {{ uv_run }} python -m docs.generate_readme
+
 # === CI ===
 
 # Run SonarCloud prerequisites
@@ -221,10 +228,7 @@ _ci: _sonarcloud check
 
 # === Folders ===
 
-exists(path) := path_exists(invocation_directory() + "/" + path)
-src_folder := if exists("src") == "true" { "src" } else { "" }
-tests_folder := if exists("tests") == "true" { "tests" } else { "" }
-code := if trim(src_folder + " " + tests_folder) == "" { ".?*.py" } else { src_folder + " " + tests_folder }
+code := "src tests docs"
 
 # === Output functions ===
 

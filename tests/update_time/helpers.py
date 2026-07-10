@@ -110,7 +110,7 @@ class LoggingTestCase(CacheClearingTestCase):
         self.mock_error.assert_called_once_with(message, *args, stacklevel=ANY)
 
     def assert_new_version_logged(
-        self, path: Path, dependency: str, version: str, changes: str = Logger._NO_CHANGELOG, *, once: bool = True
+        self, path: Path, dependency: str, version: str, changes: str = Logger.NO_CHANGELOG, *, once: bool = True
     ) -> None:
         """Assert that the availability of a new version was logged at info level for the dependency in the file.
 
@@ -118,12 +118,12 @@ class LoggingTestCase(CacheClearingTestCase):
         same way the logger renders it.
         """
         assert_called = self.mock_info.assert_called_once_with if once else self.mock_info.assert_called_with
-        assert_called(Logger._MESSAGE_NEW_VERSION, dependency, Logger._relative(path), version, changes, stacklevel=ANY)
+        assert_called(Logger.MESSAGE_NEW_VERSION, dependency, Logger._relative(path), version, changes, stacklevel=ANY)
 
     def assert_no_new_version_logged(self) -> None:
         """Assert that no new version was logged at info level (other info-level messages are allowed)."""
         new_version_calls = [
-            call for call in self.mock_info.call_args_list if call.args[:1] == (Logger._MESSAGE_NEW_VERSION,)
+            call for call in self.mock_info.call_args_list if call.args[:1] == (Logger.MESSAGE_NEW_VERSION,)
         ]
         self.assertEqual([], new_version_calls, "Expected no new version to be logged")
 
