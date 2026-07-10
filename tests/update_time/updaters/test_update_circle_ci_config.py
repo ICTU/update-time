@@ -3,6 +3,7 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from update_time.io.log import Logger
 from update_time.updaters.update_circle_ci_config import update_circle_ci_config
 
 from tests.update_time import registry
@@ -36,11 +37,8 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
             assert_success(update_circle_ci_config(CIRCLE_CI_DIR))
         config_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         continue_yaml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
-        self.assertEqual(2, self.mock_info.call_count)
         self.assert_path_logged(continue_yaml)
-        self.assert_new_version_logged(
-            continue_yaml, "cimg/go", "1.26.2", "Suppressing changelog already shown, see above"
-        )
+        self.assert_new_version_logged(continue_yaml, "cimg/go", "1.26.2", Logger._SUPPRESSING_CHANGELOG, once=False)
         self.assert_no_warnings_logged()
 
     def test_machine_executor_alias_ignored(self):

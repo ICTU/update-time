@@ -2,9 +2,10 @@
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import Mock, patch
 
 from update_time.domain.version import DependencyVersion, VersionString
+from update_time.io.log import Logger
 from update_time.updaters.update_github_action import get_latest_version, update_github_actions
 
 from tests.update_time.assertions import assert_success
@@ -64,7 +65,7 @@ class UpdateGitHubActionTest(LoggingTestCase):
         """Test that an error is logged and the current version kept when there is no valid release."""
         mock_get.return_value = mock_response([])
         self.assertEqual("1.0", get_latest_version("docker/action", "1.0").version)
-        self.mock_error.assert_called_once_with("No valid version found for %s", "docker/action", stacklevel=ANY)
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "docker/action")
 
     def test_no_commit_sha(self, mock_get: Mock):
         """Test that the version is not updated when the commit SHA can't be fetched for an eligible release."""
@@ -75,6 +76,8 @@ class UpdateGitHubActionTest(LoggingTestCase):
         latest_version = get_latest_version("docker/no-sha-action", "1.0")
         # No SHA means _update_action leaves the reference alone; no changelog is attached either:
         self.assert_version(latest_version, "1.0", "", "")
+        url = "https://github.com/docker/no-sha-action/releases/tag/1.1"
+        self.assert_error_logged(Logger._MESSAGE_NO_COMMIT_SHA, "docker/no-sha-action", "1.1", url)
 
 
 GITHUB_DIR = Path("/repo/.github")
@@ -96,10 +99,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         composite_action_yaml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
         self.assert_path_logged(composite_action_yaml)
         self.assert_new_version_logged(
-            composite_action_yaml,
-            "action/action",
-            "1.1",
-            "Suppressing changelog already shown, see above",
+            composite_action_yaml, "action/action", "1.1", Logger._SUPPRESSING_CHANGELOG, once=False
         )
         self.assert_no_warnings_logged()
 
@@ -204,6 +204,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_once_with(
             f"uses: action/action@{NEW_SHA} # v1.1  # update-time: ignore[stale]\n"
         )
+        self.assert_new_version_logged(workflow_yml, "action/action", "1.1")
         self.assert_no_warnings_logged()  # staleness skipped despite the old release
 
     def test_unpinned_action_without_sha_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):

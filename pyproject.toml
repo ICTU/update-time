@@ -86,6 +86,9 @@ lint.ignore = [
 lint.per-file-ignores.".vulture-whitelist.py" = [
     "ALL",
 ]
+lint.per-file-ignores."tests/**" = [
+    "SLF001", # https://docs.astral.sh/ruff/rules/private-member-access/ - tests assert against Logger's private message constants
+]
 lint.isort.section-order = [
     "future",
     "standard-library",

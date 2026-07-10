@@ -7,16 +7,15 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import ANY, Mock, patch
 
+from rich.console import Console
 from rich.logging import RichHandler
 from rich.text import Text
 
 from update_time.domain.version import DependencyVersion
 from update_time.io import filesystem
-from update_time.io.log import Logger, LogHighlighter, get_logger
+from update_time.io.log import _DEPENDENCY_MARKER, Logger, LogHighlighter, get_logger
 
 from tests.update_time.helpers import new_version_getter
-
-NEW_VERSION_MESSAGE = "New version available for %s in %s: %s\n%s"  # the format Logger.new_version logs at INFO
 
 
 class GetLoggerTests(TestCase):
@@ -38,9 +37,10 @@ class LoggerTests(TestCase):
         """Test that a repeated changelog is suppressed."""
         logger = Logger("suppress changelog")
         path = Path.cwd() / "pyproject.toml"
+        message = Logger._MESSAGE_NEW_VERSION
         logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), path)
         mock_info.assert_called_once_with(
-            NEW_VERSION_MESSAGE,
+            message,
             "dependency",
             Path("pyproject.toml"),
             "1.0",
@@ -49,11 +49,11 @@ class LoggerTests(TestCase):
         )
         logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), path)
         mock_info.assert_called_with(
-            NEW_VERSION_MESSAGE,
+            message,
             "dependency",
             Path("pyproject.toml"),
             "1.0",
-            "Suppressing changelog already shown, see above",
+            Logger._SUPPRESSING_CHANGELOG,
             stacklevel=ANY,
         )
 
@@ -62,7 +62,7 @@ class LoggerTests(TestCase):
         """Test that the version is logged without a publication date when it is unknown."""
         Logger("no date").new_version("dependency", DependencyVersion("1.0", "Changelog"), Path.cwd() / "a.txt")
         mock_info.assert_called_once_with(
-            NEW_VERSION_MESSAGE,
+            Logger._MESSAGE_NEW_VERSION,
             "dependency",
             Path("a.txt"),
             "1.0",
@@ -76,7 +76,12 @@ class LoggerTests(TestCase):
         sha = f"sha256:{'a' * 64}"
         Logger("pin").pinned("dependency", DependencyVersion("1.0", sha=sha), Path.cwd() / "Dockerfile")
         mock_info.assert_called_once_with(
-            "Pinned %s in %s to %s@%s", "dependency", Path("Dockerfile"), "1.0", sha, stacklevel=ANY
+            Logger._MESSAGE_PINNED,
+            "dependency",
+            Path("Dockerfile"),
+            "1.0",
+            sha,
+            stacklevel=ANY,
         )
 
     @patch("logging.Logger.warning")
@@ -84,12 +89,8 @@ class LoggerTests(TestCase):
         """Test that a re-pushed tag whose digest changed under an unchanged pin is warned about at warning level."""
         old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
         Logger("drift").digest_drift("dependency", "3.14", old_sha, new_sha, Path.cwd() / "Dockerfile")
-        message = (
-            "Digest drift for %s:%s in %s: pinned to %s but the registry now serves %s; the pin was left unchanged,"
-            " verify the change is expected before updating the pin"
-        )
         mock_warning.assert_called_once_with(
-            message, "dependency", "3.14", Path("Dockerfile"), old_sha, new_sha, stacklevel=ANY
+            Logger._MESSAGE_DIGEST_DRIFT, "dependency", "3.14", Path("Dockerfile"), old_sha, new_sha, stacklevel=ANY
         )
 
     @patch("logging.Logger.info")
@@ -97,7 +98,7 @@ class LoggerTests(TestCase):
         """Test that adopting a re-pushed tag's new digest is logged at info level, not warning."""
         old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
         Logger("adopt").adopted_drift("dependency", "3.14", old_sha, new_sha, Path.cwd() / "Dockerfile")
-        message = "Adopted digest drift for %s:%s in %s: re-pinned from %s to %s"
+        message = Logger._MESSAGE_ADOPTED_DIGEST_DRIFT
         mock_info.assert_called_once_with(
             message, "dependency", "3.14", Path("Dockerfile"), old_sha, new_sha, stacklevel=ANY
         )
@@ -108,9 +109,8 @@ class LoggerTests(TestCase):
         published = datetime.now(UTC) - timedelta(days=512, hours=1)
         version = DependencyVersion("4.15.0", newest_published=published)
         Logger("stale").warn_if_stale("humanize", version, Path.cwd() / "requirements.txt")
-        message = "Stale dependency %s in %s: newest release %s was published %d days ago (> %d)"
         mock_warning.assert_called_once_with(
-            message, "humanize", Path("requirements.txt"), "4.15.0", 512, 365, stacklevel=ANY
+            Logger._MESSAGE_STALE, "humanize", Path("requirements.txt"), "4.15.0", 512, 365, stacklevel=ANY
         )
 
     @patch("logging.Logger.warning")
@@ -127,42 +127,38 @@ class LoggerTests(TestCase):
     def test_path_logged_at_debug(self, mock_debug: Mock):
         """Test that the per-file 'checking for updates' progress is logged at debug level."""
         Logger("path").path(Path.cwd() / "config.yml")
-        mock_debug.assert_called_once_with("Checking if there are updates for %s", Path("config.yml"), stacklevel=ANY)
+        mock_debug.assert_called_once_with(Logger._MESSAGE_CHECKING_PATH, Path("config.yml"), stacklevel=ANY)
 
     @patch("logging.Logger.info")
     def test_configured_uv_cooldown(self, mock_info: Mock):
         """Test that writing the cooldown into a project's uv config is logged, relative to the working directory."""
         Logger("cooldown").configured_uv_cooldown(Path.cwd() / "pyproject.toml", "7 days")
-        message = "Set uv exclude-newer to %r in %s to apply the cooldown"
-        mock_info.assert_called_once_with(message, "7 days", Path("pyproject.toml"), stacklevel=ANY)
+        mock_info.assert_called_once_with(Logger._MESSAGE_UV_COOLDOWN, "7 days", Path("pyproject.toml"), stacklevel=ANY)
 
     @patch("logging.Logger.info")
     def test_configured_uv_cooldown_outside_working_directory(self, mock_info: Mock):
         """Test that a workspace root outside the working directory is logged as its absolute path, not crashing."""
         outside = Path("/elsewhere/pyproject.toml")
         Logger("cooldown").configured_uv_cooldown(outside, "7 days")
-        message = "Set uv exclude-newer to %r in %s to apply the cooldown"
-        mock_info.assert_called_once_with(message, "7 days", outside, stacklevel=ANY)
+        mock_info.assert_called_once_with(Logger._MESSAGE_UV_COOLDOWN, "7 days", outside, stacklevel=ANY)
 
     @patch("logging.Logger.warning")
     def test_invalid_pyproject_toml(self, mock_warning: Mock):
         """Test that an unparsable pyproject.toml is logged as a warning."""
         Logger("toml").invalid_pyproject_toml(Path.cwd() / "pyproject.toml")
-        message = "Skipping %s: it is not valid TOML"
-        mock_warning.assert_called_once_with(message, Path("pyproject.toml"), stacklevel=ANY)
+        mock_warning.assert_called_once_with(Logger._MESSAGE_INVALID_TOML, Path("pyproject.toml"), stacklevel=ANY)
 
     @patch("logging.Logger.debug")
     def test_excluded_path_logged_at_debug(self, mock_debug: Mock):
         """Test that a directory held back by --exclude-path is logged at debug level."""
         Logger("exclude").excluded_path(Path("vendor"))
-        message = "Excluding %s from the scan (--exclude-path)"
-        mock_debug.assert_called_once_with(message, Path("vendor"), stacklevel=ANY)
+        mock_debug.assert_called_once_with(Logger._MESSAGE_EXCLUDING_PATH, Path("vendor"), stacklevel=ANY)
 
     @patch("logging.Logger.warning")
     def test_missing_excluded_path_logged_at_warning(self, mock_warning: Mock):
         """Test that a non-existing --exclude-path directory is logged as a warning, not an error."""
         Logger("exclude").missing_excluded_path(Path("vendor"))
-        message = "Path %s passed to --exclude-path does not exist"
+        message = Logger._MESSAGE_PATH_TO_EXCLUDE_DOES_NOT_EXIST
         mock_warning.assert_called_once_with(message, Path("vendor"), stacklevel=ANY)
 
     @patch("logging.Logger.info")
@@ -171,8 +167,9 @@ class LoggerTests(TestCase):
         published = datetime(2026, 5, 29, 13, 54, tzinfo=UTC)
         version = DependencyVersion("1.0", "Changelog", published=published)
         Logger("date").new_version("dependency", version, Path.cwd() / "a.txt")
+        message = Logger._MESSAGE_NEW_VERSION
         mock_info.assert_called_once_with(
-            NEW_VERSION_MESSAGE,
+            message,
             "dependency",
             Path("a.txt"),
             "1.0, published: 2026-05-29 13:54",
@@ -185,12 +182,14 @@ class LoggerTests(TestCase):
         """Test that a non-UTC publication date is converted to UTC before logging."""
         published = datetime(2026, 5, 29, 15, 54, tzinfo=timezone(timedelta(hours=2)))
         Logger("utc").new_version("dependency", DependencyVersion("1.0", published=published), Path.cwd() / "a.txt")
+        message = Logger._MESSAGE_NEW_VERSION
+        changelog = Logger._NO_CHANGELOG
         mock_info.assert_called_once_with(
-            NEW_VERSION_MESSAGE,
+            message,
             "dependency",
             Path("a.txt"),
             "1.0, published: 2026-05-29 13:54",
-            "No changelog available!",
+            changelog,
             stacklevel=ANY,
         )
 
@@ -212,6 +211,39 @@ class LogHighlighterTests(TestCase):
         text = Text("New version available: 3.14")
         LogHighlighter().highlight(text)
         self.assertIn("repr.number", [span.style for span in text.spans])
+
+    def test_dependency_name_highlighted_and_markers_removed(self):
+        """Test that a marker-wrapped dependency name is styled as `repr.dependency` and the markers leave no trace."""
+        text = Text(Logger._MESSAGE_NEW_VERSION % ("actions/checkout", "a.txt", "1.1", "Changelog for 1.1"))
+        LogHighlighter().highlight(text)
+        self.assertEqual("New version available for actions/checkout in a.txt: 1.1\nChangelog for 1.1", text.plain)
+        dependency_spans = [(text.plain[span.start : span.end], span.style) for span in text.spans]
+        self.assertIn(("actions/checkout", "repr.dependency"), dependency_spans)
+
+    def test_dependency_names_and_digest_together(self):
+        """Test that several dependency names and a digest in one message are each styled without interfering."""
+        digest = f"sha256:{'a' * 64}"
+        message = f"Pinned {_DEPENDENCY_MARKER}ghcr.io/astral-sh/uv{_DEPENDENCY_MARKER} in Dockerfile to {digest}"
+        text = Text(message)
+        LogHighlighter().highlight(text)
+        self.assertEqual(f"Pinned ghcr.io/astral-sh/uv in Dockerfile to {digest}", text.plain)
+        styled = {(text.plain[span.start : span.end], span.style) for span in text.spans}
+        self.assertIn(("ghcr.io/astral-sh/uv", "repr.dependency"), styled)
+        self.assertIn((digest, "repr.digest"), styled)
+
+    def test_no_colour_output_is_plain_text(self):
+        """Test that with colour disabled the styled name renders as the same plain text, markers and all removed."""
+        highlighted = LogHighlighter()(Text(f"Pinned {_DEPENDENCY_MARKER}python{_DEPENDENCY_MARKER} in Dockerfile"))
+        console = Console(no_color=True, force_terminal=False)
+        with console.capture() as capture:
+            console.print(highlighted, end="")
+        self.assertEqual("Pinned python in Dockerfile", capture.get())
+
+    def test_dependency_style_is_bold_white(self):
+        """Test that get_logger wires `repr.dependency` to bold white in the handler's console theme."""
+        get_logger("theme")  # Ensure the root logger, and its themed RichHandler console, have been configured.
+        handler = next(h for h in logging.getLogger().handlers if isinstance(h, RichHandler))
+        self.assertEqual("bold white", str(handler.console.get_style("repr.dependency")))
 
 
 class LogOriginTests(TestCase):

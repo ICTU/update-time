@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN_DAYS
+from update_time.io.log import Logger
 from update_time.updaters.update_jsdelivr import update_jsdelivr, update_jsdelivrs
 
 from tests.update_time.assertions import assert_success
@@ -48,7 +49,7 @@ class UpdateJsdelivrTest(LoggingTestCase):
         self.assertIn(f'"integrity": "sha256-{HASH2}"', new_content)
         self.assertNotIn("2.0.11", new_content)
         self.assertNotIn(HASH1, new_content)
-        self.assert_new_version_logged(conf_py, "clipboard", ANY, "No changelog available!")
+        self.assert_new_version_logged(conf_py, "clipboard", ANY, Logger._NO_CHANGELOG)
         self.assert_no_warnings_logged()
 
     def test_version_lookalike_between_url_and_hash_is_left_untouched(self, mock_get: Mock):
@@ -76,6 +77,7 @@ class UpdateJsdelivrTest(LoggingTestCase):
         self.assertIn("# do not remove 2.0.11 note", new_content)  # the lookalike is preserved
         self.assertIn(f'"integrity": "sha256-{HASH2}"', new_content)
         self.assertNotIn(HASH1, new_content)
+        self.assert_new_version_logged(Path.cwd() / "docs" / "conf.py", "clipboard", ANY, Logger._NO_CHANGELOG)
 
     def test_unchanged(self, mock_get: Mock):
         """Test that the content is unchanged if there is no new version."""

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Colour the dependency name in bold white in the log output, so it stands out from the surrounding message when skimming a run. Closes [#128](https://github.com/ICTU/update-time/issues/128).
+
 ### Fixed
 
 - Colour a `sha256:` digest as a single token in the log output. Rich's automatic highlighting previously matched only a fragment of a digest — reading e.g. `a256:a4fd` as an IPv6 address — so the digest came out partly coloured and partly plain.
