@@ -79,7 +79,7 @@ def generate() -> str:
         _mark("humanize"),
         "docs/requirements.txt",
         "4.15.0",
-        "See the changelog for what changed",
+        "Changed in 4.15.0\n- Fantastic new features\n- A few bugs squashed",
     )
     log.info(Logger._MESSAGE_PINNED, _mark("python"), "Dockerfile", "3.14.6", digest)  # noqa: SLF001
     log.info(

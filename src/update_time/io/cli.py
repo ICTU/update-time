@@ -51,10 +51,13 @@ def parse_args() -> argparse.Namespace:
     """Parse the command-line arguments."""
     parser = argparse.ArgumentParser(
         prog="update-time",
-        description="Scan the current repository for pinned dependencies and update them to their latest versions, "
+        description="Scan the PATH for pinned dependencies and update them to their latest versions, "
         "rewriting the pinned versions in place. Looks at pyproject.toml, requirements.txt, package.json, Dockerfiles, "
         "GitHub Actions workflows, CircleCI configs, GitLab CI configs, Docker Compose and Helm manifests, "
         "devcontainer configs, and jsDelivr URLs. A cooldown period holds back releases that are too fresh to trust.",
+        epilog="Update-time exits with status 0 when it ran successfully, 1 when an error prevented it from finishing, "
+        "and 2 when any command-line argument was invalid. Exit status does not indicate whether anything "
+        "was updated. Inspect the diff or the INFO-level log for that.",
     )
     parser.add_argument("-V", "--version", action="version", version=f"v{version('update-time')}")
     parser.add_argument(
@@ -63,8 +66,8 @@ def parse_args() -> argparse.Namespace:
         type=directory,
         default=Path(),
         metavar="PATH",
-        help="the directory to scan for dependencies to update; paths in the log are reported relative to it "
-        "(default: the current directory)",
+        help="the directory to scan recursively for dependencies to update; paths in the log are reported relative to "
+        "it (default: the current directory)",
     )
     parser.add_argument(
         "--cooldown",
@@ -87,9 +90,12 @@ def parse_args() -> argparse.Namespace:
         type=exclude_paths,
         default=[],
         metavar="PATHS",
-        help="comma-separated list of directories, relative to the scan root, to exclude from the walk (e.g. "
+        help="comma-separated list of directories, relative to the scan root, to exclude from the scan (for example "
         "vendor,packages/legacy); every file under an excluded directory is skipped, on top of the always-ignored "
-        "build, node_modules, __pycache__, and hidden folders",
+        "build, node_modules, __pycache__, and hidden folders; directories are matched by relative path, not by name: "
+        "--exclude-path vendor excludes vendor/ at the root but not sub/vendor/; directories that don't exist are "
+        "ignored (and logged at log-level WARNING), but absolute paths, or paths that escape the scan root (../…), "
+        "are rejected; run with --log-level DEBUG to see excluded directories",
     )
     parser.add_argument(
         "--allow-image-digest-drift",
