@@ -1,18 +1,27 @@
-"""Update uv-managed pyproject.toml dependencies (work-around for the missing `uv update` command).
+"""Update uv-managed Python dependencies (work-around for the missing `uv update` command).
 
-See https://github.com/astral-sh/uv/issues/6794. Note: only exact-match version specs (`==`) are upgraded. Version
-specs with other clauses (`<=`, `~=`, etc.) are ignored, so a `package<=max version` spec opts a dependency out.
+Covers both pyproject.toml projects and PEP 723 inline script metadata, which declare their dependencies the same
+way and are both resolved through uv. See https://github.com/astral-sh/uv/issues/6794. Note: only exact-match
+version specs (`==`) are upgraded. Version specs with other clauses (`<=`, `~=`, etc.) are ignored, so a
+`package<=max version` spec opts a dependency out.
 """
 
 import os
+import re
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
-from update_time.domain.cooldown import cooldown_days
+from update_time.domain.cooldown import cooldown_cutoff, cooldown_days
 from update_time.domain.version import DependencyVersion
 from update_time.file_formats import pyproject_toml as pyproject_toml_format
 from update_time.io.log import get_logger
 from update_time.io.process import run
-from update_time.sources.pypi import get_changes, get_publication_datetime
+from update_time.sources.pypi import get_changes, get_latest_version, get_publication_datetime
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from update_time.io.log import Logger
 
 LOG = get_logger("pyproject.toml")
 # Signals that a pyproject.toml is managed by a tool other than uv. Running uv on such a project would mishandle it
@@ -122,19 +131,49 @@ def _workspace_includes(root_dir: Path, workspace: dict, project_dir: Path) -> b
     return any(relative.full_match(pattern) for pattern in workspace.get("members", []))
 
 
+# uv prefixes each dependency in a package tree with box-drawing glyphs (`├── `, `└── `, `│   `), but a script's
+# top-level dependencies get none (for a `uv tree --script` each is its own tree root). Stripping any such prefix
+# leaves the package name as the first field, so one parser handles both `uv tree` invocations.
+_TREE_PREFIX = re.compile(r"^[\s│├└─|]*")
+
+
 def parse_line_with_update(line: str) -> tuple[str, str]:
-    """Parse the package name and latest version from a `uv tree --outdated` line, e.g. '| package (latest: v1.1)'."""
-    fields = line.split()
-    return fields[1], fields[-1].lstrip("v").rstrip(")")
+    """Parse the package name and latest version from a `uv tree --outdated` line, e.g. '├── package (latest: v1.1)'."""
+    fields = _TREE_PREFIX.sub("", line).split()
+    return fields[0], fields[-1].lstrip("v").rstrip(")")
 
 
-def update_pyproject_toml(pyproject_toml: Path) -> bool:
+def _update_dependencies(uv_tree: list[str], path: Path, log: Logger) -> bool:
+    """Run `uv tree --outdated`, log every available new version, and rewrite the file's exact `==` pins.
+
+    Shared by the pyproject.toml and inline-script-metadata updaters: both read outdated dependencies from uv and
+    rewrite the same quoted `"name==version"` specs, so only the uv command, the file, and the logger differ (the
+    pyproject.toml updater also re-locks afterwards, which its caller handles). Returns whether `uv tree` produced
+    usable output; when it didn't (e.g. an unreachable registry) nothing can be determined to update, so the caller
+    can skip any follow-up work that would fail the same way.
+    """
+    log.path(path)
+    outdated = run(uv_tree)
+    if not outdated.ok:
+        return False
+    lines_with_updates = [line for line in outdated.stdout.splitlines() if " (latest: " in line]
+    for line in lines_with_updates:
+        package, version = parse_line_with_update(line)
+        changes = get_changes(package, version)
+        published = get_publication_datetime(package, version)
+        dependency_version = DependencyVersion(version, changes, published=published)
+        log.new_version(package, dependency_version, path)
+    latest_versions = dict(parse_line_with_update(line) for line in lines_with_updates)
+    pyproject_toml_format.rewrite_pinned_versions(path, latest_versions)
+    return True
+
+
+def update_pyproject_toml(pyproject_toml: Path, log: Logger) -> bool:
     """Update the pyproject.toml with the latest dependency versions; return whether `uv tree` succeeded.
 
     When `uv tree` fails (e.g. the registry is unreachable) nothing can be determined to update, and re-locking
     would fail the same way, so the caller skips the lockfile update for this file rather than trying it in vain.
     """
-    LOG.path(pyproject_toml)
     # The cooldown lives in `[tool.uv] exclude-newer` (see `configure_cooldown`), which uv reads for `tree` as well.
     # `--frozen` is omitted because `uv tree --outdated` only honors that cooldown when it is free to re-resolve.
     uv_tree = [
@@ -147,19 +186,42 @@ def update_pyproject_toml(pyproject_toml: Path) -> bool:
         "--all-groups",
         "--outdated",
     ]
-    outdated = run(uv_tree)
-    if not outdated.ok:
-        return False
-    lines_with_updates = [line for line in outdated.stdout.splitlines() if " (latest: " in line]
-    for line in lines_with_updates:
-        package, version = parse_line_with_update(line)
-        changes = get_changes(package, version)
-        published = get_publication_datetime(package, version)
-        dependency_version = DependencyVersion(version, changes, published=published)
-        LOG.new_version(package, dependency_version, pyproject_toml)
-    latest_versions = dict(parse_line_with_update(line) for line in lines_with_updates)
-    pyproject_toml_format.rewrite_pinned_versions(pyproject_toml, latest_versions)
-    return True
+    return _update_dependencies(uv_tree, pyproject_toml, log)
+
+
+def update_python_inline_script_metadata(script: Path, log: Logger) -> bool:
+    """Update a .py file's PEP 723 inline `# /// script` dependencies to their latest versions; return uv's success.
+
+    A script has no lockfile, so — unlike the pyproject.toml path, which persists the cooldown into `[tool.uv]` —
+    the cooldown is passed to uv on the command line as an `--exclude-newer` cutoff. `--depth=0` limits the report
+    to the script's own dependencies: for a script each is its own tree root, so a deeper depth would pull in
+    transitive packages that aren't pinned in the block.
+    """
+    uv_tree = [
+        "uv",
+        "tree",
+        "--script",
+        str(script),
+        "--quiet",
+        "--depth=0",
+        "--outdated",
+        "--exclude-newer",
+        cooldown_cutoff(),
+    ]
+    return _update_dependencies(uv_tree, script, log)
+
+
+def newest_pypi_releases(path: Path) -> Iterable[tuple[str, DependencyVersion]]:
+    """Yield each exact `==` pin in the file as a (name, newest PyPI release) pair, for the staleness check.
+
+    Shared by the pyproject.toml and inline-script-metadata updaters: both declare dependencies as quoted
+    `"name==version"` specs that `pinned_versions` reads the same way, and both resolve staleness against PyPI. The
+    caller hands this to `warn_about_stale_dependencies` after the update, so it reads the pins uv settled on.
+    """
+    return (
+        (name, get_latest_version(name, version))
+        for name, version in pyproject_toml_format.pinned_versions(path).items()
+    )
 
 
 def update_uv_lock(pyproject_toml: Path) -> None:
