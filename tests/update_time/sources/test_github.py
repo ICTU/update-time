@@ -2,7 +2,7 @@
 
 import unittest
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import ANY, Mock, patch
 
 import requests
@@ -11,7 +11,7 @@ from update_time.io.log import Logger
 from update_time.sources.github import (
     Release,
     changes_from_release,
-    get_latest_release,
+    get_latest_version,
     get_release,
     github_owner_and_repository,
     github_to_raw,
@@ -26,6 +26,9 @@ from tests.update_time.helpers import (
     patch_get,
     release_json,
 )
+
+if TYPE_CHECKING:
+    from update_time.domain.version import DependencyVersion, VersionString
 
 
 class GitHubURLtoRawTest(unittest.TestCase):
@@ -75,83 +78,99 @@ class GitHubOwnerAndRepositoryTest(unittest.TestCase):
         )
 
 
-class GetLatestReleaseTest(LoggingTestCase):
-    """Unit tests for getting the latest release for a GitHub repo."""
+class GetLatestVersionTest(LoggingTestCase):
+    """Unit tests for getting the latest release version for a GitHub action."""
+
+    def assert_version(self, latest: DependencyVersion, version: VersionString, changes: str, sha: str) -> None:
+        """Assert that the resolved version has the given version, changelog, and commit SHA."""
+        self.assertEqual(version, latest.version)
+        self.assertEqual(changes, latest.changes)
+        self.assertEqual(sha, latest.sha)  # The commit SHA is what the updater pins to.
 
     @patch("requests.get")
-    def test_get_latest_release(self, mock_get: Mock):
-        """Test getting the latest release."""
-        mock_get.side_effect = [mock_response([release_json("1.0")]), mock_response(commits_json())]
-        release = get_latest_release("owner", "repository")
-        self.assertEqual(Release(owner="owner", repository="repository", tag_name="1.0"), release)
-        self.assertEqual("sha", cast("Release", release).commit_sha)
+    def test_invalid_current_version(self, mock_get: Mock):
+        """Test that an unparsable current version is returned unchanged, without querying GitHub."""
+        self.assertEqual("not a version", get_latest_version("owner/repository", "not a version").version)
+        mock_get.assert_not_called()
+
+    @patch("requests.get")
+    def test_unchanged(self, mock_get: Mock):
+        """Test that a release matching the current version resolves to that version and its commit SHA."""
+        mock_get.side_effect = [mock_response([release_json("1.0", body="changelog")]), mock_response(commits_json())]
+        self.assert_version(get_latest_version("owner/repository", "1.0"), "1.0", "changelog", "sha")
+
+    @patch("requests.get")
+    def test_newer(self, mock_get: Mock):
+        """Test that a newer release is resolved, with its changelog and commit SHA."""
+        mock_get.side_effect = [mock_response([release_json("1.1", body="changelog")]), mock_response(commits_json())]
+        self.assert_version(get_latest_version("owner/repository", "1.0"), "1.1", "changelog", "sha")
+
+    @patch("requests.get")
+    def test_publication_date(self, mock_get: Mock):
+        """Test that the resolved release's publication date is captured."""
+        published = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+        mock_get.side_effect = [
+            mock_response([release_json("1.1", published_at=published)]),
+            mock_response(commits_json()),
+        ]
+        self.assertEqual(datetime.fromisoformat(published), get_latest_version("owner/repository", "1.0").published)
+
+    @patch_get([release_json("0.9")])
+    def test_older_release_kept(self):
+        """Test that the current version is kept, without an error, when every release is older than it."""
+        self.assert_version(get_latest_version("owner/older", "1.0"), "1.0", "", "")
 
     @patch("requests.get")
     def test_no_error_when_releases_cannot_be_fetched(self, mock_get: Mock):
         """Test that an unreachable repo logs only the fetch warning, not a redundant 'no valid version' error."""
         mock_get.return_value = mock_response([], ok=False)
-        self.assertIsNone(get_latest_release("owner", "unreachable repository"))
+        self.assertEqual("1.0", get_latest_version("owner/unreachable", "1.0").version)
         self.assert_could_not_fetch_logged(mock_get().url, mock_get().status_code)
 
     @patch_get([])
     def test_no_version_error_when_repo_has_no_releases(self):
-        """Test that a reachable repo with no eligible releases logs a 'no valid version' error."""
-        self.assertIsNone(get_latest_release("owner", "repository without releases"))
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/repository without releases")
+        """Test that a reachable repo with no releases keeps the current version and logs a 'no valid version' error."""
+        self.assertEqual("1.0", get_latest_version("owner/no releases", "1.0").version)
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/no releases")
 
-    @patch_get([release_json("1.0", draft=True)])
+    @patch_get([release_json("1.1", draft=True)])
     def test_skip_draft_releases(self):
-        """Test that draft releases are not included, logging a 'no valid version' error for the reachable repo."""
-        self.assertIsNone(get_latest_release("owner", "repository with only a draft release"))
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/repository with only a draft release")
+        """Test that draft releases are not candidates, logging a 'no valid version' error for the reachable repo."""
+        self.assertEqual("1.0", get_latest_version("owner/only a draft", "1.0").version)
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/only a draft")
 
-    @patch_get([release_json("1.0", prerelease=True)])
+    @patch_get([release_json("1.1", prerelease=True)])
     def test_skip_prerelease_releases(self):
-        """Test that prerelease releases are not included, logging a 'no valid version' error for the reachable repo."""
-        self.assertIsNone(get_latest_release("owner", "repository with only a prerelease release"))
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/repository with only a prerelease release")
+        """Test that prerelease releases are not candidates, logging a 'no valid version' error for the repo."""
+        self.assertEqual("1.0", get_latest_version("owner/only a prerelease", "1.0").version)
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/only a prerelease")
 
-    @patch_get([release_json("invalid-1.0")])
+    @patch_get([release_json("invalid-1.1")])
     def test_invalid_versions(self):
-        """Test that invalid versions are not included, logging a 'no valid version' error for the reachable repo."""
-        self.assertIsNone(get_latest_release("owner", "repository with a invalid version"))
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/repository with a invalid version")
+        """Test that invalid versions are not candidates, logging a 'no valid version' error for the reachable repo."""
+        self.assertEqual("1.0", get_latest_version("owner/invalid version", "1.0").version)
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/invalid version")
 
     @patch("requests.get")
-    def test_http_error_on_commits_endpoint(self, mock_get: Mock):
-        """Test that reading commit_sha returns an empty string and logs an error when the commits endpoint fails."""
-        mock_get.side_effect = [
-            mock_response([release_json("1.0")]),
-            mock_response({}, ok=False),
-        ]
-        release = get_latest_release("owner", "repository 2")
-        self.assertIsNotNone(release)
-        self.assertIsNone(cast("Release", release).commit_sha)
-        message = Logger._MESSAGE_NO_COMMIT_SHA
-        url = "https://github.com/owner/repository 2/releases/tag/1.0"
-        self.assert_error_logged(message, "owner/repository 2", "1.0", url)
+    def test_no_commit_sha(self, mock_get: Mock):
+        """Test that the current version is kept when the commit SHA can't be fetched for the eligible release."""
+        mock_get.side_effect = [mock_response([release_json("1.1")]), mock_response({}, ok=False)]
+        self.assert_version(get_latest_version("owner/no sha", "1.0"), "1.0", "", "")
+        url = "https://github.com/owner/no sha/releases/tag/1.1"
+        self.assert_error_logged(Logger._MESSAGE_NO_COMMIT_SHA, "owner/no sha", "1.1", url)
 
     @patch("requests.get")
     def test_skip_releases_within_cooldown(self, mock_get: Mock):
-        """Test that releases published within the cooldown period are skipped in favor of older releases."""
+        """Test that a release published within the cooldown is skipped in favor of an older, eligible release."""
         recent = (datetime.now(UTC) - timedelta(days=1)).isoformat()
         old_iso = (datetime.now(UTC) - timedelta(days=10)).isoformat()
-        mock_get.return_value = mock_response(
-            [
-                release_json("2.0", published_at=recent),
-                release_json("1.0", published_at=old_iso),
-            ]
-        )
-        release = get_latest_release("owner", "repository with cooldown")
-        self.assertEqual(
-            Release(
-                owner="owner",
-                repository="repository with cooldown",
-                tag_name="1.0",
-                published_at=datetime.fromisoformat(old_iso),
-            ),
-            release,
-        )
+        mock_get.side_effect = [
+            mock_response([release_json("2.0", published_at=recent), release_json("1.1", published_at=old_iso)]),
+            mock_response(commits_json()),
+        ]
+        latest = get_latest_version("owner/with cooldown", "1.0")
+        self.assert_version(latest, "1.1", "", "sha")
+        self.assertEqual(datetime.fromisoformat(old_iso), latest.published)
 
 
 class NewestPublicationDateTest(LoggingTestCase):

@@ -1,7 +1,7 @@
 """GitHub functions."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import cache, cached_property
 from urllib.parse import urlparse
@@ -10,7 +10,7 @@ from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.staleness import newest_datetime
-from update_time.domain.version import is_valid
+from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 
@@ -54,9 +54,13 @@ class Release:
         return within_cooldown(self.published_at)
 
     @property
-    def is_eligible(self) -> bool:
-        """Return whether this release is eligible to be used as the latest release."""
-        return not self.draft and not self.prerelease and self.has_valid_version and not self.within_cooldown
+    def is_candidate(self) -> bool:
+        """Return whether this release could be an update: a valid, non-draft, non-prerelease version.
+
+        These are the name-only checks (no cooldown, no commit-SHA fetch) that narrow the releases before each
+        candidate's metadata is resolved, mirroring `oci.Tag.is_candidate_for`.
+        """
+        return not self.draft and not self.prerelease and self.has_valid_version
 
     @cached_property
     def commit_sha(self) -> str | None:
@@ -109,21 +113,51 @@ def _list_releases(owner: str, repository: str) -> tuple[dict, ...] | None:
     return tuple(response.json()) if response is not None else None
 
 
-def get_latest_release(owner: str, repository: str) -> Release | None:
-    """Get the latest eligible release from the GitHub releases API, or None if there is none.
+@cache
+def get_latest_version(action: DependencyName, current_version: VersionString) -> DependencyVersion:
+    """Return the latest eligible release for the GitHub action, or the current version unchanged.
 
-    Don't use the latest release endpoint, but rather get recent releases and weed out invalid versions. When the
-    releases were fetched but none is eligible, that's logged as "no valid version"; a fetch failure is left to
-    `fetch`'s own warning, so a network problem isn't reported twice.
+    Mirrors `pypi.get_latest_version` and `oci.get_latest_tag`: narrow the releases to candidates by name (a valid,
+    non-draft, non-prerelease version at least as new as the current one — the current version itself included, so
+    an action referenced by tag only can be pinned to its commit SHA without a version bump), then walk them
+    newest-first with `first_eligible`, resolving each candidate's commit SHA and cooldown until one is eligible.
+    When the releases were fetched but none carries a valid version, that's logged as "no valid version"; a fetch
+    failure is left to `fetch`'s own warning, so a network problem isn't reported twice. The newest release date is
+    always attached (for the staleness check), even when the version is unchanged.
     """
+    owner, repository, *_path = action.split("/")
+    if not is_valid(current_version):
+        return DependencyVersion(version=current_version)
+    newest_published = newest_publication_date(owner, repository)
+    unchanged = DependencyVersion(current_version, newest_published=newest_published)
     releases = _list_releases(owner, repository)
     if releases is None:
-        return None  # Couldn't reach GitHub; the fetch already logged a warning.
-    candidates = (Release.from_json(owner, repository, release) for release in releases)
-    latest = next((r for r in candidates if r.is_eligible), None)
-    if latest is None:
+        return unchanged  # Couldn't reach GitHub; the fetch already logged a warning.
+    valid_releases = [
+        release for release in (Release.from_json(owner, repository, raw) for raw in releases) if release.is_candidate
+    ]
+    if not valid_releases:
         LOG.no_version(f"{owner}/{repository}")
-    return latest
+        return unchanged
+    current = Version(current_version)
+    candidates = sorted(
+        (release for release in valid_releases if release.version >= current),
+        key=lambda release: release.version,
+        reverse=True,
+    )
+    latest = first_eligible(candidates, _eligible_release, current_version)
+    return replace(latest, newest_published=newest_published)
+
+
+def _eligible_release(release: Release) -> DependencyVersion | None:
+    """Resolve the candidate release's commit SHA and return it as a DependencyVersion when eligible, or None.
+
+    Eligible means past the cooldown and with a resolvable commit SHA to pin to. Otherwise None, so `first_eligible`
+    skips to the next (older) candidate — the same fall-through the OCI and PyPI sources use.
+    """
+    if release.within_cooldown or (sha := release.commit_sha) is None:
+        return None
+    return DependencyVersion(str(release.version), release.body, sha, release.published_at)
 
 
 def newest_publication_date(owner: str, repository: str) -> datetime | None:
@@ -131,7 +165,7 @@ def newest_publication_date(owner: str, repository: str) -> datetime | None:
 
     Taken over every release (including pre-releases) and ignoring cooldown eligibility, so a repo that has just
     published anything counts as active. Drafts carry no publication date and are naturally excluded. Reuses the
-    cached releases list, so it costs no extra request on top of `get_latest_release`.
+    cached releases list, so it costs no extra request on top of `get_latest_version`.
     """
     releases = _list_releases(owner, repository) or ()
     return newest_datetime(release["published_at"] for release in releases if release.get("published_at"))
