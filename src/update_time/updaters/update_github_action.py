@@ -8,17 +8,15 @@ If an environment variable GITHUB_TOKEN is set, the script will use it to increa
 
 import re
 import sys
-from functools import cache, partial
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from packaging.version import Version
-
-from update_time.domain.version import DependencyName, DependencyVersion, VersionString, is_valid
+from update_time.domain.version import is_valid
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
 from update_time.io.log import get_logger
 from update_time.io.rewrite import updated_lines
-from update_time.sources.github import get_latest_release, newest_publication_date
+from update_time.sources.github import get_latest_version
 
 if TYPE_CHECKING:
     from update_time.io.rewrite import Marker
@@ -31,20 +29,6 @@ ACTION_RE = re.compile(
     r"uses: (?P<dependency>[\w\d\./-]+)@"
     r"(?:(?P<sha>[a-f0-9]{40}) # v?(?P<version>[\d\w\.\-]+)|v(?P<ref>[\d\w\.\-]+))"
 )
-
-
-@cache
-def get_latest_version(action: DependencyName, current_version_string: VersionString) -> DependencyVersion:
-    """Fetch the latest version for the action."""
-    owner, repository, *_path = action.split("/")
-    # The newest release date rides on the cached releases list, so it's free; it feeds the staleness check.
-    newest_published = newest_publication_date(owner, repository)
-    release = get_latest_release(owner, repository)
-    if release is None or release.commit_sha is None or release.version < Version(current_version_string):
-        return DependencyVersion(current_version_string, newest_published=newest_published)
-    return DependencyVersion(
-        str(release.version), release.body, release.commit_sha, release.published_at, newest_published
-    )
 
 
 def _update_action(match: re.Match[str], path: Path, scope: str | None) -> str:

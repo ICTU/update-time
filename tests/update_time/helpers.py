@@ -13,6 +13,7 @@ from update_time.domain.version import DependencyVersion, NewVersionGetter, Vers
 from update_time.io.log import Logger
 from update_time.sources.docker_hub import api_headers as docker_hub_headers
 from update_time.sources.github import _list_releases as github_list_release
+from update_time.sources.github import get_latest_version as github_get_latest_version
 from update_time.sources.npmjs import _package_metadata as npmjs_package_metadata
 from update_time.sources.npmjs import get_changes as npmjs_get_changes
 from update_time.sources.npmjs import get_publication_datetime as npmjs_get_publication_datetime
@@ -21,7 +22,6 @@ from update_time.sources.oci import _registry_token as oci_registry_token
 from update_time.sources.oci import _tag_names as oci_tag_names
 from update_time.sources.pypi import project_metadata as pypi_project_metadata
 from update_time.sources.pypi import release_metadata as pypi_release_metadata
-from update_time.updaters.update_github_action import get_latest_version as github_get_latest_version
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
