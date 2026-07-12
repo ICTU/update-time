@@ -47,7 +47,7 @@ Running `update-time -h` shows the full command-line interface:
 $ update-time -h
 usage: update-time [-h] [-V] [--cooldown DAYS] [--stale-after DAYS]
                    [--exclude-path PATHS] [--allow-image-digest-drift]
-                   [--log-level {DEBUG,INFO,WARNING,ERROR}]
+                   [--force] [--log-level {DEBUG,INFO,WARNING,ERROR}]
                    [PATH]
 
 Scan the PATH for pinned dependencies and update them to their latest
@@ -88,14 +88,17 @@ options:
                         of only warning; equivalent to marking every image
                         reference with # update-time: allow[digest-drift] (an
                         # update-time: ignore marker still wins)
+  --force               run even when not inside a git repository (changes are
+                        made in place and cannot be reverted)
   --log-level {DEBUG,INFO,WARNING,ERROR}
                         the minimum severity of messages to log; available new
                         versions are logged at INFO (default: INFO)
 
 Update-time exits with status 0 when it ran successfully, 1 when an error
-prevented it from finishing, and 2 when any command-line argument was invalid.
-Exit status does not indicate whether anything was updated. Inspect the diff
-or the INFO-level log for that.
+prevented it from finishing, and 2 when any command-line argument was invalid,
+including a PATH that is not inside a git repository (unless --force is
+passed). Exit status does not indicate whether anything was updated. Inspect
+the diff or the INFO-level log for that.
 ```
 
 ### Workflow
@@ -106,6 +109,8 @@ The recommended workflow is to run Update-time on a dedicated branch, push it, a
 2. Run `update-time` in the root of your repository to update the dependencies in place.
 3. Commit the changes and open a pull request.
 4. Let your tests and checks run in CI to confirm nothing is broken before merging.
+
+Because Update-time rewrites files in place, it must be run inside a git repository, where every change it makes can be reverted with `git restore`. It refuses to run — printing an error and exiting with a non-zero status without touching any files — when the directory it scans is not inside a repository. Pass `--force` to override the refusal and run anyway; the changes are then made in place with no safety net. Note that being inside a repository only guarantees revertability relative to the last commit: uncommitted edits to the same lines Update-time rewrites would be lost on a revert too, though in practice Update-time only touches version pins, which rarely overlap in-progress edits.
 
 ### Increasing rate limits
 

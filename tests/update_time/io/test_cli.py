@@ -19,6 +19,10 @@ if TYPE_CHECKING:
 class CommandLineInterfaceTest(unittest.TestCase):
     """Unit tests for the command-line interface."""
 
+    def setUp(self) -> None:
+        """Treat the PATH as inside a git repository by default, so parsing succeeds unless a test says otherwise."""
+        self.enterContext(patch("update_time.io.cli.inside_git_repository", Mock(return_value=True)))
+
     def parsed(self, *argv: str) -> argparse.Namespace:
         """Parse the given command-line arguments and return the resulting namespace."""
         with patch("sys.argv", ["update-time", *argv]):
@@ -85,6 +89,26 @@ class CommandLineInterfaceTest(unittest.TestCase):
     def test_path_that_is_not_a_directory(self):
         """Test that a path that is not an existing directory is rejected with a user-facing message."""
         self.assert_rejected(["no-such-directory"], "no-such-directory is not an existing directory")
+
+    def test_default_force(self):
+        """Test that --force is off by default."""
+        self.assertFalse(self.parsed().force)
+
+    def test_force(self):
+        """Test that --force turns on forcing the run outside a git repository."""
+        self.assertTrue(self.parsed("--force").force)
+
+    @patch("pathlib.Path.is_dir", Mock(return_value=True))
+    @patch("update_time.io.cli.inside_git_repository", Mock(return_value=False))
+    def test_path_not_in_git_repository_is_rejected(self):
+        """Test that a PATH that is not inside a git repository is rejected like any other invalid argument."""
+        self.assert_rejected(["some-directory"], "some-directory is not inside a git repository")
+
+    @patch("pathlib.Path.is_dir", Mock(return_value=True))
+    @patch("update_time.io.cli.inside_git_repository", Mock(return_value=False))
+    def test_force_allows_a_path_not_in_a_git_repository(self):
+        """Test that --force lets a PATH that is not inside a git repository through instead of rejecting it."""
+        self.assertTrue(self.parsed("--force", "some-directory").force)
 
     def test_default_log_level(self):
         """Test that the log level defaults to the default log level."""

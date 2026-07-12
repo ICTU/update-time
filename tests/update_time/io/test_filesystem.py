@@ -2,10 +2,21 @@
 
 import unittest
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
+if TYPE_CHECKING:
+    from unittest.mock import _patch
+
 from update_time.domain.version import DependencyVersion
-from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR, excluded_paths, glob, update_file, update_files
+from update_time.io.filesystem import (
+    EXCLUDE_PATHS_ENV_VAR,
+    excluded_paths,
+    glob,
+    inside_git_repository,
+    update_file,
+    update_files,
+)
 
 from tests.update_time.assertions import assert_success
 from tests.update_time.helpers import mock_path, new_version_getter, patch_environ
@@ -75,6 +86,44 @@ class GlobTest(unittest.TestCase):
         """Test that every directory in a comma-separated --exclude-path list is skipped."""
         mock_glob.return_value = [Path("/vendor/a.txt"), Path("/packages/legacy/b.txt"), Path("/packages/kept/c.txt")]
         self.assertEqual([Path("/packages/kept/c.txt")], list(glob("*.txt")))
+
+
+class InsideGitRepositoryTest(unittest.TestCase):
+    """Unit tests for detecting whether a directory sits inside a git repository."""
+
+    @staticmethod
+    def patch_git_entry(*git_dirs: Path) -> _patch:
+        """Patch `Path.exists` so that only a `.git` entry in one of the given directories exists."""
+        git_entries = {git_dir / ".git" for git_dir in git_dirs}
+        return patch("pathlib.Path.exists", autospec=True, side_effect=lambda self: self in git_entries)
+
+    def test_no_git_entry_found(self):
+        """Test that a directory with no `.git` up to the filesystem root is not inside a repository."""
+        with self.patch_git_entry():
+            self.assertFalse(inside_git_repository(Path("/home/user/project")))
+
+    def test_git_directory_in_the_directory_itself(self):
+        """Test that a directory containing a `.git` entry is inside a repository."""
+        with self.patch_git_entry(Path("/home/user/project")):
+            self.assertTrue(inside_git_repository(Path("/home/user/project")))
+
+    def test_git_entry_is_a_file(self):
+        """Test that a `.git` *file* (a worktree or submodule pointer) counts, so `.is_dir()` is not required."""
+        with self.patch_git_entry(Path("/home/user/project")), patch("pathlib.Path.is_dir", Mock(return_value=False)):
+            self.assertTrue(inside_git_repository(Path("/home/user/project")))
+
+    def test_git_directory_in_a_parent(self):
+        """Test that a `.git` entry in a parent directory means a subdirectory is inside the repository."""
+        with self.patch_git_entry(Path("/home/user/project")):
+            self.assertTrue(inside_git_repository(Path("/home/user/project/src/pkg")))
+
+    def test_defaults_to_the_working_directory(self):
+        """Test that, without an explicit start, the check walks up from the working directory."""
+        with (
+            patch("pathlib.Path.cwd", Mock(return_value=Path("/home/user/project"))),
+            self.patch_git_entry(Path("/home/user/project")),
+        ):
+            self.assertTrue(inside_git_repository())
 
 
 class ExcludedPathsTest(unittest.TestCase):

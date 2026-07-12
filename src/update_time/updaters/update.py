@@ -9,7 +9,7 @@ from pathlib import Path
 from update_time.domain.cooldown import COOLDOWN_DAYS_ENV_VAR
 from update_time.domain.staleness import STALE_AFTER_DAYS_ENV_VAR
 from update_time.io.cli import parse_args
-from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR
+from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR, inside_git_repository
 from update_time.io.log import LOG_LEVEL_ENV_VAR, get_logger
 from update_time.io.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR
 
@@ -76,6 +76,15 @@ def main() -> int:
     os.environ[STALE_AFTER_DAYS_ENV_VAR] = str(args.stale_after)
     os.environ[LOG_LEVEL_ENV_VAR] = args.log_level
     os.environ[ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR] = "1" if args.allow_image_digest_drift else "0"
+    # Update-time rewrites files in place, so it refuses to run outside a git repository where changes can't be
+    # reverted. --force overrides the refusal, proceeding with a warning. Checked once, before any subprocess is
+    # spawned; the log level is already exported above, so both messages honour --log-level. The check keys off the
+    # scan root (the parent has chdir'd there), so it reflects the tree whose files would actually be rewritten.
+    # parse_args has already refused to run outside a git repository unless --force was given; when it was, warn that
+    # the in-place rewrites cannot be reverted. The log level is exported above, so the warning honours --log-level.
+    scan_root = Path.cwd()
+    if not inside_git_repository(scan_root):
+        get_logger(__name__).forced_outside_git_repository(scan_root)
     configure_excluded_paths(args.exclude_path)
     return update_dependencies()
 
