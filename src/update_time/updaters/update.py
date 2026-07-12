@@ -26,6 +26,7 @@ PARALLEL_SCRIPTS = (
     "manifest_images",
     "devcontainer",
     "jsdelivr",
+    "python_inline_script_metadata",
 )
 # node_engine and package_json both rewrite the package.json files, so they run sequentially (after the
 # parallel scripts and after each other) to avoid concurrent writes to the same files. Also, node_engine

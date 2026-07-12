@@ -7,7 +7,7 @@ regenerating produces a byte-identical file unless the sample or the styling act
 
 `generate` also returns the same lines as plain text; `generate_readme` embeds that as the accessible fallback in the
 README (the `<details>` block after the image) for readers whose viewer can't render the SVG, or who use a screen
-reader. Run this module directly to print that text; regenerate the whole README (and this SVG) with `just readme`.
+reader. Regenerate the whole README (and this SVG) with `just readme`.
 """
 
 import io
@@ -95,7 +95,3 @@ def generate() -> str:
     svg = console.export_svg(title="update-time", unique_id="update-time-log")
     _OUTPUT.write_text(_portable(svg))
     return "\n".join(line.rstrip() for line in plain_text.splitlines())  # strip the trailing render padding
-
-
-if __name__ == "__main__":
-    print(generate())  # noqa: T201
