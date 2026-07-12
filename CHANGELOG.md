@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Added
 
+- Refuse to run when the scanned directory is not inside a git repository, so Update-time's in-place rewrites always have a `git restore` safety net. Pass `--force` to run anyway. Closes [#81](https://github.com/ICTU/update-time/issues/81).
 - Colour the dependency name in bold white in the log output, so it stands out from the surrounding message when skimming a run. Closes [#128](https://github.com/ICTU/update-time/issues/128).
 
 ### Fixed

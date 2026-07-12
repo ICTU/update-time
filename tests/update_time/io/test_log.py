@@ -161,6 +161,28 @@ class LoggerTests(TestCase):
         message = Logger._MESSAGE_PATH_TO_EXCLUDE_DOES_NOT_EXIST
         mock_warning.assert_called_once_with(message, Path("vendor"), stacklevel=ANY)
 
+    @patch("logging.Logger.warning")
+    def test_forced_outside_git_repository_logged_at_warning(self, mock_warning: Mock):
+        """Test that running outside a git repository because of --force is logged as a warning, with the scan root."""
+        Logger("git").forced_outside_git_repository(Path("/home/user/project"))
+        mock_warning.assert_called_once_with(
+            Logger._MESSAGE_FORCED_OUTSIDE_GIT_REPOSITORY, Path("/home/user/project"), stacklevel=ANY
+        )
+
+    def test_no_message_contains_a_full_stop(self):
+        """Test that no log message contains a full stop, keeping the style consistent (commas and semicolons).
+
+        Every string attribute of `Logger` is a message template (or a fragment substituted into one), so introspect
+        them all rather than listing them by hand and risk missing a future message.
+        """
+        messages = [
+            value for name, value in vars(Logger).items() if isinstance(value, str) and not name.startswith("__")
+        ]
+        self.assertGreater(len(messages), 1)  # Guard against the introspection silently finding nothing to check.
+        for message in messages:
+            with self.subTest(message=message):
+                self.assertNotIn(".", message)
+
     @patch("logging.Logger.info")
     def test_new_version_with_publication_date(self, mock_info: Mock):
         """Test that the publication date is appended to the version when it is known."""

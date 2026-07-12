@@ -7,6 +7,7 @@ from pathlib import Path
 
 from update_time.domain.cooldown import COOLDOWN_DAYS
 from update_time.domain.staleness import STALE_AFTER_DAYS
+from update_time.io.filesystem import inside_git_repository
 from update_time.io.log import DEFAULT_LOG_LEVEL, LOG_LEVELS
 
 
@@ -56,8 +57,9 @@ def parse_args() -> argparse.Namespace:
         "GitHub Actions workflows, CircleCI configs, GitLab CI configs, Docker Compose and Helm manifests, "
         "devcontainer configs, and jsDelivr URLs. A cooldown period holds back releases that are too fresh to trust.",
         epilog="Update-time exits with status 0 when it ran successfully, 1 when an error prevented it from finishing, "
-        "and 2 when any command-line argument was invalid. Exit status does not indicate whether anything "
-        "was updated. Inspect the diff or the INFO-level log for that.",
+        "and 2 when any command-line argument was invalid, including a PATH that is not inside a git repository "
+        "(unless --force is passed). Exit status does not indicate whether anything was updated. Inspect the diff or "
+        "the INFO-level log for that.",
     )
     parser.add_argument("-V", "--version", action="version", version=f"v{version('update-time')}")
     parser.add_argument(
@@ -105,6 +107,11 @@ def parse_args() -> argparse.Namespace:
         "allow[digest-drift] (an # update-time: ignore marker still wins)",
     )
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help="run even when not inside a git repository (changes are made in place and cannot be reverted)",
+    )
+    parser.add_argument(
         "--log-level",
         type=str.upper,
         choices=LOG_LEVELS,
@@ -112,4 +119,12 @@ def parse_args() -> argparse.Namespace:
         help="the minimum severity of messages to log; available new versions are logged at INFO (default: "
         "%(default)s)",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    # Treat a PATH outside a git repository as an invalid argument and exit with status 2, unless overridden by --force.
+    # Resolve the (possibly relative) PATH first so the walk up to the root has parents to visit.
+    if not args.force and not inside_git_repository(args.path.resolve()):
+        parser.error(
+            f"{args.path} is not inside a git repository; rerun inside a repository so changes can be reverted, or "
+            "pass --force to run anyway"
+        )
+    return args

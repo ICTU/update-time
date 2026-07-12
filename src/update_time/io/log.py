@@ -145,6 +145,21 @@ class Logger:
         except ValueError:
             return path
 
+    # --- Run gating ---
+
+    _MESSAGE_FORCED_OUTSIDE_GIT_REPOSITORY = (
+        "Running outside a git repository (%s) because --force was given; changes are made in place and cannot be "
+        "reverted"
+    )
+
+    def forced_outside_git_repository(self, path: Path) -> None:
+        """Warn that Update-time is running outside the git repository at the path because --force overrode the refusal.
+
+        The path is the scan root, which is the working directory, so it is logged as its absolute self (making it
+        relative would collapse it to `.`).
+        """
+        self._log(self.log.warning, self._MESSAGE_FORCED_OUTSIDE_GIT_REPOSITORY, path)
+
     # --- Source results: resolving a dependency's latest version and digest ---
 
     MESSAGE_NEW_VERSION = f"New version available for {_DEPENDENCY_MARKER}%s{_DEPENDENCY_MARKER} in %s: %s\n%s"

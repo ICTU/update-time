@@ -46,6 +46,17 @@ def excluded_paths() -> list[Path]:
     return [Path(entry) for entry in value.split(",") if entry]
 
 
+def inside_git_repository(start: Path | None = None) -> bool:
+    """Return whether the given directory (default: the working directory) sits inside a git repository.
+
+    Walks up from the directory to the filesystem root looking for a `.git` entry. Uses `.exists()` rather than
+    `.is_dir()` because git worktrees and submodules record `.git` as a *file* (a pointer), not a directory. Checking
+    for the entry directly keeps Update-time dependency-free and works even where `git` is not installed.
+    """
+    directory = Path.cwd() if start is None else start
+    return any((parent / ".git").exists() for parent in (directory, *directory.parents))
+
+
 def glob(*glob_patterns: str, start: Path | None = None, case_sensitive: bool | None = None) -> Iterator[Path]:
     """Return an iterator over all paths matching any of the given glob patterns.
 

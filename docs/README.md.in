@@ -48,6 +48,10 @@ The recommended workflow is to run Update-time on a dedicated branch, push it, a
 3. Commit the changes and open a pull request.
 4. Let your tests and checks run in CI to confirm nothing is broken before merging.
 
+Because Update-time rewrites files in place, it expects to make updates inside a git repository, so changes can be reverted. Update-time refuses to run when the directory to scan is not inside a git repository; printing an error and exiting with a non-zero status without touching any files. Pass `--force` to override.
+
+Note that being inside a repository only guarantees revertability relative to the last commit: uncommitted edits to the same lines Update-time rewrites would be lost on a revert too. Although in practice Update-time only touches version pins, which rarely overlap in-progress edits.
+
 ### Increasing rate limits
 
 To raise API rate limits while updating, set the following environment variables before running Update-time:
