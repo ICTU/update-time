@@ -13,12 +13,12 @@ class ReadTest(unittest.TestCase):
     def test_mapping(self):
         """Test that a YAML mapping is parsed into a dict."""
         self.assertEqual(
-            {"machine": {"image": "ubuntu-2204:1"}}, yaml.read(mock_path("machine:\n  image: ubuntu-2204:1\n"))
+            yaml.read(mock_path("machine:\n  image: ubuntu-2204:1\n")), {"machine": {"image": "ubuntu-2204:1"}}
         )
 
     def test_sequence(self):
         """Test that a YAML sequence is parsed into a list."""
-        self.assertEqual(["a", "b"], yaml.read(mock_path("- a\n- b\n")))
+        self.assertEqual(yaml.read(mock_path("- a\n- b\n")), ["a", "b"])
 
     def test_empty(self):
         """Test that an empty YAML file is parsed as None."""

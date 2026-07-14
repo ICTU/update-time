@@ -84,7 +84,7 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         """Test that an error message is logged if the Dockerfile does not exist."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
-        self.assertEqual(1, update_node_engines())
+        self.assertEqual(update_node_engines(), 1)
         self.assert_error_logged(Logger._MESSAGE_MISSING_NODE_BASE_IMAGE, Path("/Dockerfile"))
         mock_package_json.write_text.assert_not_called()
         self.assert_no_path_logged()
@@ -97,7 +97,7 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         """Test that an error message is logged if the Dockerfile has no Node base image."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
-        self.assertEqual(1, update_node_engines())
+        self.assertEqual(update_node_engines(), 1)
         self.assert_error_logged(Logger._MESSAGE_MISSING_NODE_BASE_IMAGE, Path("/Dockerfile"))
         mock_package_json.write_text.assert_not_called()
         self.assert_no_path_logged()

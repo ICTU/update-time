@@ -30,7 +30,7 @@ class StaleAfterDaysTest(unittest.TestCase):
     def test_env_var(self):
         """Test that the threshold is read from the env var when set."""
         with patch_environ({STALE_AFTER_DAYS_ENV_VAR: "30"}):
-            self.assertEqual(30, stale_after_days())
+            self.assertEqual(stale_after_days(), 30)
 
 
 class IsStaleTest(unittest.TestCase):
@@ -83,7 +83,7 @@ class StalenessDaysTest(unittest.TestCase):
 
     def test_days_ago(self):
         """Test that the number of whole days since publication is returned."""
-        self.assertEqual(10, staleness_days(datetime.now(UTC) - timedelta(days=10, hours=1)))
+        self.assertEqual(staleness_days(datetime.now(UTC) - timedelta(days=10, hours=1)), 10)
 
 
 class NewestDatetimeTest(unittest.TestCase):

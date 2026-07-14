@@ -61,4 +61,4 @@ class ScannedManifestsTest(unittest.TestCase):
         update_manifest_images()
         helm_call = mock_update_files.call_args_list[1]
         self.assertEqual(YAML_GLOB_PATTERNS, helm_call.args)
-        self.assertEqual("helm", helm_call.kwargs["start"].name)
+        self.assertEqual(helm_call.kwargs["start"].name, "helm")

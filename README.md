@@ -298,7 +298,7 @@ Every kind of dependency Update-time updates is checked for staleness, except th
 
 ## 🎛️ Controlling updates per reference
 
-Comments of the form `# update-time: <directive>` let you steer what happens to an individual reference — most often to hold it back, but also to opt it into behaviour that is off by default. To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
+Comments of the form `# update-time: <directive>` let you steer what happens to an individual reference — most often to hold it back, but also to bound how far it may move, or to opt it into behaviour that is off by default. To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
 
 By default the marker holds a reference back from both version updates and the [staleness](#-stale-dependencies) check. Add a bracketed scope to narrow it to just one:
 
@@ -311,6 +311,40 @@ By default the marker holds a reference back from both version updates and the [
 So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet, and `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
 
 One further marker does the opposite of holding a reference back. `# update-time: allow[digest-drift]` opts an already-digest-pinned image reference *into* adopting a re-pushed digest, so when only its digest has drifted the new digest is pinned instead of only warned about (see [Pinning](#-pinning)). It follows the same placement rules as the other markers, and the global `--allow-image-digest-drift` flag applies it to every image reference at once. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.
+
+`ignore[update]` freezes a reference at its current version. Sometimes you want the middle ground: keep receiving updates *within a range* while blocking a jump you're not ready for — for example, keep getting `python:3.12` patch releases but hold off on `3.13` until you've migrated. Add a [PEP 440](https://peps.python.org/pep-0440/) version specifier directly after `update` inside the brackets, either to allow or ignore updates: `# update-time: allow[update<specifier>]` **keeps only** the updates whose version satisfies the specifier, and `# update-time: ignore[update<specifier>]` **drops** the updates whose version satisfies it (the plain `ignore[update]` is the drop-everything case).
+
+For example, `allow[update<3.13]` keeps a `python` base image on its newest `3.12` release and never crosses into `3.13`:
+
+```dockerfile
+# update-time: allow[update<3.13]
+FROM python:3.12.1-bookworm-slim
+```
+
+The same works inline, for image and action references — here `allow[update==7.*]` keeps Redis on its `7.x` line and `ignore[update>=5]` keeps `checkout` below `v5`:
+
+```yaml
+image: redis:7.2  # update-time: allow[update==7.*]
+uses: actions/checkout@v4  # update-time: ignore[update>=5]
+```
+
+The specifier filters the candidate versions *before* the highest is picked, so a bounded reference still advances as far as the bound allows: when on `3.12.8`, `allow[update<3.13]` still adopts a freshly published `3.12.9`, it just never crosses into `3.13`.
+
+`allow` and `ignore` are complements, which matters for ranges. For a one-sided bound the two are interchangeable — `allow[update<3.13]` and `ignore[update>=3.13]` express the same ceiling. For a *range* they are opposites: with versions `3.13` through `3.16` available, `allow[update>=3.13,<3.15]` keeps the reference *within* `[3.13, 3.15)` and picks `3.14`, whereas `ignore[update>=3.13,<3.15]` *excludes* that range and skips ahead to `3.16`. Pick the framing that matches what you mean.
+
+Choose the operator deliberately. To keep `3.12` together with its patch releases while blocking `3.13`, use `<3.13`, `==3.12.*`, or `~=3.12.0`. Don't use `<=3.12` if you want to stay on `3.12`: since `3.12.1 > 3.12` in PEP 440, it also blocks `3.12.1`, which is rarely what "stay on 3.12" means.
+
+A few rules govern how a bound interacts with the other markers and checks:
+
+- A bare `# update-time: ignore` (or `# update-time: ignore[update]` with no specifier) holds back *all* updates and wins over any bound on the same reference.
+- Use a single bound per reference; pairing an `allow[update<specifier>]` with an `ignore[update<specifier>]` on one reference is undefined.
+- A bound narrows updates only, not staleness. Staleness is always measured against the project's newest overall release; the bound doesn't come into play.
+- The digest is still pinned or refreshed for whichever version the bound selects, exactly as without a bound.
+- To combine a bound with another directive of the same verb (say, `allow[digest-drift]`), list both as comma-separated items in one bracket: `# update-time: allow[update<3.13, digest-drift]`. To combine directives of different verbs, list them after the `# update-time:` prefix, separated by a space: `# update-time: ignore[stale] allow[update<3.13]`. A reason can still follow the last directive.
+
+Update-time logs a `WARNING` when a bound is redundant. That may happen in two ways:
+- Either the bound **never has an effect**, so removing it would change nothing: the current version and every version above it satisfy the bound, for example `allow[update>=3.12]` on a `3.12` pin.
+- Or the bound **blocks every update**, so it is just a frozen `ignore[update]` in disguise (use that instead if the freeze is intended): no version above the current one satisfies the bound, for example `ignore[update>=3.12]` on a `3.12` pin.
 
 Any of these markers can be placed two ways:
 
@@ -337,7 +371,7 @@ Any of these markers can be placed two ways:
 
 This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, `devcontainer.json` files, and `requirements.txt` files. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it.
 
-Run with `--log-level DEBUG` to see each held-back update logged and confirm a marker is recognised. Since the marker is case-sensitive, a typo (or wrong case) simply produces no such log and the reference is updated as usual.
+Run with `--log-level DEBUG` to confirm a marker is recognised: every recognised marker is logged, as is every update it holds back. Since the marker is case-sensitive, a typo (or wrong case) simply produces no such log and the reference is updated as usual.
 
 For `pyproject.toml`, `package.json`, and PEP 723 inline script metadata — which are updated through uv, npm, and pnpm rather than line by line — the marker does not apply. Opt a dependency out there by pinning it with a maximum or non-`==` version specifier instead (for example `package<=3.12`). The marker likewise has no effect on jsDelivr URLs, which are rewritten through a whole-file substitution rather than the line-by-line engine; there is currently no way to exclude a specific jsDelivr URL from updates.
 

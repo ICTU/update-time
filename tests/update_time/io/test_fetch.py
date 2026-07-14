@@ -87,7 +87,7 @@ class NextPageUrlTest(unittest.TestCase):
         response = self._response(
             "https://reg.example/v2/lib/tags/list?n=1000", '</v2/lib/tags/list?last=x>; rel="next"'
         )
-        self.assertEqual("https://reg.example/v2/lib/tags/list?last=x", next_page_url(response))
+        self.assertEqual(next_page_url(response), "https://reg.example/v2/lib/tags/list?last=x")
 
     def test_only_the_next_relation_is_followed(self):
         """Test that a Link header without a `next` relation (e.g. only `last`) yields no next page."""

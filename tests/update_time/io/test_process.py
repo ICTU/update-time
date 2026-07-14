@@ -16,13 +16,13 @@ class RunTests(TestCase):
     def test_stdout_is_returned(self, mock_run: Mock):
         """Test that the stdout of a successful command is captured."""
         mock_run.return_value = Mock(stdout="output", stderr="")
-        self.assertEqual("output", run(["tool", "--version"]).stdout)
+        self.assertEqual(run(["tool", "--version"]).stdout, "output")
 
     def test_command_and_cwd_are_passed(self, mock_run: Mock):
         """Test that the command and working directory are passed to the subprocess."""
         mock_run.return_value = Mock(stdout="", stderr="")
         run(["tool", "list"], cwd=Path("/dir"))
-        self.assertEqual((["tool", "list"],), mock_run.call_args.args)
+        self.assertEqual(mock_run.call_args.args, (["tool", "list"],))
         self.assertEqual(Path("/dir"), mock_run.call_args.kwargs["cwd"])
 
     def test_cwd_defaults_to_none(self, mock_run: Mock):
@@ -34,12 +34,12 @@ class RunTests(TestCase):
     def test_json_is_parsed(self, mock_run: Mock):
         """Test that stdout is parsed as JSON on demand."""
         mock_run.return_value = Mock(stdout='{"a": 1}', stderr="")
-        self.assertEqual({"a": 1}, run(["npm", "list"]).json)
+        self.assertEqual(run(["npm", "list"]).json, {"a": 1})
 
     def test_empty_output_parses_to_an_empty_dict(self, mock_run: Mock):
         """Test that a command with no output parses to an empty dict rather than crashing."""
         mock_run.return_value = Mock(stdout="", stderr="")
-        self.assertEqual({}, run(["npm", "list"]).json)
+        self.assertEqual(run(["npm", "list"]).json, {})
 
     def test_clean_exit_is_ok(self, mock_run: Mock):
         """Test that a command that exits cleanly is ok, even with no output."""
@@ -56,7 +56,7 @@ class RunTests(TestCase):
         error = subprocess.CalledProcessError(returncode=1, cmd="", output='{"pkg": {}}', stderr="[WARN] deprecated\n")
         mock_run.side_effect = error
         result = run(["pnpm", "outdated"])
-        self.assertEqual({"pkg": {}}, result.json)
+        self.assertEqual(result.json, {"pkg": {}})
         self.assertTrue(result.ok)
         mock_warning.assert_not_called()
 
@@ -65,7 +65,7 @@ class RunTests(TestCase):
         """Test that a command that both failed and produced nothing is not ok, and its stderr is surfaced."""
         mock_run.side_effect = subprocess.CalledProcessError(returncode=1, cmd="", output="", stderr="boom\n")
         result = run(["uv", "lock"])
-        self.assertEqual("", result.stdout)
+        self.assertEqual(result.stdout, "")
         self.assertFalse(result.ok)
         mock_warning.assert_called_once_with(Logger._MESSAGE_COMMAND_STDERR, "uv lock", "boom", stacklevel=ANY)
 
@@ -74,6 +74,6 @@ class RunTests(TestCase):
         """Test that a missing executable is logged and a failed, empty result returned rather than crashing."""
         mock_run.side_effect = FileNotFoundError
         result = run(["npm", "outdated"])
-        self.assertEqual("", result.stdout)
+        self.assertEqual(result.stdout, "")
         self.assertFalse(result.ok)
         mock_error.assert_called_once_with(Logger._MESSAGE_COMMAND_NOT_FOUND, "npm outdated", "npm", stacklevel=ANY)

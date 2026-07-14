@@ -114,7 +114,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", written)
         self.assertIn(f'"integrity": "sha256-{HASH2}"', written)
         self.assert_path_logged(mock_conf)
-        self.assert_new_version_logged(mock_conf, "clipboard", ANY, ANY)
+        self.assert_new_version_logged(mock_conf, "clipboard", ANY, Logger.NO_CHANGELOG)
         self.assert_no_warnings_logged()
 
     def test_no_changes(self, mock_get: Mock, mock_glob: Mock):

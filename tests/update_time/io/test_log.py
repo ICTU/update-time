@@ -7,11 +7,13 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import ANY, Mock, patch
 
+from packaging.specifiers import SpecifierSet
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.text import Text
 
-from update_time.domain.version import DependencyVersion
+from update_time.domain.marker import Marker
+from update_time.domain.version import DependencyVersion, Redundancy, VersionFilter
 from update_time.io import filesystem
 from update_time.io.log import _DEPENDENCY_MARKER, Logger, LogHighlighter, get_logger
 
@@ -95,12 +97,13 @@ class LoggerTests(TestCase):
 
     @patch("logging.Logger.info")
     def test_adopted_drift(self, mock_info: Mock):
-        """Test that adopting a re-pushed tag's new digest is logged at info level, not warning."""
+        """Test that adopting a re-pushed tag's new digest is logged at info level, naming the opt-in that caused it."""
         old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
-        Logger("adopt").adopted_drift("dependency", "3.14", old_sha, new_sha, Path.cwd() / "Dockerfile")
+        cause = "update-time: allow[digest-drift]"
+        Logger("adopt").adopted_drift("dependency", "3.14", old_sha, new_sha, Path.cwd() / "Dockerfile", cause)
         message = Logger._MESSAGE_ADOPTED_DIGEST_DRIFT
         mock_info.assert_called_once_with(
-            message, "dependency", "3.14", Path("Dockerfile"), old_sha, new_sha, stacklevel=ANY
+            message, "dependency", "3.14", Path("Dockerfile"), old_sha, new_sha, cause, stacklevel=ANY
         )
 
     @patch("logging.Logger.warning")
@@ -122,6 +125,56 @@ class LoggerTests(TestCase):
         logger.warn_if_stale("humanize", recent, Path.cwd() / "requirements.txt")
         logger.warn_if_stale("humanize", undated, Path.cwd() / "requirements.txt")
         mock_warning.assert_not_called()
+
+    @patch("logging.Logger.warning")
+    def test_invalid_specifier(self, mock_warning: Mock):
+        """Test that an unparsable version bound specifier is warned about at warning level."""
+        Logger("bound").invalid_specifier("python", "@@@", Path.cwd() / "Dockerfile")
+        mock_warning.assert_called_once_with(
+            Logger._MESSAGE_INVALID_SPECIFIER, "@@@", "python", Path("Dockerfile"), stacklevel=ANY
+        )
+
+    @patch("logging.Logger.warning")
+    def test_warn_if_redundant_bound(self, mock_warning: Mock):
+        """Test that a redundant bound is warned about at warning level, showing the bound and how it is redundant."""
+        version_filter = VersionFilter(SpecifierSet(">=3.12"), allow=True)  # never has an effect on a 3.12 pin
+        Logger("bound").warn_if_redundant_bound("python", version_filter, "3.12", Path.cwd() / "Dockerfile")
+        mock_warning.assert_called_once_with(
+            Logger._MESSAGE_REDUNDANT_BOUND,
+            "allow[update>=3.12]",
+            "python",
+            "3.12",
+            Path("Dockerfile"),
+            Redundancy.NO_EFFECT.value,
+            stacklevel=ANY,
+        )
+
+    @patch("logging.Logger.warning")
+    def test_warn_if_redundant_bound_does_nothing_when_live(self, mock_warning: Mock):
+        """Test that nothing is logged when the bound is live (a genuine ceiling or floor)."""
+        version_filter = VersionFilter(SpecifierSet("<3.13"), allow=True)  # a live ceiling on a 3.12 pin
+        Logger("bound").warn_if_redundant_bound("python", version_filter, "3.12", Path.cwd() / "Dockerfile")
+        mock_warning.assert_not_called()
+
+    @patch("logging.Logger.debug")
+    def test_applying_marker(self, mock_debug: Mock):
+        """Test that a reference's marker is logged at debug level as the directive list it expresses."""
+        bound = VersionFilter(SpecifierSet("<3.13"), allow=True)
+        marker = Marker(ignore_stale=True, allow_drift=True, version_filter=bound)
+        Logger("marker").applying_marker("python", marker, Path.cwd() / "Dockerfile")
+        mock_debug.assert_called_once_with(
+            Logger._MESSAGE_APPLYING_MARKER,
+            "ignore[stale] allow[update<3.13] allow[digest-drift]",
+            "python",
+            Path("Dockerfile"),
+            stacklevel=ANY,
+        )
+
+    @patch("logging.Logger.debug")
+    def test_applying_marker_does_nothing_without_marker(self, mock_debug: Mock):
+        """Test that nothing is logged for a reference without a marker."""
+        Logger("marker").applying_marker("python", Marker(), Path.cwd() / "Dockerfile")
+        mock_debug.assert_not_called()
 
     @patch("logging.Logger.debug")
     def test_path_logged_at_debug(self, mock_debug: Mock):
@@ -238,7 +291,7 @@ class LogHighlighterTests(TestCase):
         """Test that a marker-wrapped dependency name is styled as `repr.dependency` and the markers leave no trace."""
         text = Text(Logger.MESSAGE_NEW_VERSION % ("actions/checkout", "a.txt", "1.1", "Changelog for 1.1"))
         LogHighlighter().highlight(text)
-        self.assertEqual("New version available for actions/checkout in a.txt: 1.1\nChangelog for 1.1", text.plain)
+        self.assertEqual(text.plain, "New version available for actions/checkout in a.txt: 1.1\nChangelog for 1.1")
         dependency_spans = [(text.plain[span.start : span.end], span.style) for span in text.spans]
         self.assertIn(("actions/checkout", "repr.dependency"), dependency_spans)
 
@@ -248,7 +301,7 @@ class LogHighlighterTests(TestCase):
         message = f"Pinned {_DEPENDENCY_MARKER}ghcr.io/astral-sh/uv{_DEPENDENCY_MARKER} in Dockerfile to {digest}"
         text = Text(message)
         LogHighlighter().highlight(text)
-        self.assertEqual(f"Pinned ghcr.io/astral-sh/uv in Dockerfile to {digest}", text.plain)
+        self.assertEqual(text.plain, f"Pinned ghcr.io/astral-sh/uv in Dockerfile to {digest}")
         styled = {(text.plain[span.start : span.end], span.style) for span in text.spans}
         self.assertIn(("ghcr.io/astral-sh/uv", "repr.dependency"), styled)
         self.assertIn((digest, "repr.digest"), styled)
@@ -259,13 +312,13 @@ class LogHighlighterTests(TestCase):
         console = Console(no_color=True, force_terminal=False)
         with console.capture() as capture:
             console.print(highlighted, end="")
-        self.assertEqual("Pinned python in Dockerfile", capture.get())
+        self.assertEqual(capture.get(), "Pinned python in Dockerfile")
 
     def test_dependency_style_is_bold_white(self):
         """Test that get_logger wires `repr.dependency` to bold white in the handler's console theme."""
         get_logger("theme")  # Ensure the root logger, and its themed RichHandler console, have been configured.
         handler = next(h for h in logging.getLogger().handlers if isinstance(h, RichHandler))
-        self.assertEqual("bold white", str(handler.console.get_style("repr.dependency")))
+        self.assertEqual(str(handler.console.get_style("repr.dependency")), "bold white")
 
 
 class LogOriginTests(TestCase):
@@ -276,7 +329,7 @@ class LogOriginTests(TestCase):
         logger = Logger("origin direct")
         with self.assertLogs(logger.log, level="DEBUG") as captured:
             logger.path(Path.cwd())
-        self.assertEqual("test_log.py", Path(captured.records[0].pathname).name)
+        self.assertEqual(Path(captured.records[0].pathname).name, "test_log.py")
 
     def test_filesystem_helper_call_is_attributed_to_the_caller(self):
         """Test that logs emitted via the filesystem helper report the helper's caller, not filesystem.py, as origin."""
@@ -295,4 +348,4 @@ class LogOriginTests(TestCase):
                     start=Path(directory),
                 )
         origins = {Path(record.pathname).name for record in captured.records}
-        self.assertEqual({"test_log.py"}, origins)
+        self.assertEqual(origins, {"test_log.py"})

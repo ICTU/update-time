@@ -4,6 +4,9 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from unittest.mock import Mock, patch
 
+from packaging.specifiers import SpecifierSet
+
+from update_time.domain.version import NO_BOUND, VersionFilter
 from update_time.sources.pypi import (
     CHANGELOG_URL_KEYS,
     REPOSITORY_URL_KEYS,
@@ -48,14 +51,14 @@ class GetChangesTest(LoggingTestCase):
     def test_no_url_found(self, mock_get: Mock):
         """Test that the changes are empty if no changelog URL is returned by PyPI."""
         self.create_mock_response(mock_get, {"info": {"description": "Package-foo description"}})
-        self.assertEqual("", get_changes("package-1", "1.0"))
+        self.assertEqual(get_changes("package-1", "1.0"), "")
 
     def test_changelog_url_found(self, mock_get: Mock):
         """Test that the changes are returned if a changelog URL is returned by PyPI."""
         changelog = "Changelog\n## 1.1\n- Fixed foo\n"
         for key in CHANGELOG_URL_KEYS:
             self.create_mock_response(mock_get, {"info": {"project_urls": {key: "https://changes"}}}, text=changelog)
-            self.assertEqual("## 1.1\n- Fixed foo", get_changes(f"package-2-{key}", "1.1"))
+            self.assertEqual(get_changes(f"package-2-{key}", "1.1"), "## 1.1\n- Fixed foo")
 
     def test_changelog_url_gives_error(self, mock_get: Mock):
         """Test that changelog URLs are skipped if they result in an HTTP error."""
@@ -66,7 +69,7 @@ class GetChangesTest(LoggingTestCase):
                     {"info": {"description": "Package-foo description", "project_urls": {key: "https://changes"}}},
                     status_code=status_code,
                 )
-                self.assertEqual("", get_changes(f"package-3-{status_code}-{key}", "1.1"))
+                self.assertEqual(get_changes(f"package-3-{status_code}-{key}", "1.1"), "")
 
     def test_repository_url_found(self, mock_get: Mock):
         """Test that the changes are returned if a repository URL is returned by PyPI."""
@@ -109,12 +112,12 @@ class GetChangesTest(LoggingTestCase):
             [release_json("1.1")],
             commits_json(),
         )
-        self.assertEqual("", get_changes("package-7", "1.1"))
+        self.assertEqual(get_changes("package-7", "1.1"), "")
 
     def test_changelog_url_unreachable(self, mock_get: Mock):
         """Test that an unreachable changelog URL yields an empty changelog instead of crashing."""
         self.create_mock_response(mock_get, status_code=HTTPStatus.NOT_FOUND)
-        self.assertEqual("", changelog_from_url("https://changes", "1.0"))
+        self.assertEqual(changelog_from_url("https://changes", "1.0"), "")
 
 
 class GetPublicationDateTimeTest(CacheClearingTestCase):
@@ -180,60 +183,66 @@ class GetLatestVersionTest(LoggingTestCase):
 
     def test_invalid_current_version(self, mock_get: Mock):
         """Test that an invalid current version is returned unchanged without querying PyPI."""
-        self.assertEqual("not a version", get_latest_version("package", "not a version").version)
+        self.assertEqual(get_latest_version("package", "not a version", NO_BOUND).version, "not a version")
         mock_get.assert_not_called()
 
     def test_no_newer_version(self, mock_get: Mock):
         """Test that the current version is returned when it is already the latest."""
         mock_get.side_effect = [pypi_index("1.0")]
-        self.assertEqual("1.0", get_latest_version("no_newer", "1.0").version)
+        self.assertEqual(get_latest_version("no_newer", "1.0", NO_BOUND).version, "1.0")
 
     def test_new_version(self, mock_get: Mock):
         """Test that the latest version is returned, with its publication date."""
         mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release()]
-        latest = get_latest_version("new_version", "1.0")
-        self.assertEqual("1.1", latest.version)
+        latest = get_latest_version("new_version", "1.0", NO_BOUND)
+        self.assertEqual(latest.version, "1.1")
         self.assertEqual(datetime(2020, 1, 1, tzinfo=UTC), latest.published)
 
     def test_highest_version(self, mock_get: Mock):
         """Test that the highest of multiple newer versions is returned."""
         mock_get.side_effect = [pypi_index("1.0", "1.2", "1.1"), pypi_release()]
-        self.assertEqual("1.2", get_latest_version("highest", "1.0").version)
+        self.assertEqual(get_latest_version("highest", "1.0", NO_BOUND).version, "1.2")
 
     def test_newest_published_attached(self, mock_get: Mock):
         """Test that the newest release date is attached, so an up-to-date pin can still be flagged as stale."""
         mock_get.side_effect = [pypi_index("1.0", files=[{"upload-time": PYPI_OLD_UPLOAD}])]
-        latest = get_latest_version("stale", "1.0")
-        self.assertEqual("1.0", latest.version)
+        latest = get_latest_version("stale", "1.0", NO_BOUND)
+        self.assertEqual(latest.version, "1.0")
         self.assertEqual(datetime(2020, 1, 1, tzinfo=UTC), latest.newest_published)
 
     def test_prerelease_ignored(self, mock_get: Mock):
         """Test that pre-releases are ignored without fetching their metadata."""
         mock_get.side_effect = [pypi_index("1.0", "2.0b1")]
-        self.assertEqual("1.0", get_latest_version("prerelease", "1.0").version)
+        self.assertEqual(get_latest_version("prerelease", "1.0", NO_BOUND).version, "1.0")
+
+    def test_version_filter_bounds_candidates(self, mock_get: Mock):
+        """Test that a version filter drops out-of-bound candidates so a bounded version wins over a higher one."""
+        mock_get.side_effect = [pypi_index("1.0", "1.9", "2.0"), pypi_release()]
+        version_filter = VersionFilter(SpecifierSet("<2"), allow=True)
+        self.assertEqual(get_latest_version("bounded", "1.0", version_filter).version, "1.9")
 
     def test_yanked_release_ignored(self, mock_get: Mock):
         """Test that yanked releases are ignored."""
         mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(yanked=True)]
-        self.assertEqual("1.0", get_latest_version("yanked", "1.0").version)
+        self.assertEqual(get_latest_version("yanked", "1.0", NO_BOUND).version, "1.0")
 
     def test_release_without_files_ignored(self, mock_get: Mock):
         """Test that releases without distribution files are ignored."""
         mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(upload_time="")]
-        self.assertEqual("1.0", get_latest_version("no_files", "1.0").version)
+        self.assertEqual(get_latest_version("no_files", "1.0", NO_BOUND).version, "1.0")
 
     def test_release_metadata_unavailable_ignored(self, mock_get: Mock):
         """Test that a candidate whose metadata can't be fetched is skipped instead of crashing the run."""
         mock_get.side_effect = [pypi_index("1.0", "1.1"), mock_response(ok=False)]
-        self.assertEqual("1.0", get_latest_version("metadata_error", "1.0").version)
+        self.assertEqual(get_latest_version("metadata_error", "1.0", NO_BOUND).version, "1.0")
 
     def test_invalid_release_ignored(self, mock_get: Mock):
         """Test that releases with an invalid version are ignored without fetching their metadata."""
         mock_get.side_effect = [pypi_index("1.0", "not-a-version")]
-        self.assertEqual("1.0", get_latest_version("invalid_release", "1.0").version)
+        self.assertEqual(get_latest_version("invalid_release", "1.0", NO_BOUND).version, "1.0")
 
     def test_release_within_cooldown_ignored(self, mock_get: Mock):
         """Test that a release published within the cooldown period is held back."""
         recent = datetime.now(UTC).isoformat()
         mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(recent)]
-        self.assertEqual("1.0", get_latest_version("cooldown", "1.0").version)
+        self.assertEqual(get_latest_version("cooldown", "1.0", NO_BOUND).version, "1.0")

@@ -12,7 +12,6 @@ help recipe="":
     else just --usage {{ recipe }}; \
     if just --show {{ recipe }}-help > /dev/null 2>&1; then just {{ recipe }}-help; fi; fi
 
-export COVERAGE_RCFILE := justfile_directory() + "/.coveragerc"
 # Enable uv's malware check on every sync (it can't be enabled via pyproject.toml). The experimental-feature
 # warning is suppressed by the --quiet flag on `uv sync`. See https://astral.sh/blog/uv-audit.
 export UV_MALWARE_CHECK := "1"
@@ -25,7 +24,7 @@ ruff := uv_run + " ruff --quiet"
 troml := uv_run + " troml"
 ty := uv_run + ' ty check --no-progress --error-on-warning --color=${_color:-auto}'
 vulture := uv_run + " vulture --exclude .venv --min-confidence 0"
-vulture_whitelist := ".vulture-whitelist.py"
+vulture_whitelist := "tools/vulture-whitelist.py"
 coverage := uv_run + " coverage"
 
 # === Build and publish ===
@@ -121,9 +120,9 @@ ty: (py-check "ty" f"{{ty}} {{code}}")
 [private]
 mypy: (py-check "mypy" f"{{uv_run}} mypy {{code}}")
 
-# Run fixit to lint Python code.
+# Run fixit to lint Python code, after checking the local fixit rules with their own test cases.
 [private]
-fixit: (py-check "fixit" f"{{fixit}} lint {{code}}")
+fixit: (py-check "fixit" f"{{fixit}} test .tools.fixit_rules && {{fixit}} lint {{code}}")
 
 # Run ruff to lint and check the formatting of Python code.
 [private]
@@ -163,7 +162,7 @@ codespell: (py-check "codespell" f"{{uv_run}} codespell")
 # Run yamllint to lint YAML files such as workflow definitions.
 [private]
 yamllint:
-    {{ start_capture() }} {{ uv_run }} yamllint --strict -c .yamllint -f {{ when_color("colored", "auto") }} . {{ end_capture("yamllint") }}
+    {{ start_capture() }} {{ uv_run }} yamllint --strict -c tools/yamllint.yml -f {{ when_color("colored", "auto") }} . {{ end_capture("yamllint") }}
 
 # Run zizmor to audit GitHub Action workflows.
 [private]

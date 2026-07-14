@@ -125,7 +125,7 @@ class LoggingTestCase(CacheClearingTestCase):
         new_version_calls = [
             call for call in self.mock_info.call_args_list if call.args[:1] == (Logger.MESSAGE_NEW_VERSION,)
         ]
-        self.assertEqual([], new_version_calls, "Expected no new version to be logged")
+        self.assertEqual(new_version_calls, [], "Expected no new version to be logged")
 
     def assert_pinned_logged(self, path: Path, dependency: str, version: str, sha: str) -> None:
         """Assert that pinning a previously unpinned reference to a digest was logged at info level for the file."""
@@ -141,13 +141,13 @@ class LoggingTestCase(CacheClearingTestCase):
             message, dependency, version, Logger._relative(path), current_sha, new_sha, stacklevel=ANY
         )
 
-    def assert_adopted_drift_logged(
-        self, path: Path, dependency: str, version: str, current_sha: str, new_sha: str
+    def assert_adopted_drift_logged(  # noqa: PLR0913
+        self, path: Path, dependency: str, version: str, current_sha: str, new_sha: str, cause: object = ANY
     ) -> None:
         """Assert that adopting a re-pushed tag's new digest was logged once at info level for the file."""
         message = Logger._MESSAGE_ADOPTED_DIGEST_DRIFT
         self.mock_info.assert_called_once_with(
-            message, dependency, version, Logger._relative(path), current_sha, new_sha, stacklevel=ANY
+            message, dependency, version, Logger._relative(path), current_sha, new_sha, cause, stacklevel=ANY
         )
 
     def assert_stale_dependency_logged(self, path: Path, dependency: str, version: str) -> None:
@@ -168,9 +168,11 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that no path being checked for updates was logged (nothing logged at debug level)."""
         self.mock_debug.assert_not_called()
 
-    def assert_ignored_logged(self, dependency: str, path: Path) -> None:
-        """Assert that ignoring a reference (via the update-time: ignore marker) was logged at debug level."""
-        self.mock_debug.assert_called_with(Logger._MESSAGE_IGNORED, dependency, Logger._relative(path), stacklevel=ANY)
+    def assert_ignored_logged(self, dependency: str, path: Path, directive: object = ANY) -> None:
+        """Assert that ignoring a reference (via an update-time: ignore directive) was logged at debug level."""
+        self.mock_debug.assert_called_with(
+            Logger._MESSAGE_IGNORED, dependency, Logger._relative(path), directive, stacklevel=ANY
+        )
 
     def assert_skipped_logged(self, path: Path, reason: str) -> None:
         """Assert that deliberately skipping a file was logged at info level with the given reason."""

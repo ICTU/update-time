@@ -13,6 +13,7 @@ from rich.highlighter import ReprHighlighter
 from rich.logging import RichHandler
 from rich.theme import Theme
 
+from update_time.domain.marker import Marker
 from update_time.domain.staleness import is_stale, stale_after_days, staleness_days
 
 if TYPE_CHECKING:
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
     from requests import Response
     from rich.text import Text
 
-    from update_time.domain.version import DependencyVersion
+    from update_time.domain.version import DependencyVersion, VersionFilter, VersionString
 
 
 # The log levels that can be selected on the command line, and the default. Reporting an available new version is
@@ -200,19 +201,20 @@ class Logger:
         self._log(self.log.warning, message, dependency, version, self._relative(path), current_sha, new_sha)
 
     _MESSAGE_ADOPTED_DIGEST_DRIFT = (
-        f"Adopted digest drift for {_DEPENDENCY_MARKER}%s{_DEPENDENCY_MARKER}:%s in %s: re-pinned from %s to %s"
+        f"Adopted digest drift for {_DEPENDENCY_MARKER}%s{_DEPENDENCY_MARKER}:%s in %s: re-pinned from %s to %s (%s)"
     )
 
-    def adopted_drift(self, dependency: str, version: str, current_sha: str, new_sha: str, path: Path) -> None:
+    def adopted_drift(  # noqa: PLR0913
+        self, dependency: str, version: str, current_sha: str, new_sha: str, path: Path, cause: str
+    ) -> None:
         """Log, at info level, that a re-pushed tag's new digest was adopted because the reference opted in.
 
-        The tag was re-pushed under the same name and the reference opted into adopting the drift (via an
-        `# update-time: allow[digest-drift]` marker or the `--allow-image-digest-drift` flag), so the pin is updated
-        to the new digest. Unlike `digest_drift`, this is a normal change the user asked for, so it is info, not a
-        warning.
+        `cause` names the opt-in that triggered the adoption (the reference's `# update-time: allow[digest-drift]`
+        marker, or the repo-wide `--allow-image-digest-drift` flag). Unlike `digest_drift`, this is a normal change the
+        user asked for, so it is info, not a warning.
         """
         message = self._MESSAGE_ADOPTED_DIGEST_DRIFT
-        self._log(self.log.info, message, dependency, version, self._relative(path), current_sha, new_sha)
+        self._log(self.log.info, message, dependency, version, self._relative(path), current_sha, new_sha, cause)
 
     _MESSAGE_STALE = (
         f"Stale dependency {_DEPENDENCY_MARKER}%s{_DEPENDENCY_MARKER} in %s: "
@@ -223,7 +225,7 @@ class Logger:
         """Warn if the dependency's newest release is old enough that the project may have gone quiet.
 
         Does nothing when the newest release date is unknown or within the threshold (or the check is disabled),
-        so callers can hand off every resolved version unconditionally; `is_stale` is the single gate.
+        so callers can hand off every resolved version unconditionally.
         """
         if (published := version.newest_published) is None or not is_stale(published):
             return
@@ -252,6 +254,36 @@ class Logger:
         """Warn that a jsDelivr file's integrity hash couldn't be resolved, so the reference is left unchanged."""
         self._log(self.log.warning, self._MESSAGE_NO_INTEGRITY_HASH, dependency, version, filename)
 
+    _MESSAGE_INVALID_SPECIFIER = (
+        f"Invalid %r in the update-time marker for {_DEPENDENCY_MARKER}%s{_DEPENDENCY_MARKER} "
+        "in %s; leaving the reference unchanged"
+    )
+
+    def invalid_specifier(self, dependency: str, specifier: str, path: Path) -> None:
+        """Warn that a marker carried an invalid version specifier or item, so the reference is left unchanged."""
+        self._log(self.log.warning, self._MESSAGE_INVALID_SPECIFIER, specifier, dependency, self._relative(path))
+
+    _MESSAGE_REDUNDANT_BOUND = (
+        f"Redundant update bound %s on {_DEPENDENCY_MARKER}%s{_DEPENDENCY_MARKER} %s in %s: it %s"
+    )
+
+    def warn_if_redundant_bound(
+        self, dependency: str, version_filter: VersionFilter, current_version: VersionString, path: Path
+    ) -> None:
+        """Warn when a version bound is redundant for the current version (never has an effect, or blocks everything).
+
+        Does nothing when the reference has no bound (the keep-all `NO_BOUND`) or the bound is live (see
+        `VersionFilter.redundancy`), so callers can hand off every reference unconditionally. The bound is rendered
+        in its marker form (`allow[update<3.13]`, with the specifier in PEP 440's normalised clause order), so the
+        warning shows which bound on which pin is redundant.
+        """
+        if (redundancy := version_filter.redundancy(current_version)) is None:
+            return
+        bound = str(Marker(version_filter=version_filter))  # Rendered in its marker form, e.g. `allow[update<3.13]`.
+        message = self._MESSAGE_REDUNDANT_BOUND
+        arguments = (bound, dependency, current_version, self._relative(path), redundancy.value)
+        self._log(self.log.warning, message, *arguments)
+
     # --- File scanning and selection ---
 
     _MESSAGE_CHECKING_PATH = "Checking if there are updates for %s"
@@ -260,11 +292,24 @@ class Logger:
         """Log working on path."""
         self._log(self.log.debug, self._MESSAGE_CHECKING_PATH, self._relative(path))
 
-    _MESSAGE_IGNORED = f"Ignoring updates for {_DEPENDENCY_MARKER}%s{_DEPENDENCY_MARKER} in %s (update-time: ignore)"
+    _MESSAGE_APPLYING_MARKER = f"Applying update-time marker %s to {_DEPENDENCY_MARKER}%s{_DEPENDENCY_MARKER} in %s"
 
-    def ignored(self, dependency: str, path: Path) -> None:
-        """Log that a reference was left unchanged because of an `# update-time: ignore` marker."""
-        self._log(self.log.debug, self._MESSAGE_IGNORED, dependency, self._relative(path))
+    def applying_marker(self, dependency: str, marker: Marker, path: Path) -> None:
+        """Log, at debug level, the marker applying to a reference, so users can confirm it is recognised.
+
+        Does nothing when the line carries no marker (the rendered directive list is empty), so the caller can hand
+        off every reference unconditionally.
+        """
+        if not (directives := str(marker)):
+            return
+        self._log(self.log.debug, self._MESSAGE_APPLYING_MARKER, directives, dependency, self._relative(path))
+
+    _MESSAGE_IGNORED = f"Ignoring updates for {_DEPENDENCY_MARKER}%s{_DEPENDENCY_MARKER} in %s (update-time: %s)"
+
+    def ignored(self, dependency: str, marker: Marker, path: Path) -> None:
+        """Log that a reference's update was held back by the marker's `ignore` directive, naming its form."""
+        directive = "ignore" if marker.ignore_update and marker.ignore_stale else "ignore[update]"
+        self._log(self.log.debug, self._MESSAGE_IGNORED, dependency, self._relative(path), directive)
 
     _MESSAGE_EXCLUDING_PATH = "Excluding %s from the scan (--exclude-path)"
 

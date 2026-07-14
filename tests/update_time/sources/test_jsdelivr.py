@@ -39,8 +39,8 @@ class GetLatestVersionTest(LoggingTestCase):
         """Test that no newer version keeps the current version and fetches no integrity hash."""
         mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": ELIGIBLE})]
         latest_version = get_latest_version("clipboard", "1.0", FILENAME)
-        self.assertEqual("1.0", latest_version.version)
-        self.assertEqual("", latest_version.sha)
+        self.assertEqual(latest_version.version, "1.0")
+        self.assertEqual(latest_version.sha, "")
 
     def test_newer_version_bumps_and_fetches_hash(self, mock_get: Mock):
         """Test that an eligible newer version is adopted together with its integrity hash."""
@@ -50,8 +50,8 @@ class GetLatestVersionTest(LoggingTestCase):
             mock_response(FLAT_FILES),
         ]
         latest_version = get_latest_version("clipboard", "1.0", FILENAME)
-        self.assertEqual("1.1", latest_version.version)
-        self.assertEqual(f"sha256-{HASH2}", latest_version.sha)
+        self.assertEqual(latest_version.version, "1.1")
+        self.assertEqual(latest_version.sha, f"sha256-{HASH2}")
 
     def test_fresh_version_held_back(self, mock_get: Mock):
         """Test that a version within the cooldown is skipped and the newest eligible older version is chosen."""
@@ -61,35 +61,35 @@ class GetLatestVersionTest(LoggingTestCase):
             mock_response(FLAT_FILES),
         ]
         latest_version = get_latest_version("clipboard", "1.0", FILENAME)
-        self.assertEqual("1.5", latest_version.version)
-        self.assertEqual(f"sha256-{HASH2}", latest_version.sha)
+        self.assertEqual(latest_version.version, "1.5")
+        self.assertEqual(latest_version.sha, f"sha256-{HASH2}")
 
     def test_all_newer_versions_within_cooldown(self, mock_get: Mock):
         """Test that the current version is kept when every newer version is still within the cooldown."""
         mock_get.side_effect = [jsdelivr_versions("2.0", "1.0"), npm_registry({"2.0": FRESH})]
         latest_version = get_latest_version("clipboard", "1.0", FILENAME)
-        self.assertEqual("1.0", latest_version.version)
-        self.assertEqual("", latest_version.sha)
+        self.assertEqual(latest_version.version, "1.0")
+        self.assertEqual(latest_version.sha, "")
 
     def test_prerelease_ignored(self, mock_get: Mock):
         """Test that a newer pre-release is not adopted (and no publication date is looked up for it)."""
         mock_get.side_effect = [jsdelivr_versions("2.0.0-rc.1", "1.0"), npm_registry({"1.0": ELIGIBLE})]
-        self.assertEqual("1.0", get_latest_version("clipboard", "1.0", FILENAME).version)
+        self.assertEqual(get_latest_version("clipboard", "1.0", FILENAME).version, "1.0")
 
     def test_version_without_publication_date_skipped(self, mock_get: Mock):
         """Test that a version the npm registry has no release date for yet is treated as too fresh and skipped."""
         mock_get.side_effect = [jsdelivr_versions("1.1", "1.0"), npm_registry({})]
-        self.assertEqual("1.0", get_latest_version("clipboard", "1.0", FILENAME).version)
+        self.assertEqual(get_latest_version("clipboard", "1.0", FILENAME).version, "1.0")
 
     def test_unparsable_current_version_left_alone(self, mock_get: Mock):
         """Test that an unparsable current version (e.g. a trailing dot) is left unchanged, querying nothing."""
-        self.assertEqual("1.", get_latest_version("clipboard", "1.", FILENAME).version)
+        self.assertEqual(get_latest_version("clipboard", "1.", FILENAME).version, "1.")
         mock_get.assert_not_called()
 
     def test_package_api_unreachable_keeps_current(self, mock_get: Mock):
         """Test that an unreachable jsDelivr package API leaves the version unchanged instead of crashing."""
         mock_get.side_effect = [mock_response(ok=False), npm_registry({"1.0": ELIGIBLE})]
-        self.assertEqual("1.0", get_latest_version("clipboard", "1.0", FILENAME).version)
+        self.assertEqual(get_latest_version("clipboard", "1.0", FILENAME).version, "1.0")
 
     def test_integrity_fetch_failure_keeps_current(self, mock_get: Mock):
         """Test that a failed integrity-hash fetch leaves the version unchanged, so the hash can't fall out of sync."""
@@ -99,8 +99,8 @@ class GetLatestVersionTest(LoggingTestCase):
             mock_response(ok=False),  # the integrity-hash request fails
         ]
         latest_version = get_latest_version("clipboard", "1.0", FILENAME)
-        self.assertEqual("1.0", latest_version.version)
-        self.assertEqual("", latest_version.sha)
+        self.assertEqual(latest_version.version, "1.0")
+        self.assertEqual(latest_version.sha, "")
 
     def test_hashes_referenced_file_not_package_default(self, mock_get: Mock):
         """Test that the referenced file's hash is used, even when the package default isn't a listed file."""
@@ -114,16 +114,16 @@ class GetLatestVersionTest(LoggingTestCase):
             mock_response(flat),
         ]
         latest_version = get_latest_version("mathjax", "3.2.2", "/es5/tex-mml-chtml.js")
-        self.assertEqual("3.3.0", latest_version.version)
-        self.assertEqual(f"sha256-{HASH2}", latest_version.sha)  # from the referenced file, not the unlisted default
+        self.assertEqual(latest_version.version, "3.3.0")
+        self.assertEqual(latest_version.sha, f"sha256-{HASH2}")  # from the referenced file, not the unlisted default
 
     def test_missing_referenced_file_hash_left_unchanged(self, mock_get: Mock):
         """Test that a version whose referenced file has no listed hash is left unchanged, and the reason is logged."""
         flat = {"default": FILENAME, "files": [{"name": "/other.js", "hash": HASH1}]}  # FILENAME is absent
         mock_get.side_effect = [jsdelivr_versions("1.1", "1.0"), npm_registry({"1.1": ELIGIBLE}), mock_response(flat)]
         latest_version = get_latest_version("clipboard", "1.0", FILENAME)
-        self.assertEqual("1.0", latest_version.version)
-        self.assertEqual("", latest_version.sha)
+        self.assertEqual(latest_version.version, "1.0")
+        self.assertEqual(latest_version.sha, "")
         message = Logger._MESSAGE_NO_INTEGRITY_HASH
         self.mock_warning.assert_called_once_with(message, "clipboard", "1.1", FILENAME, stacklevel=ANY)
 
