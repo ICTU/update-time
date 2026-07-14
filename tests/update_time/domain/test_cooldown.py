@@ -19,7 +19,7 @@ class CooldownDaysTest(unittest.TestCase):
     def test_env_var(self):
         """Test that the cooldown is read from the env var when set."""
         with patch_environ({COOLDOWN_DAYS_ENV_VAR: "14"}):
-            self.assertEqual(14, cooldown_days())
+            self.assertEqual(cooldown_days(), 14)
 
 
 class WithinCooldownTest(unittest.TestCase):

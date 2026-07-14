@@ -72,15 +72,14 @@ def _eligible_version(
 
 
 def _candidate_versions(dependency: str, current_version: Version) -> list[Version]:
-    """Return the dependency's stable versions newer than the current one, newest first."""
+    """Return the dependency's stable versions newer than the current one (`first_eligible` orders them)."""
     response = fetch(f"{JSDELIVR_PACKAGE_API}/{dependency}", LOG, headers=HEADERS)
     if response is None:
         return []
     versions = [
         Version(entry["version"]) for entry in response.json().get("versions", []) if is_valid(entry["version"])
     ]
-    newer = [version for version in versions if version > current_version and not version.is_prerelease]
-    return sorted(newer, reverse=True)
+    return [version for version in versions if version > current_version and not version.is_prerelease]
 
 
 def _publication_datetime(dependency: str, version: Version) -> datetime | None:

@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from update_time.domain.version import DependencyVersion
+from update_time.domain.version import NO_BOUND, DependencyVersion, parse_version_filter
 from update_time.io.log import Logger
 from update_time.updaters.update_github_action import update_github_actions
 
@@ -77,7 +77,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         assert_success(update_github_actions(GITHUB_DIR))
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
-        mock_get_latest_version.assert_called_once_with("actions/checkout", "4")
+        mock_get_latest_version.assert_called_once_with("actions/checkout", "4", NO_BOUND)
         self.assert_path_logged(workflow_yml)
         self.assert_pinned_logged(workflow_yml, "actions/checkout", "4.1.1", NEW_SHA)
         self.assert_no_new_version_logged()
@@ -90,11 +90,24 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         assert_success(update_github_actions(GITHUB_DIR))
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
-        mock_get_latest_version.assert_called_once_with("actions/checkout", "4.1.1")
+        mock_get_latest_version.assert_called_once_with("actions/checkout", "4.1.1", NO_BOUND)
         self.assert_path_logged(workflow_yml)
         self.assert_pinned_logged(workflow_yml, "actions/checkout", "4.1.1", NEW_SHA)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
+
+    def test_allow_update_bound_passes_filter_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an `allow[update<…>]` marker passes the bound to the source and pins the bounded release."""
+        mock_get_latest_version.return_value = DependencyVersion(version="4.2.0", sha=NEW_SHA)
+        workflow_yml = mock_path("uses: actions/checkout@v4  # update-time: allow[update<5]\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        assert_success(update_github_actions(GITHUB_DIR))
+        workflow_yml.write_text.assert_called_with(
+            f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: allow[update<5]\n"
+        )
+        mock_get_latest_version.assert_called_once_with("actions/checkout", "4", parse_version_filter("<5", allow=True))
+        self.assert_pinned_logged(workflow_yml, "actions/checkout", "4.2.0", NEW_SHA)
+        self.assert_no_warnings_logged()  # a `<5` bound on a v4 pin is live, so no redundancy warning
 
     def test_inline_ignore_marker_pins_action(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an inline `# update-time: ignore` comment leaves the action untouched, looking up no version."""

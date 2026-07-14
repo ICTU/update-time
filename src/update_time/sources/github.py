@@ -10,7 +10,14 @@ from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.staleness import newest_datetime
-from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
+from update_time.domain.version import (
+    DependencyName,
+    DependencyVersion,
+    VersionFilter,
+    VersionString,
+    first_eligible,
+    is_valid,
+)
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 
@@ -80,6 +87,10 @@ class Release:
         """Return the release version."""
         return Version(self.tag_name.lstrip("v"))
 
+    def __lt__(self, other: Release) -> bool:
+        """Order releases by version, so candidates sort newest-first without a sort key."""
+        return self.version < other.version
+
 
 def github_to_raw(url: str) -> str:
     """Convert GitHub URLs to URLs that return raw content."""
@@ -114,20 +125,23 @@ def _list_releases(owner: str, repository: str) -> tuple[dict, ...] | None:
 
 
 @cache
-def get_latest_version(action: DependencyName, current_version: VersionString) -> DependencyVersion:
+def get_latest_version(
+    action: DependencyName, current_version: VersionString, version_filter: VersionFilter
+) -> DependencyVersion:
     """Return the latest eligible release for the GitHub action, or the current version unchanged.
 
     Mirrors `pypi.get_latest_version` and `oci.get_latest_tag`: narrow the releases to candidates by name (a valid,
     non-draft, non-prerelease version at least as new as the current one — the current version itself included, so
     an action referenced by tag only can be pinned to its commit SHA without a version bump), then walk them
-    newest-first with `first_eligible`, resolving each candidate's commit SHA and cooldown until one is eligible.
-    When the releases were fetched but none carries a valid version, that's logged as "no valid version"; a fetch
-    failure is left to `fetch`'s own warning, so a network problem isn't reported twice. The newest release date is
-    always attached (for the staleness check), even when the version is unchanged.
+    newest-first with `first_eligible`, resolving each candidate's commit SHA and cooldown until one is eligible. A
+    `version_filter` bound narrows the candidates before the highest is picked. When the releases were fetched but
+    none carries a valid version, that's logged as "no valid version"; a fetch failure is left to `fetch`'s own
+    warning, so a network problem isn't reported twice. The newest release date is always attached (for the
+    staleness check), even when the version is unchanged.
     """
-    owner, repository, *_path = action.split("/")
     if not is_valid(current_version):
         return DependencyVersion(version=current_version)
+    owner, repository, *_path = action.split("/")
     newest_published = newest_publication_date(owner, repository)
     unchanged = DependencyVersion(current_version, newest_published=newest_published)
     releases = _list_releases(owner, repository)
@@ -140,11 +154,9 @@ def get_latest_version(action: DependencyName, current_version: VersionString) -
         LOG.no_version(f"{owner}/{repository}")
         return unchanged
     current = Version(current_version)
-    candidates = sorted(
-        (release for release in valid_releases if release.version >= current),
-        key=lambda release: release.version,
-        reverse=True,
-    )
+    candidates = [
+        release for release in valid_releases if release.version >= current and version_filter.keeps(release.version)
+    ]
     latest = first_eligible(candidates, _eligible_release, current_version)
     return replace(latest, newest_published=newest_published)
 

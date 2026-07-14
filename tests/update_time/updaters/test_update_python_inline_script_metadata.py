@@ -102,7 +102,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         assert_success(update_python_inline_script_metadatas())
         get.assert_not_called()  # nothing outdated, so no changelog is fetched
         command = self.uv_commands(run)[0]
-        self.assertEqual(["uv", "tree", "--script"], command[:3])
+        self.assertEqual(command[:3], ["uv", "tree", "--script"])
         self.assertIn("--depth=0", command)
         self.assertTrue(command[command.index("--exclude-newer") + 1])  # a non-empty cutoff follows the flag
         self.assertNotIn(["uv", "lock"], [command[:2] for command in self.uv_commands(run)])  # scripts have no lockfile

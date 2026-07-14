@@ -15,7 +15,13 @@ from typing import TYPE_CHECKING, cast
 from packaging.version import InvalidVersion, Version
 
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible
+from update_time.domain.version import (
+    DependencyName,
+    DependencyVersion,
+    VersionFilter,
+    VersionString,
+    first_eligible,
+)
 from update_time.io.fetch import fetch, next_page_url
 from update_time.io.log import get_logger
 from update_time.sources import docker_hub
@@ -146,6 +152,17 @@ class Tag:
         """
         return self._suffix_tag.sortable_version
 
+    def __lt__(self, other: Tag) -> bool:
+        """Order tags by version axes (main version, then embedded suffix version), so candidates sort newest-first.
+
+        This flat ordering picks the highest candidate; `is_newer_or_equal` is the separate axis-wise check that
+        decides candidacy.
+        """
+        return (self.sortable_version, self.sortable_suffix_version) < (
+            other.sortable_version,
+            other.sortable_suffix_version,
+        )
+
     @property
     def within_cooldown(self) -> bool:
         """Return whether the tag was pushed within the configured cooldown period.
@@ -236,7 +253,9 @@ def is_docker_hub_image(image: str) -> bool:
     return _is_docker_hub_host(host)
 
 
-def get_latest_tag(image: DependencyName, current_tag: VersionString) -> DependencyVersion:
+def get_latest_tag(
+    image: DependencyName, current_tag: VersionString, version_filter: VersionFilter
+) -> DependencyVersion:
     """Find the latest compatible tag for an image. Keeps the same non-numerical parts while upgrading the version.
 
     Resolves images on any OCI registry (Docker Hub, ghcr.io, mcr.microsoft.com, quay.io, ...). Returns the digest
@@ -245,31 +264,38 @@ def get_latest_tag(image: DependencyName, current_tag: VersionString) -> Depende
 
     Lists all tag names in one request, then resolves the digest for the highest candidate versions until one is
     eligible (it has a digest and is past the cooldown). Normally that's the very first one; only versions newer
-    than the latest eligible one (those still within Docker Hub's cooldown) are resolved and skipped.
+    than the latest eligible one (those still within Docker Hub's cooldown) are resolved and skipped. A
+    `version_filter` bound narrows the candidates by their parsed main version before the highest is picked, so the
+    prefix/suffix matching is unaffected; the staleness date stays based on the newest compatible tag, unnarrowed
+    by the bound.
     """
     current = Tag(name=current_tag)
     if current.version is None:
         # Can't determine a newer tag if the tag doesn't contain a valid version
         return DependencyVersion(version=current_tag)
     tags = [Tag(name=name) for name in _tag_names(image)]
-    candidates = [tag for tag in tags if tag.is_candidate_for(current)]
-    candidates.sort(key=lambda tag: (tag.sortable_version, tag.sortable_suffix_version), reverse=True)
+    compatible = [tag for tag in tags if tag.is_candidate_for(current)]
+    candidates = [tag for tag in compatible if version_filter.keeps(cast("Version", tag.version))]
     latest = first_eligible(candidates, lambda candidate: _eligible_tag(image, current, candidate), current_tag)
-    return replace(latest, newest_published=_newest_tag_push_date(image, candidates))
+    # Staleness is measured against all compatible tags, not just the bounded candidates, so a version bound narrows
+    # the update only: a reference kept on an old line by a bound is still warned about when the image has gone quiet
+    # overall, and never merely because the bounded line has.
+    return replace(latest, newest_published=_newest_tag_push_date(image, compatible))
 
 
-def _newest_tag_push_date(image: str, candidates: list[Tag]) -> datetime | None:
+def _newest_tag_push_date(image: str, compatible: list[Tag]) -> datetime | None:
     """Return the push date of the newest compatible tag for the staleness check, or None.
 
     Only Docker Hub exposes a push date (the OCI protocol doesn't), so a tag on another registry resolves to no
     date and is never flagged as stale — the same limitation as the cooldown. Unlike the cooldown, eligibility is
     ignored: the newest tag's date is used even if it is still within the cooldown, so a freshly re-pushed tag is
-    not reported as stale. The newest candidate was already resolved while picking the latest eligible tag, so this
-    reuses that cached result and costs no extra request; when no compatible tag is listed there is nothing to date.
+    not reported as stale. The newest compatible tag was usually already resolved while picking the latest eligible
+    tag, so this reuses that cached result without an extra request; only a version bound that excludes the newest
+    tag from the update makes it cost one. When no compatible tag is listed there is nothing to date.
     """
-    if not candidates:
+    if not compatible:
         return None
-    resolved = _get_tag(image, candidates[0].name)
+    resolved = _get_tag(image, max(compatible).name)
     return resolved.last_pushed if resolved else None
 
 

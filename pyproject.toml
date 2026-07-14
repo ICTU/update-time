@@ -83,11 +83,11 @@ lint.ignore = [
     "PT",     # https://docs.astral.sh/ruff/rules/#flake8-pytest-style-pt - pytest isn't used
     "TC006",  # https://docs.astral.sh/ruff/rules/runtime-cast-value/ - the rule claims it's often necessary to quote the first argument passed to cast(), but that's not the case in this code base
 ]
-lint.per-file-ignores.".vulture-whitelist.py" = [
-    "ALL",
-]
 lint.per-file-ignores."tests/**" = [
     "SLF001", # https://docs.astral.sh/ruff/rules/private-member-access/ - tests assert against Logger's private message constants
+]
+lint.per-file-ignores."tools/vulture-whitelist.py" = [
+    "ALL",
 ]
 lint.isort.section-order = [
     "future",
@@ -102,8 +102,38 @@ lint.isort.sections.tests = [
 ]
 
 [tool.codespell]
-skip = "*.lock,./.git,./.venv,./build,./dist,./htmlcov,./.mypy_cache,./.ruff_cache,./.coverage"
+skip = "*.lock,./.git,./.venv,./build,./dist,./htmlcov,./.mypy_cache,./.ruff_cache"
 
 [tool.pyproject-fmt]
 indent = 4
 keep_full_version = true  # Don't remove trailing zero's from version specifiers
+
+[tool.coverage]
+run.branch = true
+run.data_file = "build/.coverage"
+run.dynamic_context = "test_function"
+run.omit = [
+    "*/.venv/*",
+    "*/venv/*",
+    "docs/*",
+    "tools/*",
+]
+run.source = [
+    ".",
+]
+report.exclude_lines = [
+    "if TYPE_CHECKING:",
+    "pragma: no cover",
+    "raise NotImplementedError",
+]
+report.fail_under = 100
+report.skip_covered = true
+html.directory = "build/unittest-coverage"
+html.show_contexts = true
+xml.output = "build/unittest-coverage.xml"
+
+[tool.fixit]
+enable = [
+    "fixit.rules",        # Adding local rules to enable replaces the default, so re-enable the built-in rules explicitly
+    ".tools.fixit_rules", # Local rules; the leading dot makes the module path relative to this file
+]

@@ -19,7 +19,7 @@ from update_time.io.rewrite import updated_lines
 from update_time.sources.github import get_latest_version
 
 if TYPE_CHECKING:
-    from update_time.io.rewrite import Marker
+    from update_time.domain.marker import Marker
 
 LOG = get_logger("github action")
 # Match a `uses:` reference that is either already pinned to a commit SHA with a version comment
@@ -31,21 +31,22 @@ ACTION_RE = re.compile(
 )
 
 
-def _update_action(match: re.Match[str], path: Path, scope: str | None) -> str:
+def _update_action(match: re.Match[str], path: Path, marker: Marker) -> str:
     """Pin or update a single `uses:` reference to the latest version's commit SHA, or leave it unchanged.
 
-    `scope` is the reference's `# update-time: ignore[...]` scope: `"update"` holds back the (re)pin, `"stale"` the
-    staleness warning.
+    `marker` carries the reference's `# update-time:` directives: `ignore_update` holds back the (re)pin,
+    `ignore_stale` the staleness warning, and a `version_filter` bounds which release the (re)pin may adopt.
     """
     dependency = match.group("dependency")
     current_sha = match.group("sha")
     current_version = match.group("version") if current_sha else match.group("ref")
     if not is_valid(current_version):
         return match.group(0)  # Ignore references that aren't versions (e.g. a branch name)
-    latest = get_latest_version(dependency, current_version)
-    if scope != "stale":
+    LOG.warn_if_redundant_bound(dependency, marker.version_filter, current_version, path)
+    latest = get_latest_version(dependency, current_version, marker.version_filter)
+    if not marker.ignore_stale:
         LOG.warn_if_stale(dependency, latest, path)
-    if scope == "update" or not latest.sha:
+    if marker.ignore_update or not latest.sha:
         return match.group(0)  # Held back by the marker, or can't (re)pin without a commit SHA
     if current_sha is None:
         LOG.pinned(dependency, latest, path)
@@ -62,11 +63,11 @@ def update_github_actions(github_dir: Path) -> int:
         LOG.path(yaml_file)
         old_content = yaml_file.read_text()
 
-        # Rewrite per line (keeping line endings) so an `# update-time: ignore[...]` marker can hold back a single
-        # `uses:`; the marker's ignore scope reaches `_update_action` through the per-line substitution. Actions pin
-        # a commit SHA, not an image digest, so the marker's `allow_drift` opt-in does not apply here.
+        # Rewrite per line (keeping line endings) so an `# update-time:` marker can hold back or bound a single
+        # `uses:`; the marker reaches `_update_action` through the per-line substitution. Actions pin a commit SHA,
+        # not an image digest, so the marker's `allow_drift` opt-in does not apply here.
         def update_line(line: str, marker: Marker, path: Path = yaml_file) -> str:
-            return ACTION_RE.sub(partial(_update_action, path=path, scope=marker.ignore_scope), line)
+            return ACTION_RE.sub(partial(_update_action, path=path, marker=marker), line)
 
         new_lines = updated_lines(old_content.splitlines(keepends=True), ACTION_RE, update_line, LOG, yaml_file)
         new_content = "".join(new_lines)

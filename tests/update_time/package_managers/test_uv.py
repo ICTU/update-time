@@ -156,7 +156,7 @@ class WorkspaceTableTest(unittest.TestCase):
     def test_returns_the_workspace_table(self):
         """Test that a declared `[tool.uv.workspace]` table is returned."""
         contents = '[project]\nname = "root"\n\n[tool.uv.workspace]\nmembers = ["packages/*"]\n'
-        self.assertEqual({"members": ["packages/*"]}, _workspace_table(mock_path(contents)))
+        self.assertEqual(_workspace_table(mock_path(contents)), {"members": ["packages/*"]})
 
     def test_no_workspace_table(self):
         """Test that a pyproject.toml without a workspace table yields None."""

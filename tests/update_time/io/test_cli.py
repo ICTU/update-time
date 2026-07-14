@@ -37,7 +37,7 @@ class CommandLineInterfaceTest(unittest.TestCase):
             self.assertRaises(SystemExit) as cm,
         ):
             parse_args()
-        self.assertEqual(0, cm.exception.code)
+        self.assertEqual(cm.exception.code, 0)
         return stdout.getvalue()
 
     def assert_rejected(self, argv: list[str], expected_message: str) -> None:
@@ -49,12 +49,12 @@ class CommandLineInterfaceTest(unittest.TestCase):
             self.assertRaises(SystemExit) as cm,
         ):
             parse_args()
-        self.assertEqual(2, cm.exception.code)
+        self.assertEqual(cm.exception.code, 2)
         self.assertIn(expected_message, stderr.getvalue())
 
     def test_version(self):
         """Test that the --version option shows the version and exits."""
-        self.assertEqual(f"v{version('update-time')}", self.stdout_of("--version").strip())
+        self.assertEqual(self.stdout_of("--version").strip(), f"v{version('update-time')}")
 
     def test_help(self):
         """Test that the --help option shows the help text and exits."""
@@ -66,7 +66,7 @@ class CommandLineInterfaceTest(unittest.TestCase):
 
     def test_cooldown(self):
         """Test that the --cooldown option sets the cooldown period."""
-        self.assertEqual(14, self.parsed("--cooldown", "14").cooldown)
+        self.assertEqual(self.parsed("--cooldown", "14").cooldown, 14)
 
     def test_negative_cooldown(self):
         """Test that a negative --cooldown is rejected."""
@@ -116,7 +116,7 @@ class CommandLineInterfaceTest(unittest.TestCase):
 
     def test_log_level(self):
         """Test that the --log-level option sets the log level, upper-casing the value."""
-        self.assertEqual("DEBUG", self.parsed("--log-level", "debug").log_level)
+        self.assertEqual(self.parsed("--log-level", "debug").log_level, "DEBUG")
 
     def test_invalid_log_level(self):
         """Test that an invalid --log-level is rejected."""
@@ -124,7 +124,7 @@ class CommandLineInterfaceTest(unittest.TestCase):
 
     def test_default_exclude_path(self):
         """Test that no paths are excluded by default."""
-        self.assertEqual([], self.parsed().exclude_path)
+        self.assertEqual(self.parsed().exclude_path, [])
 
     def test_exclude_path(self):
         """Test that a comma-separated --exclude-path is parsed into a list of relative paths."""

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Added
 
+- Bound how far a line-based reference may update by adding a version specifier to the `update` scope. For example, `# update-time: allow[update<3.13]` limits updates to those smaller than 3.13, so a `python:3.12.x` pin keeps getting `3.12` patches without jumping to `3.13`. Closes [#58](https://github.com/ICTU/update-time/issues/58).
 - Update exact `==` pins in the [PEP 723](https://peps.python.org/pep-0723/) inline script metadata (`# /// script` blocks) of standalone `*.py` files, using uv, the same way `pyproject.toml` dependencies are updated. Closes [#29](https://github.com/ICTU/update-time/issues/29).
 - Refuse to run when the scanned directory is not inside a git repository, so Update-time's in-place rewrites always have a `git restore` safety net. Pass `--force` to run anyway. Closes [#81](https://github.com/ICTU/update-time/issues/81).
 - Colour the dependency name in bold white in the log output, so it stands out from the surrounding message when skimming a run. Closes [#128](https://github.com/ICTU/update-time/issues/128).

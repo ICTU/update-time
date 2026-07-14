@@ -13,7 +13,7 @@ class ReadTest(unittest.TestCase):
 
     def test_valid(self):
         """Test that a valid pyproject.toml is parsed into a dict."""
-        self.assertEqual({"project": {"name": "x"}}, pyproject_toml.read(mock_path('[project]\nname = "x"\n')))
+        self.assertEqual(pyproject_toml.read(mock_path('[project]\nname = "x"\n')), {"project": {"name": "x"}})
 
     def test_malformed(self):
         """Test that a malformed pyproject.toml reads back as None instead of raising."""
@@ -30,13 +30,13 @@ class ToolKeyTest(unittest.TestCase):
     def test_value_with_comment(self):
         """Test that both the value and its trailing comment are returned."""
         contents = '[tool.uv]\nexclude-newer = "7 days" # a note\n'
-        self.assertEqual(("7 days", "# a note"), pyproject_toml.tool_key(mock_path(contents), "uv", "exclude-newer"))
+        self.assertEqual(pyproject_toml.tool_key(mock_path(contents), "uv", "exclude-newer"), ("7 days", "# a note"))
 
     def test_value_without_comment(self):
         """Test that a key without a trailing comment returns an empty comment string."""
         self.assertEqual(
-            ("7 days", ""),
             pyproject_toml.tool_key(mock_path('[tool.uv]\nexclude-newer = "7 days"\n'), "uv", "exclude-newer"),
+            ("7 days", ""),
         )
 
     def test_absent_table(self):
@@ -98,12 +98,12 @@ class RewritePinnedVersionsTest(unittest.TestCase):
     def test_bumps_known_versions(self):
         """Test that a pin with a known newer version is rewritten."""
         pyproject_file = self.rewrite('dependencies = ["pkg==1.0"]\n', {"pkg": "1.1"})
-        self.assertEqual('dependencies = ["pkg==1.1"]\n', pyproject_file.write_text.call_args.args[0])
+        self.assertEqual(pyproject_file.write_text.call_args.args[0], 'dependencies = ["pkg==1.1"]\n')
 
     def test_matches_name_case_insensitively(self):
         """Test that the name is matched case-insensitively while its original casing is preserved."""
         pyproject_file = self.rewrite('dependencies = ["Pkg==1.0"]\n', {"pkg": "1.1"})
-        self.assertEqual('dependencies = ["Pkg==1.1"]\n', pyproject_file.write_text.call_args.args[0])
+        self.assertEqual(pyproject_file.write_text.call_args.args[0], 'dependencies = ["Pkg==1.1"]\n')
 
     def test_leaves_unknown_names_and_writes_nothing(self):
         """Test that a pin with no known newer version is left alone and the file is not rewritten."""
@@ -123,9 +123,9 @@ class PinnedVersionsTest(unittest.TestCase):
             '[dependency-groups]\ndev = ["ruff==0.6.0"]\n'
         )
         self.assertEqual(
-            {"pkg": "1.0", "sphinx": "7.4", "ruff": "0.6.0"}, pyproject_toml.pinned_versions(mock_path(contents))
+            pyproject_toml.pinned_versions(mock_path(contents)), {"pkg": "1.0", "sphinx": "7.4", "ruff": "0.6.0"}
         )
 
     def test_no_pins(self):
         """Test that a file with no exact pins yields an empty mapping."""
-        self.assertEqual({}, pyproject_toml.pinned_versions(mock_path('dependencies = ["pkg>=1.0"]\n')))
+        self.assertEqual(pyproject_toml.pinned_versions(mock_path('dependencies = ["pkg>=1.0"]\n')), {})

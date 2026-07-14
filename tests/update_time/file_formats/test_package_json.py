@@ -14,7 +14,7 @@ class ReadTest(unittest.TestCase):
     def test_read(self):
         """Test that a package.json is parsed into a dict."""
         self.assertEqual(
-            {"name": "x", "version": "1.0"}, package_json.read(mock_path('{"name": "x", "version": "1.0"}'))
+            package_json.read(mock_path('{"name": "x", "version": "1.0"}')), {"name": "x", "version": "1.0"}
         )
 
 
@@ -32,7 +32,7 @@ class DependencyNamesTest(unittest.TestCase):
             }
         )
         self.assertEqual(
-            ["react", "left-pad", "typescript", "fsevents"], package_json.dependency_names(mock_path(contents))
+            package_json.dependency_names(mock_path(contents)), ["react", "left-pad", "typescript", "fsevents"]
         )
 
     def test_non_registry_specs_skipped(self):
@@ -49,8 +49,8 @@ class DependencyNamesTest(unittest.TestCase):
                 }
             }
         )
-        self.assertEqual(["clipboard"], package_json.dependency_names(mock_path(contents)))
+        self.assertEqual(package_json.dependency_names(mock_path(contents)), ["clipboard"])
 
     def test_no_dependencies(self):
         """Test that a package.json without dependency sections yields an empty list."""
-        self.assertEqual([], package_json.dependency_names(mock_path('{"name": "x"}')))
+        self.assertEqual(package_json.dependency_names(mock_path('{"name": "x"}')), [])

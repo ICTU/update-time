@@ -10,7 +10,14 @@ from packaging.version import Version
 from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.staleness import newest_datetime
-from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
+from update_time.domain.version import (
+    DependencyName,
+    DependencyVersion,
+    VersionFilter,
+    VersionString,
+    first_eligible,
+    is_valid,
+)
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.sources.github import changes_from_release, github_owner_and_repository, github_to_raw
@@ -88,20 +95,27 @@ def release_datetime(urls: list[Distribution]) -> datetime | None:
     return newest_datetime(url["upload_time_iso_8601"] for url in urls)
 
 
-def get_latest_version(package: DependencyName, current_version: VersionString) -> DependencyVersion:
+def get_latest_version(
+    package: DependencyName, current_version: VersionString, version_filter: VersionFilter
+) -> DependencyVersion:
     """Return the latest stable release of the package that is available outside the cooldown window.
 
-    Pre-releases, dev-releases, yanked releases, and releases still within the cooldown period are ignored.
-    Returns the current version unchanged when it is invalid or already the latest eligible version.
+    Pre-releases, dev-releases, yanked releases, and releases still within the cooldown period are ignored, as is
+    any release the `version_filter` bound rules out. Returns the current version unchanged when it is invalid or
+    already the latest eligible version.
     """
     if not is_valid(current_version):
         return DependencyVersion(version=current_version)
     current = Version(current_version)
     versions = [Version(release) for release in project_versions(package) if is_valid(release)]
     candidates = [
-        version for version in versions if version > current and not version.is_prerelease and not version.is_devrelease
+        version
+        for version in versions
+        if version > current
+        and not version.is_prerelease
+        and not version.is_devrelease
+        and version_filter.keeps(version)
     ]
-    candidates.sort(reverse=True)
     latest = first_eligible(candidates, lambda version: _eligible_release(package, version), current_version)
     # Always attach the newest release date so an already-up-to-date pin can still be flagged as stale. It rides on
     # the Index API response fetched above, so it costs no extra request; whether it counts as stale (and whether the

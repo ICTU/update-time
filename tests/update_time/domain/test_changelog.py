@@ -10,11 +10,11 @@ class GetChangeFromChangelogTest(unittest.TestCase):
 
     def test_empty_changelog(self):
         """Test that an empty changelog results in an empty change."""
-        self.assertEqual("", get_version_changes_from_changelog("", "1.0"))
+        self.assertEqual(get_version_changes_from_changelog("", "1.0"), "")
 
     def test_non_empty_changelog(self):
         """Test that a changelog without the version number simply returns the changelog."""
-        self.assertEqual("Empty changelog", get_version_changes_from_changelog("Empty changelog", "1.0"))
+        self.assertEqual(get_version_changes_from_changelog("Empty changelog", "1.0"), "Empty changelog")
 
     def test_version_number_found(self):
         """Test that a changelog with the version number returns the text after the version number."""

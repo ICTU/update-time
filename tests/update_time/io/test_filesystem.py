@@ -51,7 +51,7 @@ class GlobTest(unittest.TestCase):
         """Test that some folders are ignored."""
         folders_that_should_be_ignored = ["/project/build", "/example/node_modules", "/src/__pycache__", "/.git"]
         mock_glob.return_value = [Path(folder) / "file.txt" for folder in folders_that_should_be_ignored]
-        self.assertEqual([], list(glob("*.txt")))
+        self.assertEqual(list(glob("*.txt")), [])
 
     def test_hidden_folder_named_in_pattern_is_visited(self, mock_glob: Mock):
         """Test that a hidden folder named literally in the pattern is visited, not skipped as a hidden folder."""
@@ -67,7 +67,7 @@ class GlobTest(unittest.TestCase):
     def test_hidden_folder_not_named_in_pattern_is_still_skipped(self, mock_glob: Mock):
         """Test that hidden folders the pattern does not name are still skipped, even next to one it does."""
         mock_glob.return_value = [Path("/.git/.devcontainer/devcontainer.json")]
-        self.assertEqual([], list(glob(".devcontainer/devcontainer.json")))
+        self.assertEqual(list(glob(".devcontainer/devcontainer.json")), [])
 
     @patch_environ({EXCLUDE_PATHS_ENV_VAR: "vendor"})
     def test_excluded_folder_is_skipped(self, mock_glob: Mock):
@@ -132,12 +132,12 @@ class ExcludedPathsTest(unittest.TestCase):
     def test_no_excluded_paths(self):
         """Test that no excluded paths are returned when the environment variable is not set."""
         with patch_environ():
-            self.assertEqual([], excluded_paths())
+            self.assertEqual(excluded_paths(), [])
 
     def test_empty_excluded_paths(self):
         """Test that an empty environment variable yields no excluded paths."""
         with patch_environ({EXCLUDE_PATHS_ENV_VAR: ""}):
-            self.assertEqual([], excluded_paths())
+            self.assertEqual(excluded_paths(), [])
 
     def test_excluded_paths(self):
         """Test that the comma-separated excluded paths are parsed into a list of paths."""

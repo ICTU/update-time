@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from update_time.domain.cooldown import cooldown_cutoff, cooldown_days
-from update_time.domain.version import DependencyVersion
+from update_time.domain.version import NO_BOUND, DependencyVersion
 from update_time.file_formats import pyproject_toml as pyproject_toml_format
 from update_time.io.log import get_logger
 from update_time.io.process import run
@@ -219,7 +219,7 @@ def newest_pypi_releases(path: Path) -> Iterable[tuple[str, DependencyVersion]]:
     caller hands this to `warn_about_stale_dependencies` after the update, so it reads the pins uv settled on.
     """
     return (
-        (name, get_latest_version(name, version))
+        (name, get_latest_version(name, version, NO_BOUND))
         for name, version in pyproject_toml_format.pinned_versions(path).items()
     )
 

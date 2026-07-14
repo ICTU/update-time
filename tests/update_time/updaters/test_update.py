@@ -22,9 +22,9 @@ class RunScriptTest(unittest.TestCase):
     def test_run_script(self, mock_run: Mock):
         """Test that a script is run and its exit code is returned."""
         mock_run.return_value = Mock(returncode=0)
-        self.assertEqual(0, run_script("dockerfile_base_image"))
+        self.assertEqual(run_script("dockerfile_base_image"), 0)
         args = mock_run.call_args.args[0]
-        self.assertEqual("update_dockerfile_base_image.py", args[-1].split("/")[-1])
+        self.assertEqual(args[-1].split("/")[-1], "update_dockerfile_base_image.py")
 
 
 @patch("subprocess.run")
@@ -34,7 +34,7 @@ class UpdateDependenciesTest(unittest.TestCase):
     def test_all_scripts_are_run(self, mock_run: Mock):
         """Test that all updater scripts are run, the parallel ones before the sequential ones."""
         mock_run.return_value = Mock(returncode=0)
-        self.assertEqual(0, update_dependencies())
+        self.assertEqual(update_dependencies(), 0)
         scripts_run = [run_call.args[0][-1].split("/")[-1] for run_call in mock_run.call_args_list]
         expected = [f"update_{name}.py" for name in (*PARALLEL_SCRIPTS, *SEQUENTIAL_SCRIPTS)]
         self.assertEqual(sorted(expected), sorted(scripts_run))
@@ -52,7 +52,7 @@ class UpdateDependenciesTest(unittest.TestCase):
     def test_highest_exit_code_is_returned(self, mock_run: Mock):
         """Test that the highest exit code of all scripts is returned."""
         mock_run.return_value = Mock(returncode=1)
-        self.assertEqual(1, update_dependencies())
+        self.assertEqual(update_dependencies(), 1)
 
 
 @patch("os.chdir", Mock())
@@ -90,45 +90,45 @@ class UpdateMainTest(unittest.TestCase):
         """Test that main parses the arguments and then updates the dependencies."""
         mock_run.return_value = Mock(returncode=0)
         exit_code, environment = self.run_main(mock_run)
-        self.assertEqual(0, exit_code)
-        self.assertEqual("7", environment[COOLDOWN_DAYS_ENV_VAR])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[COOLDOWN_DAYS_ENV_VAR], "7")
 
     def test_main_passes_cooldown_to_subprocesses(self, mock_run: Mock):
         """Test that main exports the cooldown in the environment so the updater subprocesses inherit it."""
         exit_code, environment = self.run_main(mock_run, "--cooldown", "14")
-        self.assertEqual(0, exit_code)
-        self.assertEqual("14", environment[COOLDOWN_DAYS_ENV_VAR])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[COOLDOWN_DAYS_ENV_VAR], "14")
 
     def test_main_passes_log_level_to_subprocesses(self, mock_run: Mock):
         """Test that main exports the log level in the environment so the updater subprocesses inherit it."""
         exit_code, environment = self.run_main(mock_run, "--log-level", "debug")
-        self.assertEqual(0, exit_code)
-        self.assertEqual("DEBUG", environment[LOG_LEVEL_ENV_VAR])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[LOG_LEVEL_ENV_VAR], "DEBUG")
 
     def test_main_passes_allow_image_digest_drift_off_by_default(self, mock_run: Mock):
         """Test that main exports the drift opt-in as off when --allow-image-digest-drift is not given."""
         exit_code, environment = self.run_main(mock_run)
-        self.assertEqual(0, exit_code)
-        self.assertEqual("0", environment[ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR], "0")
 
     def test_main_passes_allow_image_digest_drift_when_set(self, mock_run: Mock):
         """Test that main exports the drift opt-in as on when --allow-image-digest-drift is given."""
         exit_code, environment = self.run_main(mock_run, "--allow-image-digest-drift")
-        self.assertEqual(0, exit_code)
-        self.assertEqual("1", environment[ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR], "1")
 
     @patch("pathlib.Path.exists", Mock(return_value=True))
     def test_main_passes_excluded_paths_to_subprocesses(self, mock_run: Mock):
         """Test that main exports the excluded paths in the environment so the updater subprocesses inherit them."""
         exit_code, environment = self.run_main(mock_run, "--exclude-path", "vendor,packages/legacy")
-        self.assertEqual(0, exit_code)
-        self.assertEqual("vendor,packages/legacy", environment[EXCLUDE_PATHS_ENV_VAR])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[EXCLUDE_PATHS_ENV_VAR], "vendor,packages/legacy")
 
     def test_main_passes_no_excluded_paths_by_default(self, mock_run: Mock):
         """Test that main exports an empty excluded-paths variable when --exclude-path is not given."""
         exit_code, environment = self.run_main(mock_run)
-        self.assertEqual(0, exit_code)
-        self.assertEqual("", environment[EXCLUDE_PATHS_ENV_VAR])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[EXCLUDE_PATHS_ENV_VAR], "")
 
     def test_main_leaves_non_existing_excluded_paths_out_of_the_environment(self, mock_run: Mock):
         """Test that a non-existing excluded path is warned about but not passed down to the subprocesses."""
@@ -138,8 +138,8 @@ class UpdateMainTest(unittest.TestCase):
             patch("pathlib.Path.exists", autospec=True, side_effect=lambda self: self == Path("vendor")),
         ):
             exit_code, environment = self.run_main(mock_run, "--exclude-path", "vendor,missing")
-        self.assertEqual(0, exit_code)
-        self.assertEqual("vendor", environment[EXCLUDE_PATHS_ENV_VAR])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[EXCLUDE_PATHS_ENV_VAR], "vendor")
         mock_logger.missing_excluded_path.assert_called_once_with(Path("missing"))
 
     @patch("pathlib.Path.exists", Mock(return_value=True))
@@ -179,7 +179,7 @@ class UpdateMainTest(unittest.TestCase):
         mock_logger = Mock()
         with patch("update_time.updaters.update.get_logger", Mock(return_value=mock_logger)):
             exit_code, _ = self.run_main(mock_run)
-        self.assertEqual(0, exit_code)
+        self.assertEqual(exit_code, 0)
         mock_run.assert_called()
         mock_logger.forced_outside_git_repository.assert_not_called()
 
@@ -187,7 +187,7 @@ class UpdateMainTest(unittest.TestCase):
         """Test that main refuses to run outside a git repository."""
         with patch("sys.stderr.write") as mock_write:
             exit_code, _ = self.run_main(mock_run, inside_git=False)
-        self.assertEqual(2, exit_code)
+        self.assertEqual(exit_code, 2)
         mock_write.assert_called_with(
             "update-time: error: . is not inside a git repository; rerun inside a repository so changes can be "
             "reverted, or pass --force to run anyway\n"
@@ -200,6 +200,6 @@ class UpdateMainTest(unittest.TestCase):
         mock_logger = Mock()
         with patch("update_time.updaters.update.get_logger", Mock(return_value=mock_logger)):
             exit_code, _ = self.run_main(mock_run, "--force", inside_git=False)
-        self.assertEqual(0, exit_code)
+        self.assertEqual(exit_code, 0)
         mock_run.assert_called()
         mock_logger.forced_outside_git_repository.assert_called_once_with(Path.cwd())

@@ -39,7 +39,7 @@ class NpmjsPublicationDatetimeTest(LoggingTestCase):
     @patch_get(ok=False)
     def test_get_changes_when_unreachable(self):
         """Test that an unreachable registry yields no changelog instead of crashing."""
-        self.assertEqual("", get_changes("package", "1.0"))
+        self.assertEqual(get_changes("package", "1.0"), "")
 
 
 class NpmjsNewestPublicationDateTest(LoggingTestCase):
@@ -72,7 +72,7 @@ class NpmjsNewestReleaseTest(LoggingTestCase):
     def test_newest_release(self):
         """Test that the `latest` dist-tag and its publication date are returned as a DependencyVersion."""
         release = cast("DependencyVersion", newest_release("package"))
-        self.assertEqual("2.0", release.version)
+        self.assertEqual(release.version, "2.0")
         self.assertEqual(datetime(2024, 6, 1, tzinfo=UTC), release.newest_published)
 
     @patch_get(ok=False)
@@ -87,20 +87,20 @@ class GetChangesRepositoryTest(CacheClearingTestCase):
     @patch_get({"name": "package"})  # no `repository` field
     def test_missing_repository(self):
         """Test that a package with no repository metadata yields no changelog instead of crashing."""
-        self.assertEqual("", get_changes("no_repo", "1.0"))
+        self.assertEqual(get_changes("no_repo", "1.0"), "")
 
     @patch_get({"repository": "github:org/package"})
     def test_string_repository_shorthand(self):
         """Test that a repository given as an npm shorthand string doesn't crash the changelog lookup."""
-        self.assertEqual("", get_changes("string_repo", "1.0"))
+        self.assertEqual(get_changes("string_repo", "1.0"), "")
 
     @patch_get({"repository": {"type": "git"}})
     def test_repository_object_without_url(self):
         """Test that a repository object without a url yields no changelog instead of crashing."""
-        self.assertEqual("", get_changes("no_url", "1.0"))
+        self.assertEqual(get_changes("no_url", "1.0"), "")
 
     @patch("update_time.sources.npmjs.changes_from_release", Mock(return_value="Changelog"))
     @patch_get({"repository": {"url": "git+https://github.com/org/package.git"}})
     def test_repository_object_url_is_used(self):
         """Test that a repository object's url is parsed and used to find the changelog."""
-        self.assertEqual("Changelog", get_changes("with_repo", "1.0"))
+        self.assertEqual(get_changes("with_repo", "1.0"), "Changelog")
