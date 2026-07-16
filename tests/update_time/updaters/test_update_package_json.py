@@ -13,10 +13,10 @@ from update_time.updaters.update_package_json import update_package_jsons
 from tests.update_time.assertions import assert_success
 from tests.update_time.helpers import (
     LoggingTestCase,
-    commits_json,
+    github_commits_json,
+    github_release_json,
     mock_path,
     mock_response,
-    release_json,
     staleness_disabled,
 )
 
@@ -37,9 +37,9 @@ def package_lookup_responses() -> Mock:
     return Mock(
         side_effect=[
             mock_response({"repository": {"url": "https://github.com/package/1.1"}}),
-            mock_response([release_json("v1.1", body="Changelog")]),
+            mock_response([github_release_json("v1.1", body="Changelog")]),
             mock_response({"time": {"1.1": "20260530T10:26:45.543Z"}}),
-            mock_response(commits_json()),
+            mock_response(github_commits_json()),
         ]
     )
 

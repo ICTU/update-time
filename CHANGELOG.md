@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Support GitHub versions that are tagged but not released: a version that was tagged without being published as a GitHub release is now an update candidate too, with the publication date for the cooldown taken from the tagged commit. Closes [#143](https://github.com/ICTU/update-time/issues/143).
 
 ## 0.0.19 - 2026-07-16
 
