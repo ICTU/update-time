@@ -15,7 +15,7 @@ from rich.text import Text
 from update_time.domain.marker import Marker
 from update_time.domain.version import DependencyVersion, Redundancy, VersionFilter
 from update_time.io import filesystem
-from update_time.io.log import _DEPENDENCY_MARKER, Logger, LogHighlighter, get_logger
+from update_time.io.log import DEPENDENCY_DELIMITER, Logger, LogHighlighter, get_logger
 
 from tests.update_time.helpers import new_version_getter
 
@@ -298,7 +298,7 @@ class LogHighlighterTests(TestCase):
     def test_dependency_names_and_digest_together(self):
         """Test that several dependency names and a digest in one message are each styled without interfering."""
         digest = f"sha256:{'a' * 64}"
-        message = f"Pinned {_DEPENDENCY_MARKER}ghcr.io/astral-sh/uv{_DEPENDENCY_MARKER} in Dockerfile to {digest}"
+        message = f"Pinned {DEPENDENCY_DELIMITER}ghcr.io/astral-sh/uv{DEPENDENCY_DELIMITER} in Dockerfile to {digest}"
         text = Text(message)
         LogHighlighter().highlight(text)
         self.assertEqual(text.plain, f"Pinned ghcr.io/astral-sh/uv in Dockerfile to {digest}")
@@ -308,7 +308,7 @@ class LogHighlighterTests(TestCase):
 
     def test_no_colour_output_is_plain_text(self):
         """Test that with colour disabled the styled name renders as the same plain text, markers and all removed."""
-        highlighted = LogHighlighter()(Text(f"Pinned {_DEPENDENCY_MARKER}python{_DEPENDENCY_MARKER} in Dockerfile"))
+        highlighted = LogHighlighter()(Text(f"Pinned {DEPENDENCY_DELIMITER}python{DEPENDENCY_DELIMITER} in Dockerfile"))
         console = Console(no_color=True, force_terminal=False)
         with console.capture() as capture:
             console.print(highlighted, end="")

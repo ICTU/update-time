@@ -16,6 +16,7 @@ from packaging.version import InvalidVersion, Version
 
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.version import (
+    SHA256_DIGEST,
     DependencyName,
     DependencyVersion,
     VersionFilter,
@@ -34,7 +35,7 @@ LOG = get_logger("oci")
 # A Docker image reference as it appears in files: `dependency:version` with an optional `@sha256:digest`. Updaters
 # prefix this with the keyword that introduces the reference in their file format (e.g. `FROM ` or `image: `). The
 # digest is optional but a concrete version tag is required, so references through a variable (`${VAR}`) don't match.
-IMAGE_REFERENCE = r"(?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>sha256:[a-f0-9]{64}))?"
+IMAGE_REFERENCE = rf"(?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>{SHA256_DIGEST}))?"
 
 # The same reference under a YAML `image:` key, shared by the CircleCI, GitLab CI, Docker Compose, and Helm updaters.
 YAML_IMAGE_REFERENCE = rf"image: {IMAGE_REFERENCE}"
@@ -42,6 +43,10 @@ YAML_IMAGE_REFERENCE = rf"image: {IMAGE_REFERENCE}"
 # Image references without a registry host are on Docker Hub, whose OCI registry host differs from the user-facing
 # `docker.io` alias and whose images live under an implicit `library/` namespace.
 DOCKER_HUB_OCI_HOST = "registry-1.docker.io"
+
+# The page size for the registry's tag listing. `_tag_names` follows the registry's pagination links, so this only
+# sizes the pages, it does not cap how many tags are considered.
+TAGS_PAGE_SIZE = 1000
 
 # Media types offered when resolving a manifest digest, so the registry returns the multi-arch index digest (the
 # digest to pin) when the image is multi-arch, and the single image-manifest digest otherwise.
@@ -350,7 +355,7 @@ def _tag_names(image: str) -> list[str]:
     host = _registry_host(image)
     repository = _repository(image)
     headers = _auth_headers(host, repository, _credentials(image))
-    url: str | None = f"https://{host}/v2/{repository}/tags/list?n=1000"
+    url: str | None = f"https://{host}/v2/{repository}/tags/list?n={TAGS_PAGE_SIZE}"
     names: list[str] = []
     while url:
         response = fetch(url, LOG, headers=headers)

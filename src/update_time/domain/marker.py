@@ -80,12 +80,16 @@ class Marker:
 # The marker a bare `ignore` (or a single unrecognised ignore bracket) expresses: hold everything back.
 _BARE_IGNORE = Marker(ignore_update=True, ignore_stale=True)
 
+# The comment leads that can carry a marker: `#` in most formats we update, `//` in devcontainer.json (which is
+# JSONC). Shared by the marker prefix and the standalone-comment check in `parse_marker`, so the two always agree
+# on what counts as a comment.
+_COMMENT_LEADS = ("#", "//")
+
 # An `# update-time:` comment steers what happens to the reference on its line. It works inline on the reference's
 # own line (valid in YAML and requirements) or as a standalone comment on the line directly above it (the form
-# Dockerfiles need, as they reject inline comments). The comment lead is `#` in most formats we update, or `//` in
-# devcontainer.json (which is JSONC). The prefix introduces a whitespace-separated list of one or more directives
-# (see `_DIRECTIVE`); trailing text after the last directive (a reason) is allowed.
-_MARKER_PREFIX = re.compile(r"(?:#|//)\s*update-time:\s*")
+# Dockerfiles need, as they reject inline comments). The prefix introduces a whitespace-separated list of one or
+# more directives (see `_DIRECTIVE`); trailing text after the last directive (a reason) is allowed.
+_MARKER_PREFIX = re.compile(rf"(?:{'|'.join(re.escape(lead) for lead in _COMMENT_LEADS)})\s*update-time:\s*")
 
 # A single directive in a marker's directive list: an `ignore` verb with an optional bracket, or an `allow` verb
 # with a required one. `ignore` holds a reference back: bare `ignore` skips both the update and the staleness
@@ -113,7 +117,7 @@ def parse_marker(line: str, previous_line: str) -> Marker:
     an unparsable version specifier is carried out as `invalid_specifier` for the caller to report.
     """
     marker = _parse_marker_contents(line)
-    if previous_line.lstrip().startswith(("#", "//")):
+    if previous_line.lstrip().startswith(_COMMENT_LEADS):
         marker = marker.merge(_parse_marker_contents(previous_line))  # The inline directives win over those above.
     return marker
 

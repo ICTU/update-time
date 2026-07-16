@@ -21,7 +21,12 @@ YAML_GLOB_PATTERNS = ("*.yml", "*.yaml")
 # Dockerfiles are conventionally named `Dockerfile`, or `<purpose>.Dockerfile` / `Dockerfile.<purpose>` when a
 # project has more than one (e.g. `python.Dockerfile`, `Dockerfile.dev`). The three patterns don't overlap for any
 # realistic name, so a file is discovered once. Shared by the base-image and Node-engine updaters.
-DOCKERFILE_GLOB_PATTERNS = ("Dockerfile", "*.Dockerfile", "Dockerfile.*")
+DOCKERFILE_NAME = "Dockerfile"
+DOCKERFILE_GLOB_PATTERNS = (DOCKERFILE_NAME, f"*.{DOCKERFILE_NAME}", f"{DOCKERFILE_NAME}.*")
+
+# Directories whose contents `glob` always skips, on top of hidden (dot-prefixed) folders and the directories passed
+# to --exclude-path. The --exclude-path help in `io.cli` lists them, so it stays in step with this tuple.
+ALWAYS_IGNORED_DIRECTORIES = ("build", "node_modules", "__pycache__")
 
 
 def _named_hidden_parts(glob_pattern: str) -> set[str]:
@@ -68,7 +73,6 @@ def glob(*glob_patterns: str, start: Path | None = None, case_sensitive: bool | 
     """
     if start is None:
         start = Path.cwd()
-    path_parts_to_ignore = {"build", "node_modules", "__pycache__"}
     excluded = excluded_paths()
     for glob_pattern in glob_patterns:
         named_hidden = _named_hidden_parts(glob_pattern)
@@ -76,7 +80,7 @@ def glob(*glob_patterns: str, start: Path | None = None, case_sensitive: bool | 
             relative_path = path.relative_to(start)
             if any(part.startswith(".") and part not in named_hidden for part in relative_path.parts):
                 continue
-            if any(part in path_parts_to_ignore for part in relative_path.parts):
+            if any(part in ALWAYS_IGNORED_DIRECTORIES for part in relative_path.parts):
                 continue
             if any(relative_path.is_relative_to(excluded_dir) for excluded_dir in excluded):
                 continue

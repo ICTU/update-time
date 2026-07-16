@@ -19,6 +19,10 @@ LOG = get_logger("docker hub")
 # Docker Hub's proprietary tags API; the only source of a tag's real push date (the OCI protocol exposes none).
 REGISTRY = "https://registry.hub.docker.com"
 
+# The token endpoint the credentials are exchanged at; note that it lives on the user-facing hub.docker.com host,
+# not on the REGISTRY host above.
+AUTH_URL = "https://hub.docker.com/v2/auth/token"
+
 
 def credentials() -> tuple[str, str] | None:
     """Return the (username, token) Docker Hub credentials if both DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN are set."""
@@ -32,8 +36,7 @@ def api_headers() -> dict[str, str]:
     """Return Docker Hub API request headers with a bearer token if DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN are set."""
     if creds := credentials():
         username, token = creds
-        url = "https://hub.docker.com/v2/auth/token"
-        response = fetch(url, LOG, method="post", json={"identifier": username, "secret": token})
+        response = fetch(AUTH_URL, LOG, method="post", json={"identifier": username, "secret": token})
         if response is not None:
             return {"Authorization": f"Bearer {response.json()['access_token']}"}
     return {}

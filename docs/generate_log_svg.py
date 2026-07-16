@@ -18,9 +18,17 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.logging import RichHandler
-from rich.theme import Theme
 
-from update_time.io.log import _DEPENDENCY_MARKER, Logger, LogHighlighter
+from update_time.domain.staleness import STALE_AFTER_DAYS
+from update_time.domain.version import SHA256_HEX_CHARS
+from update_time.io.log import (
+    DEPENDENCY_DELIMITER,
+    LOG_MESSAGE_FORMAT,
+    LOG_THEME,
+    LOG_TIME_FORMAT,
+    Logger,
+    LogHighlighter,
+)
 
 _OUTPUT = Path(__file__).with_name("log-output.svg")
 # A fixed wall-clock so the rendered timestamp — and therefore the SVG — is identical on every regeneration. The
@@ -37,9 +45,9 @@ class _FixedTime(logging.Filter):
         return True
 
 
-def _mark(name: str) -> str:
-    """Wrap a dependency name in the marker the highlighter colours, the way `Logger` does before logging."""
-    return f"{_DEPENDENCY_MARKER}{name}{_DEPENDENCY_MARKER}"
+def _delimit(name: str) -> str:
+    """Wrap a dependency name in the delimiter the highlighter colours, the way `Logger` does before logging."""
+    return f"{DEPENDENCY_DELIMITER}{name}{DEPENDENCY_DELIMITER}"
 
 
 def _portable(svg: str) -> str:
@@ -66,30 +74,31 @@ def generate() -> str:
         width=100,
         force_terminal=True,
         file=io.StringIO(),  # capture the live render; we only want the exported SVG and text, not stdout noise
-        theme=Theme({"repr.digest": "dim", "repr.dependency": "bold white"}),
+        theme=LOG_THEME,
     )
     handler = RichHandler(console=console, highlighter=LogHighlighter(), show_path=False)
     handler.addFilter(_FixedTime())
-    logging.basicConfig(level="INFO", datefmt="[%X]", format="%(message)s", handlers=[handler])
+    logging.basicConfig(level="INFO", datefmt=LOG_TIME_FORMAT, format=LOG_MESSAGE_FORMAT, handlers=[handler])
     log = logging.getLogger("update-time")
 
-    digest = "sha256:" + "9f2c1e7b" + "d4" * 28
+    # A representative digest, padded to the exact length of a real one so `LogHighlighter` recognises and dims it.
+    digest = "sha256:" + ("9f2c1e7b" + "d4" * SHA256_HEX_CHARS)[:SHA256_HEX_CHARS]
     log.info(
         Logger.MESSAGE_NEW_VERSION,
-        _mark("humanize"),
+        _delimit("humanize"),
         "docs/requirements.txt",
         "4.15.0",
         "Changed in 4.15.0\n- Fantastic new features\n- A few bugs squashed",
     )
-    log.info(Logger._MESSAGE_PINNED, _mark("python"), "Dockerfile", "3.14.6", digest)  # noqa: SLF001
+    log.info(Logger._MESSAGE_PINNED, _delimit("python"), "Dockerfile", "3.14.6", digest)  # noqa: SLF001
     log.info(
         Logger.MESSAGE_NEW_VERSION,
-        _mark("actions/checkout"),
+        _delimit("actions/checkout"),
         ".github/workflows/ci.yml",
         "4.3.0",
         Logger.NO_CHANGELOG,
     )
-    log.warning(Logger._MESSAGE_STALE, _mark("left-pad"), "package.json", "1.3.0", 512, 365)  # noqa: SLF001
+    log.warning(Logger._MESSAGE_STALE, _delimit("left-pad"), "package.json", "1.3.0", 512, STALE_AFTER_DAYS)  # noqa: SLF001
 
     plain_text = console.export_text(clear=False)  # capture before the export clears the recording
     svg = console.export_svg(title="update-time", unique_id="update-time-log")

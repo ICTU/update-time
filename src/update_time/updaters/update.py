@@ -33,6 +33,14 @@ PARALLEL_SCRIPTS = (
 # reads the Node version from the Dockerfile so it can't run in parallel with dockerfile_base_image.
 SEQUENTIAL_SCRIPTS = ("node_engine", "package_json")
 
+# A new updater script must be registered in PARALLEL_SCRIPTS or SEQUENTIAL_SCRIPTS above, or it would silently
+# never run; fail fast on import when the registered names and the `update_<name>.py` scripts on disk disagree.
+_REGISTERED = set(PARALLEL_SCRIPTS + SEQUENTIAL_SCRIPTS)
+_ON_DISK = {path.stem.removeprefix("update_") for path in SRC.glob("update_*.py")}
+if _REGISTERED != _ON_DISK:  # pragma: no cover
+    _message = f"The registered updater scripts and the scripts on disk differ: {sorted(_REGISTERED ^ _ON_DISK)}"
+    raise RuntimeError(_message)
+
 
 def run_script(name: str) -> int:
     """Run the updater script with the given name and return its exit code."""

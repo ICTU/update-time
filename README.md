@@ -330,7 +330,7 @@ uses: actions/checkout@v4  # update-time: ignore[update>=5]
 
 The specifier filters the candidate versions *before* the highest is picked, so a bounded reference still advances as far as the bound allows: when on `3.12.8`, `allow[update<3.13]` still adopts a freshly published `3.12.9`, it just never crosses into `3.13`.
 
-`allow` and `ignore` are complements, which matters for ranges. For a one-sided bound the two are interchangeable — `allow[update<3.13]` and `ignore[update>=3.13]` express the same ceiling. For a *range* they are opposites: with versions `3.13` through `3.16` available, `allow[update>=3.13,<3.15]` keeps the reference *within* `[3.13, 3.15)` and picks `3.14`, whereas `ignore[update>=3.13,<3.15]` *excludes* that range and skips ahead to `3.16`. Pick the framing that matches what you mean.
+`allow` and `ignore` are complements, which matters for ranges. For a one-sided bound the two are interchangeable — `allow[update<3.13]` and `ignore[update>=3.13]` express the same ceiling. For a *range* they are opposites: with versions `3.13` through `3.16` available, `allow[update>=3.13,<3.15]` keeps the reference *within* `[3.13, 3.15)` and picks `3.14`, whereas `ignore[update>=3.13,<3.15]` *excludes* that range and skips ahead to `3.16`.
 
 Choose the operator deliberately. To keep `3.12` together with its patch releases while blocking `3.13`, use `<3.13`, `==3.12.*`, or `~=3.12.0`. Don't use `<=3.12` if you want to stay on `3.12`: since `3.12.1 > 3.12` in PEP 440, it also blocks `3.12.1`, which is rarely what "stay on 3.12" means.
 

@@ -43,7 +43,7 @@ def update_package_jsons() -> int:
     supported = []
     for package_json in glob("package.json"):
         if (manager := node.SUPPORTED_MANAGERS.get(name := package_manager(package_json))) is None:
-            LOG.unsupported_package_manager(package_json, name, "npm and pnpm")
+            LOG.unsupported_package_manager(package_json, name, " and ".join(node.SUPPORTED_MANAGERS))
         else:
             manager.update_package_json(package_json)
             supported.append(package_json)

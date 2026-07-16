@@ -27,6 +27,9 @@ if TYPE_CHECKING:
 
 LOG = get_logger("pypi")
 
+# The PyPI host, serving both the JSON API (`/pypi/…/json`) and the Index API (`/simple/…`).
+PYPI = "https://pypi.org"
+
 CHANGELOG_URL_KEYS = {"changes", "changelog", "release notes"}
 REPOSITORY_URL_KEYS = {"repository", "source", "homepage"}
 
@@ -56,7 +59,7 @@ class Release(TypedDict):
 @cache
 def release_metadata(package: str, version: str) -> Release | None:
     """Get the release metadata from PyPI, or None if it can't be fetched."""
-    response = fetch(f"https://pypi.org/pypi/{package}/{version}/json", LOG)
+    response = fetch(f"{PYPI}/pypi/{package}/{version}/json", LOG)
     return response.json() if response is not None else None
 
 
@@ -70,7 +73,7 @@ def project_metadata(package: str) -> dict:
     and `newest_publication_date` share this single request.
     """
     headers = {"Accept": "application/vnd.pypi.simple.v1+json"}
-    response = fetch(f"https://pypi.org/simple/{package}/", LOG, headers=headers)
+    response = fetch(f"{PYPI}/simple/{package}/", LOG, headers=headers)
     return response.json() if response is not None else {}
 
 

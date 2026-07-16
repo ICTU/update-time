@@ -1,23 +1,27 @@
 """Local fixit rules, enabled via `[tool.fixit]` in pyproject.toml."""
 
+import inspect
+import unittest
+
 import libcst as cst
 from fixit import Invalid, LintRule, Valid
 
-# The unittest assertion methods that compare an actual value against an expected one.
+
+def _compares_actual_to_expected(assert_method_name: str) -> bool:
+    """Return whether the `unittest.TestCase` assertion method compares an actual value against an expected one.
+
+    These assertions are recognisable by their symmetric parameter names: either `first` and `second` (such as
+    `assertEqual`) or a numbered pair (such as `list1` and `list2` of `assertListEqual`). Order-sensitive
+    comparisons such as `assertGreaterEqual` (`a` and `b`) and asymmetric assertions such as `assertIn`
+    (`member` and `container`) don't follow this naming pattern.
+    """
+    method = getattr(unittest.TestCase, assert_method_name)
+    parameters = list(inspect.signature(method).parameters)[1:3]
+    return parameters == ["first", "second"] or tuple(parameter[-1] for parameter in parameters) == ("1", "2")
+
+
 _EQUALITY_ASSERT_METHODS = frozenset(
-    {
-        "assertEqual",
-        "assertNotEqual",
-        "assertAlmostEqual",
-        "assertNotAlmostEqual",
-        "assertListEqual",
-        "assertTupleEqual",
-        "assertSetEqual",
-        "assertDictEqual",
-        "assertSequenceEqual",
-        "assertCountEqual",
-        "assertMultiLineEqual",
-    }
+    name for name in dir(unittest.TestCase) if name.startswith("assert") and _compares_actual_to_expected(name)
 )
 
 _LITERAL_NAMES = frozenset({"True", "False", "None"})

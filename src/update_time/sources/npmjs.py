@@ -11,6 +11,9 @@ from update_time.sources.github import changes_from_release, github_owner_and_re
 
 LOG = get_logger("npmjs")
 
+# The npm registry API's base URL.
+REGISTRY = "https://registry.npmjs.org"
+
 # The npm registry's `time` map carries two bookkeeping entries alongside the per-version publish times.
 _TIME_BOOKKEEPING_KEYS = frozenset({"created", "modified"})
 
@@ -30,7 +33,7 @@ def _repository_url(metadata: dict) -> str:
 @cache
 def get_changes(package: str, version: str) -> str:
     """Return the changelog for the package and version, or empty string if it can't be fetched or found."""
-    response = fetch(f"https://registry.npmjs.org/{package}/{version}", LOG)
+    response = fetch(f"{REGISTRY}/{package}/{version}", LOG)
     if response is None:
         return ""
     owner, repository = github_owner_and_repository(_repository_url(response.json()))
@@ -44,7 +47,7 @@ def _package_metadata(package: str) -> dict:
     Shared by `get_publication_datetime` and `newest_publication_date` so both read the same `time` map in one
     (cached) request.
     """
-    response = fetch(f"https://registry.npmjs.org/{package}", LOG)
+    response = fetch(f"{REGISTRY}/{package}", LOG)
     return response.json() if response is not None else {}
 
 

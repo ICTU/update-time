@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.version import DependencyVersion
 from update_time.file_formats import package_json as package_json_format
-from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, glob, update_file
+from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, glob, update_file
 from update_time.io.log import get_logger
 
 if TYPE_CHECKING:
@@ -62,7 +62,7 @@ def find_node_dockerfile(package_json: Path) -> Path:
     one we can actually sync to) is preferred over one whose Node base image uses a non-numeric tag like 'node:lts'.
     If no Node base image is found at all, returns the local Dockerfile path so the caller can log the error.
     """
-    local_dockerfile = package_json.parent / "Dockerfile"
+    local_dockerfile = package_json.parent / DOCKERFILE_NAME
     candidates = [local_dockerfile, *glob(*DOCKERFILE_GLOB_PATTERNS)]
     for dockerfile in candidates:
         if node_base_image_version(dockerfile):

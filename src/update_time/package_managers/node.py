@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 LOG = get_logger("package.json")
 COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
 
+# pnpm measures its cooldown (`minimumReleaseAge`) in minutes, while Update-time's --cooldown option is in days.
+MINUTES_PER_DAY = 24 * 60
+
 
 def _npm_installed_versions(listed: dict | list) -> dict[str, str]:
     """Return the installed top-level versions from `npm list --json` output."""
@@ -118,7 +121,7 @@ PNPM = PackageManager(
     config_get=["pnpm", "config", "get"],
     cooldown_config_keys=("minimumReleaseAge",),
     cooldown_unset="undefined",  # `pnpm config get` reports an unset key as `undefined` (not its built-in default).
-    cooldown_option=lambda days: f"--config.minimumReleaseAge={days * 24 * 60}",  # pnpm measures the age in minutes.
+    cooldown_option=lambda days: f"--config.minimumReleaseAge={days * MINUTES_PER_DAY}",
     installed_versions=_pnpm_installed_versions,
 )
 # The managers Update-time can update, keyed by name. The updater resolves a detected manager name against this
