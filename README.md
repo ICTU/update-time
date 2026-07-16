@@ -163,11 +163,11 @@ Update-time looks for `package.json` files recursively from the starting path. T
 
 #### What dependencies are updated?
 
-Update-time delegates updating Node dependencies to the package manager used to manage the `package.json`. If that is npm, it runs `npm update --save --include=dev`; if it is pnpm, it runs `pnpm update --latest`.
+Update-time delegates updating Node dependencies to the package manager used to manage the `package.json`. If that is npm, it runs `npm update --save --include=dev`; if it is pnpm, it runs `pnpm update`.
 
 #### What versions are updated?
 
-See the documentation of [npm update](https://docs.npmjs.com/cli/v12/commands/npm-update) or [pnpm update](https://pnpm.io/cli/update).
+Both package managers update each dependency to the newest version that satisfies the range declared in the `package.json`, so a dependency declared as `"react": "^17.0.0"` receives `17.x` updates but never crosses into `18`. This means you can declare an upper bound to opt a dependency out of major-version updates, and pin an exact version to opt it out of automatic updates entirely, just like with [Python dependencies](#what-versions-are-updated). See the documentation of [npm update](https://docs.npmjs.com/cli/v12/commands/npm-update) and [pnpm update](https://pnpm.io/cli/update) for the finer points of how each manager resolves versions.
 
 ### Node engine version
 

@@ -115,8 +115,9 @@ NPM = PackageManager(
 )
 PNPM = PackageManager(
     outdated=["pnpm", "outdated", "--format", "json"],
-    # `--latest` bumps the package.json ranges (not just the lockfile) to the newest release the cooldown allows.
-    update=["pnpm", "update", "--latest"],
+    # Deliberately without `--latest`, which would cross the version ranges declared in package.json; without it,
+    # pnpm stays within the declared ranges, like `npm update` does.
+    update=["pnpm", "update"],
     installed=["pnpm", "list", "--json", "--depth=0"],
     config_get=["pnpm", "config", "get"],
     cooldown_config_keys=("minimumReleaseAge",),

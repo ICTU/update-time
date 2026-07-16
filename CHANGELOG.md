@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Fixed
 
+- Keep pnpm-managed `package.json` dependencies within their declared version ranges, as npm-managed dependencies already were, instead of bumping every dependency to the newest release regardless of the declared range. Closes [#135](https://github.com/ICTU/update-time/issues/135).
 - Colour a `sha256:` digest as a single token in the log output. Rich's automatic highlighting previously matched only a fragment of a digest — reading e.g. `a256:a4fd` as an IPv6 address — so the digest came out partly coloured and partly plain.
 
 ## 0.0.18 - 2026-07-10
