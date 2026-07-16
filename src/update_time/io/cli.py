@@ -7,7 +7,7 @@ from pathlib import Path
 
 from update_time.domain.cooldown import COOLDOWN_DAYS
 from update_time.domain.staleness import STALE_AFTER_DAYS
-from update_time.io.filesystem import inside_git_repository
+from update_time.io.filesystem import ALWAYS_IGNORED_DIRECTORIES, inside_git_repository
 from update_time.io.log import DEFAULT_LOG_LEVEL, LOG_LEVELS
 
 
@@ -95,7 +95,8 @@ def parse_args() -> argparse.Namespace:
         metavar="PATHS",
         help="comma-separated list of directories, relative to the scan root, to exclude from the scan (for example "
         "vendor,packages/legacy); every file under an excluded directory is skipped, on top of the always-ignored "
-        "build, node_modules, __pycache__, and hidden folders; directories are matched by relative path, not by name: "
+        f"{', '.join(ALWAYS_IGNORED_DIRECTORIES)}, and hidden folders; "
+        "directories are matched by relative path, not by name: "
         "--exclude-path vendor excludes vendor/ at the root but not sub/vendor/; directories that don't exist are "
         "ignored (and logged at log-level WARNING), but absolute paths, or paths that escape the scan root (../…), "
         "are rejected; run with --log-level DEBUG to see excluded directories",

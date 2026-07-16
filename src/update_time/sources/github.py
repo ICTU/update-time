@@ -23,6 +23,12 @@ from update_time.io.log import get_logger
 
 LOG = get_logger("github")
 
+# The GitHub REST API's per-repository base URL, shared by the releases and commits endpoints.
+GITHUB_API = "https://api.github.com/repos"
+# GitHub's maximum releases page size. Only the first page is fetched, so at most this many of the most recent
+# releases are considered.
+RELEASES_PER_PAGE = 100
+
 
 @dataclass(frozen=True)
 class Release:
@@ -73,7 +79,7 @@ class Release:
     def commit_sha(self) -> str | None:
         """Fetch the commit SHA for this release's tag, or None if the commits endpoint can't be reached."""
         dependency = f"{self.owner}/{self.repository}"
-        commits_url = f"https://api.github.com/repos/{dependency}/commits/{self.tag_name}"
+        commits_url = f"{GITHUB_API}/{dependency}/commits/{self.tag_name}"
         response = fetch(commits_url, LOG, headers=_github_headers(), require_ok=False)
         if response is None or not response.ok:
             LOG.no_commit_sha(
@@ -119,7 +125,7 @@ def _list_releases(owner: str, repository: str) -> tuple[dict, ...] | None:
     An empty tuple means the repo was reached but has no releases; None means the fetch itself failed (already
     logged by `fetch`). Distinguishing the two lets callers avoid reporting a network problem a second time.
     """
-    releases_url = f"https://api.github.com/repos/{owner}/{repository}/releases?per_page=100"
+    releases_url = f"{GITHUB_API}/{owner}/{repository}/releases?per_page={RELEASES_PER_PAGE}"
     response = fetch(releases_url, LOG, headers=_github_headers())
     return tuple(response.json()) if response is not None else None
 

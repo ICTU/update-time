@@ -23,6 +23,12 @@ type VersionString = str
 # e.g. sources.oci.get_latest_tag and sources.pypi.get_latest_version.
 type NewVersionGetter = Callable[[DependencyName, VersionString, VersionFilter], DependencyVersion]
 
+# A `sha256:` digest as it appears in image references (`python:3.14@sha256:…`) and log messages: the `sha256:`
+# prefix plus the digest's 64 hexadecimal characters. Shared by the image-reference pattern in `sources/oci.py` and
+# the log highlighter in `io/log.py`, so the two always agree on what a digest looks like.
+SHA256_HEX_CHARS = 64
+SHA256_DIGEST = rf"sha256:[0-9a-f]{{{SHA256_HEX_CHARS}}}"
+
 # A version higher than any real one, used to probe whether a bound caps anything above the current version.
 _SENTINEL_VERSION = Version("9" * 18)
 
