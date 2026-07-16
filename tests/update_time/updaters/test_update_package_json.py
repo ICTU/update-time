@@ -244,7 +244,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         assert_manager_called(
             mock_run,
             ["pnpm", "outdated", "--format", "json", *cooldown_option],
-            ["pnpm", "update", "--latest", *cooldown_option],
+            ["pnpm", "update", *cooldown_option],
             ["pnpm", "list", "--json", "--depth=0"],
         )
 
