@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.19 - 2026-07-16
+
 ### Added
 
 - Bound how far a line-based reference may update by adding a version specifier to the `update` scope. For example, `# update-time: allow[update<3.13]` limits updates to those smaller than 3.13, so a `python:3.12.x` pin keeps getting `3.12` patches without jumping to `3.13`. Closes [#58](https://github.com/ICTU/update-time/issues/58).
