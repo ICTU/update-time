@@ -249,11 +249,22 @@ class Logger:
         """Log no version found."""
         self._log(self.log.error, self._MESSAGE_NO_VERSION, dependency)
 
-    _MESSAGE_NO_COMMIT_SHA = f"Could not fetch commit SHA for {DEPENDENCY_DELIMITER}%s{DEPENDENCY_DELIMITER} %s: %s"
+    _MESSAGE_NO_COMMIT_SHA = (
+        f"Could not fetch commit SHA for {DEPENDENCY_DELIMITER}%s{DEPENDENCY_DELIMITER} %s (%s): %s"
+    )
 
-    def no_commit_sha(self, dependency: str, version: str, url: str) -> None:
-        """Log that no commit SHA could be fetched for an otherwise-eligible release."""
-        self._log(self.log.error, self._MESSAGE_NO_COMMIT_SHA, dependency, version, url)
+    def no_commit_sha(self, dependency: str, version: str, reason: str, url: str) -> None:
+        """Log that no commit SHA could be fetched for an otherwise-eligible release, and why."""
+        self._log(self.log.error, self._MESSAGE_NO_COMMIT_SHA, dependency, version, reason, url)
+
+    _MESSAGE_NO_TAG_DATE = (
+        f"Could not determine the publication date of {DEPENDENCY_DELIMITER}%s{DEPENDENCY_DELIMITER} tag %s (%s), "
+        "so the cooldown can't be verified; skipping this version"
+    )
+
+    def no_tag_date(self, dependency: str, tag: str, reason: str) -> None:
+        """Log that a tag's commit date couldn't be resolved, and why, so the tag was skipped as an update candidate."""
+        self._log(self.log.error, self._MESSAGE_NO_TAG_DATE, dependency, tag, reason)
 
     _MESSAGE_NO_INTEGRITY_HASH = (
         f"Could not resolve the integrity hash for {DEPENDENCY_DELIMITER}%s{DEPENDENCY_DELIMITER} %s (%s), "

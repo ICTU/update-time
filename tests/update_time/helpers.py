@@ -12,7 +12,9 @@ from update_time.domain.staleness import STALE_AFTER_DAYS_ENV_VAR
 from update_time.domain.version import DependencyVersion, NewVersionGetter, VersionString
 from update_time.io.log import Logger
 from update_time.sources.docker_hub import api_headers as docker_hub_headers
+from update_time.sources.github import _get_commit as github_get_commit
 from update_time.sources.github import _list_releases as github_list_release
+from update_time.sources.github import _list_tags as github_list_tags
 from update_time.sources.github import get_latest_version as github_get_latest_version
 from update_time.sources.npmjs import _package_metadata as npmjs_package_metadata
 from update_time.sources.npmjs import get_changes as npmjs_get_changes
@@ -52,8 +54,10 @@ class CacheClearingTestCase(unittest.TestCase):
         oci_get_tag,
         oci_registry_token,
         oci_tag_names,
+        github_get_commit,
         github_get_latest_version,
         github_list_release,
+        github_list_tags,
         npmjs_get_changes,
         npmjs_get_publication_datetime,
         npmjs_package_metadata,
@@ -253,14 +257,52 @@ def mock_path(content: str, parent: Path | None = None) -> Mock:
     return path
 
 
-def release_json(tag_name: str, **extra: object) -> dict[str, object]:
+def github_release_json(tag_name: str, **extra: object) -> dict[str, object]:
     """Return a GitHub release API result for the tag, eligible (not a draft or prerelease) unless overridden."""
-    return {"draft": False, "prerelease": False, "tag_name": tag_name, **extra}
+    return {"draft": False, "prerelease": False, "tag_name": tag_name, "body": None, "published_at": None, **extra}
 
 
-def commits_json(sha: str = "sha") -> dict[str, str]:
-    """Return a GitHub commits API result carrying a release tag's commit SHA."""
-    return {"sha": sha}
+def github_tag_json(name: str, sha: str = "sha") -> dict[str, object]:
+    """Return a GitHub tags API result for the tag, carrying the tagged commit's SHA."""
+    return {"name": name, "commit": {"sha": sha}}
+
+
+def github_commits_json(sha: str = "sha", date: str = "") -> dict[str, object]:
+    """Return a GitHub commits API result carrying a tag's commit SHA and, when given, its committer date."""
+    return {"sha": sha, **({"commit": {"committer": {"date": date}}} if date else {})}
+
+
+def github_api(
+    releases: list | None = None, tags: list | None = None, commit: Mapping | Mock | Exception | None = None
+) -> Mock:
+    """Return a requests.get mock that serves the GitHub releases, tags, and commits endpoints from the arguments.
+
+    Routing by URL keeps tests independent of the order in which the source hits the endpoints. An endpoint given
+    as None fails (a non-OK response), so tests can exercise unreachable endpoints. The commits endpoint serves the
+    same commit for every ref; pass a Mock to serve a full response instead of JSON (e.g. a non-OK response with an
+    error body), or an exception to make the request itself fail.
+    """
+
+    def serve(url: str, **_kwargs: object) -> Mock:
+        json: Mapping | list | None
+        if "/commits/" in url:
+            if isinstance(commit, Exception):
+                raise commit
+            if isinstance(commit, Mock):
+                return commit
+            json = commit
+        else:
+            json = releases if "/releases" in url else tags
+        return mock_response(json, ok=json is not None, status_code=200 if json is not None else 404, url=url)
+
+    return Mock(side_effect=serve)
+
+
+def patch_github(
+    releases: list | None = None, tags: list | None = None, commit: Mapping | Mock | Exception | None = None
+) -> _patch:
+    """Patch requests.get to serve the GitHub API endpoints from the given values (see `github_api`)."""
+    return patch("requests.get", github_api(releases, tags, commit))
 
 
 def jsdelivr_versions(*version_strings: str) -> Mock:

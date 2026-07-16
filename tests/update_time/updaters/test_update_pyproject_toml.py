@@ -11,10 +11,10 @@ from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 from tests.update_time.assertions import assert_success
 from tests.update_time.helpers import (
     LoggingTestCase,
-    commits_json,
+    github_commits_json,
+    github_release_json,
     mock_path,
     mock_response,
-    release_json,
     staleness_disabled,
 )
 
@@ -114,7 +114,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         get.side_effect = [
             mock_response(self.pypi_metadata()),
             Mock(text=self.changelog, headers={"Content-Type": "text/html"}),
-            mock_response([{"tag_name": "v1.1"}]),
+            mock_response([github_release_json("v1.1")]),
         ]
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_with_html_changelog==1.0"))
         glob.return_value = [mock_pyproject_toml]
@@ -131,8 +131,8 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         run.return_value = self.mock_update_on_stdout("package_with_github_releases", "v1.1")
         get.side_effect = [
             mock_response(self.pypi_metadata(changelog_url="")),
-            mock_response([release_json("v1.1", body=self.changelog)]),
-            mock_response(commits_json()),
+            mock_response([github_release_json("v1.1", body=self.changelog)]),
+            mock_response(github_commits_json()),
         ]
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_with_github_releases==1.0"))
         glob.return_value = [mock_pyproject_toml]

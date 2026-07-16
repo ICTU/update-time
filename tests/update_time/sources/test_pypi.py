@@ -21,12 +21,12 @@ from tests.update_time.helpers import (
     PYPI_OLD_UPLOAD,
     CacheClearingTestCase,
     LoggingTestCase,
-    commits_json,
+    github_commits_json,
+    github_release_json,
     mock_response,
     patch_get,
     pypi_index,
     pypi_release,
-    release_json,
 )
 
 
@@ -80,8 +80,8 @@ class GetChangesTest(LoggingTestCase):
             self.create_mock_response(
                 mock_get,
                 {"info": {"project_urls": {"docs": docs, key: repo}}},
-                [release_json("1.1", body=changelog)],
-                commits_json(),
+                [github_release_json("1.1", body=changelog)],
+                github_commits_json(),
             )
             self.assertEqual(changelog, get_changes(f"package-4-{key}", "1.1"))
 
@@ -98,8 +98,8 @@ class GetChangesTest(LoggingTestCase):
         self.create_mock_response(
             mock_get,
             {"info": {"description": f"Package description\n{github_url}\n"}},
-            [release_json("1.1", body=changelog)],
-            commits_json(),
+            [github_release_json("1.1", body=changelog)],
+            github_commits_json(),
         )
         self.assertEqual(changelog, get_changes("package-6", "1.1"))
 
@@ -109,8 +109,8 @@ class GetChangesTest(LoggingTestCase):
         self.create_mock_response(
             mock_get,
             {"info": {"description": f"Package description\n{github_url}\n"}},
-            [release_json("1.1")],
-            commits_json(),
+            [github_release_json("1.1")],
+            github_commits_json(),
         )
         self.assertEqual(get_changes("package-7", "1.1"), "")
 
