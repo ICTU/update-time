@@ -13,7 +13,6 @@ from rich.highlighter import ReprHighlighter
 from rich.logging import RichHandler
 from rich.theme import Theme
 
-from update_time.domain.marker import Marker
 from update_time.domain.staleness import is_stale, stale_after_days, staleness_days
 from update_time.domain.version import SHA256_DIGEST
 
@@ -24,6 +23,7 @@ if TYPE_CHECKING:
     from requests import Response
     from rich.text import Text
 
+    from update_time.domain.marker import Marker
     from update_time.domain.version import DependencyVersion, VersionFilter, VersionString
 
 
@@ -206,8 +206,8 @@ class Logger:
         serves. Update-time deliberately does not update the pin: silently adopting a re-pushed digest would defeat
         the immutability a digest pin exists to provide. The drift is surfaced instead, so it can be reviewed.
         """
-        message = self._MESSAGE_DIGEST_DRIFT
-        self._log(self.log.warning, message, dependency, version, self._relative(path), current_sha, new_sha)
+        arguments = (dependency, version, self._relative(path), current_sha, new_sha)
+        self._log(self.log.warning, self._MESSAGE_DIGEST_DRIFT, *arguments)
 
     _MESSAGE_ADOPTED_DIGEST_DRIFT = (
         f"Adopted digest drift for {DEPENDENCY_DELIMITER}%s{DEPENDENCY_DELIMITER}:%s in %s: "
@@ -223,8 +223,8 @@ class Logger:
         marker, or the repo-wide `--allow-image-digest-drift` flag). Unlike `digest_drift`, this is a normal change the
         user asked for, so it is info, not a warning.
         """
-        message = self._MESSAGE_ADOPTED_DIGEST_DRIFT
-        self._log(self.log.info, message, dependency, version, self._relative(path), current_sha, new_sha, cause)
+        arguments = (dependency, version, self._relative(path), current_sha, new_sha, cause)
+        self._log(self.log.info, self._MESSAGE_ADOPTED_DIGEST_DRIFT, *arguments)
 
     _MESSAGE_STALE = (
         f"Stale dependency {DEPENDENCY_DELIMITER}%s{DEPENDENCY_DELIMITER} in %s: "
@@ -239,9 +239,8 @@ class Logger:
         """
         if (published := version.newest_published) is None or not is_stale(published):
             return
-        message = self._MESSAGE_STALE
-        days_ago, threshold = staleness_days(published), stale_after_days()
-        self._log(self.log.warning, message, dependency, self._relative(path), version.version, days_ago, threshold)
+        arguments = (dependency, self._relative(path), version.version, staleness_days(published), stale_after_days())
+        self._log(self.log.warning, self._MESSAGE_STALE, *arguments)
 
     _MESSAGE_NO_VERSION = f"No valid version found for {DEPENDENCY_DELIMITER}%s{DEPENDENCY_DELIMITER}"
 
@@ -294,16 +293,13 @@ class Logger:
         """Warn when a version bound is redundant for the current version (never has an effect, or blocks everything).
 
         Does nothing when the reference has no bound (the keep-all `NO_BOUND`) or the bound is live (see
-        `VersionFilter.redundancy`), so callers can hand off every reference unconditionally. The bound is rendered
-        in its marker form (`allow[update<3.13]`, with the specifier in PEP 440's normalised clause order), so the
-        warning shows which bound on which pin is redundant.
+        `VersionFilter.redundancy`), so callers can hand off every reference unconditionally. The bound renders itself
+        in its marker form (`allow[update<3.13]`), so the warning shows which bound on which pin is redundant.
         """
         if (redundancy := version_filter.redundancy(current_version)) is None:
             return
-        bound = str(Marker(version_filter=version_filter))  # Rendered in its marker form, e.g. `allow[update<3.13]`.
-        message = self._MESSAGE_REDUNDANT_BOUND
-        arguments = (bound, dependency, current_version, self._relative(path), redundancy.value)
-        self._log(self.log.warning, message, *arguments)
+        arguments = (version_filter, dependency, current_version, self._relative(path), redundancy.value)
+        self._log(self.log.warning, self._MESSAGE_REDUNDANT_BOUND, *arguments)
 
     # --- File scanning and selection ---
 
@@ -329,8 +325,7 @@ class Logger:
 
     def ignored(self, dependency: str, marker: Marker, path: Path) -> None:
         """Log that a reference's update was held back by the marker's `ignore` directive, naming its form."""
-        directive = "ignore" if marker.ignore_update and marker.ignore_stale else "ignore[update]"
-        self._log(self.log.debug, self._MESSAGE_IGNORED, dependency, self._relative(path), directive)
+        self._log(self.log.debug, self._MESSAGE_IGNORED, dependency, self._relative(path), marker.ignore_directive)
 
     _MESSAGE_EXCLUDING_PATH = "Excluding %s from the scan (--exclude-path)"
 
@@ -390,11 +385,11 @@ class Logger:
 
     # --- HTTP fetching ---
 
-    _MESSAGE_COULD_NOT_FETCH = "Could not fetch %s: %s"
+    _MESSAGE_NOT_OK_RESPONSE = "Could not fetch %s: HTTP %s %s"
 
     def response(self, response: Response) -> None:
-        """Log a response's status code."""
-        self._log(self.log.warning, self._MESSAGE_COULD_NOT_FETCH, response.url, response.status_code)
+        """Log a response's status code and reason phrase (e.g. `HTTP 404 Not Found`)."""
+        self._log(self.log.warning, self._MESSAGE_NOT_OK_RESPONSE, response.url, response.status_code, response.reason)
 
     _MESSAGE_TIMEOUT = "Timeout while fetching %s"
 
@@ -402,9 +397,11 @@ class Logger:
         """Log a request timeout."""
         self._log(self.log.warning, self._MESSAGE_TIMEOUT, url)
 
+    _MESSAGE_REQUEST_ERROR = "Could not fetch %s: %s"
+
     def request_error(self, url: str, error: object) -> None:
         """Log a network error (connection failure, too many redirects, ...) while fetching a URL."""
-        self._log(self.log.warning, self._MESSAGE_COULD_NOT_FETCH, url, error)
+        self._log(self.log.warning, self._MESSAGE_REQUEST_ERROR, url, error)
 
     # --- External commands ---
 

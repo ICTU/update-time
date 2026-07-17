@@ -83,7 +83,7 @@ class _Rewriter:
         if marker.allow_drift or allow_image_digest_drift():
             # The reference opted in, so adopt the re-pushed digest instead of only warning about it. The
             # per-reference marker is the more specific opt-in, so it is named as the cause when both apply.
-            cause = "update-time: allow[digest-drift]" if marker.allow_drift else "--allow-image-digest-drift"
+            cause = f"update-time: {marker.drift_directive}" if marker.allow_drift else "--allow-image-digest-drift"
             self.logger.adopted_drift(dependency, version, current_sha, latest.sha, self.path, cause)
             return self._replace_groups(line, match, {"sha": latest.sha})
         # The tag was re-pushed with a different digest; warn but leave the immutable pin unchanged.

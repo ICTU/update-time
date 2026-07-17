@@ -38,6 +38,25 @@ class Marker:
     version_filter: VersionFilter = NO_BOUND
     invalid_specifier: str | None = None
 
+    @property
+    def ignore_directive(self) -> str:
+        """Return the marker's `ignore` directive in its normalised form, or an empty string when it holds nothing back.
+
+        Combined scopes collapse to a bare `ignore`; a single scope renders as `ignore[update]` or `ignore[stale]`.
+        """
+        if self.ignore_update and self.ignore_stale:
+            return "ignore"
+        if self.ignore_update:
+            return "ignore[update]"
+        if self.ignore_stale:
+            return "ignore[stale]"
+        return ""
+
+    @property
+    def drift_directive(self) -> str:
+        """Return the marker's digest-drift opt-in directive, or an empty string when it opts nothing in."""
+        return "allow[digest-drift]" if self.allow_drift else ""
+
     def __str__(self) -> str:
         """Return the marker as the directive list it expresses, or an empty string when it expresses nothing.
 
@@ -46,17 +65,12 @@ class Marker:
         so it is not rendered.
         """
         directives = []
-        if self.ignore_update and self.ignore_stale:
-            directives.append("ignore")
-        elif self.ignore_update:
-            directives.append("ignore[update]")
-        elif self.ignore_stale:
-            directives.append("ignore[stale]")
+        if directive := self.ignore_directive:
+            directives.append(directive)
         if self.version_filter != NO_BOUND:
-            verb = "allow" if self.version_filter.allow else "ignore"
-            directives.append(f"{verb}[update{self.version_filter.specifier}]")
-        if self.allow_drift:
-            directives.append("allow[digest-drift]")
+            directives.append(str(self.version_filter))
+        if directive := self.drift_directive:
+            directives.append(directive)
         return " ".join(directives)
 
     def merge(self, other: Marker) -> Marker:

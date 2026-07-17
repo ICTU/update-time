@@ -90,6 +90,18 @@ class VersionFilterTest(unittest.TestCase):
         self.assertFalse(version_filter.keeps(Version("3.13")))
         self.assertTrue(version_filter.keeps(Version("3.12.9")))
 
+    def test_str_of_allow_filter(self):
+        """Test that an allow filter renders as the marker directive that expresses it."""
+        self.assertEqual(str(VersionFilter(SpecifierSet("<3.13"), allow=True)), "allow[update<3.13]")
+
+    def test_str_of_ignore_filter(self):
+        """Test that an ignore filter renders as the marker directive that expresses it."""
+        self.assertEqual(str(VersionFilter(SpecifierSet(">=3.13"), allow=False)), "ignore[update>=3.13]")
+
+    def test_str_of_no_bound(self):
+        """Test that the keep-all NO_BOUND renders as the no-op allow[update] directive."""
+        self.assertEqual(str(NO_BOUND), "allow[update]")
+
     def test_is_hashable(self):
         """Test that a filter is hashable, so it can thread through the cached source lookups."""
         self.assertIsInstance(hash(VersionFilter(SpecifierSet("<3.13"), allow=True)), int)

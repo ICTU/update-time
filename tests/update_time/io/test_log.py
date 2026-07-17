@@ -141,7 +141,7 @@ class LoggerTests(TestCase):
         Logger("bound").warn_if_redundant_bound("python", version_filter, "3.12", Path.cwd() / "Dockerfile")
         mock_warning.assert_called_once_with(
             Logger._MESSAGE_REDUNDANT_BOUND,
-            "allow[update>=3.12]",
+            version_filter,
             "python",
             "3.12",
             Path("Dockerfile"),
