@@ -1,8 +1,11 @@
 """Test the architecture of the tool."""
 
+import inspect
 import unittest
 
 from archunitpython import assert_passes, project_files
+
+from update_time.io.log import Logger
 
 
 class DependenciesTest(unittest.TestCase):
@@ -93,3 +96,37 @@ class LayeringTest(unittest.TestCase):
             with self.subTest(layer="updaters", module=module):
                 rule = project_files("src/").in_folder("updaters").should_not().depend_on_external_modules()
                 assert_passes(rule.matching(module))
+
+
+class LoggerMessageTest(unittest.TestCase):
+    """Test that Logger's message templates and its log methods pair one-to-one.
+
+    Each `MESSAGE_` template on `Logger` belongs to the log method that emits it, but the class layout can only
+    express that by convention (each template sits directly above its method), so the pairing is checked here by
+    inspecting which templates each method references.
+    """
+
+    @staticmethod
+    def methods_by_template() -> dict[str, set[str]]:
+        """Return, for each message template on Logger, the names of the log methods that reference it."""
+        templates = {name for name in vars(Logger) if name.removeprefix("_").startswith("MESSAGE_")}
+        references: dict[str, set[str]] = {template: set() for template in templates}
+        for name in vars(Logger):
+            if name.startswith("__") or not inspect.isfunction(function := getattr(Logger, name)):
+                continue
+            for template in templates & set(function.__code__.co_names):
+                references[template].add(name)
+        return references
+
+    def test_each_template_belongs_to_exactly_one_method(self):
+        """Test that each message template is referenced by exactly one log method: no orphans, no sharing."""
+        unpaired = {template: methods for template, methods in self.methods_by_template().items() if len(methods) != 1}
+        self.assertEqual(unpaired, {})
+
+    def test_each_method_references_at_most_one_template(self):
+        """Test that no log method references more than one message template."""
+        template_counts: dict[str, int] = {}
+        for methods in self.methods_by_template().values():
+            for method in methods:
+                template_counts[method] = template_counts.get(method, 0) + 1
+        self.assertEqual({method: count for method, count in template_counts.items() if count > 1}, {})

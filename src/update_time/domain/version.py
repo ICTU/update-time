@@ -77,6 +77,16 @@ class VersionFilter:
     specifier: SpecifierSet
     allow: bool
 
+    def __str__(self) -> str:
+        """Return the filter as the marker directive that expresses it, e.g. `allow[update<3.13]`.
+
+        The rendering is normalised rather than what the user wrote: the verb follows the `allow` flag and the
+        specifier is in PEP 440's clause order. The keep-all `NO_BOUND` renders as the no-op `allow[update]`;
+        callers that render only real bounds guard against it themselves.
+        """
+        verb = "allow" if self.allow else "ignore"
+        return f"{verb}[update{self.specifier}]"
+
     def keeps(self, version: Version) -> bool:
         """Return whether a candidate version survives the bound."""
         return self.specifier.contains(version, prereleases=True) == self.allow

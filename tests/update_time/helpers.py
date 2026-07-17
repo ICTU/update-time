@@ -193,9 +193,9 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that an unparsable pyproject.toml was logged as a warning for the file."""
         self.mock_warning.assert_called_once_with(Logger._MESSAGE_INVALID_TOML, Logger._relative(path), stacklevel=ANY)
 
-    def assert_could_not_fetch_logged(self, url: object = ANY, detail: object = ANY) -> None:
-        """Assert that a single 'could not fetch' warning was logged, optionally for a given URL and status/error."""
-        self.mock_warning.assert_called_once_with(Logger._MESSAGE_COULD_NOT_FETCH, url, detail, stacklevel=ANY)
+    def assert_could_not_fetch_logged(self, url: object = ANY, status: object = ANY, reason: object = ANY) -> None:
+        """Assert that a single 'could not fetch' warning was logged, optionally for a given URL and status/reason."""
+        self.mock_warning.assert_called_once_with(Logger._MESSAGE_NOT_OK_RESPONSE, url, status, reason, stacklevel=ANY)
 
     def assert_command_stderr_logged(self, command: object = ANY, stderr: object = ANY) -> None:
         """Assert that a single 'command wrote to stderr' warning was logged, optionally for a given command/stderr."""
