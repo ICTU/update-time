@@ -6,13 +6,12 @@ from http import HTTPStatus
 from unittest.mock import Mock, patch
 
 import requests
-from packaging.specifiers import SpecifierSet
 
-from update_time.domain.version import NO_BOUND, VersionFilter
-from update_time.sources.oci import _registry_token, get_latest_tag, is_docker_hub_image
+from update_time.domain.version import NO_BOUND, Verb
+from update_time.sources.oci import Tag, _registry_token, get_latest_tag, is_docker_hub_image
 
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
-from tests.update_time.helpers import LoggingTestCase, docker_tag, mock_response, patch_environ
+from tests.update_time.helpers import LoggingTestCase, bound, docker_tag, mock_response, patch_environ
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
 
 
@@ -32,6 +31,21 @@ class IsDockerHubImageTest(unittest.TestCase):
         """
         for image in ("registry.gitlab.com/group/image", "gcr.io/proj/image", "localhost:5000/i", "Host/image"):
             self.assertFalse(is_docker_hub_image(image), image)
+
+
+class TagTest(unittest.TestCase):
+    """Unit tests for tags."""
+
+    def test_sort_tag(self):
+        """Test tag sorting."""
+        self.assertLess(Tag("1"), Tag("2"))
+        self.assertLess(Tag("1.3"), Tag("1.4"))
+        self.assertLess(Tag("1.3.1"), Tag("1.3.2"))
+        self.assertLess(Tag("1.3"), Tag("1.3.1"))
+        self.assertLess(Tag("1.3"), Tag("1.3.0"))
+        self.assertLess(Tag("python1.3"), Tag("python1.3.0"))
+        self.assertLess(Tag("python1.3-alpine2.3"), Tag("python1.3.0-alpine2.3"))
+        self.assertLess(Tag("python1.3.0-alpine2.3"), Tag("python1.3.0-alpine2.3.0"))
 
 
 @patch_environ()
@@ -111,12 +125,55 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(docker_tag("2.2", DIGEST), docker_tag("2.3"))
         self.assertEqual(get_latest_tag("ignore_tags_without_digest", "1.2", NO_BOUND).version, "2.2")
 
+    def test_equal_version_alias_tag_keeps_current_spelling(self):
+        """Test that an alias tag spelling the current version differently (`22.15` for `22.15.0`) is not adopted."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("22.15", DIGEST), docker_tag("22.15.0", DIGEST))
+        latest = get_latest_tag("alias", "22.15.0", NO_BOUND)
+        self.assertEqual(latest.version, "22.15.0")
+        self.assertEqual(latest.sha, DIGEST)
+
+    def test_equal_version_alias_tag_keeps_current_spelling_under_exact_bound(self):
+        """Test that a bound pinning the current release exactly (`ignore[patch-update]`) adopts no alias spelling."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("22.15", DIGEST), docker_tag("22.15.0", DIGEST))
+        version_filter = bound(Verb.ALLOW, "update==22.15.0")
+        self.assertEqual(get_latest_tag("alias-bounded", "22.15.0", version_filter).version, "22.15.0")
+
+    def test_equal_version_alias_tag_does_not_lend_its_digest(self):
+        """Test that the current spelling keeps its own digest, not a co-listed alias tag's differing digest.
+
+        The alias `22.15` (digest DIGEST2) is listed before the exact `22.15.0` (digest DIGEST1), so were the tie
+        broken by listing order the alias would resolve first and lend its digest to the `22.15.0` name; the tag
+        ordering prefers the more precise spelling instead, so its own digest is pinned.
+        """
+        self.requests.side_effect = mock_docker_registry(docker_tag("22.15", DIGEST2), docker_tag("22.15.0", DIGEST1))
+        latest = get_latest_tag("alias", "22.15.0", NO_BOUND)
+        self.assertEqual(latest.version, "22.15.0")
+        self.assertEqual(latest.sha, DIGEST1)
+
+    def test_update_to_a_version_listed_under_two_spellings_keeps_the_precise_one(self):
+        """Test that updating to a version the registry lists twice adopts the precise spelling, not the alias.
+
+        The registry lists both `22.16` and `22.16.0` for the new version, with the shorter alias first; the tag
+        ordering prefers the more precise spelling, so a `22.15.0` pin advances to `22.16.0` without losing a
+        component.
+        """
+        self.requests.side_effect = mock_docker_registry(docker_tag("22.16", DIGEST1), docker_tag("22.16.0", DIGEST2))
+        latest = get_latest_tag("two-spellings", "22.15.0", NO_BOUND)
+        self.assertEqual(latest.version, "22.16.0")
+        self.assertEqual(latest.sha, DIGEST2)
+
+    def test_level_bound_anchors_to_the_current_tag(self):
+        """Test that a level bound is anchored to the current tag, keeping updates within the pinned minor line."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.12.9", DIGEST1), docker_tag("3.13.0", DIGEST2))
+        version_filter = bound(Verb.IGNORE, "minor-update")
+        self.assertEqual(get_latest_tag("level-bounded", "3.12.1", version_filter).version, "3.12.9")
+
     def test_version_filter_bounds_candidates(self):
         """Test that a version filter drops out-of-bound tags so a bounded tag wins over a higher one."""
         self.requests.side_effect = mock_docker_registry(
             docker_tag("2.2", DIGEST2), docker_tag("2.1", DIGEST1), docker_tag("2.3", DIGEST3)
         )
-        version_filter = VersionFilter(SpecifierSet("<2.3"), allow=True)
+        version_filter = bound(Verb.ALLOW, "update<2.3")
         self.assertEqual(get_latest_tag("bounded", "1.2", version_filter).version, "2.2")
 
     def test_tag_names_paginated(self):
@@ -239,7 +296,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(
             docker_tag("1.4", DIGEST1, tag_last_pushed=old), docker_tag("2.0", DIGEST2, tag_last_pushed=newest)
         )
-        latest = get_latest_tag("bounded_staleness", "1.3", VersionFilter(SpecifierSet("<2"), allow=True))
+        latest = get_latest_tag("bounded_staleness", "1.3", bound(Verb.ALLOW, "update<2"))
         self.assertEqual(latest.version, "1.4")  # The bound keeps the update below 2.0...
         self.assertEqual(datetime.fromisoformat(newest), latest.newest_published)  # ...but 2.0 still defines staleness.
 

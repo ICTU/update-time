@@ -1,8 +1,9 @@
 """Parse the `# update-time:` marker language.
 
 Comments of the form `# update-time: <directive>…` let users steer what happens to an individual reference: hold it
-back (`ignore`, optionally narrowed to the update or the staleness warning), bound how far it may update
-(`allow[update<…>]` / `ignore[update<…>]`), or opt it into adopting a re-pushed image digest (`allow[digest-drift]`).
+back (`ignore`, optionally narrowed to the update or the staleness warning), bound how far it may update — to an
+absolute version range (`allow[update<…>]` / `ignore[update<…>]`) or by update level (`allow[minor-update]` /
+`ignore[major-update]`) — or opt it into adopting a re-pushed image digest (`allow[digest-drift]`).
 A marker is read inline on the reference's own line or from a standalone comment on the line directly above it; one
 prefix can carry several whitespace-separated directives, and a directive's bracket several comma-separated items
 (`ignore[stale, update>=3.13]`). Parsing is pure — text in, `Marker` out — so it lives in `domain`; acting on the
@@ -13,10 +14,12 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from update_time.domain.version import NO_BOUND, VersionFilter, parse_version_filter
+from packaging.specifiers import InvalidSpecifier
+
+from update_time.domain.version import NO_BOUND, Verb, parse_bound
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from update_time.domain.version import VersionFilter
 
 
 @dataclass(frozen=True)
@@ -26,10 +29,10 @@ class Marker:
     `ignore_update` and `ignore_stale` are whether an `ignore` directive holds back the reference's update and its
     staleness warning: a bare `ignore` holds back both, `ignore[update]` and `ignore[stale]` each just one.
     `allow_drift` is whether an `allow[digest-drift]` directive opts the reference into adopting a re-pushed digest.
-    `version_filter` is the bound from an `allow[update…]` / `ignore[update…]` directive that carries a specifier
-    (see `VersionFilter`), defaulting to `NO_BOUND` (keep every candidate) when there is none. `invalid_specifier`
-    is the raw text of a bracket item that could not be parsed — an invalid version specifier, or an unrecognised
-    item in a comma list — so the caller can warn and leave the reference unchanged; None otherwise.
+    `version_filter` is the version bound from an `allow`/`ignore` directive (see `VersionFilter`), defaulting to
+    `NO_BOUND` (keep every candidate) when there is none.
+    `invalid_specifier` is the raw text of a bracket item that could not be parsed — an invalid version specifier,
+    or an unrecognised item in a comma list — so the caller can warn and leave the reference unchanged; None otherwise.
     """
 
     ignore_update: bool = False
@@ -60,9 +63,10 @@ class Marker:
     def __str__(self) -> str:
         """Return the marker as the directive list it expresses, or an empty string when it expresses nothing.
 
-        The rendering is normalised rather than the text the user wrote: combined `ignore` scopes collapse to a
-        bare `ignore`, a bound's specifier is in PEP 440's clause order, and an invalid item is not a directive,
-        so it is not rendered.
+        The directive list is normalised rather than the text the user wrote: combined `ignore` scopes collapse to
+        a bare `ignore`, comma-combined bracket items render as separate directives, and an invalid item is not a
+        directive, so it is not rendered. A bound's specifier, however, renders as the user wrote it (see
+        `VersionFilter.__str__`).
         """
         directives = []
         if directive := self.ignore_directive:
@@ -105,19 +109,12 @@ _COMMENT_LEADS = ("#", "//")
 # more directives (see `_DIRECTIVE`); trailing text after the last directive (a reason) is allowed.
 _MARKER_PREFIX = re.compile(rf"(?:{'|'.join(re.escape(lead) for lead in _COMMENT_LEADS)})\s*update-time:\s*")
 
-# A single directive in a marker's directive list: an `ignore` verb with an optional bracket, or an `allow` verb
-# with a required one. `ignore` holds a reference back: bare `ignore` skips both the update and the staleness
-# warning, `ignore[update]` only the update (a PEP 440 specifier after `update` bounds which updates are dropped
-# instead of dropping them all), and `ignore[stale]` only the staleness warning. `allow` opts a reference into
-# behaviour that is off by default: adopting a re-pushed image digest (`allow[digest-drift]`), or keeping only the
-# updates whose version satisfies a specifier (`allow[update<…>]`). A bracket carries one item or a comma-separated
-# list of them (`ignore[stale, update>=3.13]`); what the items mean — including the fallbacks for unrecognised
-# ones, such as `ignore[stale<…>]`, since `stale` takes no specifier — is decided by the per-verb item parsers. The
-# trailing whitespace lets consecutive directives be matched one after another; the first token that is not a
-# directive ends the list.
-_DIRECTIVE = re.compile(
-    r"(?:(?P<ignore>ignore)\b(?:\[(?P<ignore_bracket>[^\]]*)\])?|allow\[(?P<allow_bracket>[^\]]*)\])\s*"
-)
+# A single directive in a marker's directive list: a verb, optionally followed by a bracket. The `verb` group's
+# text is a `Verb` member value; the `\b` keeps a word merely starting with a verb (`ignores`) from matching. The
+# `bracket` group captures everything between the square brackets. It is optional only after `ignore`: the
+# lookahead requires a bracket after `allow`, so a bare `allow` is not a directive. The trailing whitespace lets
+# consecutive directives be matched one after another.
+_DIRECTIVE = re.compile(r"(?P<verb>ignore\b|allow(?=\[))(?:\[(?P<bracket>[^\]]*)\])?\s*")
 
 
 def parse_marker(line: str, previous_line: str) -> Marker:
@@ -154,44 +151,34 @@ def _parse_marker_contents(text: str) -> Marker:
 
 
 def _parse_directive(directive: re.Match[str]) -> Marker:
-    """Return the marker expressed by a single parsed directive."""
-    if directive.group("ignore"):
-        return _parse_ignore_directive(directive.group("ignore_bracket"))
-    return _parse_allow_directive(directive.group("allow_bracket"))
+    """Return the marker expressed by a single parsed directive.
 
-
-def _parse_ignore_directive(bracket: str | None) -> Marker:
-    """Return the marker for an `ignore` directive: hold-backs, or a bound dropping matching updates.
-
-    No bracket is a bare `ignore` (hold back both the update and the staleness warning); the bracket items narrow
-    that (see `_parse_ignore_item`). A single unrecognised item (a typo, or `stale` with a specifier) falls back to
-    a bare `ignore`.
+    A directive without a bracket degrades to its verb's default: a bare `ignore`, holding back everything, or the
+    `allow` no-op, which expresses nothing. For `ignore` the bracketless form is the documented bare `ignore`; for
+    `allow` it is an `allow[` whose bracket was never closed, since the lookahead in `_DIRECTIVE` guarantees a `[`
+    follows the verb, but not that a bracket was consumed — nothing was captured, so there is no item to report as
+    invalid, and the malformed directive is left as a no-op reason. A closed bracket, even one holding only an
+    unrecognised item, is handled by `_parse_bracket` instead.
     """
-    if bracket is None:
-        return _BARE_IGNORE  # bare `ignore`
-    return _parse_bracket(bracket, _parse_ignore_item, fallback=_BARE_IGNORE)
+    verb = Verb(directive.group("verb"))
+    if (bracket := directive.group("bracket")) is None:
+        return _BARE_IGNORE if verb is Verb.IGNORE else Marker()  # A bare `ignore`, or an unterminated `allow[`.
+    return _parse_bracket(verb, bracket)
 
 
-def _parse_allow_directive(bracket: str) -> Marker:
-    """Return the marker for an `allow` directive: a digest-drift opt-in, or a bound keeping matching updates.
+def _parse_bracket(verb: Verb, bracket: str) -> Marker:
+    """Return the marker for a directive's bracket: its comma-separated items parsed for the verb and merged.
 
-    The bracket items opt the reference into behaviour that is off by default (see `_parse_allow_item`). A single
-    unrecognised item (a typo) expresses nothing.
-    """
-    return _parse_bracket(bracket, _parse_allow_item, fallback=Marker())
-
-
-def _parse_bracket(bracket: str, parse_item: Callable[[str], Marker | None], fallback: Marker) -> Marker:
-    """Return the marker for a directive's bracket: its comma-separated items parsed by `parse_item` and merged.
-
-    A single unrecognised item degrades to the verb's `fallback` (a bare `ignore`, or the `allow` no-op); in a
-    comma list an unrecognised item is instead carried out as `invalid_specifier`, so a mistyped combination warns
-    rather than silently doing the wrong thing.
+    A single unrecognised item under `ignore` degrades to a bare `ignore`, so a typo can't accidentally un-hold a
+    held-back reference. Every other unrecognised item — one under `allow`, or any in a comma list — is carried out
+    as `invalid_specifier`, so a mistyped bound (`allow[patch-updates]`, `ignore[stale, updaet]`) warns and leaves
+    the reference unchanged rather than silently dropping the bound; only `ignore`'s hold-back has a safe direction
+    to fail towards, so only it falls back rather than warning.
     """
     items = _bracket_items(bracket)
-    markers = [parse_item(item) for item in items]
-    if markers == [None]:
-        return fallback
+    markers = [_parse_bracket_item(verb, item) for item in items]
+    if markers == [None] and verb is Verb.IGNORE:
+        return _BARE_IGNORE
     marker = Marker()
     for item, item_marker in zip(items, markers, strict=True):
         marker = marker.merge(item_marker if item_marker is not None else Marker(invalid_specifier=item))
@@ -214,37 +201,28 @@ def _bracket_items(bracket: str) -> list[str]:
     return items
 
 
-def _parse_ignore_item(item: str) -> Marker | None:
-    """Return the marker for one `ignore` bracket item, or None when the item is unrecognised.
+def _parse_bracket_item(verb: Verb, item: str) -> Marker | None:
+    """Return the marker for one bracket item of the given verb, or None when the item is unrecognised.
 
-    `update` and `stale` hold back just the update or just the staleness warning, and a specifier after `update`
-    bounds which updates are dropped instead of dropping them all.
+    Most of the vocabulary is per verb: `ignore[update]` and `ignore[stale]` hold back just the update or just the
+    staleness warning, and `allow[digest-drift]` opts into adopting a re-pushed digest, while a bare `allow[update]`
+    allows every update, which is the default anyway, keeping the two verbs complements. The update bounds — a
+    specifier after `update`, or a `<level>-update` item — are shared between the verbs and delegated to
+    `parse_bound`; a malformed `update` specifier surfaces from it as `InvalidSpecifier`, telling a mistyped bound
+    (reported as an invalid item) apart from an unrecognised item (None) without re-testing the item's shape here.
     """
-    if item == "update":
-        return Marker(ignore_update=True)
-    if item == "stale":
-        return Marker(ignore_stale=True)
-    if item.startswith("update"):
-        return _parse_version_bound(item.removeprefix("update"), allow=False)  # `ignore[update<…>]`
-    return None
-
-
-def _parse_allow_item(item: str) -> Marker | None:
-    """Return the marker for one `allow` bracket item, or None when the item is unrecognised.
-
-    `digest-drift` opts into adopting a re-pushed digest, and a specifier after `update` keeps only the updates
-    that satisfy it (a bare `update` keeps them all, expressing nothing).
-    """
-    if item == "digest-drift":
-        return Marker(allow_drift=True)
-    if item == "update":
-        return Marker()  # A bare `allow[update]` allows every update, which is the default anyway.
-    if item.startswith("update"):
-        return _parse_version_bound(item.removeprefix("update"), allow=True)  # `allow[update<…>]`
-    return None
-
-
-def _parse_version_bound(specifier: str, *, allow: bool) -> Marker:
-    """Return the marker for a version bound: the parsed filter, or the invalid specifier for the caller to report."""
-    parsed = parse_version_filter(specifier, allow=allow)
-    return Marker(invalid_specifier=specifier) if parsed is None else Marker(version_filter=parsed)
+    match verb, item:
+        case Verb.IGNORE, "update":
+            return Marker(ignore_update=True)
+        case Verb.ALLOW, "update":
+            return Marker()  # bare `allow[update]`: the default no-op
+        case Verb.IGNORE, "stale":
+            return Marker(ignore_stale=True)
+        case Verb.ALLOW, "digest-drift":
+            return Marker(allow_drift=True)
+    # not a keyword item — try the shared update bounds
+    try:
+        version_filter = parse_bound(verb, item)
+    except InvalidSpecifier:
+        return Marker(invalid_specifier=item.removeprefix("update"))  # `update` with an unparsable specifier
+    return Marker(version_filter=version_filter) if version_filter is not None else None

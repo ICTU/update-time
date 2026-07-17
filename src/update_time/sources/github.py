@@ -337,7 +337,9 @@ def get_latest_version(
         return unchanged
     current = Version(current_version)
     candidates = [
-        version for version in valid_versions if version.version >= current and version_filter.keeps(version.version)
+        version
+        for version in valid_versions
+        if version.version >= current and version_filter.keeps(version.version, current_version)
     ]
     latest = first_eligible(candidates, _eligible_version, current_version)
     return replace(latest, newest_published=newest_published)

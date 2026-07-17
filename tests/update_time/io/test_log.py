@@ -7,17 +7,16 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import ANY, Mock, patch
 
-from packaging.specifiers import SpecifierSet
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.text import Text
 
 from update_time.domain.marker import Marker
-from update_time.domain.version import DependencyVersion, Redundancy, VersionFilter
+from update_time.domain.version import DependencyVersion, Redundancy, Verb
 from update_time.io import filesystem
 from update_time.io.log import DEPENDENCY_DELIMITER, Logger, LogHighlighter, get_logger
 
-from tests.update_time.helpers import new_version_getter
+from tests.update_time.helpers import bound, new_version_getter
 
 
 class GetLoggerTests(TestCase):
@@ -137,8 +136,41 @@ class LoggerTests(TestCase):
     @patch("logging.Logger.warning")
     def test_warn_if_redundant_bound(self, mock_warning: Mock):
         """Test that a redundant bound is warned about at warning level, showing the bound and how it is redundant."""
-        version_filter = VersionFilter(SpecifierSet(">=3.12"), allow=True)  # never has an effect on a 3.12 pin
-        Logger("bound").warn_if_redundant_bound("python", version_filter, "3.12", Path.cwd() / "Dockerfile")
+        version_filter = bound(Verb.ALLOW, "update>=3.12")  # never has an effect on a 3.12 pin
+        marker = Marker(version_filter=version_filter)
+        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Path.cwd() / "Dockerfile")
+        mock_warning.assert_called_once_with(
+            Logger._MESSAGE_REDUNDANT_BOUND,
+            version_filter,
+            "python",
+            "3.12",
+            Path("Dockerfile"),
+            Redundancy.NO_EFFECT.value,
+            stacklevel=ANY,
+        )
+
+    @patch("logging.Logger.warning")
+    def test_warn_if_redundant_level_bound(self, mock_warning: Mock):
+        """Test that a level bound that blocks every update is warned about, rendered in its level form."""
+        version_filter = bound(Verb.IGNORE, "patch-update")  # ignore[patch-update] blocks every update
+        marker = Marker(version_filter=version_filter)
+        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Path.cwd() / "Dockerfile")
+        mock_warning.assert_called_once_with(
+            Logger._MESSAGE_REDUNDANT_BOUND,
+            version_filter,
+            "python",
+            "3.12",
+            Path("Dockerfile"),
+            Redundancy.BLOCKS_ALL.value,
+            stacklevel=ANY,
+        )
+
+    @patch("logging.Logger.warning")
+    def test_warn_if_redundant_keep_all_level_bound(self, mock_warning: Mock):
+        """Test that a level bound that allows every update is warned about, unlike the implicit NO_BOUND default."""
+        version_filter = bound(Verb.ALLOW, "major-update")  # allow[major-update] allows every update
+        marker = Marker(version_filter=version_filter)
+        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Path.cwd() / "Dockerfile")
         mock_warning.assert_called_once_with(
             Logger._MESSAGE_REDUNDANT_BOUND,
             version_filter,
@@ -152,15 +184,29 @@ class LoggerTests(TestCase):
     @patch("logging.Logger.warning")
     def test_warn_if_redundant_bound_does_nothing_when_live(self, mock_warning: Mock):
         """Test that nothing is logged when the bound is live (a genuine ceiling or floor)."""
-        version_filter = VersionFilter(SpecifierSet("<3.13"), allow=True)  # a live ceiling on a 3.12 pin
-        Logger("bound").warn_if_redundant_bound("python", version_filter, "3.12", Path.cwd() / "Dockerfile")
+        version_filter = bound(Verb.ALLOW, "update<3.13")  # a live ceiling on a 3.12 pin
+        marker = Marker(version_filter=version_filter)
+        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Path.cwd() / "Dockerfile")
+        mock_warning.assert_not_called()
+
+    @patch("logging.Logger.warning")
+    def test_warn_if_redundant_bound_does_nothing_when_level_bound_is_live(self, mock_warning: Mock):
+        """Test that nothing is logged for a level bound between the extremes: it always leaves room above the pin."""
+        marker = Marker(version_filter=bound(Verb.IGNORE, "minor-update"))
+        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Path.cwd() / "Dockerfile")
+        mock_warning.assert_not_called()
+
+    @patch("logging.Logger.warning")
+    def test_warn_if_redundant_bound_does_nothing_for_no_bound(self, mock_warning: Mock):
+        """Test that nothing is logged for the keep-all NO_BOUND: the unmarked default is not a bound to report on."""
+        Logger("bound").warn_if_redundant_bound("python", Marker(), "3.12", Path.cwd() / "Dockerfile")
         mock_warning.assert_not_called()
 
     @patch("logging.Logger.debug")
     def test_applying_marker(self, mock_debug: Mock):
         """Test that a reference's marker is logged at debug level as the directive list it expresses."""
-        bound = VersionFilter(SpecifierSet("<3.13"), allow=True)
-        marker = Marker(ignore_stale=True, allow_drift=True, version_filter=bound)
+        version_filter = bound(Verb.ALLOW, "update<3.13")
+        marker = Marker(ignore_stale=True, allow_drift=True, version_filter=version_filter)
         Logger("marker").applying_marker("python", marker, Path.cwd() / "Dockerfile")
         mock_debug.assert_called_once_with(
             Logger._MESSAGE_APPLYING_MARKER,

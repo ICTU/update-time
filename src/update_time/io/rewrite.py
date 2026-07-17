@@ -50,14 +50,15 @@ class _Rewriter:
 
         `marker` carries the reference's `# update-time:` directives (see `parse_marker`): `ignore_update` holds
         back the update, `ignore_stale` the staleness warning, and a `version_filter` bounds the source's version
-        selection. A reference that is already up to date is checked for digest drift (see `_handle_drift`); one
-        with an update, or without its available digest, is rewritten (see `_apply_update`).
+        selection (a level-based bound is anchored to the reference's current version first). A reference that is
+        already up to date is checked for digest drift (see `_handle_drift`); one with an update, or without its
+        available digest, is rewritten (see `_apply_update`).
         """
         if not (match := re.search(self.regexp, line)):
             return line
         dependency = match.group("dependency")
         version = match.group("version")
-        self.logger.warn_if_redundant_bound(dependency, marker.version_filter, version, self.path)
+        self.logger.warn_if_redundant_bound(dependency, marker, version, self.path)
         latest_version = self.get_new_version(dependency, version, marker.version_filter)
         if not marker.ignore_stale:
             self.logger.warn_if_stale(dependency, latest_version, self.path)

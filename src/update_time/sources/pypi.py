@@ -117,7 +117,7 @@ def get_latest_version(
         if version > current
         and not version.is_prerelease
         and not version.is_devrelease
-        and version_filter.keeps(version)
+        and version_filter.keeps(version, current_version)
     ]
     latest = first_eligible(candidates, lambda version: _eligible_release(package, version), current_version)
     # Always attach the newest release date so an already-up-to-date pin can still be flagged as stale. It rides on

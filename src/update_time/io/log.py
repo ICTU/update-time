@@ -14,7 +14,7 @@ from rich.logging import RichHandler
 from rich.theme import Theme
 
 from update_time.domain.staleness import is_stale, stale_after_days, staleness_days
-from update_time.domain.version import SHA256_DIGEST
+from update_time.domain.version import NO_BOUND, SHA256_DIGEST
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from rich.text import Text
 
     from update_time.domain.marker import Marker
-    from update_time.domain.version import DependencyVersion, VersionFilter, VersionString
+    from update_time.domain.version import DependencyVersion, VersionString
 
 
 # The log levels that can be selected on the command line, and the default. Reporting an available new version is
@@ -288,17 +288,21 @@ class Logger:
     )
 
     def warn_if_redundant_bound(
-        self, dependency: str, version_filter: VersionFilter, current_version: VersionString, path: Path
+        self, dependency: str, marker: Marker, current_version: VersionString, path: Path
     ) -> None:
-        """Warn when a version bound is redundant for the current version (never has an effect, or blocks everything).
+        """Warn when the marker's version bound is redundant for the current version.
 
-        Does nothing when the reference has no bound (the keep-all `NO_BOUND`) or the bound is live (see
-        `VersionFilter.redundancy`), so callers can hand off every reference unconditionally. The bound renders itself
-        in its marker form (`allow[update<3.13]`), so the warning shows which bound on which pin is redundant.
+        The bound is redundant when it never has an effect or blocks every update (see
+        `VersionFilter.redundancy`). Does nothing when the reference has no bound (the keep-all `NO_BOUND` — the
+        unmarked default, not a bound to report on) or the bound is live, so callers can hand off every reference
+        unconditionally. The bound renders itself in its marker form (`allow[update<3.13]`, or a level-based
+        `ignore[minor-update]`), so the warning shows which bound on which pin is redundant.
         """
-        if (redundancy := version_filter.redundancy(current_version)) is None:
+        if (bound := marker.version_filter) == NO_BOUND:
             return
-        arguments = (version_filter, dependency, current_version, self._relative(path), redundancy.value)
+        if (redundancy := bound.redundancy(current_version)) is None:
+            return
+        arguments = (bound, dependency, current_version, self._relative(path), redundancy.value)
         self._log(self.log.warning, self._MESSAGE_REDUNDANT_BOUND, *arguments)
 
     # --- File scanning and selection ---

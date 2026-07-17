@@ -6,9 +6,8 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import ANY, Mock, patch
 
 import requests
-from packaging.specifiers import SpecifierSet
 
-from update_time.domain.version import NO_BOUND, VersionFilter
+from update_time.domain.version import NO_BOUND, Verb
 from update_time.io.log import Logger
 from update_time.sources.github import (
     TaggedVersion,
@@ -23,6 +22,7 @@ from update_time.sources.github import (
 from tests.update_time.helpers import (
     CacheClearingTestCase,
     LoggingTestCase,
+    bound,
     github_commits_json,
     github_release_json,
     github_tag_json,
@@ -122,7 +122,7 @@ class GetLatestVersionTest(LoggingTestCase):
     )
     def test_version_filter_bounds_candidates(self):
         """Test that a version filter drops out-of-bound releases so a bounded release wins over a higher one."""
-        version_filter = VersionFilter(SpecifierSet("<2"), allow=True)
+        version_filter = bound(Verb.ALLOW, "update<2")
         self.assert_version(get_latest_version("owner/bounded", "1.0", version_filter), "1.1", "", "sha")
 
     @patch_github(releases=[github_release_json("0.9")], tags=[])

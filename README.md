@@ -334,17 +334,33 @@ The specifier filters the candidate versions *before* the highest is picked, so 
 
 Choose the operator deliberately. To keep `3.12` together with its patch releases while blocking `3.13`, use `<3.13`, `==3.12.*`, or `~=3.12.0`. Don't use `<=3.12` if you want to stay on `3.12`: since `3.12.1 > 3.12` in PEP 440, it also blocks `3.12.1`, which is rarely what "stay on 3.12" means.
 
-A few rules govern how a bound interacts with the other markers and checks:
+A bound with a specifier names the version it must not reach, so it goes stale: after migrating to `3.13`, an `allow[update<3.13]` blocks every update (Update-time warns about it) until the comment is rewritten. To express the policy ("no major jumps") rather than the fence ("not past 3.13"), bound the update by its *level* instead: `# update-time: ignore[major-update]` or `ignore[minor-update]`, or their complements `allow[minor-update]` and `allow[patch-update]`. An update's level is the most significant version component it changes relative to the currently pinned version: a major update changes the first component, a minor update the second, and a patch update the third. A component the current version doesn't have counts as zero, so `node:22` followed by `23` is a major update, and `22` followed by `22.1` a minor one. `ignore` holds back updates of the named level *or more significant*, `allow` keeps updates of the named level *or less significant* — "block minor but allow major" is never meaningful — which makes the two verbs exact complements, just like specifier bounds:
+
+| Directive | Effect | Complement |
+| --------- | ------ | ---------- |
+| `ignore[major-update]` | minor and patch updates only | `allow[minor-update]` |
+| `ignore[minor-update]` | patch updates only | `allow[patch-update]` |
+
+Pick whichever verb reads best in context. Unlike a specifier bound, a level-based bound is anchored to the currently pinned version on every run, so it ratchets along as the reference advances: `ignore[minor-update]` on `python:3.12.1` blocks `3.13` today and, once you migrate the pin to `3.13`, blocks `3.14` — the comment never needs editing:
+
+```dockerfile
+# update-time: ignore[minor-update]
+FROM python:3.12.1-bookworm-slim
+```
+
+The levels are positional, not semantic: they refer to the component's position in the version, not to the project's compatibility promises. Projects may ship breaking changes in releases that bump the *second* component, so "stay on Python 3.12" is `ignore[minor-update]` despite Python 3.13 shipping breaking changes (it removed 19 legacy modules from the standard library). The same caution applies to projects using calendar versioning. And as with specifier bounds, the level applies to a Docker tag's main version; a version embedded in the suffix (the `3.23` in `alpine3.23`) is unaffected by the bound.
+
+A few rules govern how a bound — with a specifier or level-based — interacts with the other markers and checks:
 
 - A bare `# update-time: ignore` (or `# update-time: ignore[update]` with no specifier) holds back *all* updates and wins over any bound on the same reference.
-- Use a single bound per reference; pairing an `allow[update<specifier>]` with an `ignore[update<specifier>]` on one reference is undefined.
+- Use a single bound per reference; pairing two bounds, say an `allow[update<specifier>]` with an `ignore[update<specifier>]`, or a specifier bound with a level-based one, on one reference is undefined.
 - A bound narrows updates only, not staleness. Staleness is always measured against the project's newest overall release; the bound doesn't come into play.
 - The digest is still pinned or refreshed for whichever version the bound selects, exactly as without a bound.
-- To combine a bound with another directive of the same verb (say, `allow[digest-drift]`), list both as comma-separated items in one bracket: `# update-time: allow[update<3.13, digest-drift]`. To combine directives of different verbs, list them after the `# update-time:` prefix, separated by a space: `# update-time: ignore[stale] allow[update<3.13]`. A reason can still follow the last directive.
+- To combine a bound with another directive of the same verb (say, `allow[digest-drift]`), list both as comma-separated items in one bracket: `# update-time: allow[update<3.13, digest-drift]` or `# update-time: allow[minor-update, digest-drift]`. To combine directives of different verbs, list them after the `# update-time:` prefix, separated by a space: `# update-time: ignore[stale] allow[update<3.13]`. A reason can still follow the last directive.
 
 Update-time logs a `WARNING` when a bound is redundant. That may happen in two ways:
-- Either the bound **never has an effect**, so removing it would change nothing: the current version and every version above it satisfy the bound, for example `allow[update>=3.12]` on a `3.12` pin.
-- Or the bound **blocks every update**, so it is just a frozen `ignore[update]` in disguise (use that instead if the freeze is intended): no version above the current one satisfies the bound, for example `ignore[update>=3.12]` on a `3.12` pin.
+- Either the bound **never has an effect**, so removing it would change nothing: the current version and every version above it satisfy the bound, for example `allow[update>=3.12]` on a `3.12` pin, or `allow[major-update]` on any pin (it allows every update, so it says nothing).
+- Or the bound **blocks every update**, so it is just a frozen `ignore[update]` in disguise (use that instead if the freeze is intended): no version above the current one satisfies the bound, for example `ignore[update>=3.12]` on a `3.12` pin, or `ignore[patch-update]` on any pin.
 
 Any of these markers can be placed two ways:
 
