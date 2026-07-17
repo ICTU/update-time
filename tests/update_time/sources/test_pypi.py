@@ -4,9 +4,7 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from unittest.mock import Mock, patch
 
-from packaging.specifiers import SpecifierSet
-
-from update_time.domain.version import NO_BOUND, VersionFilter
+from update_time.domain.version import NO_BOUND, Verb
 from update_time.sources.pypi import (
     CHANGELOG_URL_KEYS,
     REPOSITORY_URL_KEYS,
@@ -21,6 +19,7 @@ from tests.update_time.helpers import (
     PYPI_OLD_UPLOAD,
     CacheClearingTestCase,
     LoggingTestCase,
+    bound,
     github_commits_json,
     github_release_json,
     mock_response,
@@ -218,7 +217,7 @@ class GetLatestVersionTest(LoggingTestCase):
     def test_version_filter_bounds_candidates(self, mock_get: Mock):
         """Test that a version filter drops out-of-bound candidates so a bounded version wins over a higher one."""
         mock_get.side_effect = [pypi_index("1.0", "1.9", "2.0"), pypi_release()]
-        version_filter = VersionFilter(SpecifierSet("<2"), allow=True)
+        version_filter = bound(Verb.ALLOW, "update<2")
         self.assertEqual(get_latest_version("bounded", "1.0", version_filter).version, "1.9")
 
     def test_yanked_release_ignored(self, mock_get: Mock):

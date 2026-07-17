@@ -4,12 +4,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from update_time.domain.version import NO_BOUND, DependencyVersion, parse_version_filter
+from update_time.domain.version import NO_BOUND, DependencyVersion, Verb
 from update_time.io.log import Logger
 from update_time.updaters.update_github_action import update_github_actions
 
 from tests.update_time.assertions import assert_success
-from tests.update_time.helpers import LoggingTestCase, mock_path
+from tests.update_time.helpers import LoggingTestCase, bound, mock_path
 
 OLD_SHA = "a" * 40
 NEW_SHA = "b" * 40
@@ -105,9 +105,22 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_with(
             f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: allow[update<5]\n"
         )
-        mock_get_latest_version.assert_called_once_with("actions/checkout", "4", parse_version_filter("<5", allow=True))
+        mock_get_latest_version.assert_called_once_with("actions/checkout", "4", bound(Verb.ALLOW, "update<5"))
         self.assert_pinned_logged(workflow_yml, "actions/checkout", "4.2.0", NEW_SHA)
         self.assert_no_warnings_logged()  # a `<5` bound on a v4 pin is live, so no redundancy warning
+
+    def test_level_bound_passes_filter_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an `ignore[major-update]` marker passes the level bound to the source."""
+        mock_get_latest_version.return_value = DependencyVersion(version="4.2.0", sha=NEW_SHA)
+        workflow_yml = mock_path("uses: actions/checkout@v4  # update-time: ignore[major-update]\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        assert_success(update_github_actions(GITHUB_DIR))
+        workflow_yml.write_text.assert_called_with(
+            f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: ignore[major-update]\n"
+        )
+        mock_get_latest_version.assert_called_once_with("actions/checkout", "4", bound(Verb.IGNORE, "major-update"))
+        self.assert_pinned_logged(workflow_yml, "actions/checkout", "4.2.0", NEW_SHA)
+        self.assert_no_warnings_logged()  # a major-update bound on a v4 pin is live, so no redundancy warning
 
     def test_inline_ignore_marker_pins_action(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an inline `# update-time: ignore` comment leaves the action untouched, looking up no version."""

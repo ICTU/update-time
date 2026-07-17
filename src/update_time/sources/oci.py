@@ -161,11 +161,18 @@ class Tag:
         """Order tags by version axes (main version, then embedded suffix version), so candidates sort newest-first.
 
         This flat ordering picks the highest candidate; `is_newer_or_equal` is the separate axis-wise check that
-        decides candidacy.
+        decides candidacy. When versions are equal, prefer more specific versions (so 1.3 < 1.3.0).
         """
-        return (self.sortable_version, self.sortable_suffix_version) < (
+        return (
+            self.sortable_version,
+            self.sortable_suffix_version,
+            len(self.sortable_version.release),
+            len(self.sortable_suffix_version.release),
+        ) < (
             other.sortable_version,
             other.sortable_suffix_version,
+            len(other.sortable_version.release),
+            len(other.sortable_suffix_version.release),
         )
 
     @property
@@ -280,7 +287,7 @@ def get_latest_tag(
         return DependencyVersion(version=current_tag)
     tags = [Tag(name=name) for name in _tag_names(image)]
     compatible = [tag for tag in tags if tag.is_candidate_for(current)]
-    candidates = [tag for tag in compatible if version_filter.keeps(cast("Version", tag.version))]
+    candidates = [tag for tag in compatible if version_filter.keeps(cast("Version", tag.version), current_tag)]
     latest = first_eligible(candidates, lambda candidate: _eligible_tag(image, current, candidate), current_tag)
     # Staleness is measured against all compatible tags, not just the bounded candidates, so a version bound narrows
     # the update only: a reference kept on an old line by a bound is still warned about when the image has gone quiet
@@ -305,11 +312,18 @@ def _newest_tag_push_date(image: str, compatible: list[Tag]) -> datetime | None:
 
 
 def _eligible_tag(image: str, current: Tag, candidate: Tag) -> DependencyVersion | None:
-    """Resolve the candidate's digest and push date and return it when eligible, or None when it isn't."""
+    """Resolve the candidate's digest and push date and return it when eligible, or None when it isn't.
+
+    A candidate that equals the current tag on every version axis is the current version under another tag spelling
+    (an alias such as `22.15` for `22.15.0`), so the current spelling is kept and only its digest is adopted.
+    """
     latest = _get_tag(image, candidate.name)
     if latest is None or not latest.is_eligible:
         return None
-    name = current.with_version(cast("Version", latest.version), latest.suffix).name
+    if current.is_newer_or_equal(latest):  # The candidate is never older (see `is_candidate_for`), so this is equality.
+        name = current.name
+    else:
+        name = current.with_version(cast("Version", latest.version), latest.suffix).name
     return DependencyVersion(version=name, sha=latest.digest, published=latest.last_pushed)
 
 

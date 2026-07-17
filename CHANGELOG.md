@@ -8,7 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Added
 
+- Hold back major or minor updates with level-based bounds: `# update-time: ignore[minor-update]` on a `python:3.12` pin keeps `3.12` patch updates coming while blocking `3.13`. Unlike `ignore[update>=3.13]` it re-anchors to the pinned version on every run, so the comment survives migrations unedited. The `allow` complements (`allow[minor-update]`, `allow[patch-update]`) work too. Closes [#145](https://github.com/ICTU/update-time/issues/145).
 - Support GitHub versions that are tagged but not released: a version that was tagged without being published as a GitHub release is now an update candidate too, with the publication date for the cooldown taken from the tagged commit. Closes [#143](https://github.com/ICTU/update-time/issues/143).
+
+### Fixed
+
+- Keep an image tag's spelling when the registry lists the same version under another name: a reference pinned to e.g. `node:22.15.0` was sometimes rewritten to the alias tag `node:22.15` — the same version, spelled shorter — when no newer version was eligible.
 
 ## 0.0.19 - 2026-07-16
 
