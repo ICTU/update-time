@@ -9,7 +9,7 @@ from update_time.io.rewrite import update_references_in_lines
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from update_time.domain.version import NewVersionGetter
+    from update_time.domain.bound import NewVersionGetter
     from update_time.io.log import Logger
 
 # Private channel that passes --exclude-path from the CLI to the updater subprocesses; not a user-facing setting

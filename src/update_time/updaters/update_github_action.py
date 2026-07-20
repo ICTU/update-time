@@ -35,7 +35,7 @@ def _update_action(match: re.Match[str], path: Path, marker: Marker) -> str:
     """Pin or update a single `uses:` reference to the latest version's commit SHA, or leave it unchanged.
 
     `marker` carries the reference's `# update-time:` directives: `ignore_update` holds back the (re)pin,
-    `ignore_stale` the staleness warning, and a `version_filter` bounds which release the (re)pin may adopt
+    `ignore_stale` the staleness warning, and a `version_bound` bounds which release the (re)pin may adopt
     (a level-based bound is anchored to the currently pinned version first).
     """
     dependency = match.group("dependency")
@@ -44,7 +44,7 @@ def _update_action(match: re.Match[str], path: Path, marker: Marker) -> str:
     if not is_valid(current_version):
         return match.group(0)  # Ignore references that aren't versions (e.g. a branch name)
     LOG.warn_if_redundant_bound(dependency, marker, current_version, path)
-    latest = get_latest_version(dependency, current_version, marker.version_filter)
+    latest = get_latest_version(dependency, current_version, marker.version_bound)
     if not marker.ignore_stale:
         LOG.warn_if_stale(dependency, latest, path)
     if marker.ignore_update or not latest.sha:

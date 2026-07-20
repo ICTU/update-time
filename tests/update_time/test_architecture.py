@@ -19,6 +19,18 @@ class DependenciesTest(unittest.TestCase):
         """Test that scripts are not imported."""
         assert_passes(project_files("src/").should_not().depend_on_files().with_name("update_*.py"))
 
+    def test_version_primitives_are_a_leaf(self):
+        """Test that the version primitives depend on nothing else in the project, so everything can build on them.
+
+        `version.py` holds the primitives the rest of the domain builds on (`bound.py` imports `is_valid` and the
+        type aliases from it), so it must import nothing back. Since `domain` is the innermost layer (`LayeringTest`
+        keeps it from reaching any outer one), depending on nothing else in `domain` makes `version.py` a
+        project-wide leaf. `have_no_cycles` only forbids a two-way dependency, not a one-way inversion, so pinning
+        the direction here keeps `version.py` reasoned about (and tested) without the bound machinery.
+        """
+        rule = project_files("src/").with_name("version.py").should_not().depend_on_files().in_folder("domain")
+        assert_passes(rule)
+
 
 class LayeringTest(unittest.TestCase):
     """Test the layered architecture: domain < io < {file_formats, sources} < package_managers < updaters.

@@ -19,8 +19,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from update_time.domain.bound import NewVersionGetter
     from update_time.domain.marker import Marker
-    from update_time.domain.version import DependencyVersion, NewVersionGetter
+    from update_time.domain.version import DependencyVersion
     from update_time.io.log import Logger
 
 # Private channel that passes --allow-image-digest-drift from the CLI to the updater subprocesses; not a user-facing
@@ -49,7 +50,7 @@ class _Rewriter:
         """Update the line with the new version (and digest) if any, or return the line unchanged.
 
         `marker` carries the reference's `# update-time:` directives (see `parse_marker`): `ignore_update` holds
-        back the update, `ignore_stale` the staleness warning, and a `version_filter` bounds the source's version
+        back the update, `ignore_stale` the staleness warning, and a `version_bound` bounds the source's version
         selection (a level-based bound is anchored to the reference's current version first). A reference that is
         already up to date is checked for digest drift (see `_handle_drift`); one with an update, or without its
         available digest, is rewritten (see `_apply_update`).
@@ -59,7 +60,7 @@ class _Rewriter:
         dependency = match.group("dependency")
         version = match.group("version")
         self.logger.warn_if_redundant_bound(dependency, marker, version, self.path)
-        latest_version = self.get_new_version(dependency, version, marker.version_filter)
+        latest_version = self.get_new_version(dependency, version, marker.version_bound)
         if not marker.ignore_stale:
             self.logger.warn_if_stale(dependency, latest_version, self.path)
         if marker.ignore_update:
@@ -147,7 +148,7 @@ def updated_lines(
     A marker that holds back both the update and the staleness warning (a bare `ignore`, or the two scopes
     combined) leaves the line untouched without even querying the source; a marker holding back just one still
     calls `update_line`, passing the `Marker` so the other check runs (and so an `allow[digest-drift]` opt-in or a
-    `version_filter` reaches `update_line`). When the line carries a reference (matched by `regexp`), its marker is
+    `version_bound` reaches `update_line`). When the line carries a reference (matched by `regexp`), its marker is
     logged at the debug level, as is the held-back update when the marker holds the update back, so users can
     confirm a marker is recognised. A marker with an item that could not be parsed is reported
     here (where the logger and path are available, unlike in the pure `parse_marker`) and leaves the reference

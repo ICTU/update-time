@@ -4,7 +4,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from update_time.domain.version import NO_BOUND, DependencyVersion, Verb
+from update_time.domain.bound import NO_BOUND, Verb
+from update_time.domain.version import DependencyVersion
 from update_time.io.log import Logger
 from update_time.updaters.update_github_action import update_github_actions
 
@@ -96,7 +97,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    def test_allow_update_bound_passes_filter_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
+    def test_allow_update_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an `allow[update<…>]` marker passes the bound to the source and pins the bounded release."""
         mock_get_latest_version.return_value = DependencyVersion(version="4.2.0", sha=NEW_SHA)
         workflow_yml = mock_path("uses: actions/checkout@v4  # update-time: allow[update<5]\n")
@@ -109,7 +110,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_pinned_logged(workflow_yml, "actions/checkout", "4.2.0", NEW_SHA)
         self.assert_no_warnings_logged()  # a `<5` bound on a v4 pin is live, so no redundancy warning
 
-    def test_level_bound_passes_filter_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
+    def test_level_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an `ignore[major-update]` marker passes the level bound to the source."""
         mock_get_latest_version.return_value = DependencyVersion(version="4.2.0", sha=NEW_SHA)
         workflow_yml = mock_path("uses: actions/checkout@v4  # update-time: ignore[major-update]\n")

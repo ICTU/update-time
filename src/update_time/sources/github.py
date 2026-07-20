@@ -5,7 +5,7 @@ from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import NotRequired, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 from urllib.parse import urlparse
 
 from packaging.version import Version
@@ -15,13 +15,15 @@ from update_time.domain.staleness import newest_datetime
 from update_time.domain.version import (
     DependencyName,
     DependencyVersion,
-    VersionFilter,
     VersionString,
     first_eligible,
     is_valid,
 )
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
+
+if TYPE_CHECKING:
+    from update_time.domain.bound import VersionBound
 
 LOG = get_logger("github")
 
@@ -309,7 +311,7 @@ def _tagged_versions(owner: str, repository: str) -> list[TaggedVersion] | None:
 
 @cache
 def get_latest_version(
-    action: DependencyName, current_version: VersionString, version_filter: VersionFilter
+    action: DependencyName, current_version: VersionString, version_bound: VersionBound
 ) -> DependencyVersion:
     """Return the latest eligible version for the GitHub action, or the current version unchanged.
 
@@ -318,7 +320,7 @@ def get_latest_version(
     version at least as new as the current one — the current version itself included, so an action referenced by
     tag only can be pinned to its commit SHA without a version bump), then walk them newest-first with
     `first_eligible`, resolving each candidate's publication date, cooldown, and commit SHA until one is eligible.
-    A `version_filter` bound narrows the candidates before the highest is picked. When the versions were fetched
+    A `version_bound` bound narrows the candidates before the highest is picked. When the versions were fetched
     but none is valid, that's logged as "no valid version"; a fetch failure is left to `fetch`'s own warning, so a
     network problem isn't reported twice. The newest publication date is always attached (for the staleness
     check), even when the version is unchanged.
@@ -339,7 +341,7 @@ def get_latest_version(
     candidates = [
         version
         for version in valid_versions
-        if version.version >= current and version_filter.keeps(version.version, current_version)
+        if version.version >= current and version_bound.keeps(version.version, current_version)
     ]
     latest = first_eligible(candidates, _eligible_version, current_version)
     return replace(latest, newest_published=newest_published)

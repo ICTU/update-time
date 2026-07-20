@@ -8,15 +8,9 @@ from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
 import update_time
+from update_time.domain.bound import NewVersionGetter, Verb, VersionBound, parse_bound
 from update_time.domain.staleness import STALE_AFTER_DAYS_ENV_VAR
-from update_time.domain.version import (
-    DependencyVersion,
-    NewVersionGetter,
-    Verb,
-    VersionFilter,
-    VersionString,
-    parse_bound,
-)
+from update_time.domain.version import DependencyVersion, VersionString
 from update_time.io.log import Logger
 from update_time.sources.docker_hub import api_headers as docker_hub_headers
 from update_time.sources.github import _get_commit as github_get_commit
@@ -218,17 +212,17 @@ def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGette
     return lambda *_args: DependencyVersion(version=version, sha=sha)
 
 
-def bound(verb: Verb, item: str) -> VersionFilter:
+def bound(verb: Verb, item: str) -> VersionBound:
     """Return the version bound the marker item expresses, for tests that need a bound as input.
 
-    Wraps `parse_bound` to guarantee a filter — a test only passes an invalid item by mistake — so the result can
-    flow into positions typed `VersionFilter` without an Optional check in every test.
+    Wraps `parse_bound` to guarantee a bound — a test only passes an invalid item by mistake — so the result can
+    flow into positions typed `VersionBound` without an Optional check in every test.
     """
-    version_filter = parse_bound(verb, item)
-    if version_filter is None:
+    version_bound = parse_bound(verb, item)
+    if version_bound is None:
         message = f"Not a version bound item: {item!r}"
         raise ValueError(message)
-    return version_filter
+    return version_bound
 
 
 def mock_response(json: Mapping | list | None = None, **kwargs: object) -> Mock:

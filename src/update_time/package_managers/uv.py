@@ -11,8 +11,9 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import cooldown_cutoff, cooldown_days
-from update_time.domain.version import NO_BOUND, DependencyVersion
+from update_time.domain.version import DependencyVersion
 from update_time.file_formats import pyproject_toml as pyproject_toml_format
 from update_time.io.log import get_logger
 from update_time.io.process import run
