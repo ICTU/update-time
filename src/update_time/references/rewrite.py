@@ -3,8 +3,8 @@
 The updaters that edit files line by line (Dockerfiles, CI configs, manifests, requirements, workflows, ...) share
 this engine: given a regexp that captures a reference and a function that returns its new version, it rewrites each
 matched reference in place — touching only the captured spans and skipping any line pinned by an `# update-time:
-ignore` marker. It's pure text processing, but it reports what it changed through a `Logger`, so it lives in `io`
-rather than `domain`.
+ignore` marker. Which version a reference should update to is `resolve.latest_version`'s decision; this module owns
+the text surgery around it, reporting what it changed through a `Logger`.
 """
 
 import os
@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.bound import Verb
 from update_time.domain.marker import parse_marker
+from update_time.domain.version import Reference
+from update_time.io.log import attribute_logs_to_caller
+from update_time.references.resolve import latest_version
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -24,6 +27,8 @@ if TYPE_CHECKING:
     from update_time.domain.marker import Marker
     from update_time.domain.version import DependencyVersion
     from update_time.io.log import Logger
+
+attribute_logs_to_caller(__file__)  # This engine logs on behalf of the updaters, so records point at the updater.
 
 # Private channel that passes --allow-image-digest-drift from the CLI to the updater subprocesses; not a user-facing
 # setting (use --allow-image-digest-drift instead). The leading underscore marks it internal.
@@ -50,27 +55,24 @@ class _Rewriter:
     def update_line(self, line: str, marker: Marker) -> str:
         """Update the line with the new version (and digest) if any, or return the line unchanged.
 
-        `marker` carries the reference's `# update-time:` directives (see `parse_marker`): `ignore_update` holds
-        back the update, `ignore_stale` the staleness warning, and a `version_bound` bounds the source's version
-        selection (a level-based bound is anchored to the reference's current version first). A reference that is
-        already up to date is checked for digest drift (see `_handle_drift`); one with an update, or without its
-        available digest, is rewritten (see `_apply_update`).
+        Which version to update to — honouring the reference's `# update-time:` marker — is `latest_version`'s
+        decision, or None to leave the line unchanged. A reference that is already up to date is checked for digest
+        drift (see `_handle_drift`); one with an update, or without its available digest, is rewritten (see
+        `_apply_update`).
         """
         if not (match := re.search(self.regexp, line)):
             return line
         dependency = match.group("dependency")
         version = match.group("version")
-        self.logger.warn_if_redundant_bound(dependency, marker, version, self.path)
-        latest_version = self.get_new_version(dependency, version, marker.version_bound)
-        if not marker.ignore_stale:
-            self.logger.warn_if_stale(dependency, latest_version, self.path)
-        if marker.ignore_update:
+        reference = Reference(dependency, version)
+        latest = latest_version(reference, self.get_new_version, marker, self.path, self.logger)
+        if latest is None:
             return line
         has_sha_group = "sha" in match.groupdict()
-        pin_unpinned = has_sha_group and match.group("sha") is None and bool(latest_version.sha)
-        if latest_version.version == version and not pin_unpinned:
-            return self._handle_drift(line, match, marker, latest_version)
-        return self._apply_update(line, match, latest_version, pin_unpinned=pin_unpinned)
+        pin_unpinned = has_sha_group and match.group("sha") is None and bool(latest.sha)
+        if latest.version == version and not pin_unpinned:
+            return self._handle_drift(line, match, marker, latest)
+        return self._apply_update(line, match, latest, pin_unpinned=pin_unpinned)
 
     def _handle_drift(self, line: str, match: re.Match[str], marker: Marker, latest: DependencyVersion) -> str:
         """Return the line for an up-to-date reference, adopting or warning about a re-pushed digest.

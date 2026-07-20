@@ -3,8 +3,9 @@
 import sys
 from pathlib import Path
 
-from update_time.io.filesystem import YAML_GLOB_PATTERNS, update_files
+from update_time.io.filesystem import YAML_GLOB_PATTERNS
 from update_time.io.log import get_logger
+from update_time.references.file import update_files
 from update_time.sources.oci import YAML_IMAGE_REFERENCE, get_latest_tag
 
 LOG = get_logger("manifest images")

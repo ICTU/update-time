@@ -106,26 +106,32 @@ LOG_MESSAGE_FORMAT = "%(message)s"
 
 # Files that wrap or dispatch logging on behalf of the updaters. Frames in these files are skipped when
 # determining a log record's origin, so the reported origin is the updater that triggered the log rather than this
-# wrapper or the generic file-finding (filesystem.py) and reference-rewriting (rewrite.py) engines.
-_HELPER_FILES = frozenset(
-    str(path.resolve())
-    for path in (Path(__file__), Path(__file__).with_name("filesystem.py"), Path(__file__).with_name("rewrite.py"))
-)
+# wrapper or a registered engine (see `attribute_logs_to_caller`).
+_helper_files = {str(Path(__file__).resolve())}
+
+
+def attribute_logs_to_caller(module_file: str) -> None:
+    """Register a module whose frames should be skipped when determining a log record's origin.
+
+    A module that logs on behalf of the updaters registers itself, so its frames are walked past and a log record
+    is attributed to the updater that triggered it rather than to the shared machinery in between.
+    """
+    _helper_files.add(str(Path(module_file).resolve()))
 
 
 def _caller_stacklevel() -> int:
-    """Return the stacklevel of the first frame outside the logging and filesystem helpers.
+    """Return the stacklevel of the first frame outside the logging and rewriting helpers.
 
     A fixed stacklevel can't work because some log methods are called directly by an updater while others
-    are dispatched through filesystem.py (with extra comprehension frames in between), so walk the stack to
-    find the originating updater frame instead.
+    are dispatched through the registered helper modules (with extra comprehension frames in between), so walk
+    the stack to find the originating updater frame instead.
     """
     level = 1  # Start at the frame that emits the record (Logger._log) and skip helper frames from there.
     try:
         frame: FrameType | None = sys._getframe(level)  # noqa: SLF001
     except ValueError:  # pragma: no cover
         return level
-    while frame is not None and str(Path(frame.f_code.co_filename).resolve()) in _HELPER_FILES:
+    while frame is not None and str(Path(frame.f_code.co_filename).resolve()) in _helper_files:
         level += 1
         frame = frame.f_back
     return level

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
-from update_time.io.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR
+from update_time.references.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR
 
 from tests.update_time.assertions import assert_success
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3

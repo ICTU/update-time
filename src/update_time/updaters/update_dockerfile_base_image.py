@@ -7,8 +7,9 @@ digest is optional in the regex but a concrete version tag is still required, so
 
 import sys
 
-from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, update_files
+from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS
 from update_time.io.log import get_logger
+from update_time.references.file import update_files
 from update_time.sources.oci import IMAGE_REFERENCE, get_latest_tag
 
 LOG = get_logger("dockerfile")

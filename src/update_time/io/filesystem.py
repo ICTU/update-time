@@ -1,16 +1,11 @@
-"""Find and update files."""
+"""Find the files to scan for references."""
 
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from update_time.io.rewrite import update_references_in_lines
-
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
-
-    from update_time.domain.bound import NewVersionGetter
-    from update_time.io.log import Logger
+    from collections.abc import Iterator
 
 # Private channel that passes --exclude-path from the CLI to the updater subprocesses; not a user-facing setting
 # (use --exclude-path instead). The leading underscore marks it internal. Entries are the comma-joined, scan-root
@@ -85,50 +80,3 @@ def glob(*glob_patterns: str, start: Path | None = None, case_sensitive: bool | 
             if any(relative_path.is_relative_to(excluded_dir) for excluded_dir in excluded):
                 continue
             yield path
-
-
-def rewrite_file(path: Path, transform: Callable[[list[str]], list[str]], logger: Logger) -> None:
-    """Read the file, apply `transform` to its lines, and write it back only if the lines changed.
-
-    The read/compare/write boilerplate shared by every updater that rewrites a file line by line. `update_file`
-    supplies a `transform` that runs the shared reference-rewriting engine; an updater whose references span more
-    than one line — a pre-commit hook's `repo:` and its `rev:` sit on separate lines — supplies its own stateful
-    pass instead.
-    """
-    logger.path(path)
-    old_lines = path.read_text().splitlines()
-    new_lines = transform(old_lines)
-    if old_lines != new_lines:
-        path.write_text("\n".join(new_lines) + "\n")
-
-
-def update_file(path: Path, *regexps: str, get_new_version: NewVersionGetter, logger: Logger) -> int:
-    """Update the references in the file and write it back if the new lines differ from the old lines.
-
-    Multiple regexps are applied in turn to the same content, so a file that pins more than one kind of reference (a
-    devcontainer.json's base `image` and its `features`) is read and written once, not once per regexp.
-    """
-    rewrite_file(
-        path,
-        lambda lines: update_references_in_lines(
-            lines, *regexps, get_new_version=get_new_version, logger=logger, path=path
-        ),
-        logger,
-    )
-    return 0
-
-
-def update_files(
-    *glob_patterns: str,
-    regexp: str,
-    get_new_version: NewVersionGetter,
-    logger: Logger,
-    start: Path | None = None,
-    case_sensitive: bool | None = None,
-) -> int:
-    """Update the files using the regexp to find the current version and get_new_version to find new versions."""
-    results = {
-        update_file(path, regexp, get_new_version=get_new_version, logger=logger)
-        for path in glob(*glob_patterns, start=start, case_sensitive=case_sensitive)
-    }
-    return max(results, default=0)

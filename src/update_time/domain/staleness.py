@@ -60,9 +60,9 @@ def warn_about_stale_dependencies(
 ) -> None:
     """Run the staleness pass the manifest updaters share (`pyproject.toml`, `package.json`).
 
-    The line-by-line updaters check staleness inline (via `io.rewrite`), but a manifest updater delegates the update
-    to uv/npm/pnpm and never calls a source per dependency, so it makes its own pass: `newest_releases(file)` yields
-    the file's declared dependencies as `(name, newest release)` pairs — resolving each release from a registry,
+    The line-by-line updaters check staleness inline (via `references.rewrite`), but a manifest updater delegates
+    the update to uv/npm/pnpm and never calls a source per dependency, so it makes its own pass: `newest_releases(file)`
+    yields the file's declared dependencies as `(name, newest release)` pairs — resolving each release from a registry,
     None when the dependency isn't a registry package — and `warn(name, release, file)` reports the stale ones
     (typically `Logger.warn_if_stale`). Skipped entirely when the check is disabled, so the resolver never runs and
     makes no registry request. Callback-driven so `domain` stays free of the I/O the resolver and warning perform,

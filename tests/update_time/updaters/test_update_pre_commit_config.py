@@ -9,10 +9,9 @@ from update_time.io.log import Logger
 from update_time.updaters.update_pre_commit_config import update_pre_commit_configs
 
 from tests.update_time.assertions import assert_success
+from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
+from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.helpers import LoggingTestCase, bound, mock_path
-
-OLD_SHA = "a" * 40
-NEW_SHA = "b" * 40
 
 HOOKS = "hooks:\n      - id: trailing-whitespace\n"
 
@@ -22,7 +21,7 @@ def config(rev_block: str) -> str:
     return f"repos:\n  - repo: https://github.com/pre-commit/pre-commit-hooks\n    {rev_block}    {HOOKS}"
 
 
-@patch("update_time.updaters.github_reference.get_latest_version")
+@patch("update_time.references.github.get_latest_version")
 @patch("pathlib.Path.glob")
 class UpdatePreCommitConfigsTest(LoggingTestCase):
     """Unit tests for the update pre-commit configs function."""

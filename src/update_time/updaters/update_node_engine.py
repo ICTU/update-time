@@ -9,8 +9,9 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.version import DependencyVersion
 from update_time.file_formats import package_json as package_json_format
-from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, glob, update_file
+from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, glob
 from update_time.io.log import get_logger
+from update_time.references.file import update_file
 
 if TYPE_CHECKING:
     from pathlib import Path

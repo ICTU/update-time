@@ -14,8 +14,9 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString
 from update_time.file_formats import yaml as yaml_format
-from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob, update_file
+from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
 from update_time.io.log import get_logger
+from update_time.references.file import update_file
 from update_time.sources.oci import YAML_IMAGE_REFERENCE, get_latest_tag
 
 if TYPE_CHECKING:

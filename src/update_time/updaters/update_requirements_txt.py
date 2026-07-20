@@ -14,8 +14,9 @@ import sys
 from typing import TYPE_CHECKING
 
 from update_time.file_formats import requirements_txt as requirements_txt_format
-from update_time.io.filesystem import glob, update_file
+from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
+from update_time.references.file import update_file
 from update_time.sources.pypi import get_latest_version
 
 if TYPE_CHECKING:

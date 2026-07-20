@@ -14,8 +14,8 @@ from rich.text import Text
 from update_time.domain.bound import Redundancy, Verb
 from update_time.domain.marker import Marker
 from update_time.domain.version import DependencyVersion
-from update_time.io import filesystem
 from update_time.io.log import DEPENDENCY_DELIMITER, Logger, LogHighlighter, get_logger
+from update_time.references import file
 
 from tests.update_time.helpers import bound, new_version_getter
 
@@ -378,7 +378,7 @@ class LogHighlighterTests(TestCase):
 
 
 class LogOriginTests(TestCase):
-    """Tests that log records are attributed to the originating updater, not the logging or filesystem helpers."""
+    """Tests that log records are attributed to the originating updater, not the logging or rewriting helpers."""
 
     def test_direct_call_is_attributed_to_the_caller(self):
         """Test that a log method called directly reports the calling line as its origin."""
@@ -387,8 +387,8 @@ class LogOriginTests(TestCase):
             logger.path(Path.cwd())
         self.assertEqual(Path(captured.records[0].pathname).name, "test_log.py")
 
-    def test_filesystem_helper_call_is_attributed_to_the_caller(self):
-        """Test that logs emitted via the filesystem helper report the helper's caller, not filesystem.py, as origin."""
+    def test_rewrite_helper_call_is_attributed_to_the_caller(self):
+        """Test that logs emitted via the file-rewrite helpers report the helpers' caller, not a helper, as origin."""
         logger = Logger("origin helper")
         with TemporaryDirectory() as directory:
             (Path(directory) / "config.yml").write_text("dependency: 1.0\n")
@@ -396,7 +396,7 @@ class LogOriginTests(TestCase):
                 patch("pathlib.Path.cwd", Mock(return_value=Path(directory))),
                 self.assertLogs(logger.log, level="DEBUG") as captured,
             ):
-                filesystem.update_files(
+                file.update_files(
                     "*.yml",
                     regexp=r"(?P<dependency>dependency): (?P<version>[\d.]+)",
                     get_new_version=new_version_getter("2.0"),
