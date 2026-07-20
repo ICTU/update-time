@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
+from update_time.domain.bound import Verb
 from update_time.domain.marker import parse_marker
 
 if TYPE_CHECKING:
@@ -84,8 +85,11 @@ class _Rewriter:
         dependency, version = match.group("dependency"), match.group("version")
         if marker.allow_drift or allow_image_digest_drift():
             # The reference opted in, so adopt the re-pushed digest instead of only warning about it. The
-            # per-reference marker is the more specific opt-in, so it is named as the cause when both apply.
-            cause = f"update-time: {marker.drift_directive}" if marker.allow_drift else "--allow-image-digest-drift"
+            # per-reference marker is the more specific opt-in, so its `allow` directives are named verbatim as the
+            # cause when both apply; the digest-drift opt-in is among them.
+            cause = (
+                f"update-time: {marker.raw_marker(Verb.ALLOW)}" if marker.allow_drift else "--allow-image-digest-drift"
+            )
             self.logger.adopted_drift(dependency, version, current_sha, latest.sha, self.path, cause)
             return self._replace_groups(line, match, {"sha": latest.sha})
         # The tag was re-pushed with a different digest; warn but leave the immutable pin unchanged.
