@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.20 - 2026-07-20
+
 ### Added
 
 - Hold back major or minor updates with level-based bounds: `# update-time: ignore[minor-update]` on a `python:3.12` pin keeps `3.12` patch updates coming while blocking `3.13`. Unlike `ignore[update>=3.13]` it re-anchors to the pinned version on every run, so the comment survives migrations unedited. The `allow` complements (`allow[minor-update]`, `allow[patch-update]`) work too. Closes [#145](https://github.com/ICTU/update-time/issues/145).
