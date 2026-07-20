@@ -11,7 +11,7 @@ marker, and reporting about it, is left to the rewrite engine in `io`.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from packaging.specifiers import InvalidSpecifier
@@ -33,6 +33,8 @@ class Marker:
     `NO_BOUND` (keep every candidate) when there is none.
     `invalid_specifier` is the raw text of a bracket item that could not be parsed — an invalid version specifier,
     or an unrecognised item in a comma list — so the caller can warn and leave the reference unchanged; None otherwise.
+    `raw` is the marker's whole directive text exactly as it appears in the file, read back through `raw_marker` so
+    the reference's marker can be echoed to the user verbatim.
     """
 
     ignore_update: bool = False
@@ -40,51 +42,28 @@ class Marker:
     allow_drift: bool = False
     version_bound: VersionBound = NO_BOUND
     invalid_specifier: str | None = None
+    raw: str = field(compare=False, default="")
 
-    @property
-    def ignore_directive(self) -> str:
-        """Return the marker's `ignore` directive in its normalised form, or an empty string when it holds nothing back.
+    def raw_marker(self, verb: Verb | None = None) -> str:
+        """Return the marker's verbatim directive text, or just the directives of one verb.
 
-        Combined scopes collapse to a bare `ignore`; a single scope renders as `ignore[update]` or `ignore[stale]`.
+        A verb's directives are picked back out of `raw` with the same grammar that parsed it, so the text stays
+        exactly as the user spelled it — a collapsed scope or a typo kept as written.
         """
-        if self.ignore_update and self.ignore_stale:
-            return "ignore"
-        if self.ignore_update:
-            return "ignore[update]"
-        if self.ignore_stale:
-            return "ignore[stale]"
-        return ""
-
-    @property
-    def drift_directive(self) -> str:
-        """Return the marker's digest-drift opt-in directive, or an empty string when it opts nothing in."""
-        return "allow[digest-drift]" if self.allow_drift else ""
-
-    def __str__(self) -> str:
-        """Return the marker as the directive list it expresses, or an empty string when it expresses nothing.
-
-        The directive list is normalised rather than the text the user wrote: combined `ignore` scopes collapse to
-        a bare `ignore`, comma-combined bracket items render as separate directives, and an invalid item is not a
-        directive, so it is not rendered. A bound's specifier, however, renders as the user wrote it (see
-        `VersionBound.__str__`).
-        """
-        directives = []
-        if directive := self.ignore_directive:
-            directives.append(directive)
-        if self.version_bound != NO_BOUND:
-            directives.append(str(self.version_bound))
-        if directive := self.drift_directive:
-            directives.append(directive)
-        return " ".join(directives)
+        if verb is None:
+            return self.raw
+        directives = (match for match in _DIRECTIVE.finditer(self.raw) if match.group("verb") == verb)
+        return " ".join(match.group().strip() for match in directives)
 
     def merge(self, other: Marker) -> Marker:
         """Return this marker combined with another one.
 
         The boolean hold-backs and opt-ins combine as unions, so `ignore[update]` and `ignore[stale]` together hold
         back as much as a bare `ignore`; of two values that cannot combine — a version bound, an invalid specifier —
-        this marker's wins. A default `Marker()` leaves every field unset, so it is the identity: merging it with
-        any marker returns that marker's values. This lets markers fold at every level — each item into a bracket's
-        marker, each directive into a text's, and the inline and comment-above texts into the line's.
+        this marker's wins, and the `raw` texts concatenate in order, this marker's first. A default `Marker()`
+        leaves every field unset, so it is the identity: merging it with any marker returns that marker's values.
+        This lets markers fold at every level — each item into a bracket's marker, each directive into a text's, and
+        the inline and comment-above texts into the line's.
         """
         return Marker(
             self.ignore_update or other.ignore_update,
@@ -92,6 +71,7 @@ class Marker:
             self.allow_drift or other.allow_drift,
             other.version_bound if self.version_bound == NO_BOUND else self.version_bound,
             self.invalid_specifier if self.invalid_specifier is not None else other.invalid_specifier,
+            " ".join(part for part in (self.raw, other.raw) if part),
         )
 
 
@@ -139,7 +119,9 @@ def _parse_marker_contents(text: str) -> Marker:
     Each `# update-time:` prefix introduces a whitespace-separated list of directives, so directives combine behind
     a single prefix (`# update-time: ignore[stale] allow[update>=3.13]`); the first token that is not a directive
     ends the list, so a trailing reason is allowed. Each directive folds into the marker with `Marker.merge`, so
-    earlier directives win over later ones.
+    earlier directives win over later ones. Each prefix's whole directive run — the text from the prefix to the last
+    directive, without the prefix itself or a trailing reason — is folded in as the marker's `raw` text, so the
+    marker can later be echoed back to the user exactly as they spelled it (see `Marker.raw_marker`).
     """
     marker = Marker()
     for prefix in _MARKER_PREFIX.finditer(text):
@@ -147,6 +129,7 @@ def _parse_marker_contents(text: str) -> Marker:
         while directive := _DIRECTIVE.match(text, position):
             position = directive.end()
             marker = marker.merge(_parse_directive(directive))
+        marker = marker.merge(Marker(raw=text[prefix.end() : position].strip()))
     return marker
 
 

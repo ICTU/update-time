@@ -205,16 +205,14 @@ class LoggerTests(TestCase):
 
     @patch("logging.Logger.debug")
     def test_applying_marker(self, mock_debug: Mock):
-        """Test that a reference's marker is logged at debug level as the directive list it expresses."""
-        version_bound = bound(Verb.ALLOW, "update<3.13")
-        marker = Marker(ignore_stale=True, allow_drift=True, version_bound=version_bound)
+        """Test that a reference's marker is logged at debug level verbatim, exactly as the user wrote it."""
+        # The raw text combines scopes and bracket items in a form the boolean fields alone could not produce, so
+        # echoing it verbatim proves the log shows the user's own marker.
+        raw = "ignore[update] ignore[stale] allow[update<3.13, digest-drift]"
+        marker = Marker(ignore_stale=True, allow_drift=True, version_bound=bound(Verb.ALLOW, "update<3.13"), raw=raw)
         Logger("marker").applying_marker("python", marker, Path.cwd() / "Dockerfile")
         mock_debug.assert_called_once_with(
-            Logger._MESSAGE_APPLYING_MARKER,
-            "ignore[stale] allow[update<3.13] allow[digest-drift]",
-            "python",
-            Path("Dockerfile"),
-            stacklevel=ANY,
+            Logger._MESSAGE_APPLYING_MARKER, raw, "python", Path("Dockerfile"), stacklevel=ANY
         )
 
     @patch("logging.Logger.debug")
@@ -222,6 +220,17 @@ class LoggerTests(TestCase):
         """Test that nothing is logged for a reference without a marker."""
         Logger("marker").applying_marker("python", Marker(), Path.cwd() / "Dockerfile")
         mock_debug.assert_not_called()
+
+    @patch("logging.Logger.debug")
+    def test_ignored(self, mock_debug: Mock):
+        """Test that a held-back reference logs its `ignore` directive verbatim, exactly as the user spelled it."""
+        # `ignored` names just the `ignore` directives from the verbatim `raw` text: the combined scopes are kept
+        # apart rather than shown as a bare `ignore`, and the `allow` alongside is left out, only the `ignore`.
+        marker = Marker(ignore_update=True, raw="ignore[update] ignore[stale] allow[digest-drift]")
+        Logger("marker").ignored("python", marker, Path.cwd() / "Dockerfile")
+        mock_debug.assert_called_once_with(
+            Logger._MESSAGE_IGNORED, "python", Path("Dockerfile"), "ignore[update] ignore[stale]", stacklevel=ANY
+        )
 
     @patch("logging.Logger.debug")
     def test_path_logged_at_debug(self, mock_debug: Mock):

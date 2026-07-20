@@ -13,7 +13,7 @@ from rich.highlighter import ReprHighlighter
 from rich.logging import RichHandler
 from rich.theme import Theme
 
-from update_time.domain.bound import NO_BOUND
+from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.staleness import is_stale, stale_after_days, staleness_days
 from update_time.domain.version import SHA256_DIGEST
 
@@ -319,18 +319,24 @@ class Logger:
     def applying_marker(self, dependency: str, marker: Marker, path: Path) -> None:
         """Log, at debug level, the marker applying to a reference, so users can confirm it is recognised.
 
-        Does nothing when the line carries no marker (the rendered directive list is empty), so the caller can hand
-        off every reference unconditionally.
+        The marker's directives are echoed verbatim (the `raw` text the user wrote), so a user comparing the log
+        line against their file sees their own marker. Does nothing when the line carries no marker (the `raw` text
+        is empty), so the caller can hand off every reference unconditionally.
         """
-        if not (directives := str(marker)):
+        if not (directives := marker.raw_marker()):
             return
         self._log(self.log.debug, self._MESSAGE_APPLYING_MARKER, directives, dependency, self._relative(path))
 
     _MESSAGE_IGNORED = f"Ignoring updates for {DEPENDENCY_DELIMITER}%s{DEPENDENCY_DELIMITER} in %s (update-time: %s)"
 
     def ignored(self, dependency: str, marker: Marker, path: Path) -> None:
-        """Log that a reference's update was held back by the marker's `ignore` directive, naming its form."""
-        self._log(self.log.debug, self._MESSAGE_IGNORED, dependency, self._relative(path), marker.ignore_directive)
+        """Log that a reference's update was held back by the marker's `ignore` directive, echoing it as written.
+
+        Only the `ignore` directive is named (`raw_marker(Verb.IGNORE)`), not the whole marker: it is the one that
+        held the update back.
+        """
+        directive = marker.raw_marker(Verb.IGNORE)
+        self._log(self.log.debug, self._MESSAGE_IGNORED, dependency, self._relative(path), directive)
 
     _MESSAGE_EXCLUDING_PATH = "Excluding %s from the scan (--exclude-path)"
 

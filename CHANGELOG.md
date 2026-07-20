@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Echo `# update-time:` markers back to the user exactly as written in the file — the whole marker, its `ignore` directive when an update is held back, and its `allow` directives when digest drift is adopted — so the log lines match what the user typed. Closes [#153](https://github.com/ICTU/update-time/issues/153).
 
 ## 0.0.20 - 2026-07-20
 
@@ -161,7 +163,7 @@ No changes yet.
 
 ### Fixed
 
-- Don't rewrite `package.json` when there are no dependency updates. npm normalizes specs such as `git+https://...` URLs to the `github:` shorthand whenever it saves the manifest, which previously produced a spurious diff even when no version changed; the original file is now restored unless a registry version was actually updated. Fixes [#27](https://github.com/ICTU/update-time/issues/27).
+- Don't rewrite `package.json` when there are no dependency updates. npm normalizes specs such as `git+https://...` URLs to the `github:` shorthand whenever it saves the manifest, which previously produced a spurious diff even when no version changed; the original file is now restored unless a registry version was actually updated. Closes [#27](https://github.com/ICTU/update-time/issues/27).
 
 ## 0.0.6 - 2026-06-27
 
