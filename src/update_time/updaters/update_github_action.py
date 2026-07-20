@@ -12,11 +12,10 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from update_time.domain.version import is_valid
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
 from update_time.io.log import get_logger
 from update_time.io.rewrite import updated_lines
-from update_time.sources.github import get_latest_version
+from update_time.updaters.github_reference import GitHubReference, latest_pin
 
 if TYPE_CHECKING:
     from update_time.domain.marker import Marker
@@ -34,27 +33,16 @@ ACTION_RE = re.compile(
 def _update_action(match: re.Match[str], path: Path, marker: Marker) -> str:
     """Pin or update a single `uses:` reference to the latest version's commit SHA, or leave it unchanged.
 
-    `marker` carries the reference's `# update-time:` directives: `ignore_update` holds back the (re)pin,
-    `ignore_stale` the staleness warning, and a `version_bound` bounds which release the (re)pin may adopt
-    (a level-based bound is anchored to the currently pinned version first).
+    An action pinned to a commit SHA with a version comment (`<sha> # v4.1.1`), or referenced by version tag only,
+    is the same GitHub-SHA-pinned reference as a pre-commit hook `rev:`, so the decision is shared with
+    `_update_rev` via `latest_pin`; only the `uses:` output syntax is spelled here.
     """
     dependency = match.group("dependency")
     current_sha = match.group("sha")
     current_version = match.group("version") if current_sha else match.group("ref")
-    if not is_valid(current_version):
-        return match.group(0)  # Ignore references that aren't versions (e.g. a branch name)
-    LOG.warn_if_redundant_bound(dependency, marker, current_version, path)
-    latest = get_latest_version(dependency, current_version, marker.version_bound)
-    if not marker.ignore_stale:
-        LOG.warn_if_stale(dependency, latest, path)
-    if marker.ignore_update or not latest.sha:
-        return match.group(0)  # Held back by the marker, or can't (re)pin without a commit SHA
-    if current_sha is None:
-        LOG.pinned(dependency, latest, path)
-    elif latest.version != current_version:
-        LOG.new_version(dependency, latest, path)
-    else:
-        return match.group(0)  # Already pinned and up to date
+    latest = latest_pin(GitHubReference(dependency, current_version, current_sha), marker, path, LOG)
+    if latest is None:
+        return match.group(0)  # Invalid, held back, unpinnable, or already up to date: leave the reference as it is
     return f"uses: {dependency}@{latest.sha} # v{latest.version}"
 
 

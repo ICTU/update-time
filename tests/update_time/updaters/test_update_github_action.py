@@ -19,7 +19,7 @@ NEW_SHA = "b" * 40
 GITHUB_DIR = Path("/repo/.github")
 
 
-@patch("update_time.updaters.update_github_action.get_latest_version")
+@patch("update_time.updaters.github_reference.get_latest_version")
 @patch("pathlib.Path.glob")
 class UpdateGitHubActionsTest(LoggingTestCase):
     """Unit tests for the update GitHub Actions function."""

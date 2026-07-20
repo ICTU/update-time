@@ -1,0 +1,19 @@
+---
+# Pre-commit hooks for the Update-time repository. Enable them with `uvx pre-commit install`.
+# Update-time keeps the remote hook's rev up to date and pinned; run `just update-deps` to bump it.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+  - repo: local
+    hooks:
+      - id: readme
+        name: Regenerate README.md
+        entry: just readme
+        language: system
+        pass_filenames: false
+        files: ^(docs/.*|src/update_time/io/cli\.py|pyproject\.toml)$
