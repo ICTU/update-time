@@ -9,7 +9,7 @@ from unittest.mock import Mock, call, patch
 from update_time.domain.cooldown import COOLDOWN_DAYS_ENV_VAR
 from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR
 from update_time.io.log import LOG_LEVEL_ENV_VAR
-from update_time.io.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR
+from update_time.references.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR
 from update_time.updaters.update import PARALLEL_SCRIPTS, SEQUENTIAL_SCRIPTS, main, run_script, update_dependencies
 
 from tests.update_time.helpers import patch_environ

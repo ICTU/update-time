@@ -51,6 +51,14 @@ class DependencyVersion:
         return bool(self.sha) and self.sha != sha
 
 
+@dataclass(frozen=True)
+class Reference:
+    """A pinned reference as a file records it: a dependency and the version it is currently pinned to."""
+
+    dependency: DependencyName
+    current_version: VersionString
+
+
 def first_eligible[Candidate: SupportsRichComparison](
     candidates: Iterable[Candidate],
     resolve: Callable[[Candidate], DependencyVersion | None],

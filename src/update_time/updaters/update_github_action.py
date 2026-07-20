@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
 from update_time.io.log import get_logger
-from update_time.io.rewrite import updated_lines
-from update_time.updaters.github_reference import GitHubReference, latest_pin
+from update_time.references.github import GitHubReference, latest_pin
+from update_time.references.rewrite import updated_lines
 
 if TYPE_CHECKING:
     from update_time.domain.marker import Marker

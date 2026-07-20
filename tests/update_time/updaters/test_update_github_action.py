@@ -10,16 +10,14 @@ from update_time.io.log import Logger
 from update_time.updaters.update_github_action import update_github_actions
 
 from tests.update_time.assertions import assert_success
+from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
+from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.helpers import LoggingTestCase, bound, mock_path
-
-OLD_SHA = "a" * 40
-NEW_SHA = "b" * 40
-
 
 GITHUB_DIR = Path("/repo/.github")
 
 
-@patch("update_time.updaters.github_reference.get_latest_version")
+@patch("update_time.references.github.get_latest_version")
 @patch("pathlib.Path.glob")
 class UpdateGitHubActionsTest(LoggingTestCase):
     """Unit tests for the update GitHub Actions function."""

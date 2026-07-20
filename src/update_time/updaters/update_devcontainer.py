@@ -13,8 +13,9 @@ comments and trailing commas (which devcontainer.json allows, and plain JSON for
 
 import sys
 
-from update_time.io.filesystem import glob, update_file
+from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
+from update_time.references.file import update_file
 from update_time.sources.oci import IMAGE_REFERENCE, get_latest_tag
 
 LOG = get_logger("devcontainer")

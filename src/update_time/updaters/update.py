@@ -11,7 +11,7 @@ from update_time.domain.staleness import STALE_AFTER_DAYS_ENV_VAR
 from update_time.io.cli import parse_args
 from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR, inside_git_repository
 from update_time.io.log import LOG_LEVEL_ENV_VAR, get_logger
-from update_time.io.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR
+from update_time.references.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR
 
 SRC = Path(__file__).parent
 

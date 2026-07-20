@@ -16,10 +16,11 @@ from itertools import pairwise
 from typing import TYPE_CHECKING
 
 from update_time.domain.marker import parse_marker
-from update_time.io.filesystem import glob, rewrite_file
+from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
+from update_time.references.file import rewrite_file
+from update_time.references.github import GitHubReference, latest_pin
 from update_time.sources.github import github_owner_and_repository
-from update_time.updaters.github_reference import GitHubReference, latest_pin
 
 if TYPE_CHECKING:
     from pathlib import Path

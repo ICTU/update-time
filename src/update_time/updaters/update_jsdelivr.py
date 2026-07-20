@@ -6,7 +6,7 @@ from pathlib import Path
 
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
-from update_time.io.rewrite import rewrite_match
+from update_time.references.rewrite import rewrite_match
 from update_time.sources.jsdelivr import get_latest_version
 
 LOG = get_logger("jsdelivr")
