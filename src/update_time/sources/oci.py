@@ -19,7 +19,6 @@ from update_time.domain.version import (
     SHA256_DIGEST,
     DependencyName,
     DependencyVersion,
-    VersionFilter,
     VersionString,
     first_eligible,
 )
@@ -29,6 +28,8 @@ from update_time.sources import docker_hub
 
 if TYPE_CHECKING:
     from datetime import datetime
+
+    from update_time.domain.bound import VersionBound
 
 LOG = get_logger("oci")
 
@@ -265,9 +266,7 @@ def is_docker_hub_image(image: str) -> bool:
     return _is_docker_hub_host(host)
 
 
-def get_latest_tag(
-    image: DependencyName, current_tag: VersionString, version_filter: VersionFilter
-) -> DependencyVersion:
+def get_latest_tag(image: DependencyName, current_tag: VersionString, version_bound: VersionBound) -> DependencyVersion:
     """Find the latest compatible tag for an image. Keeps the same non-numerical parts while upgrading the version.
 
     Resolves images on any OCI registry (Docker Hub, ghcr.io, mcr.microsoft.com, quay.io, ...). Returns the digest
@@ -277,7 +276,7 @@ def get_latest_tag(
     Lists all tag names in one request, then resolves the digest for the highest candidate versions until one is
     eligible (it has a digest and is past the cooldown). Normally that's the very first one; only versions newer
     than the latest eligible one (those still within Docker Hub's cooldown) are resolved and skipped. A
-    `version_filter` bound narrows the candidates by their parsed main version before the highest is picked, so the
+    `version_bound` bound narrows the candidates by their parsed main version before the highest is picked, so the
     prefix/suffix matching is unaffected; the staleness date stays based on the newest compatible tag, unnarrowed
     by the bound.
     """
@@ -287,7 +286,7 @@ def get_latest_tag(
         return DependencyVersion(version=current_tag)
     tags = [Tag(name=name) for name in _tag_names(image)]
     compatible = [tag for tag in tags if tag.is_candidate_for(current)]
-    candidates = [tag for tag in compatible if version_filter.keeps(cast("Version", tag.version), current_tag)]
+    candidates = [tag for tag in compatible if version_bound.keeps(cast("Version", tag.version), current_tag)]
     latest = first_eligible(candidates, lambda candidate: _eligible_tag(image, current, candidate), current_tag)
     # Staleness is measured against all compatible tags, not just the bounded candidates, so a version bound narrows
     # the update only: a reference kept on an old line by a bound is still warned about when the image has gone quiet

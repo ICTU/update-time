@@ -2,7 +2,7 @@
 
 import unittest
 
-from update_time.domain.version import Verb
+from update_time.domain.bound import Verb
 
 from tests.update_time.helpers import bound
 

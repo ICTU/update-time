@@ -16,10 +16,10 @@ from typing import TYPE_CHECKING
 
 from packaging.specifiers import InvalidSpecifier
 
-from update_time.domain.version import NO_BOUND, Verb, parse_bound
+from update_time.domain.bound import NO_BOUND, Verb, parse_bound
 
 if TYPE_CHECKING:
-    from update_time.domain.version import VersionFilter
+    from update_time.domain.bound import VersionBound
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ class Marker:
     `ignore_update` and `ignore_stale` are whether an `ignore` directive holds back the reference's update and its
     staleness warning: a bare `ignore` holds back both, `ignore[update]` and `ignore[stale]` each just one.
     `allow_drift` is whether an `allow[digest-drift]` directive opts the reference into adopting a re-pushed digest.
-    `version_filter` is the version bound from an `allow`/`ignore` directive (see `VersionFilter`), defaulting to
+    `version_bound` is the version bound from an `allow`/`ignore` directive (see `VersionBound`), defaulting to
     `NO_BOUND` (keep every candidate) when there is none.
     `invalid_specifier` is the raw text of a bracket item that could not be parsed — an invalid version specifier,
     or an unrecognised item in a comma list — so the caller can warn and leave the reference unchanged; None otherwise.
@@ -38,7 +38,7 @@ class Marker:
     ignore_update: bool = False
     ignore_stale: bool = False
     allow_drift: bool = False
-    version_filter: VersionFilter = NO_BOUND
+    version_bound: VersionBound = NO_BOUND
     invalid_specifier: str | None = None
 
     @property
@@ -66,13 +66,13 @@ class Marker:
         The directive list is normalised rather than the text the user wrote: combined `ignore` scopes collapse to
         a bare `ignore`, comma-combined bracket items render as separate directives, and an invalid item is not a
         directive, so it is not rendered. A bound's specifier, however, renders as the user wrote it (see
-        `VersionFilter.__str__`).
+        `VersionBound.__str__`).
         """
         directives = []
         if directive := self.ignore_directive:
             directives.append(directive)
-        if self.version_filter != NO_BOUND:
-            directives.append(str(self.version_filter))
+        if self.version_bound != NO_BOUND:
+            directives.append(str(self.version_bound))
         if directive := self.drift_directive:
             directives.append(directive)
         return " ".join(directives)
@@ -90,7 +90,7 @@ class Marker:
             self.ignore_update or other.ignore_update,
             self.ignore_stale or other.ignore_stale,
             self.allow_drift or other.allow_drift,
-            other.version_filter if self.version_filter == NO_BOUND else self.version_filter,
+            other.version_bound if self.version_bound == NO_BOUND else self.version_bound,
             self.invalid_specifier if self.invalid_specifier is not None else other.invalid_specifier,
         )
 
@@ -222,7 +222,7 @@ def _parse_bracket_item(verb: Verb, item: str) -> Marker | None:
             return Marker(allow_drift=True)
     # not a keyword item — try the shared update bounds
     try:
-        version_filter = parse_bound(verb, item)
+        version_bound = parse_bound(verb, item)
     except InvalidSpecifier:
         return Marker(invalid_specifier=item.removeprefix("update"))  # `update` with an unparsable specifier
-    return Marker(version_filter=version_filter) if version_filter is not None else None
+    return Marker(version_bound=version_bound) if version_bound is not None else None

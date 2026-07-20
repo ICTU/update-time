@@ -7,7 +7,7 @@ from unittest.mock import ANY, Mock, patch
 
 import requests
 
-from update_time.domain.version import NO_BOUND, Verb
+from update_time.domain.bound import NO_BOUND, Verb
 from update_time.io.log import Logger
 from update_time.sources.github import (
     TaggedVersion,
@@ -120,10 +120,10 @@ class GetLatestVersionTest(LoggingTestCase):
     @patch_github(
         releases=[github_release_json("1.1"), github_release_json("2.0")], tags=[], commit=github_commits_json()
     )
-    def test_version_filter_bounds_candidates(self):
-        """Test that a version filter drops out-of-bound releases so a bounded release wins over a higher one."""
-        version_filter = bound(Verb.ALLOW, "update<2")
-        self.assert_version(get_latest_version("owner/bounded", "1.0", version_filter), "1.1", "", "sha")
+    def test_bound_narrows_candidates(self):
+        """Test that a version bound drops out-of-bound releases so a bounded release wins over a higher one."""
+        version_bound = bound(Verb.ALLOW, "update<2")
+        self.assert_version(get_latest_version("owner/bounded", "1.0", version_bound), "1.1", "", "sha")
 
     @patch_github(releases=[github_release_json("0.9")], tags=[])
     def test_older_release_kept(self):

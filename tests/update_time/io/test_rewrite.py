@@ -5,18 +5,15 @@ import unittest
 from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock
 
+from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.marker import Marker
-from update_time.domain.version import (
-    NO_BOUND,
-    DependencyVersion,
-    Verb,
-)
+from update_time.domain.version import DependencyVersion
 from update_time.io.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR, rewrite_match, update_references_in_lines
 
 from tests.update_time.helpers import bound, new_version_getter, patch_environ
 
 if TYPE_CHECKING:
-    from update_time.domain.version import NewVersionGetter
+    from update_time.domain.bound import NewVersionGetter
 
 REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"
 SHA_REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>sha256:[a-f0-9]{64}))?"
@@ -270,22 +267,22 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version.assert_not_called()
         self.logger.adopted_drift.assert_not_called()
 
-    def test_allow_update_bound_passes_filter_to_source(self):
-        """Test that an inline `allow[update<…>]` marker passes the filter to the source and applies the result."""
+    def test_allow_update_bound_passes_bound_to_source(self):
+        """Test that an inline `allow[update<…>]` marker passes the bound to the source and applies the result."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.12.9"))
         lines = ["image: python:3.12  # update-time: allow[update<3.13]"]
         new_lines = self.rewrite(lines, REGEXP, get_new_version)
         self.assertEqual(new_lines, ["image: python:3.12.9  # update-time: allow[update<3.13]"])
         get_new_version.assert_called_once_with("python", "3.12", bound(Verb.ALLOW, "update<3.13"))
 
-    def test_ignore_update_bound_passes_filter_to_source(self):
-        """Test that an inline `ignore[update>=…]` marker passes the complement (drop) filter to the source."""
+    def test_ignore_update_bound_passes_bound_to_source(self):
+        """Test that an inline `ignore[update>=…]` marker passes the complement (drop) bound to the source."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.12.9"))
         lines = ["image: python:3.12  # update-time: ignore[update>=3.13]"]
         self.rewrite(lines, REGEXP, get_new_version)
         get_new_version.assert_called_once_with("python", "3.12", bound(Verb.IGNORE, "update>=3.13"))
 
-    def test_ignore_level_bound_passes_filter_to_source(self):
+    def test_ignore_level_bound_passes_bound_to_source(self):
         """Test that an inline `ignore[minor-update]` marker passes the level bound to the source."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.12.9"))
         lines = ["image: python:3.12.1  # update-time: ignore[minor-update]"]
@@ -293,14 +290,14 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assertEqual(new_lines, ["image: python:3.12.9  # update-time: ignore[minor-update]"])
         get_new_version.assert_called_once_with("python", "3.12.1", bound(Verb.IGNORE, "minor-update"))
 
-    def test_allow_level_bound_passes_filter_to_source(self):
+    def test_allow_level_bound_passes_bound_to_source(self):
         """Test that an inline `allow[minor-update]` marker passes the level bound to the source."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.13.0"))
         lines = ["image: python:3.12.1  # update-time: allow[minor-update]"]
         self.rewrite(lines, REGEXP, get_new_version)
         get_new_version.assert_called_once_with("python", "3.12.1", bound(Verb.ALLOW, "minor-update"))
 
-    def test_level_bound_marker_above_line_passes_filter(self):
+    def test_level_bound_marker_above_line_passes_bound(self):
         """Test that a standalone `ignore[major-update]` comment bounds the reference on the line below it."""
         get_new_version = Mock(return_value=DependencyVersion(version="7.4"))
         lines = ["# update-time: ignore[major-update]", "image: redis:7.2"]
@@ -328,7 +325,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that a level bound that blocks every update is warned about."""
         lines = ["image: python:3.12  # update-time: ignore[patch-update]"]
         self.rewrite(lines, REGEXP, new_version_getter("3.12"))
-        marker = Marker(version_filter=bound(Verb.IGNORE, "patch-update"))
+        marker = Marker(version_bound=bound(Verb.IGNORE, "patch-update"))
         self.logger.warn_if_redundant_bound.assert_called_once_with("python", marker, "3.12", self.path)
 
     def test_unknown_level_in_ignore_falls_back_to_bare_ignore(self):
@@ -339,7 +336,7 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version.assert_not_called()
         self.logger.ignored.assert_called_once_with("python", Marker(ignore_update=True, ignore_stale=True), self.path)
 
-    def test_bound_marker_above_line_passes_filter(self):
+    def test_bound_marker_above_line_passes_bound(self):
         """Test that a standalone `allow[update<…>]` comment bounds the reference on the line below it."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.12.9"))
         lines = ["# update-time: allow[update<3.13]", "image: python:3.12"]
@@ -476,7 +473,7 @@ class UpdateReferencesTest(unittest.TestCase):
 
     def test_redundant_bound_is_warned(self):
         """Test that a bound that never has an effect for the current version is warned about."""
-        marker = Marker(version_filter=bound(Verb.ALLOW, "update>=3.12"))
+        marker = Marker(version_bound=bound(Verb.ALLOW, "update>=3.12"))
         lines = ["image: python:3.12  # update-time: allow[update>=3.12]"]
         self.rewrite(lines, REGEXP, new_version_getter("3.12"))
         self.logger.warn_if_redundant_bound.assert_called_once_with("python", marker, "3.12", self.path)
@@ -510,7 +507,7 @@ class UpdateReferencesTest(unittest.TestCase):
 
         A mistyped `ignore[update…]` bound must be reported like any invalid item, not fall back to a bare
         `ignore` that freezes the reference with no warning. The malformed-bound-versus-unrecognised-item verdict
-        reaches the marker parser as the `InvalidSpecifier` the filter constructor raises; were it collapsed to a
+        reaches the marker parser as the `InvalidSpecifier` the bound constructor raises; were it collapsed to a
         plain not-a-bound, this reference would freeze silently.
         """
         get_new_version = Mock()

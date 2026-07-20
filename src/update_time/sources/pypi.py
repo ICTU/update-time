@@ -13,7 +13,6 @@ from update_time.domain.staleness import newest_datetime
 from update_time.domain.version import (
     DependencyName,
     DependencyVersion,
-    VersionFilter,
     VersionString,
     first_eligible,
     is_valid,
@@ -24,6 +23,8 @@ from update_time.sources.github import changes_from_release, github_owner_and_re
 
 if TYPE_CHECKING:
     from datetime import datetime
+
+    from update_time.domain.bound import VersionBound
 
 LOG = get_logger("pypi")
 
@@ -99,12 +100,12 @@ def release_datetime(urls: list[Distribution]) -> datetime | None:
 
 
 def get_latest_version(
-    package: DependencyName, current_version: VersionString, version_filter: VersionFilter
+    package: DependencyName, current_version: VersionString, version_bound: VersionBound
 ) -> DependencyVersion:
     """Return the latest stable release of the package that is available outside the cooldown window.
 
     Pre-releases, dev-releases, yanked releases, and releases still within the cooldown period are ignored, as is
-    any release the `version_filter` bound rules out. Returns the current version unchanged when it is invalid or
+    any release the `version_bound` bound rules out. Returns the current version unchanged when it is invalid or
     already the latest eligible version.
     """
     if not is_valid(current_version):
@@ -117,7 +118,7 @@ def get_latest_version(
         if version > current
         and not version.is_prerelease
         and not version.is_devrelease
-        and version_filter.keeps(version, current_version)
+        and version_bound.keeps(version, current_version)
     ]
     latest = first_eligible(candidates, lambda version: _eligible_release(package, version), current_version)
     # Always attach the newest release date so an already-up-to-date pin can still be flagged as stale. It rides on

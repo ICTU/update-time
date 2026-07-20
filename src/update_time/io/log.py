@@ -13,8 +13,9 @@ from rich.highlighter import ReprHighlighter
 from rich.logging import RichHandler
 from rich.theme import Theme
 
+from update_time.domain.bound import NO_BOUND
 from update_time.domain.staleness import is_stale, stale_after_days, staleness_days
-from update_time.domain.version import NO_BOUND, SHA256_DIGEST
+from update_time.domain.version import SHA256_DIGEST
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -293,12 +294,12 @@ class Logger:
         """Warn when the marker's version bound is redundant for the current version.
 
         The bound is redundant when it never has an effect or blocks every update (see
-        `VersionFilter.redundancy`). Does nothing when the reference has no bound (the keep-all `NO_BOUND` — the
+        `VersionBound.redundancy`). Does nothing when the reference has no bound (the keep-all `NO_BOUND` — the
         unmarked default, not a bound to report on) or the bound is live, so callers can hand off every reference
         unconditionally. The bound renders itself in its marker form (`allow[update<3.13]`, or a level-based
         `ignore[minor-update]`), so the warning shows which bound on which pin is redundant.
         """
-        if (bound := marker.version_filter) == NO_BOUND:
+        if (bound := marker.version_bound) == NO_BOUND:
             return
         if (redundancy := bound.redundancy(current_version)) is None:
             return

@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from update_time.domain.version import NO_BOUND, Verb
+from update_time.domain.bound import NO_BOUND, Verb
 from update_time.sources.oci import Tag, _registry_token, get_latest_tag, is_docker_hub_image
 
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
@@ -135,8 +135,8 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
     def test_equal_version_alias_tag_keeps_current_spelling_under_exact_bound(self):
         """Test that a bound pinning the current release exactly (`ignore[patch-update]`) adopts no alias spelling."""
         self.requests.side_effect = mock_docker_registry(docker_tag("22.15", DIGEST), docker_tag("22.15.0", DIGEST))
-        version_filter = bound(Verb.ALLOW, "update==22.15.0")
-        self.assertEqual(get_latest_tag("alias-bounded", "22.15.0", version_filter).version, "22.15.0")
+        version_bound = bound(Verb.ALLOW, "update==22.15.0")
+        self.assertEqual(get_latest_tag("alias-bounded", "22.15.0", version_bound).version, "22.15.0")
 
     def test_equal_version_alias_tag_does_not_lend_its_digest(self):
         """Test that the current spelling keeps its own digest, not a co-listed alias tag's differing digest.
@@ -165,16 +165,16 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
     def test_level_bound_anchors_to_the_current_tag(self):
         """Test that a level bound is anchored to the current tag, keeping updates within the pinned minor line."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.12.9", DIGEST1), docker_tag("3.13.0", DIGEST2))
-        version_filter = bound(Verb.IGNORE, "minor-update")
-        self.assertEqual(get_latest_tag("level-bounded", "3.12.1", version_filter).version, "3.12.9")
+        version_bound = bound(Verb.IGNORE, "minor-update")
+        self.assertEqual(get_latest_tag("level-bounded", "3.12.1", version_bound).version, "3.12.9")
 
-    def test_version_filter_bounds_candidates(self):
-        """Test that a version filter drops out-of-bound tags so a bounded tag wins over a higher one."""
+    def test_bound_narrows_candidates(self):
+        """Test that a version bound drops out-of-bound tags so a bounded tag wins over a higher one."""
         self.requests.side_effect = mock_docker_registry(
             docker_tag("2.2", DIGEST2), docker_tag("2.1", DIGEST1), docker_tag("2.3", DIGEST3)
         )
-        version_filter = bound(Verb.ALLOW, "update<2.3")
-        self.assertEqual(get_latest_tag("bounded", "1.2", version_filter).version, "2.2")
+        version_bound = bound(Verb.ALLOW, "update<2.3")
+        self.assertEqual(get_latest_tag("bounded", "1.2", version_bound).version, "2.2")
 
     def test_tag_names_paginated(self):
         """Test that the newest tag is returned even if the tag names listing is paginated."""
