@@ -54,9 +54,9 @@ def parse_args() -> argparse.Namespace:
         prog="update-time",
         description="Scan the PATH for pinned dependencies and update them to their latest versions, rewriting the "
         "pinned versions in place. Looks at pyproject.toml, requirements.txt, Python PEP 723 inline script metadata, "
-        "package.json, Dockerfiles, GitHub Actions workflows, CircleCI configs, GitLab CI configs, Docker Compose and "
-        "Helm manifests, devcontainer configs, and jsDelivr URLs. A cooldown period holds back releases that are too "
-        "fresh to trust.",
+        "package.json, Dockerfiles, GitHub Actions workflows, pre-commit configs, CircleCI configs, GitLab CI configs, "
+        "Docker Compose and Helm manifests, devcontainer configs, and jsDelivr URLs. A cooldown period holds back "
+        "releases that are too fresh to trust.",
         epilog="Update-time exits with status 0 when it ran successfully, 1 when an error prevented it from finishing, "
         "and 2 when any command-line argument was invalid, including a PATH that is not inside a git repository "
         "(unless --force is passed). Exit status does not indicate whether anything was updated. Inspect the diff or "
@@ -77,8 +77,9 @@ def parse_args() -> argparse.Namespace:
         type=days,
         default=COOLDOWN_DAYS,
         metavar="DAYS",
-        help="number of days to hold back newly published Docker image, GitHub Action, requirements.txt, npm, pnpm, "
-        "pyproject.toml, Python inline script metadata, and jsDelivr versions (default: %(default)s)",
+        help="number of days to hold back newly published Docker image, GitHub Action, pre-commit hook, "
+        "requirements.txt, npm, pnpm, pyproject.toml, Python inline script metadata, and jsDelivr versions "
+        "(default: %(default)s)",
     )
     parser.add_argument(
         "--stale-after",

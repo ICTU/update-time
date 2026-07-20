@@ -70,6 +70,7 @@ Update-time updates the following types of dependencies, found in the listed fil
 | Node engine version | `package.json` | the Node base image in the project's Dockerfile |
 | Docker (OCI) images (tag + digest) | Dockerfiles, CircleCI configs, `.gitlab-ci.yml`, Docker Compose files, Helm charts, and devcontainer configs | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) |
 | GitHub Action versions (SHA + tag) | YAML files under `.github/` | [GitHub API](https://api.github.com) (releases and tags) |
+| Pre-commit hook versions (SHA + tag) | `.pre-commit-config.yaml` | [GitHub API](https://api.github.com) (releases and tags) |
 | jsDelivr npm URLs (version + SRI hash) | Sphinx config | [npm registry](https://registry.npmjs.org) |
 
 ### Python dependencies
@@ -170,6 +171,20 @@ The actions in the `uses:` references in those files. Actions referenced by a br
 
 An action referenced by a version tag such as `@v4` or `@v4.1.1` is bumped to the latest version, and so is an action already pinned to a commit SHA with a version comment (`@<sha> # v4.1.1`). That is normally the latest GitHub release, but a version that was tagged without being published as a release counts too, so an action whose repository only tags its versions — or whose releases stopped while tagging continued — is still updated. The publication date of such a version is taken from the tagged commit. See [Pinning](#-pinning) for how an unpinned action is pinned to the commit SHA of the latest version.
 
+### Pre-commit hooks
+
+#### What files are updated?
+
+Update-time looks for `.pre-commit-config.yaml` files, recursively from the starting path. Pre-commit reads the file at the repository root, but a monorepo can carry one per sub-project, so every one found is updated.
+
+#### What dependencies are updated?
+
+The `rev:` of each hook repository hosted on GitHub. A `repo: local` or `repo: meta` entry has no `rev:` and is left untouched, as is a `rev:` that names a branch rather than a version, and a repository hosted outside GitHub.
+
+#### What versions are updated?
+
+A `rev:` given as a version tag such as `v4.5.0` is bumped to the latest version, and so is a `rev:` already pinned to a commit SHA with a `# frozen: v4.5.0` version comment. Like a GitHub Action, that is normally the latest GitHub release, but a version that was tagged without being published as a release counts too, so a hook repository that only tags its versions is still updated, with the publication date taken from the tagged commit. See [Pinning](#-pinning) for how an unpinned `rev:` is pinned to the commit SHA of the latest version.
+
 ### jsDelivr
 
 #### What files are updated?
@@ -194,6 +209,7 @@ What Update-time pins for each kind of dependency:
 
 - Docker images referenced by tag only get the `@sha256:digest` of the (latest) tag appended, so the image is reproducible. This covers base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, Docker Compose and Helm manifest images, and devcontainer base images and features. The image's registry is taken from the reference, so images on Docker Hub and on other OCI registries (`ghcr.io`, `mcr.microsoft.com`, …) are both resolved. The cooldown, however, only applies to Docker Hub, since the OCI protocol exposes no publication date.
 - GitHub Actions referenced by version tag only are pinned to the commit SHA of the latest version, with the version added as a trailing comment: `uses: actions/checkout@v4` becomes `uses: actions/checkout@<sha> # v4.1.1`.
+- Pre-commit hook `rev:`s referenced by version tag only are pinned to the commit SHA of the latest version, with the version travelling in pre-commit's own `# frozen: <version>` comment convention: `rev: v4.5.0` becomes `rev: <sha>  # frozen: v4.5.0`. This is the same format `pre-commit autoupdate --freeze` produces and understands, so the config stays interoperable with pre-commit's own tooling. The tag's `v` prefix convention is kept in the comment, so a repository that tags without a `v` gets `# frozen: 4.5.0`.
 
 ### Dependencies not pinned
 
@@ -202,6 +218,7 @@ Some types of dependencies are not pinned by Update-time:
 - Docker images without a concrete version tag are ignored: references through a `{{ ... }}` template or `${VAR}` variable substitution, and tagless base images such as `FROM scratch` or stage references.
 - CircleCI machine-executor images (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) are not pinned, since they are not registry images.
 - GitHub Actions referenced by a branch (e.g. `@main`) are left untouched because they don't resolve to a version.
+- Pre-commit hook `rev:`s that name a branch, or that are already a bare commit SHA without a `# frozen:` comment, don't resolve to a version and are left untouched, as are `repo: local`, `repo: meta`, and repositories hosted outside GitHub.
 - The Node engine version is a version constraint, not a locked dependency, so it can't be pinned.
 - The SRI hash of jsDelivr npm URLs is updated when present, but not added when not present. This is a limitation of the rewrite engine of Update-time itself.
 
@@ -215,7 +232,7 @@ To adopt the new digest instead, opt the reference in with an `# update-time: al
 
 To avoid adopting releases that are too fresh to trust, Update-time honours a cooldown period during which newly published versions are not yet picked up. It defaults to **7 days** and can be changed with the `--cooldown` option, for example `update-time --cooldown 14`. How the cooldown is applied depends on the dependency type:
 
-- **Docker images, GitHub Actions, `requirements.txt` dependencies, and jsDelivr npm URLs** — Update-time enforces the cooldown itself, based on each image tag's push date and each release's publication date. For a GitHub Action version that was tagged without a GitHub release, the tagged commit's date is used.
+- **Docker images, GitHub Actions, pre-commit hooks, `requirements.txt` dependencies, and jsDelivr npm URLs** — Update-time enforces the cooldown itself, based on each image tag's push date and each release's publication date. For a GitHub Action or pre-commit hook version that was tagged without a GitHub release, the tagged commit's date is used.
 - **npm dependencies** — Update-time passes the cooldown to `npm` via npm's `min-release-age` option (also measured in days), which npm added in 11.10.0; older npm versions ignore the option, so updates still run but without a cooldown. If your project already configures a cooldown in its `.npmrc` (`min-release-age` or `before`), Update-time leaves that in place instead of overriding it.
 - **pnpm dependencies** — Update-time passes the cooldown to `pnpm` via pnpm's `minimumReleaseAge` setting, converting the value to minutes (pnpm measures the age in minutes rather than days). If your project already configures `minimumReleaseAge` (in `pnpm-workspace.yaml`), Update-time leaves that in place instead of overriding it.
 - **`pyproject.toml` dependencies** — Update-time applies the cooldown through uv's `exclude-newer` setting, which it writes into your `pyproject.toml` under `[tool.uv]` (as a relative value such as `exclude-newer = "7 days"`, tagged with a `managed by Update-time` comment). It writes this to the workspace root, so a plain `uv sync --locked` keeps working afterwards without having to repeat the setting on the command line. Because the value lives in `[tool.uv]`, the cooldown then applies to every uv command in the project (`uv lock`, `uv add`, CI), not just to Update-time. Update-time keeps its own commented value in step with `--cooldown`, but never touches a value you set yourself: if your `pyproject.toml` already sets `exclude-newer` without the marker comment, or the `UV_EXCLUDE_NEWER` environment variable is set, Update-time leaves that in place instead. Remove the marker comment to take ownership of the line and stop Update-time from changing it.
@@ -229,7 +246,7 @@ Keeping a pin on the latest version doesn't help if that latest version is itsel
 WARNING requirements.txt: Stale dependency humanize in docs/requirements.txt: newest release 4.15.0 was published 512 days ago (> 365)
 ```
 
-The date compared against the threshold is the publication date of the dependency's *newest* release. For a GitHub Action whose newest version was tagged without being published as a release, the tagged commit's date is used instead. This way a project that has just published a release is never reported as stale, not even when that release is still within the [cooldown](#-cooldown) window. A reference held back with a bare `# update-time: ignore` (or `# update-time: ignore[stale]`) marker is not checked for staleness either. `# update-time: ignore[update]` holds back only the update, so its staleness is still reported (see [Controlling updates per reference](#-controlling-updates-per-reference)).
+The date compared against the threshold is the publication date of the dependency's *newest* release. For a GitHub Action or pre-commit hook whose newest version was tagged without being published as a release, the tagged commit's date is used instead. This way a project that has just published a release is never reported as stale, not even when that release is still within the [cooldown](#-cooldown) window. A reference held back with a bare `# update-time: ignore` (or `# update-time: ignore[stale]`) marker is not checked for staleness either. `# update-time: ignore[update]` holds back only the update, so its staleness is still reported (see [Controlling updates per reference](#-controlling-updates-per-reference)).
 
 Every kind of dependency Update-time updates is checked for staleness, except the Node engine version in `package.json`: it is derived from the project's Dockerfile rather than a registry release, so it has no publication date to compare (the Node base image it comes from is itself checked, in the Dockerfile). Two data limitations narrow the check where the date isn't available. First, `package.json` dependencies given as git, file, workspace, or alias references are skipped, since they don't resolve to a registry release. Second, image tags are only checked on Docker Hub, because the push date the check relies on isn't exposed by other registries (`ghcr.io`, `mcr.microsoft.com`, …), the same limitation as the cooldown. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
 
@@ -322,7 +339,7 @@ Any of these markers can be placed two ways:
   FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   ```
 
-This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, `devcontainer.json` files, and `requirements.txt` files. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it.
+This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, `.pre-commit-config.yaml` files, `devcontainer.json` files, and `requirements.txt` files. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it. In a `.pre-commit-config.yaml`, an inline marker follows the `# frozen:` comment on the `rev:` line when both are present.
 
 Run with `--log-level DEBUG` to confirm a marker is recognised: every recognised marker is logged, as is every update it holds back. Since the marker is case-sensitive, a typo (or wrong case) simply produces no such log and the reference is updated as usual.
 
