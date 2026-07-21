@@ -1,5 +1,6 @@
 """Unit tests for the file system module."""
 
+import re
 import unittest
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -8,13 +9,12 @@ from unittest.mock import Mock, patch
 if TYPE_CHECKING:
     from unittest.mock import _patch
 
-from update_time.io.filesystem import EXCLUDE_PATHS, glob, inside_git_repository
+from update_time.io.filesystem import EXCLUDE_PATHS, first_line_match, glob, inside_git_repository
 
-from tests.update_time.helpers import patch_environ
+from tests.update_time.helpers import patch_environ, patch_pathlib_path
 
 
-@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
-@patch("pathlib.Path.glob")
+@patch_pathlib_path("glob", cwd=Path("/"))
 class GlobTest(unittest.TestCase):
     """Unit tests for the glob function."""
 
@@ -115,6 +115,39 @@ class InsideGitRepositoryTest(unittest.TestCase):
             self.patch_git_entry(Path("/home/user/project")),
         ):
             self.assertTrue(inside_git_repository())
+
+
+class FirstLineMatchTest(unittest.TestCase):
+    """Unit tests for reading the first matching line off a file."""
+
+    PATTERN = r"FROM \S+:(?P<version>[\d.]+)"
+
+    @staticmethod
+    def file(content: str, *, exists: bool = True) -> Mock:
+        """Return a mock file with the given text content, or a missing file when exists is False."""
+        return Mock(exists=Mock(return_value=exists), read_text=Mock(return_value=content))
+
+    def test_missing_file(self):
+        """Test that a missing file yields an empty string, like a file without a matching line."""
+        self.assertEqual(first_line_match(self.file("FROM python:3.14", exists=False), self.PATTERN, "version"), "")
+
+    def test_no_matching_line(self):
+        """Test that a file with no line matching the pattern yields an empty string."""
+        self.assertEqual(first_line_match(self.file("# a comment\nRUN echo hi\n"), self.PATTERN, "version"), "")
+
+    def test_returns_named_group_of_first_match(self):
+        """Test that the named group of the first matching line is returned, not a later one."""
+        self.assertEqual(
+            first_line_match(self.file("# comment\nFROM python:3.14\nFROM node:22\n"), self.PATTERN, "version"), "3.14"
+        )
+
+    def test_anchored_at_the_start_of_the_line(self):
+        """Test that the pattern is anchored at the start of the line (re.match), so a mid-line match is not found."""
+        self.assertEqual(first_line_match(self.file("COPY --from=python:3.14 /x /x\n"), self.PATTERN, "version"), "")
+
+    def test_accepts_a_compiled_pattern(self):
+        """Test that a pre-compiled pattern works the same as a string pattern."""
+        self.assertEqual(first_line_match(self.file("FROM python:3.14\n"), re.compile(self.PATTERN), "version"), "3.14")
 
 
 class ExcludedPathsTest(unittest.TestCase):

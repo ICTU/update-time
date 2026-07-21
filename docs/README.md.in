@@ -68,6 +68,7 @@ Update-time updates the following types of dependencies, found in the listed fil
 | Python dependencies | `pyproject.toml`, `requirements.txt`, and PEP 723 inline script metadata (`# /// script` blocks in `*.py` files) | [PyPI](https://pypi.org) |
 | npm and pnpm dependencies | `package.json` (and their lock files) | [npm registry](https://registry.npmjs.org) |
 | Node engine version | `package.json` | the Node base image in the project's Dockerfile, or the latest [Node](https://hub.docker.com/_/node) release on Docker Hub |
+| Python version | `.python-version` | the Python base image in the project's Dockerfile, or the latest [Python](https://hub.docker.com/_/python) release on Docker Hub |
 | Docker (OCI) images (tag + digest) | Dockerfiles, CircleCI configs, `.gitlab-ci.yml`, Docker Compose files, Helm charts, and devcontainer configs | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) |
 | GitHub Action versions (SHA + tag) | YAML files under `.github/` | [GitHub API](https://api.github.com) (releases and tags) |
 | Pre-commit hook versions (SHA + tag) | `.pre-commit-config.yaml` | [GitHub API](https://api.github.com) (releases and tags) |
@@ -122,6 +123,22 @@ The Node engine version in the `package.json`.
 The Node engine version is updated only when it contains a specific version (for example, `26.4`); a range or other non-numeric value is left untouched.
 
 The new version is taken from the Node base image in the project's Dockerfile, so the engine and the image stay in step, provided there is a Dockerfile in the same folder, it has a Node base image, and that image has a numeric version number. When no Dockerfile declares a numeric Node base image, the engine is instead updated to the latest [Node](https://hub.docker.com/_/node) release on Docker Hub, honouring the [cooldown](#-cooldown). A Node base image pinned to a non-numeric tag such as `node:lts` is the exception: it is left alone rather than overridden with a mismatched concrete version.
+
+### Python version
+
+#### What files are updated?
+
+Update-time looks for `.python-version` files recursively from the starting path, so both a repository that pins its Python version at the root and a monorepo that pins one per package are covered. `.python-version` is the de facto standard for pinning a project's Python version, read by uv, pyenv, and GitHub's `setup-python` action, among others.
+
+#### What dependencies are updated?
+
+Each entry that is a plain CPython version, `X.Y` or `X.Y.Z` (for example `3.12` or `3.12.6`), on a line of its own. A file may list several entries, one per line (pyenv reads more than one), each handled independently. Alternative implementations (`pypy3.10-7.3.12`, `miniconda3-…`), free-threaded and other variant suffixes (`3.13t`), prefixed forms (`cpython@3.12`, `>=3.10`), and the `system` sentinel are left untouched.
+
+#### What versions are updated?
+
+An entry is moved forward and pinned to a fuller version. Like the Node engine version, the new version is taken from the Python base image in the project's Dockerfile, so the development and production runtimes stay in step, provided there is a Dockerfile in the same folder with a `FROM python:<version>` base image that has a numeric version. The entry then adopts that image's version at the precision the tag provides, so `python:3.14.2-slim` yields `3.14.2` and a bare `python:3.14` yields `3.14`; an entry already ahead of the image is left alone rather than downgraded. When no Dockerfile declares a numeric Python base image, the entry is instead updated to the latest [Python](https://hub.docker.com/_/python) release on Docker Hub, honouring the [cooldown](#-cooldown), which pins even a less precise entry to the full version, so `3.12.6` — and `3.12` — become `3.13.2` (or whatever the latest is).
+
+Other Python version pins are left untouched: the `requires-python` value in `pyproject.toml` and in PEP 723 inline script metadata is not a `.python-version` entry and stays as it is.
 
 ### Docker images
 
@@ -208,6 +225,7 @@ What Update-time pins for each kind of dependency:
 - Docker images referenced by tag only get the `@sha256:digest` of the (latest) tag appended, so the image is reproducible. This covers base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, Docker Compose and Helm manifest images, and devcontainer base images and features. The image's registry is taken from the reference, so images on Docker Hub and on other OCI registries (`ghcr.io`, `mcr.microsoft.com`, …) are both resolved. The cooldown, however, only applies to Docker Hub, since the OCI protocol exposes no publication date.
 - GitHub Actions referenced by version tag only are pinned to the commit SHA of the latest version, with the version added as a trailing comment: `uses: actions/checkout@v4` becomes `uses: actions/checkout@<sha> # v4.1.1`.
 - Pre-commit hook `rev:`s referenced by version tag only are pinned to the commit SHA of the latest version, with the version travelling in pre-commit's own `# frozen: <version>` comment convention: `rev: v4.5.0` becomes `rev: <sha>  # frozen: v4.5.0`. This is the same format `pre-commit autoupdate --freeze` produces and understands, so the config stays interoperable with pre-commit's own tooling. The tag's `v` prefix convention is kept in the comment, so a repository that tags without a `v` gets `# frozen: 4.5.0`.
+- A `.python-version` entry has no digest or commit SHA to add, so its pinning is writing a fuller version: when the version comes from Docker Hub a less precise `3.12` is pinned to the full `3.13.2`, while in the Dockerfile tier it adopts the image tag's precision instead (see [Python version](#python-version)).
 
 ### Dependencies not pinned
 
@@ -230,7 +248,7 @@ To adopt the new digest instead, opt the reference in with an `# update-time: al
 
 To avoid adopting releases that are too fresh to trust, Update-time honours a cooldown period during which newly published versions are not yet picked up. It defaults to **7 days** and can be changed with the `--cooldown` option, for example `update-time --cooldown 14`. How the cooldown is applied depends on the dependency type:
 
-- **Docker images, GitHub Actions, pre-commit hooks, `requirements.txt` dependencies, and jsDelivr npm URLs** — Update-time enforces the cooldown itself, based on each image tag's push date and each release's publication date. For a GitHub Action or pre-commit hook version that was tagged without a GitHub release, the tagged commit's date is used.
+- **Docker images, GitHub Actions, pre-commit hooks, `requirements.txt` dependencies, jsDelivr npm URLs, and `.python-version` files** — Update-time enforces the cooldown itself, based on each image tag's push date and each release's publication date. For a GitHub Action or pre-commit hook version that was tagged without a GitHub release, the tagged commit's date is used. A `.python-version` entry updated from Docker Hub honours the cooldown through the Python image tag's push date; when it instead follows a Dockerfile, the cooldown was already applied when the image was updated.
 - **npm dependencies** — Update-time passes the cooldown to `npm` via npm's `min-release-age` option (also measured in days), which npm added in 11.10.0; older npm versions ignore the option, so updates still run but without a cooldown. If your project already configures a cooldown in its `.npmrc` (`min-release-age` or `before`), Update-time leaves that in place instead of overriding it.
 - **pnpm dependencies** — Update-time passes the cooldown to `pnpm` via pnpm's `minimumReleaseAge` setting, converting the value to minutes (pnpm measures the age in minutes rather than days). If your project already configures `minimumReleaseAge` (in `pnpm-workspace.yaml`), Update-time leaves that in place instead of overriding it.
 - **`pyproject.toml` dependencies** — Update-time applies the cooldown through uv's `exclude-newer` setting, which it writes into your `pyproject.toml` under `[tool.uv]` (as a relative value such as `exclude-newer = "7 days"`, tagged with a `managed by Update-time` comment). It writes this to the workspace root, so a plain `uv sync --locked` keeps working afterwards without having to repeat the setting on the command line. Because the value lives in `[tool.uv]`, the cooldown then applies to every uv command in the project (`uv lock`, `uv add`, CI), not just to Update-time. Update-time keeps its own commented value in step with `--cooldown`, but never touches a value you set yourself: if your `pyproject.toml` already sets `exclude-newer` without the marker comment, or the `UV_EXCLUDE_NEWER` environment variable is set, Update-time leaves that in place instead. Remove the marker comment to take ownership of the line and stop Update-time from changing it.
@@ -246,7 +264,7 @@ WARNING requirements.txt: Stale dependency humanize in docs/requirements.txt: ne
 
 The date compared against the threshold is the publication date of the dependency's *newest* release. For a GitHub Action or pre-commit hook whose newest version was tagged without being published as a release, the tagged commit's date is used instead. This way a project that has just published a release is never reported as stale, not even when that release is still within the [cooldown](#-cooldown) window. A reference held back with a bare `# update-time: ignore` (or `# update-time: ignore[stale]`) marker is not checked for staleness either. `# update-time: ignore[update]` holds back only the update, so its staleness is still reported (see [Controlling updates per reference](#-controlling-updates-per-reference)).
 
-Every kind of dependency Update-time updates is checked for staleness. The one indirect case is the Node engine version in `package.json`: when it is derived from the project's Dockerfile, only the staleness of the base image is reported. Two data limitations narrow the check where the date isn't available. First, `package.json` dependencies given as git, file, workspace, or alias references are skipped, since they don't resolve to a registry release. Second, image tags are only checked on Docker Hub, because the push date the check relies on isn't exposed by other registries (`ghcr.io`, `mcr.microsoft.com`, …), the same limitation as the cooldown. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
+Every kind of dependency Update-time updates is checked for staleness. Two indirect cases are the Node engine version in `package.json` and the Python version in `.python-version`: when either is derived from the project's Dockerfile, only the staleness of the base image is reported, while a `.python-version` entry that follows Docker Hub is checked against the Python image tag's push date. Two data limitations narrow the check where the date isn't available. First, `package.json` dependencies given as git, file, workspace, or alias references are skipped, since they don't resolve to a registry release. Second, image tags are only checked on Docker Hub, because the push date the check relies on isn't exposed by other registries (`ghcr.io`, `mcr.microsoft.com`, …), the same limitation as the cooldown. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
 
 ## 🎛️ Controlling updates per reference
 
@@ -316,7 +334,7 @@ Update-time logs a `WARNING` when a bound is redundant. That may happen in two w
 
 Any of these markers can be placed two ways:
 
-- **Inline**, on the reference's own line (in YAML files, `requirements.txt`, and `devcontainer.json`):
+- **Inline**, on the reference's own line (in YAML files, `requirements.txt`, `devcontainer.json`, and `.python-version` files):
 
   ```yaml
   image: python:3.12  # update-time: ignore
@@ -337,7 +355,7 @@ Any of these markers can be placed two ways:
   FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   ```
 
-This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, `.pre-commit-config.yaml` files, `devcontainer.json` files, and `requirements.txt` files. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it. In a `.pre-commit-config.yaml`, an inline marker follows the `# frozen:` comment on the `rev:` line when both are present.
+This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, `.pre-commit-config.yaml` files, `devcontainer.json` files, `requirements.txt` files, and `.python-version` files. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it. In a `.pre-commit-config.yaml`, an inline marker follows the `# frozen:` comment on the `rev:` line when both are present. In a `.python-version` file both forms are recognised, but uv rejects an inline comment on a `.python-version` line (it then ignores the entry and silently resolves a different Python), so the line-above form is the safer placement for a uv project; either way the marker wins over a version derived from the Dockerfile, so a deliberately held-back development version is never dragged forward by an image update.
 
 Run with `--log-level DEBUG` to confirm a marker is recognised: every recognised marker is logged, as is every update it holds back. Since the marker is case-sensitive, a typo (or wrong case) simply produces no such log and the reference is updated as usual.
 

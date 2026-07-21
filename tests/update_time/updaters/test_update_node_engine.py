@@ -7,12 +7,17 @@ from update_time.io.log import Logger
 from update_time.updaters.update_node_engine import update_node_engines
 
 from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import LoggingTestCase, docker_tag, mock_docker_hub_auth, mock_path
+from tests.update_time.helpers import (
+    LoggingTestCase,
+    docker_tag,
+    mock_docker_hub_auth,
+    mock_path,
+    patch_pathlib_path,
+)
 from tests.update_time.registry import mock_docker_registry
 
 
-@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
-@patch("pathlib.Path.rglob")
+@patch_pathlib_path("rglob", cwd=Path("/"))
 class UpdateNodeEnginesTest(LoggingTestCase):
     """Unit tests for the update Node engines function."""
 
@@ -20,8 +25,7 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         """Create a mock package.json file."""
         return mock_path(contents, parent=Path("/"))
 
-    @patch("pathlib.Path.exists", Mock(return_value=True))
-    @patch("pathlib.Path.read_text", Mock(return_value="FROM node:18"))
+    @patch_pathlib_path(exists=True, read_text="FROM node:18")
     def test_unchanged(self, mock_glob: Mock):
         """Test that the package.json is not written if there is no new Node version."""
         mock_package_json = self.create_package_json()
@@ -32,8 +36,7 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    @patch("pathlib.Path.exists", Mock(return_value=True))
-    @patch("pathlib.Path.read_text", Mock(return_value="FROM node:19"))
+    @patch_pathlib_path(exists=True, read_text="FROM node:19")
     def test_update(self, mock_glob: Mock):
         """Test that the package.json is updated if there is a new Node version."""
         mock_package_json = self.create_package_json()
@@ -44,20 +47,7 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         self.assert_new_version_logged(mock_package_json, "node", "19")
         self.assert_no_warnings_logged()
 
-    @patch("pathlib.Path.exists", Mock(return_value=True))
-    @patch("pathlib.Path.read_text", Mock(return_value="# syntax=docker/dockerfile:1\nARG TAG=19\nFROM node:19\n"))
-    def test_node_base_image_not_on_first_line(self, mock_glob: Mock):
-        """Test that the Node base image is found even when it is not on the first line of the Dockerfile."""
-        mock_package_json = self.create_package_json()
-        mock_glob.return_value = [mock_package_json]
-        update_node_engines()
-        mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "19" }}\n')
-        self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged(mock_package_json, "node", "19")
-        self.assert_no_warnings_logged()
-
-    @patch("pathlib.Path.exists", Mock(return_value=True))
-    @patch("pathlib.Path.read_text", Mock(return_value="FROM node:lts AS base"))
+    @patch_pathlib_path(exists=True, read_text="FROM node:lts AS base")
     def test_non_numeric_node_base_image(self, mock_glob: Mock):
         """Test that a non-numeric Node base image tag (e.g. node:lts) is skipped with a warning, not an error."""
         mock_package_json = self.create_package_json()
@@ -92,18 +82,17 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         self.assert_new_version_logged(mock_package_json, "node", "20")
         self.assert_no_warnings_logged()
 
-    @patch("pathlib.Path.exists", Mock(return_value=False))
+    @patch_pathlib_path(exists=False)
     def test_no_dockerfile(self, mock_glob: Mock):
         """Test that the engine falls back to the latest Node release when there is no Dockerfile to derive it from."""
         self.assert_falls_back_to_latest_node(mock_glob)
 
-    @patch("pathlib.Path.exists", Mock(return_value=True))
-    @patch("pathlib.Path.read_text", Mock(return_value="FROM python:3.14"))
+    @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
     def test_no_node_base_image(self, mock_glob: Mock):
         """Test that the engine falls back to the latest Node release when no Dockerfile has a Node base image."""
         self.assert_falls_back_to_latest_node(mock_glob)
 
-    @patch("pathlib.Path.exists", Mock(return_value=False))
+    @patch_pathlib_path(exists=False)
     def test_fallback_dockerfile(self, mock_glob: Mock):
         """Test that a Node base image elsewhere in the repo is used when the package.json has no local Dockerfile."""
         mock_package_json = self.create_package_json()
@@ -121,7 +110,7 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         self.assert_new_version_logged(mock_package_json, "node", "20")
         self.assert_no_warnings_logged()
 
-    @patch("pathlib.Path.exists", Mock(return_value=False))
+    @patch_pathlib_path(exists=False)
     def test_numeric_dockerfile_preferred_over_non_numeric(self, mock_glob: Mock):
         """Test that a Dockerfile with a numeric Node tag wins over one with a non-numeric tag (e.g. node:lts)."""
         mock_package_json = self.create_package_json()

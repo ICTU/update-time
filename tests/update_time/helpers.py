@@ -4,7 +4,7 @@ import importlib
 import pkgutil
 import unittest
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar, cast
 from unittest.mock import ANY, Mock, patch
 
 import update_time
@@ -27,9 +27,12 @@ from update_time.sources.pypi import project_metadata as pypi_project_metadata
 from update_time.sources.pypi import release_metadata as pypi_release_metadata
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
     from pathlib import Path
     from unittest.mock import _patch, _patch_dict
+
+# A test method or class a patch decorator is applied to and returns unchanged (see `patch_pathlib_path`).
+_Decorated = TypeVar("_Decorated", bound="Callable[..., object]")
 
 
 @cache
@@ -256,6 +259,25 @@ def patch_environ(environment_variables: dict[str, str] | None = None, *, clear:
     """
     clear = not environment_variables if clear is None else clear
     return patch.dict("os.environ", environment_variables or {}, clear=clear)
+
+
+def patch_pathlib_path(*methods: str, **methods_and_return_values: object) -> Callable[[_Decorated], _Decorated]:
+    """Patch one or more pathlib.Path methods, each to return the given value, for the test's duration.
+
+    Usable as a decorator on a test method or class (like `unittest.mock.patch`, by stacking one patch per method);
+    it adds no mock argument. Each keyword names a pathlib.Path method and gives the value it should return, so
+    several can be patched at once, for example `@patch_pathlib_path(exists=True, read_text="file contents")`.
+    """
+
+    def decorate(target: _Decorated) -> _Decorated:
+        decorated: Callable[..., object] = target
+        for method in methods:
+            decorated = patch(f"pathlib.Path.{method}")(decorated)
+        for method, return_value in methods_and_return_values.items():
+            decorated = patch(f"pathlib.Path.{method}", Mock(return_value=return_value))(decorated)
+        return cast("_Decorated", decorated)
+
+    return decorate
 
 
 # Reusable decorator that disables the staleness check, for update tests that focus on the update flow and would

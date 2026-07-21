@@ -54,8 +54,8 @@ def update_github_actions(github_dir: Path) -> None:
         # Rewrite per line (keeping line endings) so an `# update-time:` marker can hold back or bound a single
         # `uses:`; the marker reaches `_update_action` through the per-line substitution. Actions pin a commit SHA,
         # not an image digest, so the marker's `allow_drift` opt-in does not apply here.
-        def update_line(line: str, marker: Marker, path: Path = yaml_file) -> str:
-            return ACTION_RE.sub(partial(_update_action, path=path, marker=marker), line)
+        def update_line(match: re.Match[str], marker: Marker, path: Path = yaml_file) -> str:
+            return ACTION_RE.sub(partial(_update_action, path=path, marker=marker), match.string)
 
         new_lines = updated_lines(old_content.splitlines(keepends=True), ACTION_RE, update_line, LOG, yaml_file)
         new_content = "".join(new_lines)

@@ -12,6 +12,8 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.io.cli import parse_args
 from update_time.io.log import LOG_LEVEL
 
+from tests.update_time.helpers import patch_pathlib_path
+
 if TYPE_CHECKING:
     import argparse
 
@@ -80,12 +82,12 @@ class CommandLineInterfaceTest(unittest.TestCase):
         """Test that the path defaults to the current directory."""
         self.assertEqual(Path(), self.parsed().path)
 
-    @patch("pathlib.Path.is_dir", Mock(return_value=True))
+    @patch_pathlib_path(is_dir=True)
     def test_path(self):
         """Test that a positional path argument is parsed as a directory."""
         self.assertEqual(Path("some-directory"), self.parsed("some-directory").path)
 
-    @patch("pathlib.Path.is_dir", Mock(return_value=False))
+    @patch_pathlib_path(is_dir=False)
     def test_path_that_is_not_a_directory(self):
         """Test that a path that is not an existing directory is rejected with a user-facing message."""
         self.assert_rejected(["no-such-directory"], "no-such-directory is not an existing directory")
@@ -98,13 +100,13 @@ class CommandLineInterfaceTest(unittest.TestCase):
         """Test that --force turns on forcing the run outside a git repository."""
         self.assertTrue(self.parsed("--force").force)
 
-    @patch("pathlib.Path.is_dir", Mock(return_value=True))
+    @patch_pathlib_path(is_dir=True)
     @patch("update_time.io.cli.inside_git_repository", Mock(return_value=False))
     def test_path_not_in_git_repository_is_rejected(self):
         """Test that a PATH that is not inside a git repository is rejected like any other invalid argument."""
         self.assert_rejected(["some-directory"], "some-directory is not inside a git repository")
 
-    @patch("pathlib.Path.is_dir", Mock(return_value=True))
+    @patch_pathlib_path(is_dir=True)
     @patch("update_time.io.cli.inside_git_repository", Mock(return_value=False))
     def test_force_allows_a_path_not_in_a_git_repository(self):
         """Test that --force lets a PATH that is not inside a git repository through instead of rejecting it."""

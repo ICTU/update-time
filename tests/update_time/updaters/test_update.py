@@ -4,7 +4,7 @@ import os
 import unittest
 from pathlib import Path
 from typing import cast
-from unittest.mock import Mock, call, patch
+from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.filesystem import EXCLUDE_PATHS
@@ -12,7 +12,7 @@ from update_time.io.log import LOG_LEVEL
 from update_time.references.rewrite import ALLOW_IMAGE_DIGEST_DRIFT
 from update_time.updaters.update import PARALLEL_SCRIPTS, SEQUENTIAL_SCRIPTS, main, run_script, update_dependencies
 
-from tests.update_time.helpers import patch_environ
+from tests.update_time.helpers import patch_environ, patch_pathlib_path
 
 
 @patch("subprocess.run")
@@ -41,13 +41,11 @@ class UpdateDependenciesTest(unittest.TestCase):
         self.assertEqual([f"update_{name}.py" for name in SEQUENTIAL_SCRIPTS], scripts_run[-len(SEQUENTIAL_SCRIPTS) :])
 
     def test_sequential_scripts_run_in_order(self, mock_run: Mock):
-        """Test that the sequential scripts run after the parallel ones, node_engine before package_json."""
+        """Test that node_engine runs before package_json (they share the package.json they both rewrite)."""
         mock_run.return_value = Mock(returncode=0)
         update_dependencies()
-        self.assertEqual(
-            [call("update_node_engine.py"), call("update_package_json.py")],
-            [call(run_call.args[0][-1].split("/")[-1]) for run_call in mock_run.call_args_list[-2:]],
-        )
+        scripts_run = [run_call.args[0][-1].split("/")[-1] for run_call in mock_run.call_args_list]
+        self.assertLess(scripts_run.index("update_node_engine.py"), scripts_run.index("update_package_json.py"))
 
     def test_highest_exit_code_is_returned(self, mock_run: Mock):
         """Test that the highest exit code of all scripts is returned."""
@@ -117,7 +115,7 @@ class UpdateMainTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(environment[ALLOW_IMAGE_DIGEST_DRIFT.name], "1")
 
-    @patch("pathlib.Path.exists", Mock(return_value=True))
+    @patch_pathlib_path(exists=True)
     def test_main_passes_excluded_paths_to_subprocesses(self, mock_run: Mock):
         """Test that main exports the excluded paths in the environment so the updater subprocesses inherit them."""
         exit_code, environment = self.run_main(mock_run, "--exclude-path", "vendor,packages/legacy")
@@ -142,7 +140,7 @@ class UpdateMainTest(unittest.TestCase):
         self.assertEqual(environment[EXCLUDE_PATHS.name], "vendor")
         mock_logger.missing_excluded_path.assert_called_once_with(Path("missing"))
 
-    @patch("pathlib.Path.exists", Mock(return_value=True))
+    @patch_pathlib_path(exists=True)
     def test_main_logs_existing_excluded_path(self, mock_run: Mock):
         """Test that main logs an existing excluded path once at DEBUG."""
         mock_logger = Mock()
@@ -151,7 +149,7 @@ class UpdateMainTest(unittest.TestCase):
         mock_logger.excluded_path.assert_called_once_with(Path("vendor"))
         mock_logger.missing_excluded_path.assert_not_called()
 
-    @patch("pathlib.Path.exists", Mock(return_value=False))
+    @patch_pathlib_path(exists=False)
     def test_main_warns_about_missing_excluded_path(self, mock_run: Mock):
         """Test that main warns about a non-existing excluded path instead of failing the run."""
         mock_logger = Mock()
@@ -166,7 +164,7 @@ class UpdateMainTest(unittest.TestCase):
             self.run_main(mock_run)
         mock_chdir.assert_called_once_with(Path())
 
-    @patch("pathlib.Path.is_dir", Mock(return_value=True))
+    @patch_pathlib_path(is_dir=True)
     def test_main_changes_to_the_given_directory(self, mock_run: Mock):
         """Test that main changes to the given path before spawning the updater subprocesses."""
         with patch("os.chdir") as mock_chdir:
