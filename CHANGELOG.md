@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 - Update the hook versions pinned in `.pre-commit-config.yaml` files: bump each GitHub-hosted hook's `rev:` to its latest version, pin an unpinned tag to a commit SHA using pre-commit's own `# frozen:` comment convention, and apply the cooldown and staleness check like any other dependency. Closes [#144](https://github.com/ICTU/update-time/issues/144).
 
+### Changed
+
+- Update the Node engine to the latest [Node](https://hub.docker.com/_/node) release on Docker Hub when no Dockerfile declares a numeric Node base image to derive it from, instead of logging an error. Part of [#156](https://github.com/ICTU/update-time/issues/156).
+
 ### Fixed
 
 - Echo `# update-time:` markers back to the user exactly as written in the file — the whole marker, its `ignore` directive when an update is held back, and its `allow` directives when digest drift is adopted — so the log lines match what the user typed. Closes [#153](https://github.com/ICTU/update-time/issues/153).

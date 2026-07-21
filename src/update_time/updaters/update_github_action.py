@@ -7,7 +7,6 @@ If an environment variable GITHUB_TOKEN is set, the script will use it to increa
 """
 
 import re
-import sys
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -46,7 +45,7 @@ def _update_action(match: re.Match[str], path: Path, marker: Marker) -> str:
     return f"uses: {dependency}@{latest.sha} # v{latest.version}"
 
 
-def update_github_actions(github_dir: Path) -> int:
+def update_github_actions(github_dir: Path) -> None:
     """Update the GitHub Actions in all YAML files under the GitHub directory, including composite actions."""
     for yaml_file in glob(*YAML_GLOB_PATTERNS, start=github_dir):
         LOG.path(yaml_file)
@@ -62,13 +61,12 @@ def update_github_actions(github_dir: Path) -> int:
         new_content = "".join(new_lines)
         if new_content != old_content:
             yaml_file.write_text(new_content)
-    return 0
 
 
-def main() -> int:  # pragma: no cover
+def main() -> None:  # pragma: no cover
     """Update the GitHub Actions in the repository's workflows."""
-    return update_github_actions(Path.cwd() / ".github")
+    update_github_actions(Path.cwd() / ".github")
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    main()

@@ -7,9 +7,6 @@ from unittest.mock import MagicMock, Mock, patch
 
 from update_time.updaters.update_requirements_txt import REQUIREMENTS_GLOB_PATTERNS, update_requirements_txts
 
-from tests.update_time.assertions import (
-    assert_success,
-)
 from tests.update_time.helpers import (
     PYPI_OLD_UPLOAD,
     LoggingTestCase,
@@ -56,7 +53,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt = self.requirements_file("flask==1.0\n")
         mock_rglob.return_value = [requirements_txt]
         mock_get.side_effect = self.pypi("1.0")
-        assert_success(update_requirements_txts())
+        update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
         self.assert_path_logged(requirements_txt)
         self.assert_no_new_version_logged()
@@ -67,7 +64,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt = self.requirements_file("humanize==4.15.0\n")
         mock_rglob.return_value = [requirements_txt]
         mock_get.side_effect = self.stale_pypi("4.15.0")  # No newer version; newest release is old.
-        assert_success(update_requirements_txts())
+        update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
         self.assert_stale_dependency_logged(requirements_txt, "humanize", "4.15.0")
 
@@ -77,7 +74,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_rglob.return_value = [requirements_txt]
         recent = datetime.now(UTC).isoformat()
         mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=recent)
-        assert_success(update_requirements_txts())
+        update_requirements_txts()
         self.assert_no_warnings_logged()
 
     def test_staleness_disabled(self, mock_rglob: Mock, mock_get: Mock):
@@ -86,7 +83,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_rglob.return_value = [requirements_txt]
         mock_get.side_effect = self.stale_pypi("4.15.0")
         with staleness_disabled:
-            assert_success(update_requirements_txts())
+            update_requirements_txts()
         self.assert_no_warnings_logged()
 
     def test_change(self, mock_rglob: Mock, mock_get: Mock):
@@ -94,7 +91,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt = self.requirements_file("flask==1.0\n")
         mock_rglob.return_value = [requirements_txt]
         mock_get.side_effect = self.pypi("1.0", "1.1", bump=True)
-        assert_success(update_requirements_txts())
+        update_requirements_txts()
         requirements_txt.write_text.assert_called_once_with("flask==1.1\n")
         self.assert_path_logged(requirements_txt)
         self.assert_new_version_logged(requirements_txt, "flask", PUBLISHED)
@@ -105,7 +102,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt = self.requirements_file('flask[async]==1.0 ; python_version < "3.12"  # keep\n')
         mock_rglob.return_value = [requirements_txt]
         mock_get.side_effect = self.pypi("1.0", "1.1", bump=True)
-        assert_success(update_requirements_txts())
+        update_requirements_txts()
         requirements_txt.write_text.assert_called_once_with('flask[async]==1.1 ; python_version < "3.12"  # keep\n')
         self.assert_path_logged(requirements_txt)
         self.assert_new_version_logged(requirements_txt, "flask", PUBLISHED)
@@ -116,7 +113,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt = self.requirements_file("certifi == 2020.4.5.1          # used by requests\n")
         mock_rglob.return_value = [requirements_txt]
         mock_get.side_effect = self.pypi("2020.4.5.1", "2020.4.5.2", bump=True)
-        assert_success(update_requirements_txts())
+        update_requirements_txts()
         requirements_txt.write_text.assert_called_once_with("certifi == 2020.4.5.2          # used by requests\n")
         self.assert_path_logged(requirements_txt)
         self.assert_new_version_logged(requirements_txt, "certifi", "2020.4.5.2, published: 2020-01-01 00:00")
@@ -129,7 +126,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         )
         requirements_txt = self.requirements_file(contents)
         mock_rglob.return_value = [requirements_txt]
-        assert_success(update_requirements_txts())
+        update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
         mock_get.assert_not_called()
         self.assert_path_logged(requirements_txt)
@@ -142,7 +139,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_rglob.return_value = [requirements_txt]
         recent = datetime.now(UTC).isoformat()
         mock_get.side_effect = self.pypi("1.0", "1.1", bump=True, upload_time=recent)
-        assert_success(update_requirements_txts())
+        update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
         self.assert_path_logged(requirements_txt)
         self.assert_no_new_version_logged()
@@ -152,7 +149,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that a hash-pinned (fully locked) requirements file is skipped entirely."""
         requirements_txt = self.requirements_file("flask==1.0 \\\n    --hash=sha256:abc\n")
         mock_rglob.return_value = [requirements_txt]
-        assert_success(update_requirements_txts())
+        update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
         mock_get.assert_not_called()
         self.assert_skipped_logged(requirements_txt, "compiled or hash-pinned requirements file")
@@ -164,7 +161,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that a pip-compile/uv generated requirements file is skipped entirely."""
         requirements_txt = self.requirements_file("# This file is autogenerated by pip-compile\nflask==1.0\n")
         mock_rglob.return_value = [requirements_txt]
-        assert_success(update_requirements_txts())
+        update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
         mock_get.assert_not_called()
         self.assert_skipped_logged(requirements_txt, "compiled or hash-pinned requirements file")
@@ -176,7 +173,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that a requirements file with a sibling .in source is skipped entirely."""
         requirements_txt = self.requirements_file("flask==1.0\n", sibling_in=True)
         mock_rglob.return_value = [requirements_txt]
-        assert_success(update_requirements_txts())
+        update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
         mock_get.assert_not_called()
         self.assert_skipped_logged(requirements_txt, "compiled or hash-pinned requirements file")

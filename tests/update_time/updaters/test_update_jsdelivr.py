@@ -8,7 +8,6 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
 from update_time.updaters.update_jsdelivr import update_jsdelivr, update_jsdelivrs
 
-from tests.update_time.assertions import assert_success
 from tests.update_time.fixtures import HASH1, HASH2
 from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, mock_path, mock_response, npm_registry
 
@@ -109,7 +108,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         ]
         mock_conf = mock_path(CONF)
         mock_glob.return_value = [mock_conf]
-        assert_success(update_jsdelivrs())
+        update_jsdelivrs()
         written = mock_conf.write_text.call_args.args[0]
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", written)
         self.assertIn(f'"integrity": "sha256-{HASH2}"', written)
@@ -122,7 +121,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         mock_get.side_effect = [jsdelivr_versions("2.0.11"), npm_registry({"2.0.11": ELIGIBLE})]
         mock_conf = mock_path(CONF)
         mock_glob.return_value = [mock_conf]
-        assert_success(update_jsdelivrs())
+        update_jsdelivrs()
         mock_conf.write_text.assert_not_called()
         self.assert_path_logged(mock_conf)
         self.assert_no_new_version_logged()

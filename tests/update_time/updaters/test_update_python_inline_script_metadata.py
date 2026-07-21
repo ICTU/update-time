@@ -7,7 +7,6 @@ from unittest.mock import Mock, patch
 
 from update_time.updaters.update_python_inline_script_metadata import update_python_inline_script_metadatas
 
-from tests.update_time.assertions import assert_success
 from tests.update_time.helpers import LoggingTestCase, mock_path, mock_response, pypi_index, staleness_disabled
 
 if TYPE_CHECKING:
@@ -74,7 +73,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         )
         mock_script = self.create_script(script("package==1.0"))
         glob.return_value = [mock_script]
-        assert_success(update_python_inline_script_metadatas())
+        update_python_inline_script_metadatas()
         mock_script.write_text.assert_called_with(script("package==1.1"))
         self.assert_new_version_logged(mock_script, "package", "1.1, published: 2026-05-30 12:08")
         self.assert_no_warnings_logged()
@@ -88,7 +87,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         ]
         mock_script = self.create_script(script("package_with_changelog==1.0"))
         glob.return_value = [mock_script]
-        assert_success(update_python_inline_script_metadatas())
+        update_python_inline_script_metadatas()
         mock_script.write_text.assert_called_with(script("package_with_changelog==1.1"))
         self.assert_new_version_logged(
             mock_script, "package_with_changelog", "1.1, published: 2026-05-30 12:07", self.changelog
@@ -99,7 +98,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         """Test that uv is run against the script with `--depth=0` and the cooldown as an `--exclude-newer` cutoff."""
         run.return_value = self.mock_update_on_stdout("package")
         glob.return_value = [self.create_script(script("package==1.0"))]
-        assert_success(update_python_inline_script_metadatas())
+        update_python_inline_script_metadatas()
         get.assert_not_called()  # nothing outdated, so no changelog is fetched
         command = self.uv_commands(run)[0]
         self.assertEqual(command[:3], ["uv", "tree", "--script"])
@@ -113,7 +112,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         get.return_value = mock_response({"info": {"description": "Package"}, "urls": []})
         mock_script = self.create_script(script("package==1.0", "other==2.0", requires_python=">=3.14"))
         glob.return_value = [mock_script]
-        assert_success(update_python_inline_script_metadatas())
+        update_python_inline_script_metadatas()
         # `other` is not reported outdated, and `requires-python` and the comment prefixes/trailing commas are kept.
         mock_script.write_text.assert_called_with(script("package==1.1", "other==2.0", requires_python=">=3.14"))
 
@@ -122,7 +121,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         run.return_value = self.mock_update_on_stdout("package")
         mock_script = self.create_script(script("package==1.0"))
         glob.return_value = [mock_script]
-        assert_success(update_python_inline_script_metadatas())
+        update_python_inline_script_metadatas()
         mock_script.write_text.assert_not_called()
         get.assert_not_called()
         self.assert_no_new_version_logged()
@@ -132,7 +131,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         """Test that a .py file without a `# /// script` block is left untouched and does not invoke uv."""
         mock_script = self.create_script("import os\n\nprint(os.getcwd())\n")
         glob.return_value = [mock_script]
-        assert_success(update_python_inline_script_metadatas())
+        update_python_inline_script_metadatas()
         run.assert_not_called()
         get.assert_not_called()
         mock_script.write_text.assert_not_called()
@@ -163,7 +162,7 @@ class StaleInlineScriptDependencyTest(LoggingTestCase):
             "1.0", files=[{"upload-time": (datetime.now(UTC) - timedelta(days=512)).isoformat()}]
         )
         script_file = self.mock_script(glob)
-        assert_success(update_python_inline_script_metadatas())
+        update_python_inline_script_metadatas()
         self.assert_stale_dependency_logged(script_file, "package", "1.0")
 
     def test_recent_dependency_not_warned(self, run: Mock, get: Mock, glob: Mock):
@@ -171,7 +170,7 @@ class StaleInlineScriptDependencyTest(LoggingTestCase):
         run.return_value = Mock(stdout="package v1.0\n")
         get.return_value = pypi_index("1.0", files=[{"upload-time": datetime.now(UTC).isoformat()}])
         self.mock_script(glob)
-        assert_success(update_python_inline_script_metadatas())
+        update_python_inline_script_metadatas()
         self.assert_no_warnings_logged()
 
     @staleness_disabled
@@ -179,6 +178,6 @@ class StaleInlineScriptDependencyTest(LoggingTestCase):
         """Test that `--stale-after 0` skips the staleness pass entirely, so it makes no PyPI request."""
         run.return_value = Mock(stdout="package v1.0\n")
         self.mock_script(glob)
-        assert_success(update_python_inline_script_metadatas())
+        update_python_inline_script_metadatas()
         get.assert_not_called()
         self.assert_no_warnings_logged()

@@ -4,7 +4,6 @@ Note: this script does not update package-lock.json.
 """
 
 import re
-import sys
 from typing import TYPE_CHECKING
 
 from update_time.domain.version import DependencyVersion
@@ -12,6 +11,7 @@ from update_time.file_formats import package_json as package_json_format
 from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, glob
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
+from update_time.sources.oci import get_latest_tag
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -61,7 +61,8 @@ def find_node_dockerfile(package_json: Path) -> Path:
     Prefers the Dockerfile next to the package.json; for package.json files without a local Node-base Dockerfile
     (e.g. docs/), falls back to any other Dockerfile in the repo. A Dockerfile with a numeric Node base image (the
     one we can actually sync to) is preferred over one whose Node base image uses a non-numeric tag like 'node:lts'.
-    If no Node base image is found at all, returns the local Dockerfile path so the caller can log the error.
+    If no Node base image is found at all, returns the local Dockerfile path; the caller finds no version on it and
+    falls back to the latest Node release instead.
     """
     local_dockerfile = package_json.parent / DOCKERFILE_NAME
     candidates = [local_dockerfile, *glob(*DOCKERFILE_GLOB_PATTERNS)]
@@ -74,32 +75,39 @@ def find_node_dockerfile(package_json: Path) -> Path:
     return local_dockerfile
 
 
-def update_node_engine(package_json: Path) -> int:
-    """Update the Node engine version based on the Docker base image."""
+def update_node_engine(package_json: Path) -> None:
+    """Update the Node engine version to the Docker Node base image version, or the latest Node release.
+
+    Prefer the numeric Node base image in the project's Dockerfile, so the engine and the image stay in step. A Node
+    base image with a non-numeric tag (e.g. 'node:lts') yields no concrete version, so it is skipped with a warning.
+    When no Dockerfile declares a Node base image at all, fall back to the latest Node release on Docker Hub, so the
+    engine is still moved forward (honouring the cooldown) rather than left behind.
+    """
     dockerfile = find_node_dockerfile(package_json)
     if version := node_base_image_version(dockerfile):
-        return update_file(
+        update_file(
             package_json, NODE_ENGINE_RE, get_new_version=lambda *_args: DependencyVersion(version=version), logger=LOG
         )
+        return
     if tag := node_base_image_tag(dockerfile):
         # A Node base image exists but uses a non-numeric tag (e.g. 'node:lts'); we can't derive a concrete
         # version to sync the engine to, so skip without failing the run.
         LOG.non_numeric_node_base_image(dockerfile, tag)
-        return 0
-    LOG.expected_node_base_image(dockerfile)
-    return 1
+        return
+    update_file(package_json, NODE_ENGINE_RE, get_new_version=get_latest_tag, logger=LOG)
 
 
-def update_node_engines() -> int:
+def update_node_engines() -> None:
     """Find all package.json files and update the Node engine."""
-    results = {update_node_engine(pkg_json) for pkg_json in glob("package.json") if has_node_engine(pkg_json)}
-    return max(results, default=0)
+    for pkg_json in glob("package.json"):
+        if has_node_engine(pkg_json):
+            update_node_engine(pkg_json)
 
 
-def main() -> int:  # pragma: no cover
+def main() -> None:  # pragma: no cover
     """Update the Node engines in the repository's package.json files."""
-    return update_node_engines()
+    update_node_engines()
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    main()

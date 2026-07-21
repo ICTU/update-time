@@ -10,7 +10,6 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.package_managers.node import COMMON_NPM_OPTIONS
 from update_time.updaters.update_package_json import update_package_jsons
 
-from tests.update_time.assertions import assert_success
 from tests.update_time.helpers import (
     LoggingTestCase,
     github_commits_json,
@@ -93,7 +92,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = self.npm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout='{"dependencies": {}}'))
-        assert_success(update_package_jsons())
+        update_package_jsons()
         self.assert_npm_called(mock_run)
         self.assert_path_logged(mock_package_json)
         self.assert_no_new_version_logged()
@@ -111,7 +110,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
             Mock(stdout=""),
             Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
         )
-        assert_success(update_package_jsons())
+        update_package_jsons()
         self.assert_npm_called(mock_run)
         self.assert_path_logged(mock_package_json)
         self.assert_new_version_logged(mock_package_json, "package", "1.1, published: 2026-05-30 10:26", "Changelog")
@@ -136,7 +135,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         mock_package_json.read_text = Mock(side_effect=[original, original, normalized])
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = self.npm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout='{"dependencies": {}}'))
-        assert_success(update_package_jsons())
+        update_package_jsons()
         mock_package_json.write_text.assert_called_once_with(original)
         self.assert_npm_called(mock_run)
         self.assert_path_logged(mock_package_json)
@@ -153,7 +152,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
             Mock(stdout=""),
             Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
         )
-        assert_success(update_package_jsons())
+        update_package_jsons()
         mock_package_json.write_text.assert_not_called()
         self.assert_npm_called(mock_run)
         self.assert_path_logged(mock_package_json)
@@ -170,7 +169,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
             # "held" stayed at 1.0 (e.g. min-release-age held back every newer release), "untracked" has no version:
             Mock(stdout='{"dependencies": {"held": {"version": "1.0"}, "untracked": {"missing": true}}}'),
         )
-        assert_success(update_package_jsons())
+        update_package_jsons()
         self.assert_npm_called(mock_run)
         self.assert_path_logged(mock_package_json)
         self.assert_no_new_version_logged()
@@ -182,7 +181,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         mock_glob.return_value = [mock_package_json]
         # npm outdated and npm list both return nothing, as a failed command does (its failure is logged by `run`):
         mock_run.side_effect = self.npm_runs(Mock(stdout=""), Mock(stdout=""), Mock(stdout=""))
-        assert_success(update_package_jsons())
+        update_package_jsons()
         self.assert_npm_called(mock_run)
         mock_package_json.write_text.assert_not_called()
         self.assert_no_new_version_logged()
@@ -195,7 +194,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         mock_run.side_effect = self.npm_runs(
             subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr="error: offline"),
         )
-        assert_success(update_package_jsons())
+        update_package_jsons()
         commands = [call.args[0][:2] for call in mock_run.call_args_list]
         self.assertIn(["npm", "outdated"], commands)
         self.assertNotIn(["npm", "update"], commands)  # skipped because outdated failed
@@ -214,7 +213,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
             Mock(stdout=""),
             Mock(stdout='{"dependencies": {}}'),
         ]
-        assert_success(update_package_jsons())
+        update_package_jsons()
         self.assert_npm_called(mock_run, cooldown=False)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -253,7 +252,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = self.pnpm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]"))
-        assert_success(update_package_jsons())
+        update_package_jsons()
         self.assert_pnpm_called(mock_run)
         self.assert_path_logged(mock_package_json)
         self.assert_no_new_version_logged()
@@ -272,7 +271,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
             Mock(stdout=""),
             Mock(stdout='[{"name": "root", "devDependencies": {"package": {"version": "1.1"}}}]'),
         )
-        assert_success(update_package_jsons())
+        update_package_jsons()
         self.assert_pnpm_called(mock_run)
         self.assert_path_logged(mock_package_json)
         self.assert_new_version_logged(mock_package_json, "package", "1.1, published: 2026-05-30 10:26", "Changelog")
@@ -291,7 +290,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
                 '"devDependencies": {"untracked": {"from": "untracked"}}}]'
             ),
         )
-        assert_success(update_package_jsons())
+        update_package_jsons()
         self.assert_pnpm_called(mock_run)
         self.assert_path_logged(mock_package_json)
         self.assert_no_new_version_logged()
@@ -303,7 +302,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = self.pnpm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]"))
         with patch("pathlib.Path.exists", Mock(return_value=True)):
-            assert_success(update_package_jsons())
+            update_package_jsons()
         self.assert_pnpm_called(mock_run)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -314,7 +313,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         mock_glob.return_value = [mock_package_json]
         # The cooldown probe returns a value, so Update-time adds no cooldown of its own:
         mock_run.side_effect = [Mock(stdout="4320\n"), Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]")]
-        assert_success(update_package_jsons())
+        update_package_jsons()
         self.assert_pnpm_called(mock_run, cooldown=False)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -330,7 +329,7 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
         """Test that a package.json with an unsupported `packageManager` field is skipped without running anything."""
         mock_package_json = mock_path('{"packageManager": "yarn@4.5.0"}', parent=Path("/"))
         mock_glob.return_value = [mock_package_json]
-        assert_success(update_package_jsons())
+        update_package_jsons()
         mock_run.assert_not_called()
         mock_package_json.write_text.assert_not_called()
         self.assert_unsupported_package_manager_logged(mock_package_json, "yarn", "npm and pnpm")
@@ -342,7 +341,7 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
         mock_glob.return_value = [mock_package_json]
         # Only yarn.lock exists next to the manifest (no pnpm-lock.yaml), so yarn is detected and the file skipped:
         with patch("pathlib.Path.exists", lambda self: self.name == "yarn.lock"):
-            assert_success(update_package_jsons())
+            update_package_jsons()
         mock_run.assert_not_called()
         mock_package_json.write_text.assert_not_called()
         self.assert_unsupported_package_manager_logged(mock_package_json, "yarn", "npm and pnpm")
@@ -387,7 +386,7 @@ class StaleDependencyTest(LoggingTestCase):
         self.stub_no_update(mock_run)
         get.return_value = self.registry_doc("2.0.11", (datetime.now(UTC) - timedelta(days=512)).isoformat())
         package_json = self.package_json(glob)
-        assert_success(update_package_jsons())
+        update_package_jsons()
         self.assert_stale_dependency_logged(package_json, "clipboard", "2.0.11")
 
     @patch("requests.get")
@@ -396,7 +395,7 @@ class StaleDependencyTest(LoggingTestCase):
         self.stub_no_update(mock_run)
         get.return_value = self.registry_doc("2.0.11", datetime.now(UTC).isoformat())
         self.package_json(glob)
-        assert_success(update_package_jsons())
+        update_package_jsons()
         self.assert_no_warnings_logged()
 
     @patch("requests.get")
@@ -405,7 +404,7 @@ class StaleDependencyTest(LoggingTestCase):
         self.stub_no_update(mock_run)
         get.return_value = mock_response({})  # no `dist-tags`, so newest_release returns None
         self.package_json(glob)
-        assert_success(update_package_jsons())
+        update_package_jsons()
         self.assert_no_warnings_logged()
 
     @staleness_disabled
@@ -414,6 +413,6 @@ class StaleDependencyTest(LoggingTestCase):
         """Test that `--stale-after 0` skips the staleness pass entirely, so it makes no npm registry request."""
         self.stub_no_update(mock_run)
         self.package_json(glob)
-        assert_success(update_package_jsons())
+        update_package_jsons()
         get.assert_not_called()
         self.assert_no_warnings_logged()

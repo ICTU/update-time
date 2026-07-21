@@ -16,10 +16,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class EnvVar[T]:
-    """A process-environment variable holding a typed value, with a paired `get` and `set`.
-
-    `parse` and `serialize` are inverses, kept together so the read and write sides of one variable stay in step.
-    """
+    """A process-environment variable holding a typed value, with a paired `get` and `set`."""
 
     name: str
     default: T

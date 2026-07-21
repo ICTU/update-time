@@ -9,7 +9,6 @@ with `update_file` rather than searched for with `glob` (which is recursive and 
 `.gitlab-ci.yml`).
 """
 
-import sys
 from pathlib import Path
 
 from update_time.io.log import get_logger
@@ -19,17 +18,16 @@ from update_time.sources.oci import YAML_IMAGE_REFERENCE, get_latest_tag
 LOG = get_logger("gitlab ci")
 
 
-def update_gitlab_ci_config(gitlab_ci_config: Path) -> int:
+def update_gitlab_ci_config(gitlab_ci_config: Path) -> None:
     """Update the images in the GitLab CI configuration file, if it exists."""
-    if not gitlab_ci_config.exists():
-        return 0
-    return update_file(gitlab_ci_config, YAML_IMAGE_REFERENCE, get_new_version=get_latest_tag, logger=LOG)
+    if gitlab_ci_config.exists():
+        update_file(gitlab_ci_config, YAML_IMAGE_REFERENCE, get_new_version=get_latest_tag, logger=LOG)
 
 
-def main() -> int:  # pragma: no cover
+def main() -> None:  # pragma: no cover
     """Update the images in the repository's GitLab CI configuration."""
-    return update_gitlab_ci_config(Path.cwd() / ".gitlab-ci.yml")
+    update_gitlab_ci_config(Path.cwd() / ".gitlab-ci.yml")
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    main()

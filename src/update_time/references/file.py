@@ -37,7 +37,7 @@ def rewrite_file(path: Path, transform: Callable[[list[str]], list[str]], logger
         path.write_text("\n".join(new_lines) + "\n")
 
 
-def update_file(path: Path, *regexps: str, get_new_version: NewVersionGetter, logger: Logger) -> int:
+def update_file(path: Path, *regexps: str, get_new_version: NewVersionGetter, logger: Logger) -> None:
     """Update the references in the file and write it back if the new lines differ from the old lines.
 
     Multiple regexps are applied in turn to the same content, so a file that pins more than one kind of reference (a
@@ -50,7 +50,6 @@ def update_file(path: Path, *regexps: str, get_new_version: NewVersionGetter, lo
         ),
         logger,
     )
-    return 0
 
 
 def update_files(
@@ -60,10 +59,7 @@ def update_files(
     logger: Logger,
     start: Path | None = None,
     case_sensitive: bool | None = None,
-) -> int:
+) -> None:
     """Update the files using the regexp to find the current version and get_new_version to find new versions."""
-    results = {
+    for path in glob(*glob_patterns, start=start, case_sensitive=case_sensitive):
         update_file(path, regexp, get_new_version=get_new_version, logger=logger)
-        for path in glob(*glob_patterns, start=start, case_sensitive=case_sensitive)
-    }
-    return max(results, default=0)

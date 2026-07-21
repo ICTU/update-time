@@ -379,12 +379,6 @@ class Logger:
         """Warn that a pyproject.toml can't be parsed as TOML, so it is skipped rather than crashing the run."""
         self._log(self.log.warning, self._MESSAGE_INVALID_TOML, self._relative(path))
 
-    _MESSAGE_MISSING_NODE_BASE_IMAGE = "Expected Dockerfile %s to have a Node base image"
-
-    def expected_node_base_image(self, dockerfile: Path) -> None:
-        """Log missing Node base image."""
-        self._log(self.log.error, self._MESSAGE_MISSING_NODE_BASE_IMAGE, dockerfile)
-
     _MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG = (
         "Cannot derive the Node engine version from the non-numeric base image tag 'node:%s' in %s"
     )
