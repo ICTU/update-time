@@ -11,8 +11,6 @@ The file is edited line by line with the same machinery as the other image updat
 comments and trailing commas (which devcontainer.json allows, and plain JSON forbids) are preserved untouched.
 """
 
-import sys
-
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
@@ -32,19 +30,16 @@ FEATURE_RE = rf'"{IMAGE_REFERENCE}":\s*{{'
 DEVCONTAINER_GLOBS = (".devcontainer.json", ".devcontainer/devcontainer.json", ".devcontainer/*/devcontainer.json")
 
 
-def update_devcontainers() -> int:
+def update_devcontainers() -> None:
     """Update the base image and feature references in the repository's devcontainer.json files."""
-    results = {
+    for devcontainer in glob(*DEVCONTAINER_GLOBS):
         update_file(devcontainer, IMAGE_RE, FEATURE_RE, get_new_version=get_latest_tag, logger=LOG)
-        for devcontainer in glob(*DEVCONTAINER_GLOBS)
-    }
-    return max(results, default=0)
 
 
-def main() -> int:  # pragma: no cover
+def main() -> None:  # pragma: no cover
     """Update the images and features in the repository's devcontainer.json files."""
-    return update_devcontainers()
+    update_devcontainers()
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    main()

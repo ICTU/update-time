@@ -11,7 +11,6 @@ from update_time.updaters.update_devcontainer import (
 )
 
 from tests.update_time import registry
-from tests.update_time.assertions import assert_success
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST3
 from tests.update_time.helpers import docker_tag, mock_docker_hub_auth, mock_path
 from tests.update_time.registry import mock_docker_registry
@@ -25,16 +24,16 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
         """Return a devcontainer `"image"` value for the image."""
         return f'"image": "{image}"\n'
 
-    def run_updater(self, mock_file: Mock) -> int:
+    def run_updater(self, mock_file: Mock) -> None:
         """Run the devcontainer updater with the mock file as the only discovered devcontainer.json."""
         with patch("update_time.updaters.update_devcontainer.glob", return_value=[mock_file]):
-            return update_devcontainers()
+            update_devcontainers()
 
     def test_feature_updated_and_pinned(self):
         """Test that a feature key (an OCI reference) is bumped and pinned with its digest."""
         self.requests.side_effect = mock_docker_registry(docker_tag("2.1", DIGEST1))
         devcontainer = mock_path('    "ghcr.io/devcontainers/features/node:1": {}\n')
-        assert_success(self.run_updater(devcontainer))
+        self.run_updater(devcontainer)
         devcontainer.write_text.assert_called_once_with(
             f'    "ghcr.io/devcontainers/features/node:2.1@{DIGEST1}": {{}}\n'
         )
@@ -45,7 +44,7 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
         """Test that an unpinned feature that is already at the latest version is still pinned with its digest."""
         self.requests.side_effect = mock_docker_registry(docker_tag("2", DIGEST3))
         devcontainer = mock_path('    "ghcr.io/devcontainers/features/node:2": {}\n')
-        assert_success(self.run_updater(devcontainer))
+        self.run_updater(devcontainer)
         devcontainer.write_text.assert_called_once_with(
             f'    "ghcr.io/devcontainers/features/node:2@{DIGEST3}": {{}}\n'
         )
@@ -56,7 +55,7 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
         """Test that an image without a version tag is left unchanged (there is no version to resolve)."""
         self.requests.side_effect = mock_docker_registry(docker_tag("1.1", DIGEST))
         devcontainer = mock_path('  "image": "mcr.microsoft.com/devcontainers/typescript-node"\n')
-        assert_success(self.run_updater(devcontainer))
+        self.run_updater(devcontainer)
         devcontainer.write_text.assert_not_called()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -67,7 +66,7 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
         devcontainer = mock_path(
             '  "build": { "dockerfile": "Dockerfile" },\n  "appPort": "3000:3000",\n  "forwardPorts": [3000]\n'
         )
-        assert_success(self.run_updater(devcontainer))
+        self.run_updater(devcontainer)
         devcontainer.write_text.assert_not_called()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()

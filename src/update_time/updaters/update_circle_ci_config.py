@@ -8,7 +8,6 @@ CircleCI machine-executor images (the `image:` under a `machine:` key, e.g. `ubu
 Docker Hub and have no registry to query, so they are detected by parsing the YAML and left unchanged.
 """
 
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -40,7 +39,7 @@ def machine_images(config: object) -> set[str]:
     return images
 
 
-def update_circle_ci_yaml(config_file: Path) -> int:
+def update_circle_ci_yaml(config_file: Path) -> None:
     """Update the Docker images in a single CircleCI YAML file, leaving machine-executor images unchanged."""
     machine = machine_images(yaml_format.read(config_file))
 
@@ -51,19 +50,19 @@ def update_circle_ci_yaml(config_file: Path) -> int:
             return DependencyVersion(version=version)  # Leave machine images unchanged; they aren't on a registry
         return get_latest_tag(dependency, version, version_bound)
 
-    return update_file(config_file, YAML_IMAGE_REFERENCE, get_new_version=get_new_version, logger=LOG)
+    update_file(config_file, YAML_IMAGE_REFERENCE, get_new_version=get_new_version, logger=LOG)
 
 
-def update_circle_ci_config(circle_ci_dir: Path) -> int:
+def update_circle_ci_config(circle_ci_dir: Path) -> None:
     """Update the images in all YAML files under the CircleCI directory."""
-    results = {update_circle_ci_yaml(config_file) for config_file in glob(*YAML_GLOB_PATTERNS, start=circle_ci_dir)}
-    return max(results, default=0)
+    for config_file in glob(*YAML_GLOB_PATTERNS, start=circle_ci_dir):
+        update_circle_ci_yaml(config_file)
 
 
-def main() -> int:  # pragma: no cover
+def main() -> None:  # pragma: no cover
     """Update the images in the repository's CircleCI configuration."""
-    return update_circle_ci_config(Path.cwd() / ".circleci")
+    update_circle_ci_config(Path.cwd() / ".circleci")
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    main()

@@ -10,7 +10,6 @@ transitive pins (and hashes) would corrupt the file. A requirements file is trea
 header from pip-compile or uv, or a sibling `.in` source file.
 """
 
-import sys
 from typing import TYPE_CHECKING
 
 from update_time.file_formats import requirements_txt as requirements_txt_format
@@ -36,25 +35,25 @@ REQUIREMENT_RE = (
 REQUIREMENTS_GLOB_PATTERNS = ("requirements.txt", "requirements-*.txt", "*-requirements.txt", "requirements/*.txt")
 
 
-def update_requirements_txt(requirements_txt: Path) -> int:
+def update_requirements_txt(requirements_txt: Path) -> None:
     """Update the exact pins in a single requirements file, unless it is compiled or locked."""
     if requirements_txt_format.is_compiled(requirements_txt):
         LOG.skipped(requirements_txt, "compiled or hash-pinned requirements file")
-        return 0
-    return update_file(requirements_txt, REQUIREMENT_RE, get_new_version=get_latest_version, logger=LOG)
+        return
+    update_file(requirements_txt, REQUIREMENT_RE, get_new_version=get_latest_version, logger=LOG)
 
 
-def update_requirements_txts() -> int:
+def update_requirements_txts() -> None:
     """Find all requirements files and update the exact pins in them."""
     requirements_files = set(glob(*REQUIREMENTS_GLOB_PATTERNS, case_sensitive=True))
-    results = {update_requirements_txt(requirements_txt) for requirements_txt in requirements_files}
-    return max(results, default=0)
+    for requirements_txt in requirements_files:
+        update_requirements_txt(requirements_txt)
 
 
-def main() -> int:  # pragma: no cover
+def main() -> None:  # pragma: no cover
     """Update the dependencies in the repository's requirements files."""
-    return update_requirements_txts()
+    update_requirements_txts()
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    main()

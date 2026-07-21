@@ -8,7 +8,6 @@ from unittest.mock import Mock, patch
 
 from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 
-from tests.update_time.assertions import assert_success
 from tests.update_time.helpers import (
     LoggingTestCase,
     github_commits_json,
@@ -81,7 +80,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         )
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
         glob.return_value = [mock_pyproject_toml]
-        assert_success(update_pyproject_tomls())
+        update_pyproject_tomls()
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(mock_pyproject_toml, "package", "1.1, published: 2026-05-30 12:08")
@@ -97,7 +96,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         ]
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_with_changelog==1.0"))
         glob.return_value = [mock_pyproject_toml]
-        assert_success(update_pyproject_tomls())
+        update_pyproject_tomls()
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_changelog==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
@@ -118,7 +117,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         ]
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_with_html_changelog==1.0"))
         glob.return_value = [mock_pyproject_toml]
-        assert_success(update_pyproject_tomls())
+        update_pyproject_tomls()
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_html_changelog==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
@@ -136,7 +135,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         ]
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_with_github_releases==1.0"))
         glob.return_value = [mock_pyproject_toml]
-        assert_success(update_pyproject_tomls())
+        update_pyproject_tomls()
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_github_releases==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
@@ -153,7 +152,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         get.return_value = mock_response(self.pypi_metadata(changelog_url="", repository="https://gitlab.com/org/repo"))
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_without_github_releases==1.0"))
         glob.return_value = [mock_pyproject_toml]
-        assert_success(update_pyproject_tomls())
+        update_pyproject_tomls()
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_without_github_releases==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
@@ -168,7 +167,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         run.return_value = self.mock_update_on_stdout("package")
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
         glob.return_value = [mock_pyproject_toml]
-        assert_success(update_pyproject_tomls())
+        update_pyproject_tomls()
         mock_pyproject_toml.write_text.assert_not_called()
         get.assert_not_called()
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
@@ -180,7 +179,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         run.side_effect = subprocess.CalledProcessError(cmd="", returncode=2, output="", stderr="error: offline")
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
         glob.return_value = [mock_pyproject_toml]
-        assert_success(update_pyproject_tomls())
+        update_pyproject_tomls()
         commands = [call.args[0][:2] for call in run.call_args_list]
         self.assertIn(["uv", "tree"], commands)
         self.assertNotIn(["uv", "lock"], commands)  # uv lock is skipped because uv tree failed
@@ -192,7 +191,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         """Test that a pyproject.toml with a non-uv tool section (e.g. [tool.poetry]) is skipped without running uv."""
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0") + '\n[tool.poetry]\nname = "x"\n')
         glob.return_value = [mock_pyproject_toml]
-        assert_success(update_pyproject_tomls())
+        update_pyproject_tomls()
         run.assert_not_called()
         get.assert_not_called()
         mock_pyproject_toml.write_text.assert_not_called()
@@ -204,7 +203,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         """Test that a pyproject.toml with a non-uv lockfile (e.g. poetry.lock) is skipped without running uv."""
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
         glob.return_value = [mock_pyproject_toml]
-        assert_success(update_pyproject_tomls())
+        update_pyproject_tomls()
         run.assert_not_called()
         get.assert_not_called()
         mock_pyproject_toml.write_text.assert_not_called()
@@ -215,7 +214,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         """Test that an unparsable pyproject.toml is skipped with a warning, without running uv or crashing."""
         mock_pyproject_toml = self.create_pyproject_toml('[project]\ndependencies = ["package==1.0"\n')  # missing ]
         glob.return_value = [mock_pyproject_toml]
-        assert_success(update_pyproject_tomls())
+        update_pyproject_tomls()
         run.assert_not_called()
         get.assert_not_called()
         mock_pyproject_toml.write_text.assert_not_called()
@@ -251,7 +250,7 @@ class StaleDependencyTest(LoggingTestCase):
         run.return_value = Mock(stdout="| package\n")
         get.return_value = self.simple_api("1.0", (datetime.now(UTC) - timedelta(days=512)).isoformat())
         pyproject_toml = self.mock_pyproject_toml(glob)
-        assert_success(update_pyproject_tomls())
+        update_pyproject_tomls()
         self.assert_stale_dependency_logged(pyproject_toml, "package", "1.0")
 
     def test_recent_dependency_not_warned(self, run: Mock, get: Mock, glob: Mock):
@@ -259,7 +258,7 @@ class StaleDependencyTest(LoggingTestCase):
         run.return_value = Mock(stdout="| package\n")
         get.return_value = self.simple_api("1.0", datetime.now(UTC).isoformat())
         self.mock_pyproject_toml(glob)
-        assert_success(update_pyproject_tomls())
+        update_pyproject_tomls()
         self.assert_no_warnings_logged()
 
     @staleness_disabled
@@ -267,6 +266,6 @@ class StaleDependencyTest(LoggingTestCase):
         """Test that `--stale-after 0` skips the staleness pass entirely, so it makes no PyPI request."""
         run.return_value = Mock(stdout="| package\n")
         self.mock_pyproject_toml(glob)
-        assert_success(update_pyproject_tomls())
+        update_pyproject_tomls()
         get.assert_not_called()
         self.assert_no_warnings_logged()

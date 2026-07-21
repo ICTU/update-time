@@ -67,7 +67,7 @@ Update-time updates the following types of dependencies, found in the listed fil
 | ---------- | ----- | ------ |
 | Python dependencies | `pyproject.toml`, `requirements.txt`, and PEP 723 inline script metadata (`# /// script` blocks in `*.py` files) | [PyPI](https://pypi.org) |
 | npm and pnpm dependencies | `package.json` (and their lock files) | [npm registry](https://registry.npmjs.org) |
-| Node engine version | `package.json` | the Node base image in the project's Dockerfile |
+| Node engine version | `package.json` | the Node base image in the project's Dockerfile, or the latest [Node](https://hub.docker.com/_/node) release on Docker Hub |
 | Docker (OCI) images (tag + digest) | Dockerfiles, CircleCI configs, `.gitlab-ci.yml`, Docker Compose files, Helm charts, and devcontainer configs | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) |
 | GitHub Action versions (SHA + tag) | YAML files under `.github/` | [GitHub API](https://api.github.com) (releases and tags) |
 | Pre-commit hook versions (SHA + tag) | `.pre-commit-config.yaml` | [GitHub API](https://api.github.com) (releases and tags) |
@@ -119,11 +119,9 @@ The Node engine version in the `package.json`.
 
 #### What versions are updated?
 
-The Node engine version in the `package.json` is updated with the Node base image version, provided:
-- the Node version specifier contains a specific version (for example, `26.4`),
-- there is a Dockerfile in the same folder,
-- the Dockerfile has a Node base image, and
-- the Node base image has a numeric version number (`node:lts` won't do).
+The Node engine version is updated only when it contains a specific version (for example, `26.4`); a range or other non-numeric value is left untouched.
+
+The new version is taken from the Node base image in the project's Dockerfile, so the engine and the image stay in step, provided there is a Dockerfile in the same folder, it has a Node base image, and that image has a numeric version number. When no Dockerfile declares a numeric Node base image, the engine is instead updated to the latest [Node](https://hub.docker.com/_/node) release on Docker Hub, honouring the [cooldown](#-cooldown). A Node base image pinned to a non-numeric tag such as `node:lts` is the exception: it is left alone rather than overridden with a mismatched concrete version.
 
 ### Docker images
 
@@ -248,7 +246,7 @@ WARNING requirements.txt: Stale dependency humanize in docs/requirements.txt: ne
 
 The date compared against the threshold is the publication date of the dependency's *newest* release. For a GitHub Action or pre-commit hook whose newest version was tagged without being published as a release, the tagged commit's date is used instead. This way a project that has just published a release is never reported as stale, not even when that release is still within the [cooldown](#-cooldown) window. A reference held back with a bare `# update-time: ignore` (or `# update-time: ignore[stale]`) marker is not checked for staleness either. `# update-time: ignore[update]` holds back only the update, so its staleness is still reported (see [Controlling updates per reference](#-controlling-updates-per-reference)).
 
-Every kind of dependency Update-time updates is checked for staleness, except the Node engine version in `package.json`: it is derived from the project's Dockerfile rather than a registry release, so it has no publication date to compare (the Node base image it comes from is itself checked, in the Dockerfile). Two data limitations narrow the check where the date isn't available. First, `package.json` dependencies given as git, file, workspace, or alias references are skipped, since they don't resolve to a registry release. Second, image tags are only checked on Docker Hub, because the push date the check relies on isn't exposed by other registries (`ghcr.io`, `mcr.microsoft.com`, …), the same limitation as the cooldown. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
+Every kind of dependency Update-time updates is checked for staleness. The one indirect case is the Node engine version in `package.json`: when it is derived from the project's Dockerfile, only the staleness of the base image is reported. Two data limitations narrow the check where the date isn't available. First, `package.json` dependencies given as git, file, workspace, or alias references are skipped, since they don't resolve to a registry release. Second, image tags are only checked on Docker Hub, because the push date the check relies on isn't exposed by other registries (`ghcr.io`, `mcr.microsoft.com`, …), the same limitation as the cooldown. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
 
 ## 🎛️ Controlling updates per reference
 

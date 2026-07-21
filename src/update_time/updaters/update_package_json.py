@@ -1,6 +1,5 @@
 """Find package.json files and update their dependencies with the project's Node package manager."""
 
-import sys
 from typing import TYPE_CHECKING
 
 from update_time.domain.staleness import warn_about_stale_dependencies
@@ -38,7 +37,7 @@ def package_manager(package_json: Path) -> str:
     return "npm"
 
 
-def update_package_jsons() -> int:
+def update_package_jsons() -> None:
     """Find all package.json files and update each with its (supported) package manager, skipping the rest."""
     supported = []
     for package_json in glob("package.json"):
@@ -48,7 +47,6 @@ def update_package_jsons() -> int:
             manager.update_package_json(package_json)
             supported.append(package_json)
     warn_about_stale_dependencies(supported, _newest_releases, LOG.warn_if_stale)
-    return 0
 
 
 def _newest_releases(package_json: Path) -> Iterable[tuple[str, DependencyVersion | None]]:
@@ -56,10 +54,10 @@ def _newest_releases(package_json: Path) -> Iterable[tuple[str, DependencyVersio
     return ((name, npmjs.newest_release(name)) for name in package_json_format.dependency_names(package_json))
 
 
-def main() -> int:  # pragma: no cover
+def main() -> None:  # pragma: no cover
     """Update the dependencies in the repository's package.json files."""
-    return update_package_jsons()
+    update_package_jsons()
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    main()

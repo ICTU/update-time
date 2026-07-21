@@ -14,7 +14,6 @@ from urllib.parse import parse_qs, urlparse
 
 from update_time.references.rewrite import ALLOW_IMAGE_DIGEST_DRIFT
 
-from tests.update_time.assertions import assert_success
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
 from tests.update_time.helpers import LoggingTestCase, docker_tag, mock_path, mock_response, patch_environ
 
@@ -129,15 +128,15 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         """Return `image` embedded in the file format the updater rewrites (e.g. `FROM {image}` and a newline)."""
         raise NotImplementedError
 
-    def run_updater(self, mock_file: Mock) -> int:
-        """Discover `mock_file`, run the updater, and return its exit code."""
+    def run_updater(self, mock_file: Mock) -> None:
+        """Discover `mock_file` and run the updater."""
         raise NotImplementedError
 
     def test_no_changes(self) -> None:
         """Test that an image already at the latest pinned tag is left unchanged."""
         self.requests.side_effect = mock_docker_registry()
         mock_file = mock_path(self.reference(f"python:3.14@{DIGEST}"))
-        assert_success(self.run_updater(mock_file))
+        self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
         self.assert_path_logged(mock_file)
         self.assert_no_new_version_logged()
@@ -148,7 +147,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
         self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST, tag_last_pushed=old))
         mock_file = mock_path(self.reference(f"python:3.14@{DIGEST}"))
-        assert_success(self.run_updater(mock_file))
+        self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
         self.assert_stale_dependency_logged(mock_file, "python", "3.14")
 
@@ -156,7 +155,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         """Test that the image tag and digest are bumped when a newer version is available."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
         mock_file = mock_path(self.reference(f"python:3.14@{DIGEST1}"))
-        assert_success(self.run_updater(mock_file))
+        self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.15@{DIGEST2}"))
         self.assert_new_version_logged(mock_file, "python", "3.15")
         self.assert_no_warnings_logged()
@@ -165,7 +164,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         """Test that a pinned image whose tag was re-pushed with a different digest is warned about, not rewritten."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST2))
         mock_file = mock_path(self.reference(f"python:3.14@{DIGEST1}"))
-        assert_success(self.run_updater(mock_file))
+        self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
         self.assert_digest_drift_logged(mock_file, "python", "3.14", DIGEST1, DIGEST2)
         self.assert_no_new_version_logged()
@@ -175,7 +174,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST2))
         mock_file = mock_path(self.reference(f"python:3.14@{DIGEST1}"))
         with patch_environ({ALLOW_IMAGE_DIGEST_DRIFT.name: "1"}):
-            assert_success(self.run_updater(mock_file))
+            self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14@{DIGEST2}"))
         self.assert_adopted_drift_logged(mock_file, "python", "3.14", DIGEST1, DIGEST2)
         self.assert_no_warnings_logged()
@@ -184,7 +183,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         """Test that an image referenced by tag only is pinned with the latest tag and digest."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
         mock_file = mock_path(self.reference("python:3.14"))
-        assert_success(self.run_updater(mock_file))
+        self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.15@{DIGEST2}"))
         self.assert_new_version_logged(mock_file, "python", "3.15")
         self.assert_no_warnings_logged()
@@ -193,7 +192,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         """Test that an unpinned image already at the latest version is still pinned with its digest."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST3))
         mock_file = mock_path(self.reference("python:3.14"))
-        assert_success(self.run_updater(mock_file))
+        self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14@{DIGEST3}"))
         self.assert_pinned_logged(mock_file, "python", "3.14", DIGEST3)
         self.assert_no_warnings_logged()

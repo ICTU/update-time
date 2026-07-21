@@ -10,7 +10,6 @@ If an environment variable GITHUB_TOKEN is set, the script will use it to increa
 """
 
 import re
-import sys
 from functools import partial
 from itertools import pairwise
 from typing import TYPE_CHECKING
@@ -116,17 +115,16 @@ def _apply_marker(line: str, match: re.Match[str], dependency: str, path: Path, 
     return _update_rev(line, match, dependency, path, marker)
 
 
-def update_pre_commit_configs(start: Path | None = None) -> int:
+def update_pre_commit_configs(start: Path | None = None) -> None:
     """Update the hook revs in all `.pre-commit-config.yaml` files found recursively from the start directory."""
     for config in glob(PRE_COMMIT_CONFIG, start=start):
         rewrite_file(config, partial(_updated_lines, path=config), LOG)
-    return 0
 
 
-def main() -> int:  # pragma: no cover
+def main() -> None:  # pragma: no cover
     """Update the hook revs in the repository's pre-commit configuration files."""
-    return update_pre_commit_configs()
+    update_pre_commit_configs()
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    main()

@@ -8,7 +8,6 @@ block are processed; every other .py file is left untouched and never invokes uv
 """
 
 import re
-import sys
 from typing import TYPE_CHECKING
 
 from update_time.domain.staleness import warn_about_stale_dependencies
@@ -29,7 +28,7 @@ def _has_script_block(script: Path) -> bool:
     return _SCRIPT_BLOCK.search(script.read_text()) is not None
 
 
-def update_python_inline_script_metadatas() -> int:
+def update_python_inline_script_metadatas() -> None:
     """Find all .py files with inline script metadata and update the exact pins in their `# /// script` blocks."""
     scripts = [script for script in glob("*.py") if _has_script_block(script)]
     for script in scripts:
@@ -37,13 +36,12 @@ def update_python_inline_script_metadatas() -> int:
     # Check staleness after the update, so it reads the `==` pins uv settled on, reusing the PyPI source (the same
     # one the pyproject.toml and requirements.txt updaters use).
     warn_about_stale_dependencies(scripts, uv.newest_pypi_releases, LOG.warn_if_stale)
-    return 0
 
 
-def main() -> int:  # pragma: no cover
+def main() -> None:  # pragma: no cover
     """Update the dependencies in the repository's inline script metadata."""
-    return update_python_inline_script_metadatas()
+    update_python_inline_script_metadatas()
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    main()

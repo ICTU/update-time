@@ -1,7 +1,6 @@
 """Updater script for jsDelivr CDN URLs (limited to npm packages in the Sphinx config at the moment)."""
 
 import re
-import sys
 from pathlib import Path
 
 from update_time.io.filesystem import glob
@@ -34,7 +33,7 @@ def update_jsdelivr(content: str, path: Path) -> str:
     return JSDELIVR_RE.sub(replace, content)
 
 
-def update_jsdelivrs() -> int:
+def update_jsdelivrs() -> None:
     """Find the Sphinx config files under docs/ and update the jsDelivr URLs in them."""
     for sphinx_config_py in glob("conf.py", start=Path.cwd() / "docs"):
         LOG.path(sphinx_config_py)
@@ -42,13 +41,12 @@ def update_jsdelivrs() -> int:
         new_content = update_jsdelivr(old_content, sphinx_config_py)
         if new_content != old_content:
             sphinx_config_py.write_text(new_content)
-    return 0
 
 
-def main() -> int:  # pragma: no cover
+def main() -> None:  # pragma: no cover
     """Update the jsDelivr URLs in the repository's Sphinx configuration."""
-    return update_jsdelivrs()
+    update_jsdelivrs()
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    main()

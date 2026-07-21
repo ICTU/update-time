@@ -7,7 +7,6 @@ from update_time.io.filesystem import YAML_GLOB_PATTERNS
 from update_time.updaters.update_manifest_images import update_manifest_images
 
 from tests.update_time import registry
-from tests.update_time.assertions import assert_success
 from tests.update_time.fixtures import DIGEST
 from tests.update_time.helpers import docker_tag, mock_docker_hub_auth, mock_path
 from tests.update_time.registry import mock_docker_registry
@@ -21,7 +20,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         """Return a Docker Compose / Helm `image:` line for the image."""
         return f"image: {image}\n"
 
-    def run_updater(self, mock_file: Mock) -> int:
+    def run_updater(self, mock_file: Mock) -> None:
         """Run the manifest updater with the mock file as the only Docker Compose file.
 
         update_manifest_images globs the Compose pattern and then the Helm YAML patterns; returning the file for the
@@ -32,13 +31,13 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
             return [mock_file] if pattern == "docker-compose*.yml" else []
 
         with patch("pathlib.Path.rglob", side_effect=rglob):
-            return update_manifest_images()
+            update_manifest_images()
 
     def test_variable_substitution_ignored(self):
         """Test that image tags using ${...} substitution are not modified."""
         self.requests.side_effect = mock_docker_registry(docker_tag("999.0", DIGEST))
         mock_manifest = mock_path(self.reference("ictu/quality-time_proxy:${QUALITY_TIME_VERSION}"))
-        assert_success(self.run_updater(mock_manifest))
+        self.run_updater(mock_manifest)
         mock_manifest.write_text.assert_not_called()
         self.assert_path_logged(mock_manifest)
         self.assert_no_new_version_logged()
