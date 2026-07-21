@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Added
 
+- Update the CPython version pinned in `.python-version` files, following the Python base image in the project's Dockerfile or the latest [Python](https://hub.docker.com/_/python) release on Docker Hub. Closes [#142](https://github.com/ICTU/update-time/issues/142).
 - Update the hook versions pinned in `.pre-commit-config.yaml` files: bump each GitHub-hosted hook's `rev:` to its latest version, pin an unpinned tag to a commit SHA using pre-commit's own `# frozen:` comment convention, and apply the cooldown and staleness check like any other dependency. Closes [#144](https://github.com/ICTU/update-time/issues/144).
 
 ### Changed

@@ -16,6 +16,7 @@ from tests.update_time.helpers import (
     github_release_json,
     mock_path,
     mock_response,
+    patch_pathlib_path,
     staleness_disabled,
 )
 
@@ -60,8 +61,7 @@ def assert_manager_called(mock_run: Mock, outdated: list[str], update: list[str]
 
 # Staleness makes its own npm registry requests; it is disabled here and covered by StaleDependencyTest below.
 @staleness_disabled
-@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
-@patch("pathlib.Path.rglob")
+@patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("subprocess.run")
 class UpdateNpmPackageJsonTest(LoggingTestCase):
     """Unit tests for updating an npm-managed package.json."""
@@ -220,8 +220,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
 
 
 @staleness_disabled
-@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
-@patch("pathlib.Path.rglob")
+@patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("subprocess.run")
 class UpdatePnpmPackageJsonTest(LoggingTestCase):
     """Unit tests for updating a pnpm-managed package.json (detected via the corepack `packageManager` field)."""
@@ -296,13 +295,13 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
+    @patch_pathlib_path(exists=True)
     def test_pnpm_detected_via_lockfile(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json with a sibling pnpm-lock.yaml (and no packageManager field) uses pnpm."""
         mock_package_json = self.create_package_json("{}")  # No packageManager field; detection falls to the lockfile.
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = self.pnpm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]"))
-        with patch("pathlib.Path.exists", Mock(return_value=True)):
-            update_package_jsons()
+        update_package_jsons()
         self.assert_pnpm_called(mock_run)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -319,8 +318,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
 
-@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
-@patch("pathlib.Path.rglob")
+@patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("subprocess.run")
 class SkipUnsupportedPackageManagerTest(LoggingTestCase):
     """Unit tests for skipping package.json files managed by an unsupported package manager (yarn, bun)."""
@@ -348,8 +346,7 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
         self.assert_no_new_version_logged()
 
 
-@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
-@patch("pathlib.Path.rglob")
+@patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("subprocess.run")
 class StaleDependencyTest(LoggingTestCase):
     """Unit tests for the package.json staleness check, which makes its own npm registry pass over the deps.

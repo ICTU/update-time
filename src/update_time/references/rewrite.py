@@ -9,6 +9,7 @@ the text surgery around it, reporting what it changed through a `Logger`.
 
 import re
 from dataclasses import dataclass
+from functools import partial
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
@@ -52,29 +53,27 @@ class _Rewriter:
     logger: Logger
     path: Path
 
-    def update_line(self, line: str, marker: Marker) -> str:
-        """Update the line with the new version (and digest) if any, or return the line unchanged.
+    def update_line(self, match: re.Match[str], marker: Marker) -> str:
+        """Update the matched reference's line with the new version (and digest) if any, or return it unchanged.
 
-        Which version to update to — honouring the reference's `# update-time:` marker — is `latest_version`'s
-        decision, or None to leave the line unchanged. A reference that is already up to date is checked for digest
-        drift (see `_handle_drift`); one with an update, or without its available digest, is rewritten (see
-        `_apply_update`).
+        `updated_lines` has already matched the reference, so its line is `match.string`. Which version to update to
+        — honouring the reference's `# update-time:` marker — is `latest_version`'s decision, or None to leave the
+        line unchanged. A reference that is already up to date is checked for digest drift (see `_handle_drift`); one
+        with an update, or without its available digest, is rewritten (see `_apply_update`).
         """
-        if not (match := re.search(self.regexp, line)):
-            return line
         dependency = match.group("dependency")
         version = match.group("version")
         reference = Reference(dependency, version)
         latest = latest_version(reference, self.get_new_version, marker, self.path, self.logger)
         if latest is None:
-            return line
+            return match.string
         has_sha_group = "sha" in match.groupdict()
         pin_unpinned = has_sha_group and match.group("sha") is None and bool(latest.sha)
         if latest.version == version and not pin_unpinned:
-            return self._handle_drift(line, match, marker, latest)
-        return self._apply_update(line, match, latest, pin_unpinned=pin_unpinned)
+            return self._handle_drift(match, marker, latest)
+        return self._apply_update(match, latest, pin_unpinned=pin_unpinned)
 
-    def _handle_drift(self, line: str, match: re.Match[str], marker: Marker, latest: DependencyVersion) -> str:
+    def _handle_drift(self, match: re.Match[str], marker: Marker, latest: DependencyVersion) -> str:
         """Return the line for an up-to-date reference, adopting or warning about a re-pushed digest.
 
         When the reference is pinned and only its digest changed at the registry (a re-pushed tag), the drift is
@@ -83,7 +82,7 @@ class _Rewriter:
         """
         current_sha = match.groupdict().get("sha")
         if current_sha is None or not latest.digest_differs_from(current_sha):
-            return line
+            return match.string
         dependency, version = match.group("dependency"), match.group("version")
         if marker.allow_drift or ALLOW_IMAGE_DIGEST_DRIFT.get():
             # The reference opted in, so adopt the re-pushed digest instead of only warning about it. The
@@ -93,12 +92,12 @@ class _Rewriter:
                 f"update-time: {marker.raw_marker(Verb.ALLOW)}" if marker.allow_drift else "--allow-image-digest-drift"
             )
             self.logger.adopted_drift(dependency, version, current_sha, latest.sha, self.path, cause)
-            return self._replace_groups(line, match, {"sha": latest.sha})
+            return self._replace_groups(match, {"sha": latest.sha})
         # The tag was re-pushed with a different digest; warn but leave the immutable pin unchanged.
         self.logger.digest_drift(dependency, version, current_sha, latest.sha, self.path)
-        return line
+        return match.string
 
-    def _apply_update(self, line: str, match: re.Match[str], latest: DependencyVersion, *, pin_unpinned: bool) -> str:
+    def _apply_update(self, match: re.Match[str], latest: DependencyVersion, *, pin_unpinned: bool) -> str:
         """Return the line rewritten to the latest version and digest, logging the change.
 
         With `pin_unpinned` the regexp has an optional `sha` group that did not match, so the reference is unpinned
@@ -119,11 +118,12 @@ class _Rewriter:
             replacements = {"version": latest.version}
             if match.groupdict().get("sha") is not None:
                 replacements["sha"] = latest.sha
-        return self._replace_groups(line, match, replacements)
+        return self._replace_groups(match, replacements)
 
     @staticmethod
-    def _replace_groups(line: str, match: re.Match[str], replacements: dict[str, str]) -> str:
+    def _replace_groups(match: re.Match[str], replacements: dict[str, str]) -> str:
         """Replace the named groups within the matched region of the line, leaving the rest of the line untouched."""
+        line = match.string
         return line[: match.start()] + rewrite_match(match, replacements) + line[match.end() :]
 
 
@@ -142,39 +142,55 @@ def rewrite_match(match: re.Match[str], replacements: dict[str, str]) -> str:
     return text
 
 
+def apply_marker(  # noqa: PLR0913
+    line: str, dependency: str, marker: Marker, path: Path, logger: Logger, update: Callable[[], str]
+) -> str:
+    """Report a matched reference's `# update-time:` marker and update it, or leave the line unchanged when held back.
+
+    The marker gate shared by every line-based reference. An item that could not be parsed is reported (here, where
+    the logger and path are available, unlike in the pure `parse_marker`) and leaves the reference unchanged.
+    Otherwise the marker is logged at the debug level, as is the held-back update when the marker holds the update
+    back, so users can confirm a marker is recognised. A marker holding back both the update and the staleness
+    warning returns the line without calling `update`, so the source is never even queried; any other marker hands
+    off to `update` — the caller's thunk that performs the rewrite — so the check the marker doesn't hold back still
+    runs. Callers that discover the reference themselves (a pre-commit `rev:`, a `.python-version` entry) pass the
+    `dependency` name; `updated_lines` reads it from the regexp's match group.
+    """
+    if marker.invalid_specifier is not None:
+        logger.invalid_specifier(dependency, marker.invalid_specifier, path)
+        return line
+    logger.applying_marker(dependency, marker, path)
+    if marker.ignore_update:
+        logger.ignored(dependency, marker, path)
+    if marker.ignore_update and marker.ignore_stale:
+        return line
+    return update()
+
+
 def updated_lines(
     lines: list[str],
     regexp: str | re.Pattern[str],
-    update_line: Callable[[str, Marker], str],
+    update_line: Callable[[re.Match[str], Marker], str],
     logger: Logger,
     path: Path,
 ) -> list[str]:
-    """Return the lines with `update_line` applied to each line, honouring any `# update-time:` marker.
+    """Return the lines with `update_line` applied to each line carrying a reference, honouring any marker.
 
-    A marker that holds back both the update and the staleness warning (a bare `ignore`, or the two scopes
-    combined) leaves the line untouched without even querying the source; a marker holding back just one still
-    calls `update_line`, passing the `Marker` so the other check runs (and so an `allow[digest-drift]` opt-in or a
-    `version_bound` reaches `update_line`). When the line carries a reference (matched by `regexp`), its marker is
-    logged at the debug level, as is the held-back update when the marker holds the update back, so users can
-    confirm a marker is recognised. A marker with an item that could not be parsed is reported
-    here (where the logger and path are available, unlike in the pure `parse_marker`) and leaves the reference
-    unchanged. Each line is paired with the line before it, so a standalone marker comment can apply to the line
-    below it.
+    Each line is paired with the line before it, so a standalone marker comment can apply to the line below it. A
+    line that carries no reference (no `regexp` match) is left untouched — a marker on it is for the line below.
+    A line that does carry one is run through the shared `apply_marker` gate, which logs its marker, holds it back,
+    or hands off to `update_line` (bound here to the line and its `Marker`, so an `allow[digest-drift]` opt-in or a
+    `version_bound` still reaches it).
     """
     result = []
     for previous_line, line in pairwise(["", *lines]):
-        marker = parse_marker(line, previous_line)
         match = re.search(regexp, line)
-        if marker.invalid_specifier is not None:
-            if match:
-                logger.invalid_specifier(match.group("dependency"), marker.invalid_specifier, path)
-            result.append(line)  # An unparsable marker item leaves the reference unchanged.
+        if match is None:
+            result.append(line)  # No reference on this line; a marker here applies to the line below it.
             continue
-        if match:
-            logger.applying_marker(match.group("dependency"), marker, path)
-            if marker.ignore_update:
-                logger.ignored(match.group("dependency"), marker, path)
-        result.append(line if marker.ignore_update and marker.ignore_stale else update_line(line, marker))
+        marker = parse_marker(line, previous_line)
+        update = partial(update_line, match, marker)
+        result.append(apply_marker(line, match.group("dependency"), marker, path, logger, update))
     return result
 
 

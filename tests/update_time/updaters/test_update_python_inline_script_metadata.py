@@ -7,7 +7,14 @@ from unittest.mock import Mock, patch
 
 from update_time.updaters.update_python_inline_script_metadata import update_python_inline_script_metadatas
 
-from tests.update_time.helpers import LoggingTestCase, mock_path, mock_response, pypi_index, staleness_disabled
+from tests.update_time.helpers import (
+    LoggingTestCase,
+    mock_path,
+    mock_response,
+    patch_pathlib_path,
+    pypi_index,
+    staleness_disabled,
+)
 
 if TYPE_CHECKING:
     from update_time.sources.pypi import Release
@@ -28,8 +35,7 @@ def script(*specs: str, requires_python: str = ">=3.11") -> str:
 
 
 @staleness_disabled
-@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
-@patch("pathlib.Path.rglob")
+@patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("requests.get")
 @patch("subprocess.run")
 class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
@@ -138,8 +144,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         self.assert_no_new_version_logged()
 
 
-@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
-@patch("pathlib.Path.rglob")
+@patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("requests.get")
 @patch("subprocess.run")
 class StaleInlineScriptDependencyTest(LoggingTestCase):

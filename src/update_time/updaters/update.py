@@ -31,8 +31,8 @@ PARALLEL_SCRIPTS = (
 )
 # node_engine and package_json both rewrite the package.json files, so they run sequentially (after the
 # parallel scripts and after each other) to avoid concurrent writes to the same files. Also, node_engine
-# reads the Node version from the Dockerfile so it can't run in parallel with dockerfile_base_image.
-SEQUENTIAL_SCRIPTS = ("node_engine", "package_json")
+# and python_version read a version from the Dockerfile, so they can't run in parallel with dockerfile_base_image.
+SEQUENTIAL_SCRIPTS = ("node_engine", "package_json", "python_version_file")
 
 # A new updater script must be registered in PARALLEL_SCRIPTS or SEQUENTIAL_SCRIPTS above, or it would silently
 # never run; fail fast on import when the registered names and the `update_<name>.py` scripts on disk disagree.

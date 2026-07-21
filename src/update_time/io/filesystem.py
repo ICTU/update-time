@@ -1,5 +1,6 @@
 """Find the files to scan for references."""
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -38,6 +39,20 @@ def _named_hidden_parts(glob_pattern: str) -> set[str]:
     equality, which a wildcard never satisfies, so including it grants no exception anyway.
     """
     return {part for part in Path(glob_pattern).parts if part.startswith(".")}
+
+
+def first_line_match(path: Path, pattern: str | re.Pattern[str], group: str) -> str:
+    """Return the named group of the first line in the file that matches the pattern (anchored at the start), or ''.
+
+    A missing file yields '' too, so callers can treat it the same as a file without a matching line. Used to read a
+    single value off a Dockerfile — the Node or Python base image version — without a full parser.
+    """
+    if not path.exists():
+        return ""
+    for line in path.read_text().splitlines():
+        if match := re.match(pattern, line):
+            return match.group(group)
+    return ""
 
 
 def inside_git_repository(start: Path | None = None) -> bool:

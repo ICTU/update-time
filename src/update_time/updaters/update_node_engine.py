@@ -3,12 +3,11 @@
 Note: this script does not update package-lock.json.
 """
 
-import re
 from typing import TYPE_CHECKING
 
 from update_time.domain.version import DependencyVersion
 from update_time.file_formats import package_json as package_json_format
-from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, glob
+from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, first_line_match, glob
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
 from update_time.sources.oci import get_latest_tag
@@ -28,31 +27,18 @@ def has_node_engine(package_json: Path) -> bool:
     return "engines" in package_json_contents and "node" in package_json_contents["engines"]
 
 
-def _first_match(dockerfile: Path, regexp: str, group: str) -> str:
-    """Return the named group of the first Node `FROM` line matching the regexp, or '' when there is none.
-
-    A missing Dockerfile yields '' too, so callers can treat it the same as a Dockerfile without a Node base image.
-    """
-    if not dockerfile.exists():
-        return ""
-    for line in dockerfile.read_text().splitlines():
-        if match := re.match(regexp, line):
-            return match.group(group)
-    return ""
-
-
 def node_base_image_version(dockerfile: Path) -> str:
     """Return the numeric Node base image version (e.g. '22' from 'node:22-alpine').
 
     Returns an empty string if the Dockerfile is missing, has no Node base image, or its Node base image uses a
     non-numeric tag such as 'node:lts' (from which no concrete version can be derived).
     """
-    return _first_match(dockerfile, NODE_IMAGE_RE, "version")
+    return first_line_match(dockerfile, NODE_IMAGE_RE, "version")
 
 
 def node_base_image_tag(dockerfile: Path) -> str:
     """Return the tag of the Node base image (e.g. '22.1.0', '22-alpine' or 'lts'), or empty string if none."""
-    return _first_match(dockerfile, NODE_BASE_IMAGE_RE, "tag")
+    return first_line_match(dockerfile, NODE_BASE_IMAGE_RE, "tag")
 
 
 def find_node_dockerfile(package_json: Path) -> Path:

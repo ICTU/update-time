@@ -19,6 +19,7 @@ from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.references.file import rewrite_file
 from update_time.references.github import GitHubReference, latest_pin
+from update_time.references.rewrite import apply_marker
 from update_time.sources.github import github_owner_and_repository
 
 if TYPE_CHECKING:
@@ -57,7 +58,7 @@ def _dependency_from_repo(repo: str) -> str:
     return f"{owner}/{repository}" if owner and repository else ""
 
 
-def _update_rev(line: str, match: re.Match[str], dependency: str, path: Path, marker: Marker) -> str:
+def _update_rev(match: re.Match[str], dependency: str, path: Path, marker: Marker) -> str:
     """Pin or bump a single `rev:` to the latest version's commit SHA, or leave it unchanged.
 
     A hook `rev:` pinned to a commit SHA with a `# frozen: v4.5.0` comment, or referenced by version tag only, is the
@@ -69,8 +70,9 @@ def _update_rev(line: str, match: re.Match[str], dependency: str, path: Path, ma
     current_version = match.group("version") if current_sha else match.group("tag")
     latest = latest_pin(GitHubReference(dependency, current_version, current_sha), marker, path, LOG)
     if latest is None:
-        return line  # Invalid, held back, unpinnable, or already up to date: leave the reference as it is
+        return match.string  # Invalid, held back, unpinnable, or already up to date: leave the reference as it is
     frozen_version = f"v{latest.version}" if current_version.startswith("v") else latest.version
+    line = match.string
     return f"{line[: match.start()]}rev: {latest.sha}  # frozen: {frozen_version}{line[match.end() :]}"
 
 
@@ -91,28 +93,12 @@ def _updated_lines(lines: list[str], path: Path) -> list[str]:
             dependency = _dependency_from_repo(repo_match.group("repo"))
             result.append(line)
         elif (rev_match := REV_RE.search(line)) and dependency:
-            result.append(_apply_marker(line, rev_match, dependency, path, parse_marker(line, previous_line)))
+            marker = parse_marker(line, previous_line)
+            update = partial(_update_rev, rev_match, dependency, path, marker)
+            result.append(apply_marker(line, dependency, marker, path, LOG, update))
         else:
             result.append(line)
     return result
-
-
-def _apply_marker(line: str, match: re.Match[str], dependency: str, path: Path, marker: Marker) -> str:
-    """Report the reference's marker and update its `rev:`, or leave the line unchanged when the marker holds it back.
-
-    An unparsable marker item is reported and leaves the reference untouched. Otherwise the marker is logged, a
-    held-back update is logged too, and a marker that holds back both the update and the staleness warning skips the
-    source lookup entirely; any other marker hands off to `_update_rev` so the check it doesn't hold back still runs.
-    """
-    if marker.invalid_specifier is not None:
-        LOG.invalid_specifier(dependency, marker.invalid_specifier, path)
-        return line
-    LOG.applying_marker(dependency, marker, path)
-    if marker.ignore_update:
-        LOG.ignored(dependency, marker, path)
-    if marker.ignore_update and marker.ignore_stale:
-        return line
-    return _update_rev(line, match, dependency, path, marker)
 
 
 def update_pre_commit_configs(start: Path | None = None) -> None:

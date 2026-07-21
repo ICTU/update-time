@@ -14,6 +14,7 @@ from tests.update_time.helpers import (
     github_release_json,
     mock_path,
     mock_response,
+    patch_pathlib_path,
     staleness_disabled,
 )
 
@@ -31,8 +32,7 @@ def pyproject(spec: str) -> str:
 # staleness pass is disabled here (it makes its own PyPI requests); it has its own tests in StaleDependencyTest below.
 @staleness_disabled
 @patch("update_time.package_managers.uv.configure_cooldown", Mock())
-@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
-@patch("pathlib.Path.rglob")
+@patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("requests.get")
 @patch("subprocess.run")
 class UpdatePyprojectTomlsTest(LoggingTestCase):
@@ -198,7 +198,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_unsupported_package_manager_logged(mock_pyproject_toml, "poetry", "uv")
         self.assert_no_new_version_logged()
 
-    @patch("pathlib.Path.exists", Mock(return_value=True))
+    @patch_pathlib_path(exists=True)
     def test_skip_non_uv_lockfile(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pyproject.toml with a non-uv lockfile (e.g. poetry.lock) is skipped without running uv."""
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
@@ -223,8 +223,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
 
 @patch("update_time.package_managers.uv.configure_cooldown", Mock())
-@patch("pathlib.Path.cwd", Mock(return_value=Path("/")))
-@patch("pathlib.Path.rglob")
+@patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("requests.get")
 @patch("subprocess.run")
 class StaleDependencyTest(LoggingTestCase):
