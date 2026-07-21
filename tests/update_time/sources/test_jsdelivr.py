@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, Mock, patch
 
-from update_time.domain.cooldown import COOLDOWN_DAYS
+from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
 from update_time.sources.jsdelivr import get_latest_version
 
@@ -21,7 +21,7 @@ FILENAME = "/dist/clipboard.min.js"
 FLAT_FILES = {"default": FILENAME, "files": [{"name": FILENAME, "hash": HASH2}]}
 
 # npm publication dates, relative to now so the cooldown decision is independent of the wall clock.
-ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN_DAYS + 1)).isoformat()  # comfortably past the cooldown
+ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN.default + 1)).isoformat()  # comfortably past the cooldown
 FRESH = (datetime.now(UTC) - timedelta(days=1)).isoformat()  # still within the cooldown
 
 

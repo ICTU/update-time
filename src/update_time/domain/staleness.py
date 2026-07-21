@@ -6,9 +6,10 @@ mirrors the cooldown helpers, at the other end of the timeline: the cooldown hol
 fresh, while staleness warns about dependencies whose newest release is too old.
 """
 
-import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+
+from update_time.primitives.environment import EnvVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -16,15 +17,8 @@ if TYPE_CHECKING:
 
     from update_time.domain.version import DependencyName, DependencyVersion
 
-STALE_AFTER_DAYS = 365  # Default staleness threshold in days, used when --stale-after is not given
-# Private channel that passes --stale-after from the CLI to the updater subprocesses; not a user-facing setting
-# (use --stale-after instead). The leading underscore marks it internal.
-STALE_AFTER_DAYS_ENV_VAR = "_UPDATE_TIME_STALE_AFTER_DAYS"
-
-
-def stale_after_days() -> int:
-    """Return the configured staleness threshold in days, or 0 when the check is disabled."""
-    return int(os.environ.get(STALE_AFTER_DAYS_ENV_VAR, STALE_AFTER_DAYS))
+# Private channel that passes --stale-after from the CLI to the updater subprocesses; 0 disables the check.
+STALE_AFTER = EnvVar("_UPDATE_TIME_STALE_AFTER_DAYS", default=365, parse=int)
 
 
 def staleness_days(published: datetime) -> int:
@@ -39,7 +33,7 @@ def is_stale(published: datetime | None) -> bool:
     produces a warning. Whole days are compared (via `staleness_days`), the same count the warning reports, so the
     "> threshold" decision and the "N days ago (> threshold)" message never disagree at the fractional boundary.
     """
-    if (threshold := stale_after_days()) == 0 or published is None:
+    if (threshold := STALE_AFTER.get()) == 0 or published is None:
         return False
     return staleness_days(published) > threshold
 
@@ -68,7 +62,7 @@ def warn_about_stale_dependencies(
     makes no registry request. Callback-driven so `domain` stays free of the I/O the resolver and warning perform,
     like `first_eligible`.
     """
-    if stale_after_days() == 0:
+    if STALE_AFTER.get() == 0:
         return
     for file in files:
         for name, release in newest_releases(file):

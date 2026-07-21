@@ -19,7 +19,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.logging import RichHandler
 
-from update_time.domain.staleness import STALE_AFTER_DAYS
+from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import SHA256_HEX_CHARS
 from update_time.io.log import (
     DEPENDENCY_DELIMITER,
@@ -98,7 +98,7 @@ def generate() -> str:
         "4.3.0",
         Logger.NO_CHANGELOG,
     )
-    log.warning(Logger._MESSAGE_STALE, _delimit("left-pad"), "package.json", "1.3.0", 512, STALE_AFTER_DAYS)  # noqa: SLF001
+    log.warning(Logger._MESSAGE_STALE, _delimit("left-pad"), "package.json", "1.3.0", 512, STALE_AFTER.default)  # noqa: SLF001
 
     plain_text = console.export_text(clear=False)  # capture before the export clears the recording
     svg = console.export_svg(title="update-time", unique_id="update-time-log")

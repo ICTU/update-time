@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
-from update_time.references.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR
+from update_time.references.rewrite import ALLOW_IMAGE_DIGEST_DRIFT
 
 from tests.update_time.assertions import assert_success
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
@@ -174,7 +174,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         """Test that --allow-image-digest-drift re-pins a re-pushed tag's digest instead of only warning about it."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST2))
         mock_file = mock_path(self.reference(f"python:3.14@{DIGEST1}"))
-        with patch_environ({ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR: "1"}):
+        with patch_environ({ALLOW_IMAGE_DIGEST_DRIFT.name: "1"}):
             assert_success(self.run_updater(mock_file))
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14@{DIGEST2}"))
         self.assert_adopted_drift_logged(mock_file, "python", "3.14", DIGEST1, DIGEST2)

@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
-from update_time.domain.cooldown import COOLDOWN_DAYS
+from update_time.domain.cooldown import COOLDOWN
 from update_time.io.cli import parse_args
-from update_time.io.log import DEFAULT_LOG_LEVEL
+from update_time.io.log import LOG_LEVEL
 
 if TYPE_CHECKING:
     import argparse
@@ -62,7 +62,7 @@ class CommandLineInterfaceTest(unittest.TestCase):
 
     def test_default_cooldown(self):
         """Test that the cooldown defaults to the default cooldown period."""
-        self.assertEqual(COOLDOWN_DAYS, self.parsed().cooldown)
+        self.assertEqual(COOLDOWN.default, self.parsed().cooldown)
 
     def test_cooldown(self):
         """Test that the --cooldown option sets the cooldown period."""
@@ -112,7 +112,7 @@ class CommandLineInterfaceTest(unittest.TestCase):
 
     def test_default_log_level(self):
         """Test that the log level defaults to the default log level."""
-        self.assertEqual(DEFAULT_LOG_LEVEL, self.parsed().log_level)
+        self.assertEqual(LOG_LEVEL.default, self.parsed().log_level)
 
     def test_log_level(self):
         """Test that the --log-level option sets the log level, upper-casing the value."""

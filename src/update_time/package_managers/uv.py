@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from update_time.domain.bound import NO_BOUND
-from update_time.domain.cooldown import cooldown_cutoff, cooldown_days
+from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
 from update_time.domain.version import DependencyVersion
 from update_time.file_formats import pyproject_toml as pyproject_toml_format
 from update_time.io.log import get_logger
@@ -80,7 +80,7 @@ def _persist_exclude_newer(pyproject_toml: Path) -> None:
     the user's own and is left untouched, as is an already-current marked value (which is not rewritten).
     """
     existing = pyproject_toml_format.tool_key(pyproject_toml, "uv", "exclude-newer")
-    cooldown = f"{cooldown_days()} days"
+    cooldown = f"{COOLDOWN.get()} days"
     if existing is not None:
         value, comment = existing
         if EXCLUDE_NEWER_MARKER not in comment.lower():

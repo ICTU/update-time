@@ -1,7 +1,6 @@
 """Log helpers."""
 
 import logging
-import os
 import re
 import sys
 from datetime import UTC
@@ -14,8 +13,9 @@ from rich.logging import RichHandler
 from rich.theme import Theme
 
 from update_time.domain.bound import NO_BOUND, Verb
-from update_time.domain.staleness import is_stale, stale_after_days, staleness_days
+from update_time.domain.staleness import STALE_AFTER, is_stale, staleness_days
 from update_time.domain.version import SHA256_DIGEST
+from update_time.primitives.environment import EnvVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,15 +32,8 @@ if TYPE_CHECKING:
 # logged at INFO (it is the tool's regular output, not a problem), while genuinely unexpected situations stay at
 # WARNING and failures at ERROR. The per-file "checking ..." progress is logged at DEBUG.
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
-DEFAULT_LOG_LEVEL = "INFO"
-# Private channel that passes the log level from the CLI to the updater subprocesses; not a user-facing setting
-# (use --log-level instead). The leading underscore marks it internal.
-LOG_LEVEL_ENV_VAR = "_UPDATE_TIME_LOG_LEVEL"
-
-
-def log_level() -> str:
-    """Return the configured log level."""
-    return os.environ.get(LOG_LEVEL_ENV_VAR, DEFAULT_LOG_LEVEL)
+# Private channel that passes the log level from the CLI to the updater subprocesses.
+LOG_LEVEL = EnvVar("_UPDATE_TIME_LOG_LEVEL", default="INFO", parse=str)
 
 
 # Private-use-area character that brackets a dependency name in a log message, so the highlighter can style the name
@@ -246,7 +239,7 @@ class Logger:
         """
         if (published := version.newest_published) is None or not is_stale(published):
             return
-        arguments = (dependency, self._relative(path), version.version, staleness_days(published), stale_after_days())
+        arguments = (dependency, self._relative(path), version.version, staleness_days(published), STALE_AFTER.get())
         self._log(self.log.warning, self._MESSAGE_STALE, *arguments)
 
     _MESSAGE_NO_VERSION = f"No valid version found for {DEPENDENCY_DELIMITER}%s{DEPENDENCY_DELIMITER}"
@@ -453,5 +446,7 @@ def get_logger(name: str) -> Logger:
     if not logging.getLogger().handlers:
         console = Console(stderr=True, theme=LOG_THEME)
         handler = RichHandler(console=console, highlighter=LogHighlighter())
-        logging.basicConfig(level=log_level(), datefmt=LOG_TIME_FORMAT, format=LOG_MESSAGE_FORMAT, handlers=[handler])
+        logging.basicConfig(
+            level=LOG_LEVEL.get(), datefmt=LOG_TIME_FORMAT, format=LOG_MESSAGE_FORMAT, handlers=[handler]
+        )
     return Logger(name)

@@ -7,7 +7,6 @@ ignore` marker. Which version a reference should update to is `resolve.latest_ve
 the text surgery around it, reporting what it changed through a `Logger`.
 """
 
-import os
 import re
 from dataclasses import dataclass
 from itertools import pairwise
@@ -17,6 +16,7 @@ from update_time.domain.bound import Verb
 from update_time.domain.marker import parse_marker
 from update_time.domain.version import Reference
 from update_time.io.log import attribute_logs_to_caller
+from update_time.primitives.environment import EnvVar
 from update_time.references.resolve import latest_version
 
 if TYPE_CHECKING:
@@ -30,14 +30,14 @@ if TYPE_CHECKING:
 
 attribute_logs_to_caller(__file__)  # This engine logs on behalf of the updaters, so records point at the updater.
 
-# Private channel that passes --allow-image-digest-drift from the CLI to the updater subprocesses; not a user-facing
-# setting (use --allow-image-digest-drift instead). The leading underscore marks it internal.
-ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR = "_UPDATE_TIME_ALLOW_IMAGE_DIGEST_DRIFT"
-
-
-def allow_image_digest_drift() -> bool:
-    """Return whether a re-pushed image digest should be adopted repo-wide (the --allow-image-digest-drift flag)."""
-    return os.environ.get(ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR) == "1"
+# Private channel that passes --allow-image-digest-drift from the CLI to the updater subprocesses: whether a
+# re-pushed image digest should be adopted repo-wide.
+ALLOW_IMAGE_DIGEST_DRIFT = EnvVar(
+    "_UPDATE_TIME_ALLOW_IMAGE_DIGEST_DRIFT",
+    default=False,
+    parse=lambda value: value == "1",
+    serialize=lambda allow: "1" if allow else "0",
+)
 
 
 @dataclass(frozen=True)
@@ -85,7 +85,7 @@ class _Rewriter:
         if current_sha is None or not latest.digest_differs_from(current_sha):
             return line
         dependency, version = match.group("dependency"), match.group("version")
-        if marker.allow_drift or allow_image_digest_drift():
+        if marker.allow_drift or ALLOW_IMAGE_DIGEST_DRIFT.get():
             # The reference opted in, so adopt the re-pushed digest instead of only warning about it. The
             # per-reference marker is the more specific opt-in, so its `allow` directives are named verbatim as the
             # cause when both apply; the digest-drift opt-in is among them.
