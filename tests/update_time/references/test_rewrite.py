@@ -8,7 +8,7 @@ from unittest.mock import Mock
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.marker import Marker
 from update_time.domain.version import DependencyVersion
-from update_time.references.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR, rewrite_match, update_references_in_lines
+from update_time.references.rewrite import ALLOW_IMAGE_DIGEST_DRIFT, rewrite_match, update_references_in_lines
 
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
@@ -245,7 +245,7 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_flag_adopts_digest_drift_repo_wide(self):
         """Test that the --allow-image-digest-drift flag (via its env var) adopts drift without a per-line marker."""
         lines = [f"image: python:3.14@{OLD_DIGEST}"]
-        with patch_environ({ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR: "1"}):
+        with patch_environ({ALLOW_IMAGE_DIGEST_DRIFT.name: "1"}):
             new_lines = self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST))
         self.assertEqual(new_lines, [f"image: python:3.14@{NEW_DIGEST}"])
         self.logger.adopted_drift.assert_called_once_with(
@@ -257,7 +257,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that an `ignore` marker still wins over the global --allow-image-digest-drift flag."""
         get_new_version = Mock()
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: ignore"]
-        with patch_environ({ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR: "1"}):
+        with patch_environ({ALLOW_IMAGE_DIGEST_DRIFT.name: "1"}):
             self.assertEqual(lines, self.rewrite(lines, SHA_REGEXP, get_new_version))
         get_new_version.assert_not_called()
         self.logger.adopted_drift.assert_not_called()

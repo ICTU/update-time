@@ -6,12 +6,12 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from update_time.domain.cooldown import COOLDOWN_DAYS_ENV_VAR
-from update_time.domain.staleness import STALE_AFTER_DAYS_ENV_VAR
+from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.staleness import STALE_AFTER
 from update_time.io.cli import parse_args
-from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR, inside_git_repository
-from update_time.io.log import LOG_LEVEL_ENV_VAR, get_logger
-from update_time.references.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR
+from update_time.io.filesystem import EXCLUDE_PATHS, inside_git_repository
+from update_time.io.log import LOG_LEVEL, get_logger
+from update_time.references.rewrite import ALLOW_IMAGE_DIGEST_DRIFT
 
 SRC = Path(__file__).parent
 
@@ -73,7 +73,7 @@ def configure_excluded_paths(paths: list[Path]) -> None:
             existing.append(path)
         else:
             logger.missing_excluded_path(path)
-    os.environ[EXCLUDE_PATHS_ENV_VAR] = ",".join(str(path) for path in existing)
+    EXCLUDE_PATHS.set(existing)
 
 
 def main() -> int:
@@ -82,10 +82,10 @@ def main() -> int:
     # Scope the whole run to the requested directory; everything downstream keys off the current working directory.
     os.chdir(args.path)
     # Pass the cooldown, staleness threshold, log level, and drift opt-in down to the subprocesses via the environment.
-    os.environ[COOLDOWN_DAYS_ENV_VAR] = str(args.cooldown)
-    os.environ[STALE_AFTER_DAYS_ENV_VAR] = str(args.stale_after)
-    os.environ[LOG_LEVEL_ENV_VAR] = args.log_level
-    os.environ[ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR] = "1" if args.allow_image_digest_drift else "0"
+    COOLDOWN.set(args.cooldown)
+    STALE_AFTER.set(args.stale_after)
+    LOG_LEVEL.set(args.log_level)
+    ALLOW_IMAGE_DIGEST_DRIFT.set(args.allow_image_digest_drift)
     # Update-time rewrites files in place, so it refuses to run outside a git repository where changes can't be
     # reverted. --force overrides the refusal, proceeding with a warning. Checked once, before any subprocess is
     # spawned; the log level is already exported above, so both messages honour --log-level. The check keys off the

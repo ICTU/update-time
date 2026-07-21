@@ -9,7 +9,7 @@ from unittest.mock import ANY, Mock, patch
 
 import update_time
 from update_time.domain.bound import NewVersionGetter, Verb, VersionBound, parse_bound
-from update_time.domain.staleness import STALE_AFTER_DAYS_ENV_VAR
+from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import DependencyVersion, VersionString
 from update_time.io.log import Logger
 from update_time.sources.docker_hub import api_headers as docker_hub_headers
@@ -260,7 +260,7 @@ def patch_environ(environment_variables: dict[str, str] | None = None, *, clear:
 
 # Reusable decorator that disables the staleness check, for update tests that focus on the update flow and would
 # otherwise trigger the staleness pass's own registry requests. The staleness pass has its own dedicated tests.
-staleness_disabled = patch_environ({STALE_AFTER_DAYS_ENV_VAR: "0"})
+staleness_disabled = patch_environ({STALE_AFTER.name: "0"})
 
 
 def mock_path(content: str, parent: Path | None = None) -> Mock:

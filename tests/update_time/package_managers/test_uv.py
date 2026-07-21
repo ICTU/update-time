@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import ANY, Mock, call, patch
 
-from update_time.domain.cooldown import COOLDOWN_DAYS
+from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
 from update_time.package_managers.uv import (
     EXCLUDE_NEWER_COMMENT,
@@ -41,10 +41,10 @@ class PersistExcludeNewerTest(LoggingTestCase):
         """Test that the cooldown is written, with the marker comment, when the project configures none."""
         pyproject_toml = self.persist(pyproject("a==1.0"))
         written = pyproject_toml.write_text.call_args.args[0]
-        self.assertIn(f'exclude-newer = "{COOLDOWN_DAYS} days"', written)
+        self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', written)
         self.assertIn(EXCLUDE_NEWER_COMMENT, written)
         self.mock_info.assert_called_once_with(
-            Logger._MESSAGE_UV_COOLDOWN, f"{COOLDOWN_DAYS} days", ANY, stacklevel=ANY
+            Logger._MESSAGE_UV_COOLDOWN, f"{COOLDOWN.default} days", ANY, stacklevel=ANY
         )
 
     def test_creates_tool_uv_section_when_absent(self):
@@ -59,7 +59,7 @@ class PersistExcludeNewerTest(LoggingTestCase):
         )
         written = pyproject_toml.write_text.call_args.args[0]
         self.assertIn("exclude-newer-package = { msgpack = false }", written)
-        self.assertIn(f'exclude-newer = "{COOLDOWN_DAYS} days"', written)
+        self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', written)
 
     def test_leaves_a_user_value_untouched(self):
         """Test that an exclude-newer without the marker (the user's own) is left alone, writing and logging nothing."""
@@ -69,12 +69,12 @@ class PersistExcludeNewerTest(LoggingTestCase):
 
     def test_does_not_rewrite_when_already_current(self):
         """Test that a marked value already matching the cooldown is not rewritten (no spurious file churn)."""
-        pyproject_toml = self.persist(pyproject("a==1.0") + marked(f"{COOLDOWN_DAYS} days"))
+        pyproject_toml = self.persist(pyproject("a==1.0") + marked(f"{COOLDOWN.default} days"))
         pyproject_toml.write_text.assert_not_called()
 
     def test_syncs_own_value_to_the_cooldown(self):
         """Test that a previously Update-time-written value is rewritten when --cooldown changes."""
-        with patch.dict(os.environ, {"_UPDATE_TIME_COOLDOWN_DAYS": "14"}):
+        with patch.dict(os.environ, {COOLDOWN.name: "14"}):
             pyproject_toml = self.persist(pyproject("a==1.0") + marked("7 days"))
         self.assertIn('exclude-newer = "14 days"', pyproject_toml.write_text.call_args.args[0])
 

@@ -33,15 +33,18 @@ class DependenciesTest(unittest.TestCase):
 
 
 class LayeringTest(unittest.TestCase):
-    """Test the layered architecture: domain < io < {file_formats, sources} < {package_managers, references} < updaters.
+    """Test the layered architecture, innermost to outermost.
 
-    Each layer may use the ones before it but not the ones after it: `domain` is the pure, I/O-free core; `io` wraps
-    file, process, and log I/O; `file_formats` read/write/parse specific manifest formats and `sources` are the
-    registry/API clients (parallel siblings, neither using the other); `package_managers` drive the external managers
-    (uv/npm/pnpm) using file_formats and sources, and `references` decide which version a pinned reference should
-    update to and rewrite the reference accordingly (parallel siblings, neither using the other); and `updaters`
-    wire everything together. Keeping the arrows pointing one way is what lets `domain` be tested in isolation and
-    `file_formats`/`sources` be reused.
+    primitives < domain < io < {file_formats, sources} < {package_managers, references} < updaters.
+
+    Each layer may use the ones before it but not the ones after it: `primitives` are project-agnostic building
+    blocks (a typed environment variable) that even the pure core may reach for; `domain` is the pure, I/O-free
+    core; `io` wraps file, process, and log I/O; `file_formats` read/write/parse specific manifest formats and
+    `sources` are the registry/API clients (parallel siblings, neither using the other); `package_managers` drive
+    the external managers (uv/npm/pnpm) using file_formats and sources, and `references` decide which version a
+    pinned reference should update to and rewrite the reference accordingly (parallel siblings, neither using the
+    other); and `updaters` wire everything together. Keeping the arrows pointing one way is what lets `domain` be
+    tested in isolation and `file_formats`/`sources` be reused.
     """
 
     def assert_layer_does_not_depend_on(self, layer: str, *outer_layers: str) -> None:
@@ -51,8 +54,14 @@ class LayeringTest(unittest.TestCase):
                 rule = project_files("src/").in_folder(layer).should_not().depend_on_files().in_folder(outer_layer)
                 assert_passes(rule)
 
-    def test_domain_depends_on_no_other_layer(self):
-        """Test that the domain layer is self-contained, depending on none of the layers above it."""
+    def test_primitives_depend_on_no_other_layer(self):
+        """Test that the primitives layer is the innermost, depending on none of the layers above it."""
+        self.assert_layer_does_not_depend_on(
+            "primitives", "domain", "io", "file_formats", "sources", "package_managers", "references", "updaters"
+        )
+
+    def test_domain_depends_on_no_outer_layer(self):
+        """Test that the domain layer depends on none of the layers above it (only the inner `primitives` layer)."""
         self.assert_layer_does_not_depend_on(
             "domain", "io", "file_formats", "sources", "package_managers", "references", "updaters"
         )
@@ -86,7 +95,7 @@ class LayeringTest(unittest.TestCase):
         goes through one place with a uniform timeout, error handling, and logging. This also keeps the pure domain
         layer free of any I/O.
         """
-        for layer in ("domain", "sources", "package_managers", "references", "updaters"):
+        for layer in ("primitives", "domain", "sources", "package_managers", "references", "updaters"):
             with self.subTest(layer=layer):
                 rule = project_files("src/").in_folder(layer).should_not().depend_on_external_modules()
                 assert_passes(rule.matching(r"requests"))
@@ -109,7 +118,7 @@ class LayeringTest(unittest.TestCase):
         parses JSON *command output* (`npm`/`pnpm --json`), which is not a manifest — but no updater parses a manifest
         itself: it goes through file_formats. So updaters import none of the four.
         """
-        for layer in ("domain", "io", "sources", "package_managers", "references", "updaters"):
+        for layer in ("primitives", "domain", "io", "sources", "package_managers", "references", "updaters"):
             for module in ("tomllib", "tomlkit", "yaml"):
                 with self.subTest(layer=layer, module=module):
                     rule = project_files("src/").in_folder(layer).should_not().depend_on_external_modules()

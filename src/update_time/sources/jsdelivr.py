@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.staleness import stale_after_days
+from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
@@ -49,7 +49,7 @@ def get_latest_version(
     # Attach the newest npm publication date for the staleness check. Unlike the other sources this can cost an
     # extra npm request (when the reference is already at the newest version, so no candidate was resolved), so it
     # is skipped when the check is disabled; `is_stale` remains the single gate on whether a warning is emitted.
-    newest_published = newest_publication_date(dependency) if stale_after_days() > 0 else None
+    newest_published = newest_publication_date(dependency) if STALE_AFTER.get() > 0 else None
     return replace(latest, newest_published=newest_published)
 
 

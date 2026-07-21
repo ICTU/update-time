@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from update_time.domain.cooldown import cooldown_days
+from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.version import DependencyVersion
 from update_time.file_formats.package_json import DEPENDENCY_SECTIONS
 from update_time.io.log import get_logger
@@ -69,7 +69,7 @@ class PackageManager:
         config = (run([*self.config_get, key], cwd=directory).stdout.strip() for key in self.cooldown_config_keys)
         if any(value != self.cooldown_unset for value in config):
             return []
-        return [self.cooldown_option(cooldown_days())]
+        return [self.cooldown_option(COOLDOWN.get())]
 
     def update_package_json(self, package_json: Path) -> None:
         """Update the package.json and its lockfile using this package manager."""

@@ -5,10 +5,10 @@ import os
 from importlib.metadata import version
 from pathlib import Path
 
-from update_time.domain.cooldown import COOLDOWN_DAYS
-from update_time.domain.staleness import STALE_AFTER_DAYS
+from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.staleness import STALE_AFTER
 from update_time.io.filesystem import ALWAYS_IGNORED_DIRECTORIES, inside_git_repository
-from update_time.io.log import DEFAULT_LOG_LEVEL, LOG_LEVELS
+from update_time.io.log import LOG_LEVEL, LOG_LEVELS
 
 
 def days(value: str) -> int:
@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cooldown",
         type=days,
-        default=COOLDOWN_DAYS,
+        default=COOLDOWN.default,
         metavar="DAYS",
         help="number of days to hold back newly published Docker image, GitHub Action, pre-commit hook, "
         "requirements.txt, npm, pnpm, pyproject.toml, Python inline script metadata, and jsDelivr versions "
@@ -84,7 +84,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--stale-after",
         type=days,
-        default=STALE_AFTER_DAYS,
+        default=STALE_AFTER.default,
         metavar="DAYS",
         help="warn when a dependency's newest release is older than this many days; 0 disables the check "
         "(default: %(default)s)",
@@ -118,7 +118,7 @@ def parse_args() -> argparse.Namespace:
         "--log-level",
         type=str.upper,
         choices=LOG_LEVELS,
-        default=DEFAULT_LOG_LEVEL,
+        default=LOG_LEVEL.default,
         help="the minimum severity of messages to log; available new versions are logged at INFO (default: "
         "%(default)s)",
     )

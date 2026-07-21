@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
-from update_time.domain.cooldown import COOLDOWN_DAYS
+from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
 from update_time.updaters.update_jsdelivr import update_jsdelivr, update_jsdelivrs
 
@@ -17,7 +17,7 @@ FILENAME = "/dist/clipboard.min.js"
 FLAT_FILES = {"default": FILENAME, "files": [{"name": FILENAME, "hash": HASH2}]}
 
 # An npm publication date comfortably past the cooldown, relative to now so the decision doesn't depend on the clock.
-ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN_DAYS + 1)).isoformat()
+ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN.default + 1)).isoformat()
 
 
 # The relevant part of the Sphinx config, formatted as Ruff would format it.

@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 if TYPE_CHECKING:
     from unittest.mock import _patch
 
-from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR, excluded_paths, glob, inside_git_repository
+from update_time.io.filesystem import EXCLUDE_PATHS, glob, inside_git_repository
 
 from tests.update_time.helpers import patch_environ
 
@@ -60,19 +60,19 @@ class GlobTest(unittest.TestCase):
         mock_glob.return_value = [Path("/.git/.devcontainer/devcontainer.json")]
         self.assertEqual(list(glob(".devcontainer/devcontainer.json")), [])
 
-    @patch_environ({EXCLUDE_PATHS_ENV_VAR: "vendor"})
+    @patch_environ({EXCLUDE_PATHS.name: "vendor"})
     def test_excluded_folder_is_skipped(self, mock_glob: Mock):
         """Test that files under a directory passed to --exclude-path are skipped."""
         mock_glob.return_value = [Path("/vendor/file.txt"), Path("/src/file.txt")]
         self.assertEqual([Path("/src/file.txt")], list(glob("*.txt")))
 
-    @patch_environ({EXCLUDE_PATHS_ENV_VAR: "vendor"})
+    @patch_environ({EXCLUDE_PATHS.name: "vendor"})
     def test_excluded_folder_matches_by_prefix_not_by_name(self, mock_glob: Mock):
         """Test that --exclude-path matches a relative path prefix, not a folder name anywhere in the tree."""
         mock_glob.return_value = [Path("/vendor/file.txt"), Path("/src/vendor/file.txt")]
         self.assertEqual([Path("/src/vendor/file.txt")], list(glob("*.txt")))
 
-    @patch_environ({EXCLUDE_PATHS_ENV_VAR: "vendor,packages/legacy"})
+    @patch_environ({EXCLUDE_PATHS.name: "vendor,packages/legacy"})
     def test_multiple_excluded_folders_are_skipped(self, mock_glob: Mock):
         """Test that every directory in a comma-separated --exclude-path list is skipped."""
         mock_glob.return_value = [Path("/vendor/a.txt"), Path("/packages/legacy/b.txt"), Path("/packages/kept/c.txt")]
@@ -123,14 +123,14 @@ class ExcludedPathsTest(unittest.TestCase):
     def test_no_excluded_paths(self):
         """Test that no excluded paths are returned when the environment variable is not set."""
         with patch_environ():
-            self.assertEqual(excluded_paths(), [])
+            self.assertEqual(EXCLUDE_PATHS.get(), [])
 
     def test_empty_excluded_paths(self):
         """Test that an empty environment variable yields no excluded paths."""
-        with patch_environ({EXCLUDE_PATHS_ENV_VAR: ""}):
-            self.assertEqual(excluded_paths(), [])
+        with patch_environ({EXCLUDE_PATHS.name: ""}):
+            self.assertEqual(EXCLUDE_PATHS.get(), [])
 
     def test_excluded_paths(self):
         """Test that the comma-separated excluded paths are parsed into a list of paths."""
-        with patch_environ({EXCLUDE_PATHS_ENV_VAR: "vendor,packages/legacy"}):
-            self.assertEqual([Path("vendor"), Path("packages/legacy")], excluded_paths())
+        with patch_environ({EXCLUDE_PATHS.name: "vendor,packages/legacy"}):
+            self.assertEqual([Path("vendor"), Path("packages/legacy")], EXCLUDE_PATHS.get())

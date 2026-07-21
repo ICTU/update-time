@@ -1,16 +1,21 @@
 """Find the files to scan for references."""
 
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from update_time.primitives.environment import EnvVar
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-# Private channel that passes --exclude-path from the CLI to the updater subprocesses; not a user-facing setting
-# (use --exclude-path instead). The leading underscore marks it internal. Entries are the comma-joined, scan-root
-# relative directories to skip.
-EXCLUDE_PATHS_ENV_VAR = "_UPDATE_TIME_EXCLUDE_PATHS"
+# Private channel that passes --exclude-path from the CLI to the updater subprocesses. The scan-root-relative
+# directories to skip, validated by the CLI (relative, non-escaping) so they are trusted here.
+EXCLUDE_PATHS: EnvVar[list[Path]] = EnvVar(
+    "_UPDATE_TIME_EXCLUDE_PATHS",
+    default=[],
+    parse=lambda value: [Path(entry) for entry in value.split(",") if entry],
+    serialize=lambda paths: ",".join(str(path) for path in paths),
+)
 
 YAML_GLOB_PATTERNS = ("*.yml", "*.yaml")
 # Dockerfiles are conventionally named `Dockerfile`, or `<purpose>.Dockerfile` / `Dockerfile.<purpose>` when a
@@ -35,17 +40,6 @@ def _named_hidden_parts(glob_pattern: str) -> set[str]:
     return {part for part in Path(glob_pattern).parts if part.startswith(".")}
 
 
-def excluded_paths() -> list[Path]:
-    """Return the user-excluded directories (relative to the scan root), passed down from the CLI via the environment.
-
-    `glob` skips every file under one of these. The set extends the built-in ignores (`build`, `node_modules`,
-    `__pycache__`, hidden folders); it does not replace them. The CLI validates the entries (relative, non-escaping),
-    so they are trusted here.
-    """
-    value = os.environ.get(EXCLUDE_PATHS_ENV_VAR, "")
-    return [Path(entry) for entry in value.split(",") if entry]
-
-
 def inside_git_repository(start: Path | None = None) -> bool:
     """Return whether the given directory (default: the working directory) sits inside a git repository.
 
@@ -64,11 +58,11 @@ def glob(*glob_patterns: str, start: Path | None = None, case_sensitive: bool | 
     pattern like `*.yml` doesn't reach into them. A hidden folder or file named literally in the pattern itself is
     the exception: `glob(".devcontainer/devcontainer.json")` visits `.devcontainer`, so callers can target hidden
     locations directly instead of working around the default skip. Directories passed to `--exclude-path` (see
-    `excluded_paths`) are skipped on top of these built-in ignores.
+    `EXCLUDE_PATHS`) are skipped on top of these built-in ignores.
     """
     if start is None:
         start = Path.cwd()
-    excluded = excluded_paths()
+    excluded = EXCLUDE_PATHS.get()
     for glob_pattern in glob_patterns:
         named_hidden = _named_hidden_parts(glob_pattern)
         for path in start.rglob(glob_pattern, case_sensitive=case_sensitive):

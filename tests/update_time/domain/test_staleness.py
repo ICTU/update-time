@@ -6,31 +6,15 @@ from pathlib import Path
 from unittest.mock import Mock
 
 from update_time.domain.staleness import (
-    STALE_AFTER_DAYS,
-    STALE_AFTER_DAYS_ENV_VAR,
+    STALE_AFTER,
     is_stale,
     newest_datetime,
-    stale_after_days,
     staleness_days,
     warn_about_stale_dependencies,
 )
 from update_time.domain.version import DependencyVersion
 
 from tests.update_time.helpers import patch_environ, staleness_disabled
-
-
-class StaleAfterDaysTest(unittest.TestCase):
-    """Unit tests for the stale_after_days helper."""
-
-    def test_default(self):
-        """Test that the threshold defaults to the default staleness period when the env var is not set."""
-        with patch_environ():
-            self.assertEqual(STALE_AFTER_DAYS, stale_after_days())
-
-    def test_env_var(self):
-        """Test that the threshold is read from the env var when set."""
-        with patch_environ({STALE_AFTER_DAYS_ENV_VAR: "30"}):
-            self.assertEqual(stale_after_days(), 30)
 
 
 class IsStaleTest(unittest.TestCase):
@@ -42,13 +26,13 @@ class IsStaleTest(unittest.TestCase):
 
     def test_disabled(self):
         """Test that a threshold of 0 disables the check, so nothing is stale."""
-        old = datetime.now(UTC) - timedelta(days=STALE_AFTER_DAYS * 10)
+        old = datetime.now(UTC) - timedelta(days=STALE_AFTER.default * 10)
         with staleness_disabled:
             self.assertFalse(is_stale(old))
 
     def test_old_timestamp(self):
         """Test that a timestamp older than the threshold is stale."""
-        self.assertTrue(is_stale(datetime.now(UTC) - timedelta(days=STALE_AFTER_DAYS + 1)))
+        self.assertTrue(is_stale(datetime.now(UTC) - timedelta(days=STALE_AFTER.default + 1)))
 
     def test_recent_timestamp(self):
         """Test that a timestamp newer than the threshold is not stale."""
@@ -59,13 +43,13 @@ class IsStaleTest(unittest.TestCase):
 
         This keeps the decision in step with the reported day count, so a "N days ago (> N)" message never appears.
         """
-        self.assertFalse(is_stale(datetime.now(UTC) - timedelta(days=STALE_AFTER_DAYS, hours=12)))
+        self.assertFalse(is_stale(datetime.now(UTC) - timedelta(days=STALE_AFTER.default, hours=12)))
 
     def test_configured_threshold(self):
         """Test that is_stale honours the threshold from the env var."""
-        timestamp = datetime.now(UTC) - timedelta(days=STALE_AFTER_DAYS + 1)
+        timestamp = datetime.now(UTC) - timedelta(days=STALE_AFTER.default + 1)
         self.assertTrue(is_stale(timestamp))
-        with patch_environ({STALE_AFTER_DAYS_ENV_VAR: str(STALE_AFTER_DAYS * 2)}):
+        with patch_environ({STALE_AFTER.name: str(STALE_AFTER.default * 2)}):
             self.assertFalse(is_stale(timestamp))
 
     def test_future_timestamp(self):
@@ -74,7 +58,7 @@ class IsStaleTest(unittest.TestCase):
 
     def test_non_utc_timestamp(self):
         """Test that an old timestamp in a non-UTC timezone is stale."""
-        old = datetime.now(timezone(timedelta(hours=5))) - timedelta(days=STALE_AFTER_DAYS + 1)
+        old = datetime.now(timezone(timedelta(hours=5))) - timedelta(days=STALE_AFTER.default + 1)
         self.assertTrue(is_stale(old))
 
 

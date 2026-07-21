@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
-from update_time.domain.cooldown import COOLDOWN_DAYS
+from update_time.domain.cooldown import COOLDOWN
 from update_time.package_managers.node import COMMON_NPM_OPTIONS
 from update_time.updaters.update_package_json import update_package_jsons
 
@@ -20,8 +20,8 @@ from tests.update_time.helpers import (
     staleness_disabled,
 )
 
-NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN_DAYS}"  # the cooldown npm option Update-time adds by default
-PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN_DAYS * 24 * 60}"  # pnpm's, in minutes
+NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN.default}"  # the cooldown npm option Update-time adds by default
+PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN.default * 24 * 60}"  # pnpm's, in minutes
 NPM_UNSET = "null\n"  # what `npm config get <cooldown key>` prints when the key is not set
 PNPM_UNSET = "undefined\n"  # what `pnpm config get minimumReleaseAge` prints when the key is not set
 

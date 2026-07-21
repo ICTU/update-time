@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import Mock, call, patch
 
-from update_time.domain.cooldown import COOLDOWN_DAYS_ENV_VAR
-from update_time.io.filesystem import EXCLUDE_PATHS_ENV_VAR
-from update_time.io.log import LOG_LEVEL_ENV_VAR
-from update_time.references.rewrite import ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR
+from update_time.domain.cooldown import COOLDOWN
+from update_time.io.filesystem import EXCLUDE_PATHS
+from update_time.io.log import LOG_LEVEL
+from update_time.references.rewrite import ALLOW_IMAGE_DIGEST_DRIFT
 from update_time.updaters.update import PARALLEL_SCRIPTS, SEQUENTIAL_SCRIPTS, main, run_script, update_dependencies
 
 from tests.update_time.helpers import patch_environ
@@ -91,44 +91,44 @@ class UpdateMainTest(unittest.TestCase):
         mock_run.return_value = Mock(returncode=0)
         exit_code, environment = self.run_main(mock_run)
         self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[COOLDOWN_DAYS_ENV_VAR], "7")
+        self.assertEqual(environment[COOLDOWN.name], "7")
 
     def test_main_passes_cooldown_to_subprocesses(self, mock_run: Mock):
         """Test that main exports the cooldown in the environment so the updater subprocesses inherit it."""
         exit_code, environment = self.run_main(mock_run, "--cooldown", "14")
         self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[COOLDOWN_DAYS_ENV_VAR], "14")
+        self.assertEqual(environment[COOLDOWN.name], "14")
 
     def test_main_passes_log_level_to_subprocesses(self, mock_run: Mock):
         """Test that main exports the log level in the environment so the updater subprocesses inherit it."""
         exit_code, environment = self.run_main(mock_run, "--log-level", "debug")
         self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[LOG_LEVEL_ENV_VAR], "DEBUG")
+        self.assertEqual(environment[LOG_LEVEL.name], "DEBUG")
 
     def test_main_passes_allow_image_digest_drift_off_by_default(self, mock_run: Mock):
         """Test that main exports the drift opt-in as off when --allow-image-digest-drift is not given."""
         exit_code, environment = self.run_main(mock_run)
         self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR], "0")
+        self.assertEqual(environment[ALLOW_IMAGE_DIGEST_DRIFT.name], "0")
 
     def test_main_passes_allow_image_digest_drift_when_set(self, mock_run: Mock):
         """Test that main exports the drift opt-in as on when --allow-image-digest-drift is given."""
         exit_code, environment = self.run_main(mock_run, "--allow-image-digest-drift")
         self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[ALLOW_IMAGE_DIGEST_DRIFT_ENV_VAR], "1")
+        self.assertEqual(environment[ALLOW_IMAGE_DIGEST_DRIFT.name], "1")
 
     @patch("pathlib.Path.exists", Mock(return_value=True))
     def test_main_passes_excluded_paths_to_subprocesses(self, mock_run: Mock):
         """Test that main exports the excluded paths in the environment so the updater subprocesses inherit them."""
         exit_code, environment = self.run_main(mock_run, "--exclude-path", "vendor,packages/legacy")
         self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[EXCLUDE_PATHS_ENV_VAR], "vendor,packages/legacy")
+        self.assertEqual(environment[EXCLUDE_PATHS.name], "vendor,packages/legacy")
 
     def test_main_passes_no_excluded_paths_by_default(self, mock_run: Mock):
         """Test that main exports an empty excluded-paths variable when --exclude-path is not given."""
         exit_code, environment = self.run_main(mock_run)
         self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[EXCLUDE_PATHS_ENV_VAR], "")
+        self.assertEqual(environment[EXCLUDE_PATHS.name], "")
 
     def test_main_leaves_non_existing_excluded_paths_out_of_the_environment(self, mock_run: Mock):
         """Test that a non-existing excluded path is warned about but not passed down to the subprocesses."""
@@ -139,7 +139,7 @@ class UpdateMainTest(unittest.TestCase):
         ):
             exit_code, environment = self.run_main(mock_run, "--exclude-path", "vendor,missing")
         self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[EXCLUDE_PATHS_ENV_VAR], "vendor")
+        self.assertEqual(environment[EXCLUDE_PATHS.name], "vendor")
         mock_logger.missing_excluded_path.assert_called_once_with(Path("missing"))
 
     @patch("pathlib.Path.exists", Mock(return_value=True))
