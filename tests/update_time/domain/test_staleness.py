@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock
 
+from update_time.domain.location import Location
 from update_time.domain.staleness import (
     STALE_AFTER,
     is_stale,
@@ -97,13 +98,13 @@ class WarnAboutStaleDependenciesTest(unittest.TestCase):
         newest_releases = Mock(return_value=[("humanize", self.release)])
         warn_about_stale_dependencies([self.file], newest_releases, self.warn)
         newest_releases.assert_called_once_with(self.file)
-        self.warn.assert_called_once_with("humanize", self.release, self.file)
+        self.warn.assert_called_once_with("humanize", self.release, Location(self.file))
 
     def test_skips_unresolved_releases(self):
         """Test that a dependency whose newest release can't be resolved (None) is skipped, not warned about."""
         newest_releases = Mock(return_value=[("humanize", None), ("rich", self.release)])
         warn_about_stale_dependencies([self.file], newest_releases, self.warn)
-        self.warn.assert_called_once_with("rich", self.release, self.file)
+        self.warn.assert_called_once_with("rich", self.release, Location(self.file))
 
     def test_disabled(self):
         """Test that a threshold of 0 skips the pass entirely, so the resolver never runs and makes no request."""

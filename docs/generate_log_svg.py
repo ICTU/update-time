@@ -23,6 +23,7 @@ from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import SHA256_HEX_CHARS
 from update_time.io.log import (
     DEPENDENCY_DELIMITER,
+    LOCATION_DELIMITER,
     LOG_MESSAGE_FORMAT,
     LOG_THEME,
     LOG_TIME_FORMAT,
@@ -48,6 +49,12 @@ class _FixedTime(logging.Filter):
 def _delimit(name: str) -> str:
     """Wrap a dependency name in the delimiter the highlighter colours, the way `Logger` does before logging."""
     return f"{DEPENDENCY_DELIMITER}{name}{DEPENDENCY_DELIMITER}"
+
+
+def _locate(path: str, line: int | None = None) -> str:
+    """Wrap a file location in the delimiter the highlighter colours, the way `Logger._render` does before logging."""
+    rendered = f"{path}:{line}" if line is not None else path
+    return f"{LOCATION_DELIMITER}{rendered}{LOCATION_DELIMITER}"
 
 
 def _portable(svg: str) -> str:
@@ -86,19 +93,20 @@ def generate() -> str:
     log.info(
         Logger.MESSAGE_NEW_VERSION,
         _delimit("humanize"),
-        "docs/requirements.txt",
+        _locate("docs/requirements.txt", 12),
         "4.15.0",
         "Changed in 4.15.0\n- Fantastic new features\n- A few bugs squashed",
     )
-    log.info(Logger._MESSAGE_PINNED, _delimit("python"), "Dockerfile", "3.14.6", digest)  # noqa: SLF001
+    log.info(Logger._MESSAGE_PINNED, _delimit("python"), _locate("Dockerfile", 1), "3.14.6", digest)  # noqa: SLF001
     log.info(
         Logger.MESSAGE_NEW_VERSION,
         _delimit("actions/checkout"),
-        ".github/workflows/ci.yml",
+        _locate(".github/workflows/ci.yml", 17),
         "4.3.0",
         Logger.NO_CHANGELOG,
     )
-    log.warning(Logger._MESSAGE_STALE, _delimit("left-pad"), "package.json", "1.3.0", 512, STALE_AFTER.default)  # noqa: SLF001
+    # A manifest delegated to npm/pnpm, so no per-dependency line is surfaced: reported file-only, without a number.
+    log.warning(Logger._MESSAGE_STALE, _delimit("left-pad"), _locate("package.json"), "1.3.0", 512, STALE_AFTER.default)  # noqa: SLF001
 
     plain_text = console.export_text(clear=False)  # capture before the export clears the recording
     svg = console.export_svg(title="update-time", unique_id="update-time-log")

@@ -31,13 +31,13 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         """Test that images are updated in all YAML files under the CircleCI directory, not just config.yml."""
         self.requests.side_effect = mock_docker_registry(docker_tag("1.26.2", DIGEST2))
         config_yml = mock_path(f"image: cimg/go:1.26.1@{DIGEST1}\n")
-        continue_yaml = mock_path(f"image: cimg/go:1.26.1@{DIGEST1}\n")
-        with patch("pathlib.Path.glob", side_effect=[[config_yml], [continue_yaml]]):
+        next_yml = mock_path(f"image: cimg/go:1.26.1@{DIGEST1}\n")
+        with patch("pathlib.Path.glob", side_effect=[[config_yml], [next_yml]]):
             update_circle_ci_config(CIRCLE_CI_DIR)
         config_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
-        continue_yaml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
-        self.assert_path_logged(continue_yaml)
-        self.assert_new_version_logged(continue_yaml, "cimg/go", "1.26.2", Logger._SUPPRESSING_CHANGELOG, once=False)
+        next_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
+        self.assert_path_logged(next_yml)
+        self.assert_new_version_logged(next_yml, "cimg/go", "1.26.2", Logger._SUPPRESSING_CHANGELOG, once=False, line=1)
         self.assert_no_warnings_logged()
 
     def test_machine_executor_alias_ignored(self):
@@ -67,5 +67,5 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         config_yml = mock_path(config)
         self.run_updater(config_yml)
         config_yml.write_text.assert_called_with(config.replace("cimg/python:3.13", f"cimg/python:3.14@{DIGEST2}"))
-        self.assert_new_version_logged(config_yml, "cimg/python", "3.14")
+        self.assert_new_version_logged(config_yml, "cimg/python", "3.14", line=6)
         self.assert_no_warnings_logged()

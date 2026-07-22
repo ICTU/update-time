@@ -140,32 +140,34 @@ class GetLatestVersionTest(LoggingTestCase):
     def test_no_version_error_when_repo_has_no_versions(self):
         """Test that a repo without releases and tags keeps the current version, logging a 'no valid version' error."""
         self.assertEqual(get_latest_version("owner/no versions", "1.0", NO_BOUND).version, "1.0")
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/no versions")
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, Logger._render_dependency("owner/no versions"))
 
     @patch_github(releases=[github_release_json("1.1", draft=True)], tags=[])
     def test_skip_draft_releases(self):
         """Test that draft releases are not candidates, logging a 'no valid version' error for the reachable repo."""
         self.assertEqual(get_latest_version("owner/only a draft", "1.0", NO_BOUND).version, "1.0")
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/only a draft")
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, Logger._render_dependency("owner/only a draft"))
 
     @patch_github(releases=[github_release_json("1.1", prerelease=True)], tags=[])
     def test_skip_prerelease_releases(self):
         """Test that prerelease releases are not candidates, logging a 'no valid version' error for the repo."""
         self.assertEqual(get_latest_version("owner/only a prerelease", "1.0", NO_BOUND).version, "1.0")
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/only a prerelease")
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, Logger._render_dependency("owner/only a prerelease"))
 
     @patch_github(releases=[github_release_json("invalid-1.1")], tags=[])
     def test_invalid_versions(self):
         """Test that invalid versions are not candidates, logging a 'no valid version' error for the reachable repo."""
         self.assertEqual(get_latest_version("owner/invalid version", "1.0", NO_BOUND).version, "1.0")
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/invalid version")
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, Logger._render_dependency("owner/invalid version"))
 
     @patch_github(releases=[github_release_json("1.1")], tags=[])
     def test_no_commit_sha(self):
         """Test that the current version is kept when the commit SHA can't be fetched for the eligible release."""
         self.assert_version(get_latest_version("owner/no sha", "1.0", NO_BOUND), "1.0", "", "")
         url = "https://github.com/owner/no sha/releases/tag/1.1"
-        self.assert_error_logged(Logger._MESSAGE_NO_COMMIT_SHA, "owner/no sha", "1.1", "HTTP 404", url)
+        self.assert_error_logged(
+            Logger._MESSAGE_NO_COMMIT_SHA, Logger._render_dependency("owner/no sha"), "1.1", "HTTP 404", url
+        )
 
     @patch_github(
         releases=[
@@ -215,7 +217,7 @@ class GetLatestVersionTest(LoggingTestCase):
     def test_skip_prerelease_tags(self):
         """Test that a tag without a release is recognised as a pre-release by its version and is not a candidate."""
         self.assertEqual(get_latest_version("owner/only a prerelease tag", "1.0", NO_BOUND).version, "1.0")
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, "owner/only a prerelease tag")
+        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, Logger._render_dependency("owner/only a prerelease tag"))
 
     @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=github_commits_json(date=RECENT_ISO))
     def test_skip_tags_within_cooldown(self):
@@ -226,14 +228,19 @@ class GetLatestVersionTest(LoggingTestCase):
     def test_skip_tag_whose_commit_cannot_be_fetched(self):
         """Test that a tag is skipped, and the skip logged with the reason, when its commit can't be fetched."""
         self.assert_version(get_latest_version("owner/no date", "1.0", NO_BOUND), "1.0", "", "")
-        self.assert_error_logged(Logger._MESSAGE_NO_TAG_DATE, "owner/no date", "v1.1", "HTTP 404")
+        self.assert_error_logged(
+            Logger._MESSAGE_NO_TAG_DATE, Logger._render_dependency("owner/no date"), "v1.1", "HTTP 404"
+        )
 
     @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=github_commits_json())
     def test_skip_tag_whose_commit_has_no_date(self):
         """Test that a tag is skipped, and the skip logged with the reason, when its commit has no committer date."""
         self.assert_version(get_latest_version("owner/no date", "1.0", NO_BOUND), "1.0", "", "")
         self.assert_error_logged(
-            Logger._MESSAGE_NO_TAG_DATE, "owner/no date", "v1.1", "the commit has no committer date"
+            Logger._MESSAGE_NO_TAG_DATE,
+            Logger._render_dependency("owner/no date"),
+            "v1.1",
+            "the commit has no committer date",
         )
 
     @patch_github(
@@ -245,14 +252,19 @@ class GetLatestVersionTest(LoggingTestCase):
         """Test that the GitHub-supplied reason for a failed commit fetch, such as rate limiting, is logged."""
         self.assert_version(get_latest_version("owner/rate limited", "1.0", NO_BOUND), "1.0", "", "")
         self.assert_error_logged(
-            Logger._MESSAGE_NO_TAG_DATE, "owner/rate limited", "v1.1", "HTTP 403, API rate limit exceeded"
+            Logger._MESSAGE_NO_TAG_DATE,
+            Logger._render_dependency("owner/rate limited"),
+            "v1.1",
+            "HTTP 403, API rate limit exceeded",
         )
 
     @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=requests.exceptions.Timeout())
     def test_skip_tag_when_the_commit_request_fails(self):
         """Test that a commits request that fails at the transport level is logged as the reason for the skip."""
         self.assert_version(get_latest_version("owner/timeout", "1.0", NO_BOUND), "1.0", "", "")
-        self.assert_error_logged(Logger._MESSAGE_NO_TAG_DATE, "owner/timeout", "v1.1", "the request failed")
+        self.assert_error_logged(
+            Logger._MESSAGE_NO_TAG_DATE, Logger._render_dependency("owner/timeout"), "v1.1", "the request failed"
+        )
 
     @patch_github(
         releases=[github_release_json("v5.0.0", body="changelog", published_at=OLD_ISO)],

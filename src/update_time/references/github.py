@@ -17,8 +17,7 @@ from update_time.references.resolve import latest_version
 from update_time.sources.github import get_latest_version
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
+    from update_time.domain.location import Location
     from update_time.domain.marker import Marker
     from update_time.domain.version import DependencyVersion
     from update_time.io.log import Logger
@@ -34,7 +33,7 @@ class GitHubReference(Reference):
     current_sha: str | None
 
 
-def latest_pin(reference: GitHubReference, marker: Marker, path: Path, log: Logger) -> DependencyVersion | None:
+def latest_pin(reference: GitHubReference, marker: Marker, location: Location, log: Logger) -> DependencyVersion | None:
     """Return the latest version to (re)pin the GitHub reference to, or None to leave it unchanged.
 
     Which version to update to is `latest_version`'s decision, resolving through `sources.github`; layered on top
@@ -47,13 +46,13 @@ def latest_pin(reference: GitHubReference, marker: Marker, path: Path, log: Logg
     dependency, current_version, current_sha = reference.dependency, reference.current_version, reference.current_sha
     if not is_valid(current_version):
         return None
-    latest = latest_version(reference, get_latest_version, marker, path, log)
+    latest = latest_version(reference, get_latest_version, marker, location, log)
     if latest is None or not latest.sha:
         return None
     if current_sha is None:
-        log.pinned(dependency, latest, path)
+        log.pinned(dependency, latest, location)
     elif Version(latest.version) != Version(current_version):
-        log.new_version(dependency, latest, path)
+        log.new_version(dependency, latest, location)
     else:
         return None  # Already pinned and up to date
     return latest

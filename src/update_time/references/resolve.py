@@ -9,9 +9,8 @@ re-pushed digest to adopt) layers those on top of the version this decision reso
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from update_time.domain.bound import NewVersionGetter
+    from update_time.domain.location import Location
     from update_time.domain.marker import Marker
     from update_time.domain.version import DependencyVersion, Reference
     from update_time.io.log import Logger
@@ -21,7 +20,7 @@ def latest_version(
     reference: Reference,
     get_new_version: NewVersionGetter,
     marker: Marker,
-    path: Path,
+    location: Location,
     log: Logger,
 ) -> DependencyVersion | None:
     """Return the latest version to update the reference to, or None to leave it unchanged.
@@ -34,8 +33,8 @@ def latest_version(
     decision.
     """
     dependency, current_version = reference.dependency, reference.current_version
-    log.warn_if_redundant_bound(dependency, marker, current_version, path)
+    log.warn_if_redundant_bound(dependency, marker, current_version, location)
     latest = get_new_version(dependency, current_version, marker.version_bound)
     if not marker.ignore_stale:
-        log.warn_if_stale(dependency, latest, path)
+        log.warn_if_stale(dependency, latest, location)
     return None if marker.ignore_update else latest

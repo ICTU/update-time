@@ -36,7 +36,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.6.0\n"))
         mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", NO_BOUND)
         self.assert_path_logged(config_file)
-        self.assert_pinned_logged(config_file, self.HOOK, "4.6.0", NEW_SHA)
+        self.assert_pinned_logged(config_file, self.HOOK, "4.6.0", NEW_SHA, line=3)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -47,7 +47,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.5.0\n"))
-        self.assert_pinned_logged(config_file, self.HOOK, "4.5.0", NEW_SHA)
+        self.assert_pinned_logged(config_file, self.HOOK, "4.5.0", NEW_SHA, line=3)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -59,7 +59,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: 24.1.0\n"))
         mock_get_latest_version.assert_called_once_with(self.HOOK, "22.10.0", NO_BOUND)
-        self.assert_pinned_logged(config_file, self.HOOK, "24.1.0", NEW_SHA)
+        self.assert_pinned_logged(config_file, self.HOOK, "24.1.0", NEW_SHA, line=3)
 
     def test_pin_quoted_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a quoted rev tag is pinned, dropping the quotes like pre-commit's own freeze does."""
@@ -78,7 +78,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.6.0\n"))
         mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", NO_BOUND)
-        self.assert_new_version_logged(config_file, self.HOOK, "4.6.0")
+        self.assert_new_version_logged(config_file, self.HOOK, "4.6.0", line=3)
         self.assert_no_warnings_logged()
 
     def test_frozen_rev_up_to_date(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -187,7 +187,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
-        self.assert_stale_dependency_logged(config_file, self.HOOK, "4.5.0")
+        self.assert_stale_dependency_logged(config_file, self.HOOK, "4.5.0", line=3)
 
     def test_inline_ignore_marker(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an inline `# update-time: ignore` comment leaves the rev untouched, looking up no version."""
@@ -196,7 +196,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_ignored_logged(self.HOOK, config_file)
+        self.assert_ignored_logged(self.HOOK, config_file, line=3)
         self.assert_no_warnings_logged()
 
     def test_inline_ignore_marker_after_frozen_comment(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -206,7 +206,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_ignored_logged(self.HOOK, config_file)
+        self.assert_ignored_logged(self.HOOK, config_file, line=3)
 
     def test_preceding_ignore_marker(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a standalone `# update-time: ignore` comment holds back the rev on the line below it."""
@@ -219,7 +219,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_ignored_logged(self.HOOK, config_file)
+        self.assert_ignored_logged(self.HOOK, config_file, line=4)
 
     def test_ignore_update_marker_skips_repin_but_still_checks_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[update]` leaves the rev unchanged but still warns when the hook is stale."""
@@ -229,8 +229,8 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
-        self.assert_stale_dependency_logged(config_file, self.HOOK, "4.6.0")
-        self.assert_ignored_logged(self.HOOK, config_file)
+        self.assert_stale_dependency_logged(config_file, self.HOOK, "4.6.0", line=3)
+        self.assert_ignored_logged(self.HOOK, config_file, line=3)
 
     def test_ignore_stale_marker_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[stale]` bumps the rev but skips the staleness check even for an old release."""
@@ -242,7 +242,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         config_file.write_text.assert_called_once_with(
             config(f"rev: {NEW_SHA}  # frozen: v4.6.0  # update-time: ignore[stale]\n")
         )
-        self.assert_new_version_logged(config_file, self.HOOK, "4.6.0")
+        self.assert_new_version_logged(config_file, self.HOOK, "4.6.0", line=3)
         self.assert_no_warnings_logged()
 
     def test_allow_update_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -255,7 +255,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
             config(f"rev: {NEW_SHA}  # frozen: v4.6.0  # update-time: allow[update<5]\n")
         )
         mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", bound(Verb.ALLOW, "update<5"))
-        self.assert_pinned_logged(config_file, self.HOOK, "4.6.0", NEW_SHA)
+        self.assert_pinned_logged(config_file, self.HOOK, "4.6.0", NEW_SHA, line=3)
         self.assert_no_warnings_logged()
 
     def test_level_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -268,7 +268,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
             config(f"rev: {NEW_SHA}  # frozen: v4.6.0  # update-time: ignore[major-update]\n")
         )
         mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", bound(Verb.IGNORE, "major-update"))
-        self.assert_pinned_logged(config_file, self.HOOK, "4.6.0", NEW_SHA)
+        self.assert_pinned_logged(config_file, self.HOOK, "4.6.0", NEW_SHA, line=3)
         self.assert_no_warnings_logged()
 
     def test_invalid_specifier_leaves_rev_unchanged(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -279,5 +279,5 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
         self.mock_warning.assert_called_once_with(
-            Logger._MESSAGE_INVALID_SPECIFIER, "@@@", self.HOOK, ANY, stacklevel=ANY
+            Logger._MESSAGE_INVALID_SPECIFIER, "@@@", Logger._render_dependency(self.HOOK), ANY, stacklevel=ANY
         )

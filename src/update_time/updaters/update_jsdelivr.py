@@ -3,6 +3,7 @@
 import re
 from pathlib import Path
 
+from update_time.domain.location import Location
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.references.rewrite import rewrite_match
@@ -24,10 +25,12 @@ def update_jsdelivr(content: str, path: Path) -> str:
     def replace(match: re.Match[str]) -> str:
         dependency, version, filename = match.group("dependency"), match.group("version"), match.group("filename")
         latest_version = get_latest_version(dependency, version, filename)
-        LOG.warn_if_stale(dependency, latest_version, path)
+        # A whole-file substitution, not a line-based rewrite, so the URL's line isn't tracked: report file-only.
+        location = Location(path)
+        LOG.warn_if_stale(dependency, latest_version, location)
         if latest_version.version == version:
             return match.group(0)
-        LOG.new_version(dependency, latest_version, path)
+        LOG.new_version(dependency, latest_version, location)
         return rewrite_match(match, {"version": latest_version.version, "sha": latest_version.sha})
 
     return JSDELIVR_RE.sub(replace, content)

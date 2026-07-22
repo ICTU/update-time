@@ -44,7 +44,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile = mock_path("FROM ruby:3.3 AS build\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_called_with(f"FROM ruby:3.4@{DIGEST2} AS build\n")
-        self.assert_new_version_logged(mock_dockerfile, "ruby", "3.4")
+        self.assert_new_version_logged(mock_dockerfile, "ruby", "3.4", line=1)
         self.assert_no_warnings_logged()
 
     def test_platform_flag_with_build_arg_is_preserved(self):
@@ -53,7 +53,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile = mock_path("FROM --platform=$BUILDPLATFORM python:3.14\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_called_with(f"FROM --platform=$BUILDPLATFORM python:3.15@{DIGEST2}\n")
-        self.assert_new_version_logged(mock_dockerfile, "python", "3.15")
+        self.assert_new_version_logged(mock_dockerfile, "python", "3.15", line=1)
         self.assert_no_warnings_logged()
 
     def test_platform_flag_with_literal_value_and_stage_alias_is_preserved(self):
@@ -62,7 +62,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile = mock_path("FROM --platform=linux/amd64 node:18 AS build\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_called_with(f"FROM --platform=linux/amd64 node:20@{DIGEST2} AS build\n")
-        self.assert_new_version_logged(mock_dockerfile, "node", "20")
+        self.assert_new_version_logged(mock_dockerfile, "node", "20", line=1)
         self.assert_no_warnings_logged()
 
     def test_ignore_marker_leaves_base_image_untouched(self):
@@ -71,7 +71,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_not_called()
         self.requests.assert_not_called()
-        self.assert_ignored_logged("ghcr.io/astral-sh/uv", mock_dockerfile)
+        self.assert_ignored_logged("ghcr.io/astral-sh/uv", mock_dockerfile, line=2)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -81,5 +81,5 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile = mock_path("FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_called_with(f"FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim@{DIGEST2}\n")
-        self.assert_new_version_logged(mock_dockerfile, "ghcr.io/astral-sh/uv", "python3.13-bookworm-slim")
+        self.assert_new_version_logged(mock_dockerfile, "ghcr.io/astral-sh/uv", "python3.13-bookworm-slim", line=1)
         self.assert_no_warnings_logged()

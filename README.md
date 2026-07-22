@@ -12,13 +12,13 @@ Example Update-time output:
 <summary>The same output as text</summary>
 
 ```console
-[09:14:03] INFO     New version available for humanize in docs/requirements.txt: 4.15.0
+[09:14:03] INFO     New version available for humanize in docs/requirements.txt:12: 4.15.0
                     Changed in 4.15.0
                     - Fantastic new features
                     - A few bugs squashed
-           INFO     Pinned python in Dockerfile to
+           INFO     Pinned python in Dockerfile:1 to
                     3.14.6@sha256:9f2c1e7bd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4
-           INFO     New version available for actions/checkout in .github/workflows/ci.yml: 4.3.0
+           INFO     New version available for actions/checkout in .github/workflows/ci.yml:17: 4.3.0
                     No changelog available!
            WARNING  Stale dependency left-pad in package.json: newest release 1.3.0 was published
                     512 days ago (> 365)

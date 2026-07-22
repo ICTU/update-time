@@ -125,7 +125,9 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual(latest_version.version, "1.0")
         self.assertEqual(latest_version.sha, "")
         message = Logger._MESSAGE_NO_INTEGRITY_HASH
-        self.mock_warning.assert_called_once_with(message, "clipboard", "1.1", FILENAME, stacklevel=ANY)
+        self.mock_warning.assert_called_once_with(
+            message, Logger._render_dependency("clipboard"), "1.1", FILENAME, stacklevel=ANY
+        )
 
     def test_newest_published_attached(self, mock_get: Mock):
         """Test that the package's newest npm publication date is attached for the staleness check."""
