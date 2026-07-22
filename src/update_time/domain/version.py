@@ -53,10 +53,16 @@ class DependencyVersion:
 
 @dataclass(frozen=True)
 class Reference:
-    """A pinned reference as a file records it: a dependency and the version it is currently pinned to."""
+    """A pinned reference as a file records it: a dependency and the version it is currently pinned to.
+
+    `current_sha` is the commit SHA the reference is pinned to when it carries one in a `<sha> # <version>` form (a
+    GitHub Action `uses:` or pre-commit hook `rev:`); it is empty for a reference that is still an unpinned version
+    tag or that records no SHA of its own.
+    """
 
     dependency: DependencyName
     current_version: VersionString
+    current_sha: str = ""
 
 
 def first_eligible[Candidate: SupportsRichComparison](

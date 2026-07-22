@@ -12,9 +12,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from update_time.domain.location import Location
+from update_time.domain.version import Reference
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
 from update_time.io.log import get_logger
-from update_time.references.github import GitHubReference, latest_pin
+from update_time.references.github import latest_pin
 from update_time.references.rewrite import updated_lines
 
 if TYPE_CHECKING:
@@ -38,9 +39,9 @@ def _update_action(match: re.Match[str], location: Location, marker: Marker) -> 
     `_update_rev` via `latest_pin`; only the `uses:` output syntax is spelled here.
     """
     dependency = match.group("dependency")
-    current_sha = match.group("sha")
+    current_sha = match.group("sha") or ""
     current_version = match.group("version") if current_sha else match.group("ref")
-    latest = latest_pin(GitHubReference(dependency, current_version, current_sha), marker, location, LOG)
+    latest = latest_pin(Reference(dependency, current_version, current_sha), marker, location, LOG)
     if latest is None:
         return match.group(0)  # Invalid, held back, unpinnable, or already up to date: leave the reference as it is
     return f"uses: {dependency}@{latest.sha} # v{latest.version}"

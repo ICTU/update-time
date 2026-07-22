@@ -7,33 +7,22 @@ syntax — and so how the new reference text is spelled — differs. This module
 updater to parse its own version group and spell its own output.
 """
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
-from update_time.domain.version import Reference, is_valid
+from update_time.domain.version import is_valid
 from update_time.references.resolve import latest_version
 from update_time.sources.github import get_latest_version
 
 if TYPE_CHECKING:
     from update_time.domain.location import Location
     from update_time.domain.marker import Marker
-    from update_time.domain.version import DependencyVersion
+    from update_time.domain.version import DependencyVersion, Reference
     from update_time.io.log import Logger
 
 
-@dataclass(frozen=True)
-class GitHubReference(Reference):
-    """A `Reference` to a GitHub repository, also carrying the commit SHA it is pinned to.
-
-    `current_sha` is the pinned commit SHA, or None when the reference is still an unpinned version tag.
-    """
-
-    current_sha: str | None
-
-
-def latest_pin(reference: GitHubReference, marker: Marker, location: Location, log: Logger) -> DependencyVersion | None:
+def latest_pin(reference: Reference, marker: Marker, location: Location, log: Logger) -> DependencyVersion | None:
     """Return the latest version to (re)pin the GitHub reference to, or None to leave it unchanged.
 
     Which version to update to is `latest_version`'s decision, resolving through `sources.github`; layered on top
@@ -49,7 +38,7 @@ def latest_pin(reference: GitHubReference, marker: Marker, location: Location, l
     latest = latest_version(reference, get_latest_version, marker, location, log)
     if latest is None or not latest.sha:
         return None
-    if current_sha is None:
+    if not current_sha:
         log.pinned(dependency, latest, location)
     elif Version(latest.version) != Version(current_version):
         log.new_version(dependency, latest, location)

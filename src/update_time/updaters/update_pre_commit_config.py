@@ -16,10 +16,11 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.location import Location
 from update_time.domain.marker import parse_marker
+from update_time.domain.version import Reference
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.references.file import rewrite_file
-from update_time.references.github import GitHubReference, latest_pin
+from update_time.references.github import latest_pin
 from update_time.references.rewrite import apply_marker
 from update_time.sources.github import github_owner_and_repository
 
@@ -67,9 +68,9 @@ def _update_rev(match: re.Match[str], dependency: str, location: Location, marke
     `latest_pin`; only the `rev:` output is spelled here. The version is echoed in the `# frozen:` comment keeping the
     tag's own `v` prefix convention, so the config stays interoperable with pre-commit's tooling.
     """
-    current_sha = match.group("sha")
+    current_sha = match.group("sha") or ""
     current_version = match.group("version") if current_sha else match.group("tag")
-    latest = latest_pin(GitHubReference(dependency, current_version, current_sha), marker, location, LOG)
+    latest = latest_pin(Reference(dependency, current_version, current_sha), marker, location, LOG)
     if latest is None:
         return match.string  # Invalid, held back, unpinnable, or already up to date: leave the reference as it is
     frozen_version = f"v{latest.version}" if current_version.startswith("v") else latest.version
