@@ -11,6 +11,7 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from update_time.domain.location import Location
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
 from update_time.io.log import get_logger
 from update_time.references.github import GitHubReference, latest_pin
@@ -29,7 +30,7 @@ ACTION_RE = re.compile(
 )
 
 
-def _update_action(match: re.Match[str], path: Path, marker: Marker) -> str:
+def _update_action(match: re.Match[str], location: Location, marker: Marker) -> str:
     """Pin or update a single `uses:` reference to the latest version's commit SHA, or leave it unchanged.
 
     An action pinned to a commit SHA with a version comment (`<sha> # v4.1.1`), or referenced by version tag only,
@@ -39,7 +40,7 @@ def _update_action(match: re.Match[str], path: Path, marker: Marker) -> str:
     dependency = match.group("dependency")
     current_sha = match.group("sha")
     current_version = match.group("version") if current_sha else match.group("ref")
-    latest = latest_pin(GitHubReference(dependency, current_version, current_sha), marker, path, LOG)
+    latest = latest_pin(GitHubReference(dependency, current_version, current_sha), marker, location, LOG)
     if latest is None:
         return match.group(0)  # Invalid, held back, unpinnable, or already up to date: leave the reference as it is
     return f"uses: {dependency}@{latest.sha} # v{latest.version}"
@@ -52,10 +53,12 @@ def update_github_actions(github_dir: Path) -> None:
         old_content = yaml_file.read_text()
 
         # Rewrite per line (keeping line endings) so an `# update-time:` marker can hold back or bound a single
-        # `uses:`; the marker reaches `_update_action` through the per-line substitution. Actions pin a commit SHA,
-        # not an image digest, so the marker's `allow_drift` opt-in does not apply here.
-        def update_line(match: re.Match[str], marker: Marker, path: Path = yaml_file) -> str:
-            return ACTION_RE.sub(partial(_update_action, path=path, marker=marker), match.string)
+        # `uses:`; the marker reaches `_update_action` through the per-line substitution. The line's number rides
+        # along so the reference is logged with it. Actions pin a commit SHA, not an image digest, so the marker's
+        # `allow_drift` opt-in does not apply here.
+        def update_line(match: re.Match[str], marker: Marker, line_number: int, path: Path = yaml_file) -> str:
+            location = Location(path, line_number)
+            return ACTION_RE.sub(partial(_update_action, location=location, marker=marker), match.string)
 
         new_lines = updated_lines(old_content.splitlines(keepends=True), ACTION_RE, update_line, LOG, yaml_file)
         new_content = "".join(new_lines)

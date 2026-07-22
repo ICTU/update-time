@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.location import Location
 from update_time.domain.version import DependencyVersion
 from update_time.file_formats.package_json import DEPENDENCY_SECTIONS
 from update_time.io.log import get_logger
@@ -93,7 +94,8 @@ class PackageManager:
                 changes = get_changes(package, new_version)
                 published = get_publication_datetime(package, new_version)
                 package_version = DependencyVersion(new_version, changes, published=published)
-                LOG.new_version(package, package_version, package_json)
+                # npm/pnpm own the rewrite, so no per-dependency line is surfaced: report the manifest, no line number.
+                LOG.new_version(package, package_version, Location(package_json))
         # The manager normalizes specs (e.g. npm rewrites git URLs to the github: shorthand) whenever it saves
         # package.json. When nothing was actually updated, restore the original manifest so reformatting doesn't
         # produce a spurious diff.

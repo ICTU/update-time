@@ -66,7 +66,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = self.stale_pypi("4.15.0")  # No newer version; newest release is old.
         update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
-        self.assert_stale_dependency_logged(requirements_txt, "humanize", "4.15.0")
+        self.assert_stale_dependency_logged(requirements_txt, "humanize", "4.15.0", line=1)
 
     def test_recent_dependency_not_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin whose newest release is recent is not warned about as stale."""
@@ -94,7 +94,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         requirements_txt.write_text.assert_called_once_with("flask==1.1\n")
         self.assert_path_logged(requirements_txt)
-        self.assert_new_version_logged(requirements_txt, "flask", PUBLISHED)
+        self.assert_new_version_logged(requirements_txt, "flask", PUBLISHED, line=1)
         self.assert_no_warnings_logged()
 
     def test_preserves_extras_marker_and_comment(self, mock_rglob: Mock, mock_get: Mock):
@@ -105,7 +105,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         requirements_txt.write_text.assert_called_once_with('flask[async]==1.1 ; python_version < "3.12"  # keep\n')
         self.assert_path_logged(requirements_txt)
-        self.assert_new_version_logged(requirements_txt, "flask", PUBLISHED)
+        self.assert_new_version_logged(requirements_txt, "flask", PUBLISHED, line=1)
         self.assert_no_warnings_logged()
 
     def test_spaces_around_equals_preserved(self, mock_rglob: Mock, mock_get: Mock):
@@ -116,7 +116,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         requirements_txt.write_text.assert_called_once_with("certifi == 2020.4.5.2          # used by requests\n")
         self.assert_path_logged(requirements_txt)
-        self.assert_new_version_logged(requirements_txt, "certifi", "2020.4.5.2, published: 2020-01-01 00:00")
+        self.assert_new_version_logged(requirements_txt, "certifi", "2020.4.5.2, published: 2020-01-01 00:00", line=1)
         self.assert_no_warnings_logged()
 
     def test_loose_specifiers_untouched(self, mock_rglob: Mock, mock_get: Mock):

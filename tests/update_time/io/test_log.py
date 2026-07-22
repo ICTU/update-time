@@ -12,9 +12,10 @@ from rich.logging import RichHandler
 from rich.text import Text
 
 from update_time.domain.bound import Redundancy, Verb
+from update_time.domain.location import Location
 from update_time.domain.marker import Marker
 from update_time.domain.version import DependencyVersion
-from update_time.io.log import DEPENDENCY_DELIMITER, Logger, LogHighlighter, get_logger
+from update_time.io.log import DEPENDENCY_DELIMITER, LOCATION_DELIMITER, Logger, LogHighlighter, get_logger
 from update_time.references import file
 
 from tests.update_time.helpers import bound, new_version_getter
@@ -34,26 +35,37 @@ class GetLoggerTests(TestCase):
 class LoggerTests(TestCase):
     """Unit tests for the logger class."""
 
+    def test_render_wraps_the_relative_path_and_line_in_the_delimiter(self):
+        """Test that a location renders as the delimiter-wrapped relative path, with the line appended when present."""
+        path = Path.cwd() / "docs" / "requirements.txt"
+        self.assertEqual(
+            Logger._render_location(Location(path, 42)),
+            f"{LOCATION_DELIMITER}docs/requirements.txt:42{LOCATION_DELIMITER}",
+        )
+        self.assertEqual(
+            Logger._render_location(Location(path)), f"{LOCATION_DELIMITER}docs/requirements.txt{LOCATION_DELIMITER}"
+        )
+
     @patch("logging.Logger.info")
     def test_suppress_repeated_changelog(self, mock_info: Mock):
         """Test that a repeated changelog is suppressed."""
         logger = Logger("suppress changelog")
         path = Path.cwd() / "pyproject.toml"
         message = Logger.MESSAGE_NEW_VERSION
-        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), path)
+        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), Location(path, 5))
         mock_info.assert_called_once_with(
             message,
-            "dependency",
-            Path("pyproject.toml"),
+            Logger._render_dependency("dependency"),
+            Logger._render_location(Location(path, 5)),
             "1.0",
             "Changelog",
             stacklevel=ANY,
         )
-        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), path)
+        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), Location(path, 5))
         mock_info.assert_called_with(
             message,
-            "dependency",
-            Path("pyproject.toml"),
+            Logger._render_dependency("dependency"),
+            Logger._render_location(Location(path, 5)),
             "1.0",
             Logger._SUPPRESSING_CHANGELOG,
             stacklevel=ANY,
@@ -62,11 +74,12 @@ class LoggerTests(TestCase):
     @patch("logging.Logger.info")
     def test_new_version_without_publication_date(self, mock_info: Mock):
         """Test that the version is logged without a publication date when it is unknown."""
-        Logger("no date").new_version("dependency", DependencyVersion("1.0", "Changelog"), Path.cwd() / "a.txt")
+        path = Path.cwd() / "a.txt"
+        Logger("no date").new_version("dependency", DependencyVersion("1.0", "Changelog"), Location(path, 3))
         mock_info.assert_called_once_with(
             Logger.MESSAGE_NEW_VERSION,
-            "dependency",
-            Path("a.txt"),
+            Logger._render_dependency("dependency"),
+            Logger._render_location(Location(path, 3)),
             "1.0",
             "Changelog",
             stacklevel=ANY,
@@ -76,11 +89,12 @@ class LoggerTests(TestCase):
     def test_pinned(self, mock_info: Mock):
         """Test that pinning a previously unpinned reference to a digest is logged."""
         sha = f"sha256:{'a' * 64}"
-        Logger("pin").pinned("dependency", DependencyVersion("1.0", sha=sha), Path.cwd() / "Dockerfile")
+        path = Path.cwd() / "Dockerfile"
+        Logger("pin").pinned("dependency", DependencyVersion("1.0", sha=sha), Location(path, 1))
         mock_info.assert_called_once_with(
             Logger._MESSAGE_PINNED,
-            "dependency",
-            Path("Dockerfile"),
+            Logger._render_dependency("dependency"),
+            Logger._render_location(Location(path, 1)),
             "1.0",
             sha,
             stacklevel=ANY,
@@ -90,9 +104,16 @@ class LoggerTests(TestCase):
     def test_digest_drift(self, mock_warning: Mock):
         """Test that a re-pushed tag whose digest changed under an unchanged pin is warned about at warning level."""
         old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
-        Logger("drift").digest_drift("dependency", "3.14", old_sha, new_sha, Path.cwd() / "Dockerfile")
+        path = Path.cwd() / "Dockerfile"
+        Logger("drift").digest_drift("dependency", "3.14", old_sha, new_sha, Location(path, 2))
         mock_warning.assert_called_once_with(
-            Logger._MESSAGE_DIGEST_DRIFT, "dependency", "3.14", Path("Dockerfile"), old_sha, new_sha, stacklevel=ANY
+            Logger._MESSAGE_DIGEST_DRIFT,
+            Logger._render_dependency("dependency"),
+            "3.14",
+            Logger._render_location(Location(path, 2)),
+            old_sha,
+            new_sha,
+            stacklevel=ANY,
         )
 
     @patch("logging.Logger.info")
@@ -100,10 +121,18 @@ class LoggerTests(TestCase):
         """Test that adopting a re-pushed tag's new digest is logged at info level, naming the opt-in that caused it."""
         old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
         cause = "update-time: allow[digest-drift]"
-        Logger("adopt").adopted_drift("dependency", "3.14", old_sha, new_sha, Path.cwd() / "Dockerfile", cause)
+        path = Path.cwd() / "Dockerfile"
+        Logger("adopt").adopted_drift("dependency", "3.14", old_sha, new_sha, Location(path, 2), cause)
         message = Logger._MESSAGE_ADOPTED_DIGEST_DRIFT
         mock_info.assert_called_once_with(
-            message, "dependency", "3.14", Path("Dockerfile"), old_sha, new_sha, cause, stacklevel=ANY
+            message,
+            Logger._render_dependency("dependency"),
+            "3.14",
+            Logger._render_location(Location(path, 2)),
+            old_sha,
+            new_sha,
+            cause,
+            stacklevel=ANY,
         )
 
     @patch("logging.Logger.warning")
@@ -111,9 +140,16 @@ class LoggerTests(TestCase):
         """Test that a dependency whose newest release is old is warned about at warning level."""
         published = datetime.now(UTC) - timedelta(days=512, hours=1)
         version = DependencyVersion("4.15.0", newest_published=published)
-        Logger("stale").warn_if_stale("humanize", version, Path.cwd() / "requirements.txt")
+        path = Path.cwd() / "requirements.txt"
+        Logger("stale").warn_if_stale("humanize", version, Location(path, 9))
         mock_warning.assert_called_once_with(
-            Logger._MESSAGE_STALE, "humanize", Path("requirements.txt"), "4.15.0", 512, 365, stacklevel=ANY
+            Logger._MESSAGE_STALE,
+            Logger._render_dependency("humanize"),
+            Logger._render_location(Location(path, 9)),
+            "4.15.0",
+            512,
+            365,
+            stacklevel=ANY,
         )
 
     @patch("logging.Logger.warning")
@@ -122,16 +158,22 @@ class LoggerTests(TestCase):
         recent = DependencyVersion("4.15.0", newest_published=datetime.now(UTC) - timedelta(days=1))
         undated = DependencyVersion("4.15.0")
         logger = Logger("stale")
-        logger.warn_if_stale("humanize", recent, Path.cwd() / "requirements.txt")
-        logger.warn_if_stale("humanize", undated, Path.cwd() / "requirements.txt")
+        loc = Location(Path.cwd() / "requirements.txt", 9)
+        logger.warn_if_stale("humanize", recent, loc)
+        logger.warn_if_stale("humanize", undated, loc)
         mock_warning.assert_not_called()
 
     @patch("logging.Logger.warning")
     def test_invalid_specifier(self, mock_warning: Mock):
         """Test that an unparsable version bound specifier is warned about at warning level."""
-        Logger("bound").invalid_specifier("python", "@@@", Path.cwd() / "Dockerfile")
+        path = Path.cwd() / "Dockerfile"
+        Logger("bound").invalid_specifier("python", "@@@", Location(path, 2))
         mock_warning.assert_called_once_with(
-            Logger._MESSAGE_INVALID_SPECIFIER, "@@@", "python", Path("Dockerfile"), stacklevel=ANY
+            Logger._MESSAGE_INVALID_SPECIFIER,
+            "@@@",
+            Logger._render_dependency("python"),
+            Logger._render_location(Location(path, 2)),
+            stacklevel=ANY,
         )
 
     @patch("logging.Logger.warning")
@@ -139,13 +181,13 @@ class LoggerTests(TestCase):
         """Test that a redundant bound is warned about at warning level, showing the bound and how it is redundant."""
         version_bound = bound(Verb.ALLOW, "update>=3.12")  # never has an effect on a 3.12 pin
         marker = Marker(version_bound=version_bound)
-        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Path.cwd() / "Dockerfile")
+        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Location(Path.cwd() / "Dockerfile", 6))
         mock_warning.assert_called_once_with(
             Logger._MESSAGE_REDUNDANT_BOUND,
             version_bound,
-            "python",
+            Logger._render_dependency("python"),
             "3.12",
-            Path("Dockerfile"),
+            Logger._render_location(Location(Path.cwd() / "Dockerfile", 6)),
             Redundancy.NO_EFFECT.value,
             stacklevel=ANY,
         )
@@ -155,13 +197,13 @@ class LoggerTests(TestCase):
         """Test that a level bound that blocks every update is warned about, rendered in its level form."""
         version_bound = bound(Verb.IGNORE, "patch-update")  # ignore[patch-update] blocks every update
         marker = Marker(version_bound=version_bound)
-        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Path.cwd() / "Dockerfile")
+        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Location(Path.cwd() / "Dockerfile", 6))
         mock_warning.assert_called_once_with(
             Logger._MESSAGE_REDUNDANT_BOUND,
             version_bound,
-            "python",
+            Logger._render_dependency("python"),
             "3.12",
-            Path("Dockerfile"),
+            Logger._render_location(Location(Path.cwd() / "Dockerfile", 6)),
             Redundancy.BLOCKS_ALL.value,
             stacklevel=ANY,
         )
@@ -171,13 +213,13 @@ class LoggerTests(TestCase):
         """Test that a level bound that allows every update is warned about, unlike the implicit NO_BOUND default."""
         version_bound = bound(Verb.ALLOW, "major-update")  # allow[major-update] allows every update
         marker = Marker(version_bound=version_bound)
-        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Path.cwd() / "Dockerfile")
+        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Location(Path.cwd() / "Dockerfile", 6))
         mock_warning.assert_called_once_with(
             Logger._MESSAGE_REDUNDANT_BOUND,
             version_bound,
-            "python",
+            Logger._render_dependency("python"),
             "3.12",
-            Path("Dockerfile"),
+            Logger._render_location(Location(Path.cwd() / "Dockerfile", 6)),
             Redundancy.NO_EFFECT.value,
             stacklevel=ANY,
         )
@@ -187,20 +229,20 @@ class LoggerTests(TestCase):
         """Test that nothing is logged when the bound is live (a genuine ceiling or floor)."""
         version_bound = bound(Verb.ALLOW, "update<3.13")  # a live ceiling on a 3.12 pin
         marker = Marker(version_bound=version_bound)
-        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Path.cwd() / "Dockerfile")
+        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Location(Path.cwd() / "Dockerfile", 6))
         mock_warning.assert_not_called()
 
     @patch("logging.Logger.warning")
     def test_warn_if_redundant_bound_does_nothing_when_level_bound_is_live(self, mock_warning: Mock):
         """Test that nothing is logged for a level bound between the extremes: it always leaves room above the pin."""
         marker = Marker(version_bound=bound(Verb.IGNORE, "minor-update"))
-        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Path.cwd() / "Dockerfile")
+        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Location(Path.cwd() / "Dockerfile", 6))
         mock_warning.assert_not_called()
 
     @patch("logging.Logger.warning")
     def test_warn_if_redundant_bound_does_nothing_for_no_bound(self, mock_warning: Mock):
         """Test that nothing is logged for the keep-all NO_BOUND: the unmarked default is not a bound to report on."""
-        Logger("bound").warn_if_redundant_bound("python", Marker(), "3.12", Path.cwd() / "Dockerfile")
+        Logger("bound").warn_if_redundant_bound("python", Marker(), "3.12", Location(Path.cwd() / "Dockerfile", 6))
         mock_warning.assert_not_called()
 
     @patch("logging.Logger.debug")
@@ -210,15 +252,20 @@ class LoggerTests(TestCase):
         # echoing it verbatim proves the log shows the user's own marker.
         raw = "ignore[update] ignore[stale] allow[update<3.13, digest-drift]"
         marker = Marker(ignore_stale=True, allow_drift=True, version_bound=bound(Verb.ALLOW, "update<3.13"), raw=raw)
-        Logger("marker").applying_marker("python", marker, Path.cwd() / "Dockerfile")
+        path = Path.cwd() / "Dockerfile"
+        Logger("marker").applying_marker("python", marker, Location(path, 6))
         mock_debug.assert_called_once_with(
-            Logger._MESSAGE_APPLYING_MARKER, raw, "python", Path("Dockerfile"), stacklevel=ANY
+            Logger._MESSAGE_APPLYING_MARKER,
+            raw,
+            Logger._render_dependency("python"),
+            Logger._render_location(Location(path, 6)),
+            stacklevel=ANY,
         )
 
     @patch("logging.Logger.debug")
     def test_applying_marker_does_nothing_without_marker(self, mock_debug: Mock):
         """Test that nothing is logged for a reference without a marker."""
-        Logger("marker").applying_marker("python", Marker(), Path.cwd() / "Dockerfile")
+        Logger("marker").applying_marker("python", Marker(), Location(Path.cwd() / "Dockerfile", 6))
         mock_debug.assert_not_called()
 
     @patch("logging.Logger.debug")
@@ -227,35 +274,51 @@ class LoggerTests(TestCase):
         # `ignored` names just the `ignore` directives from the verbatim `raw` text: the combined scopes are kept
         # apart rather than shown as a bare `ignore`, and the `allow` alongside is left out, only the `ignore`.
         marker = Marker(ignore_update=True, raw="ignore[update] ignore[stale] allow[digest-drift]")
-        Logger("marker").ignored("python", marker, Path.cwd() / "Dockerfile")
+        path = Path.cwd() / "Dockerfile"
+        Logger("marker").ignored("python", marker, Location(path, 6))
         mock_debug.assert_called_once_with(
-            Logger._MESSAGE_IGNORED, "python", Path("Dockerfile"), "ignore[update] ignore[stale]", stacklevel=ANY
+            Logger._MESSAGE_IGNORED,
+            Logger._render_dependency("python"),
+            Logger._render_location(Location(path, 6)),
+            "ignore[update] ignore[stale]",
+            stacklevel=ANY,
         )
 
     @patch("logging.Logger.debug")
     def test_path_logged_at_debug(self, mock_debug: Mock):
         """Test that the per-file 'checking for updates' progress is logged at debug level."""
-        Logger("path").path(Path.cwd() / "config.yml")
-        mock_debug.assert_called_once_with(Logger._MESSAGE_CHECKING_PATH, Path("config.yml"), stacklevel=ANY)
+        config_yml = Path.cwd() / "config.yml"
+        Logger("path").path(config_yml)
+        mock_debug.assert_called_once_with(
+            Logger._MESSAGE_CHECKING_PATH, Logger._render_location(Location(config_yml)), stacklevel=ANY
+        )
 
     @patch("logging.Logger.info")
     def test_configured_uv_cooldown(self, mock_info: Mock):
         """Test that writing the cooldown into a project's uv config is logged, relative to the working directory."""
-        Logger("cooldown").configured_uv_cooldown(Path.cwd() / "pyproject.toml", "7 days")
-        mock_info.assert_called_once_with(Logger._MESSAGE_UV_COOLDOWN, "7 days", Path("pyproject.toml"), stacklevel=ANY)
+        path = Path.cwd() / "pyproject.toml"
+        Logger("cooldown").configured_uv_cooldown(path, "7 days")
+        mock_info.assert_called_once_with(
+            Logger._MESSAGE_UV_COOLDOWN, "7 days", Logger._render_location(Location(path)), stacklevel=ANY
+        )
 
     @patch("logging.Logger.info")
     def test_configured_uv_cooldown_outside_working_directory(self, mock_info: Mock):
         """Test that a workspace root outside the working directory is logged as its absolute path, not crashing."""
         outside = Path("/elsewhere/pyproject.toml")
         Logger("cooldown").configured_uv_cooldown(outside, "7 days")
-        mock_info.assert_called_once_with(Logger._MESSAGE_UV_COOLDOWN, "7 days", outside, stacklevel=ANY)
+        mock_info.assert_called_once_with(
+            Logger._MESSAGE_UV_COOLDOWN, "7 days", Logger._render_location(Location(outside)), stacklevel=ANY
+        )
 
     @patch("logging.Logger.warning")
     def test_invalid_pyproject_toml(self, mock_warning: Mock):
         """Test that an unparsable pyproject.toml is logged as a warning."""
-        Logger("toml").invalid_pyproject_toml(Path.cwd() / "pyproject.toml")
-        mock_warning.assert_called_once_with(Logger._MESSAGE_INVALID_TOML, Path("pyproject.toml"), stacklevel=ANY)
+        path = Path.cwd() / "pyproject.toml"
+        Logger("toml").invalid_pyproject_toml(path)
+        mock_warning.assert_called_once_with(
+            Logger._MESSAGE_INVALID_TOML, Logger._render_location(Location(path)), stacklevel=ANY
+        )
 
     @patch("logging.Logger.debug")
     def test_excluded_path_logged_at_debug(self, mock_debug: Mock):
@@ -297,12 +360,13 @@ class LoggerTests(TestCase):
         """Test that the publication date is appended to the version when it is known."""
         published = datetime(2026, 5, 29, 13, 54, tzinfo=UTC)
         version = DependencyVersion("1.0", "Changelog", published=published)
-        Logger("date").new_version("dependency", version, Path.cwd() / "a.txt")
+        path = Path.cwd() / "a.txt"
+        Logger("date").new_version("dependency", version, Location(path, 3))
         message = Logger.MESSAGE_NEW_VERSION
         mock_info.assert_called_once_with(
             message,
-            "dependency",
-            Path("a.txt"),
+            Logger._render_dependency("dependency"),
+            Logger._render_location(Location(path, 3)),
             "1.0, published: 2026-05-29 13:54",
             "Changelog",
             stacklevel=ANY,
@@ -312,13 +376,14 @@ class LoggerTests(TestCase):
     def test_publication_date_is_logged_in_utc(self, mock_info: Mock):
         """Test that a non-UTC publication date is converted to UTC before logging."""
         published = datetime(2026, 5, 29, 15, 54, tzinfo=timezone(timedelta(hours=2)))
-        Logger("utc").new_version("dependency", DependencyVersion("1.0", published=published), Path.cwd() / "a.txt")
+        path = Path.cwd() / "a.txt"
+        Logger("utc").new_version("dependency", DependencyVersion("1.0", published=published), Location(path, 3))
         message = Logger.MESSAGE_NEW_VERSION
         changelog = Logger.NO_CHANGELOG
         mock_info.assert_called_once_with(
             message,
-            "dependency",
-            Path("a.txt"),
+            Logger._render_dependency("dependency"),
+            Logger._render_location(Location(path, 3)),
             "1.0, published: 2026-05-29 13:54",
             changelog,
             stacklevel=ANY,
@@ -345,7 +410,8 @@ class LogHighlighterTests(TestCase):
 
     def test_dependency_name_highlighted_and_markers_removed(self):
         """Test that a marker-wrapped dependency name is styled as `repr.dependency` and the markers leave no trace."""
-        text = Text(Logger.MESSAGE_NEW_VERSION % ("actions/checkout", "a.txt", "1.1", "Changelog for 1.1"))
+        dependency = Logger._render_dependency("actions/checkout")
+        text = Text(Logger.MESSAGE_NEW_VERSION % (dependency, "a.txt", "1.1", "Changelog for 1.1"))
         LogHighlighter().highlight(text)
         self.assertEqual(text.plain, "New version available for actions/checkout in a.txt: 1.1\nChangelog for 1.1")
         dependency_spans = [(text.plain[span.start : span.end], span.style) for span in text.spans]
@@ -361,6 +427,17 @@ class LogHighlighterTests(TestCase):
         styled = {(text.plain[span.start : span.end], span.style) for span in text.spans}
         self.assertIn(("ghcr.io/astral-sh/uv", "repr.dependency"), styled)
         self.assertIn((digest, "repr.digest"), styled)
+
+    def test_location_highlighted_as_one_token(self):
+        """Test that a delimited path:line is one `repr.filename` span, delimiters stripped and no stray number span."""
+        message = f"New version available in {LOCATION_DELIMITER}docs/requirements.txt:42{LOCATION_DELIMITER}: 4.15.0"
+        text = Text(message)
+        LogHighlighter().highlight(text)
+        self.assertEqual(text.plain, "New version available in docs/requirements.txt:42: 4.15.0")
+        styled = [(text.plain[span.start : span.end], span.style) for span in text.spans]
+        self.assertIn(("docs/requirements.txt:42", "repr.filename"), styled)
+        # The line number is part of the single location token, not highlighted as a separate number.
+        self.assertNotIn(("42", "repr.number"), styled)
 
     def test_no_colour_output_is_plain_text(self):
         """Test that with colour disabled the styled name renders as the same plain text, markers and all removed."""

@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
+from update_time.domain.location import Location
 from update_time.domain.marker import parse_marker
 from update_time.domain.version import DependencyVersion, Reference, is_valid
 from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, first_line_match, glob
@@ -99,17 +100,17 @@ def _image_version_getter(image_version: str) -> NewVersionGetter:
     return get_new_version
 
 
-def _update_version(match: re.Match[str], path: Path, marker: Marker, get_new_version: NewVersionGetter) -> str:
+def _update_version(match: re.Match[str], location: Location, marker: Marker, get_new_version: NewVersionGetter) -> str:
     """Return the entry rewritten to its new version, or unchanged when there is no update.
 
     Which version to move to — honouring the entry's `# update-time:` marker (its bound and hold-backs) — is
     `latest_version`'s decision, shared with every other reference kind; only the bare-version output is spelled here.
     """
     version = match.group("version")
-    latest = latest_version(Reference(PYTHON, version), get_new_version, marker, path, LOG)
+    latest = latest_version(Reference(PYTHON, version), get_new_version, marker, location, LOG)
     if latest is None or latest.version == version:
         return match.string
-    LOG.new_version(PYTHON, latest, path)
+    LOG.new_version(PYTHON, latest, location)
     line = match.string
     return line[: match.start("version")] + latest.version + line[match.end("version") :]
 
@@ -123,13 +124,14 @@ def _updated_lines(lines: list[str], path: Path, get_new_version: NewVersionGett
     each line is paired with the line before it so a standalone marker comment can apply to the entry below it.
     """
     result = []
-    for previous_line, line in pairwise(["", *lines]):
+    for line_number, (previous_line, line) in enumerate(pairwise(["", *lines]), start=1):
         if not (match := VERSION_RE.search(line)):
             result.append(line)
             continue
         marker = parse_marker(line, previous_line)
-        update = partial(_update_version, match, path, marker, get_new_version)
-        result.append(apply_marker(line, PYTHON, marker, path, LOG, update))
+        location = Location(path, line_number)
+        update = partial(_update_version, match, location, marker, get_new_version)
+        result.append(apply_marker(line, PYTHON, marker, location, LOG, update))
     return result
 
 

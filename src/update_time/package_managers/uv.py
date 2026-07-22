@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
+from update_time.domain.location import Location
 from update_time.domain.version import DependencyVersion
 from update_time.file_formats import pyproject_toml as pyproject_toml_format
 from update_time.io.log import get_logger
@@ -163,7 +164,8 @@ def _update_dependencies(uv_tree: list[str], path: Path, log: Logger) -> bool:
         changes = get_changes(package, version)
         published = get_publication_datetime(package, version)
         dependency_version = DependencyVersion(version, changes, published=published)
-        log.new_version(package, dependency_version, path)
+        # uv owns the rewrite, so no per-dependency line is surfaced: report the manifest without a line number.
+        log.new_version(package, dependency_version, Location(path))
     latest_versions = dict(parse_line_with_update(line) for line in lines_with_updates)
     pyproject_toml_format.rewrite_pinned_versions(path, latest_versions)
     return True

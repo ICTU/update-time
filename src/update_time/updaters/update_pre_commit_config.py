@@ -14,6 +14,7 @@ from functools import partial
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
+from update_time.domain.location import Location
 from update_time.domain.marker import parse_marker
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
@@ -58,7 +59,7 @@ def _dependency_from_repo(repo: str) -> str:
     return f"{owner}/{repository}" if owner and repository else ""
 
 
-def _update_rev(match: re.Match[str], dependency: str, path: Path, marker: Marker) -> str:
+def _update_rev(match: re.Match[str], dependency: str, location: Location, marker: Marker) -> str:
     """Pin or bump a single `rev:` to the latest version's commit SHA, or leave it unchanged.
 
     A hook `rev:` pinned to a commit SHA with a `# frozen: v4.5.0` comment, or referenced by version tag only, is the
@@ -68,7 +69,7 @@ def _update_rev(match: re.Match[str], dependency: str, path: Path, marker: Marke
     """
     current_sha = match.group("sha")
     current_version = match.group("version") if current_sha else match.group("tag")
-    latest = latest_pin(GitHubReference(dependency, current_version, current_sha), marker, path, LOG)
+    latest = latest_pin(GitHubReference(dependency, current_version, current_sha), marker, location, LOG)
     if latest is None:
         return match.string  # Invalid, held back, unpinnable, or already up to date: leave the reference as it is
     frozen_version = f"v{latest.version}" if current_version.startswith("v") else latest.version
@@ -88,14 +89,15 @@ def _updated_lines(lines: list[str], path: Path) -> list[str]:
     """
     result = []
     dependency = ""  # The GitHub owner/repository of the `repo:` in scope, or "" for a local/meta/non-GitHub repo.
-    for previous_line, line in pairwise(["", *lines]):
+    for line_number, (previous_line, line) in enumerate(pairwise(["", *lines]), start=1):
         if repo_match := REPO_RE.search(line):
             dependency = _dependency_from_repo(repo_match.group("repo"))
             result.append(line)
         elif (rev_match := REV_RE.search(line)) and dependency:
             marker = parse_marker(line, previous_line)
-            update = partial(_update_rev, rev_match, dependency, path, marker)
-            result.append(apply_marker(line, dependency, marker, path, LOG, update))
+            location = Location(path, line_number)
+            update = partial(_update_rev, rev_match, dependency, location, marker)
+            result.append(apply_marker(line, dependency, marker, location, LOG, update))
         else:
             result.append(line)
     return result
