@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.21 - 2026-07-22
+
 ### Added
 
 - Append the line number of a reference to the file location in the log (`docs/requirements.txt:42`), styled as one unit, so clicking it in a supporting terminal jumps to the line. Closes [#164](https://github.com/ICTU/update-time/issues/164).
