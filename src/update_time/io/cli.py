@@ -94,13 +94,13 @@ def parse_args() -> argparse.Namespace:
         type=exclude_paths,
         default=[],
         metavar="PATHS",
-        help="comma-separated list of directories, relative to the scan root, to exclude from the scan (for example "
-        "vendor,packages/legacy); every file under an excluded directory is skipped, on top of the always-ignored "
-        f"{', '.join(ALWAYS_IGNORED_DIRECTORIES)}, and hidden folders; "
-        "directories are matched by relative path, not by name: "
-        "--exclude-path vendor excludes vendor/ at the root but not sub/vendor/; directories that don't exist are "
-        "ignored (and logged at log-level WARNING), but absolute paths, or paths that escape the scan root (../…), "
-        "are rejected; run with --log-level DEBUG to see excluded directories",
+        help="comma-separated list of directories, relative to the scan root, to exclude from the scan, for example "
+        "vendor,packages/legacy. Every file under an excluded directory is skipped, on top of the always-ignored "
+        f"{', '.join(ALWAYS_IGNORED_DIRECTORIES)}, and hidden folders. "
+        "Directories are matched by relative path, not by name: "
+        "--exclude-path vendor excludes vendor/ at the root but not sub/vendor/. Directories that don't exist are "
+        "ignored and logged at log-level WARNING. Absolute paths, or paths that escape the scan root (../…), "
+        "are rejected. Run with --log-level DEBUG to see excluded directories",
     )
     parser.add_argument(
         "--allow-image-digest-drift",

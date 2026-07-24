@@ -315,10 +315,10 @@ def get_latest_version(
 ) -> DependencyVersion:
     """Return the latest eligible version for the GitHub action, or the current version unchanged.
 
-    Mirrors `pypi.get_latest_version` and `oci.get_latest_tag`: narrow the repo's versions — its tags enriched
-    with their releases (see `_tagged_versions`) — to candidates by name (a valid, non-draft, non-prerelease
-    version at least as new as the current one — the current version itself included, so an action referenced by
-    tag only can be pinned to its commit SHA without a version bump), then walk them newest-first with
+    Mirrors `pypi.get_latest_version` and `oci.get_latest_tag`. The repo's versions are its tags enriched with their
+    releases, from `_tagged_versions`. Narrow them to candidates by name: a valid, non-draft, non-prerelease version
+    at least as new as the current one. The current version itself is included, so an action referenced by tag only
+    can be pinned to its commit SHA without a version bump. Then walk the candidates newest-first with
     `first_eligible`, resolving each candidate's publication date, cooldown, and commit SHA until one is eligible.
     A `version_bound` bound narrows the candidates before the highest is picked. When the versions were fetched
     but none is valid, that's logged as "no valid version"; a fetch failure is left to `fetch`'s own warning, so a

@@ -189,10 +189,10 @@ def _parse_bracket_item(verb: Verb, item: str) -> Marker | None:
 
     Most of the vocabulary is per verb: `ignore[update]` and `ignore[stale]` hold back just the update or just the
     staleness warning, and `allow[digest-drift]` opts into adopting a re-pushed digest, while a bare `allow[update]`
-    allows every update, which is the default anyway, keeping the two verbs complements. The update bounds — a
-    specifier after `update`, or a `<level>-update` item — are shared between the verbs and delegated to
-    `parse_bound`; a malformed `update` specifier surfaces from it as `InvalidSpecifier`, telling a mistyped bound
-    (reported as an invalid item) apart from an unrecognised item (None) without re-testing the item's shape here.
+    allows every update, which is the default anyway, keeping the two verbs complements. An update bound, a
+    specifier after `update` or a `<level>-update` item, is shared between the verbs and delegated to `parse_bound`.
+    A malformed `update` specifier surfaces from it as `InvalidSpecifier`, which tells a mistyped bound apart from an
+    unrecognised item without re-testing the item's shape here.
     """
     match verb, item:
         case Verb.IGNORE, "update":

@@ -1,8 +1,10 @@
 __pycache__
 .claude/settings.local.json
 .coverage
+.nltk
 .pypirc
 .venv/
 build/
 dist/
+htmlcov/
 *.egg-info

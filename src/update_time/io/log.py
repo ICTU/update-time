@@ -344,9 +344,9 @@ class Logger:
         """Warn when the marker's version bound is redundant for the current version.
 
         The bound is redundant when it never has an effect or blocks every update (see
-        `VersionBound.redundancy`). Does nothing when the reference has no bound (the keep-all `NO_BOUND` — the
-        unmarked default, not a bound to report on) or the bound is live, so callers can hand off every reference
-        unconditionally. The bound renders itself in its marker form (`allow[update<3.13]`, or a level-based
+        `VersionBound.redundancy`). Does nothing when the reference has no bound or the bound is live, so callers can
+        hand off every reference unconditionally. The keep-all `NO_BOUND`, the unmarked default, is not a bound to
+        report on. The bound renders itself in its marker form (`allow[update<3.13]`, or a level-based
         `ignore[minor-update]`), so the warning shows which bound on which pin is redundant.
         """
         if (bound := marker.version_bound) == NO_BOUND:

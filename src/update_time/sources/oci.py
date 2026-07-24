@@ -384,8 +384,8 @@ def _get_tag(image: str, name: str) -> Tag | None:
     """Resolve a tag's digest (from its OCI manifest) and push date (Docker Hub only), or None if it has no digest.
 
     The digest comes from the OCI manifest, which works on every registry. The publish date needed for the cooldown
-    is only available from Docker Hub's proprietary API (the OCI protocol exposes none; see `docker_hub`), so other
-    registries' tags have no publish date and no cooldown.
+    is only available from Docker Hub's proprietary API, so other registries' tags have no publish date and no
+    cooldown. The OCI protocol exposes no publish date; see `docker_hub`.
     """
     digest = _manifest_digest(image, name)
     if not digest:

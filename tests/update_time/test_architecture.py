@@ -20,13 +20,13 @@ class DependenciesTest(unittest.TestCase):
         assert_passes(project_files("src/").should_not().depend_on_files().with_name("update_*.py"))
 
     def test_version_primitives_are_a_leaf(self):
-        """Test that the version primitives depend on nothing else in the project, so everything can build on them.
+        """Test that `version.py` depends on nothing else in `domain`, so the rest of `domain` can build on it.
 
-        `version.py` holds the primitives the rest of the domain builds on (`bound.py` imports `is_valid` and the
-        type aliases from it), so it must import nothing back. Since `domain` is the innermost layer (`LayeringTest`
-        keeps it from reaching any outer one), depending on nothing else in `domain` makes `version.py` a
-        project-wide leaf. `have_no_cycles` only forbids a two-way dependency, not a one-way inversion, so pinning
-        the direction here keeps `version.py` reasoned about (and tested) without the bound machinery.
+        `version.py` holds the foundational types and helpers the rest of `domain` builds on: `bound.py` imports
+        `is_valid` and the type aliases from it. So `version.py` must import nothing back from `domain`, making it a
+        leaf within the layer. It may still build on the inner `primitives` layer, but not on its `domain` siblings.
+        `have_no_cycles` forbids only a two-way dependency, not a one-way inversion, so pinning the direction here
+        keeps `version.py` reasoned about and tested without the bound machinery.
         """
         rule = project_files("src/").with_name("version.py").should_not().depend_on_files().in_folder("domain")
         assert_passes(rule)
@@ -37,14 +37,21 @@ class LayeringTest(unittest.TestCase):
 
     primitives < domain < io < {file_formats, sources} < {package_managers, references} < updaters.
 
-    Each layer may use the ones before it but not the ones after it: `primitives` are project-agnostic building
-    blocks (a typed environment variable) that even the pure core may reach for; `domain` is the pure, I/O-free
-    core; `io` wraps file, process, and log I/O; `file_formats` read/write/parse specific manifest formats and
-    `sources` are the registry/API clients (parallel siblings, neither using the other); `package_managers` drive
-    the external managers (uv/npm/pnpm) using file_formats and sources, and `references` decide which version a
-    pinned reference should update to and rewrite the reference accordingly (parallel siblings, neither using the
-    other); and `updaters` wire everything together. Keeping the arrows pointing one way is what lets `domain` be
-    tested in isolation and `file_formats`/`sources` be reused.
+    Each layer may use the ones before it but not the ones after it:
+    - `primitives` are project-agnostic building blocks, like a typed environment variable, that even the pure core may
+      reach for.
+    - `domain` is the pure, I/O-free core.
+    - `io` wraps file, process, and log I/O.
+    - `file_formats` read, write, and parse specific manifest formats.
+    - `sources` are the registry and API clients.
+    - `package_managers` drive the external managers, uv, npm, and pnpm, using file_formats and sources.
+    - `references` decide which version a pinned reference should update to, and rewrite the reference accordingly.
+
+    `file_formats` and `sources` are parallel siblings, neither using the other. `package_managers` and `references`
+    are parallel siblings too. `updaters` wire everything together.
+
+    Keeping the arrows pointing one way is what  lets `domain` be tested in isolation and `file_formats` and `sources`
+    be reused.
     """
 
     def assert_layer_does_not_depend_on(self, layer: str, *outer_layers: str) -> None:

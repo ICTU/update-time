@@ -420,9 +420,9 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_unterminated_allow_bracket_expresses_nothing(self):
         """Test that an `allow[` whose bracket is never closed expresses nothing, leaving the reference to update.
 
-        With no closing `]` the marker regex captures no bracket, so there is no item to report as invalid; the
-        malformed directive is a no-op reason and the reference updates as if unmarked (a closed `allow[typo]`,
-        which does have an item, warns instead — see `test_unknown_allow_item_warns_and_leaves_reference_unchanged`).
+        With no closing `]` the marker regex captures no bracket, so there is no item to report as invalid. The
+        malformed directive is a no-op reason and the reference updates as if unmarked. A closed `allow[typo]`,
+        which does have an item, warns instead; see `test_unknown_allow_item_warns_and_leaves_reference_unchanged`.
         """
         lines = ["image: python:3.14  # update-time: allow[update<4"]
         new_lines = self.rewrite(lines, REGEXP, new_version_getter("3.15"))
