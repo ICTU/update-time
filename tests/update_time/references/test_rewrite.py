@@ -551,17 +551,17 @@ class MarkerForwardingTest(unittest.TestCase):
     """Unit test that the rewrite engine hands a matched reference's parsed marker to the logger.
 
     How `parse_marker` captures the text and how `raw_marker` filters it are covered in `test_marker`; this checks
-    only the wiring — that the engine forwards the marker carrying that text to `applying_marker`, the DEBUG line
+    only the wiring — that the engine forwards the marker carrying that text to `recognised_marker`, the DEBUG line
     the README points at for confirming a marker was recognised.
     """
 
     def test_engine_forwards_the_verbatim_marker(self):
-        """Test that the marker reaching `applying_marker` carries its directives exactly as written."""
+        """Test that the marker reaching `recognised_marker` carries its directives exactly as written."""
         logger = Mock()
         lines = ["image: python:3.12  # update-time: ignore[update] ignore[stale]"]
         update_references_in_lines(
             lines, REGEXP, get_new_version=new_version_getter("3.15"), logger=logger, path=Mock()
         )
-        logger.applying_marker.assert_called_once()
-        marker = cast("Marker", logger.applying_marker.call_args.args[1])
+        logger.recognised_marker.assert_called_once()
+        marker = cast("Marker", logger.recognised_marker.call_args.args[1])
         self.assertEqual(marker.raw_marker(), "ignore[update] ignore[stale]")

@@ -84,11 +84,25 @@ class LatestVersionTest(unittest.TestCase):
         self.assertEqual(latest, DependencyVersion(version="3.15"))
         self.log.warn_if_stale.assert_not_called()
 
+    def test_ignore_stale_logs_the_held_back_staleness_warning(self):
+        """Test that `ignore[stale]` hands the resolved version to the logger, which reports what it held back."""
+        marker = Marker(ignore_stale=True, raw="ignore[stale]")
+        self.latest_version(marker)
+        self.log.ignored_staleness.assert_called_once_with(
+            "python", DependencyVersion(version="3.15"), marker, self.path
+        )
+
     def test_ignore_yanked_skips_the_yank_warning(self):
         """Test that `ignore[yanked]` holds back the yank check while the update is still returned."""
         latest = self.latest_version(Marker(ignore_yanked=True))
         self.assertEqual(latest, DependencyVersion(version="3.15"))
         self.log.warn_if_yanked.assert_not_called()
+
+    def test_ignore_yanked_logs_the_held_back_yank_warning(self):
+        """Test that `ignore[yanked]` hands the resolved version to the logger, which reports what it held back."""
+        marker = Marker(ignore_yanked=True, raw="ignore[yanked]")
+        self.latest_version(marker)
+        self.log.ignored_yank.assert_called_once_with("python", DependencyVersion(version="3.15"), marker, self.path)
 
     def test_ignore_update_returns_none(self):
         """Test that `ignore[update]` holds back the update, after the staleness check has still run."""

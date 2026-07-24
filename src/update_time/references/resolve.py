@@ -29,19 +29,24 @@ def latest_version(
 
     Warns about a redundant bound, resolves the latest version through `get_new_version` (passing the marker's
     version bound so the source only picks a version the bound admits), and warns about staleness and about a yanked
-    version, each unless the marker holds that one back. A marker holding the update back passes `BLOCK_ALL_UPDATES`
-    instead of its own bound, so the source keeps the reference on its current version and reports on the version the
-    reference stays on: a frozen pin that was yanked is still warned about. Returns None only when the marker holds
-    the update back — after the staleness and yank checks, which an `ignore[update]` leaves live. A resolved version
-    equal to the current one is still returned, not turned into None: it may carry a newer digest worth pinning,
-    and weighing that is left out of this version decision.
+    version, each unless the marker holds that one back, in which case the hold-back is logged at the debug level
+    instead, so a run reports what a marker actually suppressed. A marker holding the update back passes
+    `BLOCK_ALL_UPDATES` instead of its own bound, so the source keeps the reference on its current version and reports
+    on the version the reference stays on: a frozen pin that was yanked is still warned about. Returns None only when
+    the marker holds the update back — after the staleness and yank checks, which an `ignore[update]` leaves live.
+    A resolved version equal to the current one is still returned, not turned into None: it may carry a newer digest
+    worth pinning, and weighing that is left out of this version decision.
     """
     dependency, current_version = reference.dependency, reference.current_version
     log.warn_if_redundant_bound(dependency, marker, current_version, location)
     version_bound = BLOCK_ALL_UPDATES if marker.ignore_update else marker.version_bound
     latest = get_new_version(dependency, current_version, version_bound)
-    if not marker.ignore_stale:
+    if marker.ignore_stale:
+        log.ignored_staleness(dependency, latest, marker, location)
+    else:
         log.warn_if_stale(dependency, latest, location)
-    if not marker.ignore_yanked:
+    if marker.ignore_yanked:
+        log.ignored_yank(dependency, latest, marker, location)
+    else:
         log.warn_if_yanked(dependency, latest, location)
     return None if marker.ignore_update else latest
