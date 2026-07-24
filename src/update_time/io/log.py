@@ -176,6 +176,20 @@ class Logger:
         """Bracket a location's text in `LOCATION_DELIMITER` so the highlighter styles the whole run as one token."""
         return f"{LOCATION_DELIMITER}{location}{LOCATION_DELIMITER}"
 
+    def _log_ignored(self, message: str, dependency: str, marker: Marker, location: Location) -> None:
+        """Log, at debug level, that a marker held a reference's update or one of its warnings back.
+
+        Only the `ignore` directive is named (`raw_marker(Verb.IGNORE)`), not the whole marker: it is the one that
+        held the update or the warning back, and it is echoed exactly as the user spelled it.
+        """
+        self._log(
+            self.log.debug,
+            message,
+            self._render_dependency(dependency),
+            self._render_location(location),
+            marker.raw_marker(Verb.IGNORE),
+        )
+
     # --- Run gating ---
 
     _MESSAGE_FORCED_OUTSIDE_GIT_REPOSITORY = (
@@ -293,6 +307,19 @@ class Logger:
             STALE_AFTER.get(),
         )
 
+    _MESSAGE_IGNORED_STALENESS = "Ignoring the staleness warning for %s in %s (update-time: %s)"
+
+    def ignored_staleness(
+        self, dependency: str, version: DependencyVersion, marker: Marker, location: Location
+    ) -> None:
+        """Log, at debug level, that the marker held back a staleness warning that would otherwise have been logged.
+
+        Guards on the same condition as `warn_if_stale`, so callers can hand off every reference unconditionally and
+        a marker that suppresses nothing stays silent.
+        """
+        if is_stale(version.newest_published):
+            self._log_ignored(self._MESSAGE_IGNORED_STALENESS, dependency, marker, location)
+
     _MESSAGE_YANKED = "Yanked dependency %s in %s: version %s was yanked (%s)"
 
     def warn_if_yanked(self, dependency: str, version: DependencyVersion, location: Location) -> None:
@@ -311,6 +338,17 @@ class Logger:
             version.version,
             reason,
         )
+
+    _MESSAGE_IGNORED_YANK = "Ignoring the yank warning for %s in %s (update-time: %s)"
+
+    def ignored_yank(self, dependency: str, version: DependencyVersion, marker: Marker, location: Location) -> None:
+        """Log, at debug level, that the marker held back a yank warning that would otherwise have been logged.
+
+        Guards on the same condition as `warn_if_yanked`, so callers can hand off every reference unconditionally and
+        a marker that suppresses nothing stays silent.
+        """
+        if version.yank.yanked:
+            self._log_ignored(self._MESSAGE_IGNORED_YANK, dependency, marker, location)
 
     _MESSAGE_NO_VERSION = "No valid version found for %s"
 
@@ -390,20 +428,22 @@ class Logger:
         """Log working on path."""
         self._log(self.log.debug, self._MESSAGE_CHECKING_PATH, self._render_location(Location(path)))
 
-    _MESSAGE_APPLYING_MARKER = "Applying update-time marker %s to %s in %s"
+    _MESSAGE_RECOGNISED_MARKER = "Recognised update-time marker %s for %s in %s"
 
-    def applying_marker(self, dependency: str, marker: Marker, location: Location) -> None:
-        """Log, at debug level, the marker applying to a reference, so users can confirm it is recognised.
+    def recognised_marker(self, dependency: str, marker: Marker, location: Location) -> None:
+        """Log, at debug level, that a reference's marker was recognised, so users can confirm it was understood.
 
-        The marker's directives are echoed verbatim (the `raw` text the user wrote), so a user comparing the log
-        line against their file sees their own marker. Does nothing when the line carries no marker (the `raw` text
-        is empty), so the caller can hand off every reference unconditionally.
+        Reports that the marker was read and parsed, not that it had any effect: what a marker actually held back is
+        reported separately, by `ignored`, `ignored_staleness`, and `ignored_yank`. The marker's directives are echoed
+        verbatim (the `raw` text the user wrote), so a user comparing the log line against their file sees their own
+        marker. Does nothing when the line carries no marker (the `raw` text is empty), so the caller can hand off
+        every reference unconditionally.
         """
         if not (directives := marker.raw_marker()):
             return
         self._log(
             self.log.debug,
-            self._MESSAGE_APPLYING_MARKER,
+            self._MESSAGE_RECOGNISED_MARKER,
             directives,
             self._render_dependency(dependency),
             self._render_location(location),
@@ -412,19 +452,8 @@ class Logger:
     _MESSAGE_IGNORED = "Ignoring updates for %s in %s (update-time: %s)"
 
     def ignored(self, dependency: str, marker: Marker, location: Location) -> None:
-        """Log that a reference's update was held back by the marker's `ignore` directive, echoing it as written.
-
-        Only the `ignore` directive is named (`raw_marker(Verb.IGNORE)`), not the whole marker: it is the one that
-        held the update back.
-        """
-        directive = marker.raw_marker(Verb.IGNORE)
-        self._log(
-            self.log.debug,
-            self._MESSAGE_IGNORED,
-            self._render_dependency(dependency),
-            self._render_location(location),
-            directive,
-        )
+        """Log that a reference's update was held back by the marker's `ignore` directive, echoing it as written."""
+        self._log_ignored(self._MESSAGE_IGNORED, dependency, marker, location)
 
     _MESSAGE_EXCLUDING_PATH = "Excluding %s from the scan (--exclude-path)"
 

@@ -275,16 +275,16 @@ class LoggerTests(TestCase):
         mock_warning.assert_not_called()
 
     @patch("logging.Logger.debug")
-    def test_applying_marker(self, mock_debug: Mock):
+    def test_recognised_marker(self, mock_debug: Mock):
         """Test that a reference's marker is logged at debug level verbatim, exactly as the user wrote it."""
         # The raw text combines scopes and bracket items in a form the boolean fields alone could not produce, so
         # echoing it verbatim proves the log shows the user's own marker.
         raw = "ignore[update] ignore[stale] allow[update<3.13, digest-drift]"
         marker = Marker(ignore_stale=True, allow_drift=True, version_bound=bound(Verb.ALLOW, "update<3.13"), raw=raw)
         path = Path.cwd() / "Dockerfile"
-        Logger("marker").applying_marker("python", marker, Location(path, 6))
+        Logger("marker").recognised_marker("python", marker, Location(path, 6))
         mock_debug.assert_called_once_with(
-            Logger._MESSAGE_APPLYING_MARKER,
+            Logger._MESSAGE_RECOGNISED_MARKER,
             raw,
             Logger._render_dependency("python"),
             Logger._render_location(Location(path, 6)),
@@ -292,9 +292,9 @@ class LoggerTests(TestCase):
         )
 
     @patch("logging.Logger.debug")
-    def test_applying_marker_does_nothing_without_marker(self, mock_debug: Mock):
+    def test_recognised_marker_does_nothing_without_marker(self, mock_debug: Mock):
         """Test that nothing is logged for a reference without a marker."""
-        Logger("marker").applying_marker("python", Marker(), Location(Path.cwd() / "Dockerfile", 6))
+        Logger("marker").recognised_marker("python", Marker(), Location(Path.cwd() / "Dockerfile", 6))
         mock_debug.assert_not_called()
 
     @patch("logging.Logger.debug")
@@ -312,6 +312,57 @@ class LoggerTests(TestCase):
             "ignore[update] ignore[stale]",
             stacklevel=ANY,
         )
+
+    @patch("logging.Logger.debug")
+    def test_ignored_staleness(self, mock_debug: Mock):
+        """Test that a held-back staleness warning is logged at debug level, with the `ignore` directive as written."""
+        published = datetime.now(UTC) - timedelta(days=512, hours=1)
+        version = DependencyVersion("4.15.0", newest_published=published)
+        marker = Marker(ignore_stale=True, raw="ignore[stale] allow[digest-drift]")
+        path = Path.cwd() / "requirements.txt"
+        Logger("stale").ignored_staleness("humanize", version, marker, Location(path, 9))
+        mock_debug.assert_called_once_with(
+            Logger._MESSAGE_IGNORED_STALENESS,
+            Logger._render_dependency("humanize"),
+            Logger._render_location(Location(path, 9)),
+            "ignore[stale]",
+            stacklevel=ANY,
+        )
+
+    @patch("logging.Logger.debug")
+    def test_ignored_staleness_does_nothing_when_not_stale(self, mock_debug: Mock):
+        """Test that nothing is logged when the marker holds back a staleness warning that would not be given."""
+        recent = DependencyVersion("4.15.0", newest_published=datetime.now(UTC) - timedelta(days=1))
+        undated = DependencyVersion("4.15.0")
+        logger = Logger("stale")
+        marker = Marker(ignore_stale=True, raw="ignore[stale]")
+        loc = Location(Path.cwd() / "requirements.txt", 9)
+        logger.ignored_staleness("humanize", recent, marker, loc)
+        logger.ignored_staleness("humanize", undated, marker, loc)
+        mock_debug.assert_not_called()
+
+    @patch("logging.Logger.debug")
+    def test_ignored_yank(self, mock_debug: Mock):
+        """Test that a held-back yank warning is logged at debug level, with the `ignore` directive as written."""
+        version = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="broke Python 3.10 support"))
+        marker = Marker(ignore_yanked=True, raw="ignore[yanked] allow[digest-drift]")
+        path = Path.cwd() / "requirements.txt"
+        Logger("yanked").ignored_yank("humanize", version, marker, Location(path, 9))
+        mock_debug.assert_called_once_with(
+            Logger._MESSAGE_IGNORED_YANK,
+            Logger._render_dependency("humanize"),
+            Logger._render_location(Location(path, 9)),
+            "ignore[yanked]",
+            stacklevel=ANY,
+        )
+
+    @patch("logging.Logger.debug")
+    def test_ignored_yank_does_nothing_when_not_yanked(self, mock_debug: Mock):
+        """Test that nothing is logged when the marker holds back a yank warning that would not be given."""
+        version = DependencyVersion("4.15.0")
+        marker = Marker(ignore_yanked=True, raw="ignore[yanked]")
+        Logger("yanked").ignored_yank("humanize", version, marker, Location(Path.cwd() / "requirements.txt", 9))
+        mock_debug.assert_not_called()
 
     @patch("logging.Logger.debug")
     def test_path_logged_at_debug(self, mock_debug: Mock):

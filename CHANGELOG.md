@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 - Warn when the version a dependency is pinned to has been yanked from PyPI, or deprecated on npm, and hold the warning back with an `# update-time: ignore[yanked]` marker. Closes [#147](https://github.com/ICTU/update-time/issues/147).
 
+### Changed
+
+- Report a recognised `# update-time:` marker as `Recognised update-time marker ...` instead of `Applying update-time marker ...`, so the message says the marker was understood rather than implying it had an effect.
+
+### Fixed
+
+- Log at log-level DEBUG when an `# update-time: ignore[stale]` or `# update-time: ignore[yanked]` marker holds a warning back. Closes [#169](https://github.com/ICTU/update-time/issues/169).
+
 ## 0.0.21 - 2026-07-22
 
 ### Added
