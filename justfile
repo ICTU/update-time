@@ -174,9 +174,14 @@ zizmor:
 check-justfile:
     {{ start_capture() }} {{ just_fmt }} --check --color=$_color {{ end_capture("check-justfile") }}
 
+# Check prose for too complex sentences.
+[private]
+check-sentence-complexity:
+    {{ start_capture() }} {{ uv_run }} --script tools/sentence_complexity_check.py {{ code }} {{ end_capture("check-sentence-complexity") }}
+
 # Run the quality checks
 [parallel]
-check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile yamllint zizmor
+check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-sentence-complexity yamllint zizmor
 
 # === Fix issues ===
 
@@ -238,7 +243,7 @@ folder_prefix(folder) := if folder == "" { "" } else if folder == "." { "" } els
 when_color(yes, no) := f'$([ "$_color" = always ] && echo {{yes}} || echo {{no}})'
 
 start_capture() := f'_color=auto; [ -t 1 ] && { _color=always; export FORCE_COLOR=1; }; output=$({'
-end_capture(name) := f'; } 2>&1) || { printf "%s%s {{RED}}NOK{{NORMAL}}\n%s\n" {{name}} "$output"; exit 1; }; printf "%s%s {{GREEN}}OK{{NORMAL}}\n" {{name}}'
+end_capture(name) := f'; } 2>&1) || { printf "%s {{RED}}NOK{{NORMAL}}\n%s\n" {{name}} "$output"; exit 1; }; printf "%s%s {{GREEN}}OK{{NORMAL}}\n" {{name}}'
 
 # Like start_capture/end_capture, but for slow commands (e.g. tests): run them in the background and animate a spinner while they run. The spinner only shows for an unlabelled run on a terminal (a direct, interactive `just test`); labelled runs (a parallel `ci` or fan-out) skip it, so it never smears into their atomic OK/NOK lines.
 start_progress() := f'if [ -t 1 ]; then spin=1; else spin=; fi; tmp=$(mktemp); trap "rm -f $tmp" EXIT; { '

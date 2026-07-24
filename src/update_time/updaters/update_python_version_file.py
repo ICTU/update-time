@@ -103,8 +103,8 @@ def _image_version_getter(image_version: str) -> NewVersionGetter:
 def _update_version(match: re.Match[str], location: Location, marker: Marker, get_new_version: NewVersionGetter) -> str:
     """Return the entry rewritten to its new version, or unchanged when there is no update.
 
-    Which version to move to — honouring the entry's `# update-time:` marker (its bound and hold-backs) — is
-    `latest_version`'s decision, shared with every other reference kind; only the bare-version output is spelled here.
+    Which version to move to is `latest_version`'s decision, shared with every other reference kind, honouring the
+    entry's `# update-time:` marker with its bound and hold-backs. Only the bare-version output is spelled here.
     """
     version = match.group("version")
     latest = latest_version(Reference(PYTHON, version), get_new_version, marker, location, LOG)

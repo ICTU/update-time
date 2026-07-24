@@ -74,17 +74,17 @@ options:
   --stale-after DAYS    warn when a dependency's newest release is older than
                         this many days; 0 disables the check (default: 365)
   --exclude-path PATHS  comma-separated list of directories, relative to the
-                        scan root, to exclude from the scan (for example
-                        vendor,packages/legacy); every file under an excluded
+                        scan root, to exclude from the scan, for example
+                        vendor,packages/legacy. Every file under an excluded
                         directory is skipped, on top of the always-ignored
-                        build, node_modules, __pycache__, and hidden folders;
-                        directories are matched by relative path, not by name:
+                        build, node_modules, __pycache__, and hidden folders.
+                        Directories are matched by relative path, not by name:
                         --exclude-path vendor excludes vendor/ at the root but
-                        not sub/vendor/; directories that don't exist are
-                        ignored (and logged at log-level WARNING), but
-                        absolute paths, or paths that escape the scan root
-                        (../…), are rejected; run with --log-level DEBUG to
-                        see excluded directories
+                        not sub/vendor/. Directories that don't exist are
+                        ignored and logged at log-level WARNING. Absolute
+                        paths, or paths that escape the scan root (../…), are
+                        rejected. Run with --log-level DEBUG to see excluded
+                        directories
   --allow-image-digest-drift
                         when an already-pinned image tag has been re-pushed
                         under the same version, adopt its new digest instead
