@@ -155,11 +155,11 @@ def apply_marker(  # noqa: PLR0913
     The marker gate shared by every line-based reference. An item that could not be parsed is reported (here, where
     the logger and location are available, unlike in the pure `parse_marker`) and leaves the reference unchanged.
     Otherwise the marker is logged at the debug level, as is the held-back update when the marker holds the update
-    back, so users can confirm a marker is recognised. A marker holding back both the update and the staleness
-    warning returns the line without calling `update`, so the source is never even queried; any other marker hands
-    off to `update` — the caller's thunk that performs the rewrite — so the check the marker doesn't hold back still
-    runs. Callers that discover the reference themselves (a pre-commit `rev:`, a `.python-version` entry) pass the
-    `dependency` name; `updated_lines` reads it from the regexp's match group.
+    back, so users can confirm a marker is recognised. A marker holding back every scope — the update, the staleness
+    warning, and the yank warning — returns the line without calling `update`, so the source is never even queried;
+    any other marker hands off to `update` — the caller's thunk that performs the rewrite — so the checks the marker
+    doesn't hold back still run. Callers that discover the reference themselves (a pre-commit `rev:`, a
+    `.python-version` entry) pass the `dependency` name; `updated_lines` reads it from the regexp's match group.
     """
     if marker.invalid_specifier is not None:
         logger.invalid_specifier(dependency, marker.invalid_specifier, location)
@@ -167,7 +167,7 @@ def apply_marker(  # noqa: PLR0913
     logger.applying_marker(dependency, marker, location)
     if marker.ignore_update:
         logger.ignored(dependency, marker, location)
-    if marker.ignore_update and marker.ignore_stale:
+    if marker.ignore_update and marker.ignore_stale and marker.ignore_yanked:
         return line
     return update()
 

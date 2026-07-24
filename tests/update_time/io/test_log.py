@@ -14,7 +14,7 @@ from rich.text import Text
 from update_time.domain.bound import Redundancy, Verb
 from update_time.domain.location import Location
 from update_time.domain.marker import Marker
-from update_time.domain.version import DependencyVersion
+from update_time.domain.version import DependencyVersion, Yank
 from update_time.io.log import DEPENDENCY_DELIMITER, LOCATION_DELIMITER, Logger, LogHighlighter, get_logger
 from update_time.references import file
 
@@ -161,6 +161,35 @@ class LoggerTests(TestCase):
         loc = Location(Path.cwd() / "requirements.txt", 9)
         logger.warn_if_stale("humanize", recent, loc)
         logger.warn_if_stale("humanize", undated, loc)
+        mock_warning.assert_not_called()
+
+    @staticmethod
+    def rendered_message(mock: Mock) -> str:
+        """Return the logged message with its % arguments filled in, as it would appear once formatted."""
+        template, *args = mock.call_args.args
+        return template % tuple(args)
+
+    @patch("logging.Logger.warning")
+    def test_warn_if_yanked_without_reason(self, mock_warning: Mock):
+        """Test that a yanked pin with no maintainer reason reports that the reason was not specified."""
+        version = DependencyVersion("4.15.0", yank=Yank(yanked=True))
+        Logger("yanked").warn_if_yanked("humanize", version, Location(Path.cwd() / "requirements.txt", 9))
+        mock_warning.assert_called_once()
+        self.assertIn("was yanked (reason not specified)", self.rendered_message(mock_warning))
+
+    @patch("logging.Logger.warning")
+    def test_warn_if_yanked_with_reason(self, mock_warning: Mock):
+        """Test that the maintainer's yank reason is included in the warning, in parentheses."""
+        version = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="broke Python 3.10 support"))
+        Logger("yanked").warn_if_yanked("humanize", version, Location(Path.cwd() / "requirements.txt", 9))
+        mock_warning.assert_called_once()
+        self.assertIn('was yanked ("broke Python 3.10 support")', self.rendered_message(mock_warning))
+
+    @patch("logging.Logger.warning")
+    def test_warn_if_yanked_does_nothing_when_not_yanked(self, mock_warning: Mock):
+        """Test that nothing is logged when the version was not yanked."""
+        version = DependencyVersion("4.15.0")
+        Logger("yanked").warn_if_yanked("humanize", version, Location(Path.cwd() / "requirements.txt", 9))
         mock_warning.assert_not_called()
 
     @patch("logging.Logger.warning")

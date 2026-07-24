@@ -93,6 +93,16 @@ class UpdateJsdelivrTest(LoggingTestCase):
         self.assertEqual(CONF, update_jsdelivr(CONF, conf_py))  # no newer version, so no rewrite
         self.assert_stale_dependency_logged(conf_py, "clipboard", "2.0.11")
 
+    def test_deprecated_dependency_warned(self, mock_get: Mock):
+        """Test that a jsDelivr URL left on a deprecated version is warned about, without rewriting the URL."""
+        mock_get.side_effect = [
+            jsdelivr_versions("2.0.11"),
+            npm_registry({"2.0.11": ELIGIBLE}, deprecated={"2.0.11": "use 3.0 instead"}),
+        ]
+        conf_py = Path.cwd() / "docs" / "conf.py"
+        self.assertEqual(CONF, update_jsdelivr(CONF, conf_py))  # no newer version, so no rewrite
+        self.assert_yanked_dependency_logged(conf_py, "clipboard", "2.0.11", '"use 3.0 instead"')
+
 
 @patch("pathlib.Path.rglob")
 @patch("requests.get")

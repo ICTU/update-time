@@ -26,8 +26,9 @@ if TYPE_CHECKING:
 class Marker:
     """The `# update-time:` directives affecting a line (see `parse_marker`).
 
-    `ignore_update` and `ignore_stale` are whether an `ignore` directive holds back the reference's update and its
-    staleness warning: a bare `ignore` holds back both, `ignore[update]` and `ignore[stale]` each just one.
+    `ignore_update`, `ignore_stale`, and `ignore_yanked` are whether an `ignore` directive holds back the reference's
+    update, its staleness warning, and its yank warning: a bare `ignore` holds back all three, while
+    `ignore[update]`, `ignore[stale]`, and `ignore[yanked]` each hold back just one.
     `allow_drift` is whether an `allow[digest-drift]` directive opts the reference into adopting a re-pushed digest.
     `version_bound` is the version bound from an `allow`/`ignore` directive (see `VersionBound`), defaulting to
     `NO_BOUND` (keep every candidate) when there is none.
@@ -39,6 +40,7 @@ class Marker:
 
     ignore_update: bool = False
     ignore_stale: bool = False
+    ignore_yanked: bool = False
     allow_drift: bool = False
     version_bound: VersionBound = NO_BOUND
     invalid_specifier: str | None = None
@@ -68,6 +70,7 @@ class Marker:
         return Marker(
             self.ignore_update or other.ignore_update,
             self.ignore_stale or other.ignore_stale,
+            self.ignore_yanked or other.ignore_yanked,
             self.allow_drift or other.allow_drift,
             other.version_bound if self.version_bound == NO_BOUND else self.version_bound,
             self.invalid_specifier if self.invalid_specifier is not None else other.invalid_specifier,
@@ -76,7 +79,19 @@ class Marker:
 
 
 # The marker a bare `ignore` (or a single unrecognised ignore bracket) expresses: hold everything back.
-_BARE_IGNORE = Marker(ignore_update=True, ignore_stale=True)
+_BARE_IGNORE = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True)
+
+# The keyword bracket items each verb recognises, and the marker each expresses. An `ignore` scope holds back just
+# the update, just the staleness warning, or just the yank warning, and `allow[digest-drift]` opts into adopting a
+# re-pushed digest, while a bare `allow[update]` allows every update, which is the default anyway, keeping the two
+# verbs complements. Items outside this vocabulary are update bounds, parsed by `parse_bound`.
+_KEYWORD_ITEMS = {
+    (Verb.IGNORE, "update"): Marker(ignore_update=True),
+    (Verb.IGNORE, "stale"): Marker(ignore_stale=True),
+    (Verb.IGNORE, "yanked"): Marker(ignore_yanked=True),
+    (Verb.ALLOW, "update"): Marker(),  # bare `allow[update]`: the default no-op
+    (Verb.ALLOW, "digest-drift"): Marker(allow_drift=True),
+}
 
 # The comment leads that can carry a marker: `#` in most formats we update, `//` in devcontainer.json (which is
 # JSONC). Shared by the marker prefix and the standalone-comment check in `parse_marker`, so the two always agree
@@ -187,22 +202,13 @@ def _bracket_items(bracket: str) -> list[str]:
 def _parse_bracket_item(verb: Verb, item: str) -> Marker | None:
     """Return the marker for one bracket item of the given verb, or None when the item is unrecognised.
 
-    Most of the vocabulary is per verb: `ignore[update]` and `ignore[stale]` hold back just the update or just the
-    staleness warning, and `allow[digest-drift]` opts into adopting a re-pushed digest, while a bare `allow[update]`
-    allows every update, which is the default anyway, keeping the two verbs complements. An update bound, a
-    specifier after `update` or a `<level>-update` item, is shared between the verbs and delegated to `parse_bound`.
-    A malformed `update` specifier surfaces from it as `InvalidSpecifier`, which tells a mistyped bound apart from an
-    unrecognised item without re-testing the item's shape here.
+    The keyword vocabulary is per verb (see `_KEYWORD_ITEMS`). An update bound, a specifier after `update` or a
+    `<level>-update` item, is shared between the verbs and delegated to `parse_bound`. A malformed `update` specifier
+    surfaces from it as `InvalidSpecifier`, which tells a mistyped bound apart from an unrecognised item without
+    re-testing the item's shape here.
     """
-    match verb, item:
-        case Verb.IGNORE, "update":
-            return Marker(ignore_update=True)
-        case Verb.ALLOW, "update":
-            return Marker()  # bare `allow[update]`: the default no-op
-        case Verb.IGNORE, "stale":
-            return Marker(ignore_stale=True)
-        case Verb.ALLOW, "digest-drift":
-            return Marker(allow_drift=True)
+    if (keyword_marker := _KEYWORD_ITEMS.get((verb, item))) is not None:
+        return keyword_marker
     # not a keyword item — try the shared update bounds
     try:
         version_bound = parse_bound(verb, item)

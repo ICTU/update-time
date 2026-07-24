@@ -28,7 +28,7 @@ from update_time.sources.pypi import project_metadata as pypi_project_metadata
 from update_time.sources.pypi import release_metadata as pypi_release_metadata
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
     from unittest.mock import _patch, _patch_dict
 
@@ -229,6 +229,22 @@ class LoggingTestCase(CacheClearingTestCase):
             stacklevel=ANY,
         )
 
+    def assert_yanked_dependency_logged(
+        self, path: Path, dependency: str, version: str, reason: object = ANY, *, line: int | None = None
+    ) -> None:
+        """Assert that a pin left on a yanked version was warned about once for the file.
+
+        The reason renders differently for a specified and an unspecified yank, so it defaults to matching any.
+        """
+        self.mock_warning.assert_called_once_with(
+            Logger._MESSAGE_YANKED,
+            Logger._render_dependency(dependency),
+            Logger._render_location(Location(path, line)),
+            version,
+            reason,
+            stacklevel=ANY,
+        )
+
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged at debug level."""
         self.mock_debug.assert_called_with(
@@ -419,20 +435,26 @@ def jsdelivr_versions(*version_strings: str) -> Mock:
     return mock_response({"versions": [{"version": version} for version in version_strings]})
 
 
-def npm_registry(published: dict[str, str]) -> Mock:
-    """Return a mock npm registry response mapping versions to their publication dates (its `time` map)."""
-    return mock_response({"time": published})
+def npm_registry(published: dict[str, str], deprecated: dict[str, str] | None = None) -> Mock:
+    """Return a mock npm registry response mapping versions to publish times and optional deprecation messages."""
+    versions = {version: {"deprecated": reason} for version, reason in (deprecated or {}).items()}
+    return mock_response({"time": published, "versions": versions})
 
 
 PYPI_OLD_UPLOAD = "2020-01-01T00:00:00.000000Z"  # A distribution upload time well outside the cooldown window.
 
 
-def pypi_index(*versions: str, files: list[dict[str, str]] | None = None) -> Mock:
+def pypi_index(*versions: str, files: Sequence[Mapping[str, str | bool]] | None = None) -> Mock:
     """Return a mock PyPI Index (Simple) API response listing the versions and, when given, distribution files."""
     body: dict[str, object] = {"versions": list(versions)}
     if files is not None:
         body["files"] = files
     return mock_response(body)
+
+
+def yanked_file(filename: str, *, reason: str | bool = True) -> dict[str, str | bool]:
+    """Return a mock Index API distribution file entry marked as yanked (a reason string, or True for none)."""
+    return {"filename": filename, "yanked": reason}
 
 
 def pypi_release(upload_time: str = PYPI_OLD_UPLOAD, *, yanked: bool = False, description: str = "") -> Mock:

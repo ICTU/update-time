@@ -28,6 +28,7 @@ def update_jsdelivr(content: str, path: Path) -> str:
         # A whole-file substitution, not a line-based rewrite, so the URL's line isn't tracked: report file-only.
         location = Location(path)
         LOG.warn_if_stale(dependency, latest_version, location)
+        LOG.warn_if_yanked(dependency, latest_version, location)
         if latest_version.version == version:
             return match.group(0)
         LOG.new_version(dependency, latest_version, location)

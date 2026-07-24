@@ -4,7 +4,14 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 
-from update_time.sources.npmjs import get_changes, get_publication_datetime, newest_publication_date, newest_release
+from update_time.domain.version import Yank
+from update_time.sources.npmjs import (
+    deprecation,
+    get_changes,
+    get_publication_datetime,
+    newest_publication_date,
+    newest_release,
+)
 
 from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase, patch_get
 
@@ -79,6 +86,25 @@ class NpmjsNewestReleaseTest(LoggingTestCase):
     def test_no_latest_tag(self):
         """Test that a package with no `latest` dist-tag (e.g. unreachable) yields None."""
         self.assertIsNone(newest_release("package"))
+
+
+class NpmjsDeprecationTest(LoggingTestCase):
+    """Unit tests for reading a version's npm deprecation state."""
+
+    @patch_get({"versions": {"1.0": {"deprecated": "use 2.0 instead"}}})
+    def test_deprecated_version(self):
+        """Test that a deprecated version's flag and message are returned."""
+        self.assertEqual(deprecation("package", "1.0"), Yank(yanked=True, reason="use 2.0 instead"))
+
+    @patch_get({"versions": {"1.0": {}}})
+    def test_undeprecated_version(self):
+        """Test that a version without a deprecation message is not flagged."""
+        self.assertEqual(deprecation("package", "1.0"), Yank())
+
+    @patch_get({"versions": {}})
+    def test_unlisted_version(self):
+        """Test that a version the registry doesn't list is not flagged."""
+        self.assertEqual(deprecation("package", "9.9"), Yank())
 
 
 class GetChangesRepositoryTest(CacheClearingTestCase):

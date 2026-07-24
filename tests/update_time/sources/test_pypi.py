@@ -5,6 +5,7 @@ from http import HTTPStatus
 from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
+from update_time.domain.version import Yank
 from update_time.sources.pypi import (
     CHANGELOG_URL_KEYS,
     REPOSITORY_URL_KEYS,
@@ -26,6 +27,7 @@ from tests.update_time.helpers import (
     patch_get,
     pypi_index,
     pypi_release,
+    yanked_file,
 )
 
 
@@ -177,7 +179,7 @@ class GetLatestVersionTest(LoggingTestCase):
     `get_latest_version` makes its requests in a fixed order, so each test's `mock_get.side_effect` mirrors it:
     first the Index API (the version list), then — newest-first — one per-version metadata request per candidate,
     stopping at the first eligible release. A test supplies only as many responses as reaching its expected version
-    requires.
+    requires. The current version's yank state is read from that same Index API response.
     """
 
     def test_invalid_current_version(self, mock_get: Mock):
@@ -224,6 +226,34 @@ class GetLatestVersionTest(LoggingTestCase):
         """Test that yanked releases are ignored."""
         mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(yanked=True)]
         self.assertEqual(get_latest_version("yanked", "1.0", NO_BOUND).version, "1.0")
+
+    def test_yanked_current_version_attached(self, mock_get: Mock):
+        """Test that when the pin stays put on a yanked version, its yank reason is attached from the Index API."""
+        mock_get.side_effect = [
+            pypi_index("1.0", files=[yanked_file("yanked_pin-1.0.tar.gz", reason="broke Python 3.10")])
+        ]
+        latest = get_latest_version("yanked_pin", "1.0", NO_BOUND)
+        self.assertEqual(latest.version, "1.0")
+        self.assertEqual(latest.yank, Yank(yanked=True, reason="broke Python 3.10"))
+
+    def test_yanked_current_version_without_reason(self, mock_get: Mock):
+        """Test that a yanked pin with no maintainer reason is flagged as yanked with an empty reason."""
+        mock_get.side_effect = [pypi_index("1.0", files=[yanked_file("yanked_pin-1.0-py3-none-any.whl")])]
+        self.assertEqual(get_latest_version("yanked_pin", "1.0", NO_BOUND).yank, Yank(yanked=True))
+
+    def test_no_yank_when_the_update_moves_away(self, mock_get: Mock):
+        """Test that a run updating away from a yanked pin reports no yank, since the pin no longer sits on one."""
+        files = [yanked_file("moved-1.0.tar.gz", reason="broke Python 3.10")]
+        mock_get.side_effect = [pypi_index("1.0", "1.1", files=files), pypi_release()]
+        latest = get_latest_version("moved", "1.0", NO_BOUND)
+        self.assertEqual(latest.version, "1.1")
+        self.assertEqual(latest.yank, Yank())
+
+    def test_yanked_file_of_another_version_ignored(self, mock_get: Mock):
+        """Test that a yanked file of another version, or an unparsable filename, leaves the pin unyanked."""
+        files = [yanked_file("pin-0.9.tar.gz", reason="old"), yanked_file("not-a-distribution")]
+        mock_get.side_effect = [pypi_index("1.0", files=files)]
+        self.assertFalse(get_latest_version("pin", "1.0", NO_BOUND).yank.yanked)
 
     def test_release_without_files_ignored(self, mock_get: Mock):
         """Test that releases without distribution files are ignored."""
