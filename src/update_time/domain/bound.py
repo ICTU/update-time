@@ -199,3 +199,9 @@ def parse_bound(verb: Verb, item: str) -> VersionBound | None:
 # The absence of a version bound, represented as a keep-all bound (an empty specifier matches every version) so that
 # `version_bound` is never None: sources apply it uniformly and it is the default for an unmarked reference.
 NO_BOUND = VersionBound(Verb.ALLOW, SpecifierSet(""), item="update")
+
+# The bound an `ignore[update]` expresses: the drop-everything case, the complement of `NO_BOUND`. Ignoring an empty
+# specifier drops every version, so a source given this bound finds no candidate and keeps the current version. That
+# tells the source the reference cannot move, so it reports on the version the reference stays on — a yanked pin is
+# still detected — instead of resolving an update that would be discarded afterwards.
+BLOCK_ALL_UPDATES = VersionBound(Verb.IGNORE, SpecifierSet(""), item="update")

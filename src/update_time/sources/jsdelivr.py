@@ -16,7 +16,7 @@ from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
-from update_time.sources.npmjs import get_publication_datetime, newest_publication_date
+from update_time.sources.npmjs import deprecation, get_publication_datetime, newest_publication_date
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -46,9 +46,13 @@ def get_latest_version(
         lambda version: _eligible_version(dependency, version, filename, current_version_string),
         current_version_string,
     )
-    # Attach the newest npm publication date for the staleness check. Unlike the other sources this can cost an
-    # extra npm request (when the reference is already at the newest version, so no candidate was resolved), so it
-    # is skipped when the check is disabled; `is_stale` remains the single gate on whether a warning is emitted.
+    # When the run leaves the reference on its current version, attach that version's deprecation as a yank so a pin
+    # left on a deprecated release can be warned about; whether to warn is decided by `warn_if_yanked`. Reading the
+    # deprecation fetches the npm registry document (once, cached), which the staleness date below then reuses.
+    if latest.version == current_version_string:
+        latest = replace(latest, yank=deprecation(dependency, current_version_string))
+    # Attach the newest npm publication date for the staleness check, skipping the attachment when the check is
+    # disabled; `is_stale` remains the single gate on whether a warning is emitted.
     newest_published = newest_publication_date(dependency) if STALE_AFTER.get() > 0 else None
     return replace(latest, newest_published=newest_published)
 
@@ -56,14 +60,16 @@ def get_latest_version(
 def _eligible_version(
     dependency: str, version: Version, filename: str, current_version_string: VersionString
 ) -> DependencyVersion | None:
-    """Return the version with its integrity hash when it's past the cooldown, or None when it's still too fresh.
+    """Return the version with its integrity hash when it's eligible, or None when it's too fresh or deprecated.
 
-    A version that is past the cooldown but whose referenced file has no integrity hash ends the walk: it returns
-    the current version unchanged rather than skipping to an older one, since bumping without a matching hash would
-    break the Subresource Integrity check.
+    A version that is eligible but whose referenced file has no integrity hash ends the walk: it returns the current
+    version unchanged rather than skipping to an older one, since bumping without a matching hash would break the
+    Subresource Integrity check.
     """
     published = _publication_datetime(dependency, version)
     if published is None or within_cooldown(published):
+        return None
+    if deprecation(dependency, str(version)).yanked:
         return None
     if integrity := _get_integrity_hash(dependency, version, filename):
         return DependencyVersion(str(version), sha=integrity, published=published)

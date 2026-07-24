@@ -293,6 +293,25 @@ class Logger:
             STALE_AFTER.get(),
         )
 
+    _MESSAGE_YANKED = "Yanked dependency %s in %s: version %s was yanked (%s)"
+
+    def warn_if_yanked(self, dependency: str, version: DependencyVersion, location: Location) -> None:
+        """Warn that the version the reference is pinned to has been yanked; do nothing when it was not yanked.
+
+        The maintainer's reason is appended in parentheses, quoted when given and "reason not specified" when not.
+        """
+        if not version.yank.yanked:
+            return
+        reason = f'"{version.yank.reason}"' if version.yank.reason else "reason not specified"
+        self._log(
+            self.log.warning,
+            self._MESSAGE_YANKED,
+            self._render_dependency(dependency),
+            self._render_location(location),
+            version.version,
+            reason,
+        )
+
     _MESSAGE_NO_VERSION = "No valid version found for %s"
 
     def no_version(self, dependency: str) -> None:

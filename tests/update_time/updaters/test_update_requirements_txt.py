@@ -14,6 +14,7 @@ from tests.update_time.helpers import (
     pypi_index,
     pypi_release,
     staleness_disabled,
+    yanked_file,
 )
 
 PUBLISHED = "1.1, published: 2020-01-01 00:00"  # How PYPI_OLD_UPLOAD is rendered in the log.
@@ -67,6 +68,40 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
         self.assert_stale_dependency_logged(requirements_txt, "humanize", "4.15.0", line=1)
+
+    def test_yanked_dependency_warned(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a pin left on a yanked version is warned about, without being changed."""
+        requirements_txt = self.requirements_file("humanize==4.15.0\n")
+        mock_rglob.return_value = [requirements_txt]
+        yanked = [yanked_file("humanize-4.15.0.tar.gz", reason="broke Python 3.10")]
+        mock_get.side_effect = [
+            pypi_index("4.15.0", files=yanked)
+        ]  # No newer version; the pin's own release is yanked.
+        update_requirements_txts()
+        requirements_txt.write_text.assert_not_called()
+        self.assert_yanked_dependency_logged(requirements_txt, "humanize", "4.15.0", line=1)
+
+    def test_ignore_update_marker_still_warns_about_a_yank(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a pin frozen on a yanked version by `ignore[update]` is still warned about.
+
+        A newer version is available, but the marker keeps the reference on the yanked one, so the warning applies.
+        """
+        requirements_txt = self.requirements_file("humanize==4.15.0  # update-time: ignore[update]\n")
+        mock_rglob.return_value = [requirements_txt]
+        yanked = [yanked_file("humanize-4.15.0.tar.gz", reason="broke Python 3.10")]
+        mock_get.side_effect = [pypi_index("4.15.0", "4.16.0", files=yanked), pypi_release()]
+        update_requirements_txts()
+        requirements_txt.write_text.assert_not_called()  # the marker keeps the pin on the yanked version
+        self.assert_yanked_dependency_logged(requirements_txt, "humanize", "4.15.0", line=1)
+
+    def test_ignore_yanked_marker_silences_the_warning(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that an `ignore[yanked]` marker on the pin's line holds back the yank warning."""
+        requirements_txt = self.requirements_file("humanize==4.15.0  # update-time: ignore[yanked]\n")
+        mock_rglob.return_value = [requirements_txt]
+        yanked = [yanked_file("humanize-4.15.0.tar.gz", reason="broke Python 3.10")]
+        mock_get.side_effect = [pypi_index("4.15.0", files=yanked)]
+        update_requirements_txts()
+        self.assert_no_warnings_logged()
 
     def test_recent_dependency_not_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin whose newest release is recent is not warned about as stale."""

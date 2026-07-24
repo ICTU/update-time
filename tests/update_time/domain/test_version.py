@@ -2,7 +2,7 @@
 
 import unittest
 
-from update_time.domain.version import DependencyVersion, first_eligible, is_valid
+from update_time.domain.version import DependencyVersion, Yank, first_eligible, is_valid
 
 
 class IsValidTest(unittest.TestCase):
@@ -19,6 +19,19 @@ class IsValidTest(unittest.TestCase):
     def test_v_prefix_is_allowed(self):
         """Test that a version with a v-prefix is valid."""
         self.assertTrue(is_valid("v1.0"))
+
+
+class DependencyVersionTest(unittest.TestCase):
+    """Unit tests for the DependencyVersion data carrier."""
+
+    def test_not_yanked_by_default(self):
+        """Test that a version's yank state defaults to not yanked."""
+        self.assertEqual(DependencyVersion(version="1.0").yank, Yank())
+
+    def test_carries_yank_state(self):
+        """Test that a version can carry a yank state."""
+        yank = Yank(yanked=True, reason="broke Python 3.10 support")
+        self.assertEqual(DependencyVersion(version="1.0", yank=yank).yank, yank)
 
 
 class FirstEligibleTest(unittest.TestCase):

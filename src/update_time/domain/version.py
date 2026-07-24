@@ -33,6 +33,14 @@ def is_valid(version: VersionString) -> bool:
 
 
 @dataclass(frozen=True)
+class Yank:
+    """A version's withdrawal state: whether it was withdrawn — yanked on PyPI, deprecated on npm — and why."""
+
+    yanked: bool = False
+    reason: str = ""  # The maintainer's reason, empty when none was given
+
+
+@dataclass(frozen=True)
 class DependencyVersion:
     """A version of a dependency."""
 
@@ -41,6 +49,7 @@ class DependencyVersion:
     sha: str = ""
     published: datetime | None = None  # Publication date of this (candidate) version, when known
     newest_published: datetime | None = None  # Publication date of the dependency's newest release, for staleness
+    yank: Yank = Yank()  # The version's withdrawal state (yanked on PyPI, deprecated on npm)
 
     def digest_differs_from(self, sha: str) -> bool:
         """Return whether this version resolved a digest that differs from an already-pinned one.

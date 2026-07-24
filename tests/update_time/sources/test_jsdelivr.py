@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.version import Yank
 from update_time.io.log import Logger
 from update_time.sources.jsdelivr import get_latest_version
 
@@ -71,6 +72,24 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual(latest_version.version, "1.0")
         self.assertEqual(latest_version.sha, "")
 
+    def test_deprecated_version_skipped(self, mock_get: Mock):
+        """Test that a newer version that is deprecated on npm is not adopted as an update."""
+        mock_get.side_effect = [
+            jsdelivr_versions("1.1", "1.0"),
+            npm_registry({"1.1": ELIGIBLE}, deprecated={"1.1": "use 2.0 instead"}),
+        ]
+        self.assertEqual(get_latest_version("clipboard", "1.0", FILENAME).version, "1.0")
+
+    def test_deprecated_current_version_attached(self, mock_get: Mock):
+        """Test that when the pin stays put on a deprecated version, its deprecation is attached as a yank."""
+        mock_get.side_effect = [
+            jsdelivr_versions("1.0", "0.9"),
+            npm_registry({"1.0": ELIGIBLE}, deprecated={"1.0": "use 2.0 instead"}),
+        ]
+        latest = get_latest_version("clipboard", "1.0", FILENAME)
+        self.assertEqual(latest.version, "1.0")
+        self.assertEqual(latest.yank, Yank(yanked=True, reason="use 2.0 instead"))
+
     def test_prerelease_ignored(self, mock_get: Mock):
         """Test that a newer pre-release is not adopted (and no publication date is looked up for it)."""
         mock_get.side_effect = [jsdelivr_versions("2.0.0-rc.1", "1.0"), npm_registry({"1.0": ELIGIBLE})]
@@ -136,11 +155,12 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual(datetime.fromisoformat(old), get_latest_version("clipboard", "1.0", FILENAME).newest_published)
 
     def test_newest_published_skipped_when_disabled(self, mock_get: Mock):
-        """Test that the extra npm request is not made (and no date attached) when the staleness check is disabled.
+        """Test that no newest-release date is attached when the staleness check is disabled.
 
-        Only the jsDelivr version list is provided; a second (npm) request would raise, proving it isn't made.
+        The npm registry is still fetched to check the stay-put pin's deprecation, but its `time` map is not read
+        for a staleness date.
         """
-        mock_get.side_effect = [jsdelivr_versions("1.0", "0.9")]
+        mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": ELIGIBLE})]
         with staleness_disabled:
             latest_version = get_latest_version("clipboard", "1.0", FILENAME)
         self.assertIsNone(latest_version.newest_published)

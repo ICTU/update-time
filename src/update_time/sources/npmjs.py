@@ -4,7 +4,7 @@ from datetime import datetime
 from functools import cache
 
 from update_time.domain.staleness import newest_datetime
-from update_time.domain.version import DependencyVersion
+from update_time.domain.version import DependencyVersion, Yank
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.sources.github import changes_from_release, github_owner_and_repository
@@ -66,6 +66,16 @@ def newest_publication_date(package: str) -> datetime | None:
     """
     times = _package_metadata(package).get("time", {})
     return newest_datetime(time for key, time in times.items() if key not in _TIME_BOOKKEEPING_KEYS)
+
+
+def deprecation(package: str, version: str) -> Yank:
+    """Return the version's deprecation state as a yank (npm's counterpart to a PyPI yank).
+
+    Read from the registry document's per-version metadata, where a deprecated version carries a `deprecated`
+    message; an undeprecated version, or one the registry doesn't list, carries none.
+    """
+    deprecated = _package_metadata(package).get("versions", {}).get(version, {}).get("deprecated")
+    return Yank(yanked=bool(deprecated), reason=deprecated if isinstance(deprecated, str) else "")
 
 
 def newest_release(package: str) -> DependencyVersion | None:

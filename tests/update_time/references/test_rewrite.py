@@ -21,6 +21,9 @@ from tests.update_time.helpers import bound, new_version_getter, patch_environ
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
 
+# The marker a bare `# update-time: ignore` expresses: every check the marker can hold back is held back.
+BARE_IGNORE = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True)
+
 REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"
 SHA_REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)(?:@(?P<sha>sha256:[a-f0-9]{64}))?"
 ACTION_REGEXP = r"uses: (?P<dependency>[\w\d\./-]+)@(?P<sha>[a-f0-9]{40}) # v?(?P<version>[\d\w\.\-]+)"
@@ -170,9 +173,7 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = ["image: python:3.14  # update-time: ignore"]
         self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
         get_new_version.assert_not_called()
-        self.logger.ignored.assert_called_once_with(
-            "python", Marker(ignore_update=True, ignore_stale=True), Location(self.path, 1)
-        )
+        self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
     def test_preceding_ignore_marker_pins_next_line(self):
         """Test that a standalone `# update-time: ignore` comment pins the reference on the line below it.
@@ -183,18 +184,14 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = ["# update-time: ignore", "image: python:3.14"]
         self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
         get_new_version.assert_not_called()
-        self.logger.ignored.assert_called_once_with(
-            "python", Marker(ignore_update=True, ignore_stale=True), Location(self.path, 2)
-        )
+        self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 2))
 
     def test_inline_marker_does_not_pin_following_line(self):
         """Test that an inline marker pins only its own line, not the reference on the line below it."""
         lines = ["image: a:3.14  # update-time: ignore", "image: b:3.14"]
         new_lines = self.rewrite(lines, REGEXP, new_version_getter("3.15"))
         self.assertEqual(new_lines, ["image: a:3.14  # update-time: ignore", "image: b:3.15"])
-        self.logger.ignored.assert_called_once_with(
-            "a", Marker(ignore_update=True, ignore_stale=True), Location(self.path, 1)
-        )
+        self.logger.ignored.assert_called_once_with("a", BARE_IGNORE, Location(self.path, 1))
 
     def test_inline_slash_slash_marker_pins_line(self):
         """Test that a `//`-style ignore marker (as JSONC/devcontainer.json uses) also pins a line inline."""
@@ -202,9 +199,7 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = ["image: python:3.14  // update-time: ignore"]
         self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
         get_new_version.assert_not_called()
-        self.logger.ignored.assert_called_once_with(
-            "python", Marker(ignore_update=True, ignore_stale=True), Location(self.path, 1)
-        )
+        self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
     def test_preceding_slash_slash_marker_pins_next_line(self):
         """Test that a standalone `//` marker comment pins the reference on the line below it."""
@@ -212,9 +207,7 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = ["// update-time: ignore", "image: python:3.14"]
         self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
         get_new_version.assert_not_called()
-        self.logger.ignored.assert_called_once_with(
-            "python", Marker(ignore_update=True, ignore_stale=True), Location(self.path, 2)
-        )
+        self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 2))
 
     def test_ignore_update_marker_skips_update_but_still_checks_staleness(self):
         """Test that `ignore[update]` leaves the version unchanged but still runs the staleness check."""
@@ -222,6 +215,17 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assertEqual(lines, self.rewrite(lines, REGEXP, new_version_getter("3.15")))  # version left as-is
         self.logger.warn_if_stale.assert_called_once()  # staleness still checked
         self.logger.ignored.assert_called_once_with("python", Marker(ignore_update=True), Location(self.path, 1))
+
+    def test_ignore_update_and_stale_still_checks_for_a_yank(self):
+        """Test that a scope the marker leaves live keeps the reference queried, so its check still runs.
+
+        `ignore[update]` and `ignore[stale]` silence two of the three scopes; the yank check is not held back, so
+        the source is still queried for it rather than the reference being skipped outright.
+        """
+        lines = ["image: python:3.14  # update-time: ignore[update] ignore[stale]"]
+        self.assertEqual(lines, self.rewrite(lines, REGEXP, new_version_getter("3.15")))  # version left as-is
+        self.logger.warn_if_yanked.assert_called_once()  # the yank check still runs
+        self.logger.warn_if_stale.assert_not_called()  # staleness is held back
 
     def test_ignore_stale_marker_skips_staleness_but_still_updates(self):
         """Test that `ignore[stale]` applies the update but skips the staleness check."""
@@ -353,9 +357,7 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = ["image: python:3.12  # update-time: ignore[mega-update]"]
         self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
         get_new_version.assert_not_called()
-        self.logger.ignored.assert_called_once_with(
-            "python", Marker(ignore_update=True, ignore_stale=True), Location(self.path, 1)
-        )
+        self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
     def test_bound_marker_above_line_passes_bound(self):
         """Test that a standalone `allow[update<…>]` comment bounds the reference on the line below it."""
@@ -413,9 +415,7 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = ["image: python:3.12  # update-time: ignore[updaet]"]
         self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
         get_new_version.assert_not_called()
-        self.logger.ignored.assert_called_once_with(
-            "python", Marker(ignore_update=True, ignore_stale=True), Location(self.path, 1)
-        )
+        self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
     def test_unterminated_allow_bracket_expresses_nothing(self):
         """Test that an `allow[` whose bracket is never closed expresses nothing, leaving the reference to update.
@@ -448,9 +448,7 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = ["image: python:3.14  # update-time: ignore[update<4"]
         self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
         get_new_version.assert_not_called()
-        self.logger.ignored.assert_called_once_with(
-            "python", Marker(ignore_update=True, ignore_stale=True), Location(self.path, 1)
-        )
+        self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
     def test_comma_separated_items_combine_in_one_bracket(self):
         """Test that a bracket combines comma-separated items: `ignore[stale, update>=3.13]` bounds and silences."""
@@ -478,14 +476,12 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.warn_if_stale.assert_not_called()
 
     def test_combined_ignore_scopes_hold_back_everything(self):
-        """Test that `ignore[update]` and `ignore[stale]` combined hold back as much as a bare `ignore`."""
+        """Test that every `ignore` scope combined holds back as much as a bare `ignore`."""
         get_new_version = Mock()
-        lines = ["image: python:3.12  # update-time: ignore[update] ignore[stale]"]
+        lines = ["image: python:3.12  # update-time: ignore[update] ignore[stale] ignore[yanked]"]
         self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
-        get_new_version.assert_not_called()  # Both aspects are held back, so the source is not even queried.
-        self.logger.ignored.assert_called_once_with(
-            "python", Marker(ignore_update=True, ignore_stale=True), Location(self.path, 1)
-        )
+        get_new_version.assert_not_called()  # Every aspect is held back, so the source is not even queried.
+        self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
     def test_unrecognised_item_in_comma_list_is_logged(self):
         """Test that an unrecognised item in a comma list warns and leaves the reference unchanged."""

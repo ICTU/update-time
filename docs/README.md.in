@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/update-time?logo=pypi&logoColor=white)](https://pypi.org/project/update-time/) [![Python versions](https://img.shields.io/pypi/pyversions/update-time?logo=python&logoColor=white)](https://pypi.org/project/update-time/) [![License](https://img.shields.io/pypi/l/update-time)](https://github.com/ICTU/update-time/blob/main/LICENSE)
 
-Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for [dependencies](#-what-is-updated) and updates them to their latest versions. In addition, it [pins](#-pinning) unpinned versions if possible. To protect against supply-chain attacks, it applies a [cooldown](#-cooldown) period. And it warns you about [stale dependencies](#-stale-dependencies).
+Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for [dependencies](#-what-is-updated) and updates them to their latest versions. In addition, it [pins](#-pinning) unpinned versions if possible. To protect against supply-chain attacks, it applies a [cooldown](#-cooldown) period. And it warns you about [stale dependencies](#-stale-dependencies) and [yanked versions](#-yanked-dependencies).
 
 Example Update-time output:
 
@@ -212,7 +212,7 @@ The jsDelivr npm URLs and their accompanying Subresource Integrity (`integrity`)
 
 #### What versions are updated?
 
-The npm package version embedded in the URL is updated to the latest version on the npm registry, and the SRI hash is updated in step so the two stay consistent. The hash is only updated when already present, never added (see [Pinning](#-pinning)).
+The npm package version embedded in the URL is updated to the latest version on the npm registry, and the SRI hash is updated in step so the two stay consistent. Versions the maintainer has deprecated are skipped, and a URL left on a deprecated version is warned about (see [Yanked dependencies](#-yanked-dependencies)). The hash is only updated when already present, never added (see [Pinning](#-pinning)).
 
 ## 📌 Pinning
 
@@ -266,19 +266,34 @@ The date compared against the threshold is the publication date of the dependenc
 
 Every kind of dependency Update-time updates is checked for staleness. Two indirect cases are the Node engine version in `package.json` and the Python version in `.python-version`: when either is derived from the project's Dockerfile, only the staleness of the base image is reported, while a `.python-version` entry that follows Docker Hub is checked against the Python image tag's push date. Two data limitations narrow the check where the date isn't available. First, `package.json` dependencies given as git, file, workspace, or alias references are skipped, since they don't resolve to a registry release. Second, image tags are only checked on Docker Hub, because the push date the check relies on isn't exposed by other registries (`ghcr.io`, `mcr.microsoft.com`, …), the same limitation as the cooldown. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
 
+## 🚫 Yanked dependencies
+
+A yank means "stop using this": a release the maintainer withdrew because it was broken, botched, or insecure. An exact pin keeps installing a yanked release anyway — pip and uv honour it by design — so Update-time warns when the version a dependency is pinned to has been yanked. Like the staleness warning, it is informational only: it never changes a file and never affects the exit status, and is logged at level `WARNING`. The maintainer's reason is included when they gave one:
+
+```console
+WARNING Yanked dependency humanize in docs/requirements.txt:12: version 4.15.0 was yanked ("accidentally broke Python 3.10 support")
+```
+
+When no reason was given, the message reports `(reason not specified)` instead.
+
+The warning is only given when the run leaves the reference on the yanked version, because the replacement is still within the [cooldown](#-cooldown), a bound or an `# update-time: ignore[update]` marker holds it back, or the yanked release is the newest one and there is nothing to move to. When the run updates away from the yanked version, the warning would be noise and is not given. A yank is never a reason to adopt a release that is too fresh to trust: the cooldown still applies, so Update-time warns and leaves the decision to update to you. A reference held back with a bare `# update-time: ignore` (or `# update-time: ignore[yanked]`) marker is not checked for yanks either.
+
+Which dependencies are checked follows from where a yank can be observed. Python dependencies in `requirements.txt` files are checked against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI. On npm there is no yank, but a per-version *deprecation* is the same signal, so the versions in [jsDelivr](#jsdelivr) URLs are checked against the npm registry's deprecation message, reported in the same wording as a yank. Deprecated versions are skipped when picking a new version, just as yanked releases are on PyPI. Dependencies in `pyproject.toml`, PEP 723 inline script metadata, and `package.json` are not checked here, because their updates are delegated to uv, npm, and pnpm, which handle yanked and deprecated versions themselves. Docker images and GitHub Actions have no yank concept.
+
 ## 🎛️ Controlling updates per reference
 
 Comments of the form `# update-time: <directive>` let you steer what happens to an individual reference — most often to hold it back, but also to bound how far it may move, or to opt it into behaviour that is off by default. To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
 
-By default the marker holds a reference back from both version updates and the [staleness](#-stale-dependencies) check. Add a bracketed scope to narrow it to just one:
+By default the marker holds a reference back from version updates, the [staleness](#-stale-dependencies) check, and the [yank](#-yanked-dependencies) check. Add a bracketed scope to narrow it to just one:
 
-| Marker | Version update | Staleness warning |
-| ------ | -------------- | ----------------- |
-| `# update-time: ignore` | held back | held back |
-| `# update-time: ignore[update]` | held back | still checked |
-| `# update-time: ignore[stale]` | applied | held back |
+| Marker | Version update | Staleness warning | Yank warning |
+| ------ | -------------- | ----------------- | ------------ |
+| `# update-time: ignore` | held back | held back | held back |
+| `# update-time: ignore[update]` | held back | still checked | still checked |
+| `# update-time: ignore[stale]` | applied | held back | still checked |
+| `# update-time: ignore[yanked]` | applied | still checked | held back |
 
-So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet, and `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
+So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet or its version was withdrawn, `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version, and `# update-time: ignore[yanked]` does the same for a yank you have decided to live with. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
 
 One further marker does the opposite of holding a reference back. `# update-time: allow[digest-drift]` opts an already-digest-pinned image reference *into* adopting a re-pushed digest, so when only its digest has drifted the new digest is pinned instead of only warned about (see [Pinning](#-pinning)). It follows the same placement rules as the other markers, and the global `--allow-image-digest-drift` flag applies it to every image reference at once. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.
 

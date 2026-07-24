@@ -43,6 +43,15 @@ class RawMarkerTest(unittest.TestCase):
         self.assertEqual(Marker(raw="allow[update<3.13]").raw_marker(Verb.IGNORE), "")
 
 
+class ParseMarkerScopeTest(unittest.TestCase):
+    """Unit tests for the scopes an `ignore` directive's bracket narrows the hold-back to."""
+
+    def test_ignore_yanked(self):
+        """Test that `ignore[yanked]` holds back only the yank warning, leaving the update and staleness live."""
+        marker = parse_marker("humanize==4.15.0  # update-time: ignore[yanked]", "")
+        self.assertEqual(marker, Marker(ignore_yanked=True))
+
+
 class ParseMarkerRawTest(unittest.TestCase):
     """Unit tests that `parse_marker` captures the directive text verbatim."""
 
