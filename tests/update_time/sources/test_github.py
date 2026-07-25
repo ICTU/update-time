@@ -2,8 +2,9 @@
 
 import unittest
 from datetime import UTC, datetime, timedelta
+from logging import WARNING
 from typing import TYPE_CHECKING, cast
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import Mock, patch
 
 import requests
 
@@ -134,7 +135,7 @@ class GetLatestVersionTest(LoggingTestCase):
     def test_no_error_when_github_cannot_be_reached(self):
         """Test that an unreachable repo logs only the fetch warnings, not a redundant 'no valid version' error."""
         self.assertEqual(get_latest_version("owner/unreachable", "1.0", NO_BOUND).version, "1.0")
-        self.assertEqual(self.mock_warning.call_count, 2)  # One could-not-fetch warning per endpoint
+        self.assertEqual(len(self.records(WARNING)), 2)  # One could-not-fetch warning per endpoint
 
     @patch_github(releases=[], tags=[])
     def test_no_version_error_when_repo_has_no_versions(self):
@@ -300,7 +301,7 @@ class NewestPublicationDateTest(LoggingTestCase):
     def test_fetch_failure(self):
         """Test that no date is returned when neither the releases nor the tags can be fetched."""
         self.assertIsNone(newest_publication_date("owner", "unreachable"))
-        self.assertEqual(self.mock_warning.call_count, 2)  # One could-not-fetch warning per endpoint
+        self.assertEqual(len(self.records(WARNING)), 2)  # One could-not-fetch warning per endpoint
 
     @patch_github(releases=[], tags=[github_tag_json("v1.0")], commit=github_commits_json(date=RECENT_ISO))
     def test_tag_without_release(self):
@@ -380,7 +381,7 @@ class GetReleaseTest(LoggingTestCase):
         mock_get.side_effect = requests.exceptions.Timeout
         self.assertIsNone(get_release("owner", "repo without releases for get_release", "any", "1.0"))
         url = "https://api.github.com/repos/owner/repo without releases for get_release/releases?per_page=100"
-        self.mock_warning.assert_called_once_with(Logger._MESSAGE_TIMEOUT, url, stacklevel=ANY)
+        self.assert_logged(Logger._MESSAGE_TIMEOUT, url)
 
 
 class ChangesFromReleaseTest(CacheClearingTestCase):

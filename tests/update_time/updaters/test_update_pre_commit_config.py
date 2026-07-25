@@ -196,7 +196,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_ignored_logged(self.HOOK, config_file, line=3)
+        self.assert_ignored_logged(config_file, self.HOOK, line=3)
         self.assert_no_warnings_logged()
 
     def test_inline_ignore_marker_after_frozen_comment(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -206,7 +206,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_ignored_logged(self.HOOK, config_file, line=3)
+        self.assert_ignored_logged(config_file, self.HOOK, line=3)
 
     def test_preceding_ignore_marker(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a standalone `# update-time: ignore` comment holds back the rev on the line below it."""
@@ -219,7 +219,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_ignored_logged(self.HOOK, config_file, line=4)
+        self.assert_ignored_logged(config_file, self.HOOK, line=4)
 
     def test_ignore_update_marker_skips_repin_but_still_checks_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[update]` leaves the rev unchanged but still warns when the hook is stale."""
@@ -230,7 +230,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         self.assert_stale_dependency_logged(config_file, self.HOOK, "4.6.0", line=3)
-        self.assert_ignored_logged(self.HOOK, config_file, line=3)
+        self.assert_ignored_logged(config_file, self.HOOK, line=3)
 
     def test_ignore_stale_marker_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[stale]` bumps the rev but skips the staleness check even for an old release."""
@@ -244,7 +244,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         )
         self.assert_new_version_logged(config_file, self.HOOK, "4.6.0", line=3)
         self.assert_no_warnings_logged()
-        self.assert_ignored_staleness_logged(self.HOOK, config_file, "ignore[stale]", line=3)
+        self.assert_ignored_staleness_logged(config_file, self.HOOK, "ignore[stale]", line=3)
 
     def test_allow_update_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an `allow[update<…>]` marker passes the bound to the source and pins the bounded release."""
@@ -279,6 +279,4 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.mock_warning.assert_called_once_with(
-            Logger._MESSAGE_INVALID_SPECIFIER, "@@@", Logger._render_dependency(self.HOOK), ANY, stacklevel=ANY
-        )
+        self.assert_logged(Logger._MESSAGE_INVALID_SPECIFIER, "@@@", Logger._render_dependency(self.HOOK), ANY)

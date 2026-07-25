@@ -127,7 +127,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         update_github_actions(GITHUB_DIR)
         workflow_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_ignored_logged("action/action", workflow_yml, line=1)
+        self.assert_ignored_logged(workflow_yml, "action/action", line=1)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -138,7 +138,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         update_github_actions(GITHUB_DIR)
         workflow_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_ignored_logged("action/action", workflow_yml, line=2)
+        self.assert_ignored_logged(workflow_yml, "action/action", line=2)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -153,7 +153,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_stale_dependency_logged(
             workflow_yml, "action/action", "1.1", line=1
         )  # but staleness is still checked
-        self.assert_ignored_logged("action/action", workflow_yml, line=1)
+        self.assert_ignored_logged(workflow_yml, "action/action", line=1)
 
     def test_ignore_stale_marker_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[stale]` repins the action but skips the staleness check even for an old release."""
@@ -166,7 +166,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
             f"uses: action/action@{NEW_SHA} # v1.1  # update-time: ignore[stale]\n"
         )
         self.assert_new_version_logged(workflow_yml, "action/action", "1.1", line=1)
-        self.assert_ignored_staleness_logged("action/action", workflow_yml, "ignore[stale]", line=1)
+        self.assert_ignored_staleness_logged(workflow_yml, "action/action", "ignore[stale]", line=1)
         self.assert_no_warnings_logged()  # staleness skipped despite the old release
 
     def test_unpinned_action_without_sha_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):

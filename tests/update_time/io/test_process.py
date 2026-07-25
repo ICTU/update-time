@@ -1,6 +1,7 @@
 """Unit tests for running processes."""
 
 import subprocess  # nosec
+from logging import ERROR, WARNING
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import ANY, Mock, patch
@@ -46,8 +47,8 @@ class RunTests(TestCase):
         mock_run.return_value = Mock(stdout="", stderr="")
         self.assertTrue(run(["uv", "lock"]).ok)
 
-    @patch("logging.Logger.warning")
-    def test_non_zero_exit_with_output_is_ok_without_warning(self, mock_warning: Mock, mock_run: Mock):
+    @patch("logging.Logger.log")
+    def test_non_zero_exit_with_output_is_ok_without_warning(self, mock_log: Mock, mock_run: Mock):
         """Test that a non-zero exit is ok as long as output was produced, and isn't logged even with stderr chatter.
 
         `pnpm outdated` exits non-zero when packages are outdated and can print a deprecation `[WARN]` to stderr; the
@@ -58,22 +59,24 @@ class RunTests(TestCase):
         result = run(["pnpm", "outdated"])
         self.assertEqual(result.json, {"pkg": {}})
         self.assertTrue(result.ok)
-        mock_warning.assert_not_called()
+        mock_log.assert_not_called()
 
-    @patch("logging.Logger.warning")
-    def test_failure_without_output_is_not_ok_and_is_logged(self, mock_warning: Mock, mock_run: Mock):
+    @patch("logging.Logger.log")
+    def test_failure_without_output_is_not_ok_and_is_logged(self, mock_log: Mock, mock_run: Mock):
         """Test that a command that both failed and produced nothing is not ok, and its stderr is surfaced."""
         mock_run.side_effect = subprocess.CalledProcessError(returncode=1, cmd="", output="", stderr="boom\n")
         result = run(["uv", "lock"])
         self.assertEqual(result.stdout, "")
         self.assertFalse(result.ok)
-        mock_warning.assert_called_once_with(Logger._MESSAGE_COMMAND_STDERR, "uv lock", "boom", stacklevel=ANY)
+        mock_log.assert_called_once_with(WARNING, Logger._MESSAGE_COMMAND_STDERR, "uv lock", "boom", stacklevel=ANY)
 
-    @patch("logging.Logger.error")
-    def test_missing_executable_is_logged(self, mock_error: Mock, mock_run: Mock):
+    @patch("logging.Logger.log")
+    def test_missing_executable_is_logged(self, mock_log: Mock, mock_run: Mock):
         """Test that a missing executable is logged and a failed, empty result returned rather than crashing."""
         mock_run.side_effect = FileNotFoundError
         result = run(["npm", "outdated"])
         self.assertEqual(result.stdout, "")
         self.assertFalse(result.ok)
-        mock_error.assert_called_once_with(Logger._MESSAGE_COMMAND_NOT_FOUND, "npm outdated", "npm", stacklevel=ANY)
+        mock_log.assert_called_once_with(
+            ERROR, Logger._MESSAGE_COMMAND_NOT_FOUND, "npm outdated", "npm", stacklevel=ANY
+        )

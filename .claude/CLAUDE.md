@@ -39,6 +39,7 @@ A few rules that keep the cycle honest:
 - Treat a failing existing test as a signal: work out whether its premise legitimately changed and say why, rather than patching the assertion to match the new output.
 - Assert the actual value first, as in `assertEqual(actual, expected)`. Both orders pass locally, but the reverse is flagged in CI, so it costs a round-trip to find out.
 - `just check` prints `NOK` for a failing check, so don't count `OK` occurrences to conclude it passed: `NOK` contains `OK`.
+- Settle a "could we do X?" design question by trying X and reporting what the checker or the suite says, not by reasoning about it: the tools name the exact errors, and the count tells us how much the alternative would cost.
 
 ## Documentation
 

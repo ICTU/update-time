@@ -1,7 +1,7 @@
 """Unit tests for the jsDelivr source."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.version import Yank
@@ -144,9 +144,7 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual(latest_version.version, "1.0")
         self.assertEqual(latest_version.sha, "")
         message = Logger._MESSAGE_NO_INTEGRITY_HASH
-        self.mock_warning.assert_called_once_with(
-            message, Logger._render_dependency("clipboard"), "1.1", FILENAME, stacklevel=ANY
-        )
+        self.assert_logged(message, Logger._render_dependency("clipboard"), "1.1", FILENAME)
 
     def test_newest_published_attached(self, mock_get: Mock):
         """Test that the package's newest npm publication date is attached for the staleness check."""

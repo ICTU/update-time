@@ -29,7 +29,14 @@ from update_time.io.log import (
     LOG_TIME_FORMAT,
     Logger,
     LogHighlighter,
+    LogMessage,
 )
+
+
+def _emit(log: logging.Logger, message: LogMessage, *args: object) -> None:
+    """Emit the sample record at the level the message declares, so the screenshot follows the real log output."""
+    log.log(message.level, message, *args)
+
 
 _OUTPUT = Path(__file__).with_name("log-output.svg")
 # A fixed wall-clock so the rendered timestamp — and therefore the SVG — is identical on every regeneration. The
@@ -90,15 +97,17 @@ def generate() -> str:
 
     # A representative digest, padded to the exact length of a real one so `LogHighlighter` recognises and dims it.
     digest = "sha256:" + ("9f2c1e7b" + "d4" * SHA256_HEX_CHARS)[:SHA256_HEX_CHARS]
-    log.info(
+    _emit(
+        log,
         Logger.MESSAGE_NEW_VERSION,
         _delimit("humanize"),
         _locate("docs/requirements.txt", 12),
         "4.15.0",
         "Changed in 4.15.0\n- Fantastic new features\n- A few bugs squashed",
     )
-    log.info(Logger._MESSAGE_PINNED, _delimit("python"), _locate("Dockerfile", 1), "3.14.6", digest)  # noqa: SLF001
-    log.info(
+    _emit(log, Logger._MESSAGE_PINNED, _delimit("python"), _locate("Dockerfile", 1), "3.14.6", digest)  # noqa: SLF001
+    _emit(
+        log,
         Logger.MESSAGE_NEW_VERSION,
         _delimit("actions/checkout"),
         _locate(".github/workflows/ci.yml", 17),
@@ -106,7 +115,7 @@ def generate() -> str:
         Logger.NO_CHANGELOG,
     )
     # A manifest delegated to npm/pnpm, so no per-dependency line is surfaced: reported file-only, without a number.
-    log.warning(Logger._MESSAGE_STALE, _delimit("left-pad"), _locate("package.json"), "1.3.0", 512, STALE_AFTER.default)  # noqa: SLF001
+    _emit(log, Logger._MESSAGE_STALE, _delimit("left-pad"), _locate("package.json"), "1.3.0", 512, STALE_AFTER.default)  # noqa: SLF001
 
     plain_text = console.export_text(clear=False)  # capture before the export clears the recording
     svg = console.export_svg(title="update-time", unique_id="update-time-log")

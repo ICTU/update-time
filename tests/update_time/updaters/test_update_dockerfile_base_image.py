@@ -71,7 +71,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_not_called()
         self.requests.assert_not_called()
-        self.assert_ignored_logged("ghcr.io/astral-sh/uv", mock_dockerfile, line=2)
+        self.assert_ignored_logged(mock_dockerfile, "ghcr.io/astral-sh/uv", line=2)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -84,7 +84,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile = mock_path("# update-time: ignore[yanked]\nFROM python:3.14\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_called_with(f"# update-time: ignore[yanked]\nFROM python:3.15@{DIGEST2}\n")
-        self.assert_redundant_yank_scope_logged("python", mock_dockerfile, "ignore[yanked]", line=2)
+        self.assert_redundant_yank_scope_logged(mock_dockerfile, "python", "ignore[yanked]", line=2)
 
     def test_label_prefixed_base_image_bumped_and_pinned(self):
         """Test that a label-prefixed base image (ghcr.io/astral-sh/uv:python3.12-...) is bumped and pinned."""

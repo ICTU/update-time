@@ -3,7 +3,9 @@
 import logging
 import re
 import sys
+from dataclasses import dataclass
 from datetime import UTC
+from logging import DEBUG, ERROR, INFO, WARNING
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,7 +21,6 @@ from update_time.domain.version import SHA256_DIGEST
 from update_time.primitives.environment import EnvVar
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from types import FrameType
 
     from requests import Response
@@ -162,6 +163,29 @@ def _caller_stacklevel() -> int:
     return level
 
 
+@dataclass(frozen=True)
+class LogMessage:
+    """A log message: the level it is logged at and the format string the arguments are interpolated into.
+
+    A message's level is a property of the message, not of the call that emits it, so the two are declared together
+    and `Logger._log` emits at the level the message names. The message object itself is logged, which is what the
+    standard library expects of a message that is not a string: it calls `str()` on it when a handler formats the
+    record. Passing the object rather than the format string keeps the level available to whoever holds the message,
+    such as the log tests and the screenshot generator.
+    """
+
+    level: int
+    format: str
+
+    def __str__(self) -> str:
+        """Return the format string, so logging can interpolate the arguments into it."""
+        return self.format
+
+    def __repr__(self) -> str:
+        """Return the format string's repr, so a failing assertion reads as it did before the level travelled along."""
+        return repr(self.format)
+
+
 class Logger:
     """Wrap a logger and add update specific log methods."""
 
@@ -170,10 +194,9 @@ class Logger:
         self.log = logging.getLogger(name)
         self.logged_changes: set[tuple[str, DependencyVersion]] = set()
 
-    @staticmethod
-    def _log(log_method: Callable[..., None], msg: str, *args: object) -> None:
-        """Emit a log record, attributing it to the updater that triggered it rather than a helper."""
-        log_method(msg, *args, stacklevel=_caller_stacklevel())
+    def _log(self, message: LogMessage, *args: object) -> None:
+        """Emit a log record at the message's own level, attributing it to the updater that triggered it."""
+        self.log.log(message.level, message, *args, stacklevel=_caller_stacklevel())
 
     @staticmethod
     def _render_dependency(dependency: str) -> str:
@@ -185,14 +208,13 @@ class Logger:
         """Bracket a location's text in `LOCATION_DELIMITER` so the highlighter styles the whole run as one token."""
         return f"{LOCATION_DELIMITER}{location}{LOCATION_DELIMITER}"
 
-    def _log_ignored(self, message: str, dependency: str, marker: Marker, location: Location) -> None:
-        """Log, at debug level, that a marker held a reference's update or one of its warnings back.
+    def _log_ignored(self, message: LogMessage, dependency: str, marker: Marker, location: Location) -> None:
+        """Log that a marker held a reference's update or one of its warnings back, at the message's own level.
 
         Only the `ignore` directive is named (`raw_marker(Verb.IGNORE)`), not the whole marker: it is the one that
         held the update or the warning back, and it is echoed exactly as the user spelled it.
         """
         self._log(
-            self.log.debug,
             message,
             self._render_dependency(dependency),
             self._render_location(location),
@@ -201,9 +223,10 @@ class Logger:
 
     # --- Run gating ---
 
-    _MESSAGE_FORCED_OUTSIDE_GIT_REPOSITORY = (
+    _MESSAGE_FORCED_OUTSIDE_GIT_REPOSITORY = LogMessage(
+        WARNING,
         "Running outside a git repository (%s) because --force was given; changes are made in place and cannot be "
-        "reverted"
+        "reverted",
     )
 
     def forced_outside_git_repository(self, path: Path) -> None:
@@ -212,11 +235,11 @@ class Logger:
         The path is the scan root, which is the working directory, so it is logged as its absolute self (making it
         relative would collapse it to `.`).
         """
-        self._log(self.log.warning, self._MESSAGE_FORCED_OUTSIDE_GIT_REPOSITORY, path)
+        self._log(self._MESSAGE_FORCED_OUTSIDE_GIT_REPOSITORY, path)
 
     # --- Source results: resolving a dependency's latest version and digest ---
 
-    MESSAGE_NEW_VERSION = "New version available for %s in %s: %s\n%s"
+    MESSAGE_NEW_VERSION = LogMessage(INFO, "New version available for %s in %s: %s\n%s")
     _SUPPRESSING_CHANGELOG = "Suppressing changelog already shown, see above"
     NO_CHANGELOG = "No changelog available!"
 
@@ -231,7 +254,6 @@ class Logger:
         if version.published is not None:
             new_version += f", published: {version.published.astimezone(UTC):%Y-%m-%d %H:%M}"
         self._log(
-            self.log.info,
             self.MESSAGE_NEW_VERSION,
             self._render_dependency(dependency),
             self._render_location(location),
@@ -239,12 +261,11 @@ class Logger:
             changes,
         )
 
-    _MESSAGE_PINNED = "Pinned %s in %s to %s@%s"
+    _MESSAGE_PINNED = LogMessage(INFO, "Pinned %s in %s to %s@%s")
 
     def pinned(self, dependency: str, version: DependencyVersion, location: Location) -> None:
         """Log that a previously unpinned reference in a file was pinned to a digest, without changing its version."""
         self._log(
-            self.log.info,
             self._MESSAGE_PINNED,
             self._render_dependency(dependency),
             self._render_location(location),
@@ -252,9 +273,10 @@ class Logger:
             version.sha,
         )
 
-    _MESSAGE_DIGEST_DRIFT = (
+    _MESSAGE_DIGEST_DRIFT = LogMessage(
+        WARNING,
         "Digest drift for %s:%s in %s: pinned to %s but the registry "
-        "now serves %s; the pin was left unchanged, verify the change is expected before updating the pin"
+        "now serves %s; the pin was left unchanged, verify the change is expected before updating the pin",
     )
 
     def digest_drift(self, dependency: str, version: str, current_sha: str, new_sha: str, location: Location) -> None:
@@ -265,7 +287,6 @@ class Logger:
         the immutability a digest pin exists to provide. The drift is surfaced instead, so it can be reviewed.
         """
         self._log(
-            self.log.warning,
             self._MESSAGE_DIGEST_DRIFT,
             self._render_dependency(dependency),
             version,
@@ -274,19 +295,20 @@ class Logger:
             new_sha,
         )
 
-    _MESSAGE_ADOPTED_DIGEST_DRIFT = "Adopted digest drift for %s:%s in %s: re-pinned from %s to %s (%s)"
+    _MESSAGE_ADOPTED_DIGEST_DRIFT = LogMessage(
+        INFO, "Adopted digest drift for %s:%s in %s: re-pinned from %s to %s (%s)"
+    )
 
     def adopted_drift(  # noqa: PLR0913
         self, dependency: str, version: str, current_sha: str, new_sha: str, location: Location, cause: str
     ) -> None:
-        """Log, at info level, that a re-pushed tag's new digest was adopted because the reference opted in.
+        """Log that a re-pushed tag's new digest was adopted because the reference opted in.
 
         `cause` names the opt-in that triggered the adoption (the reference's `# update-time: allow[digest-drift]`
         marker, or the repo-wide `--allow-image-digest-drift` flag). Unlike `digest_drift`, this is a normal change the
         user asked for, so it is info, not a warning.
         """
         self._log(
-            self.log.info,
             self._MESSAGE_ADOPTED_DIGEST_DRIFT,
             self._render_dependency(dependency),
             version,
@@ -296,7 +318,9 @@ class Logger:
             cause,
         )
 
-    _MESSAGE_STALE = "Stale dependency %s in %s: newest release %s was published %d days ago (> %d)"
+    _MESSAGE_STALE = LogMessage(
+        WARNING, "Stale dependency %s in %s: newest release %s was published %d days ago (> %d)"
+    )
 
     def warn_if_stale(self, dependency: str, version: DependencyVersion, location: Location) -> None:
         """Warn if the dependency's newest release is old enough that the project may have gone quiet.
@@ -307,7 +331,6 @@ class Logger:
         if (published := version.newest_published) is None or not is_stale(published):
             return
         self._log(
-            self.log.warning,
             self._MESSAGE_STALE,
             self._render_dependency(dependency),
             self._render_location(location),
@@ -316,12 +339,12 @@ class Logger:
             STALE_AFTER.get(),
         )
 
-    _MESSAGE_IGNORED_STALENESS = "Ignoring the staleness warning for %s in %s (update-time: %s)"
+    _MESSAGE_IGNORED_STALENESS = LogMessage(DEBUG, "Ignoring the staleness warning for %s in %s (update-time: %s)")
 
     def ignored_staleness(
         self, dependency: str, version: DependencyVersion, marker: Marker, location: Location
     ) -> None:
-        """Log, at debug level, that the marker held back a staleness warning that would otherwise have been logged.
+        """Log that the marker held back a staleness warning that would otherwise have been logged.
 
         Guards on the same condition as `warn_if_stale`, so callers can hand off every reference unconditionally and
         a marker that suppresses nothing stays silent.
@@ -329,7 +352,7 @@ class Logger:
         if is_stale(version.newest_published):
             self._log_ignored(self._MESSAGE_IGNORED_STALENESS, dependency, marker, location)
 
-    _MESSAGE_YANKED = "Yanked dependency %s in %s: version %s was yanked (%s)"
+    _MESSAGE_YANKED = LogMessage(WARNING, "Yanked dependency %s in %s: version %s was yanked (%s)")
 
     def warn_if_yanked(self, dependency: str, version: DependencyVersion, location: Location) -> None:
         """Warn that the version the reference is pinned to has been yanked; do nothing when it was not yanked.
@@ -340,7 +363,6 @@ class Logger:
             return
         reason = f'"{version.yank.reason}"' if version.yank.reason else "reason not specified"
         self._log(
-            self.log.warning,
             self._MESSAGE_YANKED,
             self._render_dependency(dependency),
             self._render_location(location),
@@ -348,10 +370,10 @@ class Logger:
             reason,
         )
 
-    _MESSAGE_IGNORED_YANK = "Ignoring the yank warning for %s in %s (update-time: %s)"
+    _MESSAGE_IGNORED_YANK = LogMessage(DEBUG, "Ignoring the yank warning for %s in %s (update-time: %s)")
 
     def ignored_yank(self, dependency: str, version: DependencyVersion, marker: Marker, location: Location) -> None:
-        """Log, at debug level, that the marker held back a yank warning that would otherwise have been logged.
+        """Log that the marker held back a yank warning that would otherwise have been logged.
 
         Guards on the same condition as `warn_if_yanked`, so callers can hand off every reference unconditionally and
         a marker that suppresses nothing stays silent.
@@ -359,9 +381,10 @@ class Logger:
         if version.yank.yanked:
             self._log_ignored(self._MESSAGE_IGNORED_YANK, dependency, marker, location)
 
-    _MESSAGE_REDUNDANT_YANK_SCOPE = (
+    _MESSAGE_REDUNDANT_YANK_SCOPE = LogMessage(
+        WARNING,
         "Redundant update-time marker %s for %s in %s: this dependency's source has no yank concept, "
-        "so the marker holds nothing back"
+        "so the marker holds nothing back",
     )
 
     def redundant_yank_scope(self, dependency: str, marker: Marker, location: Location) -> None:
@@ -373,57 +396,56 @@ class Logger:
         since it is the one that holds nothing back.
         """
         self._log(
-            self.log.warning,
             self._MESSAGE_REDUNDANT_YANK_SCOPE,
             marker.raw_marker(Verb.IGNORE),
             self._render_dependency(dependency),
             self._render_location(location),
         )
 
-    _MESSAGE_NO_VERSION = "No valid version found for %s"
+    _MESSAGE_NO_VERSION = LogMessage(ERROR, "No valid version found for %s")
 
     def no_version(self, dependency: str) -> None:
         """Log no version found."""
-        self._log(self.log.error, self._MESSAGE_NO_VERSION, self._render_dependency(dependency))
+        self._log(self._MESSAGE_NO_VERSION, self._render_dependency(dependency))
 
-    _MESSAGE_NO_COMMIT_SHA = "Could not fetch commit SHA for %s %s (%s): %s"
+    _MESSAGE_NO_COMMIT_SHA = LogMessage(ERROR, "Could not fetch commit SHA for %s %s (%s): %s")
 
     def no_commit_sha(self, dependency: str, version: str, reason: str, url: str) -> None:
         """Log that no commit SHA could be fetched for an otherwise-eligible release, and why."""
-        self._log(
-            self.log.error, self._MESSAGE_NO_COMMIT_SHA, self._render_dependency(dependency), version, reason, url
-        )
+        self._log(self._MESSAGE_NO_COMMIT_SHA, self._render_dependency(dependency), version, reason, url)
 
-    _MESSAGE_NO_TAG_DATE = (
+    _MESSAGE_NO_TAG_DATE = LogMessage(
+        ERROR,
         "Could not determine the publication date of %s tag %s (%s), "
-        "so the cooldown can't be verified; skipping this version"
+        "so the cooldown can't be verified; skipping this version",
     )
 
     def no_tag_date(self, dependency: str, tag: str, reason: str) -> None:
         """Log that a tag's commit date couldn't be resolved, and why, so the tag was skipped as an update candidate."""
-        self._log(self.log.error, self._MESSAGE_NO_TAG_DATE, self._render_dependency(dependency), tag, reason)
+        self._log(self._MESSAGE_NO_TAG_DATE, self._render_dependency(dependency), tag, reason)
 
-    _MESSAGE_NO_INTEGRITY_HASH = "Could not resolve the integrity hash for %s %s (%s), leaving it unchanged"
+    _MESSAGE_NO_INTEGRITY_HASH = LogMessage(
+        WARNING, "Could not resolve the integrity hash for %s %s (%s), leaving it unchanged"
+    )
 
     def no_integrity_hash(self, dependency: str, version: str, filename: str) -> None:
         """Warn that a jsDelivr file's integrity hash couldn't be resolved, so the reference is left unchanged."""
-        self._log(
-            self.log.warning, self._MESSAGE_NO_INTEGRITY_HASH, self._render_dependency(dependency), version, filename
-        )
+        self._log(self._MESSAGE_NO_INTEGRITY_HASH, self._render_dependency(dependency), version, filename)
 
-    _MESSAGE_INVALID_SPECIFIER = "Invalid %r in the update-time marker for %s in %s; leaving the reference unchanged"
+    _MESSAGE_INVALID_SPECIFIER = LogMessage(
+        WARNING, "Invalid %r in the update-time marker for %s in %s; leaving the reference unchanged"
+    )
 
     def invalid_specifier(self, dependency: str, specifier: str, location: Location) -> None:
         """Warn that a marker carried an invalid version specifier or item, so the reference is left unchanged."""
         self._log(
-            self.log.warning,
             self._MESSAGE_INVALID_SPECIFIER,
             specifier,
             self._render_dependency(dependency),
             self._render_location(location),
         )
 
-    _MESSAGE_REDUNDANT_BOUND = "Redundant update bound %s on %s %s in %s: it %s"
+    _MESSAGE_REDUNDANT_BOUND = LogMessage(WARNING, "Redundant update bound %s on %s %s in %s: it %s")
 
     def warn_if_redundant_bound(
         self, dependency: str, marker: Marker, current_version: VersionString, location: Location
@@ -441,7 +463,6 @@ class Logger:
         if (redundancy := bound.redundancy(current_version)) is None:
             return
         self._log(
-            self.log.warning,
             self._MESSAGE_REDUNDANT_BOUND,
             bound,
             self._render_dependency(dependency),
@@ -452,16 +473,16 @@ class Logger:
 
     # --- File scanning and selection ---
 
-    _MESSAGE_CHECKING_PATH = "Checking if there are updates for %s"
+    _MESSAGE_CHECKING_PATH = LogMessage(DEBUG, "Checking if there are updates for %s")
 
     def path(self, path: Path) -> None:
         """Log working on path."""
-        self._log(self.log.debug, self._MESSAGE_CHECKING_PATH, self._render_location(Location(path)))
+        self._log(self._MESSAGE_CHECKING_PATH, self._render_location(Location(path)))
 
-    _MESSAGE_RECOGNISED_MARKER = "Recognised update-time marker %s for %s in %s"
+    _MESSAGE_RECOGNISED_MARKER = LogMessage(DEBUG, "Recognised update-time marker %s for %s in %s")
 
     def recognised_marker(self, dependency: str, marker: Marker, location: Location) -> None:
-        """Log, at debug level, that a reference's marker was recognised, so users can confirm it was understood.
+        """Log that a reference's marker was recognised, so users can confirm it was understood.
 
         Reports that the marker was read and parsed, not that it had any effect: what a marker actually held back is
         reported separately, by `ignored`, `ignored_staleness`, and `ignored_yank`. The marker's directives are echoed
@@ -472,40 +493,39 @@ class Logger:
         if not (directives := marker.raw_marker()):
             return
         self._log(
-            self.log.debug,
             self._MESSAGE_RECOGNISED_MARKER,
             directives,
             self._render_dependency(dependency),
             self._render_location(location),
         )
 
-    _MESSAGE_IGNORED = "Ignoring updates for %s in %s (update-time: %s)"
+    _MESSAGE_IGNORED = LogMessage(DEBUG, "Ignoring updates for %s in %s (update-time: %s)")
 
     def ignored(self, dependency: str, marker: Marker, location: Location) -> None:
         """Log that a reference's update was held back by the marker's `ignore` directive, echoing it as written."""
         self._log_ignored(self._MESSAGE_IGNORED, dependency, marker, location)
 
-    _MESSAGE_EXCLUDING_PATH = "Excluding %s from the scan (--exclude-path)"
+    _MESSAGE_EXCLUDING_PATH = LogMessage(DEBUG, "Excluding %s from the scan (--exclude-path)")
 
     def excluded_path(self, path: Path) -> None:
         """Log that a directory passed to `--exclude-path` is held back from the scan."""
-        self._log(self.log.debug, self._MESSAGE_EXCLUDING_PATH, path)
+        self._log(self._MESSAGE_EXCLUDING_PATH, path)
 
-    _MESSAGE_PATH_TO_EXCLUDE_DOES_NOT_EXIST = "Path %s passed to --exclude-path does not exist"
+    _MESSAGE_PATH_TO_EXCLUDE_DOES_NOT_EXIST = LogMessage(WARNING, "Path %s passed to --exclude-path does not exist")
 
     def missing_excluded_path(self, path: Path) -> None:
         """Warn that a directory passed to `--exclude-path` does not exist, so it excludes nothing."""
-        self._log(self.log.warning, self._MESSAGE_PATH_TO_EXCLUDE_DOES_NOT_EXIST, path)
+        self._log(self._MESSAGE_PATH_TO_EXCLUDE_DOES_NOT_EXIST, path)
 
-    _MESSAGE_SKIP_PATH = "Skipping %s: %s"
+    _MESSAGE_SKIP_PATH = LogMessage(INFO, "Skipping %s: %s")
 
     def skipped(self, path: Path, reason: str) -> None:
         """Log that a file was deliberately skipped without being checked for updates."""
-        self._log(self.log.info, self._MESSAGE_SKIP_PATH, self._render_location(Location(path)), reason)
+        self._log(self._MESSAGE_SKIP_PATH, self._render_location(Location(path)), reason)
 
     # --- Updater-specific diagnostics ---
 
-    _MESSAGE_UV_COOLDOWN = "Set uv exclude-newer to %r in %s to apply the cooldown"
+    _MESSAGE_UV_COOLDOWN = LogMessage(INFO, "Set uv exclude-newer to %r in %s to apply the cooldown")
 
     def configured_uv_cooldown(self, path: Path, cooldown: str) -> None:
         """Log that Update-time wrote its cooldown into the project's uv configuration.
@@ -513,69 +533,67 @@ class Logger:
         The path is a workspace root, which can sit above the current directory (when Update-time runs inside a
         member), so fall back to the absolute path when it can't be made relative to the working directory.
         """
-        self._log(self.log.info, self._MESSAGE_UV_COOLDOWN, cooldown, self._render_location(Location(path)))
+        self._log(self._MESSAGE_UV_COOLDOWN, cooldown, self._render_location(Location(path)))
 
-    _MESSAGE_SKIP_UNSUPPORTED = "Skipping %s: %s is not supported, only %s"
+    _MESSAGE_SKIP_UNSUPPORTED = LogMessage(WARNING, "Skipping %s: %s is not supported, only %s")
 
     def unsupported_package_manager(self, path: Path, manager: str, supported: str) -> None:
         """Warn that a file is managed by an unsupported package manager, so its dependencies are left unchanged."""
-        self._log(
-            self.log.warning, self._MESSAGE_SKIP_UNSUPPORTED, self._render_location(Location(path)), manager, supported
-        )
+        self._log(self._MESSAGE_SKIP_UNSUPPORTED, self._render_location(Location(path)), manager, supported)
 
-    _MESSAGE_INVALID_TOML = "Skipping %s: it is not valid TOML"
+    _MESSAGE_INVALID_TOML = LogMessage(WARNING, "Skipping %s: it is not valid TOML")
 
     def invalid_pyproject_toml(self, path: Path) -> None:
         """Warn that a pyproject.toml can't be parsed as TOML, so it is skipped rather than crashing the run."""
-        self._log(self.log.warning, self._MESSAGE_INVALID_TOML, self._render_location(Location(path)))
+        self._log(self._MESSAGE_INVALID_TOML, self._render_location(Location(path)))
 
-    _MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG = (
-        "Cannot derive the Node engine version from the non-numeric base image tag 'node:%s' in %s"
+    _MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG = LogMessage(
+        WARNING, "Cannot derive the Node engine version from the non-numeric base image tag 'node:%s' in %s"
     )
 
     def non_numeric_node_base_image(self, dockerfile: Path, tag: str) -> None:
         """Log that the Node base image tag is not a concrete version, so the Node engine can't be derived."""
-        self._log(self.log.warning, self._MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG, tag, dockerfile)
+        self._log(self._MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG, tag, dockerfile)
 
     # --- HTTP fetching ---
 
-    _MESSAGE_NOT_OK_RESPONSE = "Could not fetch %s: HTTP %s %s"
+    _MESSAGE_NOT_OK_RESPONSE = LogMessage(WARNING, "Could not fetch %s: HTTP %s %s")
 
     def response(self, response: Response) -> None:
         """Log a response's status code and reason phrase (e.g. `HTTP 404 Not Found`)."""
-        self._log(self.log.warning, self._MESSAGE_NOT_OK_RESPONSE, response.url, response.status_code, response.reason)
+        self._log(self._MESSAGE_NOT_OK_RESPONSE, response.url, response.status_code, response.reason)
 
-    _MESSAGE_TIMEOUT = "Timeout while fetching %s"
+    _MESSAGE_TIMEOUT = LogMessage(WARNING, "Timeout while fetching %s")
 
     def timeout(self, url: str) -> None:
         """Log a request timeout."""
-        self._log(self.log.warning, self._MESSAGE_TIMEOUT, url)
+        self._log(self._MESSAGE_TIMEOUT, url)
 
-    _MESSAGE_REQUEST_ERROR = "Could not fetch %s: %s"
+    _MESSAGE_REQUEST_ERROR = LogMessage(WARNING, "Could not fetch %s: %s")
 
     def request_error(self, url: str, error: object) -> None:
         """Log a network error (connection failure, too many redirects, ...) while fetching a URL."""
-        self._log(self.log.warning, self._MESSAGE_REQUEST_ERROR, url, error)
+        self._log(self._MESSAGE_REQUEST_ERROR, url, error)
 
     # --- External commands ---
 
-    _MESSAGE_COMMAND_NOT_FOUND = "Could not run %s: is %s installed?"
+    _MESSAGE_COMMAND_NOT_FOUND = LogMessage(ERROR, "Could not run %s: is %s installed?")
 
     def command_not_found(self, command: list[str]) -> None:
         """Log that a command could not be run because its executable is not installed."""
-        self._log(self.log.error, self._MESSAGE_COMMAND_NOT_FOUND, " ".join(command), command[0])
+        self._log(self._MESSAGE_COMMAND_NOT_FOUND, " ".join(command), command[0])
 
-    _MESSAGE_COMMAND_STDERR = "%s wrote to stderr:\n%s"
+    _MESSAGE_COMMAND_STDERR = LogMessage(WARNING, "%s wrote to stderr:\n%s")
 
     def command_stderr(self, command: list[str], stderr: str) -> None:
-        """Log, at warning level, that a command wrote to stderr, including what it wrote.
+        """Log that a command wrote to stderr, including what it wrote.
 
         The message stays neutral about severity because the tool decides that: its stderr may be an `[ERROR]`, a
         `[WARN]`, or just a notice (e.g. a pnpm deprecation). The warning level is Update-time's own view — this is
         only logged when the command failed or produced nothing usable (see `run`/`run_json`), so it is worth
         surfacing whatever the tool called it.
         """
-        self._log(self.log.warning, self._MESSAGE_COMMAND_STDERR, " ".join(command), stderr.rstrip())
+        self._log(self._MESSAGE_COMMAND_STDERR, " ".join(command), stderr.rstrip())
 
 
 def get_logger(name: str) -> Logger:
