@@ -366,6 +366,20 @@ class LoggerTests(TestCase):
         Logger("yanked").ignored_yank("humanize", version, marker, Location(Path.cwd() / "requirements.txt", 9))
         mock_debug.assert_not_called()
 
+    @patch("logging.Logger.warning")
+    def test_redundant_yank_scope(self, mock_warning: Mock):
+        """Test that an inert yank scope is warned about, with the `ignore` directive as the user wrote it."""
+        marker = Marker(ignore_yanked=True, raw="ignore[yanked] allow[digest-drift]")
+        path = Path.cwd() / "Dockerfile"
+        Logger("yanked").redundant_yank_scope("python", marker, Location(path, 2))
+        mock_warning.assert_called_once_with(
+            Logger._MESSAGE_REDUNDANT_YANK_SCOPE,
+            "ignore[yanked]",
+            Logger._render_dependency("python"),
+            Logger._render_location(Location(path, 2)),
+            stacklevel=ANY,
+        )
+
     @patch("logging.Logger.debug")
     def test_path_logged_at_debug(self, mock_debug: Mock):
         """Test that the per-file 'checking for updates' progress is logged at debug level."""

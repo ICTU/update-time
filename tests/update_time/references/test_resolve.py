@@ -7,6 +7,7 @@ from unittest.mock import Mock
 from update_time.domain.bound import BLOCK_ALL_UPDATES, Verb
 from update_time.domain.marker import Marker
 from update_time.domain.version import DependencyVersion, Reference
+from update_time.domain.yank import yank_reporting
 from update_time.references.resolve import latest_version
 
 from tests.update_time.fixtures import DIGEST
@@ -103,6 +104,18 @@ class LatestVersionTest(unittest.TestCase):
         marker = Marker(ignore_yanked=True, raw="ignore[yanked]")
         self.latest_version(marker)
         self.log.ignored_yank.assert_called_once_with("python", DependencyVersion(version="3.15"), marker, self.path)
+
+    def test_warns_about_a_redundant_yank_scope(self):
+        """Test that `ignore[yanked]` is reported as redundant when the source never reports a yank."""
+        marker = Marker(ignore_yanked=True, raw="ignore[yanked]")
+        self.latest_version(marker)
+        self.log.redundant_yank_scope.assert_called_once_with("python", marker, self.path)
+
+    def test_no_redundant_yank_scope_when_the_source_reports_yanks(self):
+        """Test that `ignore[yanked]` is not reported as redundant when the source can report a yank."""
+        get_new_version = yank_reporting(new_version_getter("3.15"))
+        self.latest_version(Marker(ignore_yanked=True), get_new_version)
+        self.log.redundant_yank_scope.assert_not_called()
 
     def test_ignore_update_returns_none(self):
         """Test that `ignore[update]` holds back the update, after the staleness check has still run."""

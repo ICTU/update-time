@@ -19,6 +19,7 @@ from update_time.domain.version import (
     first_eligible,
     is_valid,
 )
+from update_time.domain.yank import yank_reporting
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.sources.github import changes_from_release, github_owner_and_repository, github_to_raw
@@ -101,6 +102,7 @@ def release_datetime(urls: list[Distribution]) -> datetime | None:
     return newest_datetime(url["upload_time_iso_8601"] for url in urls)
 
 
+@yank_reporting
 def get_latest_version(
     package: DependencyName, current_version: VersionString, version_bound: VersionBound
 ) -> DependencyVersion:

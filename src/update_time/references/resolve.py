@@ -9,6 +9,7 @@ re-pushed digest to adopt) layers those on top of the version this decision reso
 from typing import TYPE_CHECKING
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES
+from update_time.domain.yank import reports_yanks
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
@@ -27,7 +28,8 @@ def latest_version(
 ) -> DependencyVersion | None:
     """Return the latest version to update the reference to, or None to leave it unchanged.
 
-    Warns about a redundant bound, resolves the latest version through `get_new_version` (passing the marker's
+    Warns about a marker that can have no effect — a redundant version bound, or a yank scope on a reference whose
+    source has no yank to report — then resolves the latest version through `get_new_version` (passing the marker's
     version bound so the source only picks a version the bound admits), and warns about staleness and about a yanked
     version, each unless the marker holds that one back, in which case the hold-back is logged at the debug level
     instead, so a run reports what a marker actually suppressed. A marker holding the update back passes
@@ -39,6 +41,8 @@ def latest_version(
     """
     dependency, current_version = reference.dependency, reference.current_version
     log.warn_if_redundant_bound(dependency, marker, current_version, location)
+    if marker.ignore_yanked and not reports_yanks(get_new_version):
+        log.redundant_yank_scope(dependency, marker, location)
     version_bound = BLOCK_ALL_UPDATES if marker.ignore_update else marker.version_bound
     latest = get_new_version(dependency, current_version, version_bound)
     if marker.ignore_stale:

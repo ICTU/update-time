@@ -360,6 +360,12 @@ By default the marker holds a reference back from version updates, the [stalenes
 
 So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet or its version was withdrawn, `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version, and `# update-time: ignore[yanked]` does the same for a yank you have decided to live with. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
 
+A yank can only be observed where the dependency's source reports one, so of the references that accept a marker, `ignore[yanked]` has something to hold back in `requirements.txt` alone (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so Update-time reports it as redundant at `WARNING`:
+
+```console
+WARNING Redundant update-time marker ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept, so the marker holds nothing back
+```
+
 One further marker does the opposite of holding a reference back. `# update-time: allow[digest-drift]` opts an already-digest-pinned image reference *into* adopting a re-pushed digest, so when only its digest has drifted the new digest is pinned instead of only warned about (see [Pinning](#-pinning)). It follows the same placement rules as the other markers, and the global `--allow-image-digest-drift` flag applies it to every image reference at once. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.
 
 `ignore[update]` freezes a reference at its current version. Sometimes you want the middle ground: keep receiving updates *within a range* while blocking a jump you're not ready for — for example, keep getting `python:3.12` patch releases but hold off on `3.13` until you've migrated. Add a [PEP 440](https://peps.python.org/pep-0440/) version specifier directly after `update` inside the brackets, either to allow or ignore updates: `# update-time: allow[update<specifier>]` **keeps only** the updates whose version satisfies the specifier, and `# update-time: ignore[update<specifier>]` **drops** the updates whose version satisfies it (the plain `ignore[update]` is the drop-everything case).
