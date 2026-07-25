@@ -120,26 +120,35 @@ LOG_TIME_FORMAT = "[%X]"
 LOG_MESSAGE_FORMAT = "%(message)s"
 
 
-# Files that wrap or dispatch logging on behalf of the updaters. Frames in these files are skipped when
-# determining a log record's origin, so the reported origin is the updater that triggered the log rather than this
-# wrapper or a registered engine (see `attribute_logs_to_caller`).
-_helper_files = {str(Path(__file__).resolve())}
+# This wrapper, and the packages that log on behalf of the updaters (see `attribute_logs_to_caller`). Frames in
+# these are skipped when determining a log record's origin, so the reported origin is the updater that triggered the
+# log rather than this wrapper or the shared machinery in between.
+_wrapper_file = Path(__file__).resolve()
+_helper_packages: set[Path] = set()
 
 
-def attribute_logs_to_caller(module_file: str) -> None:
-    """Register a module whose frames should be skipped when determining a log record's origin.
+def attribute_logs_to_caller(package_file: str) -> None:
+    """Register a package whose frames should be skipped when determining a log record's origin.
 
-    A module that logs on behalf of the updaters registers itself, so its frames are walked past and a log record
-    is attributed to the updater that triggered it rather than to the shared machinery in between.
+    A package whose modules log on behalf of the updaters registers itself, passing its `__init__.py`'s `__file__`,
+    so the frames of every module in it are walked past and a log record is attributed to the updater that triggered
+    it rather than to the shared machinery in between. Registration covers the whole package, so a module added to it
+    needs none of its own.
     """
-    _helper_files.add(str(Path(module_file).resolve()))
+    _helper_packages.add(Path(package_file).resolve().parent)
+
+
+def _is_helper_frame(filename: str) -> bool:
+    """Return whether the frame's file is this wrapper or a module in a registered package."""
+    path = Path(filename).resolve()
+    return path == _wrapper_file or any(path.is_relative_to(package) for package in _helper_packages)
 
 
 def _caller_stacklevel() -> int:
-    """Return the stacklevel of the first frame outside the logging and rewriting helpers.
+    """Return the stacklevel of the first frame outside this wrapper and the registered packages.
 
     A fixed stacklevel can't work because some log methods are called directly by an updater while others
-    are dispatched through the registered helper modules (with extra comprehension frames in between), so walk
+    are dispatched through a registered package (with extra comprehension frames in between), so walk
     the stack to find the originating updater frame instead.
     """
     level = 1  # Start at the frame that emits the record (Logger._log) and skip helper frames from there.
@@ -147,7 +156,7 @@ def _caller_stacklevel() -> int:
         frame: FrameType | None = sys._getframe(level)  # noqa: SLF001
     except ValueError:  # pragma: no cover
         return level
-    while frame is not None and str(Path(frame.f_code.co_filename).resolve()) in _helper_files:
+    while frame is not None and _is_helper_frame(frame.f_code.co_filename):
         level += 1
         frame = frame.f_back
     return level

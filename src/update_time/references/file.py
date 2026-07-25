@@ -8,7 +8,6 @@ set of glob patterns (discovered through `io.filesystem`).
 from typing import TYPE_CHECKING
 
 from update_time.io.filesystem import glob
-from update_time.io.log import attribute_logs_to_caller
 from update_time.references.rewrite import update_references_in_lines
 
 if TYPE_CHECKING:
@@ -17,9 +16,6 @@ if TYPE_CHECKING:
 
     from update_time.domain.bound import NewVersionGetter
     from update_time.io.log import Logger
-
-# This orchestration logs on behalf of the updaters, so records point at the updater.
-attribute_logs_to_caller(__file__)
 
 
 def rewrite_file(path: Path, transform: Callable[[list[str]], list[str]], logger: Logger) -> None:
