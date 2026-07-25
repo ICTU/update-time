@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Fixed
 
 - Log at log-level DEBUG when an `# update-time: ignore[stale]` or `# update-time: ignore[yanked]` marker holds a warning back. Closes [#169](https://github.com/ICTU/update-time/issues/169).
+- Attribute the staleness, yank, redundant-bound, and GitHub pin log records to the updater that triggered them, so the source position in the log names the updater like every other record. Closes [#171](https://github.com/ICTU/update-time/issues/171).
 
 ## 0.0.21 - 2026-07-22
 

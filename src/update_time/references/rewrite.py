@@ -17,7 +17,6 @@ from update_time.domain.bound import Verb
 from update_time.domain.location import Location
 from update_time.domain.marker import parse_marker
 from update_time.domain.version import Reference
-from update_time.io.log import attribute_logs_to_caller
 from update_time.primitives.environment import EnvVar
 from update_time.references.resolve import latest_version
 
@@ -29,9 +28,6 @@ if TYPE_CHECKING:
     from update_time.domain.marker import Marker
     from update_time.domain.version import DependencyVersion
     from update_time.io.log import Logger
-
-attribute_logs_to_caller(__file__)  # This engine logs on behalf of the updaters, so records point at the updater.
-
 # Private channel that passes --allow-image-digest-drift from the CLI to the updater subprocesses: whether a
 # re-pushed image digest should be adopted repo-wide.
 ALLOW_IMAGE_DIGEST_DRIFT = EnvVar(

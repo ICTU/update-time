@@ -14,9 +14,11 @@ from rich.text import Text
 from update_time.domain.bound import Redundancy, Verb
 from update_time.domain.location import Location
 from update_time.domain.marker import Marker
-from update_time.domain.version import DependencyVersion, Yank
+from update_time.domain.version import DependencyVersion, Reference, Yank
 from update_time.io.log import DEPENDENCY_DELIMITER, LOCATION_DELIMITER, Logger, LogHighlighter, get_logger
 from update_time.references import file
+from update_time.references.github import latest_pin
+from update_time.references.resolve import latest_version
 
 from tests.update_time.helpers import bound, new_version_getter
 
@@ -535,18 +537,22 @@ class LogHighlighterTests(TestCase):
 
 
 class LogOriginTests(TestCase):
-    """Tests that log records are attributed to the originating updater, not the logging or rewriting helpers."""
+    """Tests that log records are attributed to the originating updater, not to the shared machinery in between."""
+
+    def assert_origin_is_this_test(self, records: list[logging.LogRecord]) -> None:
+        """Assert that every record names this test file, the caller of the shared machinery, as its origin."""
+        self.assertEqual({Path(record.pathname).name for record in records}, {"test_log.py"})
 
     def test_direct_call_is_attributed_to_the_caller(self):
         """Test that a log method called directly reports the calling line as its origin."""
         logger = Logger("origin direct")
         with self.assertLogs(logger.log, level="DEBUG") as captured:
             logger.path(Path.cwd())
-        self.assertEqual(Path(captured.records[0].pathname).name, "test_log.py")
+        self.assert_origin_is_this_test(captured.records)
 
-    def test_rewrite_helper_call_is_attributed_to_the_caller(self):
-        """Test that logs emitted via the file-rewrite helpers report the helpers' caller, not a helper, as origin."""
-        logger = Logger("origin helper")
+    def test_file_rewrite_is_attributed_to_the_caller(self):
+        """Test that logs emitted while rewriting a file report the rewriting's caller as their origin."""
+        logger = Logger("origin rewrite")
         with TemporaryDirectory() as directory:
             (Path(directory) / "config.yml").write_text("dependency: 1.0\n")
             with (
@@ -560,5 +566,25 @@ class LogOriginTests(TestCase):
                     logger=logger,
                     start=Path(directory),
                 )
-        origins = {Path(record.pathname).name for record in captured.records}
-        self.assertEqual(origins, {"test_log.py"})
+        self.assert_origin_is_this_test(captured.records)
+
+    def test_version_decision_is_attributed_to_the_caller(self):
+        """Test that a warning from the shared version decision reports its caller, not the decision, as origin."""
+        logger = Logger("origin decision")
+        stale = DependencyVersion("2.0", newest_published=datetime.now(UTC) - timedelta(days=1000))
+        reference = Reference("dependency", "1.0")
+        with self.assertLogs(logger.log, level="DEBUG") as captured:
+            latest_version(reference, lambda *_args: stale, Marker(), Location(Path.cwd()), logger)
+        self.assert_origin_is_this_test(captured.records)
+
+    def test_github_pin_decision_is_attributed_to_the_caller(self):
+        """Test that a pin from the shared GitHub decision reports its caller, not the decision, as origin."""
+        logger = Logger("origin github")
+        latest = DependencyVersion("2.0", sha="a" * 40)
+        reference = Reference("owner/action", "1.0")
+        with (
+            patch("update_time.references.github.get_latest_version", Mock(return_value=latest)),
+            self.assertLogs(logger.log, level="DEBUG") as captured,
+        ):
+            latest_pin(reference, Marker(), Location(Path.cwd()), logger)
+        self.assert_origin_is_this_test(captured.records)
