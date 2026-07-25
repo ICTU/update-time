@@ -245,6 +245,18 @@ class LoggingTestCase(CacheClearingTestCase):
             stacklevel=ANY,
         )
 
+    def assert_redundant_yank_scope_logged(
+        self, dependency: str, path: Path, directive: object = ANY, *, line: int | None = None
+    ) -> None:
+        """Assert that a yank scope the dependency's source can never honour was warned about once for the file."""
+        self.mock_warning.assert_called_once_with(
+            Logger._MESSAGE_REDUNDANT_YANK_SCOPE,
+            directive,
+            Logger._render_dependency(dependency),
+            Logger._render_location(Location(path, line)),
+            stacklevel=ANY,
+        )
+
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged at debug level."""
         self.mock_debug.assert_called_with(
@@ -261,6 +273,30 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that ignoring a reference (via an update-time: ignore directive) was logged at debug level."""
         self.mock_debug.assert_called_with(
             Logger._MESSAGE_IGNORED,
+            Logger._render_dependency(dependency),
+            Logger._render_location(Location(path, line)),
+            directive,
+            stacklevel=ANY,
+        )
+
+    def assert_ignored_staleness_logged(
+        self, dependency: str, path: Path, directive: object = ANY, *, line: int | None = None
+    ) -> None:
+        """Assert that a staleness warning held back by a marker was logged at debug, among the other debug records."""
+        self.mock_debug.assert_any_call(
+            Logger._MESSAGE_IGNORED_STALENESS,
+            Logger._render_dependency(dependency),
+            Logger._render_location(Location(path, line)),
+            directive,
+            stacklevel=ANY,
+        )
+
+    def assert_ignored_yank_logged(
+        self, dependency: str, path: Path, directive: object = ANY, *, line: int | None = None
+    ) -> None:
+        """Assert that a yank warning held back by a marker was logged at debug level, among the other debug records."""
+        self.mock_debug.assert_any_call(
+            Logger._MESSAGE_IGNORED_YANK,
             Logger._render_dependency(dependency),
             Logger._render_location(Location(path, line)),
             directive,

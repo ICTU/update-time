@@ -359,6 +359,27 @@ class Logger:
         if version.yank.yanked:
             self._log_ignored(self._MESSAGE_IGNORED_YANK, dependency, marker, location)
 
+    _MESSAGE_REDUNDANT_YANK_SCOPE = (
+        "Redundant update-time marker %s for %s in %s: this dependency's source has no yank concept, "
+        "so the marker holds nothing back"
+    )
+
+    def redundant_yank_scope(self, dependency: str, marker: Marker, location: Location) -> None:
+        """Warn that the marker's yank scope can never hold anything back for this dependency.
+
+        The dependency's source reports no yanks, so its version's yank state is always "not yanked" and the scope is
+        inert for as long as the reference points where it points. Like a redundant version bound, that is worth
+        reporting rather than leaving silent. Only the `ignore` directive is named, echoed as the user spelled it,
+        since it is the one that holds nothing back.
+        """
+        self._log(
+            self.log.warning,
+            self._MESSAGE_REDUNDANT_YANK_SCOPE,
+            marker.raw_marker(Verb.IGNORE),
+            self._render_dependency(dependency),
+            self._render_location(location),
+        )
+
     _MESSAGE_NO_VERSION = "No valid version found for %s"
 
     def no_version(self, dependency: str) -> None:

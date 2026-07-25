@@ -244,6 +244,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         )
         self.assert_new_version_logged(config_file, self.HOOK, "4.6.0", line=3)
         self.assert_no_warnings_logged()
+        self.assert_ignored_staleness_logged(self.HOOK, config_file, "ignore[stale]", line=3)
 
     def test_allow_update_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an `allow[update<…>]` marker passes the bound to the source and pins the bounded release."""

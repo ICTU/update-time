@@ -166,6 +166,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
             f"uses: action/action@{NEW_SHA} # v1.1  # update-time: ignore[stale]\n"
         )
         self.assert_new_version_logged(workflow_yml, "action/action", "1.1", line=1)
+        self.assert_ignored_staleness_logged("action/action", workflow_yml, "ignore[stale]", line=1)
         self.assert_no_warnings_logged()  # staleness skipped despite the old release
 
     def test_unpinned_action_without_sha_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
