@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.location import Location
@@ -92,10 +92,9 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_called_once_with("3.14.2\n3.14.2\n")
-        new_version_calls = [
-            call for call in self.mock_info.call_args_list if call.args[:1] == (Logger.MESSAGE_NEW_VERSION,)
-        ]
-        self.assertEqual(len(new_version_calls), 2)  # Both entries were reported (the second's changelog suppressed).
+        self.assertEqual(
+            len(self.new_version_records()), 2
+        )  # Both entries were reported (the second's changelog suppressed).
         self.assert_no_warnings_logged()
 
     @patch_pathlib_path(exists=True, read_text="FROM python:3.14.2")
@@ -116,7 +115,7 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_not_called()
-        self.assert_ignored_logged("python", version_file, line=2)
+        self.assert_ignored_logged(version_file, "python", line=2)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -147,7 +146,7 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_not_called()
-        self.assert_ignored_logged("python", version_file, line=1)
+        self.assert_ignored_logged(version_file, "python", line=1)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -169,12 +168,11 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         update_python_version_files()
         version_file.write_text.assert_not_called()
         # The marker sits on line 1 and the entry it governs on line 2; the warning points at the entry's line.
-        self.mock_warning.assert_called_once_with(
+        self.assert_logged(
             Logger._MESSAGE_INVALID_SPECIFIER,
             "<<3.13",
             Logger._render_dependency("python"),
             Logger._render_location(Location(version_file, 2)),
-            stacklevel=ANY,
         )
         self.assert_no_new_version_logged()
 

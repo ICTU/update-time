@@ -1,7 +1,7 @@
 """Unit tests for the uv package manager's operations (detection is covered via the pyproject.toml updater)."""
 
-import os
 import unittest
+from logging import INFO
 from pathlib import Path
 from unittest.mock import ANY, Mock, call, patch
 
@@ -15,7 +15,7 @@ from update_time.package_managers.uv import (
     configure_cooldown,
 )
 
-from tests.update_time.helpers import LoggingTestCase, mock_path
+from tests.update_time.helpers import LoggingTestCase, mock_path, patch_environ
 
 
 def pyproject(spec: str) -> str:
@@ -43,9 +43,7 @@ class PersistExcludeNewerTest(LoggingTestCase):
         written = pyproject_toml.write_text.call_args.args[0]
         self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', written)
         self.assertIn(EXCLUDE_NEWER_COMMENT, written)
-        self.mock_info.assert_called_once_with(
-            Logger._MESSAGE_UV_COOLDOWN, f"{COOLDOWN.default} days", ANY, stacklevel=ANY
-        )
+        self.assert_logged(Logger._MESSAGE_UV_COOLDOWN, f"{COOLDOWN.default} days", ANY)
 
     def test_creates_tool_uv_section_when_absent(self):
         """Test that a `[tool.uv]` section is created when the pyproject.toml has none at all."""
@@ -65,17 +63,17 @@ class PersistExcludeNewerTest(LoggingTestCase):
         """Test that an exclude-newer without the marker (the user's own) is left alone, writing and logging nothing."""
         pyproject_toml = self.persist(pyproject("a==1.0") + '\n[tool.uv]\nexclude-newer = "2024-01-01"\n')
         pyproject_toml.write_text.assert_not_called()
-        self.mock_info.assert_not_called()
+        self.assertEqual(self.records(INFO), [])
 
     def test_does_not_rewrite_when_already_current(self):
         """Test that a marked value already matching the cooldown is not rewritten (no spurious file churn)."""
         pyproject_toml = self.persist(pyproject("a==1.0") + marked(f"{COOLDOWN.default} days"))
         pyproject_toml.write_text.assert_not_called()
 
+    @patch_environ({COOLDOWN.name: "14"})
     def test_syncs_own_value_to_the_cooldown(self):
         """Test that a previously Update-time-written value is rewritten when --cooldown changes."""
-        with patch.dict(os.environ, {COOLDOWN.name: "14"}):
-            pyproject_toml = self.persist(pyproject("a==1.0") + marked("7 days"))
+        pyproject_toml = self.persist(pyproject("a==1.0") + marked("7 days"))
         self.assertIn('exclude-newer = "14 days"', pyproject_toml.write_text.call_args.args[0])
 
 
@@ -102,7 +100,7 @@ class ConfigureCooldownTest(unittest.TestCase):
         self.assertEqual([call(first), call(second)], persist.call_args_list)
 
     @patch("update_time.package_managers.uv._persist_exclude_newer")
-    @patch.dict(os.environ, {"UV_EXCLUDE_NEWER": "2024-01-01"})
+    @patch_environ({"UV_EXCLUDE_NEWER": "2024-01-01"})
     def test_environment_override_writes_nothing(self, persist: Mock):
         """Test that nothing is persisted when the user sets the UV_EXCLUDE_NEWER environment variable."""
         configure_cooldown([Path("/proj/pyproject.toml")])

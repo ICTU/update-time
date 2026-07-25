@@ -106,7 +106,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = [pypi_index("4.15.0", files=yanked)]
         update_requirements_txts()
         self.assert_no_warnings_logged()
-        self.assert_ignored_yank_logged("humanize", requirements_txt, "ignore[yanked]", line=1)
+        self.assert_ignored_yank_logged(requirements_txt, "humanize", "ignore[yanked]", line=1)
 
     def test_recent_dependency_not_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin whose newest release is recent is not warned about as stale."""
