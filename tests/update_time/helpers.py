@@ -191,6 +191,12 @@ class LoggingTestCase(CacheClearingTestCase):
 
     @renders_location
     @renders_dependency
+    def assert_cannot_pin_logged(self, location: str, dependency: str) -> None:
+        """Assert that a reference with nowhere to hold a hash was reported as one that cannot be pinned."""
+        self.assert_logged(Logger._MESSAGE_CANNOT_PIN, dependency, location)
+
+    @renders_location
+    @renders_dependency
     def assert_digest_drift_logged(
         self, location: str, dependency: str, version: str, current_sha: str, new_sha: str
     ) -> None:

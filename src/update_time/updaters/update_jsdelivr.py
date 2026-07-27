@@ -1,50 +1,156 @@
-"""Updater script for jsDelivr CDN URLs (limited to npm packages in the Sphinx config at the moment)."""
+"""jsDelivr updater bumps the version in a Sphinx config's jsDelivr URLs, and their integrity hash along with it.
+
+Limited to npm packages at the moment. A reference spans two lines: the URL, and below it the attribute dictionary
+declaring the Subresource Integrity hash that has to stay in step with the version. The line the URL sits on resolves
+the version and hands it down to the dictionary's line, which the pass reaches later. A dictionary that declares no
+hash gains one there, which pins a URL that was loading whatever the CDN served; a URL declared without a dictionary
+at all has nowhere to hold a hash, so it is reported rather than pinned. An `# update-time:` marker holds a URL back
+or bounds it. A Sphinx config is Python, so the marker travels in a `#` comment, recognised both inline and
+on the line directly above the URL.
+"""
 
 import re
+from dataclasses import dataclass, replace
+from functools import partial
+from itertools import pairwise
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from update_time.domain.location import Location
+from update_time.domain.marker import parse_marker
+from update_time.domain.version import DependencyVersion, Reference
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
-from update_time.references.rewrite import rewrite_match
-from update_time.sources.jsdelivr import get_latest_version
+from update_time.references.file import rewrite_file
+from update_time.references.resolve import latest_version
+from update_time.references.rewrite import apply_marker, rewrite_line
+from update_time.sources.jsdelivr import integrity_hash, version_getter
+
+if TYPE_CHECKING:
+    from update_time.domain.marker import Marker
 
 LOG = get_logger("jsdelivr")
-# Match a jsDelivr npm URL together with the Subresource Integrity hash that follows it, so both stay in sync. The
-# file path after the version is captured so its (instead of the package default's) integrity hash is what gets updated.
-JSDELIVR_RE = re.compile(
-    r"https://cdn\.jsdelivr\.net/npm/(?P<dependency>[\w-]+)@(?P<version>[\d.]+)(?P<filename>/[^\"]*)"
-    r".*?\"integrity\": \"(?P<sha>sha\d+-[A-Za-z0-9+/=]+)\"",
-    re.DOTALL,
-)
+
+# A jsDelivr npm URL. The file path after the version is captured so its (instead of the package default's) integrity
+# hash is what gets updated.
+URL_RE = re.compile(r'https://cdn\.jsdelivr\.net/npm/(?P<dependency>[\w-]+)@(?P<version>[\d.]+)(?P<filename>/[^"]*)')
+
+# The attribute dictionary a URL is accompanied by, and the Subresource Integrity hash it declares. The hash is
+# optional, so a dictionary that declares none matches too; pinning it inserts the key in front of the entries it
+# already has, which is what replacing `open` does.
+ATTRIBUTES_RE = re.compile(r'(?P<open>\{)(?:"integrity": "(?P<sha>sha\d+-[A-Za-z0-9+/=]+)", )?')
 
 
-def update_jsdelivr(content: str, path: Path) -> str:
-    """Update the version and integrity hash of all jsDelivr URLs in the content."""
+@dataclass(frozen=True)
+class _ResolvedURL:
+    """A jsDelivr URL whose version has been resolved, waiting for the attribute dictionary that carries its hash."""
 
-    def replace(match: re.Match[str]) -> str:
-        dependency, version, filename = match.group("dependency"), match.group("version"), match.group("filename")
-        latest_version = get_latest_version(dependency, version, filename)
-        # A whole-file substitution, not a line-based rewrite, so the URL's line isn't tracked: report file-only.
-        location = Location(path)
-        LOG.warn_if_stale(dependency, latest_version, location)
-        LOG.warn_if_yanked(dependency, latest_version, location)
-        if latest_version.version == version:
-            return match.group(0)
-        LOG.new_version(dependency, latest_version, location)
-        return rewrite_match(match, {"version": latest_version.version, "sha": latest_version.sha})
+    dependency: str
+    latest: DependencyVersion
+    current_version: str
+    filename: str
+    location: Location
 
-    return JSDELIVR_RE.sub(replace, content)
+    @property
+    def version_moved(self) -> bool:
+        """Return whether the version resolved for the URL differs from the one the URL records."""
+        return self.latest.version != self.current_version
+
+    def update_attributes(self, match: re.Match[str]) -> str:
+        """Return the attribute dictionary's line, carrying the hash of the version the URL above resolved to."""
+        return self._refresh(match) if match.group("sha") else self._pin(match)
+
+    def _pin(self, match: re.Match[str]) -> str:
+        """Return the dictionary with the resolved version's hash inserted, pinning a URL that declared none.
+
+        Such a URL loads whatever the CDN serves, so the hash goes in front of the entries the dictionary already
+        has. It is the hash the version decision resolved, or, for a URL staying on its version, one looked up for
+        that version. The pin is only reported when the version stayed put: when it moved, the new version is the
+        change to report and the pin travels with it.
+        """
+        sha = self.latest.sha or integrity_hash(self.dependency, self.latest.version, self.filename)
+        if not self.version_moved:
+            LOG.pinned(self.dependency, replace(self.latest, sha=sha), self.location)
+        return rewrite_line(match, {"open": f'{{"integrity": "{sha}", '})
+
+    def _refresh(self, match: re.Match[str]) -> str:
+        """Return the dictionary with its declared hash rewritten to the resolved version's, or left as it is.
+
+        A declared hash is only rewritten when the version moved, so one that disagrees with the registry at the same
+        version is left alone rather than silently adopted.
+        """
+        return rewrite_line(match, {"sha": self.latest.sha}) if self.version_moved else match.string
+
+
+@dataclass
+class _Rewriter:
+    """Rewrites the jsDelivr references in one Sphinx config, walking its lines.
+
+    A reference spans two lines, so the version resolved at the URL's line only reaches the attribute dictionary
+    that carries its hash once the walk gets there. `resolved` is that hand-over, empty while no resolved URL is
+    waiting for its dictionary.
+    """
+
+    resolved: _ResolvedURL | None = None
+
+    def update_url(self, match: re.Match[str], marker: Marker, location: Location) -> str:
+        """Return the URL's line bumped to the latest version, or unchanged when there is no new version.
+
+        Which version to move to is `latest_version`'s decision, shared with every other reference kind, honouring
+        the URL's `# update-time:` marker with its bound and hold-backs. Only the URL's own output is spelled here;
+        the hash of the resolved version is left to the dictionary line, which the pass reaches next.
+        """
+        dependency, version = match.group("dependency"), match.group("version")
+        reference = Reference(dependency, version)
+        latest = latest_version(reference, version_getter(match.group("filename")), marker, location, LOG)
+        if latest is None:
+            return match.string
+        self.resolved = _ResolvedURL(dependency, latest, version, match.group("filename"), location)
+        if not self.resolved.version_moved:
+            return match.string
+        LOG.new_version(dependency, latest, location)
+        return rewrite_line(match, {"version": latest.version})
+
+    def updated_lines(self, lines: list[str], path: Path) -> list[str]:
+        """Return the config's lines with every jsDelivr URL and its integrity hash updated, honouring markers.
+
+        Each line that declares a URL is run through the shared `apply_marker` gate — a marker inline or on the line
+        directly above it holds the reference back or bounds it — which hands off to `update_url` for the rewrite;
+        each line is paired with the line before it so a standalone marker comment can apply to the URL below it. An
+        attribute dictionary is only visited while a resolved URL is waiting for it, so the dictionary of a reference
+        that was held back is left alone.
+        """
+        result = []
+        for line_number, (previous_line, line) in enumerate(pairwise(["", *lines]), start=1):
+            if url_match := URL_RE.search(line):
+                self._end_entry()
+                marker = parse_marker(line, previous_line)
+                location = Location(path, line_number)
+                update = partial(self.update_url, url_match, marker, location)
+                result.append(apply_marker(line, url_match.group("dependency"), marker, location, LOG, update))
+            elif (resolved := self.resolved) and (attributes_match := ATTRIBUTES_RE.search(line)):
+                self.resolved = None
+                result.append(resolved.update_attributes(attributes_match))
+            else:
+                result.append(line)
+        self._end_entry()
+        return result
+
+    def _end_entry(self) -> None:
+        """End the entry in progress, reporting a URL still waiting for the attribute dictionary it turns out to lack.
+
+        An entry ends at the next URL and when the lines run out. The URL reported is forgotten with it, so the entry
+        below never inherits a hash resolved for the one above.
+        """
+        if self.resolved is not None:
+            LOG.cannot_pin(self.resolved.dependency, self.resolved.location)
+            self.resolved = None
 
 
 def update_jsdelivrs() -> None:
     """Find the Sphinx config files under docs/ and update the jsDelivr URLs in them."""
     for sphinx_config_py in glob("conf.py", start=Path.cwd() / "docs"):
-        LOG.path(sphinx_config_py)
-        old_content = sphinx_config_py.read_text()
-        new_content = update_jsdelivr(old_content, sphinx_config_py)
-        if new_content != old_content:
-            sphinx_config_py.write_text(new_content)
+        rewrite_file(sphinx_config_py, partial(_Rewriter().updated_lines, path=sphinx_config_py), LOG)
 
 
 def main() -> None:  # pragma: no cover

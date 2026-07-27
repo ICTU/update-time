@@ -9,6 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Warn when the version a dependency is pinned to has been yanked from PyPI, or deprecated on npm, and hold the warning back with an `# update-time: ignore[yanked]` marker. Closes [#147](https://github.com/ICTU/update-time/issues/147).
+- Honour `# update-time:` markers on the jsDelivr URLs in a Sphinx config, both inline and on the line above. Part of [#177](https://github.com/ICTU/update-time/issues/177).
+- Pin a jsDelivr URL that declares no Subresource Integrity hash, by inserting one into the attribute dictionary that accompanies it. Closes [#177](https://github.com/ICTU/update-time/issues/177).
 
 ### Changed
 
@@ -19,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Log at log-level DEBUG when an `# update-time: ignore[stale]` or `# update-time: ignore[yanked]` marker holds a warning back. Closes [#169](https://github.com/ICTU/update-time/issues/169).
 - Attribute the staleness, yank, redundant-bound, and GitHub pin log records to the updater that triggered them, so the source position in the log names the updater like every other record. Closes [#171](https://github.com/ICTU/update-time/issues/171).
 - Warn when an `# update-time: ignore[yanked]` marker is on a reference whose source has no yank concept, so it can never hold anything back. Closes [#172](https://github.com/ICTU/update-time/issues/172).
+- Report the log messages about a jsDelivr URL at the URL's line (`docs/conf.py:3`) instead of at the file only. Part of [#177](https://github.com/ICTU/update-time/issues/177).
 
 ## 0.0.21 - 2026-07-22
 
