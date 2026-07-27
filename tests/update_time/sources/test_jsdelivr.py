@@ -3,10 +3,11 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, patch
 
+from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.version import Yank
+from update_time.domain.version import DependencyVersion, Yank
 from update_time.io.log import Logger
-from update_time.sources.jsdelivr import get_latest_version
+from update_time.sources.jsdelivr import version_getter
 
 from tests.update_time.fixtures import HASH1, HASH2
 from tests.update_time.helpers import (
@@ -21,6 +22,16 @@ from tests.update_time.helpers import (
 FILENAME = "/dist/clipboard.min.js"
 FLAT_FILES = {"default": FILENAME, "files": [{"name": FILENAME, "hash": HASH2}]}
 
+
+def get_latest_version(dependency: str, current_version: str, filename: str) -> DependencyVersion:
+    """Return the version the source resolves for the file the URL references, unbounded.
+
+    The source hands out a getter per referenced file (`version_getter`); the tests below vary the file and the
+    current version rather than the bound, so they go through this one call instead of repeating the two steps.
+    """
+    return version_getter(filename)(dependency, current_version, NO_BOUND)
+
+
 # npm publication dates, relative to now so the cooldown decision is independent of the wall clock.
 ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN.default + 1)).isoformat()  # comfortably past the cooldown
 FRESH = (datetime.now(UTC) - timedelta(days=1)).isoformat()  # still within the cooldown
@@ -30,7 +41,7 @@ FRESH = (datetime.now(UTC) - timedelta(days=1)).isoformat()  # still within the 
 class GetLatestVersionTest(LoggingTestCase):
     """Unit tests for the get latest jsdelivr version function.
 
-    `get_latest_version` makes its requests in a fixed order, so each test's `mock_get.side_effect` mirrors it:
+    The source makes its requests in a fixed order, so each test's `mock_get.side_effect` mirrors it:
     first the jsDelivr package API (the version list), then — newest-first — one npm registry call per candidate to
     read its publication date, stopping at the first eligible one, then the jsDelivr flat-files API for the chosen
     version's integrity hash. A test supplies only as many responses as reaching its expected version requires.

@@ -277,7 +277,7 @@ The jsDelivr npm URLs and their accompanying Subresource Integrity (`integrity`)
 
 #### What versions are updated?
 
-The npm package version embedded in the URL is updated to the latest version on the npm registry, and the SRI hash is updated in step so the two stay consistent. Versions the maintainer has deprecated are skipped, and a URL left on a deprecated version is warned about (see [Yanked dependencies](#-yanked-dependencies)). The hash is only updated when already present, never added (see [Pinning](#-pinning)).
+The npm package version embedded in the URL is updated to the latest version on the npm registry, and the SRI hash is updated in step so the two stay consistent. Versions the maintainer has deprecated are skipped, and a URL left on a deprecated version is warned about (see [Yanked dependencies](#-yanked-dependencies)). The hash is also added when the URL's attribute dictionary declares none (see [Pinning](#-pinning)).
 
 ## 📌 Pinning
 
@@ -290,6 +290,7 @@ What Update-time pins for each kind of dependency:
 - Docker images referenced by tag only get the `@sha256:digest` of the (latest) tag appended, so the image is reproducible. This covers base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, Docker Compose and Helm manifest images, and devcontainer base images and features. The image's registry is taken from the reference, so images on Docker Hub and on other OCI registries (`ghcr.io`, `mcr.microsoft.com`, …) are both resolved. The cooldown, however, only applies to Docker Hub, since the OCI protocol exposes no publication date.
 - GitHub Actions referenced by version tag only are pinned to the commit SHA of the latest version, with the version added as a trailing comment: `uses: actions/checkout@v4` becomes `uses: actions/checkout@<sha> # v4.1.1`.
 - Pre-commit hook `rev:`s referenced by version tag only are pinned to the commit SHA of the latest version, with the version travelling in pre-commit's own `# frozen: <version>` comment convention: `rev: v4.5.0` becomes `rev: <sha>  # frozen: v4.5.0`. This is the same format `pre-commit autoupdate --freeze` produces and understands, so the config stays interoperable with pre-commit's own tooling. The tag's `v` prefix convention is kept in the comment, so a repository that tags without a `v` gets `# frozen: 4.5.0`.
+- jsDelivr npm URLs whose attribute dictionary declares no `integrity` entry gain one, so the browser verifies the script the CDN serves before running it. The hash is inserted in front of the entries the dictionary already has, and reported as a pin: `Pinned clipboard in docs/conf.py:4 to 2.0.11@sha256-…`.
 - A `.python-version` entry has no digest or commit SHA to add, so its pinning is writing a fuller version: when the version comes from Docker Hub a less precise `3.12` is pinned to the full `3.13.2`, while in the Dockerfile tier it adopts the image tag's precision instead (see [Python version](#python-version)).
 
 ### Dependencies not pinned
@@ -301,7 +302,7 @@ Some types of dependencies are not pinned by Update-time:
 - GitHub Actions referenced by a branch (e.g. `@main`) are left untouched because they don't resolve to a version.
 - Pre-commit hook `rev:`s that name a branch, or that are already a bare commit SHA without a `# frozen:` comment, don't resolve to a version and are left untouched, as are `repo: local`, `repo: meta`, and repositories hosted outside GitHub.
 - The Node engine version is a version constraint, not a locked dependency, so it can't be pinned.
-- The SRI hash of jsDelivr npm URLs is updated when present, but not added when not present. This is a limitation of the rewrite engine of Update-time itself.
+- A jsDelivr npm URL declared as a bare string, without an attribute dictionary, has nowhere to hold an integrity hash, so it stays unpinned. Pinning it would mean rewriting the string into a `(url, {"integrity": …})` tuple, which is more than rewriting a line, so Update-time reports it at `INFO` and leaves it alone. Declare the URL as such a tuple to have it pinned.
 
 ### Digest drift
 
@@ -360,7 +361,7 @@ By default the marker holds a reference back from version updates, the [stalenes
 
 So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet or its version was withdrawn, `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version, and `# update-time: ignore[yanked]` does the same for a yank you have decided to live with. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
 
-A yank can only be observed where the dependency's source reports one, so of the references that accept a marker, `ignore[yanked]` has something to hold back in `requirements.txt` alone (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so Update-time reports it as redundant at `WARNING`:
+A yank can only be observed where the dependency's source reports one, so of the references that accept a marker, `ignore[yanked]` has something to hold back on a `requirements.txt` pin and on a jsDelivr URL (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so Update-time reports it as redundant at `WARNING`:
 
 ```console
 WARNING Redundant update-time marker ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept, so the marker holds nothing back
@@ -420,7 +421,7 @@ Update-time logs a `WARNING` when a bound is redundant. That may happen in two w
 
 Any of these markers can be placed two ways:
 
-- **Inline**, on the reference's own line (in YAML files, `requirements.txt`, `devcontainer.json`, and `.python-version` files):
+- **Inline**, on the reference's own line (in YAML files, `requirements.txt`, `devcontainer.json`, `.python-version`, and Sphinx `conf.py` files):
 
   ```yaml
   image: python:3.12  # update-time: ignore
@@ -434,6 +435,10 @@ Any of these markers can be placed two ways:
   "ghcr.io/devcontainers/features/node:1": {}  // update-time: ignore
   ```
 
+  ```python
+  "https://cdn.jsdelivr.net/npm/clipboard@2.0.11/dist/clipboard.min.js",  # update-time: ignore
+  ```
+
 - **On the line directly above** the reference. Use this form in Dockerfiles, which don't allow inline comments:
 
   ```dockerfile
@@ -441,11 +446,11 @@ Any of these markers can be placed two ways:
   FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   ```
 
-This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, `.pre-commit-config.yaml` files, `devcontainer.json` files, `requirements.txt` files, and `.python-version` files. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it. In a `.pre-commit-config.yaml`, an inline marker follows the `# frozen:` comment on the `rev:` line when both are present. In a `.python-version` file both forms are recognised, but uv rejects an inline comment on a `.python-version` line (it then ignores the entry and silently resolves a different Python), so the line-above form is the safer placement for a uv project; either way the marker wins over a version derived from the Dockerfile, so a deliberately held-back development version is never dragged forward by an image update.
+This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, `.pre-commit-config.yaml` files, `devcontainer.json` files, `requirements.txt` files, `.python-version` files, and the jsDelivr URLs in a Sphinx `conf.py`. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it. In a `.pre-commit-config.yaml`, an inline marker follows the `# frozen:` comment on the `rev:` line when both are present. In a `.python-version` file both forms are recognised, but uv rejects an inline comment on a `.python-version` line (it then ignores the entry and silently resolves a different Python), so the line-above form is the safer placement for a uv project; either way the marker wins over a version derived from the Dockerfile, so a deliberately held-back development version is never dragged forward by an image update.
 
 Run with `--log-level DEBUG` to confirm a marker is recognised: every recognised marker is logged as `Recognised update-time marker ...`, and every update or warning it holds back is logged on a line of its own. A recognised line means the marker was read and understood. A hold-back line means it actually suppressed something: an `ignore[yanked]` on a version that was never yanked produces none. A missing hold-back line therefore tells you the marker did nothing this run. Since the marker is case-sensitive, a typo (or wrong case) produces no `Recognised` line at all and the reference is updated as usual.
 
-For `pyproject.toml`, `package.json`, and PEP 723 inline script metadata — which are updated through uv, npm, and pnpm rather than line by line — the marker does not apply. Opt a dependency out there by pinning it with a maximum or non-`==` version specifier instead (for example `package<=3.12`). The marker likewise has no effect on jsDelivr URLs, which are rewritten through a whole-file substitution rather than the line-by-line engine; there is currently no way to exclude a specific jsDelivr URL from updates.
+For `pyproject.toml`, `package.json`, and PEP 723 inline script metadata — which are updated through uv, npm, and pnpm rather than line by line — the marker does not apply. Opt a dependency out there by pinning it with a maximum or non-`==` version specifier instead (for example `package<=3.12`).
 
 ## 📮 Point of contact
 

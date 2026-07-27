@@ -273,6 +273,16 @@ class Logger:
             version.sha,
         )
 
+    _MESSAGE_CANNOT_PIN = LogMessage(
+        INFO,
+        "Cannot pin %s in %s: the URL is declared as a bare string, so it has no attribute dictionary "
+        "to hold an integrity hash",
+    )
+
+    def cannot_pin(self, dependency: str, location: Location) -> None:
+        """Log that a reference was left unpinned because it declares nowhere to hold the hash that would pin it."""
+        self._log(self._MESSAGE_CANNOT_PIN, self._render_dependency(dependency), self._render_location(location))
+
     _MESSAGE_DIGEST_DRIFT = LogMessage(
         WARNING,
         "Digest drift for %s:%s in %s: pinned to %s but the registry "

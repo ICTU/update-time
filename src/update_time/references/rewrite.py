@@ -91,7 +91,7 @@ class _Rewriter:
                 f"update-time: {marker.raw_marker(Verb.ALLOW)}" if marker.allow_drift else "--allow-image-digest-drift"
             )
             self.logger.adopted_drift(dependency, version, current_sha, latest.sha, location, cause)
-            return self._replace_groups(match, {"sha": latest.sha})
+            return rewrite_line(match, {"sha": latest.sha})
         # The tag was re-pushed with a different digest; warn but leave the immutable pin unchanged.
         self.logger.digest_drift(dependency, version, current_sha, latest.sha, location)
         return match.string
@@ -119,21 +119,21 @@ class _Rewriter:
             replacements = {"version": latest.version}
             if match.groupdict().get("sha") is not None:
                 replacements["sha"] = latest.sha
-        return self._replace_groups(match, replacements)
+        return rewrite_line(match, replacements)
 
-    @staticmethod
-    def _replace_groups(match: re.Match[str], replacements: dict[str, str]) -> str:
-        """Replace the named groups within the matched region of the line, leaving the rest of the line untouched."""
-        line = match.string
-        return line[: match.start()] + rewrite_match(match, replacements) + line[match.end() :]
+
+def rewrite_line(match: re.Match[str], replacements: dict[str, str]) -> str:
+    """Return the matched reference's whole line with the named groups replaced, leaving the rest of it untouched."""
+    line = match.string
+    return line[: match.start()] + rewrite_match(match, replacements) + line[match.end() :]
 
 
 def rewrite_match(match: re.Match[str], replacements: dict[str, str]) -> str:
     """Return the matched text with the named groups replaced, leaving the rest of the match untouched.
 
     Only the spans the regex captured are rewritten, so a value that also occurs elsewhere within the match — the
-    `18` in `FROM node:18 AS build-18`, or a version that reappears in the span a multi-line jsDelivr match covers —
-    is left alone. Groups are replaced right-to-left so an earlier replacement doesn't shift the spans still to come.
+    `18` in `FROM node:18 AS build-18` — is left alone. Groups are replaced right-to-left so an earlier replacement
+    doesn't shift the spans still to come.
     """
     text = match.group(0)
     offset = match.start()
