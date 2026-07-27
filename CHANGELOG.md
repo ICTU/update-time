@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Leave a file's line endings alone when updating a reference in it: CRLF endings are no longer rewritten to LF, and a file without a final newline no longer gains one. Part of [#181](https://github.com/ICTU/update-time/issues/181).
 
 ## 0.0.22 - 2026-07-28
 

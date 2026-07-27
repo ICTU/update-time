@@ -9,12 +9,10 @@ the text surgery around it, reporting what it changed through a `Logger`.
 
 import re
 from dataclasses import dataclass
-from functools import partial
-from itertools import pairwise
 from typing import TYPE_CHECKING
 
 from update_time.domain.bound import Verb
-from update_time.domain.location import Location
+from update_time.domain.line import located_lines
 from update_time.domain.marker import parse_marker
 from update_time.domain.version import Reference
 from update_time.primitives.environment import EnvVar
@@ -22,9 +20,10 @@ from update_time.references.resolve import latest_version
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from update_time.domain.bound import NewVersionGetter
+    from update_time.domain.line import Line
+    from update_time.domain.location import Location
     from update_time.domain.marker import Marker
     from update_time.domain.version import DependencyVersion
     from update_time.io.log import Logger
@@ -42,33 +41,30 @@ ALLOW_IMAGE_DIGEST_DRIFT = EnvVar(
 class _Rewriter:
     """Everything needed to rewrite one kind of reference in a file.
 
-    That is: which references to match (`regexp`), how to resolve a new version, and where to report.
+    That is: how to resolve a new version, where to report, and — for a regexp that captures no `dependency` group —
+    what to call the reference.
     """
 
-    regexp: str
     get_new_version: NewVersionGetter
     logger: Logger
-    path: Path
+    dependency: str = ""
 
-    def update_line(self, match: re.Match[str], marker: Marker, line_number: int) -> str:
+    def update_line(self, match: re.Match[str], location: Location, marker: Marker) -> str:
         """Update the matched reference's line with the new version (and digest) if any, or return it unchanged.
 
-        `updated_lines` has already matched the reference, so its line is `match.string` and its 1-based position is
-        `line_number` (reported so a logged reference points at its own line). Which version to update to — honouring
-        the reference's `# update-time:` marker — is `latest_version`'s decision, or None to leave the line unchanged.
-        A reference that is already up to date is checked for digest drift (see `_handle_drift`); one with an update,
-        or without its available digest, is rewritten (see `_apply_update`).
+        `updated_lines` has already matched the reference, so its line is `match.string` and its `location` points at
+        that line. Which version to update to — honouring the reference's `# update-time:` marker — is
+        `latest_version`'s decision, or None to leave the line unchanged. A reference that is already up to date is
+        checked for digest drift (see `_handle_drift`); one with an update, or without its available digest, is
+        rewritten (see `_apply_update`).
         """
-        dependency = match.group("dependency")
-        version = match.group("version")
-        reference = Reference(dependency, version)
-        location = Location(self.path, line_number)
+        reference = matched_reference(match, self.dependency)
         latest = latest_version(reference, self.get_new_version, marker, location, self.logger)
         if latest is None:
             return match.string
         has_sha_group = "sha" in match.groupdict()
         pin_unpinned = has_sha_group and match.group("sha") is None and bool(latest.sha)
-        if latest.version == version and not pin_unpinned:
+        if latest.version == reference.current_version and not pin_unpinned:
             return self._handle_drift(match, marker, latest, location)
         return self._apply_update(match, latest, location, pin_unpinned=pin_unpinned)
 
@@ -82,7 +78,7 @@ class _Rewriter:
         current_sha = match.groupdict().get("sha")
         if current_sha is None or not latest.digest_differs_from(current_sha):
             return match.string
-        dependency, version = match.group("dependency"), match.group("version")
+        dependency, version = matched_dependency(match, self.dependency), match.group("version")
         if marker.allow_drift or ALLOW_IMAGE_DIGEST_DRIFT.get():
             # The reference opted in, so adopt the re-pushed digest instead of only warning about it. The
             # per-reference marker is the more specific opt-in, so its `allow` directives are named verbatim as the
@@ -105,7 +101,7 @@ class _Rewriter:
         and the available digest is appended to pin it, even when the version itself is already up to date;
         otherwise the version (and the digest of an already-pinned reference) is replaced in place.
         """
-        dependency = match.group("dependency")
+        dependency = matched_dependency(match, self.dependency)
         version_changed = latest.version != match.group("version")
         if pin_unpinned:
             # Append the digest to a previously unpinned reference, bumping the version too if one is available.
@@ -121,11 +117,30 @@ class _Rewriter:
                 replacements["sha"] = latest.sha
         return rewrite_line(match, replacements)
 
+    def updated_lines(self, lines: list[Line], regexp: str | re.Pattern[str]) -> list[str]:
+        """Return the lines with every reference the regexp matches updated, honouring each one's marker."""
+        return updated_lines(lines, regexp, self.update_line, self.logger, self.dependency)
+
+
+def matched_dependency(match: re.Match[str], dependency: str = "") -> str:
+    """Return the dependency the match captured in its `dependency` group, or `dependency` when it captures none."""
+    return dependency or match.group("dependency")
+
+
+def matched_reference(match: re.Match[str], dependency: str = "") -> Reference:
+    """Return the reference the match captured in its `dependency` and `version` named groups."""
+    return Reference(matched_dependency(match, dependency), match.group("version"))
+
+
+def replace_reference(match: re.Match[str], replacement: str) -> str:
+    """Return the whole line with the matched reference replaced by `replacement`."""
+    line = match.string
+    return line[: match.start()] + replacement + line[match.end() :]
+
 
 def rewrite_line(match: re.Match[str], replacements: dict[str, str]) -> str:
     """Return the matched reference's whole line with the named groups replaced, leaving the rest of it untouched."""
-    line = match.string
-    return line[: match.start()] + rewrite_match(match, replacements) + line[match.end() :]
+    return replace_reference(match, rewrite_match(match, replacements))
 
 
 def rewrite_match(match: re.Match[str], replacements: dict[str, str]) -> str:
@@ -143,69 +158,84 @@ def rewrite_match(match: re.Match[str], replacements: dict[str, str]) -> str:
     return text
 
 
-def apply_marker(  # noqa: PLR0913
-    line: str, dependency: str, marker: Marker, location: Location, logger: Logger, update: Callable[[], str]
+def apply_marker(
+    line: Line,
+    match: re.Match[str],
+    update_line: Callable[[re.Match[str], Location, Marker], str],
+    logger: Logger,
+    dependency: str = "",
 ) -> str:
-    """Report a matched reference's `# update-time:` marker and update it, or leave the line unchanged when held back.
+    """Read a matched reference's `# update-time:` marker and update it, or leave the line unchanged when held back.
 
-    The marker gate shared by every line-based reference. An item that could not be parsed is reported (here, where
+    The marker gate shared by every line-based reference, and the one place that reads one: a marker is read inline on
+    the reference's own line, or from the line directly above it when that is a standalone comment, so no updater has
+    to remember the placement rule (see `parse_marker`). An item that could not be parsed is reported (here, where
     the logger and location are available, unlike in the pure `parse_marker`) and leaves the reference unchanged.
     Otherwise the marker is reported as recognised at the debug level, as is the held-back update when the marker
     holds the update back, so users can tell a marker that was understood from one that suppressed something. A
     marker holding back every scope — the update, the staleness warning, and the yank warning — returns the line
-    without calling `update`, so the source is never even queried;
-    any other marker hands off to `update` — the caller's thunk that performs the rewrite — so the checks the marker
-    doesn't hold back still run. Callers that discover the reference themselves (a pre-commit `rev:`, a
-    `.python-version` entry) pass the `dependency` name; `updated_lines` reads it from the regexp's match group.
+    without calling `update_line`, so the source is never even queried; any other marker is handed to `update_line`
+    along with the match and the line's location, so the checks it doesn't hold back still run, with its bound and
+    its `allow` directives. The dependency comes from the regexp's `dependency` group; a regexp that captures none —
+    a pre-commit `rev:` takes it from the `repo:` above, a `.python-version` entry is a bare version — names it in
+    `dependency` instead.
     """
+    marker = parse_marker(line)
+    location = line.location
+    dependency = matched_dependency(match, dependency)
     if marker.invalid_specifier is not None:
         logger.invalid_specifier(dependency, marker.invalid_specifier, location)
-        return line
+        return line.text
     logger.recognised_marker(dependency, marker, location)
     if marker.ignore_update:
         logger.ignored(dependency, marker, location)
     if marker.ignore_update and marker.ignore_stale and marker.ignore_yanked:
-        return line
-    return update()
+        return line.text
+    return update_line(match, location, marker)
 
 
 def updated_lines(
-    lines: list[str],
+    lines: list[Line],
     regexp: str | re.Pattern[str],
-    update_line: Callable[[re.Match[str], Marker, int], str],
+    update_line: Callable[[re.Match[str], Location, Marker], str],
     logger: Logger,
-    path: Path,
+    dependency: str = "",
 ) -> list[str]:
     """Return the lines with `update_line` applied to each line carrying a reference, honouring any marker.
 
-    Each line is paired with the line before it, so a standalone marker comment can apply to the line below it, and
-    numbered (1-based) so a logged reference points at its own line. A line that carries no reference (no `regexp`
-    match) is left untouched — a marker on it is for the line below. A line that does carry one is run through the
-    shared `apply_marker` gate, which logs its marker, holds it back, or hands off to `update_line` (bound here to
-    the line, its `Marker`, and its number, so an `allow[digest-drift]` opt-in or a `version_bound` still reaches it).
+    A line that carries no reference (no `regexp` match) is left untouched — a marker on it is for the line below. A
+    line that does carry one goes to the shared `apply_marker` gate together with `update_line`, which the gate reads
+    the marker for, logs, and either holds back or runs. `dependency` names the reference for a regexp that captures
+    none.
     """
     result = []
-    for line_number, (previous_line, line) in enumerate(pairwise(["", *lines]), start=1):
-        match = re.search(regexp, line)
+    for line in lines:
+        match = re.search(regexp, line.text)
         if match is None:
-            result.append(line)  # No reference on this line; a marker here applies to the line below it.
+            result.append(line.text)  # No reference on this line; a marker here applies to the line below it.
             continue
-        marker = parse_marker(line, previous_line)
-        update = partial(update_line, match, marker, line_number)
-        location = Location(path, line_number)
-        result.append(apply_marker(line, match.group("dependency"), marker, location, logger, update))
+        result.append(apply_marker(line, match, update_line, logger, dependency))
     return result
 
 
 def update_references_in_lines(
-    lines: list[str], *regexps: str, get_new_version: NewVersionGetter, logger: Logger, path: Path
+    lines: list[Line],
+    *regexps: str | re.Pattern[str],
+    get_new_version: NewVersionGetter,
+    logger: Logger,
+    dependency: str = "",
 ) -> list[str]:
     """Return the lines with each unpinned reference updated to its new version (and digest).
 
     Several regexps are applied in turn, each to the result of the previous, so a file that pins more than one kind
     of reference (a devcontainer.json's base `image` and its `features`) is rewritten in one pass over its content.
+    Each pass locates the lines afresh, so the text a marker is read from is the text the pass before it left; the
+    file they belong to is the one they already record, so no path has to be passed alongside them.
     """
+    if not lines:
+        return []
+    path = lines[0].location.path
+    rewriter = _Rewriter(get_new_version, logger, dependency)
     for regexp in regexps:
-        rewriter = _Rewriter(regexp, get_new_version, logger, path)
-        lines = updated_lines(lines, regexp, rewriter.update_line, logger, path)
-    return lines
+        lines = located_lines(path, rewriter.updated_lines(lines, regexp))
+    return [line.text for line in lines]

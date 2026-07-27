@@ -7,42 +7,53 @@ set of glob patterns (discovered through `io.filesystem`).
 
 from typing import TYPE_CHECKING
 
+from update_time.domain.line import located_lines
 from update_time.io.filesystem import glob
 from update_time.references.rewrite import update_references_in_lines
 
 if TYPE_CHECKING:
+    import re
     from collections.abc import Callable
     from pathlib import Path
 
     from update_time.domain.bound import NewVersionGetter
+    from update_time.domain.line import Line
     from update_time.io.log import Logger
 
 
-def rewrite_file(path: Path, transform: Callable[[list[str]], list[str]], logger: Logger) -> None:
-    """Read the file, apply `transform` to its lines, and write it back only if the lines changed.
+def rewrite_file(path: Path, transform: Callable[[list[Line]], list[str]], logger: Logger) -> None:
+    """Read the file, apply `transform` to its located lines, and write it back only if the lines changed.
 
     The read/compare/write boilerplate shared by every updater that rewrites a file line by line. `update_file`
     supplies a `transform` that runs the shared reference-rewriting engine; an updater whose references span more
     than one line — a pre-commit hook's `repo:` and its `rev:` sit on separate lines — supplies its own stateful
-    pass instead.
+    pass instead. Each line keeps its own ending, so a file's CRLF endings and a missing final newline survive the
+    rewrite.
     """
     logger.path(path)
-    old_lines = path.read_text().splitlines()
-    new_lines = transform(old_lines)
+    old_lines = path.read_text().splitlines(keepends=True)
+    new_lines = transform(located_lines(path, old_lines))
     if old_lines != new_lines:
-        path.write_text("\n".join(new_lines) + "\n")
+        path.write_text("".join(new_lines))
 
 
-def update_file(path: Path, *regexps: str, get_new_version: NewVersionGetter, logger: Logger) -> None:
+def update_file(
+    path: Path,
+    *regexps: str | re.Pattern[str],
+    get_new_version: NewVersionGetter,
+    logger: Logger,
+    dependency: str = "",
+) -> None:
     """Update the references in the file and write it back if the new lines differ from the old lines.
 
     Multiple regexps are applied in turn to the same content, so a file that pins more than one kind of reference (a
-    devcontainer.json's base `image` and its `features`) is read and written once, not once per regexp.
+    devcontainer.json's base `image` and its `features`) is read and written once, not once per regexp. A regexp that
+    captures no `dependency` group — a `.python-version` entry is a bare version — names it in `dependency`.
     """
     rewrite_file(
         path,
         lambda lines: update_references_in_lines(
-            lines, *regexps, get_new_version=get_new_version, logger=logger, path=path
+            lines, *regexps, get_new_version=get_new_version, logger=logger, dependency=dependency
         ),
         logger,
     )

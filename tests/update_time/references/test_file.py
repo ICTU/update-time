@@ -1,15 +1,40 @@
 """Unit tests for the file-rewrite orchestration."""
 
 import unittest
+from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
 from update_time.domain.location import Location
 from update_time.domain.version import DependencyVersion
-from update_time.references.file import update_file, update_files
+from update_time.references.file import rewrite_file, update_file, update_files
 
 from tests.update_time.helpers import mock_path, new_version_getter
 
+if TYPE_CHECKING:
+    from update_time.domain.line import Line
+
 REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"
+
+
+def rewrite_second_line(lines: list[Line]) -> list[str]:
+    """Return the lines with `second` replaced by `third`, standing in for a transform that rewrites a reference."""
+    return [line.text.replace("second", "third") for line in lines]
+
+
+class RewriteFileTest(unittest.TestCase):
+    """Unit tests for `rewrite_file`'s read/transform/write cycle."""
+
+    def test_crlf_line_endings_preserved(self):
+        """Test that a file's CRLF line endings survive a rewrite."""
+        mock_file = mock_path("first\r\nsecond\r\n")
+        rewrite_file(mock_file, rewrite_second_line, Mock())
+        mock_file.write_text.assert_called_once_with("first\r\nthird\r\n")
+
+    def test_missing_final_newline_preserved(self):
+        """Test that a file without a final newline does not gain one in a rewrite."""
+        mock_file = mock_path("first\nsecond")
+        rewrite_file(mock_file, rewrite_second_line, Mock())
+        mock_file.write_text.assert_called_once_with("first\nthird")
 
 
 class UpdateFileTest(unittest.TestCase):
@@ -17,7 +42,7 @@ class UpdateFileTest(unittest.TestCase):
 
     The write-vs-no-write decision and the reference rewriting itself are covered by `UpdateFilesTest` (which wraps
     `update_file`) and the reference-rewriting engine's own tests (test_rewrite). What's unique here is that several
-    regexps are applied to the same content in a single read and a single write, with a trailing newline.
+    regexps are applied to the same content in a single read and a single write.
     """
 
     def test_multiple_regexps_applied_in_one_pass(self):

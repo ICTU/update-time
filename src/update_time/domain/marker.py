@@ -6,8 +6,8 @@ absolute version range (`allow[update<…>]` / `ignore[update<…>]`) or by upda
 `ignore[major-update]`) — or opt it into adopting a re-pushed image digest (`allow[digest-drift]`).
 A marker is read inline on the reference's own line or from a standalone comment on the line directly above it; one
 prefix can carry several whitespace-separated directives, and a directive's bracket several comma-separated items
-(`ignore[stale, update>=3.13]`). Parsing is pure — text in, `Marker` out — so it lives in `domain`; acting on the
-marker, and reporting about it, is left to the rewrite engine in `io`.
+(`ignore[stale, update>=3.13]`). Parsing is pure — a `Line` in, a `Marker` out — so it lives in `domain`; acting on
+the marker, and reporting about it, is left to the rewrite engine in `references`.
 """
 
 import re
@@ -20,6 +20,7 @@ from update_time.domain.bound import NO_BOUND, Verb, parse_bound
 
 if TYPE_CHECKING:
     from update_time.domain.bound import VersionBound
+    from update_time.domain.line import Line
 
 
 @dataclass(frozen=True)
@@ -112,19 +113,21 @@ _MARKER_PREFIX = re.compile(rf"(?:{'|'.join(re.escape(lead) for lead in _COMMENT
 _DIRECTIVE = re.compile(r"(?P<verb>ignore\b|allow(?=\[))(?:\[(?P<bracket>[^\]]*)\])?\s*")
 
 
-def parse_marker(line: str, previous_line: str) -> Marker:
+def parse_marker(line: Line) -> Marker:
     """Return the `# update-time:` directives affecting the line as a `Marker`.
 
     A directive is read inline on the line, or from the line directly above it when that is a standalone comment
     (the form Dockerfiles need, since they reject inline comments); requiring the preceding line to start with a
     comment lead (`#`, or `//`) keeps an inline marker from also affecting the line below it. Directives combine by
     listing them after a single `# update-time:` prefix and across the two placements; where directives conflict,
-    the first one wins, inline directives before those on the line above. Parsing is pure (no logger or path), so
-    an unparsable version specifier is carried out as `invalid_specifier` for the caller to report.
+    the first one wins, inline directives before those on the line above. Taking the whole `Line` is what keeps the
+    two placements from being read apart: a caller cannot hand over one of them and silently lose the other. Parsing
+    reports nothing itself, so an unparsable version specifier is carried out as `invalid_specifier` for the caller
+    to report against the line's location.
     """
-    marker = _parse_marker_contents(line)
-    if previous_line.lstrip().startswith(_COMMENT_LEADS):
-        marker = marker.merge(_parse_marker_contents(previous_line))  # The inline directives win over those above.
+    marker = _parse_marker_contents(line.text)
+    if line.previous_text.lstrip().startswith(_COMMENT_LEADS):
+        marker = marker.merge(_parse_marker_contents(line.previous_text))  # Inline directives win over those above.
     return marker
 
 

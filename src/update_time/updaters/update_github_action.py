@@ -7,19 +7,18 @@ If an environment variable GITHUB_TOKEN is set, the script will use it to increa
 """
 
 import re
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from update_time.domain.location import Location
-from update_time.domain.version import Reference
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
 from update_time.io.log import get_logger
-from update_time.references.github import latest_pin
+from update_time.references.file import rewrite_file
+from update_time.references.github import PinUpdater
 from update_time.references.rewrite import updated_lines
 
 if TYPE_CHECKING:
-    from update_time.domain.marker import Marker
+    from update_time.domain.line import Line
+    from update_time.domain.version import DependencyVersion, Reference
 
 LOG = get_logger("github action")
 # Match a `uses:` reference that is either already pinned to a commit SHA with a version comment
@@ -27,44 +26,30 @@ LOG = get_logger("github action")
 # local actions (no `@`) don't carry a resolvable version, so they don't match and are left untouched.
 ACTION_RE = re.compile(
     r"uses: (?P<dependency>[\w\d\./-]+)@"
-    r"(?:(?P<sha>[a-f0-9]{40}) # v?(?P<version>[\d\w\.\-]+)|v(?P<ref>[\d\w\.\-]+))"
+    r"(?:(?P<sha>[a-f0-9]{40}) # v?(?P<version>[\d\w\.\-]+)|v(?P<tag>[\d\w\.\-]+))"
 )
 
 
-def _update_action(match: re.Match[str], location: Location, marker: Marker) -> str:
-    """Pin or update a single `uses:` reference to the latest version's commit SHA, or leave it unchanged.
+def _spell_action(reference: Reference, latest: DependencyVersion) -> str:
+    """Return the `uses:` reference pinned to the latest version's commit SHA, with the version as a comment.
 
-    An action pinned to a commit SHA with a version comment (`<sha> # v4.1.1`), or referenced by version tag only,
-    is the same GitHub-SHA-pinned reference as a pre-commit hook `rev:`, so the decision is shared with
-    `_update_rev` via `latest_pin`; only the `uses:` output syntax is spelled here.
+    An action pins a commit SHA, not an image digest, so a marker's `allow_drift` opt-in never applies to one.
     """
-    dependency = match.group("dependency")
-    current_sha = match.group("sha") or ""
-    current_version = match.group("version") if current_sha else match.group("ref")
-    latest = latest_pin(Reference(dependency, current_version, current_sha), marker, location, LOG)
-    if latest is None:
-        return match.group(0)  # Invalid, held back, unpinnable, or already up to date: leave the reference as it is
-    return f"uses: {dependency}@{latest.sha} # v{latest.version}"
+    return f"uses: {reference.dependency}@{latest.sha} # v{latest.version}"
+
+
+_ACTION = PinUpdater(_spell_action, LOG)
+
+
+def _updated_lines(lines: list[Line]) -> list[str]:
+    """Return the file's lines with every `uses:` reference pinned or bumped, honouring markers."""
+    return updated_lines(lines, ACTION_RE, _ACTION.update_line, LOG)
 
 
 def update_github_actions(github_dir: Path) -> None:
     """Update the GitHub Actions in all YAML files under the GitHub directory, including composite actions."""
     for yaml_file in glob(*YAML_GLOB_PATTERNS, start=github_dir):
-        LOG.path(yaml_file)
-        old_content = yaml_file.read_text()
-
-        # Rewrite per line (keeping line endings) so an `# update-time:` marker can hold back or bound a single
-        # `uses:`; the marker reaches `_update_action` through the per-line substitution. The line's number rides
-        # along so the reference is logged with it. Actions pin a commit SHA, not an image digest, so the marker's
-        # `allow_drift` opt-in does not apply here.
-        def update_line(match: re.Match[str], marker: Marker, line_number: int, path: Path = yaml_file) -> str:
-            location = Location(path, line_number)
-            return ACTION_RE.sub(partial(_update_action, location=location, marker=marker), match.string)
-
-        new_lines = updated_lines(old_content.splitlines(keepends=True), ACTION_RE, update_line, LOG, yaml_file)
-        new_content = "".join(new_lines)
-        if new_content != old_content:
-            yaml_file.write_text(new_content)
+        rewrite_file(yaml_file, _updated_lines, LOG)
 
 
 def main() -> None:  # pragma: no cover

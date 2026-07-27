@@ -11,23 +11,21 @@ on the line directly above the URL.
 
 import re
 from dataclasses import dataclass, replace
-from functools import partial
-from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from update_time.domain.location import Location
-from update_time.domain.marker import parse_marker
-from update_time.domain.version import DependencyVersion, Reference
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.references.file import rewrite_file
 from update_time.references.resolve import latest_version
-from update_time.references.rewrite import apply_marker, rewrite_line
+from update_time.references.rewrite import apply_marker, matched_reference, rewrite_line
 from update_time.sources.jsdelivr import integrity_hash, version_getter
 
 if TYPE_CHECKING:
+    from update_time.domain.line import Line
+    from update_time.domain.location import Location
     from update_time.domain.marker import Marker
+    from update_time.domain.version import DependencyVersion, Reference
 
 LOG = get_logger("jsdelivr")
 
@@ -45,16 +43,15 @@ ATTRIBUTES_RE = re.compile(r'(?P<open>\{)(?:"integrity": "(?P<sha>sha\d+-[A-Za-z
 class _ResolvedURL:
     """A jsDelivr URL whose version has been resolved, waiting for the attribute dictionary that carries its hash."""
 
-    dependency: str
+    reference: Reference
     latest: DependencyVersion
-    current_version: str
     filename: str
     location: Location
 
     @property
     def version_moved(self) -> bool:
         """Return whether the version resolved for the URL differs from the one the URL records."""
-        return self.latest.version != self.current_version
+        return self.latest.version != self.reference.current_version
 
     def update_attributes(self, match: re.Match[str]) -> str:
         """Return the attribute dictionary's line, carrying the hash of the version the URL above resolved to."""
@@ -68,9 +65,9 @@ class _ResolvedURL:
         that version. The pin is only reported when the version stayed put: when it moved, the new version is the
         change to report and the pin travels with it.
         """
-        sha = self.latest.sha or integrity_hash(self.dependency, self.latest.version, self.filename)
+        sha = self.latest.sha or integrity_hash(self.reference.dependency, self.latest.version, self.filename)
         if not self.version_moved:
-            LOG.pinned(self.dependency, replace(self.latest, sha=sha), self.location)
+            LOG.pinned(self.reference.dependency, replace(self.latest, sha=sha), self.location)
         return rewrite_line(match, {"open": f'{{"integrity": "{sha}", '})
 
     def _refresh(self, match: re.Match[str]) -> str:
@@ -93,46 +90,42 @@ class _Rewriter:
 
     resolved: _ResolvedURL | None = None
 
-    def update_url(self, match: re.Match[str], marker: Marker, location: Location) -> str:
+    def update_url(self, match: re.Match[str], location: Location, marker: Marker) -> str:
         """Return the URL's line bumped to the latest version, or unchanged when there is no new version.
 
         Which version to move to is `latest_version`'s decision, shared with every other reference kind, honouring
         the URL's `# update-time:` marker with its bound and hold-backs. Only the URL's own output is spelled here;
         the hash of the resolved version is left to the dictionary line, which the pass reaches next.
         """
-        dependency, version = match.group("dependency"), match.group("version")
-        reference = Reference(dependency, version)
-        latest = latest_version(reference, version_getter(match.group("filename")), marker, location, LOG)
+        reference = matched_reference(match)
+        filename = match.group("filename")
+        latest = latest_version(reference, version_getter(filename), marker, location, LOG)
         if latest is None:
             return match.string
-        self.resolved = _ResolvedURL(dependency, latest, version, match.group("filename"), location)
+        self.resolved = _ResolvedURL(reference, latest, filename, location)
         if not self.resolved.version_moved:
             return match.string
-        LOG.new_version(dependency, latest, location)
+        LOG.new_version(reference.dependency, latest, location)
         return rewrite_line(match, {"version": latest.version})
 
-    def updated_lines(self, lines: list[str], path: Path) -> list[str]:
+    def updated_lines(self, lines: list[Line]) -> list[str]:
         """Return the config's lines with every jsDelivr URL and its integrity hash updated, honouring markers.
 
-        Each line that declares a URL is run through the shared `apply_marker` gate — a marker inline or on the line
-        directly above it holds the reference back or bounds it — which hands off to `update_url` for the rewrite;
-        each line is paired with the line before it so a standalone marker comment can apply to the URL below it. An
-        attribute dictionary is only visited while a resolved URL is waiting for it, so the dictionary of a reference
-        that was held back is left alone.
+        Each line that declares a URL is run through the shared `apply_marker` gate, which reads the URL's marker to
+        hold it back or bound it, and hands off to `update_url` for the rewrite. An attribute dictionary is only
+        visited while a resolved URL is waiting for it, so the dictionary of a reference that was held back is left
+        alone.
         """
         result = []
-        for line_number, (previous_line, line) in enumerate(pairwise(["", *lines]), start=1):
-            if url_match := URL_RE.search(line):
+        for line in lines:
+            if url_match := URL_RE.search(line.text):
                 self._end_entry()
-                marker = parse_marker(line, previous_line)
-                location = Location(path, line_number)
-                update = partial(self.update_url, url_match, marker, location)
-                result.append(apply_marker(line, url_match.group("dependency"), marker, location, LOG, update))
-            elif (resolved := self.resolved) and (attributes_match := ATTRIBUTES_RE.search(line)):
+                result.append(apply_marker(line, url_match, self.update_url, LOG))
+            elif (resolved := self.resolved) and (attributes_match := ATTRIBUTES_RE.search(line.text)):
                 self.resolved = None
                 result.append(resolved.update_attributes(attributes_match))
             else:
-                result.append(line)
+                result.append(line.text)
         self._end_entry()
         return result
 
@@ -143,14 +136,14 @@ class _Rewriter:
         below never inherits a hash resolved for the one above.
         """
         if self.resolved is not None:
-            LOG.cannot_pin(self.resolved.dependency, self.resolved.location)
+            LOG.cannot_pin(self.resolved.reference.dependency, self.resolved.location)
             self.resolved = None
 
 
 def update_jsdelivrs() -> None:
     """Find the Sphinx config files under docs/ and update the jsDelivr URLs in them."""
     for sphinx_config_py in glob("conf.py", start=Path.cwd() / "docs"):
-        rewrite_file(sphinx_config_py, partial(_Rewriter().updated_lines, path=sphinx_config_py), LOG)
+        rewrite_file(sphinx_config_py, _Rewriter().updated_lines, LOG)
 
 
 def main() -> None:  # pragma: no cover
