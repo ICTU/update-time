@@ -3,23 +3,39 @@
 A GitHub Action `uses:` pinned as `<sha> # v4.1.1` and a pre-commit hook `rev:` pinned as `<sha> # frozen: v4.5.0`
 are the same kind of reference: a GitHub repository pinned to a commit SHA, with the human-readable version travelling
 in a trailing comment. Both are (re)pinned to the latest version's commit SHA the same way; only the surrounding
-syntax — and so how the new reference text is spelled — differs. This module owns that shared decision, leaving each
-updater to parse its own version group and spell its own output.
+syntax — and so how the new reference text is spelled — differs. This module owns what the two share: reading the
+reference from a match, deciding the version to pin it to, and rewriting the line. Each updater supplies only how its
+own reference is spelled.
 """
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
-from update_time.domain.version import is_valid
+from update_time.domain.version import Reference, is_valid
 from update_time.references.resolve import latest_version
+from update_time.references.rewrite import matched_dependency, replace_reference
 from update_time.sources.github import get_latest_version
 
 if TYPE_CHECKING:
+    import re
+    from collections.abc import Callable
+
     from update_time.domain.location import Location
     from update_time.domain.marker import Marker
-    from update_time.domain.version import DependencyVersion, Reference
+    from update_time.domain.version import DependencyVersion
     from update_time.io.log import Logger
+
+
+def sha_pinned_reference(match: re.Match[str], dependency: str) -> Reference:
+    """Return the SHA-pinned GitHub reference the match captured.
+
+    A pinned reference carries its version in the trailing comment's `version` group, an unpinned one in its `tag`
+    group, so which group holds the version follows from whether `sha` matched.
+    """
+    current_sha = match.group("sha") or ""
+    return Reference(dependency, match.group("version") if current_sha else match.group("tag"), current_sha)
 
 
 def latest_pin(reference: Reference, marker: Marker, location: Location, log: Logger) -> DependencyVersion | None:
@@ -45,3 +61,28 @@ def latest_pin(reference: Reference, marker: Marker, location: Location, log: Lo
     else:
         return None  # Already pinned and up to date
     return latest
+
+
+@dataclass(frozen=True)
+class PinUpdater:
+    """Everything needed to update one kind of GitHub-SHA-pinned reference: how it is spelled, and where it reports.
+
+    `spell` turns the reference and the version it is being pinned to into that reference's own syntax — a `uses:`
+    for a GitHub Action, a `rev:` for a pre-commit hook.
+    """
+
+    spell: Callable[[Reference, DependencyVersion], str]
+    logger: Logger
+
+    def update_line(self, match: re.Match[str], location: Location, marker: Marker, dependency: str = "") -> str:
+        """Return the line with the reference (re)pinned to the latest version, or unchanged when it stays put.
+
+        Unchanged covers each case `latest_pin` declines: an invalid current version, a marker holding the update
+        back, no commit SHA to pin to, and a reference already pinned and up to date. The dependency comes from the
+        regexp's `dependency` group; a `rev:` takes it from the `repo:` above, so it names it in `dependency` instead.
+        """
+        reference = sha_pinned_reference(match, matched_dependency(match, dependency))
+        latest = latest_pin(reference, marker, location, self.logger)
+        if latest is None:
+            return match.string
+        return replace_reference(match, self.spell(reference, latest))

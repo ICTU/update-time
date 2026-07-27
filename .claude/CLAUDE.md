@@ -8,7 +8,7 @@ Consult the justfile to learn how to run tests and checks:
 
 ## Git
 
-I create the branches, commit, and push. Never do any of that, and never offer to: finishing a piece of work means reporting it with the tests and checks green, not proposing a commit.
+I create the branches, commit, and push. Never do any of that, and never offer to: finishing a piece of work means reporting it with the tests and checks green, not proposing a commit. Never run a command that discards work I haven't committed either (`git checkout <path>`, `git restore`, `git stash`) unless I ask for it: undo your own experiment by editing the file back, or run the experiment on a copy.
 
 ## Code review
 
@@ -18,6 +18,7 @@ When reviewing code, whether standalone or as part of the TDD refactor step, pay
 - **Duplication**: look for the same decision taken in more than one place, rather than for repeated lines. A rule every module has to remember to apply is duplication too: prefer stating it once, somewhere it cannot be forgotten. In tests, repeated setup or a repeated assertion is worth naming as a helper.
 - **Complexity**: a function should hold one decision. Watch for nesting, for flag parameters that make one function do two things, and for long parameter lists. When a docstring needs several sentences to describe the control flow, the code is doing too much, rather than the docstring being too short.
 - **Missing abstractions**: values that always travel together want a type, and a sequence of calls that callers must make in the right order wants a name. Raw strings, tuples, and dicts standing in for domain concepts are the usual smell; look for a type that already models the concept before adding one.
+- **Visibility**: a class, function, method, or constant without a leading underscore claims callers outside the module or class defining it, so check it has them. One made public for a call site that has since changed is the usual way that claim goes stale.
 - **Readability**: use the domain vocabulary the README establishes, consistently across code, docstrings, log messages, and tests. Prefer an early return to a nested conditional, say what a test asserts in its method name, and keep implementation terms out of anything the user reads.
 
 ## TDD
@@ -31,8 +32,8 @@ For a new feature, bug fix, task, or increment, prepare the cycle by adding at m
 Each cycle consists of the following three steps:
 
 1. **Red**: Show the list, then write the candidate test — don't design or write the implementation yet. Check the new test against existing tests first: when one already covers the case, add the assertion that pins it to that test instead of writing a near-duplicate. Predict the outcome of running the test, then run `just test`. If you predict the test will fail, say how the test will fail, naming the exact error, before running it. If you predict the test will succeed, say why the test will succeed. Run the whole suite, not just the new test's module, so that "only the new test fails" covers the whole suite. If the new test is predicted to fail, verify that only the new test fails, and that it fails as predicted. If you predicted the new test to succeed, verify that the whole suite succeeds. When anything else happens, analyse why and report to me. Hand back control.
-2. **Green**. If the test failed, design and implement the smallest change that makes the test pass, then run `just test` again. Smallest counts what the change leaves behind: a hack the next cycle has to throw away isn't smaller, so when you pick the structural change over it, say what you rejected. If the test succeeded, whether a refactor moved the mechanism it relies on or it pins down behaviour that already works, check that the test is not vacuous. Stub the mechanism out, confirm the test fails, and restore it. After `just test` passes, also run `just check` and fix any issue reported. Hand back control.
-3. **Refactor**. Review and refactor production and test code: review the whole diff against the code review criteria above, report the findings as a numbered list (R1, R2, ...), then work through them one at a time, running `just test` and `just check` after each. A fix a linter flagged is not that review. The cycle ends here, not at step 2: don't report the work finished with this step still outstanding, and don't wait to be asked for it. Hand back control.
+2. **Green**. If the test failed, design and implement the smallest change that makes the test pass, then run `just test` again. Smallest counts what the change leaves behind: a hack the next cycle has to throw away isn't smaller, so when you pick the structural change over it, say what you rejected. Docstrings and comments the change makes untrue are part of the change: update them now, not in the refactor step. If the test succeeded, whether a refactor moved the mechanism it relies on or it pins down behaviour that already works, check that the test is not vacuous. Stub the mechanism out, confirm the test fails, and restore it. After `just test` passes, also run `just check` and fix any issue reported. Hand back control.
+3. **Refactor**. Review and refactor production and test code: review the whole diff against the code review criteria above, and also — for anything whose signature, fields, or behaviour the step changed — its call sites and their docstrings, which the diff doesn't show. Review the architecture too: when the step adds a dependency between modules or widens what one exposes, add the new or to-be-tightened architecture test to the list of candidate tests. Report the findings as a numbered list (R1, R2, ...), then work through them one at a time, running `just test` and `just check` after each. A fix a linter flagged is not that review. The cycle ends here, not at step 2: hand back only once the R-list is reported, so a hand-back without one is an unfinished cycle.
 
 A few rules that keep the cycle honest:
 
@@ -46,6 +47,7 @@ A few rules that keep the cycle honest:
 8. `just check` prints `NOK` for a failing check, so don't count `OK` occurrences to conclude it passed: `NOK` contains `OK`.
 9. Settle a "could we do X?" design question by trying X and reporting what the checker or the suite says, not by reasoning about it: the tools name the exact errors, and the count tells us how much the alternative would cost. This holds for questions you mean to ask me too — try it first, so the question reaches me with numbers instead of an estimate.
 10. Add a missing candidate test to the list as soon as you identify one, at whatever step you are in.
+11. A refactor that changes behaviour is not a refactor, however unreachable the changed case looks. Say so before making the change rather than after, and let me decide whether a test has to drive it first.
 
 ## Documentation
 

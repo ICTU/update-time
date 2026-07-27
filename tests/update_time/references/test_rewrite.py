@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock
 
 from update_time.domain.bound import NO_BOUND, Verb
+from update_time.domain.line import located_lines
 from update_time.domain.location import Location
 from update_time.domain.marker import Marker
 from update_time.domain.version import DependencyVersion
@@ -62,13 +63,18 @@ class UpdateReferencesTest(unittest.TestCase):
     def rewrite(self, lines: list[str], regexp: str, get_new_version: NewVersionGetter) -> list[str]:
         """Run the rewrite engine over the lines with the given regexp and new-version getter."""
         return update_references_in_lines(
-            lines, regexp, get_new_version=get_new_version, logger=self.logger, path=self.path
+            located_lines(self.path, lines), regexp, get_new_version=get_new_version, logger=self.logger
         )
 
     def test_no_reference(self):
         """Test that lines without a reference are returned unchanged."""
         lines = ["line1", "line2"]
         self.assertEqual(lines, self.rewrite(lines, "regexp", new_version_getter("1.1")))
+        self.logger.new_version.assert_not_called()
+
+    def test_empty_file(self):
+        """Test that a file without any lines is returned unchanged."""
+        self.assertEqual(self.rewrite([], REGEXP, new_version_getter("3.15")), [])
         self.logger.new_version.assert_not_called()
 
     def test_new_version(self):
@@ -558,10 +564,8 @@ class MarkerForwardingTest(unittest.TestCase):
     def test_engine_forwards_the_verbatim_marker(self):
         """Test that the marker reaching `recognised_marker` carries its directives exactly as written."""
         logger = Mock()
-        lines = ["image: python:3.12  # update-time: ignore[update] ignore[stale]"]
-        update_references_in_lines(
-            lines, REGEXP, get_new_version=new_version_getter("3.15"), logger=logger, path=Mock()
-        )
+        lines = located_lines(Mock(), ["image: python:3.12  # update-time: ignore[update] ignore[stale]"])
+        update_references_in_lines(lines, REGEXP, get_new_version=new_version_getter("3.15"), logger=logger)
         logger.recognised_marker.assert_called_once()
         marker = cast("Marker", logger.recognised_marker.call_args.args[1])
         self.assertEqual(marker.raw_marker(), "ignore[update] ignore[stale]")

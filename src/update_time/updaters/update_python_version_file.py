@@ -18,27 +18,20 @@ Docker Hub rate limit.
 """
 
 import re
-from functools import partial
-from itertools import pairwise
 from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
-from update_time.domain.location import Location
-from update_time.domain.marker import parse_marker
-from update_time.domain.version import DependencyVersion, Reference, is_valid
+from update_time.domain.version import DependencyVersion, is_valid
 from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, first_line_match, glob
 from update_time.io.log import get_logger
-from update_time.references.file import rewrite_file
-from update_time.references.resolve import latest_version
-from update_time.references.rewrite import apply_marker
+from update_time.references.file import update_file
 from update_time.sources.oci import get_latest_tag
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from update_time.domain.bound import NewVersionGetter, VersionBound
-    from update_time.domain.marker import Marker
 
 LOG = get_logger("python version file")
 
@@ -100,47 +93,12 @@ def _image_version_getter(image_version: str) -> NewVersionGetter:
     return get_new_version
 
 
-def _update_version(match: re.Match[str], location: Location, marker: Marker, get_new_version: NewVersionGetter) -> str:
-    """Return the entry rewritten to its new version, or unchanged when there is no update.
-
-    Which version to move to is `latest_version`'s decision, shared with every other reference kind, honouring the
-    entry's `# update-time:` marker with its bound and hold-backs. Only the bare-version output is spelled here.
-    """
-    version = match.group("version")
-    latest = latest_version(Reference(PYTHON, version), get_new_version, marker, location, LOG)
-    if latest is None or latest.version == version:
-        return match.string
-    LOG.new_version(PYTHON, latest, location)
-    line = match.string
-    return line[: match.start("version")] + latest.version + line[match.end("version") :]
-
-
-def _updated_lines(lines: list[str], path: Path, get_new_version: NewVersionGetter) -> list[str]:
-    """Return the version file's lines with every plain CPython entry updated, honouring markers.
-
-    Each line that is a plain CPython version is handled independently, so a file that pins several versions (pyenv
-    allows this) updates each. Every matched entry is run through the shared `apply_marker` gate — a marker inline or
-    on the line directly above it holds it back or bounds it — which hands off to `_update_version` for the rewrite;
-    each line is paired with the line before it so a standalone marker comment can apply to the entry below it.
-    """
-    result = []
-    for line_number, (previous_line, line) in enumerate(pairwise(["", *lines]), start=1):
-        if not (match := VERSION_RE.search(line)):
-            result.append(line)
-            continue
-        marker = parse_marker(line, previous_line)
-        location = Location(path, line_number)
-        update = partial(_update_version, match, location, marker, get_new_version)
-        result.append(apply_marker(line, PYTHON, marker, location, LOG, update))
-    return result
-
-
 def update_python_version_files(start: Path | None = None) -> None:
     """Update the CPython version in all `.python-version` files found recursively from the start directory."""
     for version_file in glob(PYTHON_VERSION_FILE, start=start):
         image_version = _find_python_base_image_version(version_file)
         get_new_version = _image_version_getter(image_version) if image_version else get_latest_tag
-        rewrite_file(version_file, partial(_updated_lines, path=version_file, get_new_version=get_new_version), LOG)
+        update_file(version_file, VERSION_RE, get_new_version=get_new_version, logger=LOG, dependency=PYTHON)
 
 
 def main() -> None:  # pragma: no cover

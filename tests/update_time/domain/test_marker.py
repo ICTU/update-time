@@ -1,9 +1,17 @@
 """Unit tests for the marker domain object."""
 
 import unittest
+from pathlib import Path
 
 from update_time.domain.bound import Verb
+from update_time.domain.line import Line
+from update_time.domain.location import Location
 from update_time.domain.marker import Marker, parse_marker
+
+
+def line(text: str, previous_text: str = "") -> Line:
+    """Return the text as a line of a file, with the text of the line above it."""
+    return Line(text, previous_text, Location(Path("conf.py"), 1))
 
 
 class MergeTest(unittest.TestCase):
@@ -48,7 +56,7 @@ class ParseMarkerScopeTest(unittest.TestCase):
 
     def test_ignore_yanked(self):
         """Test that `ignore[yanked]` holds back only the yank warning, leaving the update and staleness live."""
-        marker = parse_marker("humanize==4.15.0  # update-time: ignore[yanked]", "")
+        marker = parse_marker(line("humanize==4.15.0  # update-time: ignore[yanked]"))
         self.assertEqual(marker, Marker(ignore_yanked=True))
 
 
@@ -57,29 +65,31 @@ class ParseMarkerRawTest(unittest.TestCase):
 
     def test_verbatim_directives(self):
         """Test that the parsed marker keeps the directives exactly as written."""
-        marker = parse_marker("image: python:3.12  # update-time: ignore[update] ignore[stale]", "")
+        marker = parse_marker(line("image: python:3.12  # update-time: ignore[update] ignore[stale]"))
         self.assertEqual(marker.raw, "ignore[update] ignore[stale]")
 
     def test_comma_combined_items_kept_together(self):
         """Test that comma-combined bracket items are kept as one directive, not split apart."""
-        marker = parse_marker("image: python:3.14  # update-time: allow[update<3.15, digest-drift]", "")
+        marker = parse_marker(line("image: python:3.14  # update-time: allow[update<3.15, digest-drift]"))
         self.assertEqual(marker.raw, "allow[update<3.15, digest-drift]")
 
     def test_unrecognised_scope_kept_as_written(self):
         """Test that a typo'd scope is kept as written even though it parses as a bare `ignore`."""
-        marker = parse_marker("image: python:3.12  # update-time: ignore[updaet]", "")
+        marker = parse_marker(line("image: python:3.12  # update-time: ignore[updaet]"))
         self.assertEqual(marker.raw, "ignore[updaet]")
 
     def test_trailing_reason_left_out(self):
         """Test that free text after the last directive (a reason) is not part of the captured text."""
-        marker = parse_marker("image: python:3.12  # update-time: ignore[stale] (until the migration)", "")
+        marker = parse_marker(line("image: python:3.12  # update-time: ignore[stale] (until the migration)"))
         self.assertEqual(marker.raw, "ignore[stale]")
 
     def test_directives_across_two_lines_are_ordered_inline_first(self):
         """Test that a marker split over a line and the comment above it captures both, inline directives first."""
-        marker = parse_marker("image: python:3.14  # update-time: allow[update<3.15]", "# update-time: ignore[stale]")
+        marker = parse_marker(
+            line("image: python:3.14  # update-time: allow[update<3.15]", "# update-time: ignore[stale]")
+        )
         self.assertEqual(marker.raw, "allow[update<3.15] ignore[stale]")
 
     def test_no_marker_has_empty_raw(self):
         """Test that a line without a marker parses to an empty verbatim text, so nothing is echoed for it."""
-        self.assertEqual(parse_marker("image: python:3.12", "").raw, "")
+        self.assertEqual(parse_marker(line("image: python:3.12")).raw, "")

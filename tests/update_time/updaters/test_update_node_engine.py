@@ -21,7 +21,7 @@ from tests.update_time.registry import mock_docker_registry
 class UpdateNodeEnginesTest(LoggingTestCase):
     """Unit tests for the update Node engines function."""
 
-    def create_package_json(self, contents: str = '{"engines": {"node": "18" }}') -> Mock:
+    def create_package_json(self, contents: str = '{"engines": {"node": "18" }}\n') -> Mock:
         """Create a mock package.json file."""
         return mock_path(contents, parent=Path("/"))
 

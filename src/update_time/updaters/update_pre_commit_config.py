@@ -11,23 +11,20 @@ If an environment variable GITHUB_TOKEN is set, the script will use it to increa
 
 import re
 from functools import partial
-from itertools import pairwise
 from typing import TYPE_CHECKING
 
-from update_time.domain.location import Location
-from update_time.domain.marker import parse_marker
-from update_time.domain.version import Reference
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.references.file import rewrite_file
-from update_time.references.github import latest_pin
+from update_time.references.github import PinUpdater
 from update_time.references.rewrite import apply_marker
 from update_time.sources.github import github_owner_and_repository
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from update_time.domain.marker import Marker
+    from update_time.domain.line import Line
+    from update_time.domain.version import DependencyVersion, Reference
 
 LOG = get_logger("pre-commit config")
 
@@ -60,54 +57,44 @@ def _dependency_from_repo(repo: str) -> str:
     return f"{owner}/{repository}" if owner and repository else ""
 
 
-def _update_rev(match: re.Match[str], dependency: str, location: Location, marker: Marker) -> str:
-    """Pin or bump a single `rev:` to the latest version's commit SHA, or leave it unchanged.
+def _spell_rev(reference: Reference, latest: DependencyVersion) -> str:
+    """Return the `rev:` pinned to the latest version's commit SHA, with the version in a `# frozen:` comment.
 
-    A hook `rev:` pinned to a commit SHA with a `# frozen: v4.5.0` comment, or referenced by version tag only, is the
-    same GitHub-SHA-pinned reference as a GitHub Action `uses:`, so the decision is shared with `_update_action` via
-    `latest_pin`; only the `rev:` output is spelled here. The version is echoed in the `# frozen:` comment keeping the
-    tag's own `v` prefix convention, so the config stays interoperable with pre-commit's tooling.
+    The version keeps the tag's own `v` prefix convention, so the config stays interoperable with pre-commit's own
+    tooling: `pre-commit autoupdate --freeze` produces and understands this format.
     """
-    current_sha = match.group("sha") or ""
-    current_version = match.group("version") if current_sha else match.group("tag")
-    latest = latest_pin(Reference(dependency, current_version, current_sha), marker, location, LOG)
-    if latest is None:
-        return match.string  # Invalid, held back, unpinnable, or already up to date: leave the reference as it is
-    frozen_version = f"v{latest.version}" if current_version.startswith("v") else latest.version
-    line = match.string
-    return f"{line[: match.start()]}rev: {latest.sha}  # frozen: {frozen_version}{line[match.end() :]}"
+    frozen_version = f"v{latest.version}" if reference.current_version.startswith("v") else latest.version
+    return f"rev: {latest.sha}  # frozen: {frozen_version}"
 
 
-def _updated_lines(lines: list[str], path: Path) -> list[str]:
+_REV = PinUpdater(_spell_rev, LOG)
+
+
+def _updated_lines(lines: list[Line]) -> list[str]:
     """Return the config's lines with every GitHub-hosted hook's `rev:` pinned or bumped, honouring markers.
 
     Unlike the single-line references most updaters rewrite, a hook's repository and its `rev:` sit on separate
     lines, so the pass tracks the repository from each `repo:` line and applies it to the `rev:` lines that follow.
-    An `# update-time:` marker on the `rev:` line, or on a standalone comment directly above it, holds the reference
-    back, bounds it, or (an unparsable item) leaves it unchanged; each is logged at debug level so users can confirm
-    a marker was recognised. Each line is paired with the line before it, so a standalone marker comment can apply
-    to the `rev:` below it.
+    A `rev:` whose repository is not on GitHub carries no dependency, so it is left untouched.
     """
     result = []
     dependency = ""  # The GitHub owner/repository of the `repo:` in scope, or "" for a local/meta/non-GitHub repo.
-    for line_number, (previous_line, line) in enumerate(pairwise(["", *lines]), start=1):
-        if repo_match := REPO_RE.search(line):
+    for line in lines:
+        if repo_match := REPO_RE.search(line.text):
             dependency = _dependency_from_repo(repo_match.group("repo"))
-            result.append(line)
-        elif (rev_match := REV_RE.search(line)) and dependency:
-            marker = parse_marker(line, previous_line)
-            location = Location(path, line_number)
-            update = partial(_update_rev, rev_match, dependency, location, marker)
-            result.append(apply_marker(line, dependency, marker, location, LOG, update))
+            result.append(line.text)
+        elif (rev_match := REV_RE.search(line.text)) and dependency:
+            update_line = partial(_REV.update_line, dependency=dependency)
+            result.append(apply_marker(line, rev_match, update_line, LOG, dependency))
         else:
-            result.append(line)
+            result.append(line.text)
     return result
 
 
 def update_pre_commit_configs(start: Path | None = None) -> None:
     """Update the hook revs in all `.pre-commit-config.yaml` files found recursively from the start directory."""
     for config in glob(PRE_COMMIT_CONFIG, start=start):
-        rewrite_file(config, partial(_updated_lines, path=config), LOG)
+        rewrite_file(config, _updated_lines, LOG)
 
 
 def main() -> None:  # pragma: no cover
