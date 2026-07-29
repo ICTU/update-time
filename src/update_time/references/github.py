@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
+from update_time.domain.drift import drift_cause, pin_drifted
 from update_time.domain.version import Reference, is_valid
 from update_time.references.resolve import latest_version
 from update_time.references.rewrite import matched_dependency, replace_reference
@@ -44,9 +45,10 @@ def latest_pin(reference: Reference, marker: Marker, location: Location, log: Lo
     Which version to update to is `latest_version`'s decision, resolving through `sources.github`; layered on top
     here is what is specific to a SHA-pinned reference. Returns None — leave the reference as it is — when the
     current version is invalid (a branch name, or a bare SHA without a version comment), the marker holds the
-    update back, no commit SHA is available to pin to, or the reference is already pinned and up to date. Otherwise
-    it logs the change (a pin for a previously unpinned reference, a new version for an already-pinned one) and
-    returns the resolved version for the caller to format into its own syntax.
+    update back, no commit SHA is available to pin to, or the reference is already pinned and up to date. A
+    reference that stays on its version is handed to `_drifted_pin`, since its tag may have moved. Otherwise it logs
+    the change (a pin for a previously unpinned reference, a new version for an already-pinned one) and returns the
+    resolved version for the caller to format into its own syntax.
     """
     dependency, current_version, current_sha = reference.dependency, reference.current_version, reference.current_sha
     if not is_valid(current_version):
@@ -59,7 +61,26 @@ def latest_pin(reference: Reference, marker: Marker, location: Location, log: Lo
     elif Version(latest.version) != Version(current_version):
         log.new_version(dependency, latest, location)
     else:
+        return _drifted_pin(reference, latest, marker, location, log)
+    return latest
+
+
+def _drifted_pin(
+    reference: Reference, latest: DependencyVersion, marker: Marker, location: Location, log: Logger
+) -> DependencyVersion | None:
+    """Return the version to re-pin the reference to when its tag has moved, or None to leave its pin as it is.
+
+    A reference that stays on its version can still have had that version's tag moved onto another commit. Adopting
+    that silently would defeat the pin, so the new commit is only adopted when the reference opted in (see
+    `drift_cause`); otherwise the drift is warned about and the pin left alone.
+    """
+    dependency, version, current_sha = reference.dependency, latest.version, reference.current_sha
+    if not pin_drifted(latest.sha, current_sha):
         return None  # Already pinned and up to date
+    if (cause := drift_cause(marker)) is None:
+        log.tag_drift(dependency, version, current_sha, latest.sha, location)
+        return None
+    log.adopted_tag_drift(dependency, version, current_sha, latest.sha, location, cause)
     return latest
 
 

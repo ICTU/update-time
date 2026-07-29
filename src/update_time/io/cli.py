@@ -103,11 +103,11 @@ def parse_args() -> argparse.Namespace:
         "are rejected. Run with --log-level DEBUG to see excluded directories",
     )
     parser.add_argument(
-        "--allow-image-digest-drift",
+        "--allow-pin-drift",
         action="store_true",
-        help="when an already-pinned image tag has been re-pushed under the same version, adopt its new digest "
-        "instead of only warning; equivalent to marking every image reference with # update-time: "
-        "allow[digest-drift] (an # update-time: ignore marker still wins)",
+        help="when an already-pinned image tag has been re-pushed, or a pinned version tag has been moved to another "
+        "commit, adopt the new digest or commit instead of only warning; equivalent to marking every reference with "
+        "# update-time: allow[pin-drift] (an # update-time: ignore marker still wins)",
     )
     parser.add_argument(
         "--force",

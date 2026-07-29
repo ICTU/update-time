@@ -33,7 +33,7 @@ ACTION_RE = re.compile(
 def _spell_action(reference: Reference, latest: DependencyVersion) -> str:
     """Return the `uses:` reference pinned to the latest version's commit SHA, with the version as a comment.
 
-    An action pins a commit SHA, not an image digest, so a marker's `allow_drift` opt-in never applies to one.
+    The SHA is the latest version's, or — for a reference adopting a moved tag — that tag's new commit.
     """
     return f"uses: {reference.dependency}@{latest.sha} # v{latest.version}"
 

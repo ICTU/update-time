@@ -5,13 +5,14 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
+from update_time.domain.drift import ALLOW_PIN_DRIFT
 from update_time.domain.version import DependencyVersion
 from update_time.io.log import Logger
 from update_time.updaters.update_github_action import update_github_actions
 
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
-from tests.update_time.helpers import LoggingTestCase, bound, mock_path
+from tests.update_time.helpers import LoggingTestCase, bound, mock_path, patch_environ
 
 GITHUB_DIR = Path("/repo/.github")
 
@@ -56,6 +57,42 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml.write_text.assert_not_called()
         self.assert_path_logged(workflow_yml)
         self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+    def test_moved_tag_warned_not_repinned(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that a pinned action whose tag now points at another commit is warned about, not silently re-pinned."""
+        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=NEW_SHA)
+        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        update_github_actions(GITHUB_DIR)
+        workflow_yml.write_text.assert_not_called()
+        self.assert_tag_drift_logged(workflow_yml, "action/action", "1.0", OLD_SHA, NEW_SHA, line=1)
+        self.assert_no_new_version_logged()
+
+    def test_allow_pin_drift_marker_adopts_moved_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an `allow[pin-drift]` marker re-pins a moved tag's commit instead of only warning about it."""
+        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=NEW_SHA)
+        marker = "  # update-time: allow[pin-drift]"
+        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0{marker}\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        update_github_actions(GITHUB_DIR)
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0{marker}\n")
+        self.assert_adopted_tag_drift_logged(
+            workflow_yml, "action/action", "1.0", OLD_SHA, NEW_SHA, "update-time: allow[pin-drift]", line=1
+        )
+        self.assert_no_warnings_logged()
+
+    def test_flag_adopts_moved_tag_repo_wide(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that the --allow-pin-drift flag (via its env var) adopts a moved tag without a per-line marker."""
+        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=NEW_SHA)
+        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        with patch_environ({ALLOW_PIN_DRIFT.name: "1"}):
+            update_github_actions(GITHUB_DIR)
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0\n")
+        self.assert_adopted_tag_drift_logged(
+            workflow_yml, "action/action", "1.0", OLD_SHA, NEW_SHA, "--allow-pin-drift", line=1
+        )
         self.assert_no_warnings_logged()
 
     def test_stale_action_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):

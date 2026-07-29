@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/update-time?logo=pypi&logoColor=white)](https://pypi.org/project/update-time/) [![Python versions](https://img.shields.io/pypi/pyversions/update-time?logo=python&logoColor=white)](https://pypi.org/project/update-time/) [![License](https://img.shields.io/pypi/l/update-time)](https://github.com/ICTU/update-time/blob/main/LICENSE)
 
-Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for [dependencies](#-what-is-updated) and updates them to their latest versions. In addition, it [pins](#-pinning) unpinned versions if possible. To protect against supply-chain attacks, it applies a [cooldown](#-cooldown) period. And it warns you about [stale dependencies](#-stale-dependencies) and [yanked versions](#-yanked-dependencies).
+Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for [dependencies](#-what-is-updated) and updates them to their latest versions. In addition, it adds a [hash pin](#-pinning) wherever a reference can carry one. To protect against supply-chain attacks, it applies a [cooldown](#-cooldown) period. And it warns you about [stale dependencies](#-stale-dependencies) and [yanked versions](#-yanked-dependencies).
 
 Example Update-time output:
 
@@ -46,8 +46,8 @@ Running `update-time -h` shows the full command-line interface:
 ```console
 $ update-time -h
 usage: update-time [-h] [-V] [--cooldown DAYS] [--stale-after DAYS]
-                   [--exclude-path PATHS] [--allow-image-digest-drift]
-                   [--force] [--log-level {DEBUG,INFO,WARNING,ERROR}]
+                   [--exclude-path PATHS] [--allow-pin-drift] [--force]
+                   [--log-level {DEBUG,INFO,WARNING,ERROR}]
                    [PATH]
 
 Scan the PATH for pinned dependencies and update them to their latest
@@ -85,12 +85,12 @@ options:
                         paths, or paths that escape the scan root (../…), are
                         rejected. Run with --log-level DEBUG to see excluded
                         directories
-  --allow-image-digest-drift
-                        when an already-pinned image tag has been re-pushed
-                        under the same version, adopt its new digest instead
-                        of only warning; equivalent to marking every image
-                        reference with # update-time: allow[digest-drift] (an
-                        # update-time: ignore marker still wins)
+  --allow-pin-drift     when an already-pinned image tag has been re-pushed,
+                        or a pinned version tag has been moved to another
+                        commit, adopt the new digest or commit instead of only
+                        warning; equivalent to marking every reference with #
+                        update-time: allow[pin-drift] (an # update-time:
+                        ignore marker still wins)
   --force               run even when not inside a git repository (changes are
                         made in place and cannot be reverted)
   --log-level {DEBUG,INFO,WARNING,ERROR}
@@ -201,7 +201,7 @@ Each entry that is a plain CPython version, `X.Y` or `X.Y.Z` (for example `3.12`
 
 #### What versions are updated?
 
-An entry is moved forward and pinned to a fuller version. Like the Node engine version, the new version is taken from the Python base image in the project's Dockerfile, so the development and production runtimes stay in step, provided there is a Dockerfile in the same folder with a `FROM python:<version>` base image that has a numeric version. The entry then adopts that image's version at the precision the tag provides, so `python:3.14.2-slim` yields `3.14.2` and a bare `python:3.14` yields `3.14`; an entry already ahead of the image is left alone rather than downgraded. When no Dockerfile declares a numeric Python base image, the entry is instead updated to the latest [Python](https://hub.docker.com/_/python) release on Docker Hub, honouring the [cooldown](#-cooldown), which pins even a less precise entry to the full version, so `3.12.6` — and `3.12` — become `3.13.2` (or whatever the latest is).
+An entry is moved forward to a fuller version. Like the Node engine version, the new version is taken from the Python base image in the project's Dockerfile, so the development and production runtimes stay in step, provided there is a Dockerfile in the same folder with a `FROM python:<version>` base image that has a numeric version. The entry then adopts that image's version at the precision the tag provides, so `python:3.14.2-slim` yields `3.14.2` and a bare `python:3.14` yields `3.14`; an entry already ahead of the image is left alone rather than downgraded. When no Dockerfile declares a numeric Python base image, the entry is instead updated to the latest [Python](https://hub.docker.com/_/python) release on Docker Hub, honouring the [cooldown](#-cooldown), which moves even a less precise entry to the full version, so `3.12.6` — and `3.12` — become `3.13.2` (or whatever the latest is).
 
 Other Python version pins are left untouched: the `requires-python` value in `pyproject.toml` and in PEP 723 inline script metadata is not a `.python-version` entry and stays as it is.
 
@@ -281,34 +281,54 @@ The npm package version embedded in the URL is updated to the latest version on 
 
 ## 📌 Pinning
 
-Update-time strives to pin unpinned dependencies to a version or tag in combination with a digest or commit SHA to protect against supply-chain attacks.
+*Pinning* covers two layers, and this section is about the second one.
 
-### Dependencies pinned
+A **version pin** names an exact version instead of something that floats: `python:3.14` instead of `python:latest`, `humanize==4.15.0` instead of `humanize>=4`. That is what Update-time scans for and moves forward.
 
-What Update-time pins for each kind of dependency:
+A **hash pin** adds a cryptographic hash of what the version resolves to — an image digest, a commit SHA, or an integrity hash — so the exact artefact is verified rather than trusted. The difference is immutability: a version pin can be re-pointed under you, because a tag can be moved or re-pushed, while a hash pin can only match the one thing it was computed from. That is what protects against a supply-chain attack, and Update-time strives to add one wherever a reference can carry it.
+
+### Dependencies with a hash pin
+
+What Update-time adds for each kind of dependency:
 
 - Docker images referenced by tag only get the `@sha256:digest` of the (latest) tag appended, so the image is reproducible. This covers base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, Docker Compose and Helm manifest images, and devcontainer base images and features. The image's registry is taken from the reference, so images on Docker Hub and on other OCI registries (`ghcr.io`, `mcr.microsoft.com`, …) are both resolved. The cooldown, however, only applies to Docker Hub, since the OCI protocol exposes no publication date.
 - GitHub Actions referenced by version tag only are pinned to the commit SHA of the latest version, with the version added as a trailing comment: `uses: actions/checkout@v4` becomes `uses: actions/checkout@<sha> # v4.1.1`.
 - Pre-commit hook `rev:`s referenced by version tag only are pinned to the commit SHA of the latest version, with the version travelling in pre-commit's own `# frozen: <version>` comment convention: `rev: v4.5.0` becomes `rev: <sha>  # frozen: v4.5.0`. This is the same format `pre-commit autoupdate --freeze` produces and understands, so the config stays interoperable with pre-commit's own tooling. The tag's `v` prefix convention is kept in the comment, so a repository that tags without a `v` gets `# frozen: 4.5.0`.
 - jsDelivr npm URLs whose attribute dictionary declares no `integrity` entry gain one, so the browser verifies the script the CDN serves before running it. The hash is inserted in front of the entries the dictionary already has, and reported as a pin: `Pinned clipboard in docs/conf.py:4 to 2.0.11@sha256-…`.
-- A `.python-version` entry has no digest or commit SHA to add, so its pinning is writing a fuller version: when the version comes from Docker Hub a less precise `3.12` is pinned to the full `3.13.2`, while in the Dockerfile tier it adopts the image tag's precision instead (see [Python version](#python-version)).
 
-### Dependencies not pinned
+### Dependencies without a hash pin
 
-Some types of dependencies are not pinned by Update-time:
+Some dependencies get no hash pin from Update-time:
 
 - Docker images without a concrete version tag are ignored: references through a `{{ ... }}` template or `${VAR}` variable substitution, and tagless base images such as `FROM scratch` or stage references.
-- CircleCI machine-executor images (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) are not pinned, since they are not registry images.
+- CircleCI machine-executor images (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) get no hash pin, since they are not registry images.
 - GitHub Actions referenced by a branch (e.g. `@main`) are left untouched because they don't resolve to a version.
 - Pre-commit hook `rev:`s that name a branch, or that are already a bare commit SHA without a `# frozen:` comment, don't resolve to a version and are left untouched, as are `repo: local`, `repo: meta`, and repositories hosted outside GitHub.
-- The Node engine version is a version constraint, not a locked dependency, so it can't be pinned.
-- A jsDelivr npm URL declared as a bare string, without an attribute dictionary, has nowhere to hold an integrity hash, so it stays unpinned. Pinning it would mean rewriting the string into a `(url, {"integrity": …})` tuple, which is more than rewriting a line, so Update-time reports it at `INFO` and leaves it alone. Declare the URL as such a tuple to have it pinned.
+- The Node engine version is a version constraint, not a locked dependency, so it can't carry a hash pin.
+- A `.python-version` entry names a CPython version rather than a fetched artefact, so there is no digest, commit SHA, or hash to add. Update-time only moves the entry to a fuller version, which makes it more precise but verifies nothing (see [Python version](#python-version)).
+- A jsDelivr npm URL declared as a bare string, without an attribute dictionary, has nowhere to hold an integrity hash, so it stays without one. Adding a hash would mean rewriting the string into a `(url, {"integrity": …})` tuple, which is more than rewriting a line, so Update-time reports it at `INFO` and leaves it alone. Declare the URL as such a tuple to have it pinned.
 
-### Digest drift
+### Pin drift
 
-Sometimes an image reference is already pinned to a digest and only that digest has changed at the registry: the tag was re-pushed (rebuilt) under the same name and version. Update-time then warns about the *digest drift*. It leaves the pin unchanged by default, so a re-pushed digest is never silently adopted (which would defeat the immutability a digest pin exists to provide).
+Sometimes a reference already carries a hash pin and only what it points at has changed. Update-time warns about that and leaves the pin unchanged, so a changed target is never silently adopted (which would defeat the immutability a pin exists to provide). It takes three forms, one per kind of pin:
 
-To adopt the new digest instead, opt the reference in with an `# update-time: allow[digest-drift]` marker (see [Controlling updates per reference](#-controlling-updates-per-reference) for placement). Alternatively, pass `--allow-image-digest-drift` to opt every image reference in the scan in at once. Adopted drift is logged at `INFO`, like any other change. An `# update-time: ignore` (or `ignore[update]`) marker still wins over both, so a reference you deliberately froze is never re-pinned.
+```console
+WARNING Digest drift for python:3.14 in Dockerfile:1: pinned to sha256:… but the registry now serves sha256:…; the pin was left unchanged, verify the change is expected before updating the pin
+WARNING Tag drift for actions/checkout@4.1.1 in .github/workflows/ci.yml:17: pinned to commit … but the tag now points at …; the pin was left unchanged, verify the tag was moved deliberately before updating the pin
+WARNING Integrity hash mismatch for clipboard@2.0.11 in docs/conf.py:4: declares sha256-… but jsDelivr serves sha256-…; the hash was left unchanged, and since npm does not republish a version it is probably the declared hash that is wrong
+```
+
+*Digest drift* means an image tag was re-pushed (rebuilt) under the same name and version, so the registry now serves a different digest.
+
+*Tag drift* means the version tag of a GitHub Action or pre-commit hook was moved onto another commit than the one the reference pins — a git tag is mutable, so whoever controls the repository can move `v4.1.1`. This is what pinning to a commit SHA exists to catch: the pin keeps the run on the commit it was pinned to whatever the tag does, which is the point, but without the warning nothing tells you that tag and pin have parted company.
+
+An *integrity hash mismatch* means the hash a jsDelivr URL declares is not the one jsDelivr serves for the version the URL sits on. Unlike the other two this rarely means anything upstream changed, since npm does not allow a published version to be republished; the declared hash is more likely wrong — mistyped, copied from another file, or tampered with. It is also the most urgent, because the browser silently refuses to load the script until the hash matches, which no build step catches. Checking it costs one extra request per up-to-date URL that declares a hash.
+
+A reference with no digest, commit SHA, or hash has nothing that can drift, so a `requirements.txt` pin, a `.python-version` entry, and the Node engine version are not checked; nor are the dependencies Update-time updates through uv, npm, and pnpm.
+
+To adopt the new value instead, opt the reference in with an `# update-time: allow[pin-drift]` marker (see [Controlling updates per reference](#-controlling-updates-per-reference) for placement): an image reference then adopts the re-pushed digest, and a GitHub Action or pre-commit hook adopts the commit its tag was moved to. Alternatively, pass `--allow-pin-drift` to opt every reference in the scan in at once. Adopted drift is logged at `INFO`, like any other change. An `# update-time: ignore` (or `ignore[update]`) marker still wins over both, so a reference you deliberately froze is never re-pinned.
+
+An integrity hash mismatch is never adopted, whatever you opt in to: the whole point of the hash is to refuse content that doesn't match it, so Update-time reports it and leaves correcting it to you.
 
 ## ⏳ Cooldown
 
@@ -367,7 +387,7 @@ A yank can only be observed where the dependency's source reports one, so of the
 WARNING Redundant update-time marker ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept, so the marker holds nothing back
 ```
 
-One further marker does the opposite of holding a reference back. `# update-time: allow[digest-drift]` opts an already-digest-pinned image reference *into* adopting a re-pushed digest, so when only its digest has drifted the new digest is pinned instead of only warned about (see [Pinning](#-pinning)). It follows the same placement rules as the other markers, and the global `--allow-image-digest-drift` flag applies it to every image reference at once. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.
+One further marker does the opposite of holding a reference back. `# update-time: allow[pin-drift]` opts an already-pinned reference *into* adopting what it now points at, so a re-pushed image tag's new digest, or the commit a moved version tag points at, is pinned instead of only warned about (see [Pin drift](#pin-drift)). It follows the same placement rules as the other markers, and the global `--allow-pin-drift` flag applies it to every reference at once. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.
 
 `ignore[update]` freezes a reference at its current version. Sometimes you want the middle ground: keep receiving updates *within a range* while blocking a jump you're not ready for — for example, keep getting `python:3.12` patch releases but hold off on `3.13` until you've migrated. Add a [PEP 440](https://peps.python.org/pep-0440/) version specifier directly after `update` inside the brackets, either to allow or ignore updates: `# update-time: allow[update<specifier>]` **keeps only** the updates whose version satisfies the specifier, and `# update-time: ignore[update<specifier>]` **drops** the updates whose version satisfies it (the plain `ignore[update]` is the drop-everything case).
 
@@ -413,7 +433,7 @@ A few rules govern how a bound — with a specifier or level-based — interacts
 - Use a single bound per reference; pairing two bounds, say an `allow[update<specifier>]` with an `ignore[update<specifier>]`, or a specifier bound with a level-based one, on one reference is undefined.
 - A bound narrows updates only, not staleness. Staleness is always measured against the project's newest overall release; the bound doesn't come into play.
 - The digest is still pinned or refreshed for whichever version the bound selects, exactly as without a bound.
-- To combine a bound with another directive of the same verb (say, `allow[digest-drift]`), list both as comma-separated items in one bracket: `# update-time: allow[update<3.13, digest-drift]` or `# update-time: allow[minor-update, digest-drift]`. To combine directives of different verbs, list them after the `# update-time:` prefix, separated by a space: `# update-time: ignore[stale] allow[update<3.13]`. A reason can still follow the last directive.
+- To combine a bound with another directive of the same verb (say, `allow[pin-drift]`), list both as comma-separated items in one bracket: `# update-time: allow[update<3.13, pin-drift]` or `# update-time: allow[minor-update, pin-drift]`. To combine directives of different verbs, list them after the `# update-time:` prefix, separated by a space: `# update-time: ignore[stale] allow[update<3.13]`. A reason can still follow the last directive.
 
 Update-time logs a `WARNING` when a bound is redundant. That may happen in two ways:
 - Either the bound **never has an effect**, so removing it would change nothing: the current version and every version above it satisfy the bound, for example `allow[update>=3.12]` on a `3.12` pin, or `allow[major-update]` on any pin (it allows every update, so it says nothing).

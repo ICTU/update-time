@@ -10,9 +10,16 @@ from update_time.updaters.update_jsdelivr import update_jsdelivrs
 from tests.update_time.fixtures import HASH1, HASH2
 from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, mock_path, mock_response, npm_registry
 
-# The flat package listing as returned by the jsDelivr API with ?structure=flat, referencing the file below.
 FILENAME = "/dist/clipboard.min.js"
-FLAT_FILES = {"default": FILENAME, "files": [{"name": FILENAME, "hash": HASH2}]}
+
+
+def served(*hashes: str) -> Mock:
+    """Return the flat package listing the jsDelivr API returns with ?structure=flat, serving the file's hash.
+
+    Passing no hash models a listing that doesn't mention the referenced file at all, so no hash can be resolved.
+    """
+    return mock_response({"default": FILENAME, "files": [{"name": FILENAME, "hash": served} for served in hashes]})
+
 
 # An npm publication date comfortably past the cooldown, relative to now so the decision doesn't depend on the clock.
 ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN.default + 1)).isoformat()
@@ -52,18 +59,24 @@ class UpdateJsdelivrsTest(LoggingTestCase):
 
     @staticmethod
     def offer_versions(
-        mock_get: Mock, *versions: str, published: str = ELIGIBLE, deprecated: dict[str, str] | None = None
+        mock_get: Mock,
+        *versions: str,
+        published: str = ELIGIBLE,
+        deprecated: dict[str, str] | None = None,
+        served_hash: str = HASH2,
     ) -> None:
         """Let the registries offer the versions, newest first, each published on the given date.
 
         The three responses are the fixed order the source asks for them in: the jsDelivr version list, the npm
         registry document carrying each version's publication date and deprecation, and the flat file listing
-        carrying the integrity hash. A run that stays on its current version never reaches the last one.
+        carrying `served_hash` as the integrity hash of the referenced file. A run that stays on its current version
+        reaches the last one too, to compare the hash the config declares against the one jsDelivr serves, so such a
+        test passes the hash its config declares to leave the two agreeing.
         """
         mock_get.side_effect = [
             jsdelivr_versions(*versions),
             npm_registry(dict.fromkeys(versions, published), deprecated),
-            mock_response(FLAT_FILES),
+            served(served_hash),
         ]
 
     @staticmethod
@@ -101,11 +114,28 @@ class UpdateJsdelivrsTest(LoggingTestCase):
 
     def test_unchanged(self, mock_get: Mock, mock_glob: Mock):
         """Test that the config is not rewritten if there is no new version."""
-        self.offer_versions(mock_get, "2.0.11")
+        self.offer_versions(mock_get, "2.0.11", served_hash=HASH1)
         mock_conf = self.update(CONF, mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_path_logged(mock_conf)
         self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+    def test_hash_mismatch_warned_not_rewritten(self, mock_get: Mock, mock_glob: Mock):
+        """Test that a declared hash disagreeing with the one jsDelivr serves is warned about, not quietly rewritten.
+
+        The config declares HASH1 for the version it sits on, while jsDelivr serves HASH2 for that same version.
+        """
+        self.offer_versions(mock_get, "2.0.11")
+        mock_conf = self.update(CONF, mock_glob)
+        mock_conf.write_text.assert_not_called()
+        self.assert_hash_mismatch_logged(mock_conf, "clipboard", "2.0.11", f"sha256-{HASH1}", f"sha256-{HASH2}", line=3)
+
+    def test_unresolvable_hash_is_not_a_mismatch(self, mock_get: Mock, mock_glob: Mock):
+        """Test that a file jsDelivr doesn't list leaves nothing to compare, so no mismatch is reported."""
+        mock_get.side_effect = [jsdelivr_versions("2.0.11"), npm_registry({"2.0.11": ELIGIBLE}), served()]
+        mock_conf = self.update(CONF, mock_glob)
+        mock_conf.write_text.assert_not_called()
         self.assert_no_warnings_logged()
 
     def test_url_without_an_integrity_hash_is_pinned(self, mock_get: Mock, mock_glob: Mock):
@@ -152,6 +182,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
             jsdelivr_versions("2.0.11"),
             npm_registry({"2.0.11": ELIGIBLE}),
             jsdelivr_versions("2.0.11"),  # the second URL's version list; the npm registry document is cached
+            served(HASH1),  # the second URL stays on its version, so its declared hash is compared against this one
         ]
         mock_conf = self.update(conf(URL, entry(URL, INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
@@ -174,14 +205,14 @@ class UpdateJsdelivrsTest(LoggingTestCase):
     def test_stale_dependency_warned(self, mock_get: Mock, mock_glob: Mock):
         """Test that a jsDelivr package whose newest release is old is warned about, without rewriting the URL."""
         old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
-        self.offer_versions(mock_get, "2.0.11", published=old)
+        self.offer_versions(mock_get, "2.0.11", published=old, served_hash=HASH1)
         mock_conf = self.update(CONF, mock_glob)
         mock_conf.write_text.assert_not_called()  # no newer version, so no rewrite
         self.assert_stale_dependency_logged(mock_conf, "clipboard", "2.0.11", line=3)
 
     def test_deprecated_dependency_warned(self, mock_get: Mock, mock_glob: Mock):
         """Test that a jsDelivr URL left on a deprecated version is warned about, without rewriting the URL."""
-        self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": "use 3.0 instead"})
+        self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": "use 3.0 instead"}, served_hash=HASH1)
         mock_conf = self.update(CONF, mock_glob)
         mock_conf.write_text.assert_not_called()  # no newer version, so no rewrite
         self.assert_yanked_dependency_logged(mock_conf, "clipboard", "2.0.11", '"use 3.0 instead"', line=3)
@@ -258,7 +289,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         The hold-back is logged at debug level, and no warning survives, so npm reporting deprecations means the
         marker is not reported as redundant either.
         """
-        self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": "use 3.0 instead"})
+        self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": "use 3.0 instead"}, served_hash=HASH1)
         mock_conf = self.update(conf(entry(f"{URL}  # update-time: ignore[yanked]", INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_no_warnings_logged()
