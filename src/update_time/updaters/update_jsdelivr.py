@@ -14,6 +14,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from update_time.domain.drift import pin_drifted
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.references.file import rewrite_file
@@ -73,10 +74,27 @@ class _ResolvedURL:
     def _refresh(self, match: re.Match[str]) -> str:
         """Return the dictionary with its declared hash rewritten to the resolved version's, or left as it is.
 
-        A declared hash is only rewritten when the version moved, so one that disagrees with the registry at the same
-        version is left alone rather than silently adopted.
+        A declared hash is only rewritten when the version moved. When the URL stays on its version, the declared
+        hash is compared against the one jsDelivr serves instead (see `_warn_if_hash_mismatches`).
         """
-        return rewrite_line(match, {"sha": self.latest.sha}) if self.version_moved else match.string
+        if self.version_moved:
+            return rewrite_line(match, {"sha": self.latest.sha})
+        self._warn_if_hash_mismatches(match.group("sha"))
+        return match.string
+
+    def _warn_if_hash_mismatches(self, declared_hash: str) -> None:
+        """Warn when the hash the dictionary declares differs from the one jsDelivr serves for the URL's version.
+
+        The declared hash is passed in rather than read from `reference`, because the URL's line carries no hash —
+        only the dictionary's line does.
+        Resolving the served hash costs one request, since a URL staying on its version never looked it up; a hash
+        that can't be resolved (an unreachable API, a file jsDelivr doesn't list) leaves nothing to compare, so it
+        stays silent and the failed request reports itself.
+        """
+        dependency, version = self.reference.dependency, self.reference.current_version
+        served_hash = integrity_hash(dependency, version, self.filename)
+        if pin_drifted(served_hash, declared_hash):
+            LOG.hash_mismatch(dependency, version, declared_hash, served_hash, self.location)
 
 
 @dataclass

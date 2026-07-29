@@ -3,7 +3,7 @@
 Comments of the form `# update-time: <directive>…` let users steer what happens to an individual reference: hold it
 back (`ignore`, optionally narrowed to the update or the staleness warning), bound how far it may update — to an
 absolute version range (`allow[update<…>]` / `ignore[update<…>]`) or by update level (`allow[minor-update]` /
-`ignore[major-update]`) — or opt it into adopting a re-pushed image digest (`allow[digest-drift]`).
+`ignore[major-update]`) — or opt it into adopting a re-pushed image digest (`allow[pin-drift]`).
 A marker is read inline on the reference's own line or from a standalone comment on the line directly above it; one
 prefix can carry several whitespace-separated directives, and a directive's bracket several comma-separated items
 (`ignore[stale, update>=3.13]`). Parsing is pure — a `Line` in, a `Marker` out — so it lives in `domain`; acting on
@@ -30,7 +30,7 @@ class Marker:
     `ignore_update`, `ignore_stale`, and `ignore_yanked` are whether an `ignore` directive holds back the reference's
     update, its staleness warning, and its yank warning: a bare `ignore` holds back all three, while
     `ignore[update]`, `ignore[stale]`, and `ignore[yanked]` each hold back just one.
-    `allow_drift` is whether an `allow[digest-drift]` directive opts the reference into adopting a re-pushed digest.
+    `allow_drift` is whether an `allow[pin-drift]` directive opts the reference into adopting a re-pushed digest.
     `version_bound` is the version bound from an `allow`/`ignore` directive (see `VersionBound`), defaulting to
     `NO_BOUND` (keep every candidate) when there is none.
     `invalid_specifier` is the raw text of a bracket item that could not be parsed — an invalid version specifier,
@@ -83,7 +83,7 @@ class Marker:
 _BARE_IGNORE = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True)
 
 # The keyword bracket items each verb recognises, and the marker each expresses. An `ignore` scope holds back just
-# the update, just the staleness warning, or just the yank warning, and `allow[digest-drift]` opts into adopting a
+# the update, just the staleness warning, or just the yank warning, and `allow[pin-drift]` opts into adopting a
 # re-pushed digest, while a bare `allow[update]` allows every update, which is the default anyway, keeping the two
 # verbs complements. Items outside this vocabulary are update bounds, parsed by `parse_bound`.
 _KEYWORD_ITEMS = {
@@ -91,7 +91,7 @@ _KEYWORD_ITEMS = {
     (Verb.IGNORE, "stale"): Marker(ignore_stale=True),
     (Verb.IGNORE, "yanked"): Marker(ignore_yanked=True),
     (Verb.ALLOW, "update"): Marker(),  # bare `allow[update]`: the default no-op
-    (Verb.ALLOW, "digest-drift"): Marker(allow_drift=True),
+    (Verb.ALLOW, "pin-drift"): Marker(allow_drift=True),
 }
 
 # The comment leads that can carry a marker: `#` in most formats we update, `//` in devcontainer.json (which is

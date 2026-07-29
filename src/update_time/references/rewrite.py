@@ -11,11 +11,10 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from update_time.domain.bound import Verb
+from update_time.domain.drift import drift_cause, pin_drifted
 from update_time.domain.line import located_lines
 from update_time.domain.marker import parse_marker
 from update_time.domain.version import Reference
-from update_time.primitives.environment import EnvVar
 from update_time.references.resolve import latest_version
 
 if TYPE_CHECKING:
@@ -27,14 +26,6 @@ if TYPE_CHECKING:
     from update_time.domain.marker import Marker
     from update_time.domain.version import DependencyVersion
     from update_time.io.log import Logger
-# Private channel that passes --allow-image-digest-drift from the CLI to the updater subprocesses: whether a
-# re-pushed image digest should be adopted repo-wide.
-ALLOW_IMAGE_DIGEST_DRIFT = EnvVar(
-    "_UPDATE_TIME_ALLOW_IMAGE_DIGEST_DRIFT",
-    default=False,
-    parse=lambda value: value == "1",
-    serialize=lambda allow: "1" if allow else "0",
-)
 
 
 @dataclass(frozen=True)
@@ -72,20 +63,14 @@ class _Rewriter:
         """Return the line for an up-to-date reference, adopting or warning about a re-pushed digest.
 
         When the reference is pinned and only its digest changed at the registry (a re-pushed tag), the drift is
-        warned about but the pin is left unchanged — unless the reference opted in (`marker.allow_drift` or the
-        global flag), in which case the new digest is adopted.
+        warned about but the pin is left unchanged — unless the reference opted in (see `drift_cause`), in which
+        case the new digest is adopted.
         """
         current_sha = match.groupdict().get("sha")
-        if current_sha is None or not latest.digest_differs_from(current_sha):
+        if current_sha is None or not pin_drifted(latest.sha, current_sha):
             return match.string
         dependency, version = matched_dependency(match, self.dependency), match.group("version")
-        if marker.allow_drift or ALLOW_IMAGE_DIGEST_DRIFT.get():
-            # The reference opted in, so adopt the re-pushed digest instead of only warning about it. The
-            # per-reference marker is the more specific opt-in, so its `allow` directives are named verbatim as the
-            # cause when both apply; the digest-drift opt-in is among them.
-            cause = (
-                f"update-time: {marker.raw_marker(Verb.ALLOW)}" if marker.allow_drift else "--allow-image-digest-drift"
-            )
+        if (cause := drift_cause(marker)) is not None:
             self.logger.adopted_drift(dependency, version, current_sha, latest.sha, location, cause)
             return rewrite_line(match, {"sha": latest.sha})
         # The tag was re-pushed with a different digest; warn but leave the immutable pin unchanged.

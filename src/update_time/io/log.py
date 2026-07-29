@@ -290,11 +290,10 @@ class Logger:
     )
 
     def digest_drift(self, dependency: str, version: str, current_sha: str, new_sha: str, location: Location) -> None:
-        """Warn that an already-pinned tag now resolves to a different digest, and that the pin was left unchanged.
+        """Warn that an already-pinned tag now resolves to a different digest at the registry.
 
-        The tag was re-pushed (rebuilt) under the same name, so its pinned digest no longer matches what the registry
-        serves. Update-time deliberately does not update the pin: silently adopting a re-pushed digest would defeat
-        the immutability a digest pin exists to provide. The drift is surfaced instead, so it can be reviewed.
+        The tag was re-pushed (rebuilt) under the same name and version. The new digest is not adopted, because
+        silently following a re-pushed tag would defeat the immutability a digest pin exists to provide.
         """
         self._log(
             self._MESSAGE_DIGEST_DRIFT,
@@ -314,9 +313,8 @@ class Logger:
     ) -> None:
         """Log that a re-pushed tag's new digest was adopted because the reference opted in.
 
-        `cause` names the opt-in that triggered the adoption (the reference's `# update-time: allow[digest-drift]`
-        marker, or the repo-wide `--allow-image-digest-drift` flag). Unlike `digest_drift`, this is a normal change the
-        user asked for, so it is info, not a warning.
+        `cause` names the opt-in that triggered the adoption (see `drift_cause`). Unlike `digest_drift`, this is a
+        normal change the user asked for, so it is info, not a warning.
         """
         self._log(
             self._MESSAGE_ADOPTED_DIGEST_DRIFT,
@@ -326,6 +324,74 @@ class Logger:
             current_sha,
             new_sha,
             cause,
+        )
+
+    _MESSAGE_TAG_DRIFT = LogMessage(
+        WARNING,
+        "Tag drift for %s@%s in %s: pinned to commit %s but the tag now points at %s; the pin was left unchanged, "
+        "verify the tag was moved deliberately before updating the pin",
+    )
+
+    def tag_drift(self, dependency: str, version: str, current_sha: str, new_sha: str, location: Location) -> None:
+        """Warn that a version tag now points at another commit than the one the reference is pinned to.
+
+        A git tag is mutable, so whoever controls the repository can move it onto a different commit. The pinned
+        commit SHA keeps the run where it was pinned, which is what pinning a SHA is for; without this warning,
+        though, nothing reports that tag and pin have parted company.
+        """
+        self._log(
+            self._MESSAGE_TAG_DRIFT,
+            self._render_dependency(dependency),
+            version,
+            self._render_location(location),
+            current_sha,
+            new_sha,
+        )
+
+    _MESSAGE_ADOPTED_TAG_DRIFT = LogMessage(
+        INFO, "Adopted tag drift for %s@%s in %s: re-pinned from commit %s to %s (%s)"
+    )
+
+    def adopted_tag_drift(  # noqa: PLR0913
+        self, dependency: str, version: str, current_sha: str, new_sha: str, location: Location, cause: str
+    ) -> None:
+        """Log that a moved tag's new commit was adopted because the reference opted in.
+
+        `cause` names the opt-in that triggered the adoption. Like `adopted_drift`, this is a change the user asked
+        for, so it is logged at info rather than as a warning.
+        """
+        self._log(
+            self._MESSAGE_ADOPTED_TAG_DRIFT,
+            self._render_dependency(dependency),
+            version,
+            self._render_location(location),
+            current_sha,
+            new_sha,
+            cause,
+        )
+
+    _MESSAGE_HASH_MISMATCH = LogMessage(
+        WARNING,
+        "Integrity hash mismatch for %s@%s in %s: declares %s but jsDelivr serves %s; the hash was left unchanged, "
+        "and since npm does not republish a version it is probably the declared hash that is wrong",
+    )
+
+    def hash_mismatch(
+        self, dependency: str, version: str, declared_hash: str, served_hash: str, location: Location
+    ) -> None:
+        """Warn that a declared Subresource Integrity hash disagrees with the one the CDN serves for that version.
+
+        The hash is left unchanged because adopting whatever the CDN serves is exactly the check it exists to
+        perform. That makes this the most urgent of the three drifts: until the hash is corrected, the browser
+        silently refuses to load the script, which no build step catches.
+        """
+        self._log(
+            self._MESSAGE_HASH_MISMATCH,
+            self._render_dependency(dependency),
+            version,
+            self._render_location(location),
+            declared_hash,
+            served_hash,
         )
 
     _MESSAGE_STALE = LogMessage(

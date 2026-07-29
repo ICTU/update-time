@@ -205,6 +205,32 @@ class LoggingTestCase(CacheClearingTestCase):
 
     @renders_location
     @renders_dependency
+    def assert_tag_drift_logged(
+        self, location: str, dependency: str, version: str, current_sha: str, new_sha: str
+    ) -> None:
+        """Assert that a moved tag's commit drift was logged as a single warning for the file."""
+        self.assert_logged(Logger._MESSAGE_TAG_DRIFT, dependency, version, location, current_sha, new_sha)
+
+    @renders_location
+    @renders_dependency
+    def assert_adopted_tag_drift_logged(  # noqa: PLR0913
+        self, location: str, dependency: str, version: str, current_sha: str, new_sha: str, cause: object = ANY
+    ) -> None:
+        """Assert that adopting a moved tag's new commit was logged once for the file."""
+        self.assert_logged(
+            Logger._MESSAGE_ADOPTED_TAG_DRIFT, dependency, version, location, current_sha, new_sha, cause
+        )
+
+    @renders_location
+    @renders_dependency
+    def assert_hash_mismatch_logged(
+        self, location: str, dependency: str, version: str, declared_hash: str, served_hash: str
+    ) -> None:
+        """Assert that a declared integrity hash disagreeing with the served one was logged once for the file."""
+        self.assert_logged(Logger._MESSAGE_HASH_MISMATCH, dependency, version, location, declared_hash, served_hash)
+
+    @renders_location
+    @renders_dependency
     def assert_adopted_drift_logged(  # noqa: PLR0913
         self, location: str, dependency: str, version: str, current_sha: str, new_sha: str, cause: object = ANY
     ) -> None:

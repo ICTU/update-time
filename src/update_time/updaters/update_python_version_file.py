@@ -1,7 +1,7 @@
 """Python version file updater bumps the CPython version pinned in `.python-version` files.
 
 A `.python-version` file pins the project's development Python, one version per line (pyenv allows several). Each
-plain CPython entry (`3.12` or `3.12.6`) is moved forward and pinned to a fuller version, in one of two tiers:
+plain CPython entry (`3.12` or `3.12.6`) is moved forward to a fuller version, in one of two tiers:
 - when a Dockerfile in the same folder has a `FROM python:<version>` base image (already updated by the Dockerfile
   updater), the entry adopts that image's version at the precision the tag provides, so the production and development
   runtimes stay in step;

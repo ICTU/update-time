@@ -32,14 +32,14 @@ class RawMarkerTest(unittest.TestCase):
 
     def test_whole_marker_without_a_verb(self):
         """Test that without a verb the whole `raw` text is returned unchanged."""
-        marker = Marker(raw="ignore[update] allow[digest-drift]")
-        self.assertEqual(marker.raw_marker(), "ignore[update] allow[digest-drift]")
+        marker = Marker(raw="ignore[update] allow[pin-drift]")
+        self.assertEqual(marker.raw_marker(), "ignore[update] allow[pin-drift]")
 
     def test_keeps_only_the_given_verbs_directives(self):
         """Test that with a verb only that verb's directives are kept, the other verb's directive left out."""
-        marker = Marker(raw="ignore[update] allow[digest-drift]")
+        marker = Marker(raw="ignore[update] allow[pin-drift]")
         self.assertEqual(marker.raw_marker(Verb.IGNORE), "ignore[update]")
-        self.assertEqual(marker.raw_marker(Verb.ALLOW), "allow[digest-drift]")
+        self.assertEqual(marker.raw_marker(Verb.ALLOW), "allow[pin-drift]")
 
     def test_combined_scopes_stay_as_written(self):
         """Test that combined scopes are kept verbatim, not collapsed to a bare `ignore`."""
@@ -70,8 +70,8 @@ class ParseMarkerRawTest(unittest.TestCase):
 
     def test_comma_combined_items_kept_together(self):
         """Test that comma-combined bracket items are kept as one directive, not split apart."""
-        marker = parse_marker(line("image: python:3.14  # update-time: allow[update<3.15, digest-drift]"))
-        self.assertEqual(marker.raw, "allow[update<3.15, digest-drift]")
+        marker = parse_marker(line("image: python:3.14  # update-time: allow[update<3.15, pin-drift]"))
+        self.assertEqual(marker.raw, "allow[update<3.15, pin-drift]")
 
     def test_unrecognised_scope_kept_as_written(self):
         """Test that a typo'd scope is kept as written even though it parses as a bare `ignore`."""
