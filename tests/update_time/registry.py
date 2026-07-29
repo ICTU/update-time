@@ -56,7 +56,7 @@ def _tags_list_response(url: str, tag_names: list[str], *, list_ok: bool, page_s
     if page_size is None:
         return mock_response({"tags": tag_names}, ok=True, status_code=200, url=url, headers={})
     last = parse_qs(urlparse(url).query).get("last", [None])[0]  # The name the previous page ended on, if any.
-    start = tag_names.index(last) + 1 if last in tag_names else 0
+    start = tag_names.index(last) + 1 if last and last in tag_names else 0
     page = tag_names[start : start + page_size]
     links = {"next": {"url": f"?last={page[-1]}", "rel": "next"}} if start + page_size < len(tag_names) else {}
     return mock_response({"tags": page}, ok=True, status_code=200, url=url, links=links, headers={})
