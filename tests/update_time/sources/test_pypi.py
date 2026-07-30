@@ -84,13 +84,13 @@ class GetChangesTest(LoggingTestCase):
                 [github_release_json("1.1", body=changelog)],
                 github_commits_json(),
             )
-            self.assertEqual(changelog, get_changes(f"package-4-{key}", "1.1"))
+            self.assertEqual(get_changes(f"package-4-{key}", "1.1"), changelog)
 
     def test_changelog_in_description(self, mock_get: Mock):
         """Test that the changelog from the description is returned."""
         changelog = "1.1\n- Fixed ...\n- Added ..."
         self.create_mock_response(mock_get, {"info": {"description": f"Package description\n{changelog}\n"}})
-        self.assertEqual(changelog, get_changes("package-5", "1.1"))
+        self.assertEqual(get_changes("package-5", "1.1"), changelog)
 
     def test_github_url_in_description_that_has_a_changelog(self, mock_get: Mock):
         """Test that the GitHub URL in the description is used to get the changelog."""
@@ -102,7 +102,7 @@ class GetChangesTest(LoggingTestCase):
             [github_release_json("1.1", body=changelog)],
             github_commits_json(),
         )
-        self.assertEqual(changelog, get_changes("package-6", "1.1"))
+        self.assertEqual(get_changes("package-6", "1.1"), changelog)
 
     def test_github_url_in_description_that_has_no_changelog(self, mock_get: Mock):
         """Test that the GitHub URL in the description is used to get the changelog."""

@@ -47,7 +47,7 @@ class GitHubURLtoRawTest(unittest.TestCase):
     def test_non_github_url(self):
         """Test that non-GitHub URLs are unchanged."""
         non_github_url = "https://notgithub.com/blob/example.md"
-        self.assertEqual(non_github_url, github_to_raw(non_github_url))
+        self.assertEqual(github_to_raw(non_github_url), non_github_url)
 
     def test_github_url_with_blob(self):
         """Test that a GitHub blob URL is rewritten to its raw URL, dropping the `/blob` segment."""

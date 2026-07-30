@@ -70,7 +70,7 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_no_reference(self):
         """Test that lines without a reference are returned unchanged."""
         lines = ["line1", "line2"]
-        self.assertEqual(lines, self.rewrite(lines, "regexp", new_version_getter("1.1")))
+        self.assertEqual(self.rewrite(lines, "regexp", new_version_getter("1.1")), lines)
         self.logger.new_version.assert_not_called()
 
     def test_empty_file(self):
@@ -105,7 +105,7 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_unchanged_version(self):
         """Test that a reference already at the latest version is left unchanged."""
         lines = ["line1", "image: python:3.14"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, new_version_getter("3.14")))
+        self.assertEqual(self.rewrite(lines, REGEXP, new_version_getter("3.14")), lines)
         self.logger.new_version.assert_not_called()
 
     def test_pin_unpinned_at_latest_version(self):
@@ -121,7 +121,7 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_digest_drift_warns_without_rewriting(self):
         """Test that a pinned reference whose digest changed at the registry is warned about, not rewritten."""
         lines = [f"image: python:3.14@{OLD_DIGEST}"]
-        self.assertEqual(lines, self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST)))
+        self.assertEqual(self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST)), lines)
         self.logger.digest_drift.assert_called_once_with(
             "python", "3.14", OLD_DIGEST, NEW_DIGEST, Location(self.path, 1)
         )
@@ -131,7 +131,7 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_matching_digest_not_warned(self):
         """Test that a pinned reference whose digest is unchanged is left alone, without a drift warning."""
         lines = [f"image: python:3.14@{DIGEST}"]
-        self.assertEqual(lines, self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", DIGEST)))
+        self.assertEqual(self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", DIGEST)), lines)
         self.logger.digest_drift.assert_not_called()
 
     def test_pin_unpinned_with_new_version(self):
@@ -145,7 +145,7 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_unpinned_left_alone_without_digest(self):
         """Test that an unpinned reference is not pinned when no digest is available."""
         lines = ["line1", "image: python:3.14"]
-        self.assertEqual(lines, self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14")))
+        self.assertEqual(self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14")), lines)
         self.logger.new_version.assert_not_called()
 
     def test_new_version_sorting_lower_than_current(self):
@@ -178,7 +178,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that an inline `# update-time: ignore` comment leaves the line untouched, looking up no version."""
         get_new_version = Mock()
         lines = ["image: python:3.14  # update-time: ignore"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
@@ -189,7 +189,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """
         get_new_version = Mock()
         lines = ["# update-time: ignore", "image: python:3.14"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 2))
 
@@ -204,7 +204,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that a `//`-style ignore marker (as JSONC/devcontainer.json uses) also pins a line inline."""
         get_new_version = Mock()
         lines = ["image: python:3.14  // update-time: ignore"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
@@ -212,14 +212,14 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that a standalone `//` marker comment pins the reference on the line below it."""
         get_new_version = Mock()
         lines = ["// update-time: ignore", "image: python:3.14"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 2))
 
     def test_ignore_update_marker_skips_update_but_still_checks_staleness(self):
         """Test that `ignore[update]` leaves the version unchanged but still runs the staleness check."""
         lines = ["image: python:3.14  # update-time: ignore[update]"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, new_version_getter("3.15")))  # version left as-is
+        self.assertEqual(self.rewrite(lines, REGEXP, new_version_getter("3.15")), lines)  # version left as-is
         self.logger.warn_if_stale.assert_called_once()  # staleness still checked
         self.logger.ignored.assert_called_once_with("python", Marker(ignore_update=True), Location(self.path, 1))
 
@@ -230,7 +230,7 @@ class UpdateReferencesTest(unittest.TestCase):
         the source is still queried for it rather than the reference being skipped outright.
         """
         lines = ["image: python:3.14  # update-time: ignore[update] ignore[stale]"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, new_version_getter("3.15")))  # version left as-is
+        self.assertEqual(self.rewrite(lines, REGEXP, new_version_getter("3.15")), lines)  # version left as-is
         self.logger.warn_if_yanked.assert_called_once()  # the yank check still runs
         self.logger.warn_if_stale.assert_not_called()  # staleness is held back
 
@@ -273,7 +273,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that a reference marked both `ignore` and `allow[pin-drift]` is left untouched: `ignore` wins."""
         get_new_version = Mock()
         lines = ["# update-time: allow[pin-drift]", f"image: python:3.14@{OLD_DIGEST}  # update-time: ignore"]
-        self.assertEqual(lines, self.rewrite(lines, SHA_REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, SHA_REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.adopted_drift.assert_not_called()
         self.logger.digest_drift.assert_not_called()
@@ -294,7 +294,7 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version = Mock()
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: ignore"]
         with patch_environ({ALLOW_PIN_DRIFT.name: "1"}):
-            self.assertEqual(lines, self.rewrite(lines, SHA_REGEXP, get_new_version))
+            self.assertEqual(self.rewrite(lines, SHA_REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.adopted_drift.assert_not_called()
 
@@ -340,7 +340,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that a reference marked both `ignore` and a level bound is left untouched: `ignore` wins."""
         get_new_version = Mock()
         lines = ["# update-time: ignore", "image: python:3.12  # update-time: allow[minor-update]"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
 
     def test_level_bound_combines_with_pin_drift_in_one_bracket(self):
@@ -348,7 +348,7 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version = Mock(return_value=DependencyVersion(version="3.14", sha=NEW_DIGEST))
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[minor-update, pin-drift]"]
         new_lines = self.rewrite(lines, SHA_REGEXP, get_new_version)
-        self.assertEqual([lines[0].replace(OLD_DIGEST, NEW_DIGEST)], new_lines)  # the drift opt-in is honoured
+        self.assertEqual(new_lines, [lines[0].replace(OLD_DIGEST, NEW_DIGEST)])  # the drift opt-in is honoured
         get_new_version.assert_called_once_with("python", "3.14", bound(Verb.ALLOW, "minor-update"))
 
     def test_redundant_level_bound_is_warned(self):
@@ -362,7 +362,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that an unknown level name in an `ignore` bracket (a typo) falls back to a bare `ignore`."""
         get_new_version = Mock()
         lines = ["image: python:3.12  # update-time: ignore[mega-update]"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
@@ -379,7 +379,7 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version = Mock(return_value=DependencyVersion(version="3.14", sha=NEW_DIGEST))
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[update<3.15] allow[pin-drift]"]
         new_lines = self.rewrite(lines, SHA_REGEXP, get_new_version)
-        self.assertEqual([lines[0].replace(OLD_DIGEST, NEW_DIGEST)], new_lines)  # the drift opt-in is honoured
+        self.assertEqual(new_lines, [lines[0].replace(OLD_DIGEST, NEW_DIGEST)])  # the drift opt-in is honoured
         get_new_version.assert_called_once_with("python", "3.14", bound(Verb.ALLOW, "update<3.15"))
         # The cause names the reference's `allow` directives verbatim, the bound alongside the pin-drift opt-in.
         self.logger.adopted_drift.assert_called_once_with(
@@ -396,7 +396,7 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version = Mock(return_value=DependencyVersion(version="3.12.9"))
         lines = ["image: python:3.12  # update-time: ignore[stale] allow[update<3.13]"]
         new_lines = self.rewrite(lines, REGEXP, get_new_version)
-        self.assertEqual([lines[0].replace("python:3.12 ", "python:3.12.9 ")], new_lines)
+        self.assertEqual(new_lines, [lines[0].replace("python:3.12 ", "python:3.12.9 ")])
         get_new_version.assert_called_once_with("python", "3.12", bound(Verb.ALLOW, "update<3.13"))
         self.logger.warn_if_stale.assert_not_called()  # the `ignore[stale]` directive is honoured alongside the bound
 
@@ -405,14 +405,14 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version = Mock(return_value=DependencyVersion(version="3.12.9"))
         lines = ["image: python:3.12  # update-time: allow[update<3.13] (pinned until the 3.13 migration)"]
         new_lines = self.rewrite(lines, REGEXP, get_new_version)
-        self.assertEqual([lines[0].replace("python:3.12 ", "python:3.12.9 ")], new_lines)
+        self.assertEqual(new_lines, [lines[0].replace("python:3.12 ", "python:3.12.9 ")])
         get_new_version.assert_called_once_with("python", "3.12", bound(Verb.ALLOW, "update<3.13"))
 
     def test_typo_ends_directive_list(self):
         """Test that a mistyped directive ends the list as a reason: the directives before it still apply."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.14", sha=NEW_DIGEST))
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: ignore[stale] alloww[pin-drift]"]
-        self.assertEqual(lines, self.rewrite(lines, SHA_REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, SHA_REGEXP, get_new_version), lines)
         self.logger.warn_if_stale.assert_not_called()  # the `ignore[stale]` before the typo is honoured
         self.logger.digest_drift.assert_called_once()  # the mistyped drift opt-in is not, so the drift only warns
 
@@ -420,7 +420,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that an unrecognised `ignore` scope (a typo) falls back to a bare `ignore`, pinning the line."""
         get_new_version = Mock()
         lines = ["image: python:3.12  # update-time: ignore[updaet]"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
@@ -445,7 +445,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """
         get_new_version = Mock()
         lines = ["image: python:3.12.1  # update-time: allow[patch-updates]"]  # plural typo of `patch-update`
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))  # left unchanged, not updated
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)  # left unchanged, not updated
         get_new_version.assert_not_called()
         self.logger.invalid_specifier.assert_called_once_with("python", "patch-updates", Location(self.path, 1))
 
@@ -453,7 +453,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that an `ignore[` whose bracket is never closed falls back to a bare `ignore`, pinning the line."""
         get_new_version = Mock()
         lines = ["image: python:3.14  # update-time: ignore[update<4"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
@@ -462,7 +462,7 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version = Mock(return_value=DependencyVersion(version="3.12.9"))
         lines = ["image: python:3.12  # update-time: ignore[stale, update>=3.13]"]
         new_lines = self.rewrite(lines, REGEXP, get_new_version)
-        self.assertEqual([lines[0].replace("python:3.12 ", "python:3.12.9 ")], new_lines)
+        self.assertEqual(new_lines, [lines[0].replace("python:3.12 ", "python:3.12.9 ")])
         get_new_version.assert_called_once_with("python", "3.12", bound(Verb.IGNORE, "update>=3.13"))
         self.logger.warn_if_stale.assert_not_called()
 
@@ -471,7 +471,7 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version = Mock(return_value=DependencyVersion(version="3.14", sha=NEW_DIGEST))
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[update<3.15, pin-drift]"]
         new_lines = self.rewrite(lines, SHA_REGEXP, get_new_version)
-        self.assertEqual([lines[0].replace(OLD_DIGEST, NEW_DIGEST)], new_lines)  # the drift opt-in is honoured
+        self.assertEqual(new_lines, [lines[0].replace(OLD_DIGEST, NEW_DIGEST)])  # the drift opt-in is honoured
         get_new_version.assert_called_once_with("python", "3.14", bound(Verb.ALLOW, "update<3.15"))
 
     def test_compound_specifier_keeps_its_comma_inside_a_bracket_list(self):
@@ -486,7 +486,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that every `ignore` scope combined holds back as much as a bare `ignore`."""
         get_new_version = Mock()
         lines = ["image: python:3.12  # update-time: ignore[update] ignore[stale] ignore[yanked]"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()  # Every aspect is held back, so the source is not even queried.
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
@@ -494,7 +494,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that an unrecognised item in a comma list warns and leaves the reference unchanged."""
         get_new_version = Mock()
         lines = ["image: python:3.12  # update-time: allow[drift, update<3.13]"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.invalid_specifier.assert_called_once_with("python", "drift", Location(self.path, 1))
 
@@ -503,7 +503,7 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version = Mock(return_value=DependencyVersion(version="3.12.9"))
         lines = ["image: python:3.12  # update-time: ignore[update>=3.13] # update-time: ignore[stale]"]
         new_lines = self.rewrite(lines, REGEXP, get_new_version)
-        self.assertEqual([lines[0].replace("python:3.12 ", "python:3.12.9 ")], new_lines)
+        self.assertEqual(new_lines, [lines[0].replace("python:3.12 ", "python:3.12.9 ")])
         get_new_version.assert_called_once_with("python", "3.12", bound(Verb.IGNORE, "update>=3.13"))
         self.logger.warn_if_stale.assert_not_called()
 
@@ -526,7 +526,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that an unparsable specifier is logged and the reference left unchanged, without querying the source."""
         get_new_version = Mock()
         lines = ["image: python:3.12  # update-time: allow[update@@@]"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.invalid_specifier.assert_called_once_with("python", "@@@", Location(self.path, 1))
 
@@ -534,7 +534,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that an unparsable specifier in a comment above the reference is reported for the reference below."""
         get_new_version = Mock()
         lines = ["# update-time: allow[update@@@]", "image: python:3.12"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.invalid_specifier.assert_called_once_with("python", "@@@", Location(self.path, 2))
 
@@ -548,7 +548,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """
         get_new_version = Mock()
         lines = ["image: python:3.12  # update-time: ignore[update@@@]"]
-        self.assertEqual(lines, self.rewrite(lines, REGEXP, get_new_version))
+        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.invalid_specifier.assert_called_once_with("python", "@@@", Location(self.path, 1))
         self.logger.ignored.assert_not_called()  # reported as invalid, not frozen as a bare `ignore`

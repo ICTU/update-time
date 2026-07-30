@@ -131,21 +131,21 @@ class CommandLineInterfaceTest(unittest.TestCase):
     def test_exclude_path(self):
         """Test that a comma-separated --exclude-path is parsed into a list of relative paths."""
         excluded = self.parsed("--exclude-path", "vendor,packages/legacy").exclude_path
-        self.assertEqual([Path("vendor"), Path("packages/legacy")], excluded)
+        self.assertEqual(excluded, [Path("vendor"), Path("packages/legacy")])
 
     def test_exclude_path_normalises_entries(self):
         """Test that --exclude-path entries are stripped of surrounding whitespace and trailing separators."""
         excluded = self.parsed("--exclude-path", " vendor/ , packages/legacy/ ").exclude_path
-        self.assertEqual([Path("vendor"), Path("packages/legacy")], excluded)
+        self.assertEqual(excluded, [Path("vendor"), Path("packages/legacy")])
 
     def test_exclude_path_collapses_interior_parent_segments(self):
         """Test that a `..` that stays inside the scan root is collapsed (normalised, not just stripped)."""
         excluded = self.parsed("--exclude-path", "packages/old/../legacy").exclude_path
-        self.assertEqual([Path("packages/legacy")], excluded)
+        self.assertEqual(excluded, [Path("packages/legacy")])
 
     def test_exclude_path_ignores_empty_entries(self):
         """Test that empty entries in --exclude-path (e.g. from a trailing comma) are dropped."""
-        self.assertEqual([Path("vendor")], self.parsed("--exclude-path", "vendor,").exclude_path)
+        self.assertEqual(self.parsed("--exclude-path", "vendor,").exclude_path, [Path("vendor")])
 
     def test_absolute_exclude_path_is_rejected(self):
         """Test that an absolute --exclude-path is rejected: the option narrows the tree, it can't redirect it."""
