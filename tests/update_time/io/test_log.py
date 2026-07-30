@@ -529,7 +529,7 @@ class LogHighlighterTests(TestCase):
         LogHighlighter().highlight(text)
         start = text.plain.index(digest)
         spans_in_digest = [span for span in text.spans if span.start >= start and span.end <= start + len(digest)]
-        self.assertEqual([(start, start + len(digest), "repr.digest")], spans_in_digest)
+        self.assertEqual(spans_in_digest, [(start, start + len(digest), "repr.digest")])
 
     def test_version_numbers_still_highlighted(self):
         """Test that ordinary highlighting (e.g. of a version number) is preserved for messages without a digest."""

@@ -97,7 +97,7 @@ class ConfigureCooldownTest(unittest.TestCase):
         workspace_root.side_effect = lambda pyproject_toml: pyproject_toml
         first, second = Path("/a/pyproject.toml"), Path("/b/pyproject.toml")
         configure_cooldown([first, second])
-        self.assertEqual([call(first), call(second)], persist.call_args_list)
+        self.assertEqual(persist.call_args_list, [call(first), call(second)])
 
     @patch("update_time.package_managers.uv._persist_exclude_newer")
     @patch_environ({"UV_EXCLUDE_NEWER": "2024-01-01"})

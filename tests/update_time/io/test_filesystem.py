@@ -21,22 +21,22 @@ class GlobTest(unittest.TestCase):
     def test_one_file(self, mock_glob: Mock):
         """Test that a file is returned."""
         mock_glob.return_value = [Path("/file.txt")]
-        self.assertEqual([Path("/file.txt")], list(glob("*.txt")))
+        self.assertEqual(list(glob("*.txt")), [Path("/file.txt")])
 
     def test_multiple_files(self, mock_glob: Mock):
         """Test that multiple files are returned."""
         mock_glob.return_value = [Path("/file.txt"), Path("/folder/another_file.txt")]
-        self.assertEqual([Path("/file.txt"), Path("/folder/another_file.txt")], list(glob("*.txt")))
+        self.assertEqual(list(glob("*.txt")), [Path("/file.txt"), Path("/folder/another_file.txt")])
 
     def test_start_folder(self, mock_glob: Mock):
         """Test that a different start folder can be passed."""
         mock_glob.return_value = [Path("/example/file.txt")]
-        self.assertEqual([Path("/example/file.txt")], list(glob("*.txt", start=Path("/example"))))
+        self.assertEqual(list(glob("*.txt", start=Path("/example"))), [Path("/example/file.txt")])
 
     def test_multiple_patterns(self, mock_glob: Mock):
         """Test that multiple glob patterns can be passed."""
         mock_glob.side_effect = [[Path("/file.yml")], [Path("/file.yaml")]]
-        self.assertEqual([Path("/file.yml"), Path("/file.yaml")], list(glob("*.yml", "*.yaml")))
+        self.assertEqual(list(glob("*.yml", "*.yaml")), [Path("/file.yml"), Path("/file.yaml")])
 
     def test_ignore_folders(self, mock_glob: Mock):
         """Test that some folders are ignored."""
@@ -48,12 +48,12 @@ class GlobTest(unittest.TestCase):
         """Test that a hidden folder named literally in the pattern is visited, not skipped as a hidden folder."""
         files = [Path("/.devcontainer/devcontainer.json"), Path("/pkg/.devcontainer/devcontainer.json")]
         mock_glob.return_value = files
-        self.assertEqual(files, list(glob(".devcontainer/devcontainer.json")))
+        self.assertEqual(list(glob(".devcontainer/devcontainer.json")), files)
 
     def test_hidden_file_named_in_pattern_is_visited(self, mock_glob: Mock):
         """Test that a top-level hidden file named literally in the pattern is visited."""
         mock_glob.return_value = [Path("/.devcontainer.json")]
-        self.assertEqual([Path("/.devcontainer.json")], list(glob(".devcontainer.json")))
+        self.assertEqual(list(glob(".devcontainer.json")), [Path("/.devcontainer.json")])
 
     def test_hidden_folder_not_named_in_pattern_is_still_skipped(self, mock_glob: Mock):
         """Test that hidden folders the pattern does not name are still skipped, even next to one it does."""
@@ -64,19 +64,19 @@ class GlobTest(unittest.TestCase):
     def test_excluded_folder_is_skipped(self, mock_glob: Mock):
         """Test that files under a directory passed to --exclude-path are skipped."""
         mock_glob.return_value = [Path("/vendor/file.txt"), Path("/src/file.txt")]
-        self.assertEqual([Path("/src/file.txt")], list(glob("*.txt")))
+        self.assertEqual(list(glob("*.txt")), [Path("/src/file.txt")])
 
     @patch_environ({EXCLUDE_PATHS.name: "vendor"})
     def test_excluded_folder_matches_by_prefix_not_by_name(self, mock_glob: Mock):
         """Test that --exclude-path matches a relative path prefix, not a folder name anywhere in the tree."""
         mock_glob.return_value = [Path("/vendor/file.txt"), Path("/src/vendor/file.txt")]
-        self.assertEqual([Path("/src/vendor/file.txt")], list(glob("*.txt")))
+        self.assertEqual(list(glob("*.txt")), [Path("/src/vendor/file.txt")])
 
     @patch_environ({EXCLUDE_PATHS.name: "vendor,packages/legacy"})
     def test_multiple_excluded_folders_are_skipped(self, mock_glob: Mock):
         """Test that every directory in a comma-separated --exclude-path list is skipped."""
         mock_glob.return_value = [Path("/vendor/a.txt"), Path("/packages/legacy/b.txt"), Path("/packages/kept/c.txt")]
-        self.assertEqual([Path("/packages/kept/c.txt")], list(glob("*.txt")))
+        self.assertEqual(list(glob("*.txt")), [Path("/packages/kept/c.txt")])
 
 
 class InsideGitRepositoryTest(unittest.TestCase):
@@ -166,4 +166,4 @@ class ExcludedPathsTest(unittest.TestCase):
     def test_excluded_paths(self):
         """Test that the comma-separated excluded paths are parsed into a list of paths."""
         with patch_environ({EXCLUDE_PATHS.name: "vendor,packages/legacy"}):
-            self.assertEqual([Path("vendor"), Path("packages/legacy")], EXCLUDE_PATHS.get())
+            self.assertEqual(EXCLUDE_PATHS.get(), [Path("vendor"), Path("packages/legacy")])

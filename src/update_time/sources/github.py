@@ -4,7 +4,7 @@ import os
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
-from functools import cache, cached_property
+from functools import cache, cached_property, total_ordering
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 from urllib.parse import urlparse
 
@@ -76,6 +76,7 @@ class CommitJSON(TypedDict):
     commit: NotRequired[GitCommit]
 
 
+@total_ordering
 @dataclass(frozen=True)
 class TaggedVersion:
     """A version of a GitHub repository, known from its tag, its release, or both.

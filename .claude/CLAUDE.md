@@ -8,7 +8,7 @@ Consult the justfile to learn how to run tests and checks:
 
 ## Git
 
-I create the branches, commit, and push. Never do any of that, and never offer to: finishing a piece of work means reporting it with the tests and checks green, not proposing a commit. Never run a command that discards work I haven't committed either (`git checkout <path>`, `git restore`, `git stash`) unless I ask for it: undo your own experiment by editing the file back, or run the experiment on a copy.
+I create the branches, commit, and push. Never do any of that, and never offer to: finishing a piece of work means reporting it with the tests and checks green, not proposing a commit. Never run a command that discards work I haven't committed either (`git checkout <path>`, `git restore`, `git stash`) unless I ask for it: undo your own experiment by editing the file back, or run the experiment on a copy. A script that rewrites files in bulk falls under this too: run it with the project's interpreter (`uv run`, never the system `python3`) and make it idempotent, so a crash halfway through can be re-run rather than undoing what already landed.
 
 ## Code review
 
@@ -27,7 +27,7 @@ Develop test-first, in small steps, and hand back control after each step so I c
 
 While doing TDD, keep a numbered list of candidate tests (T1, T2, ...) and their implementation status (todo/pass/fail). No tests are removed from the list until the session ends, unless I explicitly tell you to remove a candidate test from the list. The session ends when all tests pass (so no tests todo or fail).
 
-For a new feature, bug fix, task, or increment, prepare the cycle by adding at most five candidate tests to the list and let me choose which to start with.
+For a new feature, bug fix, task, or increment, prepare the cycle by adding at most five candidate tests to the list and let me choose which to start with. A cleanup driven by a tool's findings (SonarCloud, a linter) is a task like any other: group the findings, say which of them change behaviour, and let me choose which ones a test has to drive before you start fixing.
 
 Each cycle consists of the following three steps:
 
@@ -41,13 +41,13 @@ A few rules that keep the cycle honest:
 2. Build a behaviour before its off-switch: don't test an opt-out, a flag, or any other suppression until the thing it suppresses exists.
 3. Don't settle for describing what does or doesn't happen in a docstring: an assertion is checked on every run, a docstring claim is checked by nobody.
 4. A test that pins down existing behaviour drives no code, so predict it passes and say so; it closes a gap in intent, not in behaviour.
-5. Coverage must stay at 100%, which `just test` already enforces, so a passing run needs no separate coverage command. A gap after implementing points at a test case worth adding, not at a line worth excluding. It also bounds what a step may leave behind: write a second test in the same step when the chosen one mocks the collaborator the new code lives on, rather than ending the step with an uncovered method or none at all.
+5. Coverage must stay at 100%, which `just test` already enforces, so a passing run needs no separate coverage command. A gap after implementing points at a test case worth adding, not at a line worth excluding. It also bounds what a step may leave behind: write a second test in the same step when the chosen one mocks the collaborator the new code lives on, rather than ending the step with an uncovered method or none at all. Code the gate doesn't reach, such as `tools/`, needs that care most: pin each branch with the tool's own test cases, since neither coverage nor the type checkers look there.
 6. Treat a failing existing test as a signal: work out whether its premise legitimately changed and say why, rather than patching the assertion to match the new output.
-7. Assert the actual value first, as in `assertEqual(actual, expected)`. Both orders pass locally, but the reverse is flagged in CI, so it costs a round-trip to find out.
-8. A green run can prove nothing, so check it ran what you think: `just check` prints `NOK` for a failure, so don't count `OK` occurrences (`NOK` contains `OK`); compare the test count when imports moved, since a module that fails to import silently drops all its tests; and confirm every command in a `&&` chain actually ran before believing the run after it.
-9. Settle a "could we do X?" design question by trying X and reporting what the checker or the suite says, not by reasoning about it: the tools name the exact errors, and the count tells us how much the alternative would cost. This holds for questions you mean to ask me too — try it first, so the question reaches me with numbers instead of an estimate. It holds for a claim in a review finding as much as for a question: check "nothing covers this yet" or "it can't live there" against the code — a sibling module or an existing test usually settles it — before stating it, and don't repeat a claim when challenged without checking it.
+7. Assert the actual value first, as in `assertEqual(actual, expected)`. The local fixit rule flags the reverse whenever it can tell the two values apart, and `just fix` swaps them.
+8. A green run can prove nothing, so check it ran what you think: `just check` prints `NOK` for a failure, so don't count `OK` occurrences (`NOK` contains `OK`); compare the test count when imports moved, since a module that fails to import silently drops all its tests; and confirm every command in a `&&` chain actually ran before believing the run after it. The same goes for the output you quote from: never read a count off something you piped through `head`.
+9. Settle a "could we do X?" design question by trying X and reporting what the checker or the suite says, not by reasoning about it: the tools name the exact errors, and the count tells us how much the alternative would cost. This holds for questions you mean to ask me too — try it first, so the question reaches me with numbers instead of an estimate. It holds for a claim in a review finding as much as for a question: check "nothing covers this yet" or "it can't live there" against the code — a sibling module or an existing test usually settles it — before stating it, and don't repeat a claim when challenged without checking it. When the deciding tool only runs in CI, try each option locally anyway and hand me what the local tools say plus what stays unverified, rather than an estimate of what CI would say. And don't announce a comparison you then don't run.
 10. Add a missing candidate test to the list as soon as you identify one, at whatever step you are in.
-11. A refactor that changes behaviour is not a refactor, however unreachable the changed case looks. Say so before making the change rather than after, and let me decide whether a test has to drive it first.
+11. A refactor that changes behaviour is not a refactor, however unreachable the changed case looks, and a change that only *adds* behaviour counts — a decorator that fills in methods the class was missing changes what calling them does. Say so before making the change rather than after, and let me decide whether a test has to drive it first.
 
 ## Documentation
 

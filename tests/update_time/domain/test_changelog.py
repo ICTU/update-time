@@ -20,13 +20,13 @@ class GetChangeFromChangelogTest(unittest.TestCase):
         """Test that a changelog with the version number returns the text after the version number."""
         v1_change = "Version 1.0\n\n- Fixed ...\n- Changed ..."
         changelog = f"Changelog\n\n{v1_change}"
-        self.assertEqual(v1_change, get_version_changes_from_changelog(changelog, "1.0"))
+        self.assertEqual(get_version_changes_from_changelog(changelog, "1.0"), v1_change)
 
     def test_skip_older_versions(self):
         """Test that a older versions are not included."""
         v1_change = "## Version 1.0\n\n- Fixed ...\n- Changed ..."
         changelog = f"Changelog\n\n{v1_change}\n\n## Version 0.9\n\n- Fixed ...\n"
-        self.assertEqual(v1_change, get_version_changes_from_changelog(changelog, "1.0"))
+        self.assertEqual(get_version_changes_from_changelog(changelog, "1.0"), v1_change)
 
     def test_max_length(self):
         """Test that a change longer than max_length lines is truncated to that many lines, with a `...` indicator."""
@@ -35,29 +35,29 @@ class GetChangeFromChangelogTest(unittest.TestCase):
         changelog = f"Changelog\n\n{v1_change}\n\n{text_after_v1}"
         # max_length counts lines: the first 3 lines are kept and a `...` line marks where the rest was cut.
         expected_v1_change = "## Version 1.0\n\n- Fixed ...\n..."
-        self.assertEqual(expected_v1_change, get_version_changes_from_changelog(changelog, "1.0", max_length=3))
+        self.assertEqual(get_version_changes_from_changelog(changelog, "1.0", max_length=3), expected_v1_change)
 
     def test_max_length_is_not_applied_when_previous_version_is_found(self):
         """Test that the max length is not applied if the previous version is found."""
         v1_change = "## Version 1.0\n\n- Fixed ...\n- Changed ..."
         changelog = f"Changelog\n\n{v1_change}\n\n## Version 0.9\n\n- Fixed ...\n"
-        self.assertEqual(v1_change, get_version_changes_from_changelog(changelog, "1.0", max_length=3))
+        self.assertEqual(get_version_changes_from_changelog(changelog, "1.0", max_length=3), v1_change)
 
     def test_prose_mention_of_version_does_not_anchor_parsing(self):
         """Test that a prose mention of the version in a newer section doesn't anchor parsing there."""
         v2_change = "## [2.0.0]\n\n- A feature, completing the work started in 1.0.0."
         v1_change = "## [1.0.0]\n\n- Fixed ...\n- Changed ..."
         changelog = f"# Changelog\n\n{v2_change}\n\n{v1_change}\n\n## [0.9.0]\n\n- Fixed ...\n"
-        self.assertEqual(v1_change, get_version_changes_from_changelog(changelog, "1.0.0"))
+        self.assertEqual(get_version_changes_from_changelog(changelog, "1.0.0"), v1_change)
 
     def test_repeated_prose_mention_without_heading_anchors_on_first(self):
         """Test that without a heading, parsing anchors on the first of several prose mentions."""
         changelog = "Upgrade to 1.0.0 is recommended.\nThe 1.0.0 release fixes things."
-        self.assertEqual(changelog, get_version_changes_from_changelog(changelog, "1.0.0"))
+        self.assertEqual(get_version_changes_from_changelog(changelog, "1.0.0"), changelog)
 
     def test_version_in_footer_link_does_not_anchor_parsing(self):
         """Test that a version mention in a footer comparison link doesn't anchor parsing there."""
         v1_change = "## [1.0.0]\n\n- Fixed ...\n- Changed ..."
         footer = "[1.0.0]: https://example.org/compare/v0.9.0...v1.0.0"
         changelog = f"# Changelog\n\n{v1_change}\n\n## [0.9.0]\n\n- Fixed ...\n\n{footer}\n"
-        self.assertEqual(v1_change, get_version_changes_from_changelog(changelog, "1.0.0"))
+        self.assertEqual(get_version_changes_from_changelog(changelog, "1.0.0"), v1_change)

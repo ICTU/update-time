@@ -8,7 +8,7 @@ mcr.microsoft.com, quay.io, ...) by listing tag names, discovering the registry'
 
 import re
 from dataclasses import dataclass, replace
-from functools import cache, cached_property
+from functools import cache, cached_property, total_ordering
 from http import HTTPStatus
 from typing import TYPE_CHECKING, cast
 
@@ -72,6 +72,7 @@ _TAG = re.compile(r"(?P<prefix>[^\d-]*+)(?P<version>\d[^-]*+)-?(?P<suffix>.*)$")
 _LOWEST_VERSION = Version("0")
 
 
+@total_ordering
 @dataclass(frozen=True)
 class Tag:
     """An image tag: name-only when listed, with a digest and (Docker Hub only) push date once resolved."""
@@ -431,8 +432,10 @@ def _registry_token(host: str, repository: str, credentials: tuple[str, str] | N
     challenge = probe.headers.get("WWW-Authenticate", "")
     if probe.status_code != HTTPStatus.UNAUTHORIZED or not challenge.lower().startswith("bearer "):
         return None  # Anonymous registry (or an unexpected response): proceed without a token.
-    # Pull out each `key="value"` pair; the key and quoted value each scan linearly with no nested quantifiers.
-    params = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
+    # Pull out each `key="value"` pair. The key class is possessive (`++`) so a run of word characters not followed by
+    # `="` fails at once instead of giving characters back, which keeps matching linear; the quoted value never gives
+    # characters back either, since it excludes the `"` that follows it.
+    params = dict(re.findall(r'(\w++)="([^"]*)"', challenge))
     realm = params.pop("realm", "")
     params["scope"] = f"repository:{repository}:pull"
     response = fetch(realm, LOG, params=params, auth=credentials)
