@@ -24,9 +24,9 @@ from update_time.sources.jsdelivr import integrity_hash, version_getter
 
 if TYPE_CHECKING:
     from update_time.domain.line import Line
-    from update_time.domain.location import Location
     from update_time.domain.marker import Marker
     from update_time.domain.version import DependencyVersion, Reference
+    from update_time.primitives.location import Location
 
 LOG = get_logger("jsdelivr")
 

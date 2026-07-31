@@ -1,8 +1,4 @@
-"""Parse the `# update-time:` marker language.
-
-Parsing is pure — a `Line` in, a `Marker` out — so it lives in `domain`; acting on the marker, and reporting about
-it, is left to the rewrite engine in `references`.
-"""
+"""Parse the `# update-time:` marker language."""
 
 import re
 from dataclasses import dataclass, field
@@ -22,16 +18,15 @@ class Marker:
     """The `# update-time:` directives affecting a line (see `parse_marker`).
 
     `ignore_update`, `ignore_stale`, and `ignore_yanked` are whether an `ignore` directive holds back the reference's
-    update, its staleness warning, and its yank warning: a bare `ignore` holds back all three, while
+    update, its staleness warning, and its yank warning. A bare `ignore` holds back all three, while
     `ignore[update]`, `ignore[stale]`, and `ignore[yanked]` each hold back just one.
-    `allow_drift` is whether an `allow[hash-drift]` directive opts the reference into adopting a drifted digest or
-    commit.
+    `allow_drift` is whether an `allow[hash-drift]` directive opts the reference into adopting a drifted hash pin.
     `version_bound` is the version bound from an `allow`/`ignore` directive (see `VersionBound`), defaulting to
     `NO_BOUND` (keep every candidate) when there is none.
     `invalid_specifier` is the raw text of a bracket item that could not be parsed — an invalid version specifier,
     or an unrecognised item in a comma list — so the caller can warn and leave the reference unchanged; None otherwise.
-    `raw` is the marker's whole directive text exactly as it appears in the file, read back through `raw_marker` so
-    the reference's marker can be echoed to the user verbatim.
+    `raw` is the marker's whole directive text exactly as it appears in the file, so the reference's marker can be
+    echoed to the user verbatim: rendering the marker gives all of it, `raw_directives` gives one verb's directives.
     """
 
     ignore_update: bool = False
@@ -42,14 +37,12 @@ class Marker:
     invalid_specifier: str | None = None
     raw: str = field(compare=False, default="")
 
-    def raw_marker(self, verb: Verb | None = None) -> str:
-        """Return the marker's verbatim directive text, or just the directives of one verb.
+    def __str__(self) -> str:
+        """Render the marker as its verbatim directive text, exactly as the user spelled it."""
+        return self.raw
 
-        A verb's directives are picked back out of `raw` with the same grammar that parsed it, so the text stays
-        exactly as the user spelled it — a collapsed scope or a typo kept as written.
-        """
-        if verb is None:
-            return self.raw
+    def raw_directives(self, verb: Verb) -> str:
+        """Return just the directives of one verb, as the user spelled them."""
         directives = (match for match in _DIRECTIVE.finditer(self.raw) if match.group("verb") == verb)
         return " ".join(match.group().strip() for match in directives)
 
@@ -77,10 +70,7 @@ class Marker:
 # The marker a bare `ignore` (or a single unrecognised ignore bracket) expresses: hold everything back.
 _BARE_IGNORE = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True)
 
-# The keyword bracket items each verb recognises, and the marker each expresses. An `ignore` scope holds back just
-# the update, just the staleness warning, or just the yank warning, and `allow[hash-drift]` opts into adopting a
-# drifted digest or commit, while a bare `allow[update]` allows every update, which is the default anyway, keeping
-# the two verbs complements. Items outside this vocabulary are update bounds, parsed by `parse_bound`.
+# The keyword bracket items each verb recognises, and the marker each expresses.
 _KEYWORD_ITEMS = {
     (Verb.IGNORE, "update"): Marker(ignore_update=True),
     (Verb.IGNORE, "stale"): Marker(ignore_stale=True),
@@ -90,14 +80,12 @@ _KEYWORD_ITEMS = {
 }
 
 # The comment leads that can carry a marker: `#` in most formats we update, `//` in devcontainer.json (which is
-# JSONC). Shared by the marker prefix and the standalone-comment check in `parse_marker`, so the two always agree
-# on what counts as a comment.
+# JSONC).
 _COMMENT_LEADS = ("#", "//")
 
 # An `# update-time:` comment steers what happens to the reference on its line. It works inline on the reference's
 # own line (valid in YAML and requirements) or as a standalone comment on the line directly above it (the form
-# Dockerfiles need, as they reject inline comments). The prefix introduces a whitespace-separated list of one or
-# more directives (see `_DIRECTIVE`); trailing text after the last directive (a reason) is allowed.
+# Dockerfiles need, as they reject inline comments).
 _MARKER_PREFIX = re.compile(rf"(?:{'|'.join(re.escape(lead) for lead in _COMMENT_LEADS)})\s*update-time:\s*")
 
 # A single directive in a marker's directive list: a verb, optionally followed by a bracket. The `verb` group's
@@ -111,12 +99,8 @@ _DIRECTIVE = re.compile(r"(?P<verb>ignore\b|allow(?=\[))(?:\[(?P<bracket>[^\]]*)
 def parse_marker(line: Line) -> Marker:
     """Return the `# update-time:` directives affecting the line as a `Marker`.
 
-    Requiring the preceding line to start with a comment lead (`#`, or `//`) keeps an inline marker from also
-    affecting the line below it. Where directives conflict, the first one wins, inline directives before those on
-    the line above. Taking the whole `Line` is what keeps the two placements from being read apart: a caller cannot
-    hand over one of them and silently lose the other. Parsing
-    reports nothing itself, so an unparsable version specifier is carried out as `invalid_specifier` for the caller
-    to report against the line's location.
+    Requiring the preceding line to start with a comment lead keeps an inline marker from also affecting the line below
+    it. Where directives conflict, the first one wins, inline directives before those on the line above.
     """
     marker = _parse_marker_contents(line.text)
     if line.previous_text.lstrip().startswith(_COMMENT_LEADS):
@@ -132,7 +116,7 @@ def _parse_marker_contents(text: str) -> Marker:
     ends the list, so a trailing reason is allowed. Each directive folds into the marker with `Marker.merge`, so
     earlier directives win over later ones. Each prefix's whole directive run — the text from the prefix to the last
     directive, without the prefix itself or a trailing reason — is folded in as the marker's `raw` text, so the
-    marker can later be echoed back to the user exactly as they spelled it (see `Marker.raw_marker`).
+    marker can later be echoed back to the user exactly as they spelled it (see `Marker.raw`).
     """
     marker = Marker()
     for prefix in _MARKER_PREFIX.finditer(text):

@@ -4,11 +4,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.location import Location
 from update_time.domain.version import DependencyVersion
 from update_time.file_formats.package_json import DEPENDENCY_SECTIONS
 from update_time.io.log import get_logger
 from update_time.io.process import run
+from update_time.primitives.command import Command
+from update_time.primitives.location import Location
 from update_time.sources.npmjs import get_changes, get_publication_datetime
 
 if TYPE_CHECKING:
@@ -52,10 +53,10 @@ class PackageManager:
     `min-release-age` in days, pnpm its `minimumReleaseAge` in minutes).
     """
 
-    outdated: list[str]
-    update: list[str]
-    installed: list[str]
-    config_get: list[str]
+    outdated: Command
+    update: Command
+    installed: Command
+    config_get: Command
     cooldown_config_keys: tuple[str, ...]
     cooldown_unset: str
     cooldown_option: Callable[[int], str]
@@ -67,7 +68,9 @@ class PackageManager:
         `<manager> config get` reports the effective value from the whole config cascade (an unset key reads back as
         the manager's own sentinel), so a project that sets its own cutoff wins and we add nothing.
         """
-        config = (run([*self.config_get, key], cwd=directory).stdout.strip() for key in self.cooldown_config_keys)
+        config = (
+            run(Command(*self.config_get, key), cwd=directory).stdout.strip() for key in self.cooldown_config_keys
+        )
         if any(value != self.cooldown_unset for value in config):
             return []
         return [self.cooldown_option(COOLDOWN.get())]
@@ -77,12 +80,12 @@ class PackageManager:
         LOG.path(package_json)
         original_contents = package_json.read_text()
         cooldown = self.cooldown_options(package_json.parent)
-        outdated = run([*self.outdated, *cooldown], package_json.parent)
+        outdated = run(Command(*self.outdated, *cooldown), package_json.parent)
         if not outdated.ok:
             return  # The outdated check failed (e.g. the registry is unreachable); update and list would fail too.
         parsed = outdated.json
         outdated_packages = parsed if isinstance(parsed, dict) else {}
-        run([*self.update, *cooldown], cwd=package_json.parent)
+        run(Command(*self.update, *cooldown), cwd=package_json.parent)
         # The manager may install an older version than "latest" (e.g. when the cooldown holds back fresh releases),
         # so log the version that was actually installed rather than the latest one reported by the outdated command.
         installed = self.installed_versions(run(self.installed, package_json.parent).json)
@@ -104,10 +107,10 @@ class PackageManager:
 
 
 NPM = PackageManager(
-    outdated=["npm", "outdated", "--json", *COMMON_NPM_OPTIONS],
-    update=["npm", "update", "--save", *COMMON_NPM_OPTIONS],
-    installed=["npm", "list", "--json", "--depth=0", *COMMON_NPM_OPTIONS],
-    config_get=["npm", "config", "get"],
+    outdated=Command("npm", "outdated", "--json", *COMMON_NPM_OPTIONS),
+    update=Command("npm", "update", "--save", *COMMON_NPM_OPTIONS),
+    installed=Command("npm", "list", "--json", "--depth=0", *COMMON_NPM_OPTIONS),
+    config_get=Command("npm", "config", "get"),
     # npm config keys that hold back fresh releases. If the project sets either, we leave its cooldown alone (and
     # `min-release-age` can't be combined with `before`, so a project-level `before` also means we add nothing).
     cooldown_config_keys=("min-release-age", "before"),
@@ -116,12 +119,12 @@ NPM = PackageManager(
     installed_versions=_npm_installed_versions,
 )
 PNPM = PackageManager(
-    outdated=["pnpm", "outdated", "--format", "json"],
+    outdated=Command("pnpm", "outdated", "--format", "json"),
     # Deliberately without `--latest`, which would cross the version ranges declared in package.json; without it,
     # pnpm stays within the declared ranges, like `npm update` does.
-    update=["pnpm", "update"],
-    installed=["pnpm", "list", "--json", "--depth=0"],
-    config_get=["pnpm", "config", "get"],
+    update=Command("pnpm", "update"),
+    installed=Command("pnpm", "list", "--json", "--depth=0"),
+    config_get=Command("pnpm", "config", "get"),
     cooldown_config_keys=("minimumReleaseAge",),
     cooldown_unset="undefined",  # `pnpm config get` reports an unset key as `undefined` (not its built-in default).
     cooldown_option=lambda days: f"--config.minimumReleaseAge={days * MINUTES_PER_DAY}",

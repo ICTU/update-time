@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from update_time.io.log import Logger
+from update_time.primitives.location import Location
 from update_time.updaters.update_node_engine import update_node_engines
 
 from tests.update_time.fixtures import DIGEST
@@ -53,7 +54,9 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         update_node_engines()
-        self.assert_logged(Logger._MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG, "lts", Path("/Dockerfile"))
+        self.assert_logged(
+            Logger._MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG, tag="lts", location=Location(Path("/Dockerfile"))
+        )
         mock_package_json.write_text.assert_not_called()
         self.assert_no_path_logged()
         self.assert_no_new_version_logged()

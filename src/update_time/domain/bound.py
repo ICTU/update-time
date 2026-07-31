@@ -38,7 +38,7 @@ def _parse_version(version: VersionString) -> Version | None:
     return None
 
 
-class Redundancy(enum.Enum):
+class Redundancy(enum.StrEnum):
     """The two ways a version bound can be redundant for the current version (see `VersionBound.redundancy`)."""
 
     NO_EFFECT = "never has an effect"  # The bound admits the current version and everything above it.
@@ -46,21 +46,14 @@ class Redundancy(enum.Enum):
 
 
 class Verb(enum.StrEnum):
-    """The two verbs of the marker language, exact complements: `allow` keeps what it names, `ignore` drops it.
-
-    A `StrEnum` whose members format to the verb tokens `allow` and `ignore` as they appear in a directive.
-    """
+    """The two verbs of the marker language, exact complements: `allow` keeps what it names, `ignore` drops it."""
 
     ALLOW = "allow"
     IGNORE = "ignore"
 
 
 class UpdateLevel(enum.IntEnum):
-    """The version components a level-based bound can name, each valued with the component's position.
-
-    A major update changes the first component, a minor update the second, and a patch update the third (or a later
-    one).
-    """
+    """The version components a level-based bound can name, each valued with the component's position."""
 
     MAJOR = 0
     MINOR = 1

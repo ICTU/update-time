@@ -3,7 +3,7 @@
 import unittest
 from pathlib import Path
 
-from update_time.domain.location import Location
+from update_time.primitives.location import Location
 
 
 class LocationTest(unittest.TestCase):

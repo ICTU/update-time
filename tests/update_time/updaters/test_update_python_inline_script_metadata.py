@@ -17,6 +17,7 @@ from tests.update_time.helpers import (
 )
 
 if TYPE_CHECKING:
+    from update_time.primitives.command import Command
     from update_time.sources.pypi import Release
 
 
@@ -67,7 +68,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         update = f" (latest: {latest})" if latest else ""
         return Mock(stdout=f"{package} v1.0{update}\n")
 
-    def uv_commands(self, run: Mock) -> list[list[str]]:
+    def uv_commands(self, run: Mock) -> list[Command]:
         """Return the argv of every command run() invoked."""
         return [call.args[0] for call in run.call_args_list]
 
@@ -107,10 +108,10 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         update_python_inline_script_metadatas()
         get.assert_not_called()  # nothing outdated, so no changelog is fetched
         command = self.uv_commands(run)[0]
-        self.assertEqual(command[:3], ["uv", "tree", "--script"])
+        self.assertEqual(command[:3], ("uv", "tree", "--script"))
         self.assertIn("--depth=0", command)
         self.assertTrue(command[command.index("--exclude-newer") + 1])  # a non-empty cutoff follows the flag
-        self.assertNotIn(["uv", "lock"], [command[:2] for command in self.uv_commands(run)])  # scripts have no lockfile
+        self.assertNotIn(("uv", "lock"), [command[:2] for command in self.uv_commands(run)])  # scripts have no lockfile
 
     def test_only_outdated_pin_is_rewritten(self, run: Mock, get: Mock, glob: Mock):
         """Test that only the dependency uv reports as outdated is rewritten; the rest of the block is preserved."""

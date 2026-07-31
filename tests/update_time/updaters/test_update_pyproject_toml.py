@@ -66,8 +66,8 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
     def assert_no_cli_cooldown(self, run: Mock) -> None:
         """Assert uv tree/lock carry no `--exclude-newer` flag (the cooldown lives in config now), nor `--frozen`."""
         commands = [call.args[0] for call in run.call_args_list]
-        uv_tree = next(command for command in commands if command[:2] == ["uv", "tree"])
-        uv_lock = next(command for command in commands if command[:2] == ["uv", "lock"])
+        uv_tree = next(command for command in commands if command[:2] == ("uv", "tree"))
+        uv_lock = next(command for command in commands if command[:2] == ("uv", "lock"))
         self.assertNotIn("--frozen", uv_tree)  # --frozen would make uv tree --outdated ignore the cooldown
         for command in (uv_tree, uv_lock):
             self.assertNotIn("--exclude-newer", command)
@@ -181,8 +181,8 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         glob.return_value = [mock_pyproject_toml]
         update_pyproject_tomls()
         commands = [call.args[0][:2] for call in run.call_args_list]
-        self.assertIn(["uv", "tree"], commands)
-        self.assertNotIn(["uv", "lock"], commands)  # uv lock is skipped because uv tree failed
+        self.assertIn(("uv", "tree"), commands)
+        self.assertNotIn(("uv", "lock"), commands)  # uv lock is skipped because uv tree failed
         mock_pyproject_toml.write_text.assert_not_called()
         get.assert_not_called()
         self.assert_command_stderr_logged(stderr="error: offline")  # only uv tree's stderr is surfaced

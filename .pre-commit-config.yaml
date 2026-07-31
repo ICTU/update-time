@@ -16,4 +16,6 @@ repos:
         entry: just readme
         language: system
         pass_filenames: false
-        files: ^(docs/.*|src/update_time/io/cli\.py|pyproject\.toml)$
+        # The README is filled in from the template, the `update-time -h` output, and the log messages the sample
+        # output and the warning examples are logged through, so regenerate it when any of the four changes.
+        files: ^(docs/.*|src/update_time/io/(cli|log)\.py|pyproject\.toml)$

@@ -1,13 +1,14 @@
 """Generate README.md from the docs/README.md.in template, filling in the generated content.
 
-Two placeholders in the template are substituted so the machine-generated parts of the README never have to be
-pasted by hand and can't drift from the real tool:
+The template's placeholders are substituted so the machine-generated parts of the README:
 
 - `@@HELP_OUTPUT@@` — the output of `update-time -h`, wrapped to 80 columns.
-- `@@LOG_OUTPUT@@`  — the sample log output as text, from `generate_log_svg` (which also (re)writes docs/log-output.svg,
-  the screenshot embedded above the fallback).
+- `@@LOG_OUTPUT@@`  — the sample log output as text, from `generate_log_svg`, which also renders the screenshot
+  embedded above that fallback.
+- the sample warnings the sections below quote, from `log_samples`, each filling the placeholder it names.
 
-Regenerate the README (and the screenshot) with `just readme`.
+Regenerate the README (and the screenshot) with `just readme`. Run with `--check` to report the generated files that
+are out of date.
 """
 
 import contextlib
@@ -17,14 +18,22 @@ import sys
 from pathlib import Path
 
 from docs.generate_log_svg import generate as generate_log_output
+from docs.log_samples import sample_warnings
+from update_time.domain.staleness import STALE_AFTER
 
-_TEMPLATE = Path(__file__).with_name("README.md.in")
-_README = Path(__file__).parents[1] / "README.md"
+_THIS_FILE = Path(__file__)
+_ROOT = _THIS_FILE.parents[1]
+_README = _ROOT / "README.md"
+_TEMPLATE = _THIS_FILE.with_name("README.md.in")
+_SCREENSHOT = _THIS_FILE.with_name("log-output.svg")
 
 
 def _help_output() -> str:
     """Return the `update-time -h` output, wrapped to 80 columns (argparse renders it two narrower)."""
     os.environ["COLUMNS"] = "80"  # argparse reads this to size its help; must be set before parse_args runs
+    # ...and this to keep the colour argparse would otherwise add out of the captured help. Without it the README
+    # would carry escape sequences whenever it is generated somewhere colour is wanted, such as from a terminal.
+    os.environ["PYTHON_COLORS"] = "0"
     from update_time.io.cli import parse_args  # noqa: PLC0415 — imported here so COLUMNS is already set
 
     original_argv, sys.argv = sys.argv, ["update-time", "-h"]
@@ -38,14 +47,32 @@ def _help_output() -> str:
     return buffer.getvalue().rstrip()
 
 
+def render() -> dict[Path, str]:
+    """Return the content each generated file should have, keyed by the file it belongs in."""
+    STALE_AFTER.set(STALE_AFTER.default)  # Pin the threshold the samples report, whatever the environment holds
+    log_output = generate_log_output()
+    readme = _TEMPLATE.read_text().replace("@@HELP_OUTPUT@@", _help_output()).replace("@@LOG_OUTPUT@@", log_output.text)
+    for placeholder, warning in sample_warnings().items():
+        readme = readme.replace(placeholder, warning)
+    return {_README: readme, _SCREENSHOT: log_output.svg}
+
+
+def _out_of_date(generated: dict[Path, str]) -> list[Path]:
+    """Return the generated files whose content on disk is not what regenerating them produces."""
+    return [path for path, content in generated.items() if not path.is_file() or path.read_text() != content]
+
+
 def main() -> None:
-    """Fill the template's placeholders and write README.md."""
-    readme = (
-        _TEMPLATE.read_text()
-        .replace("@@HELP_OUTPUT@@", _help_output())
-        .replace("@@LOG_OUTPUT@@", generate_log_output())
-    )
-    _README.write_text(readme)
+    """Write the generated files, or, given `--check`, report the ones that are out of date without writing any."""
+    checking = "--check" in sys.argv[1:]
+    generated = render()
+    if not checking:
+        for path, content in generated.items():
+            path.write_text(content)
+        return
+    if stale := _out_of_date(generated):
+        names = ", ".join(str(path.relative_to(_ROOT)) for path in sorted(stale))
+        sys.exit(f"{names} out of date, run `just readme` to regenerate")
 
 
 if __name__ == "__main__":

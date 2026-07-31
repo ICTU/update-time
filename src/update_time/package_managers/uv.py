@@ -11,11 +11,12 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
-from update_time.domain.location import Location
 from update_time.domain.version import DependencyVersion
 from update_time.file_formats import pyproject_toml as pyproject_toml_format
 from update_time.io.log import get_logger
 from update_time.io.process import run
+from update_time.primitives.command import Command
+from update_time.primitives.location import Location
 from update_time.sources.pypi import get_changes, get_latest_version, get_publication_datetime
 
 if TYPE_CHECKING:
@@ -143,7 +144,7 @@ def parse_line_with_update(line: str) -> tuple[str, str]:
     return fields[0], fields[-1].lstrip("v").rstrip(")")
 
 
-def _update_dependencies(uv_tree: list[str], path: Path, log: Logger) -> bool:
+def _update_dependencies(uv_tree: Command, path: Path, log: Logger) -> bool:
     """Run `uv tree --outdated`, log every available new version, and rewrite the file's exact `==` pins.
 
     Shared by the pyproject.toml and inline-script-metadata updaters: both read outdated dependencies from uv and
@@ -177,7 +178,7 @@ def update_pyproject_toml(pyproject_toml: Path, log: Logger) -> bool:
     """
     # The cooldown lives in `[tool.uv] exclude-newer` (see `configure_cooldown`), which uv reads for `tree` as well.
     # `--frozen` is omitted because `uv tree --outdated` only honors that cooldown when it is free to re-resolve.
-    uv_tree = [
+    uv_tree = Command(
         "uv",
         "tree",
         "--directory",
@@ -186,7 +187,7 @@ def update_pyproject_toml(pyproject_toml: Path, log: Logger) -> bool:
         "--depth=1",
         "--all-groups",
         "--outdated",
-    ]
+    )
     return _update_dependencies(uv_tree, pyproject_toml, log)
 
 
@@ -198,7 +199,7 @@ def update_python_inline_script_metadata(script: Path, log: Logger) -> bool:
     to the script's own dependencies: for a script each is its own tree root, so a deeper depth would pull in
     transitive packages that aren't pinned in the block.
     """
-    uv_tree = [
+    uv_tree = Command(
         "uv",
         "tree",
         "--script",
@@ -208,7 +209,7 @@ def update_python_inline_script_metadata(script: Path, log: Logger) -> bool:
         "--outdated",
         "--exclude-newer",
         cooldown_cutoff(),
-    ]
+    )
     return _update_dependencies(uv_tree, script, log)
 
 
@@ -228,5 +229,5 @@ def newest_pypi_releases(path: Path) -> Iterable[tuple[str, DependencyVersion]]:
 def update_uv_lock(pyproject_toml: Path) -> None:
     """Update the uv.lock file for the pyproject.toml."""
     LOG.path(pyproject_toml.parent / "uv.lock")
-    uv_lock = ["uv", "lock", "--directory", str(pyproject_toml.parent), "--upgrade", "--quiet", "--no-progress"]
+    uv_lock = Command("uv", "lock", "--directory", str(pyproject_toml.parent), "--upgrade", "--quiet", "--no-progress")
     run(uv_lock)

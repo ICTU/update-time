@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
-from update_time.domain.location import Location
+from update_time.primitives.location import Location
 
 if TYPE_CHECKING:
     from pathlib import Path
