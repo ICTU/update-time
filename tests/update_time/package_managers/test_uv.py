@@ -43,7 +43,7 @@ class PersistExcludeNewerTest(LoggingTestCase):
         written = pyproject_toml.write_text.call_args.args[0]
         self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', written)
         self.assertIn(EXCLUDE_NEWER_COMMENT, written)
-        self.assert_logged(Logger._MESSAGE_UV_COOLDOWN, f"{COOLDOWN.default} days", ANY)
+        self.assert_logged(Logger._MESSAGE_UV_COOLDOWN, cooldown=f"{COOLDOWN.default} days", location=ANY)
 
     def test_creates_tool_uv_section_when_absent(self):
         """Test that a `[tool.uv]` section is created when the pyproject.toml has none at all."""

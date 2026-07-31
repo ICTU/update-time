@@ -9,9 +9,10 @@ the text surgery around it, reporting what it changed through a `Logger`.
 
 import re
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING
 
-from update_time.domain.drift import drift_cause, hash_drifted
+from update_time.domain.drift import DriftedPin, hash_drifted, report_drift
 from update_time.domain.line import located_lines
 from update_time.domain.marker import parse_marker
 from update_time.domain.version import Reference
@@ -22,10 +23,10 @@ if TYPE_CHECKING:
 
     from update_time.domain.bound import NewVersionGetter
     from update_time.domain.line import Line
-    from update_time.domain.location import Location
     from update_time.domain.marker import Marker
     from update_time.domain.version import DependencyVersion
     from update_time.io.log import Logger
+    from update_time.primitives.location import Location
 
 
 @dataclass(frozen=True)
@@ -62,20 +63,18 @@ class _Rewriter:
     def _handle_drift(self, match: re.Match[str], marker: Marker, latest: DependencyVersion, location: Location) -> str:
         """Return the line for an up-to-date reference, adopting or warning about a re-pushed digest.
 
-        When the reference is pinned and only its digest changed at the registry (a re-pushed tag), the drift is
-        warned about but the pin is left unchanged — unless the reference opted in (see `drift_cause`), in which
-        case the new digest is adopted.
+        A pinned reference whose digest changed at the registry (a re-pushed tag) has drifted; whether that is
+        adopted or only warned about is `report_drift`'s decision, and the line is rewritten only when it is adopted.
         """
         current_sha = match.groupdict().get("sha")
         if current_sha is None or not hash_drifted(latest.sha, current_sha):
             return match.string
         dependency, version = matched_dependency(match, self.dependency), match.group("version")
-        if (cause := drift_cause(marker)) is not None:
-            self.logger.adopted_drift(dependency, version, current_sha, latest.sha, location, cause)
-            return rewrite_line(match, {"sha": latest.sha})
-        # The tag was re-pushed with a different digest; warn but leave the immutable pin unchanged.
-        self.logger.digest_drift(dependency, version, current_sha, latest.sha, location)
-        return match.string
+        drifted = DriftedPin(Reference(dependency, version, current_sha), latest.sha, location)
+        adopted = report_drift(
+            marker, partial(self.logger.digest_drift, drifted), partial(self.logger.adopted_drift, drifted)
+        )
+        return rewrite_line(match, {"sha": latest.sha}) if adopted else match.string
 
     def _apply_update(
         self, match: re.Match[str], latest: DependencyVersion, location: Location, *, pin_unpinned: bool

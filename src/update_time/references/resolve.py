@@ -13,10 +13,10 @@ from update_time.domain.yank import reports_yanks
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
-    from update_time.domain.location import Location
     from update_time.domain.marker import Marker
     from update_time.domain.version import DependencyVersion, Reference
     from update_time.io.log import Logger
+    from update_time.primitives.location import Location
 
 
 def latest_version(

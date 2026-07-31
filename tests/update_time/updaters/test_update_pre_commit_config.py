@@ -311,4 +311,4 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_logged(Logger._MESSAGE_INVALID_SPECIFIER, "@@@", Logger._render_dependency(self.HOOK), ANY)
+        self.assert_logged(Logger._MESSAGE_INVALID_SPECIFIER, specifier="@@@", dependency=self.HOOK, location=ANY)

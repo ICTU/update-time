@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock
 
-from update_time.domain.location import Location
 from update_time.domain.staleness import (
     STALE_AFTER,
     is_stale,
@@ -14,6 +13,7 @@ from update_time.domain.staleness import (
     warn_about_stale_dependencies,
 )
 from update_time.domain.version import DependencyVersion
+from update_time.primitives.location import Location
 
 from tests.update_time.helpers import patch_environ, staleness_disabled
 

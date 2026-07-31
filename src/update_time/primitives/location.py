@@ -1,4 +1,4 @@
-"""The location a log message points at."""
+"""A place in a file: which file, and optionally which line of it."""
 
 from dataclasses import dataclass
 from pathlib import Path

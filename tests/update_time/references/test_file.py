@@ -4,8 +4,8 @@ import unittest
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
-from update_time.domain.location import Location
 from update_time.domain.version import DependencyVersion
+from update_time.primitives.location import Location
 from update_time.references.file import rewrite_file, update_file, update_files
 
 from tests.update_time.helpers import mock_path, new_version_getter

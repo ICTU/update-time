@@ -174,6 +174,10 @@ zizmor:
 check-justfile:
     {{ start_capture() }} {{ just_fmt }} --check --color=$_color {{ end_capture("check-justfile") }}
 
+# Check that README.md and the log-output screenshot are what regenerating them produces.
+[private]
+check-readme: (py-check "check-readme" f"PYTHONPATH=src {{uv_run}} python -m docs.generate_readme --check")
+
 # Check prose for too complex sentences.
 [private]
 check-sentence-complexity:
@@ -181,7 +185,7 @@ check-sentence-complexity:
 
 # Run the quality checks
 [parallel]
-check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-sentence-complexity yamllint zizmor
+check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-readme check-sentence-complexity yamllint zizmor
 
 # === Fix issues ===
 

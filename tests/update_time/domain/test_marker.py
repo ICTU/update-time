@@ -5,8 +5,8 @@ from pathlib import Path
 
 from update_time.domain.bound import Verb
 from update_time.domain.line import Line
-from update_time.domain.location import Location
 from update_time.domain.marker import Marker, parse_marker
+from update_time.primitives.location import Location
 
 
 def line(text: str, previous_text: str = "") -> Line:
@@ -27,28 +27,28 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(Marker(ignore_update=True, raw="ignore[update]"), Marker(ignore_update=True))
 
 
-class RawMarkerTest(unittest.TestCase):
+class RawTextTest(unittest.TestCase):
     """Unit tests for reading a marker's verbatim directive text back out of its `raw` text."""
 
-    def test_whole_marker_without_a_verb(self):
-        """Test that without a verb the whole `raw` text is returned unchanged."""
+    def test_str_is_the_whole_marker(self):
+        """Test that a marker renders as the whole of its verbatim directive text, every verb's directives kept."""
         marker = Marker(raw="ignore[update] allow[hash-drift]")
-        self.assertEqual(marker.raw_marker(), "ignore[update] allow[hash-drift]")
+        self.assertEqual(str(marker), "ignore[update] allow[hash-drift]")
 
     def test_keeps_only_the_given_verbs_directives(self):
         """Test that with a verb only that verb's directives are kept, the other verb's directive left out."""
         marker = Marker(raw="ignore[update] allow[hash-drift]")
-        self.assertEqual(marker.raw_marker(Verb.IGNORE), "ignore[update]")
-        self.assertEqual(marker.raw_marker(Verb.ALLOW), "allow[hash-drift]")
+        self.assertEqual(marker.raw_directives(Verb.IGNORE), "ignore[update]")
+        self.assertEqual(marker.raw_directives(Verb.ALLOW), "allow[hash-drift]")
 
     def test_combined_scopes_stay_as_written(self):
         """Test that combined scopes are kept verbatim, not collapsed to a bare `ignore`."""
         marker = Marker(raw="ignore[update] ignore[stale]")
-        self.assertEqual(marker.raw_marker(Verb.IGNORE), "ignore[update] ignore[stale]")
+        self.assertEqual(marker.raw_directives(Verb.IGNORE), "ignore[update] ignore[stale]")
 
     def test_empty_without_a_matching_directive(self):
         """Test that a marker whose `raw` holds no directive of the verb yields an empty text."""
-        self.assertEqual(Marker(raw="allow[update<3.13]").raw_marker(Verb.IGNORE), "")
+        self.assertEqual(Marker(raw="allow[update<3.13]").raw_directives(Verb.IGNORE), "")
 
 
 class ParseMarkerScopeTest(unittest.TestCase):

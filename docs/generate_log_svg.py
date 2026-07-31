@@ -1,67 +1,40 @@
-"""Generate the log-output screenshot (docs/log-output.svg) shown in the README.
+"""Render the log-output screenshot (docs/log-output.svg) shown in the README.
 
-A handful of representative Update-time log lines are rendered through the tool's own `LogHighlighter` and theme and
-exported as an SVG, so the README shows exactly how the coloured output looks — bold dependency names, dim digests,
-highlighted versions, and the INFO/WARNING levels. Everything is fixed (the timestamp and the SVG's element ids) so
-regenerating produces a byte-identical file unless the sample or the styling actually changes.
-
-`generate` also returns the same lines as plain text; `generate_readme` embeds that as the accessible fallback in the
-README (the `<details>` block after the image) for readers whose viewer can't render the SVG, or who use a screen
-reader. Regenerate the whole README (and this SVG) with `just readme`.
+A handful of representative log lines are emitted through Update-time's own `Logger` and rendered with its
+highlighter and theme, then exported as an SVG, so the README shows exactly how the coloured output looks.
 """
 
 import io
 import logging
 import re
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from rich.console import Console
 from rich.logging import RichHandler
 
-from update_time.domain.staleness import STALE_AFTER
-from update_time.domain.version import SHA256_HEX_CHARS
-from update_time.io.log import (
-    DEPENDENCY_DELIMITER,
-    LOCATION_DELIMITER,
-    LOG_MESSAGE_FORMAT,
-    LOG_THEME,
-    LOG_TIME_FORMAT,
-    Logger,
-    LogHighlighter,
-    LogMessage,
-)
+from update_time.domain.version import SHA256_HEX_CHARS, DependencyVersion
+from update_time.io.log import LOG_MESSAGE_FORMAT, LOG_THEME, LOG_TIME_FORMAT, Logger, LogHighlighter
+from update_time.primitives.location import Location
 
 
-def _emit(log: logging.Logger, message: LogMessage, *args: object) -> None:
-    """Emit the sample record at the level the message declares, so the screenshot follows the real log output."""
-    log.log(message.level, message, *args)
+@dataclass(frozen=True)
+class LogOutput:
+    """The sample log output in the two forms the README embeds: the SVG screenshot and its plain-text fallback."""
 
-
-_OUTPUT = Path(__file__).with_name("log-output.svg")
-# A fixed wall-clock so the rendered timestamp — and therefore the SVG — is identical on every regeneration. The
-# naive datetime round-trips through the local timezone, so it always renders as 09:14:03 regardless of the machine.
-_FIXED_TIME = datetime(2026, 7, 10, 9, 14, 3).timestamp()  # noqa: DTZ001
+    svg: str
+    text: str
 
 
 class _FixedTime(logging.Filter):
     """Pin every record's timestamp so the screenshot never changes just because the clock moved."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Overwrite the record's creation time with the fixed one and keep the record."""
-        record.created = _FIXED_TIME
+        """Overwrite the record's creation time with a fixed timestamp and keep the record."""
+        # Use a naive datetime, so it always renders as 09:14:03 regardless of the machine local timezone.
+        record.created = datetime(2026, 7, 10, 9, 14, 3).timestamp()  # noqa: DTZ001
         return True
-
-
-def _delimit(name: str) -> str:
-    """Wrap a dependency name in the delimiter the highlighter colours, the way `Logger` does before logging."""
-    return f"{DEPENDENCY_DELIMITER}{name}{DEPENDENCY_DELIMITER}"
-
-
-def _locate(path: str, line: int | None = None) -> str:
-    """Wrap a file location in the delimiter the highlighter colours, the way `Logger._render` does before logging."""
-    rendered = f"{path}:{line}" if line is not None else path
-    return f"{LOCATION_DELIMITER}{rendered}{LOCATION_DELIMITER}"
 
 
 def _portable(svg: str) -> str:
@@ -81,8 +54,8 @@ def _portable(svg: str) -> str:
     return re.sub(r",\s*url\([^)]+\)\s*format\([^)]+\)", "", svg)
 
 
-def generate() -> str:
-    """Write docs/log-output.svg and return the same log output as plain text (the README's accessible fallback)."""
+def generate() -> LogOutput:
+    """Return the sample log output as the SVG screenshot and as the plain text the README falls back to."""
     console = Console(
         record=True,
         width=100,
@@ -93,31 +66,20 @@ def generate() -> str:
     handler = RichHandler(console=console, highlighter=LogHighlighter(), show_path=False)
     handler.addFilter(_FixedTime())
     logging.basicConfig(level="INFO", datefmt=LOG_TIME_FORMAT, format=LOG_MESSAGE_FORMAT, handlers=[handler])
-    log = logging.getLogger("update-time")
+    log = Logger("update-time")
 
     # A representative digest, padded to the exact length of a real one so `LogHighlighter` recognises and dims it.
     digest = "sha256:" + ("9f2c1e7b" + "d4" * SHA256_HEX_CHARS)[:SHA256_HEX_CHARS]
-    _emit(
-        log,
-        Logger.MESSAGE_NEW_VERSION,
-        _delimit("humanize"),
-        _locate("docs/requirements.txt", 12),
-        "4.15.0",
-        "Changed in 4.15.0\n- Fantastic new features\n- A few bugs squashed",
-    )
-    _emit(log, Logger._MESSAGE_PINNED, _delimit("python"), _locate("Dockerfile", 1), "3.14.6", digest)  # noqa: SLF001
-    _emit(
-        log,
-        Logger.MESSAGE_NEW_VERSION,
-        _delimit("actions/checkout"),
-        _locate(".github/workflows/ci.yml", 17),
-        "4.3.0",
-        Logger.NO_CHANGELOG,
-    )
+    changelog = "Changed in 4.15.0\n- Fantastic new features\n- A few bugs squashed"
+    log.new_version("humanize", DependencyVersion("4.15.0", changelog), Location(Path("docs/requirements.txt"), 12))
+    log.pinned("python", DependencyVersion("3.14.6", sha=digest), Location(Path("Dockerfile"), 1))
+    log.new_version("actions/checkout", DependencyVersion("4.3.0"), Location(Path(".github/workflows/ci.yml"), 17))
     # A manifest delegated to npm/pnpm, so no per-dependency line is surfaced: reported file-only, without a number.
-    _emit(log, Logger._MESSAGE_STALE, _delimit("left-pad"), _locate("package.json"), "1.3.0", 512, STALE_AFTER.default)  # noqa: SLF001
+    # The publication date is derived from the wall clock so the age it renders — 512 days — stays put as time passes.
+    long_ago = datetime.now(UTC) - timedelta(days=512, hours=1)
+    log.warn_if_stale("left-pad", DependencyVersion("1.3.0", newest_published=long_ago), Location(Path("package.json")))
 
     plain_text = console.export_text(clear=False)  # capture before the export clears the recording
     svg = console.export_svg(title="update-time", unique_id="update-time-log")
-    _OUTPUT.write_text(_portable(svg))
-    return "\n".join(line.rstrip() for line in plain_text.splitlines())  # strip the trailing render padding
+    text = "\n".join(line.rstrip() for line in plain_text.splitlines())  # strip the trailing render padding
+    return LogOutput(svg=_portable(svg), text=text)

@@ -1,6 +1,7 @@
 """Unit tests for the version module."""
 
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from update_time.domain.version import DependencyVersion, Yank, first_eligible, is_valid
 
@@ -21,8 +22,29 @@ class IsValidTest(unittest.TestCase):
         self.assertTrue(is_valid("v1.0"))
 
 
+class YankTest(unittest.TestCase):
+    """Unit tests for rendering a version's withdrawal state."""
+
+    def test_str_quotes_the_reason(self):
+        """Test that a yank renders as the maintainer's reason, in double quotes."""
+        self.assertEqual(str(Yank(yanked=True, reason="broke Python 3.10 support")), '"broke Python 3.10 support"')
+
+    def test_str_reports_an_unspecified_reason(self):
+        """Test that a yank the maintainer gave no reason for renders as `reason not specified`."""
+        self.assertEqual(str(Yank(yanked=True)), "reason not specified")
+
+
 class DependencyVersionTest(unittest.TestCase):
     """Unit tests for the DependencyVersion data carrier."""
+
+    def test_str_is_the_version_when_the_publication_date_is_unknown(self):
+        """Test that a version whose publication date is unknown renders as its version alone."""
+        self.assertEqual(str(DependencyVersion("4.15.0")), "4.15.0")
+
+    def test_str_appends_the_publication_date_in_utc(self):
+        """Test that a known publication date is appended, converted to UTC whatever timezone it was given in."""
+        published = datetime(2026, 5, 29, 15, 54, tzinfo=timezone(timedelta(hours=2)))
+        self.assertEqual(str(DependencyVersion("1.0", published=published)), "1.0, published: 2026-05-29 13:54")
 
     def test_not_yanked_by_default(self):
         """Test that a version's yank state defaults to not yanked."""

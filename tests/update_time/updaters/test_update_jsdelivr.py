@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.version import Yank
 from update_time.io.log import Logger
 from update_time.updaters.update_jsdelivr import update_jsdelivrs
 
@@ -23,6 +24,10 @@ def served(*hashes: str) -> Mock:
 
 # An npm publication date comfortably past the cooldown, relative to now so the decision doesn't depend on the clock.
 ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN.default + 1)).isoformat()
+
+# The deprecation npm reports for clipboard 2.0.11: the reason the registry states, and the yank it becomes.
+DEPRECATION_REASON = "use 3.0 instead"
+DEPRECATED = Yank(yanked=True, reason=DEPRECATION_REASON)
 
 
 # The lines a jsDelivr reference is declared with, formatted as Ruff would format them: the URL, and below it the
@@ -94,7 +99,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assertIn(f'"integrity": "sha256-{HASH2}"', new_content)
         self.assertNotIn("2.0.11", new_content)
         self.assertNotIn(HASH1, new_content)
-        self.assert_new_version_logged(mock_conf, "clipboard", ANY, Logger.NO_CHANGELOG, line=3)
+        self.assert_new_version_logged(mock_conf, "clipboard", ANY, Logger._NO_CHANGELOG, line=3)
         self.assert_no_warnings_logged()
 
     def test_line_between_the_url_and_its_hash_is_left_untouched(self, mock_get: Mock, mock_glob: Mock):
@@ -110,7 +115,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assertIn("# do not remove 2.0.11 note", new_content)  # the lookalike is preserved
         self.assertIn(f'"integrity": "sha256-{HASH2}"', new_content)
         self.assertNotIn(HASH1, new_content)
-        self.assert_new_version_logged(mock_conf, "clipboard", ANY, Logger.NO_CHANGELOG, line=3)
+        self.assert_new_version_logged(mock_conf, "clipboard", ANY, Logger._NO_CHANGELOG, line=3)
 
     def test_unchanged(self, mock_get: Mock, mock_glob: Mock):
         """Test that the config is not rewritten if there is no new version."""
@@ -157,7 +162,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         new_content = self.written(mock_conf)
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", new_content)
         self.assertIn(f'{{"integrity": "sha256-{HASH2}", "crossorigin": "anonymous"}},', new_content)
-        self.assert_new_version_logged(mock_conf, "clipboard", ANY, Logger.NO_CHANGELOG, line=3)
+        self.assert_new_version_logged(mock_conf, "clipboard", ANY, Logger._NO_CHANGELOG, line=3)
         self.assert_no_warnings_logged()
 
     def test_bare_url_string_cannot_be_pinned(self, mock_get: Mock, mock_glob: Mock):
@@ -212,10 +217,10 @@ class UpdateJsdelivrsTest(LoggingTestCase):
 
     def test_deprecated_dependency_warned(self, mock_get: Mock, mock_glob: Mock):
         """Test that a jsDelivr URL left on a deprecated version is warned about, without rewriting the URL."""
-        self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": "use 3.0 instead"}, served_hash=HASH1)
+        self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": DEPRECATION_REASON}, served_hash=HASH1)
         mock_conf = self.update(CONF, mock_glob)
         mock_conf.write_text.assert_not_called()  # no newer version, so no rewrite
-        self.assert_yanked_dependency_logged(mock_conf, "clipboard", "2.0.11", '"use 3.0 instead"', line=3)
+        self.assert_yanked_dependency_logged(mock_conf, "clipboard", "2.0.11", DEPRECATED, line=3)
 
     def test_marker_holds_the_pin_back_as_well_as_the_update(self, mock_get: Mock, mock_glob: Mock):
         """Test that an `# update-time: ignore` marker leaves an unpinned URL unpinned, looking nothing up.
@@ -255,7 +260,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         new_content = self.written(mock_conf)
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", new_content)
         self.assertNotIn("3.0.0", new_content)
-        self.assert_new_version_logged(mock_conf, "clipboard", ANY, Logger.NO_CHANGELOG, line=3)
+        self.assert_new_version_logged(mock_conf, "clipboard", ANY, Logger._NO_CHANGELOG, line=3)
         self.assert_no_warnings_logged()
 
     def test_ignore_update_marker_holds_the_update_back_but_still_warns(self, mock_get: Mock, mock_glob: Mock):
@@ -264,10 +269,10 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         The scope narrows the marker to the update, so a URL deliberately frozen on a deprecated version is still
         reported as one, rather than going quiet along with the update.
         """
-        self.offer_versions(mock_get, "2.0.12", "2.0.11", deprecated={"2.0.11": "use 3.0 instead"})
+        self.offer_versions(mock_get, "2.0.12", "2.0.11", deprecated={"2.0.11": DEPRECATION_REASON})
         mock_conf = self.update(conf(entry(f"{URL}  # update-time: ignore[update]", INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()  # the newer version is held back
-        self.assert_yanked_dependency_logged(mock_conf, "clipboard", "2.0.11", '"use 3.0 instead"', line=3)
+        self.assert_yanked_dependency_logged(mock_conf, "clipboard", "2.0.11", DEPRECATED, line=3)
         self.assert_ignored_logged(mock_conf, "clipboard", "ignore[update]", line=3)
 
     def test_ignore_stale_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
@@ -289,7 +294,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         The hold-back is logged at debug level, and no warning survives, so npm reporting deprecations means the
         marker is not reported as redundant either.
         """
-        self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": "use 3.0 instead"}, served_hash=HASH1)
+        self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": DEPRECATION_REASON}, served_hash=HASH1)
         mock_conf = self.update(conf(entry(f"{URL}  # update-time: ignore[yanked]", INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_no_warnings_logged()

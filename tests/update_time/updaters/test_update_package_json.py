@@ -8,6 +8,7 @@ from unittest.mock import Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.package_managers.node import COMMON_NPM_OPTIONS
+from update_time.primitives.command import Command
 from update_time.updaters.update_package_json import update_package_jsons
 
 from tests.update_time.helpers import (
@@ -50,10 +51,10 @@ def outdated_error(package: str, current: str, latest: str, **extra: object) -> 
     Extra per-package fields (e.g. pnpm's `dependencyType`) are merged into the package's object.
     """
     output = json.dumps({package: {"current": current, "latest": latest, **extra}})
-    return subprocess.CalledProcessError(cmd="", returncode=1, output=output)
+    return subprocess.CalledProcessError(cmd="", returncode=1, output=output, stderr="")
 
 
-def assert_manager_called(mock_run: Mock, outdated: list[str], update: list[str], list_cmd: list[str]) -> None:
+def assert_manager_called(mock_run: Mock, outdated: Command, update: Command, list_cmd: Command) -> None:
     """Assert the manager's outdated, update, and list commands ran in order, each with the shared run kwargs."""
     run_kwargs = {"capture_output": True, "text": True, "check": True, "cwd": Path("/")}
     mock_run.assert_has_calls((call(outdated, **run_kwargs), call(update, **run_kwargs), call(list_cmd, **run_kwargs)))
@@ -82,9 +83,9 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         cooldown_option = [NPM_COOLDOWN_OPTION] if cooldown else []
         assert_manager_called(
             mock_run,
-            ["npm", "outdated", "--json", *COMMON_NPM_OPTIONS, *cooldown_option],
-            ["npm", "update", "--save", *COMMON_NPM_OPTIONS, *cooldown_option],
-            ["npm", "list", "--json", "--depth=0", *COMMON_NPM_OPTIONS],
+            Command("npm", "outdated", "--json", *COMMON_NPM_OPTIONS, *cooldown_option),
+            Command("npm", "update", "--save", *COMMON_NPM_OPTIONS, *cooldown_option),
+            Command("npm", "list", "--json", "--depth=0", *COMMON_NPM_OPTIONS),
         )
 
     def test_unchanged(self, mock_run: Mock, mock_glob: Mock):
@@ -196,9 +197,9 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         )
         update_package_jsons()
         commands = [call.args[0][:2] for call in mock_run.call_args_list]
-        self.assertIn(["npm", "outdated"], commands)
-        self.assertNotIn(["npm", "update"], commands)  # skipped because outdated failed
-        self.assertNotIn(["npm", "list"], commands)  # skipped because outdated failed
+        self.assertIn(("npm", "outdated"), commands)
+        self.assertNotIn(("npm", "update"), commands)  # skipped because outdated failed
+        self.assertNotIn(("npm", "list"), commands)  # skipped because outdated failed
         mock_package_json.write_text.assert_not_called()
         self.assert_command_stderr_logged(stderr="error: offline")  # only the outdated failure is surfaced
 
@@ -241,9 +242,9 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         cooldown_option = [PNPM_COOLDOWN_OPTION] if cooldown else []
         assert_manager_called(
             mock_run,
-            ["pnpm", "outdated", "--format", "json", *cooldown_option],
-            ["pnpm", "update", *cooldown_option],
-            ["pnpm", "list", "--json", "--depth=0"],
+            Command("pnpm", "outdated", "--format", "json", *cooldown_option),
+            Command("pnpm", "update", *cooldown_option),
+            Command("pnpm", "list", "--json", "--depth=0"),
         )
 
     def test_unchanged(self, mock_run: Mock, mock_glob: Mock):

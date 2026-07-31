@@ -1,6 +1,7 @@
-"""Dependency version primitives."""
+"""Dependency version domain object."""
 
 from dataclasses import dataclass
+from datetime import UTC
 from typing import TYPE_CHECKING
 
 from packaging.version import InvalidVersion, Version
@@ -39,6 +40,10 @@ class Yank:
     yanked: bool = False
     reason: str = ""  # The maintainer's reason, empty when none was given
 
+    def __str__(self) -> str:
+        """Render the withdrawal as the maintainer's reason, quoted, or `reason not specified` when they gave none."""
+        return f'"{self.reason}"' if self.reason else "reason not specified"
+
 
 @dataclass(frozen=True)
 class DependencyVersion:
@@ -50,6 +55,12 @@ class DependencyVersion:
     published: datetime | None = None  # Publication date of this (candidate) version, when known
     newest_published: datetime | None = None  # Publication date of the dependency's newest release, for staleness
     yank: Yank = Yank()  # The version's withdrawal state (yanked on PyPI, deprecated on npm)
+
+    def __str__(self) -> str:
+        """Render the version as its version string, followed by its publication date in UTC when that is known."""
+        if self.published is None:
+            return self.version
+        return f"{self.version}, published: {self.published.astimezone(UTC):%Y-%m-%d %H:%M}"
 
 
 @dataclass(frozen=True)

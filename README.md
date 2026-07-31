@@ -345,7 +345,7 @@ To avoid adopting releases that are too fresh to trust, Update-time honours a co
 Keeping a pin on the latest version doesn't help if that latest version is itself years old: the project may have been abandoned or superseded. Alongside updating, Update-time warns when a dependency's newest release is older than a threshold, so you can decide whether to keep it, replace it, or vendor it. The threshold defaults to **365 days** and is set with `--stale-after DAYS`; pass `--stale-after 0` to disable the check entirely. The warning is informational only — it never changes a file and never affects the exit status — and is logged at level `WARNING`. For example, a pin whose newest release came out well over a year ago is reported as:
 
 ```console
-WARNING requirements.txt: Stale dependency humanize in docs/requirements.txt: newest release 4.15.0 was published 512 days ago (> 365)
+WARNING Stale dependency humanize in docs/requirements.txt: newest release 4.15.0 was published 512 days ago (> 365)
 ```
 
 The date compared against the threshold is the publication date of the dependency's *newest* release. For a GitHub Action or pre-commit hook whose newest version was tagged without being published as a release, the tagged commit's date is used instead. This way a project that has just published a release is never reported as stale, not even when that release is still within the [cooldown](#-cooldown) window. A reference held back with a bare `# update-time: ignore` (or `# update-time: ignore[stale]`) marker is not checked for staleness either. `# update-time: ignore[update]` holds back only the update, so its staleness is still reported (see [Controlling updates per reference](#-controlling-updates-per-reference)).

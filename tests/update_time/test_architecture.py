@@ -19,7 +19,7 @@ class DependenciesTest(unittest.TestCase):
         """Test that scripts are not imported."""
         assert_passes(project_files("src/").should_not().depend_on_files().with_name("update_*.py"))
 
-    def test_version_primitives_are_a_leaf(self):
+    def test_version_module_is_a_leaf(self):
         """Test that `version.py` depends on nothing else in `domain`, so the rest of `domain` can build on it.
 
         `version.py` holds the foundational types and helpers the rest of `domain` builds on: `bound.py` imports

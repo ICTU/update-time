@@ -8,12 +8,13 @@ reference from a match, deciding the version to pin it to, and rewriting the lin
 own reference is spelled.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import partial
 from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
-from update_time.domain.drift import drift_cause, hash_drifted
+from update_time.domain.drift import DriftedPin, hash_drifted, report_drift
 from update_time.domain.version import Reference, is_valid
 from update_time.references.resolve import latest_version
 from update_time.references.rewrite import matched_dependency, replace_reference
@@ -23,10 +24,10 @@ if TYPE_CHECKING:
     import re
     from collections.abc import Callable
 
-    from update_time.domain.location import Location
     from update_time.domain.marker import Marker
     from update_time.domain.version import DependencyVersion
     from update_time.io.log import Logger
+    from update_time.primitives.location import Location
 
 
 def sha_pinned_reference(match: re.Match[str], dependency: str) -> Reference:
@@ -70,18 +71,16 @@ def _drifted_pin(
 ) -> DependencyVersion | None:
     """Return the version to re-pin the reference to when its tag has moved, or None to leave its pin as it is.
 
-    A reference that stays on its version can still have had that version's tag moved onto another commit. Adopting
-    that silently would defeat the pin, so the new commit is only adopted when the reference opted in (see
-    `drift_cause`); otherwise the drift is warned about and the pin left alone.
+    A reference that stays on its version can still have had that version's tag moved onto another commit. Whether
+    the commit it moved to is adopted or only warned about is `report_drift`'s decision, and the version is returned
+    for re-pinning only when it is adopted.
     """
-    dependency, version, current_sha = reference.dependency, latest.version, reference.current_sha
-    if not hash_drifted(latest.sha, current_sha):
+    if not hash_drifted(latest.sha, reference.current_sha):
         return None  # Already pinned and up to date
-    if (cause := drift_cause(marker)) is None:
-        log.tag_drift(dependency, version, current_sha, latest.sha, location)
-        return None
-    log.adopted_tag_drift(dependency, version, current_sha, latest.sha, location, cause)
-    return latest
+    # The version is reported as the source spells it, which the reference's own spelling need only equal, not match.
+    drifted = DriftedPin(replace(reference, current_version=latest.version), latest.sha, location)
+    adopted = report_drift(marker, partial(log.tag_drift, drifted), partial(log.adopted_tag_drift, drifted))
+    return latest if adopted else None
 
 
 @dataclass(frozen=True)

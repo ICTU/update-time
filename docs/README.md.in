@@ -248,9 +248,7 @@ Some dependencies get no hash pin from Update-time:
 Sometimes a reference already carries a hash pin and only what it points at has changed. Update-time warns about that and leaves the pin unchanged, so a changed target is never silently adopted (which would defeat the immutability a pin exists to provide). It takes three forms, one per kind of hash pin:
 
 ```console
-WARNING Digest drift for python:3.14 in Dockerfile:1: pinned to sha256:… but the registry now serves sha256:…; the pin was left unchanged, verify the change is expected before updating the pin
-WARNING Tag drift for actions/checkout@4.1.1 in .github/workflows/ci.yml:17: pinned to commit … but the tag now points at …; the pin was left unchanged, verify the tag was moved deliberately before updating the pin
-WARNING Integrity hash mismatch for clipboard@2.0.11 in docs/conf.py:4: declares sha256-… but jsDelivr serves sha256-…; the hash was left unchanged, and since npm does not republish a version it is probably the declared hash that is wrong
+@@DRIFT_WARNINGS@@
 ```
 
 *Digest drift* means an image tag was re-pushed (rebuilt) under the same name and version, so the registry now serves a different digest.
@@ -280,7 +278,7 @@ To avoid adopting releases that are too fresh to trust, Update-time honours a co
 Keeping a pin on the latest version doesn't help if that latest version is itself years old: the project may have been abandoned or superseded. Alongside updating, Update-time warns when a dependency's newest release is older than a threshold, so you can decide whether to keep it, replace it, or vendor it. The threshold defaults to **365 days** and is set with `--stale-after DAYS`; pass `--stale-after 0` to disable the check entirely. The warning is informational only — it never changes a file and never affects the exit status — and is logged at level `WARNING`. For example, a pin whose newest release came out well over a year ago is reported as:
 
 ```console
-WARNING requirements.txt: Stale dependency humanize in docs/requirements.txt: newest release 4.15.0 was published 512 days ago (> 365)
+@@STALE_WARNING@@
 ```
 
 The date compared against the threshold is the publication date of the dependency's *newest* release. For a GitHub Action or pre-commit hook whose newest version was tagged without being published as a release, the tagged commit's date is used instead. This way a project that has just published a release is never reported as stale, not even when that release is still within the [cooldown](#-cooldown) window. A reference held back with a bare `# update-time: ignore` (or `# update-time: ignore[stale]`) marker is not checked for staleness either. `# update-time: ignore[update]` holds back only the update, so its staleness is still reported (see [Controlling updates per reference](#-controlling-updates-per-reference)).
@@ -292,7 +290,7 @@ Every kind of dependency Update-time updates is checked for staleness. Two indir
 A yank means "stop using this": a release the maintainer withdrew because it was broken, botched, or insecure. An exact pin keeps installing a yanked release anyway — pip and uv honour it by design — so Update-time warns when the version a dependency is pinned to has been yanked. Like the staleness warning, it is informational only: it never changes a file and never affects the exit status, and is logged at level `WARNING`. The maintainer's reason is included when they gave one:
 
 ```console
-WARNING Yanked dependency humanize in docs/requirements.txt:12: version 4.15.0 was yanked ("accidentally broke Python 3.10 support")
+@@YANKED_WARNING@@
 ```
 
 When no reason was given, the message reports `(reason not specified)` instead.
@@ -319,7 +317,7 @@ So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen 
 A yank can only be observed where the dependency's source reports one, so of the references that accept a marker, `ignore[yanked]` has something to hold back on a `requirements.txt` pin and on a jsDelivr URL (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so Update-time reports it as redundant at `WARNING`:
 
 ```console
-WARNING Redundant update-time marker ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept, so the marker holds nothing back
+@@REDUNDANT_MARKER_WARNING@@
 ```
 
 One further marker does the opposite of holding a reference back. `# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting what it now points at, so a re-pushed image tag's new digest, or the commit a moved version tag points at, is pinned instead of only warned about (see [Hash drift](#hash-drift)). It follows the same placement rules as the other markers, and the global `--allow-hash-drift` flag applies it to every reference at once. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.

@@ -3,8 +3,8 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from update_time.domain.location import Location
 from update_time.primitives.environment import EnvVar
+from update_time.primitives.location import Location
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable

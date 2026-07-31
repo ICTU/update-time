@@ -5,9 +5,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND
-from update_time.domain.location import Location
 from update_time.domain.version import DependencyVersion
 from update_time.io.log import Logger
+from update_time.primitives.location import Location
 from update_time.updaters.update_python_version_file import update_python_version_files
 
 from tests.update_time.fixtures import DIGEST
@@ -170,9 +170,9 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         # The marker sits on line 1 and the entry it governs on line 2; the warning points at the entry's line.
         self.assert_logged(
             Logger._MESSAGE_INVALID_SPECIFIER,
-            "<<3.13",
-            Logger._render_dependency("python"),
-            Logger._render_location(Location(version_file, 2)),
+            specifier="<<3.13",
+            dependency="python",
+            location=Location(version_file, 2),
         )
         self.assert_no_new_version_logged()
 

@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock
 
 from update_time.domain.bound import NO_BOUND, Verb
-from update_time.domain.drift import ALLOW_HASH_DRIFT
+from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
 from update_time.domain.line import located_lines
-from update_time.domain.location import Location
 from update_time.domain.marker import Marker
-from update_time.domain.version import DependencyVersion
+from update_time.domain.version import DependencyVersion, Reference
+from update_time.primitives.location import Location
 from update_time.references.rewrite import rewrite_match, update_references_in_lines
 
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
@@ -67,6 +67,10 @@ class UpdateReferencesTest(unittest.TestCase):
             located_lines(self.path, lines), regexp, get_new_version=get_new_version, logger=self.logger
         )
 
+    def drifted(self, line: int = 1) -> DriftedPin:
+        """Return the drifted pin the re-pushed `python:3.14` reference these tests use produces."""
+        return DriftedPin(Reference("python", "3.14", OLD_DIGEST), NEW_DIGEST, Location(self.path, line))
+
     def test_no_reference(self):
         """Test that lines without a reference are returned unchanged."""
         lines = ["line1", "line2"]
@@ -122,9 +126,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that a pinned reference whose digest changed at the registry is warned about, not rewritten."""
         lines = [f"image: python:3.14@{OLD_DIGEST}"]
         self.assertEqual(self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST)), lines)
-        self.logger.digest_drift.assert_called_once_with(
-            "python", "3.14", OLD_DIGEST, NEW_DIGEST, Location(self.path, 1)
-        )
+        self.logger.digest_drift.assert_called_once_with(self.drifted())
         self.logger.new_version.assert_not_called()
         self.logger.pinned.assert_not_called()
 
@@ -247,9 +249,7 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[hash-drift]"]
         new_lines = self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST))
         self.assertEqual(new_lines, [f"image: python:3.14@{NEW_DIGEST}  # update-time: allow[hash-drift]"])
-        self.logger.adopted_drift.assert_called_once_with(
-            "python", "3.14", OLD_DIGEST, NEW_DIGEST, Location(self.path, 1), "update-time: allow[hash-drift]"
-        )
+        self.logger.adopted_drift.assert_called_once_with(self.drifted(), "update-time: allow[hash-drift]")
         self.logger.digest_drift.assert_not_called()
 
     def test_allow_hash_drift_marker_above_line_adopts(self):
@@ -257,9 +257,7 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = ["# update-time: allow[hash-drift]", f"image: python:3.14@{OLD_DIGEST}"]
         new_lines = self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST))
         self.assertEqual(new_lines, ["# update-time: allow[hash-drift]", f"image: python:3.14@{NEW_DIGEST}"])
-        self.logger.adopted_drift.assert_called_once_with(
-            "python", "3.14", OLD_DIGEST, NEW_DIGEST, Location(self.path, 2), "update-time: allow[hash-drift]"
-        )
+        self.logger.adopted_drift.assert_called_once_with(self.drifted(2), "update-time: allow[hash-drift]")
 
     def test_allow_hash_drift_marker_is_noop_when_version_also_changed(self):
         """Test that when the version has moved too, the normal update path runs and the marker doesn't apply."""
@@ -284,9 +282,7 @@ class UpdateReferencesTest(unittest.TestCase):
         with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
             new_lines = self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST))
         self.assertEqual(new_lines, [f"image: python:3.14@{NEW_DIGEST}"])
-        self.logger.adopted_drift.assert_called_once_with(
-            "python", "3.14", OLD_DIGEST, NEW_DIGEST, Location(self.path, 1), "--allow-hash-drift"
-        )
+        self.logger.adopted_drift.assert_called_once_with(self.drifted(), "--allow-hash-drift")
         self.logger.digest_drift.assert_not_called()
 
     def test_ignore_wins_over_allow_hash_drift_flag(self):
@@ -383,12 +379,7 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version.assert_called_once_with("python", "3.14", bound(Verb.ALLOW, "update<3.15"))
         # The cause names the reference's `allow` directives verbatim, the bound alongside the hash-drift opt-in.
         self.logger.adopted_drift.assert_called_once_with(
-            "python",
-            "3.14",
-            OLD_DIGEST,
-            NEW_DIGEST,
-            Location(self.path, 1),
-            "update-time: allow[update<3.15] allow[hash-drift]",
+            self.drifted(), "update-time: allow[update<3.15] allow[hash-drift]"
         )
 
     def test_directive_list_combines_ignore_stale_and_bound(self):
@@ -557,7 +548,7 @@ class UpdateReferencesTest(unittest.TestCase):
 class MarkerForwardingTest(unittest.TestCase):
     """Unit test that the rewrite engine hands a matched reference's parsed marker to the logger.
 
-    How `parse_marker` captures the text and how `raw_marker` filters it are covered in `test_marker`; this checks
+    How `parse_marker` captures the text and how `raw_directives` filters it are covered in `test_marker`; this checks
     only the wiring — that the engine forwards the marker carrying that text to `recognised_marker`, the DEBUG line
     the README points at for confirming a marker was recognised.
     """
@@ -569,4 +560,4 @@ class MarkerForwardingTest(unittest.TestCase):
         update_references_in_lines(lines, REGEXP, get_new_version=new_version_getter("3.15"), logger=logger)
         logger.recognised_marker.assert_called_once()
         marker = cast("Marker", logger.recognised_marker.call_args.args[1])
-        self.assertEqual(marker.raw_marker(), "ignore[update] ignore[stale]")
+        self.assertEqual(str(marker), "ignore[update] ignore[stale]")
