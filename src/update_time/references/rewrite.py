@@ -152,9 +152,8 @@ def apply_marker(
 ) -> str:
     """Read a matched reference's `# update-time:` marker and update it, or leave the line unchanged when held back.
 
-    The marker gate shared by every line-based reference, and the one place that reads one: a marker is read inline on
-    the reference's own line, or from the line directly above it when that is a standalone comment, so no updater has
-    to remember the placement rule (see `parse_marker`). An item that could not be parsed is reported (here, where
+    The marker gate shared by every line-based reference, and the one place that reads one, so no updater has to
+    remember the placement rule (see `parse_marker`). An item that could not be parsed is reported (here, where
     the logger and location are available, unlike in the pure `parse_marker`) and leaves the reference unchanged.
     Otherwise the marker is reported as recognised at the debug level, as is the held-back update when the marker
     holds the update back, so users can tell a marker that was understood from one that suppressed something. A

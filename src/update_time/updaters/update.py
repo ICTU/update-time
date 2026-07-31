@@ -86,10 +86,6 @@ def main() -> int:
     STALE_AFTER.set(args.stale_after)
     LOG_LEVEL.set(args.log_level)
     ALLOW_HASH_DRIFT.set(args.allow_hash_drift)
-    # Update-time rewrites files in place, so it refuses to run outside a git repository where changes can't be
-    # reverted. --force overrides the refusal, proceeding with a warning. Checked once, before any subprocess is
-    # spawned; the log level is already exported above, so both messages honour --log-level. The check keys off the
-    # scan root (the parent has chdir'd there), so it reflects the tree whose files would actually be rewritten.
     # parse_args has already refused to run outside a git repository unless --force was given; when it was, warn that
     # the in-place rewrites cannot be reverted. The log level is exported above, so the warning honours --log-level.
     scan_root = Path.cwd()

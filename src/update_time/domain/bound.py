@@ -59,9 +59,7 @@ class UpdateLevel(enum.IntEnum):
     """The version components a level-based bound can name, each valued with the component's position.
 
     A major update changes the first component, a minor update the second, and a patch update the third (or a later
-    one). The names are positional, not semantic: a project may ship breaking changes in releases that bump the
-    second component (CPython, calver), making "no breaking updates" `ignore[minor-update]`, not
-    `ignore[major-update]`.
+    one).
     """
 
     MAJOR = 0

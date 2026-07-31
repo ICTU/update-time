@@ -88,11 +88,7 @@ class Tag:
 
     @property
     def prefix(self) -> str:
-        """Return the non-numeric label before the version (e.g. 'python' in 'python3.12-slim'), or '' if none.
-
-        Language/runtime images prefix the version with a label. The prefix is kept when bumping and must match
-        between the current tag and a candidate, so e.g. `python3.x` is never replaced by `pypy3.x`.
-        """
+        """Return the non-numeric label before the version (e.g. 'python' in 'python3.12-slim'), or '' if none."""
         return self._match.group("prefix") if self._match else ""
 
     @cached_property
@@ -142,10 +138,9 @@ class Tag:
 
         The two strings are the parts of the suffix around its embedded version: the label before it and the
         remainder after it (`alpine3.19-slim` -> `('alpine', 'slim')`, `alpine3.23` -> `('alpine', '')`). Returning
-        them as a pair keeps them comparable without a separator that could collide. Keeping the label fixed is what
-        stops `alpine` from being replaced by another variant, exactly as the exact-suffix check did before. A suffix
-        without an embedded version has no version to strip, so its whole string is the label (and the second string
-        is empty), and the check reduces to today's exact-suffix match (`slim` still only matches `slim`).
+        them as a pair keeps them comparable without a separator that could collide. A suffix without an embedded
+        version has no version to strip, so its whole string is the label (and the second string is empty), and the
+        check reduces to an exact-suffix match (`slim` still only matches `slim`).
         """
         if self._suffix_tag.version is None:
             return (self.suffix, "")

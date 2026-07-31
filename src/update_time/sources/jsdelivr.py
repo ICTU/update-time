@@ -1,9 +1,8 @@
 """jsDelivr CDN (limited to the npm packages referenced from a Sphinx config at the moment).
 
-Like the pypi and oci sources, this honours Update-time's cooldown: a version published within the cooldown window
-is held back, so a freshly published (and possibly compromised) npm release isn't adopted immediately. The version
-list and per-file Subresource Integrity hashes come from jsDelivr's package API (data.jsdelivr.com); the publication
-date used for the cooldown comes from the npm registry (via the `npmjs` source), because jsDelivr doesn't expose it.
+The version list and per-file Subresource Integrity hashes come from jsDelivr's package API (data.jsdelivr.com);
+the publication date used for the cooldown comes from the npm registry (via the `npmjs` source), because jsDelivr
+doesn't expose it.
 """
 
 from dataclasses import replace

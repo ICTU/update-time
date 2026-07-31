@@ -1,10 +1,4 @@
-"""Dependency staleness helpers.
-
-A dependency is stale when its newest published version was released a long time ago: the upstream project has
-gone quiet, which is a maintenance signal worth surfacing even though there is no newer version to adopt. This
-mirrors the cooldown helpers, at the other end of the timeline: the cooldown holds back releases that are too
-fresh, while staleness warns about dependencies whose newest release is too old.
-"""
+"""Dependency staleness helpers."""
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING

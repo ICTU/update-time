@@ -290,11 +290,7 @@ class Logger:
     )
 
     def digest_drift(self, dependency: str, version: str, current_sha: str, new_sha: str, location: Location) -> None:
-        """Warn that an already-pinned tag now resolves to a different digest at the registry.
-
-        The tag was re-pushed (rebuilt) under the same name and version. The new digest is not adopted, because
-        silently following a re-pushed tag would defeat the immutability a digest pin exists to provide.
-        """
+        """Warn that an already-pinned tag now resolves to a different digest at the registry."""
         self._log(
             self._MESSAGE_DIGEST_DRIFT,
             self._render_dependency(dependency),
@@ -333,12 +329,7 @@ class Logger:
     )
 
     def tag_drift(self, dependency: str, version: str, current_sha: str, new_sha: str, location: Location) -> None:
-        """Warn that a version tag now points at another commit than the one the reference is pinned to.
-
-        A git tag is mutable, so whoever controls the repository can move it onto a different commit. The pinned
-        commit SHA keeps the run where it was pinned, which is what pinning a SHA is for; without this warning,
-        though, nothing reports that tag and pin have parted company.
-        """
+        """Warn that a version tag now points at another commit than the one the reference is pinned to."""
         self._log(
             self._MESSAGE_TAG_DRIFT,
             self._render_dependency(dependency),
@@ -379,12 +370,7 @@ class Logger:
     def hash_mismatch(
         self, dependency: str, version: str, declared_hash: str, served_hash: str, location: Location
     ) -> None:
-        """Warn that a declared Subresource Integrity hash disagrees with the one the CDN serves for that version.
-
-        The hash is left unchanged because adopting whatever the CDN serves is exactly the check it exists to
-        perform. That makes this the most urgent of the three drifts: until the hash is corrected, the browser
-        silently refuses to load the script, which no build step catches.
-        """
+        """Warn that a declared Subresource Integrity hash disagrees with the one the CDN serves for that version."""
         self._log(
             self._MESSAGE_HASH_MISMATCH,
             self._render_dependency(dependency),
@@ -466,10 +452,8 @@ class Logger:
     def redundant_yank_scope(self, dependency: str, marker: Marker, location: Location) -> None:
         """Warn that the marker's yank scope can never hold anything back for this dependency.
 
-        The dependency's source reports no yanks, so its version's yank state is always "not yanked" and the scope is
-        inert for as long as the reference points where it points. Like a redundant version bound, that is worth
-        reporting rather than leaving silent. Only the `ignore` directive is named, echoed as the user spelled it,
-        since it is the one that holds nothing back.
+        Only the `ignore` directive is named, echoed as the user spelled it, since it is the one that holds nothing
+        back.
         """
         self._log(
             self._MESSAGE_REDUNDANT_YANK_SCOPE,

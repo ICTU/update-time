@@ -1,13 +1,8 @@
 """Whether a hash pin has drifted, and whether the reference adopts it or only warns.
 
-A hash pin can stop matching what it points at while the version stays put: an image tag re-pushed under the same
-name serves a new digest, a mutable version tag can be moved onto another commit, and a declared integrity hash can
-disagree with the one the CDN serves. Adopting a change silently would defeat the pin, so it is adopted only when
-the reference opted in — per reference with an `# update-time: allow[hash-drift]` marker, or repo-wide with
-`--allow-hash-drift`. Adoption covers a digest or a commit only: refusing content that doesn't match is the whole
-point of a hash, so a mismatched one is always left to be corrected. Both rules live here so every kind of hash pin
-answers them the same way; what a kind does with the answer is left to the module that rewrites it. Like the
-cooldown and staleness helpers, the setting travels from the command line in an environment variable.
+Both questions live here so every kind of hash pin answers them the same way; what a kind does with the answer is
+left to the module that rewrites it. Like the cooldown and staleness helpers, the setting travels from the command
+line in an environment variable.
 """
 
 from typing import TYPE_CHECKING

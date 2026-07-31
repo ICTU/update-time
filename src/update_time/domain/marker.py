@@ -1,14 +1,7 @@
 """Parse the `# update-time:` marker language.
 
-Comments of the form `# update-time: <directive>…` let users steer what happens to an individual reference: hold it
-back (`ignore`, optionally narrowed to the update or the staleness warning), bound how far it may update — to an
-absolute version range (`allow[update<…>]` / `ignore[update<…>]`) or by update level (`allow[minor-update]` /
-`ignore[major-update]`) — or opt it into adopting a re-pushed digest, or the commit a moved tag points at
-(`allow[hash-drift]`).
-A marker is read inline on the reference's own line or from a standalone comment on the line directly above it; one
-prefix can carry several whitespace-separated directives, and a directive's bracket several comma-separated items
-(`ignore[stale, update>=3.13]`). Parsing is pure — a `Line` in, a `Marker` out — so it lives in `domain`; acting on
-the marker, and reporting about it, is left to the rewrite engine in `references`.
+Parsing is pure — a `Line` in, a `Marker` out — so it lives in `domain`; acting on the marker, and reporting about
+it, is left to the rewrite engine in `references`.
 """
 
 import re
@@ -118,12 +111,10 @@ _DIRECTIVE = re.compile(r"(?P<verb>ignore\b|allow(?=\[))(?:\[(?P<bracket>[^\]]*)
 def parse_marker(line: Line) -> Marker:
     """Return the `# update-time:` directives affecting the line as a `Marker`.
 
-    A directive is read inline on the line, or from the line directly above it when that is a standalone comment
-    (the form Dockerfiles need, since they reject inline comments); requiring the preceding line to start with a
-    comment lead (`#`, or `//`) keeps an inline marker from also affecting the line below it. Directives combine by
-    listing them after a single `# update-time:` prefix and across the two placements; where directives conflict,
-    the first one wins, inline directives before those on the line above. Taking the whole `Line` is what keeps the
-    two placements from being read apart: a caller cannot hand over one of them and silently lose the other. Parsing
+    Requiring the preceding line to start with a comment lead (`#`, or `//`) keeps an inline marker from also
+    affecting the line below it. Where directives conflict, the first one wins, inline directives before those on
+    the line above. Taking the whole `Line` is what keeps the two placements from being read apart: a caller cannot
+    hand over one of them and silently lose the other. Parsing
     reports nothing itself, so an unparsable version specifier is carried out as `invalid_specifier` for the caller
     to report against the line's location.
     """

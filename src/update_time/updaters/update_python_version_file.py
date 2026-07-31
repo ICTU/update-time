@@ -1,20 +1,6 @@
 """Python version file updater bumps the CPython version pinned in `.python-version` files.
 
-A `.python-version` file pins the project's development Python, one version per line (pyenv allows several). Each
-plain CPython entry (`3.12` or `3.12.6`) is moved forward to a fuller version, in one of two tiers:
-- when a Dockerfile in the same folder has a `FROM python:<version>` base image (already updated by the Dockerfile
-  updater), the entry adopts that image's version at the precision the tag provides, so the production and development
-  runtimes stay in step;
-- otherwise the entry is updated to the latest `python` release on Docker Hub, honouring the cooldown and staleness
-  check.
-Alternative implementations (`pypy3.10-…`), variant suffixes (`3.13t`), prefixed forms (`cpython@3.12`, `>=3.10`), and
-sentinels (`system`) don't match and are left untouched. An `# update-time:` marker holds an entry back or bounds it,
-and wins over a Dockerfile-derived version, so a deliberately held-back development version is never dragged forward by
-an image update. The marker works both inline and on the line directly above the entry; note that uv rejects an inline
-comment on a `.python-version` line, so the line-above form is the safer placement for a uv project.
-
-If an environment variable DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN are set, the fallback uses them to increase the
-Docker Hub rate limit.
+The version comes from the Python base image in a Dockerfile, or from Docker Hub when no Dockerfile declares one.
 """
 
 import re
