@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
-from update_time.domain.drift import ALLOW_PIN_DRIFT
+from update_time.domain.drift import ALLOW_HASH_DRIFT
 from update_time.domain.version import DependencyVersion
 from update_time.io.log import Logger
 from update_time.updaters.update_github_action import update_github_actions
@@ -69,29 +69,29 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_tag_drift_logged(workflow_yml, "action/action", "1.0", OLD_SHA, NEW_SHA, line=1)
         self.assert_no_new_version_logged()
 
-    def test_allow_pin_drift_marker_adopts_moved_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that an `allow[pin-drift]` marker re-pins a moved tag's commit instead of only warning about it."""
+    def test_allow_hash_drift_marker_adopts_moved_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an `allow[hash-drift]` marker re-pins a moved tag's commit instead of only warning about it."""
         mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=NEW_SHA)
-        marker = "  # update-time: allow[pin-drift]"
+        marker = "  # update-time: allow[hash-drift]"
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0{marker}\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions(GITHUB_DIR)
         workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0{marker}\n")
         self.assert_adopted_tag_drift_logged(
-            workflow_yml, "action/action", "1.0", OLD_SHA, NEW_SHA, "update-time: allow[pin-drift]", line=1
+            workflow_yml, "action/action", "1.0", OLD_SHA, NEW_SHA, "update-time: allow[hash-drift]", line=1
         )
         self.assert_no_warnings_logged()
 
     def test_flag_adopts_moved_tag_repo_wide(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that the --allow-pin-drift flag (via its env var) adopts a moved tag without a per-line marker."""
+        """Test that the --allow-hash-drift flag (via its env var) adopts a moved tag without a per-line marker."""
         mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=NEW_SHA)
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        with patch_environ({ALLOW_PIN_DRIFT.name: "1"}):
+        with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
             update_github_actions(GITHUB_DIR)
         workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0\n")
         self.assert_adopted_tag_drift_logged(
-            workflow_yml, "action/action", "1.0", OLD_SHA, NEW_SHA, "--allow-pin-drift", line=1
+            workflow_yml, "action/action", "1.0", OLD_SHA, NEW_SHA, "--allow-hash-drift", line=1
         )
         self.assert_no_warnings_logged()
 

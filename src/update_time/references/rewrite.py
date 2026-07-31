@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from update_time.domain.drift import drift_cause, pin_drifted
+from update_time.domain.drift import drift_cause, hash_drifted
 from update_time.domain.line import located_lines
 from update_time.domain.marker import parse_marker
 from update_time.domain.version import Reference
@@ -67,7 +67,7 @@ class _Rewriter:
         case the new digest is adopted.
         """
         current_sha = match.groupdict().get("sha")
-        if current_sha is None or not pin_drifted(latest.sha, current_sha):
+        if current_sha is None or not hash_drifted(latest.sha, current_sha):
             return match.string
         dependency, version = matched_dependency(match, self.dependency), match.group("version")
         if (cause := drift_cause(marker)) is not None:

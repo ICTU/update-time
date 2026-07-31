@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.drift import ALLOW_PIN_DRIFT
+from update_time.domain.drift import ALLOW_HASH_DRIFT
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.cli import parse_args
 from update_time.io.filesystem import EXCLUDE_PATHS, inside_git_repository
@@ -85,7 +85,7 @@ def main() -> int:
     COOLDOWN.set(args.cooldown)
     STALE_AFTER.set(args.stale_after)
     LOG_LEVEL.set(args.log_level)
-    ALLOW_PIN_DRIFT.set(args.allow_pin_drift)
+    ALLOW_HASH_DRIFT.set(args.allow_hash_drift)
     # Update-time rewrites files in place, so it refuses to run outside a git repository where changes can't be
     # reverted. --force overrides the refusal, proceeding with a warning. Checked once, before any subprocess is
     # spawned; the log level is already exported above, so both messages honour --log-level. The check keys off the

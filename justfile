@@ -236,15 +236,15 @@ code := "src tests docs"
 
 # === Output functions ===
 
-# Prefix and suffix that wrap a command (such as a check): `{{ start_capture() }} <cmd> {{ end_capture(name) }}` captures stdout+stderr, prints `<recipe-name> [<folder>/ ]OK` or `NOK`, and replays the captured output on failure.
+# Prefix and suffix that wrap a command (such as a check): `{{ start_capture() }} <cmd> {{ end_capture(name) }}` captures stdout+stderr, prints `<recipe-name> [<folder>/ ]PASS` or `FAIL`, and replays the captured output on failure. Neither token contains the other, so a run's outcome cannot be misread by matching on a substring.
 folder_prefix(folder) := if folder == "" { "" } else if folder == "." { "" } else { " " + trim_end_match(folder, "/") + "/" }
 
 # Pick a tool-flag value based on `$_color` set by `start_capture`. Useful for tools whose color flag values aren't `auto`/`always`/`never` (e.g. bandit's `screen`/`txt`, yamllint's `colored`/`auto`).
 when_color(yes, no) := f'$([ "$_color" = always ] && echo {{yes}} || echo {{no}})'
 
 start_capture() := f'_color=auto; [ -t 1 ] && { _color=always; export FORCE_COLOR=1; }; output=$({'
-end_capture(name) := f'; } 2>&1) || { printf "%s {{RED}}NOK{{NORMAL}}\n%s\n" {{name}} "$output"; exit 1; }; printf "%s%s {{GREEN}}OK{{NORMAL}}\n" {{name}}'
+end_capture(name) := f'; } 2>&1) || { printf "%s {{RED}}FAIL{{NORMAL}}\n%s\n" {{name}} "$output"; exit 1; }; printf "%s%s {{GREEN}}PASS{{NORMAL}}\n" {{name}}'
 
-# Like start_capture/end_capture, but for slow commands (e.g. tests): run them in the background and animate a spinner while they run. The spinner only shows for an unlabelled run on a terminal (a direct, interactive `just test`); labelled runs (a parallel `ci` or fan-out) skip it, so it never smears into their atomic OK/NOK lines.
+# Like start_capture/end_capture, but for slow commands (e.g. tests): run them in the background and animate a spinner while they run. The spinner only shows for an unlabelled run on a terminal (a direct, interactive `just test`); labelled runs (a parallel `ci` or fan-out) skip it, so it never smears into their atomic PASS/FAIL lines.
 start_progress() := f'if [ -t 1 ]; then spin=1; else spin=; fi; tmp=$(mktemp); trap "rm -f $tmp" EXIT; { '
-end_progress(name) := f'; } > "$tmp" 2>&1 & pid=$!; sp="|/-\\"; while kill -0 "$pid" 2>/dev/null; do [ -n "$spin" ] && printf "\r%c" "$sp"; sp="${sp#?}${sp%???}"; sleep 0.1; done; [ -n "$spin" ] && printf "\r"; wait "$pid" && printf "%s%s {{GREEN}}OK{{NORMAL}}\n" {{name}} || { printf "%s%s {{RED}}NOK{{NORMAL}}\n%s\n" {{name}} "$(cat "$tmp")"; exit 1; }'
+end_progress(name) := f'; } > "$tmp" 2>&1 & pid=$!; sp="|/-\\"; while kill -0 "$pid" 2>/dev/null; do [ -n "$spin" ] && printf "\r%c" "$sp"; sp="${sp#?}${sp%???}"; sleep 0.1; done; [ -n "$spin" ] && printf "\r"; wait "$pid" && printf "%s%s {{GREEN}}PASS{{NORMAL}}\n" {{name}} || { printf "%s%s {{RED}}FAIL{{NORMAL}}\n%s\n" {{name}} "$(cat "$tmp")"; exit 1; }'
