@@ -1,11 +1,9 @@
 """Which sources can observe that a version was yanked.
 
-A yank — a release the maintainer withdrew — is only visible in some of the registries Update-time resolves versions
-through: PyPI reports it as PEP 592 yank metadata, while an OCI registry and GitHub have no yank concept at all, so
-the versions they resolve are never yanked whatever they answer. A source whose versions can carry a yank state
-registers its new-version getter with `yank_reporting`, and `reports_yanks` reads the fact back, so an
-`ignore[yanked]` marker on a reference resolved through any other source can be reported as redundant instead of
-silently holding nothing back. Only the getters that resolve a marked reference take part.
+A source whose versions can carry a yank state registers its new-version getter with `yank_reporting`, and
+`reports_yanks` reads the fact back, so an `ignore[yanked]` marker on a reference resolved through any other source
+can be reported as redundant instead of silently holding nothing back. Only the getters that resolve a marked
+reference take part.
 """
 
 from typing import TYPE_CHECKING

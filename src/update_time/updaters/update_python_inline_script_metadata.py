@@ -2,9 +2,7 @@
 
 A `# /// script … # ///` block (see https://peps.python.org/pep-0723/) declares a script's dependencies as quoted
 specs in a commented TOML table, the same `"name==version"` form a pyproject.toml uses, so uv understands it
-natively and the same rewrite applies. Only exact `==` pins are bumped; looser specifiers are left untouched, so a
-`package<=max` cap remains the way to opt a dependency out. Only .py files that actually contain a `# /// script`
-block are processed; every other .py file is left untouched and never invokes uv.
+natively and the same rewrite applies.
 """
 
 import re

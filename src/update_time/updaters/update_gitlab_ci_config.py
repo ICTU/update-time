@@ -1,9 +1,5 @@
 """GitLab CI config updater script finds images and updates to the latest versions.
 
-Images referenced by tag only are automatically pinned by appending the digest of the (latest) tag. The digest
-is optional in the regex but a concrete version tag is still required, so images referenced through variable
-substitution (`$VAR` / `${VAR}`, e.g. `$CI_REGISTRY_IMAGE`) are left untouched.
-
 GitLab CI uses a single configuration file, `.gitlab-ci.yml`, at the repository root, so it is addressed directly
 with `update_file` rather than searched for with `glob` (which is recursive and would also match any nested
 `.gitlab-ci.yml`).

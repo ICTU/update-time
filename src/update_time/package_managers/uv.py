@@ -1,9 +1,7 @@
 """Update uv-managed Python dependencies (work-around for the missing `uv update` command).
 
 Covers both pyproject.toml projects and PEP 723 inline script metadata, which declare their dependencies the same
-way and are both resolved through uv. See https://github.com/astral-sh/uv/issues/6794. Note: only exact-match
-version specs (`==`) are upgraded. Version specs with other clauses (`<=`, `~=`, etc.) are ignored, so a
-`package<=max version` spec opts a dependency out.
+way and are both resolved through uv. See https://github.com/astral-sh/uv/issues/6794.
 """
 
 import os

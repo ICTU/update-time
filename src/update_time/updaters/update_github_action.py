@@ -1,10 +1,4 @@
-"""GitHub Action updater script finds YAML files in the GitHub directory and updates 'uses' keys to latest versions.
-
-Actions referenced by a version tag only (e.g. `@v4`) are automatically pinned to the commit SHA of the latest
-version, with the version added as a trailing comment. Already-pinned actions are bumped to the latest version.
-
-If an environment variable GITHUB_TOKEN is set, the script will use it to increase the GitHub rate limit.
-"""
+"""GitHub Action updater script finds YAML files in the GitHub directory and updates 'uses' keys to latest versions."""
 
 import re
 from pathlib import Path

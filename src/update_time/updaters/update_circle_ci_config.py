@@ -1,9 +1,5 @@
 """CircleCI config updater script finds images and updates to the latest versions.
 
-Images referenced by tag only are automatically pinned by appending the digest of the (latest) tag. The digest
-is optional in the regex but a concrete version tag is still required, so images referenced through variable
-substitution (`${VAR}`) are left untouched.
-
 CircleCI machine-executor images (the `image:` under a `machine:` key, e.g. `ubuntu-2204:2024.01.1`) are not on
 Docker Hub and have no registry to query, so they are detected by parsing the YAML and left unchanged.
 """

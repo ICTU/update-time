@@ -62,13 +62,7 @@ def find_node_dockerfile(package_json: Path) -> Path:
 
 
 def update_node_engine(package_json: Path) -> None:
-    """Update the Node engine version to the Docker Node base image version, or the latest Node release.
-
-    Prefer the numeric Node base image in the project's Dockerfile, so the engine and the image stay in step. A Node
-    base image with a non-numeric tag (e.g. 'node:lts') yields no concrete version, so it is skipped with a warning.
-    When no Dockerfile declares a Node base image at all, fall back to the latest Node release on Docker Hub, so the
-    engine is still moved forward (honouring the cooldown) rather than left behind.
-    """
+    """Update the Node engine version to the Docker Node base image version, or the latest Node release."""
     dockerfile = find_node_dockerfile(package_json)
     if version := node_base_image_version(dockerfile):
         update_file(

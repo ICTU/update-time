@@ -1,13 +1,4 @@
-"""Pre-commit config updater bumps the `rev:` of each GitHub-hosted hook repository to its latest version.
-
-A rev given as a version tag only (e.g. `rev: v4.5.0`) is pinned to the commit SHA of the latest version, with the
-version travelling in pre-commit's own `# frozen: <version>` comment convention — the same format `pre-commit
-autoupdate --freeze` produces and understands. A rev already pinned to a commit SHA with such a comment is bumped to
-the SHA of the latest version, exactly like a GitHub Action reference. `repo: local` and `repo: meta` entries, revs
-that are a branch name rather than a version, and repositories hosted outside GitHub are left untouched.
-
-If an environment variable GITHUB_TOKEN is set, the script will use it to increase the GitHub rate limit.
-"""
+"""Pre-commit config updater bumps the `rev:` of each GitHub-hosted hook repository to its latest version."""
 
 import re
 from functools import partial
@@ -58,11 +49,7 @@ def _dependency_from_repo(repo: str) -> str:
 
 
 def _spell_rev(reference: Reference, latest: DependencyVersion) -> str:
-    """Return the `rev:` pinned to the latest version's commit SHA, with the version in a `# frozen:` comment.
-
-    The version keeps the tag's own `v` prefix convention, so the config stays interoperable with pre-commit's own
-    tooling: `pre-commit autoupdate --freeze` produces and understands this format.
-    """
+    """Return the `rev:` pinned to the latest version's commit SHA, with the version in a `# frozen:` comment."""
     frozen_version = f"v{latest.version}" if reference.current_version.startswith("v") else latest.version
     return f"rev: {latest.sha}  # frozen: {frozen_version}"
 

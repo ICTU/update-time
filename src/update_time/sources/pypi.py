@@ -108,9 +108,7 @@ def get_latest_version(
 ) -> DependencyVersion:
     """Return the latest stable release of the package that is available outside the cooldown window.
 
-    Pre-releases, dev-releases, yanked releases, and releases still within the cooldown period are ignored, as is
-    any release the `version_bound` bound rules out. Returns the current version unchanged when it is invalid or
-    already the latest eligible version.
+    Returns the current version unchanged when it is invalid or already the latest eligible version.
     """
     if not is_valid(current_version):
         return DependencyVersion(version=current_version)

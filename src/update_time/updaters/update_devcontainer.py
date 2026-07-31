@@ -1,11 +1,7 @@
 """Devcontainer updater script finds devcontainer.json files and updates their image and feature references.
 
-A devcontainer.json pins two kinds of OCI artifact: a base `image` (e.g.
-`mcr.microsoft.com/devcontainers/typescript-node:1`) and each key under `features` (e.g.
-`ghcr.io/devcontainers/features/node:1`). Both are referenced by tag and pinned by appending the tag's digest,
-exactly like the Dockerfile and manifest image updaters, and resolved on any OCI registry (`ghcr.io`,
-`mcr.microsoft.com`, ...). References through a Dockerfile or Compose file (`build.dockerfile`,
-`dockerComposeFile`) are left to those updaters.
+Images in a Dockerfile or Compose file the devcontainer.json points at (`build.dockerfile`, `dockerComposeFile`)
+are left to those updaters.
 
 The file is edited line by line with the same machinery as the other image updaters rather than parsed as JSON, so
 comments and trailing commas (which devcontainer.json allows, and plain JSON forbids) are preserved untouched.
