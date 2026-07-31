@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
-from update_time.domain.drift import drift_cause, pin_drifted
+from update_time.domain.drift import drift_cause, hash_drifted
 from update_time.domain.version import Reference, is_valid
 from update_time.references.resolve import latest_version
 from update_time.references.rewrite import matched_dependency, replace_reference
@@ -75,7 +75,7 @@ def _drifted_pin(
     `drift_cause`); otherwise the drift is warned about and the pin left alone.
     """
     dependency, version, current_sha = reference.dependency, latest.version, reference.current_sha
-    if not pin_drifted(latest.sha, current_sha):
+    if not hash_drifted(latest.sha, current_sha):
         return None  # Already pinned and up to date
     if (cause := drift_cause(marker)) is None:
         log.tag_drift(dependency, version, current_sha, latest.sha, location)

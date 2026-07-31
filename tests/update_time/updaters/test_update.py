@@ -7,7 +7,7 @@ from typing import cast
 from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.drift import ALLOW_PIN_DRIFT
+from update_time.domain.drift import ALLOW_HASH_DRIFT
 from update_time.io.filesystem import EXCLUDE_PATHS
 from update_time.io.log import LOG_LEVEL
 from update_time.updaters.update import PARALLEL_SCRIPTS, SEQUENTIAL_SCRIPTS, main, run_script, update_dependencies
@@ -103,17 +103,17 @@ class UpdateMainTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(environment[LOG_LEVEL.name], "DEBUG")
 
-    def test_main_passes_allow_pin_drift_off_by_default(self, mock_run: Mock):
-        """Test that main exports the drift opt-in as off when --allow-pin-drift is not given."""
+    def test_main_passes_allow_hash_drift_off_by_default(self, mock_run: Mock):
+        """Test that main exports the drift opt-in as off when --allow-hash-drift is not given."""
         exit_code, environment = self.run_main(mock_run)
         self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[ALLOW_PIN_DRIFT.name], "0")
+        self.assertEqual(environment[ALLOW_HASH_DRIFT.name], "0")
 
-    def test_main_passes_allow_pin_drift_when_set(self, mock_run: Mock):
-        """Test that main exports the drift opt-in as on when --allow-pin-drift is given."""
-        exit_code, environment = self.run_main(mock_run, "--allow-pin-drift")
+    def test_main_passes_allow_hash_drift_when_set(self, mock_run: Mock):
+        """Test that main exports the drift opt-in as on when --allow-hash-drift is given."""
+        exit_code, environment = self.run_main(mock_run, "--allow-hash-drift")
         self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[ALLOW_PIN_DRIFT.name], "1")
+        self.assertEqual(environment[ALLOW_HASH_DRIFT.name], "1")
 
     @patch_pathlib_path(exists=True)
     def test_main_passes_excluded_paths_to_subprocesses(self, mock_run: Mock):

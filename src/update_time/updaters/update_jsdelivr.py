@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from update_time.domain.drift import pin_drifted
+from update_time.domain.drift import hash_drifted
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.references.file import rewrite_file
@@ -93,7 +93,7 @@ class _ResolvedURL:
         """
         dependency, version = self.reference.dependency, self.reference.current_version
         served_hash = integrity_hash(dependency, version, self.filename)
-        if pin_drifted(served_hash, declared_hash):
+        if hash_drifted(served_hash, declared_hash):
             LOG.hash_mismatch(dependency, version, declared_hash, served_hash, self.location)
 
 

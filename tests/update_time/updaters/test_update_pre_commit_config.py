@@ -105,21 +105,21 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         self.assert_tag_drift_logged(config_file, self.HOOK, "4.5.0", OLD_SHA, NEW_SHA, line=3)
         self.assert_no_new_version_logged()
 
-    def test_allow_pin_drift_marker_adopts_moved_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that a rev opted into pin drift is re-frozen to the tag's new commit, leaving its comments intact.
+    def test_allow_hash_drift_marker_adopts_moved_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that a rev opted into hash drift is re-frozen to the tag's new commit, leaving its comments intact.
 
         This is where the shared drift decision meets pre-commit's own syntax: `_spell_rev` rebuilds the `# frozen:`
         comment around the new SHA, and the marker sits outside the rewritten span. That the comment keeps its `v`
         prefix is already covered by the bump tests; what this adds is that both survive the adoption path too.
         """
         mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=NEW_SHA)
-        marker = "  # update-time: allow[pin-drift]"
+        marker = "  # update-time: allow[hash-drift]"
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0{marker}\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.5.0{marker}\n"))
         self.assert_adopted_tag_drift_logged(
-            config_file, self.HOOK, "4.5.0", OLD_SHA, NEW_SHA, "update-time: allow[pin-drift]", line=3
+            config_file, self.HOOK, "4.5.0", OLD_SHA, NEW_SHA, "update-time: allow[hash-drift]", line=3
         )
         self.assert_no_warnings_logged()
 

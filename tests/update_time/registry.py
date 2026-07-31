@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
-from update_time.domain.drift import ALLOW_PIN_DRIFT
+from update_time.domain.drift import ALLOW_HASH_DRIFT
 
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
 from tests.update_time.helpers import LoggingTestCase, docker_tag, mock_path, mock_response, patch_environ
@@ -170,10 +170,10 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.assert_no_new_version_logged()
 
     def test_digest_drift_adopted_with_flag(self) -> None:
-        """Test that --allow-pin-drift re-pins a re-pushed tag's digest instead of only warning about it."""
+        """Test that --allow-hash-drift re-pins a re-pushed tag's digest instead of only warning about it."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST2))
         mock_file = mock_path(self.reference(f"python:3.14@{DIGEST1}"))
-        with patch_environ({ALLOW_PIN_DRIFT.name: "1"}):
+        with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
             self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14@{DIGEST2}"))
         self.assert_adopted_drift_logged(mock_file, "python", "3.14", DIGEST1, DIGEST2, line=1)

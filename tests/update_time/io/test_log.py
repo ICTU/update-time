@@ -166,7 +166,7 @@ class LoggerTests(TestCase):
     def test_adopted_drift(self, mock_log: Mock):
         """Test that adopting a re-pushed tag's new digest is logged at info level, naming the opt-in that caused it."""
         old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
-        cause = "update-time: allow[pin-drift]"
+        cause = "update-time: allow[hash-drift]"
         path = Path.cwd() / "Dockerfile"
         Logger("adopt").adopted_drift("dependency", "3.14", old_sha, new_sha, Location(path, 2), cause)
         message = Logger._MESSAGE_ADOPTED_DIGEST_DRIFT
@@ -318,7 +318,7 @@ class LoggerTests(TestCase):
         """Test that a reference's marker is logged at debug level verbatim, exactly as the user wrote it."""
         # The raw text combines scopes and bracket items in a form the boolean fields alone could not produce, so
         # echoing it verbatim proves the log shows the user's own marker.
-        raw = "ignore[update] ignore[stale] allow[update<3.13, pin-drift]"
+        raw = "ignore[update] ignore[stale] allow[update<3.13, hash-drift]"
         marker = Marker(ignore_stale=True, allow_drift=True, version_bound=bound(Verb.ALLOW, "update<3.13"), raw=raw)
         path = Path.cwd() / "Dockerfile"
         Logger("marker").recognised_marker("python", marker, Location(path, 6))
@@ -340,7 +340,7 @@ class LoggerTests(TestCase):
         """Test that a held-back reference logs its `ignore` directive verbatim, exactly as the user spelled it."""
         # `ignored` names just the `ignore` directives from the verbatim `raw` text: the combined scopes are kept
         # apart rather than shown as a bare `ignore`, and the `allow` alongside is left out, only the `ignore`.
-        marker = Marker(ignore_update=True, raw="ignore[update] ignore[stale] allow[pin-drift]")
+        marker = Marker(ignore_update=True, raw="ignore[update] ignore[stale] allow[hash-drift]")
         path = Path.cwd() / "Dockerfile"
         Logger("marker").ignored("python", marker, Location(path, 6))
         mock_log.assert_called_once_with(
@@ -356,7 +356,7 @@ class LoggerTests(TestCase):
         """Test that a held-back staleness warning is logged at debug level, with the `ignore` directive as written."""
         published = datetime.now(UTC) - timedelta(days=512, hours=1)
         version = DependencyVersion("4.15.0", newest_published=published)
-        marker = Marker(ignore_stale=True, raw="ignore[stale] allow[pin-drift]")
+        marker = Marker(ignore_stale=True, raw="ignore[stale] allow[hash-drift]")
         path = Path.cwd() / "requirements.txt"
         Logger("stale").ignored_staleness("humanize", version, marker, Location(path, 9))
         mock_log.assert_called_once_with(
@@ -382,7 +382,7 @@ class LoggerTests(TestCase):
     def test_ignored_yank(self, mock_log: Mock):
         """Test that a held-back yank warning is logged at debug level, with the `ignore` directive as written."""
         version = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="broke Python 3.10 support"))
-        marker = Marker(ignore_yanked=True, raw="ignore[yanked] allow[pin-drift]")
+        marker = Marker(ignore_yanked=True, raw="ignore[yanked] allow[hash-drift]")
         path = Path.cwd() / "requirements.txt"
         Logger("yanked").ignored_yank("humanize", version, marker, Location(path, 9))
         mock_log.assert_called_once_with(
@@ -403,7 +403,7 @@ class LoggerTests(TestCase):
 
     def test_redundant_yank_scope(self, mock_log: Mock):
         """Test that an inert yank scope is warned about, with the `ignore` directive as the user wrote it."""
-        marker = Marker(ignore_yanked=True, raw="ignore[yanked] allow[pin-drift]")
+        marker = Marker(ignore_yanked=True, raw="ignore[yanked] allow[hash-drift]")
         path = Path.cwd() / "Dockerfile"
         Logger("yanked").redundant_yank_scope("python", marker, Location(path, 2))
         mock_log.assert_called_once_with(

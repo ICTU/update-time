@@ -46,7 +46,7 @@ Running `update-time -h` shows the full command-line interface:
 ```console
 $ update-time -h
 usage: update-time [-h] [-V] [--cooldown DAYS] [--stale-after DAYS]
-                   [--exclude-path PATHS] [--allow-pin-drift] [--force]
+                   [--exclude-path PATHS] [--allow-hash-drift] [--force]
                    [--log-level {DEBUG,INFO,WARNING,ERROR}]
                    [PATH]
 
@@ -85,11 +85,11 @@ options:
                         paths, or paths that escape the scan root (../…), are
                         rejected. Run with --log-level DEBUG to see excluded
                         directories
-  --allow-pin-drift     when an already-pinned image tag has been re-pushed,
+  --allow-hash-drift    when an already-pinned image tag has been re-pushed,
                         or a pinned version tag has been moved to another
                         commit, adopt the new digest or commit instead of only
                         warning; equivalent to marking every reference with #
-                        update-time: allow[pin-drift] (an # update-time:
+                        update-time: allow[hash-drift] (an # update-time:
                         ignore marker still wins)
   --force               run even when not inside a git repository (changes are
                         made in place and cannot be reverted)
@@ -308,9 +308,9 @@ Some dependencies get no hash pin from Update-time:
 - A `.python-version` entry names a CPython version rather than a fetched artefact, so there is no digest, commit SHA, or hash to add. Update-time only moves the entry to a fuller version, which makes it more precise but verifies nothing (see [Python version](#python-version)).
 - A jsDelivr npm URL declared as a bare string, without an attribute dictionary, has nowhere to hold an integrity hash, so it stays without one. Adding a hash would mean rewriting the string into a `(url, {"integrity": …})` tuple, which is more than rewriting a line, so Update-time reports it at `INFO` and leaves it alone. Declare the URL as such a tuple to have it pinned.
 
-### Pin drift
+### Hash drift
 
-Sometimes a reference already carries a hash pin and only what it points at has changed. Update-time warns about that and leaves the pin unchanged, so a changed target is never silently adopted (which would defeat the immutability a pin exists to provide). It takes three forms, one per kind of pin:
+Sometimes a reference already carries a hash pin and only what it points at has changed. Update-time warns about that and leaves the pin unchanged, so a changed target is never silently adopted (which would defeat the immutability a pin exists to provide). It takes three forms, one per kind of hash pin:
 
 ```console
 WARNING Digest drift for python:3.14 in Dockerfile:1: pinned to sha256:… but the registry now serves sha256:…; the pin was left unchanged, verify the change is expected before updating the pin
@@ -326,7 +326,7 @@ An *integrity hash mismatch* means the hash a jsDelivr URL declares is not the o
 
 A reference with no digest, commit SHA, or hash has nothing that can drift, so a `requirements.txt` pin, a `.python-version` entry, and the Node engine version are not checked; nor are the dependencies Update-time updates through uv, npm, and pnpm.
 
-To adopt the new value instead, opt the reference in with an `# update-time: allow[pin-drift]` marker (see [Controlling updates per reference](#-controlling-updates-per-reference) for placement): an image reference then adopts the re-pushed digest, and a GitHub Action or pre-commit hook adopts the commit its tag was moved to. Alternatively, pass `--allow-pin-drift` to opt every reference in the scan in at once. Adopted drift is logged at `INFO`, like any other change. An `# update-time: ignore` (or `ignore[update]`) marker still wins over both, so a reference you deliberately froze is never re-pinned.
+To adopt the new value instead, opt the reference in with an `# update-time: allow[hash-drift]` marker (see [Controlling updates per reference](#-controlling-updates-per-reference) for placement): an image reference then adopts the re-pushed digest, and a GitHub Action or pre-commit hook adopts the commit its tag was moved to. Alternatively, pass `--allow-hash-drift` to opt every reference in the scan in at once. Adopted drift is logged at `INFO`, like any other change. An `# update-time: ignore` (or `ignore[update]`) marker still wins over both, so a reference you deliberately froze is never re-pinned.
 
 An integrity hash mismatch is never adopted, whatever you opt in to: the whole point of the hash is to refuse content that doesn't match it, so Update-time reports it and leaves correcting it to you.
 
@@ -387,7 +387,7 @@ A yank can only be observed where the dependency's source reports one, so of the
 WARNING Redundant update-time marker ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept, so the marker holds nothing back
 ```
 
-One further marker does the opposite of holding a reference back. `# update-time: allow[pin-drift]` opts an already-pinned reference *into* adopting what it now points at, so a re-pushed image tag's new digest, or the commit a moved version tag points at, is pinned instead of only warned about (see [Pin drift](#pin-drift)). It follows the same placement rules as the other markers, and the global `--allow-pin-drift` flag applies it to every reference at once. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.
+One further marker does the opposite of holding a reference back. `# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting what it now points at, so a re-pushed image tag's new digest, or the commit a moved version tag points at, is pinned instead of only warned about (see [Hash drift](#hash-drift)). It follows the same placement rules as the other markers, and the global `--allow-hash-drift` flag applies it to every reference at once. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.
 
 `ignore[update]` freezes a reference at its current version. Sometimes you want the middle ground: keep receiving updates *within a range* while blocking a jump you're not ready for — for example, keep getting `python:3.12` patch releases but hold off on `3.13` until you've migrated. Add a [PEP 440](https://peps.python.org/pep-0440/) version specifier directly after `update` inside the brackets, either to allow or ignore updates: `# update-time: allow[update<specifier>]` **keeps only** the updates whose version satisfies the specifier, and `# update-time: ignore[update<specifier>]` **drops** the updates whose version satisfies it (the plain `ignore[update]` is the drop-everything case).
 
@@ -433,7 +433,7 @@ A few rules govern how a bound — with a specifier or level-based — interacts
 - Use a single bound per reference; pairing two bounds, say an `allow[update<specifier>]` with an `ignore[update<specifier>]`, or a specifier bound with a level-based one, on one reference is undefined.
 - A bound narrows updates only, not staleness. Staleness is always measured against the project's newest overall release; the bound doesn't come into play.
 - The digest is still pinned or refreshed for whichever version the bound selects, exactly as without a bound.
-- To combine a bound with another directive of the same verb (say, `allow[pin-drift]`), list both as comma-separated items in one bracket: `# update-time: allow[update<3.13, pin-drift]` or `# update-time: allow[minor-update, pin-drift]`. To combine directives of different verbs, list them after the `# update-time:` prefix, separated by a space: `# update-time: ignore[stale] allow[update<3.13]`. A reason can still follow the last directive.
+- To combine a bound with another directive of the same verb (say, `allow[hash-drift]`), list both as comma-separated items in one bracket: `# update-time: allow[update<3.13, hash-drift]` or `# update-time: allow[minor-update, hash-drift]`. To combine directives of different verbs, list them after the `# update-time:` prefix, separated by a space: `# update-time: ignore[stale] allow[update<3.13]`. A reason can still follow the last directive.
 
 Update-time logs a `WARNING` when a bound is redundant. That may happen in two ways:
 - Either the bound **never has an effect**, so removing it would change nothing: the current version and every version above it satisfy the bound, for example `allow[update>=3.12]` on a `3.12` pin, or `allow[major-update]` on any pin (it allows every update, so it says nothing).

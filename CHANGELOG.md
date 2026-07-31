@@ -10,11 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 - Warn when the version tag a GitHub Action or pre-commit hook is pinned to points at another commit than the pinned one. Part of [#179](https://github.com/ICTU/update-time/issues/179).
 - Warn when the Subresource Integrity hash a jsDelivr URL declares is not the one jsDelivr serves for that version. Part of [#179](https://github.com/ICTU/update-time/issues/179).
-- Adopt the commit a moved tag points at, instead of only warning about it, when a GitHub Action or pre-commit hook is marked `# update-time: allow[pin-drift]` or `--allow-pin-drift` is passed. Part of [#179](https://github.com/ICTU/update-time/issues/179).
+- Adopt the commit a moved tag points at, instead of only warning about it, when a GitHub Action or pre-commit hook is marked `# update-time: allow[hash-drift]` or `--allow-hash-drift` is passed. Part of [#179](https://github.com/ICTU/update-time/issues/179).
 
 ### Changed
 
-- Rename the digest-drift opt-in to `# update-time: allow[pin-drift]` and `--allow-pin-drift`, so it can name more than an image digest. Part of [#179](https://github.com/ICTU/update-time/issues/179).
+- Rename the digest-drift opt-in to `# update-time: allow[hash-drift]` and `--allow-hash-drift`, so it names what an image digest, a commit SHA, and an integrity hash have in common. Part of [#179](https://github.com/ICTU/update-time/issues/179).
 
 ### Fixed
 

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock
 
 from update_time.domain.bound import NO_BOUND, Verb
-from update_time.domain.drift import ALLOW_PIN_DRIFT
+from update_time.domain.drift import ALLOW_HASH_DRIFT
 from update_time.domain.line import located_lines
 from update_time.domain.location import Location
 from update_time.domain.marker import Marker
@@ -242,58 +242,58 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.warn_if_stale.assert_not_called()  # staleness skipped
         self.logger.ignored.assert_not_called()  # the update is not held back, so nothing is logged as ignored
 
-    def test_allow_pin_drift_marker_adopts_new_digest(self):
-        """Test that an inline `allow[pin-drift]` marker re-pins a re-pushed tag's digest instead of warning."""
-        lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[pin-drift]"]
+    def test_allow_hash_drift_marker_adopts_new_digest(self):
+        """Test that an inline `allow[hash-drift]` marker re-pins a re-pushed tag's digest instead of warning."""
+        lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[hash-drift]"]
         new_lines = self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST))
-        self.assertEqual(new_lines, [f"image: python:3.14@{NEW_DIGEST}  # update-time: allow[pin-drift]"])
+        self.assertEqual(new_lines, [f"image: python:3.14@{NEW_DIGEST}  # update-time: allow[hash-drift]"])
         self.logger.adopted_drift.assert_called_once_with(
-            "python", "3.14", OLD_DIGEST, NEW_DIGEST, Location(self.path, 1), "update-time: allow[pin-drift]"
+            "python", "3.14", OLD_DIGEST, NEW_DIGEST, Location(self.path, 1), "update-time: allow[hash-drift]"
         )
         self.logger.digest_drift.assert_not_called()
 
-    def test_allow_pin_drift_marker_above_line_adopts(self):
-        """Test that a standalone `allow[pin-drift]` comment opts the reference on the line below it in."""
-        lines = ["# update-time: allow[pin-drift]", f"image: python:3.14@{OLD_DIGEST}"]
+    def test_allow_hash_drift_marker_above_line_adopts(self):
+        """Test that a standalone `allow[hash-drift]` comment opts the reference on the line below it in."""
+        lines = ["# update-time: allow[hash-drift]", f"image: python:3.14@{OLD_DIGEST}"]
         new_lines = self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST))
-        self.assertEqual(new_lines, ["# update-time: allow[pin-drift]", f"image: python:3.14@{NEW_DIGEST}"])
+        self.assertEqual(new_lines, ["# update-time: allow[hash-drift]", f"image: python:3.14@{NEW_DIGEST}"])
         self.logger.adopted_drift.assert_called_once_with(
-            "python", "3.14", OLD_DIGEST, NEW_DIGEST, Location(self.path, 2), "update-time: allow[pin-drift]"
+            "python", "3.14", OLD_DIGEST, NEW_DIGEST, Location(self.path, 2), "update-time: allow[hash-drift]"
         )
 
-    def test_allow_pin_drift_marker_is_noop_when_version_also_changed(self):
+    def test_allow_hash_drift_marker_is_noop_when_version_also_changed(self):
         """Test that when the version has moved too, the normal update path runs and the marker doesn't apply."""
-        lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[pin-drift]"]
+        lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[hash-drift]"]
         new_lines = self.rewrite(lines, SHA_REGEXP, new_version_getter("3.15", NEW_DIGEST))
-        self.assertEqual(new_lines, [f"image: python:3.15@{NEW_DIGEST}  # update-time: allow[pin-drift]"])
+        self.assertEqual(new_lines, [f"image: python:3.15@{NEW_DIGEST}  # update-time: allow[hash-drift]"])
         self.logger.new_version.assert_called_once()  # a real version bump, not a drift adoption
         self.logger.adopted_drift.assert_not_called()
 
-    def test_ignore_wins_over_allow_pin_drift_marker(self):
-        """Test that a reference marked both `ignore` and `allow[pin-drift]` is left untouched: `ignore` wins."""
+    def test_ignore_wins_over_allow_hash_drift_marker(self):
+        """Test that a reference marked both `ignore` and `allow[hash-drift]` is left untouched: `ignore` wins."""
         get_new_version = Mock()
-        lines = ["# update-time: allow[pin-drift]", f"image: python:3.14@{OLD_DIGEST}  # update-time: ignore"]
+        lines = ["# update-time: allow[hash-drift]", f"image: python:3.14@{OLD_DIGEST}  # update-time: ignore"]
         self.assertEqual(self.rewrite(lines, SHA_REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.adopted_drift.assert_not_called()
         self.logger.digest_drift.assert_not_called()
 
     def test_flag_adopts_digest_drift_repo_wide(self):
-        """Test that the --allow-pin-drift flag (via its env var) adopts drift without a per-line marker."""
+        """Test that the --allow-hash-drift flag (via its env var) adopts drift without a per-line marker."""
         lines = [f"image: python:3.14@{OLD_DIGEST}"]
-        with patch_environ({ALLOW_PIN_DRIFT.name: "1"}):
+        with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
             new_lines = self.rewrite(lines, SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST))
         self.assertEqual(new_lines, [f"image: python:3.14@{NEW_DIGEST}"])
         self.logger.adopted_drift.assert_called_once_with(
-            "python", "3.14", OLD_DIGEST, NEW_DIGEST, Location(self.path, 1), "--allow-pin-drift"
+            "python", "3.14", OLD_DIGEST, NEW_DIGEST, Location(self.path, 1), "--allow-hash-drift"
         )
         self.logger.digest_drift.assert_not_called()
 
-    def test_ignore_wins_over_allow_pin_drift_flag(self):
-        """Test that an `ignore` marker still wins over the global --allow-pin-drift flag."""
+    def test_ignore_wins_over_allow_hash_drift_flag(self):
+        """Test that an `ignore` marker still wins over the global --allow-hash-drift flag."""
         get_new_version = Mock()
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: ignore"]
-        with patch_environ({ALLOW_PIN_DRIFT.name: "1"}):
+        with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
             self.assertEqual(self.rewrite(lines, SHA_REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.adopted_drift.assert_not_called()
@@ -343,10 +343,10 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
 
-    def test_level_bound_combines_with_pin_drift_in_one_bracket(self):
-        """Test that an `allow` bracket combines a level bound with the pin-drift opt-in."""
+    def test_level_bound_combines_with_hash_drift_in_one_bracket(self):
+        """Test that an `allow` bracket combines a level bound with the hash-drift opt-in."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.14", sha=NEW_DIGEST))
-        lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[minor-update, pin-drift]"]
+        lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[minor-update, hash-drift]"]
         new_lines = self.rewrite(lines, SHA_REGEXP, get_new_version)
         self.assertEqual(new_lines, [lines[0].replace(OLD_DIGEST, NEW_DIGEST)])  # the drift opt-in is honoured
         get_new_version.assert_called_once_with("python", "3.14", bound(Verb.ALLOW, "minor-update"))
@@ -374,21 +374,21 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assertEqual(new_lines, ["# update-time: allow[update<3.13]", "image: python:3.12.9"])
         get_new_version.assert_called_once_with("python", "3.12", bound(Verb.ALLOW, "update<3.13"))
 
-    def test_directive_list_combines_bound_and_pin_drift(self):
-        """Test that a bound and an `allow[pin-drift]` directive listed after one prefix both apply."""
+    def test_directive_list_combines_bound_and_hash_drift(self):
+        """Test that a bound and an `allow[hash-drift]` directive listed after one prefix both apply."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.14", sha=NEW_DIGEST))
-        lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[update<3.15] allow[pin-drift]"]
+        lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[update<3.15] allow[hash-drift]"]
         new_lines = self.rewrite(lines, SHA_REGEXP, get_new_version)
         self.assertEqual(new_lines, [lines[0].replace(OLD_DIGEST, NEW_DIGEST)])  # the drift opt-in is honoured
         get_new_version.assert_called_once_with("python", "3.14", bound(Verb.ALLOW, "update<3.15"))
-        # The cause names the reference's `allow` directives verbatim, the bound alongside the pin-drift opt-in.
+        # The cause names the reference's `allow` directives verbatim, the bound alongside the hash-drift opt-in.
         self.logger.adopted_drift.assert_called_once_with(
             "python",
             "3.14",
             OLD_DIGEST,
             NEW_DIGEST,
             Location(self.path, 1),
-            "update-time: allow[update<3.15] allow[pin-drift]",
+            "update-time: allow[update<3.15] allow[hash-drift]",
         )
 
     def test_directive_list_combines_ignore_stale_and_bound(self):
@@ -411,7 +411,7 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_typo_ends_directive_list(self):
         """Test that a mistyped directive ends the list as a reason: the directives before it still apply."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.14", sha=NEW_DIGEST))
-        lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: ignore[stale] alloww[pin-drift]"]
+        lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: ignore[stale] alloww[hash-drift]"]
         self.assertEqual(self.rewrite(lines, SHA_REGEXP, get_new_version), lines)
         self.logger.warn_if_stale.assert_not_called()  # the `ignore[stale]` before the typo is honoured
         self.logger.digest_drift.assert_called_once()  # the mistyped drift opt-in is not, so the drift only warns
@@ -467,9 +467,9 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.warn_if_stale.assert_not_called()
 
     def test_comma_separated_allow_items_combine_in_one_bracket(self):
-        """Test that an `allow` bracket combines a bound with the pin-drift opt-in."""
+        """Test that an `allow` bracket combines a bound with the hash-drift opt-in."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.14", sha=NEW_DIGEST))
-        lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[update<3.15, pin-drift]"]
+        lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[update<3.15, hash-drift]"]
         new_lines = self.rewrite(lines, SHA_REGEXP, get_new_version)
         self.assertEqual(new_lines, [lines[0].replace(OLD_DIGEST, NEW_DIGEST)])  # the drift opt-in is honoured
         get_new_version.assert_called_once_with("python", "3.14", bound(Verb.ALLOW, "update<3.15"))
