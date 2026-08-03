@@ -16,16 +16,12 @@ from tests.update_time.helpers import (
     mock_path,
     mock_response,
     patch_pathlib_path,
+    pyproject,
     staleness_disabled,
 )
 
 if TYPE_CHECKING:
     from update_time.sources.pypi import Release
-
-
-def pyproject(spec: str) -> str:
-    """Return a minimal valid pyproject.toml pinning the given dependency."""
-    return f'[project]\ndependencies = ["{spec}"]\n'
 
 
 # Persisting the cooldown into config is exercised by the uv package manager's tests; stub it out here so these tests
