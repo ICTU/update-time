@@ -9,6 +9,7 @@ from unittest.mock import Mock, call, patch
 from update_time.domain.cooldown import COOLDOWN
 from update_time.package_managers.node import COMMON_NPM_OPTIONS
 from update_time.primitives.command import Command
+from update_time.primitives.location import Location
 from update_time.updaters.update_package_json import update_package_jsons
 
 from tests.update_time.helpers import (
@@ -114,7 +115,9 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         update_package_jsons()
         self.assert_npm_called(mock_run)
         self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged(mock_package_json, "package", "1.1, published: 2026-05-30 10:26", "Changelog")
+        self.assert_new_version_logged(
+            "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json), "Changelog"
+        )
         self.assert_no_warnings_logged()
 
     def test_restore_git_url_dependencies(self, mock_run: Mock, mock_glob: Mock):
@@ -157,7 +160,9 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         mock_package_json.write_text.assert_not_called()
         self.assert_npm_called(mock_run)
         self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged(mock_package_json, "package", "1.1, published: 2026-05-30 10:26", "Changelog")
+        self.assert_new_version_logged(
+            "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json), "Changelog"
+        )
         self.assert_no_warnings_logged()
 
     def test_outdated_but_not_updated(self, mock_run: Mock, mock_glob: Mock):
@@ -274,7 +279,9 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         update_package_jsons()
         self.assert_pnpm_called(mock_run)
         self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged(mock_package_json, "package", "1.1, published: 2026-05-30 10:26", "Changelog")
+        self.assert_new_version_logged(
+            "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json), "Changelog"
+        )
         self.assert_no_warnings_logged()
 
     def test_outdated_but_not_updated(self, mock_run: Mock, mock_glob: Mock):
@@ -385,7 +392,7 @@ class StaleDependencyTest(LoggingTestCase):
         get.return_value = self.registry_doc("2.0.11", (datetime.now(UTC) - timedelta(days=512)).isoformat())
         package_json = self.package_json(glob)
         update_package_jsons()
-        self.assert_stale_dependency_logged(package_json, "clipboard", "2.0.11")
+        self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json))
 
     @patch("requests.get")
     def test_recent_dependency_not_warned(self, get: Mock, mock_run: Mock, glob: Mock):

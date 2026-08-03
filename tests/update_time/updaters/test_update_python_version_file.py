@@ -52,7 +52,7 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_called_once_with("3.14.2\n")
-        self.assert_new_version_logged(version_file, "python", "3.14.2", line=1)
+        self.assert_new_version_logged("python", "3.14.2", Location(version_file, 1))
         self.assert_no_warnings_logged()
 
     @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
@@ -62,7 +62,7 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_called_once_with("3.14\n")
-        self.assert_new_version_logged(version_file, "python", "3.14", line=1)
+        self.assert_new_version_logged("python", "3.14", Location(version_file, 1))
         self.assert_no_warnings_logged()
 
     @patch_pathlib_path(exists=True, read_text=f"FROM python:3.14.2-slim@{DIGEST}")
@@ -72,7 +72,7 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_called_once_with("3.14.2\n")
-        self.assert_new_version_logged(version_file, "python", "3.14.2", line=1)
+        self.assert_new_version_logged("python", "3.14.2", Location(version_file, 1))
         self.assert_no_warnings_logged()
 
     @patch_pathlib_path(exists=True, read_text="FROM python:3.13")
@@ -115,7 +115,7 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_not_called()
-        self.assert_ignored_logged(version_file, "python", line=2)
+        self.assert_ignored_logged("python", Location(version_file, 2))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -136,7 +136,7 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_called_once_with("# update-time: allow[update<3.13]\n3.12.9\n")
-        self.assert_new_version_logged(version_file, "python", "3.12.9", line=2)
+        self.assert_new_version_logged("python", "3.12.9", Location(version_file, 2))
         self.assert_no_warnings_logged()
 
     @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
@@ -146,7 +146,7 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_not_called()
-        self.assert_ignored_logged(version_file, "python", line=1)
+        self.assert_ignored_logged("python", Location(version_file, 1))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -157,7 +157,7 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_called_once_with("3.12.9  # update-time: allow[update<3.13]\n")
-        self.assert_new_version_logged(version_file, "python", "3.12.9", line=1)
+        self.assert_new_version_logged("python", "3.12.9", Location(version_file, 1))
         self.assert_no_warnings_logged()
 
     @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
@@ -194,7 +194,7 @@ class UpdatePythonVersionFilesFallbackTest(LoggingTestCase):
         update_python_version_files()
         version_file.write_text.assert_called_once_with("3.13.2\n")
         mock_get_latest_tag.assert_called_once_with("python", "3.12.6", NO_BOUND)
-        self.assert_new_version_logged(version_file, "python", "3.13.2", line=1)
+        self.assert_new_version_logged("python", "3.13.2", Location(version_file, 1))
         self.assert_no_warnings_logged()
 
     @patch("update_time.updaters.update_python_version_file.get_latest_tag")
@@ -205,7 +205,7 @@ class UpdatePythonVersionFilesFallbackTest(LoggingTestCase):
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_called_once_with("3.13.2\n")
-        self.assert_new_version_logged(version_file, "python", "3.13.2", line=1)
+        self.assert_new_version_logged("python", "3.13.2", Location(version_file, 1))
         self.assert_no_warnings_logged()
 
     def test_fallback_via_docker_hub(self, mock_glob: Mock):
@@ -216,7 +216,7 @@ class UpdatePythonVersionFilesFallbackTest(LoggingTestCase):
         with mock_docker_hub_auth, patch("requests.get", registry), patch("requests.head", registry):
             update_python_version_files()
         version_file.write_text.assert_called_once_with("3.13.2\n")
-        self.assert_new_version_logged(version_file, "python", "3.13.2", line=1)
+        self.assert_new_version_logged("python", "3.13.2", Location(version_file, 1))
         self.assert_no_warnings_logged()
 
     def test_fallback_stale_warned(self, mock_glob: Mock):
@@ -228,4 +228,4 @@ class UpdatePythonVersionFilesFallbackTest(LoggingTestCase):
         with mock_docker_hub_auth, patch("requests.get", registry), patch("requests.head", registry):
             update_python_version_files()
         version_file.write_text.assert_not_called()
-        self.assert_stale_dependency_logged(version_file, "python", "3.13.2", line=1)
+        self.assert_stale_dependency_logged("python", "3.13.2", Location(version_file, 1))

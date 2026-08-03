@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 from unittest.mock import Mock, patch
 
+from update_time.primitives.location import Location
 from update_time.updaters.update_python_inline_script_metadata import update_python_inline_script_metadatas
 
 from tests.update_time.helpers import (
@@ -82,7 +83,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         glob.return_value = [mock_script]
         update_python_inline_script_metadatas()
         mock_script.write_text.assert_called_with(script("package==1.1"))
-        self.assert_new_version_logged(mock_script, "package", "1.1, published: 2026-05-30 12:08")
+        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 12:08", Location(mock_script))
         self.assert_no_warnings_logged()
 
     def test_update_with_changelog(self, run: Mock, get: Mock, glob: Mock):
@@ -97,7 +98,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         update_python_inline_script_metadatas()
         mock_script.write_text.assert_called_with(script("package_with_changelog==1.1"))
         self.assert_new_version_logged(
-            mock_script, "package_with_changelog", "1.1, published: 2026-05-30 12:07", self.changelog
+            "package_with_changelog", "1.1, published: 2026-05-30 12:07", Location(mock_script), self.changelog
         )
         self.assert_no_warnings_logged()
 
@@ -169,7 +170,7 @@ class StaleInlineScriptDependencyTest(LoggingTestCase):
         )
         script_file = self.mock_script(glob)
         update_python_inline_script_metadatas()
-        self.assert_stale_dependency_logged(script_file, "package", "1.0")
+        self.assert_stale_dependency_logged("package", "1.0", Location(script_file))
 
     def test_recent_dependency_not_warned(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pinned dependency whose newest release is recent is not warned about as stale."""

@@ -160,31 +160,31 @@ class LoggerTests(TestCase):
     def test_suppress_repeated_changelog(self, mock_log: Mock):
         """Test that a repeated changelog is suppressed."""
         logger = Logger("suppress changelog")
-        path = Path.cwd() / "pyproject.toml"
         message = Logger._MESSAGE_NEW_VERSION
-        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), Location(path, 5))
+        location = Location(Path.cwd() / "pyproject.toml", 5)
+        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), location)
         self.assert_record(
-            mock_log, message, dependency="dependency", location=Location(path, 5), version="1.0", changes="Changelog"
+            mock_log, message, dependency="dependency", location=location, version="1.0", changes="Changelog"
         )
-        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), Location(path, 5))
+        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), location)
         self.assert_last_record(
             mock_log,
             message,
             dependency="dependency",
-            location=Location(path, 5),
+            location=location,
             version="1.0",
             changes=Logger._SUPPRESSING_CHANGELOG,
         )
 
     def test_new_version_without_publication_date(self, mock_log: Mock):
         """Test that the version is logged without a publication date when it is unknown."""
-        path = Path.cwd() / "a.txt"
-        Logger("no date").new_version("dependency", DependencyVersion("1.0", "Changelog"), Location(path, 3))
+        location = Location(Path.cwd() / "a.txt", 3)
+        Logger("no date").new_version("dependency", DependencyVersion("1.0", "Changelog"), location)
         self.assert_record(
             mock_log,
             Logger._MESSAGE_NEW_VERSION,
             dependency="dependency",
-            location=Location(path, 3),
+            location=location,
             version="1.0",
             changes="Changelog",
         )
@@ -197,27 +197,22 @@ class LoggerTests(TestCase):
     def test_pinned(self, mock_log: Mock):
         """Test that pinning a previously unpinned reference to a digest is logged."""
         sha = f"sha256:{'a' * 64}"
-        path = Path.cwd() / "Dockerfile"
-        Logger("pin").pinned("dependency", DependencyVersion("1.0", sha=sha), Location(path, 1))
+        location = Location(Path.cwd() / "Dockerfile", 1)
+        Logger("pin").pinned("dependency", DependencyVersion("1.0", sha=sha), location)
         self.assert_record(
-            mock_log,
-            Logger._MESSAGE_PINNED,
-            dependency="dependency",
-            location=Location(path, 1),
-            version="1.0",
-            sha=sha,
+            mock_log, Logger._MESSAGE_PINNED, dependency="dependency", location=location, version="1.0", sha=sha
         )
 
     def test_digest_drift(self, mock_log: Mock):
         """Test that a re-pushed tag whose digest changed under an unchanged pin is warned about at warning level."""
         old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
-        path = Path.cwd() / "Dockerfile"
-        Logger("drift").digest_drift(DriftedPin(Reference("dependency", "3.14", old_sha), new_sha, Location(path, 2)))
+        location = Location(Path.cwd() / "Dockerfile", 2)
+        Logger("drift").digest_drift(DriftedPin(Reference("dependency", "3.14", old_sha), new_sha, location))
         self.assert_record(
             mock_log,
             Logger._MESSAGE_DIGEST_DRIFT,
             dependency="dependency",
-            location=Location(path, 2),
+            location=location,
             version="3.14",
             current_sha=old_sha,
             new_sha=new_sha,
@@ -227,16 +222,13 @@ class LoggerTests(TestCase):
         """Test that adopting a re-pushed tag's new digest is logged at info level, naming the opt-in that caused it."""
         old_sha, new_sha = f"sha256:{'a' * 64}", f"sha256:{'b' * 64}"
         cause = "update-time: allow[hash-drift]"
-        path = Path.cwd() / "Dockerfile"
-        Logger("adopt").adopted_drift(
-            DriftedPin(Reference("dependency", "3.14", old_sha), new_sha, Location(path, 2)), cause
-        )
-        message = Logger._MESSAGE_ADOPTED_DIGEST_DRIFT
+        location = Location(Path.cwd() / "Dockerfile", 2)
+        Logger("adopt").adopted_drift(DriftedPin(Reference("dependency", "3.14", old_sha), new_sha, location), cause)
         self.assert_record(
             mock_log,
-            message,
+            Logger._MESSAGE_ADOPTED_DIGEST_DRIFT,
             dependency="dependency",
-            location=Location(path, 2),
+            location=location,
             version="3.14",
             current_sha=old_sha,
             new_sha=new_sha,
@@ -247,13 +239,13 @@ class LoggerTests(TestCase):
         """Test that an old newest release is warned about at warning level, and how the warning reads formatted."""
         published = datetime.now(UTC) - timedelta(days=512, hours=1)
         version = DependencyVersion("4.15.0", newest_published=published)
-        path = Path.cwd() / "requirements.txt"
-        Logger("stale").warn_if_stale("humanize", version, Location(path, 9))
+        location = Location(Path.cwd() / "requirements.txt", 9)
+        Logger("stale").warn_if_stale("humanize", version, location)
         self.assert_record(
             mock_log,
             Logger._MESSAGE_STALE,
             dependency="humanize",
-            location=Location(path, 9),
+            location=location,
             version="4.15.0",
             days=512,
             threshold=365,
@@ -285,13 +277,13 @@ class LoggerTests(TestCase):
     def test_warn_if_yanked_with_reason(self, mock_log: Mock):
         """Test that the warning carries the version's yank, and renders the maintainer's reason in parentheses."""
         yank = Yank(yanked=True, reason="broke Python 3.10 support")
-        path = Path.cwd() / "requirements.txt"
-        Logger("yanked").warn_if_yanked("humanize", DependencyVersion("4.15.0", yank=yank), Location(path, 9))
+        location = Location(Path.cwd() / "requirements.txt", 9)
+        Logger("yanked").warn_if_yanked("humanize", DependencyVersion("4.15.0", yank=yank), location)
         self.assert_record(
             mock_log,
             Logger._MESSAGE_YANKED,
             dependency="humanize",
-            location=Location(path, 9),
+            location=location,
             version="4.15.0",
             reason=yank,
         )
@@ -305,26 +297,23 @@ class LoggerTests(TestCase):
 
     def test_invalid_specifier(self, mock_log: Mock):
         """Test that an unparsable version bound specifier is warned about at warning level."""
-        path = Path.cwd() / "Dockerfile"
-        Logger("bound").invalid_specifier("python", "@@@", Location(path, 2))
+        location = Location(Path.cwd() / "Dockerfile", 2)
+        Logger("bound").invalid_specifier("python", "@@@", location)
         self.assert_record(
-            mock_log,
-            Logger._MESSAGE_INVALID_SPECIFIER,
-            dependency="python",
-            location=Location(path, 2),
-            specifier="@@@",
+            mock_log, Logger._MESSAGE_INVALID_SPECIFIER, dependency="python", location=location, specifier="@@@"
         )
 
     def test_warn_if_redundant_bound(self, mock_log: Mock):
         """Test that a redundant bound is warned about at warning level, showing the bound and how it is redundant."""
         version_bound = bound(Verb.ALLOW, "update>=3.12")  # never has an effect on a 3.12 pin
         marker = Marker(version_bound=version_bound)
-        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Location(Path.cwd() / "Dockerfile", 6))
+        location = Location(Path.cwd() / "Dockerfile", 6)
+        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", location)
         self.assert_record(
             mock_log,
             Logger._MESSAGE_REDUNDANT_BOUND,
             dependency="python",
-            location=Location(Path.cwd() / "Dockerfile", 6),
+            location=location,
             bound=version_bound,
             version="3.12",
             redundancy=Redundancy.NO_EFFECT,
@@ -339,12 +328,13 @@ class LoggerTests(TestCase):
         """Test that a level bound that blocks every update is warned about, rendered in its level form."""
         version_bound = bound(Verb.IGNORE, "patch-update")  # ignore[patch-update] blocks every update
         marker = Marker(version_bound=version_bound)
-        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Location(Path.cwd() / "Dockerfile", 6))
+        location = Location(Path.cwd() / "Dockerfile", 6)
+        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", location)
         self.assert_record(
             mock_log,
             Logger._MESSAGE_REDUNDANT_BOUND,
             dependency="python",
-            location=Location(Path.cwd() / "Dockerfile", 6),
+            location=location,
             bound=version_bound,
             version="3.12",
             redundancy=Redundancy.BLOCKS_ALL,
@@ -359,12 +349,13 @@ class LoggerTests(TestCase):
         """Test that a level bound that allows every update is warned about, unlike the implicit NO_BOUND default."""
         version_bound = bound(Verb.ALLOW, "major-update")  # allow[major-update] allows every update
         marker = Marker(version_bound=version_bound)
-        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", Location(Path.cwd() / "Dockerfile", 6))
+        location = Location(Path.cwd() / "Dockerfile", 6)
+        Logger("bound").warn_if_redundant_bound("python", marker, "3.12", location)
         self.assert_record(
             mock_log,
             Logger._MESSAGE_REDUNDANT_BOUND,
             dependency="python",
-            location=Location(Path.cwd() / "Dockerfile", 6),
+            location=location,
             bound=version_bound,
             version="3.12",
             redundancy=Redundancy.NO_EFFECT,
@@ -394,14 +385,14 @@ class LoggerTests(TestCase):
         # echoing it verbatim proves the log shows the user's own marker.
         raw = "ignore[update] ignore[stale] allow[update<3.13, hash-drift]"
         marker = Marker(ignore_stale=True, allow_drift=True, version_bound=bound(Verb.ALLOW, "update<3.13"), raw=raw)
-        path = Path.cwd() / "Dockerfile"
-        Logger("marker").recognised_marker("python", marker, Location(path, 6))
+        location = Location(Path.cwd() / "Dockerfile", 6)
+        Logger("marker").recognised_marker("python", marker, location)
         self.assert_record(
             mock_log,
             Logger._MESSAGE_RECOGNISED_MARKER,
             directives=marker,
             dependency="python",
-            location=Location(path, 6),
+            location=location,
         )
         self.assertEqual(
             self.rendered_message(mock_log),
@@ -419,13 +410,13 @@ class LoggerTests(TestCase):
         # `ignored` names just the `ignore` directives from the verbatim `raw` text: the combined scopes are kept
         # apart rather than shown as a bare `ignore`, and the `allow` alongside is left out, only the `ignore`.
         marker = Marker(ignore_update=True, raw="ignore[update] ignore[stale] allow[hash-drift]")
-        path = Path.cwd() / "Dockerfile"
-        Logger("marker").ignored("python", marker, Location(path, 6))
+        location = Location(Path.cwd() / "Dockerfile", 6)
+        Logger("marker").ignored("python", marker, location)
         self.assert_record(
             mock_log,
             Logger._MESSAGE_IGNORED,
             dependency="python",
-            location=Location(path, 6),
+            location=location,
             directive="ignore[update] ignore[stale]",
         )
         self.assertEqual(
@@ -440,13 +431,13 @@ class LoggerTests(TestCase):
         published = datetime.now(UTC) - timedelta(days=512, hours=1)
         version = DependencyVersion("4.15.0", newest_published=published)
         marker = Marker(ignore_stale=True, raw="ignore[stale] allow[hash-drift]")
-        path = Path.cwd() / "requirements.txt"
-        Logger("stale").ignored_staleness("humanize", version, marker, Location(path, 9))
+        location = Location(Path.cwd() / "requirements.txt", 9)
+        Logger("stale").ignored_staleness("humanize", version, marker, location)
         self.assert_record(
             mock_log,
             Logger._MESSAGE_IGNORED_STALENESS,
             dependency="humanize",
-            location=Location(path, 9),
+            location=location,
             directive="ignore[stale]",
         )
 
@@ -465,13 +456,13 @@ class LoggerTests(TestCase):
         """Test that a held-back yank warning is logged at debug level, with the `ignore` directive as written."""
         version = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="broke Python 3.10 support"))
         marker = Marker(ignore_yanked=True, raw="ignore[yanked] allow[hash-drift]")
-        path = Path.cwd() / "requirements.txt"
-        Logger("yanked").ignored_yank("humanize", version, marker, Location(path, 9))
+        location = Location(Path.cwd() / "requirements.txt", 9)
+        Logger("yanked").ignored_yank("humanize", version, marker, location)
         self.assert_record(
             mock_log,
             Logger._MESSAGE_IGNORED_YANK,
             dependency="humanize",
-            location=Location(path, 9),
+            location=location,
             directive="ignore[yanked]",
         )
 
@@ -485,13 +476,13 @@ class LoggerTests(TestCase):
     def test_redundant_yank_scope(self, mock_log: Mock):
         """Test that an inert yank scope is warned about, with the `ignore` directive as the user wrote it."""
         marker = Marker(ignore_yanked=True, raw="ignore[yanked] allow[hash-drift]")
-        path = Path.cwd() / "Dockerfile"
-        Logger("yanked").redundant_yank_scope("python", marker, Location(path, 2))
+        location = Location(Path.cwd() / "Dockerfile", 2)
+        Logger("yanked").redundant_yank_scope("python", marker, location)
         self.assert_record(
             mock_log,
             Logger._MESSAGE_REDUNDANT_YANK_SCOPE,
             dependency="python",
-            location=Location(path, 2),
+            location=location,
             directive="ignore[yanked]",
         )
 
@@ -540,8 +531,7 @@ class LoggerTests(TestCase):
     def test_missing_excluded_path_logged_at_warning(self, mock_log: Mock):
         """Test that a non-existing --exclude-path directory is logged as a warning, not an error."""
         Logger("exclude").missing_excluded_path(Path("vendor"))
-        message = Logger._MESSAGE_PATH_TO_EXCLUDE_DOES_NOT_EXIST
-        self.assert_record(mock_log, message, path=Path("vendor"))
+        self.assert_record(mock_log, Logger._MESSAGE_PATH_TO_EXCLUDE_DOES_NOT_EXIST, path=Path("vendor"))
         self.assertEqual(self.rendered_message(mock_log), "Path vendor passed to --exclude-path does not exist")
 
     def test_non_numeric_node_base_image(self, mock_log: Mock):
@@ -551,9 +541,9 @@ class LoggerTests(TestCase):
         relative to the working directory and delimited for the highlighter rather than as a bare path.
         """
         dockerfile = Path.cwd() / "docker" / "Dockerfile"
-        message = Logger._MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG
+        location = Location(dockerfile)
         Logger("node").non_numeric_node_base_image(dockerfile, "lts")
-        self.assert_record(mock_log, message, tag="lts", location=Location(dockerfile))
+        self.assert_record(mock_log, Logger._MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG, tag="lts", location=location)
         self.assertEqual(
             self.rendered_message(mock_log),
             "Cannot derive the Node engine version from the non-numeric base image tag 'node:lts' in "
@@ -585,14 +575,13 @@ class LoggerTests(TestCase):
         """Test that the publication date is appended to the version when it is known."""
         published = datetime(2026, 5, 29, 13, 54, tzinfo=UTC)
         version = DependencyVersion("1.0", "Changelog", published=published)
-        path = Path.cwd() / "a.txt"
-        Logger("date").new_version("dependency", version, Location(path, 3))
-        message = Logger._MESSAGE_NEW_VERSION
+        location = Location(Path.cwd() / "a.txt", 3)
+        Logger("date").new_version("dependency", version, location)
         self.assert_record(
             mock_log,
-            message,
+            Logger._MESSAGE_NEW_VERSION,
             dependency="dependency",
-            location=Location(path, 3),
+            location=location,
             version="1.0, published: 2026-05-29 13:54",
             changes="Changelog",
         )
@@ -600,15 +589,14 @@ class LoggerTests(TestCase):
     def test_publication_date_is_logged_in_utc(self, mock_log: Mock):
         """Test that a non-UTC publication date is converted to UTC before logging."""
         published = datetime(2026, 5, 29, 15, 54, tzinfo=timezone(timedelta(hours=2)))
-        path = Path.cwd() / "a.txt"
-        Logger("utc").new_version("dependency", DependencyVersion("1.0", published=published), Location(path, 3))
-        message = Logger._MESSAGE_NEW_VERSION
+        location = Location(Path.cwd() / "a.txt", 3)
+        Logger("utc").new_version("dependency", DependencyVersion("1.0", published=published), location)
         changelog = Logger._NO_CHANGELOG
         self.assert_record(
             mock_log,
-            message,
+            Logger._MESSAGE_NEW_VERSION,
             dependency="dependency",
-            location=Location(path, 3),
+            location=location,
             version="1.0, published: 2026-05-29 13:54",
             changes=changelog,
         )

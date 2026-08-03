@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from update_time.io.log import Logger
+from update_time.primitives.location import Location
 from update_time.updaters.update_circle_ci_config import update_circle_ci_config
 
 from tests.update_time import registry
@@ -37,7 +38,9 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         config_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         next_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         self.assert_path_logged(next_yml)
-        self.assert_new_version_logged(next_yml, "cimg/go", "1.26.2", Logger._SUPPRESSING_CHANGELOG, once=False, line=1)
+        self.assert_new_version_logged(
+            "cimg/go", "1.26.2", Location(next_yml, 1), Logger._SUPPRESSING_CHANGELOG, once=False
+        )
         self.assert_no_warnings_logged()
 
     def test_machine_executor_alias_ignored(self):
@@ -67,5 +70,5 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         config_yml = mock_path(config)
         self.run_updater(config_yml)
         config_yml.write_text.assert_called_with(config.replace("cimg/python:3.13", f"cimg/python:3.14@{DIGEST2}"))
-        self.assert_new_version_logged(config_yml, "cimg/python", "3.14", line=6)
+        self.assert_new_version_logged("cimg/python", "3.14", Location(config_yml, 6))
         self.assert_no_warnings_logged()

@@ -44,11 +44,11 @@ dev = [
     "fixit==2.2.1",
     "mypy==2.3.0",
     "pip-audit==2.10.1",
-    "pyproject-fmt==2.25.3",
-    "ruff==0.15.22",
+    "pyproject-fmt==2.25.4",
+    "ruff==0.16.0",
     "troml==0.4.1",
-    "ty==0.0.62",
-    "types-pyyaml==6.0.12.20260518",
+    "ty==0.0.63",
+    "types-pyyaml==6.0.12.20260724",
     "types-requests==2.33.0.20260712",
     "unittest-xml-reporting==4.0.0",
     "vulture==2.16",
@@ -77,6 +77,7 @@ lint.select = [
 lint.ignore = [
     "ANN201", # https://docs.astral.sh/ruff/rules/missing-return-type-undocumented-public-function/ - too many untyped return values atm to turn this rule on
     "COM812", # https://docs.astral.sh/ruff/rules/missing-trailing-comma/ - this rule may cause conflicts when used with the ruff formatter
+    "CPY001", # https://docs.astral.sh/ruff/rules/missing-copyright-notice/ - this would lead to duplication of boiler plate text
     "D203",   # https://docs.astral.sh/ruff/rules/one-blank-line-before-class/ - prevent warning: `one-blank-line-before-class` (D203) and `no-blank-line-before-class` (D211) are incompatible. Ignoring `one-blank-line-before-class`
     "D213",   # https://docs.astral.sh/ruff/rules/multi-line-summary-second-line/ - prevent warning: `multi-line-summary-first-line` (D212) and `multi-line-summary-second-line` (D213) are incompatible. Ignoring `multi-line-summary-second-line`
     "ISC001", # https://docs.astral.sh/ruff/rules/single-line-implicit-string-concatenation/ - this rule may cause conflicts when used with the ruff formatter

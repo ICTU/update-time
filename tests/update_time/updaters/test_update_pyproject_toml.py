@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 from unittest.mock import Mock, patch
 
+from update_time.primitives.location import Location
 from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 
 from tests.update_time.helpers import (
@@ -83,7 +84,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         update_pyproject_tomls()
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
-        self.assert_new_version_logged(mock_pyproject_toml, "package", "1.1, published: 2026-05-30 12:08")
+        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 12:08", Location(mock_pyproject_toml))
         self.assert_no_cli_cooldown(run)
         self.assert_no_warnings_logged()
 
@@ -100,9 +101,9 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_changelog==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
-            mock_pyproject_toml,
             "package_with_changelog",
             "1.1, published: 2026-05-30 12:07",
+            Location(mock_pyproject_toml),
             self.changelog,
         )
         self.assert_no_warnings_logged()
@@ -121,7 +122,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_html_changelog==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
-            mock_pyproject_toml, "package_with_html_changelog", "1.1, published: 2026-05-30 12:07"
+            "package_with_html_changelog", "1.1, published: 2026-05-30 12:07", Location(mock_pyproject_toml)
         )
         self.assert_no_warnings_logged()
 
@@ -139,9 +140,9 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_github_releases==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
-            mock_pyproject_toml,
             "package_with_github_releases",
             "1.1, published: 2026-05-30 12:07",
+            Location(mock_pyproject_toml),
             self.changelog,
         )
         self.assert_no_warnings_logged()
@@ -156,9 +157,9 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_without_github_releases==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
-            mock_pyproject_toml,
             "package_without_github_releases",
             "1.1, published: 2026-05-30 12:07",
+            Location(mock_pyproject_toml),
         )
         self.assert_no_warnings_logged()
 
@@ -250,7 +251,7 @@ class StaleDependencyTest(LoggingTestCase):
         get.return_value = self.simple_api("1.0", (datetime.now(UTC) - timedelta(days=512)).isoformat())
         pyproject_toml = self.mock_pyproject_toml(glob)
         update_pyproject_tomls()
-        self.assert_stale_dependency_logged(pyproject_toml, "package", "1.0")
+        self.assert_stale_dependency_logged("package", "1.0", Location(pyproject_toml))
 
     def test_recent_dependency_not_warned(self, run: Mock, get: Mock, glob: Mock):
         """Test that a direct dependency whose newest release is recent is not warned about as stale."""

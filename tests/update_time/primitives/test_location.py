@@ -20,5 +20,6 @@ class LocationTest(unittest.TestCase):
     def test_relative_falls_back_to_the_absolute_path_outside_the_working_directory(self):
         """Test that a path that can't be made relative to the working directory is kept as its absolute self."""
         outside = Path("/elsewhere/pyproject.toml")
-        self.assertEqual(Location(outside, 7).relative(), outside)
-        self.assertEqual(str(Location(outside, 7)), "/elsewhere/pyproject.toml:7")
+        location = Location(outside, 7)
+        self.assertEqual(location.relative(), outside)
+        self.assertEqual(str(location), "/elsewhere/pyproject.toml:7")
