@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
-from update_time.domain.drift import ALLOW_HASH_DRIFT
+from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
+from update_time.domain.version import Reference
+from update_time.primitives.location import Location
 
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
 from tests.update_time.helpers import LoggingTestCase, docker_tag, mock_path, mock_response, patch_environ
@@ -132,6 +134,11 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         """Discover `mock_file` and run the updater."""
         raise NotImplementedError
 
+    @staticmethod
+    def drifted(mock_file: Mock) -> DriftedPin:
+        """Return the drifted pin the re-pushed `python:3.14` reference these tests use produces."""
+        return DriftedPin(Reference("python", "3.14", DIGEST1), DIGEST2, Location(mock_file, 1))
+
     def test_no_changes(self) -> None:
         """Test that an image already at the latest pinned tag is left unchanged."""
         self.requests.side_effect = mock_docker_registry()
@@ -149,7 +156,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file = mock_path(self.reference(f"python:3.14@{DIGEST}"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
-        self.assert_stale_dependency_logged(mock_file, "python", "3.14", line=1)
+        self.assert_stale_dependency_logged("python", "3.14", Location(mock_file, 1))
 
     def test_bumped(self) -> None:
         """Test that the image tag and digest are bumped when a newer version is available."""
@@ -157,7 +164,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file = mock_path(self.reference(f"python:3.14@{DIGEST1}"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.15@{DIGEST2}"))
-        self.assert_new_version_logged(mock_file, "python", "3.15", line=1)
+        self.assert_new_version_logged("python", "3.15", Location(mock_file, 1))
         self.assert_no_warnings_logged()
 
     def test_digest_drift_warned_not_repinned(self) -> None:
@@ -166,7 +173,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file = mock_path(self.reference(f"python:3.14@{DIGEST1}"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
-        self.assert_digest_drift_logged(mock_file, "python", "3.14", DIGEST1, DIGEST2, line=1)
+        self.assert_digest_drift_logged(self.drifted(mock_file))
         self.assert_no_new_version_logged()
 
     def test_digest_drift_adopted_with_flag(self) -> None:
@@ -176,7 +183,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
             self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14@{DIGEST2}"))
-        self.assert_adopted_drift_logged(mock_file, "python", "3.14", DIGEST1, DIGEST2, line=1)
+        self.assert_adopted_digest_drift_logged(self.drifted(mock_file))
         self.assert_no_warnings_logged()
 
     def test_pin_unpinned_image(self) -> None:
@@ -185,7 +192,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file = mock_path(self.reference("python:3.14"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.15@{DIGEST2}"))
-        self.assert_new_version_logged(mock_file, "python", "3.15", line=1)
+        self.assert_new_version_logged("python", "3.15", Location(mock_file, 1))
         self.assert_no_warnings_logged()
 
     def test_pin_unpinned_image_already_at_latest(self) -> None:
@@ -194,5 +201,5 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file = mock_path(self.reference("python:3.14"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14@{DIGEST3}"))
-        self.assert_pinned_logged(mock_file, "python", "3.14", DIGEST3, line=1)
+        self.assert_pinned_logged("python", "3.14", DIGEST3, Location(mock_file, 1))
         self.assert_no_warnings_logged()

@@ -45,7 +45,7 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         update_node_engines()
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "19" }}\n')
         self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged(mock_package_json, "node", "19", line=1)
+        self.assert_new_version_logged("node", "19", Location(mock_package_json, 1))
         self.assert_no_warnings_logged()
 
     @patch_pathlib_path(exists=True, read_text="FROM node:lts AS base")
@@ -80,7 +80,7 @@ class UpdateNodeEnginesTest(LoggingTestCase):
             update_node_engines()
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "20" }}\n')
         self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged(mock_package_json, "node", "20", line=1)
+        self.assert_new_version_logged("node", "20", Location(mock_package_json, 1))
         self.assert_no_warnings_logged()
 
     @patch_pathlib_path(exists=False)
@@ -108,7 +108,7 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         update_node_engines()
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "20" }}\n')
         self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged(mock_package_json, "node", "20", line=1)
+        self.assert_new_version_logged("node", "20", Location(mock_package_json, 1))
         self.assert_no_warnings_logged()
 
     @patch_pathlib_path(exists=False)
@@ -126,5 +126,5 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         mock_glob.side_effect = rglob
         update_node_engines()
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "20" }}\n')
-        self.assert_new_version_logged(mock_package_json, "node", "20", line=1)
+        self.assert_new_version_logged("node", "20", Location(mock_package_json, 1))
         self.assert_no_warnings_logged()  # node:lts is passed over, so it is never warned about.

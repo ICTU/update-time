@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import PurePath
 from unittest.mock import MagicMock, Mock, patch
 
+from update_time.primitives.location import Location
 from update_time.updaters.update_requirements_txt import REQUIREMENTS_GLOB_PATTERNS, update_requirements_txts
 
 from tests.update_time.helpers import (
@@ -67,7 +68,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = self.stale_pypi("4.15.0")  # No newer version; newest release is old.
         update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
-        self.assert_stale_dependency_logged(requirements_txt, "humanize", "4.15.0", line=1)
+        self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
     def test_yanked_dependency_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin left on a yanked version is warned about, without being changed."""
@@ -79,7 +80,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         ]  # No newer version; the pin's own release is yanked.
         update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
-        self.assert_yanked_dependency_logged(requirements_txt, "humanize", "4.15.0", line=1)
+        self.assert_yanked_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
     def test_ignore_update_marker_still_warns_about_a_yank(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin frozen on a yanked version by `ignore[update]` is still warned about.
@@ -92,7 +93,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = [pypi_index("4.15.0", "4.16.0", files=yanked), pypi_release()]
         update_requirements_txts()
         requirements_txt.write_text.assert_not_called()  # the marker keeps the pin on the yanked version
-        self.assert_yanked_dependency_logged(requirements_txt, "humanize", "4.15.0", line=1)
+        self.assert_yanked_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
     def test_ignore_yanked_marker_silences_the_warning(self, mock_rglob: Mock, mock_get: Mock):
         """Test that an `ignore[yanked]` marker on the pin's line holds back the yank warning.
@@ -106,7 +107,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = [pypi_index("4.15.0", files=yanked)]
         update_requirements_txts()
         self.assert_no_warnings_logged()
-        self.assert_ignored_yank_logged(requirements_txt, "humanize", "ignore[yanked]", line=1)
+        self.assert_ignored_yank_logged("humanize", Location(requirements_txt, 1), "ignore[yanked]")
 
     def test_recent_dependency_not_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin whose newest release is recent is not warned about as stale."""
@@ -134,7 +135,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         requirements_txt.write_text.assert_called_once_with("flask==1.1\n")
         self.assert_path_logged(requirements_txt)
-        self.assert_new_version_logged(requirements_txt, "flask", PUBLISHED, line=1)
+        self.assert_new_version_logged("flask", PUBLISHED, Location(requirements_txt, 1))
         self.assert_no_warnings_logged()
 
     def test_preserves_extras_marker_and_comment(self, mock_rglob: Mock, mock_get: Mock):
@@ -145,7 +146,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         requirements_txt.write_text.assert_called_once_with('flask[async]==1.1 ; python_version < "3.12"  # keep\n')
         self.assert_path_logged(requirements_txt)
-        self.assert_new_version_logged(requirements_txt, "flask", PUBLISHED, line=1)
+        self.assert_new_version_logged("flask", PUBLISHED, Location(requirements_txt, 1))
         self.assert_no_warnings_logged()
 
     def test_spaces_around_equals_preserved(self, mock_rglob: Mock, mock_get: Mock):
@@ -156,7 +157,9 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         requirements_txt.write_text.assert_called_once_with("certifi == 2020.4.5.2          # used by requests\n")
         self.assert_path_logged(requirements_txt)
-        self.assert_new_version_logged(requirements_txt, "certifi", "2020.4.5.2, published: 2020-01-01 00:00", line=1)
+        self.assert_new_version_logged(
+            "certifi", "2020.4.5.2, published: 2020-01-01 00:00", Location(requirements_txt, 1)
+        )
         self.assert_no_warnings_logged()
 
     def test_loose_specifiers_untouched(self, mock_rglob: Mock, mock_get: Mock):

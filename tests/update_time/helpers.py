@@ -10,9 +10,8 @@ from unittest.mock import ANY, Mock, call, patch
 
 import update_time
 from update_time.domain.bound import NewVersionGetter, Verb, VersionBound, parse_bound
-from update_time.domain.drift import DriftedPin
 from update_time.domain.staleness import STALE_AFTER
-from update_time.domain.version import DependencyVersion, Reference, VersionString
+from update_time.domain.version import DependencyVersion, VersionString
 from update_time.io.log import Logger, LogMessage
 from update_time.primitives.location import Location
 from update_time.sources.docker_hub import api_headers as docker_hub_headers
@@ -33,6 +32,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
     from unittest.mock import _Call, _patch, _patch_dict
+
+    from update_time.domain.drift import DriftedPin
 
 # A test method or class a patch decorator is applied to and returns unchanged (see `patch_pathlib_path`).
 _Decorated = TypeVar("_Decorated", bound="Callable[..., object]")
@@ -143,14 +144,13 @@ class LoggingTestCase(CacheClearingTestCase):
         self._error_expected = True
         self.assert_logged(message, **fields)
 
-    def assert_new_version_logged(  # noqa: PLR0913
+    def assert_new_version_logged(
         self,
-        path: Path,
         dependency: str,
         version: str,
+        location: Location,
         changes: str = Logger._NO_CHANGELOG,
         *,
-        line: int | None = None,
         once: bool = True,
     ) -> None:
         """Assert that the availability of a new version was logged for the dependency in the file."""
@@ -158,7 +158,7 @@ class LoggingTestCase(CacheClearingTestCase):
         assert_logged(
             Logger._MESSAGE_NEW_VERSION,
             dependency=dependency,
-            location=Location(path, line),
+            location=location,
             version=version,
             changes=changes,
         )
@@ -172,143 +172,74 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that no new version was logged (other records at the same level are allowed)."""
         self.assertEqual(self.new_version_records(), [], "Expected no new version to be logged")
 
-    def assert_pinned_logged(
-        self, path: Path, dependency: str, version: str, sha: str, *, line: int | None = None
-    ) -> None:
+    def assert_pinned_logged(self, dependency: str, version: str, sha: str, location: Location) -> None:
         """Assert that pinning a previously unpinned reference to a digest was logged for the file."""
         self.assert_last_logged(
-            Logger._MESSAGE_PINNED, dependency=dependency, location=Location(path, line), version=version, sha=sha
+            Logger._MESSAGE_PINNED, dependency=dependency, location=location, version=version, sha=sha
         )
 
-    def assert_cannot_pin_logged(self, path: Path, dependency: str, *, line: int | None = None) -> None:
+    def assert_cannot_pin_logged(self, dependency: str, location: Location) -> None:
         """Assert that a reference with nowhere to hold a hash was reported as one that cannot be pinned."""
-        self.assert_logged(Logger._MESSAGE_CANNOT_PIN, dependency=dependency, location=Location(path, line))
+        self.assert_logged(Logger._MESSAGE_CANNOT_PIN, dependency=dependency, location=location)
 
-    @staticmethod
-    def _drift_fields(  # noqa: PLR0913
-        path: Path, dependency: str, version: str, current_sha: str, new_sha: str, line: int | None
-    ) -> dict[str, object]:
-        """Return the fields the logger passes when a hash pin's target has drifted.
-
-        Assembled from what the assertions' callers have — a path and a line — and then asked of the logger, so
-        which fields a drift message carries is decided in one place rather than restated here.
-        """
-        return Logger._drift_fields(
-            DriftedPin(Reference(dependency, version, current_sha), new_sha, Location(path, line))
-        )
-
-    def assert_digest_drift_logged(  # noqa: PLR0913
-        self, path: Path, dependency: str, version: str, current_sha: str, new_sha: str, *, line: int | None = None
-    ) -> None:
+    def assert_digest_drift_logged(self, drifted: DriftedPin) -> None:
         """Assert that a re-pushed tag's digest drift was logged as a single warning for the file."""
-        self.assert_logged(
-            Logger._MESSAGE_DIGEST_DRIFT, **self._drift_fields(path, dependency, version, current_sha, new_sha, line)
-        )
+        self.assert_logged(Logger._MESSAGE_DIGEST_DRIFT, **Logger._drift_fields(drifted))
 
-    def assert_tag_drift_logged(  # noqa: PLR0913
-        self, path: Path, dependency: str, version: str, current_sha: str, new_sha: str, *, line: int | None = None
-    ) -> None:
+    def assert_tag_drift_logged(self, drifted: DriftedPin) -> None:
         """Assert that a moved tag's commit drift was logged as a single warning for the file."""
-        self.assert_logged(
-            Logger._MESSAGE_TAG_DRIFT, **self._drift_fields(path, dependency, version, current_sha, new_sha, line)
-        )
+        self.assert_logged(Logger._MESSAGE_TAG_DRIFT, **Logger._drift_fields(drifted))
 
-    def assert_adopted_tag_drift_logged(  # noqa: PLR0913
-        self,
-        path: Path,
-        dependency: str,
-        version: str,
-        current_sha: str,
-        new_sha: str,
-        cause: object = ANY,
-        *,
-        line: int | None = None,
-    ) -> None:
+    def assert_adopted_tag_drift_logged(self, drifted: DriftedPin, cause: object = ANY) -> None:
         """Assert that adopting a moved tag's new commit was logged once for the file."""
-        self.assert_logged(
-            Logger._MESSAGE_ADOPTED_TAG_DRIFT,
-            **self._drift_fields(path, dependency, version, current_sha, new_sha, line),
-            cause=cause,
-        )
+        self.assert_logged(Logger._MESSAGE_ADOPTED_TAG_DRIFT, **Logger._drift_fields(drifted), cause=cause)
 
-    def assert_adopted_drift_logged(  # noqa: PLR0913
-        self,
-        path: Path,
-        dependency: str,
-        version: str,
-        current_sha: str,
-        new_sha: str,
-        cause: object = ANY,
-        *,
-        line: int | None = None,
-    ) -> None:
+    def assert_adopted_digest_drift_logged(self, drifted: DriftedPin, cause: object = ANY) -> None:
         """Assert that adopting a re-pushed tag's new digest was logged once for the file."""
-        self.assert_logged(
-            Logger._MESSAGE_ADOPTED_DIGEST_DRIFT,
-            **self._drift_fields(path, dependency, version, current_sha, new_sha, line),
-            cause=cause,
-        )
+        self.assert_logged(Logger._MESSAGE_ADOPTED_DIGEST_DRIFT, **Logger._drift_fields(drifted), cause=cause)
 
-    def assert_hash_mismatch_logged(  # noqa: PLR0913
+    def assert_hash_mismatch_logged(
         self,
-        path: Path,
         dependency: str,
         version: str,
         declared_hash: str,
         served_hash: str,
-        *,
-        line: int | None = None,
+        location: Location,
     ) -> None:
         """Assert that a declared integrity hash disagreeing with the served one was logged once for the file."""
         self.assert_logged(
             Logger._MESSAGE_HASH_MISMATCH,
             dependency=dependency,
             version=version,
-            location=Location(path, line),
+            location=location,
             declared_hash=declared_hash,
             served_hash=served_hash,
         )
 
-    def assert_stale_dependency_logged(
-        self, path: Path, dependency: str, version: str, *, line: int | None = None
-    ) -> None:
+    def assert_stale_dependency_logged(self, dependency: str, version: str, location: Location) -> None:
         """Assert that a stale dependency (its newest release too old) was warned about once for the file.
 
         The exact age and threshold vary with the wall clock, so they are matched with ANY.
         """
         self.assert_logged(
-            Logger._MESSAGE_STALE,
-            dependency=dependency,
-            location=Location(path, line),
-            version=version,
-            days=ANY,
-            threshold=ANY,
+            Logger._MESSAGE_STALE, dependency=dependency, location=location, version=version, days=ANY, threshold=ANY
         )
 
     def assert_yanked_dependency_logged(
-        self, path: Path, dependency: str, version: str, reason: object = ANY, *, line: int | None = None
+        self, dependency: str, version: str, location: Location, reason: object = ANY
     ) -> None:
         """Assert that a pin left on a yanked version was warned about once for the file.
 
         The warning carries the version's `Yank`, which most callers don't care about, so it defaults to matching any.
         """
         self.assert_logged(
-            Logger._MESSAGE_YANKED,
-            dependency=dependency,
-            location=Location(path, line),
-            version=version,
-            reason=reason,
+            Logger._MESSAGE_YANKED, dependency=dependency, location=location, version=version, reason=reason
         )
 
-    def assert_redundant_yank_scope_logged(
-        self, path: Path, dependency: str, directive: object = ANY, *, line: int | None = None
-    ) -> None:
+    def assert_redundant_yank_scope_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
         """Assert that a yank scope the dependency's source can never honour was warned about once for the file."""
         self.assert_logged(
-            Logger._MESSAGE_REDUNDANT_YANK_SCOPE,
-            directive=directive,
-            dependency=dependency,
-            location=Location(path, line),
+            Logger._MESSAGE_REDUNDANT_YANK_SCOPE, directive=directive, dependency=dependency, location=location
         )
 
     def assert_path_logged(self, path: Path) -> None:
@@ -319,31 +250,20 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that no path being checked for updates was logged (nothing logged at debug level)."""
         self.assertEqual(self.records(DEBUG), [])
 
-    @staticmethod
-    def _held_back_fields(path: Path, dependency: str, directive: object, line: int | None) -> dict[str, object]:
-        """Return the fields the logger passes when a marker holds an update or one of the warnings back."""
-        return {"dependency": dependency, "location": Location(path, line), "directive": directive}
-
-    def assert_ignored_logged(
-        self, path: Path, dependency: str, directive: object = ANY, *, line: int | None = None
-    ) -> None:
+    def assert_ignored_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
         """Assert that ignoring a reference (via an update-time: ignore directive) was logged."""
-        self.assert_last_logged(Logger._MESSAGE_IGNORED, **self._held_back_fields(path, dependency, directive, line))
+        self.assert_last_logged(Logger._MESSAGE_IGNORED, dependency=dependency, location=location, directive=directive)
 
-    def assert_ignored_staleness_logged(
-        self, path: Path, dependency: str, directive: object = ANY, *, line: int | None = None
-    ) -> None:
+    def assert_ignored_staleness_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
         """Assert that a staleness warning held back by a marker was logged, among the other records."""
         self.assert_logged_among_others(
-            Logger._MESSAGE_IGNORED_STALENESS, **self._held_back_fields(path, dependency, directive, line)
+            Logger._MESSAGE_IGNORED_STALENESS, dependency=dependency, location=location, directive=directive
         )
 
-    def assert_ignored_yank_logged(
-        self, path: Path, dependency: str, directive: object = ANY, *, line: int | None = None
-    ) -> None:
+    def assert_ignored_yank_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
         """Assert that a yank warning held back by a marker was logged, among the other records."""
         self.assert_logged_among_others(
-            Logger._MESSAGE_IGNORED_YANK, **self._held_back_fields(path, dependency, directive, line)
+            Logger._MESSAGE_IGNORED_YANK, dependency=dependency, location=location, directive=directive
         )
 
     def assert_skipped_logged(self, path: Path, reason: str) -> None:

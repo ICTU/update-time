@@ -5,9 +5,10 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
-from update_time.domain.drift import ALLOW_HASH_DRIFT
-from update_time.domain.version import DependencyVersion
+from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
+from update_time.domain.version import DependencyVersion, Reference
 from update_time.io.log import Logger
+from update_time.primitives.location import Location
 from update_time.updaters.update_github_action import update_github_actions
 
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
@@ -22,6 +23,11 @@ GITHUB_DIR = Path("/repo/.github")
 class UpdateGitHubActionsTest(LoggingTestCase):
     """Unit tests for the update GitHub Actions function."""
 
+    @staticmethod
+    def drifted(workflow_yml: Mock) -> DriftedPin:
+        """Return the drifted pin the moved `action/action` version tag these tests use produces."""
+        return DriftedPin(Reference("action/action", "1.0", OLD_SHA), NEW_SHA, Location(workflow_yml, 1))
+
     def test_multiple_files(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that actions are updated in all YAML files under the GitHub directory, not just workflows."""
         mock_get_latest_version.return_value = DependencyVersion(version="1.1", sha=NEW_SHA)
@@ -33,7 +39,11 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         composite_action_yaml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
         self.assert_path_logged(composite_action_yaml)
         self.assert_new_version_logged(
-            composite_action_yaml, "action/action", "1.1", Logger._SUPPRESSING_CHANGELOG, once=False, line=1
+            "action/action",
+            "1.1",
+            Location(composite_action_yaml, 1),
+            Logger._SUPPRESSING_CHANGELOG,
+            once=False,
         )
         self.assert_no_warnings_logged()
 
@@ -66,7 +76,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions(GITHUB_DIR)
         workflow_yml.write_text.assert_not_called()
-        self.assert_tag_drift_logged(workflow_yml, "action/action", "1.0", OLD_SHA, NEW_SHA, line=1)
+        self.assert_tag_drift_logged(self.drifted(workflow_yml))
         self.assert_no_new_version_logged()
 
     def test_allow_hash_drift_marker_adopts_moved_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -77,9 +87,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions(GITHUB_DIR)
         workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0{marker}\n")
-        self.assert_adopted_tag_drift_logged(
-            workflow_yml, "action/action", "1.0", OLD_SHA, NEW_SHA, "update-time: allow[hash-drift]", line=1
-        )
+        self.assert_adopted_tag_drift_logged(self.drifted(workflow_yml), "update-time: allow[hash-drift]")
         self.assert_no_warnings_logged()
 
     def test_flag_adopts_moved_tag_repo_wide(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -90,9 +98,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
             update_github_actions(GITHUB_DIR)
         workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0\n")
-        self.assert_adopted_tag_drift_logged(
-            workflow_yml, "action/action", "1.0", OLD_SHA, NEW_SHA, "--allow-hash-drift", line=1
-        )
+        self.assert_adopted_tag_drift_logged(self.drifted(workflow_yml), "--allow-hash-drift")
         self.assert_no_warnings_logged()
 
     def test_stale_action_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -103,7 +109,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions(GITHUB_DIR)
         workflow_yml.write_text.assert_not_called()
-        self.assert_stale_dependency_logged(workflow_yml, "action/action", "1.0", line=1)
+        self.assert_stale_dependency_logged("action/action", "1.0", Location(workflow_yml, 1))
 
     def test_pin_unpinned_action(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an action referenced by version tag only is pinned to the commit SHA with a version comment."""
@@ -114,7 +120,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
         mock_get_latest_version.assert_called_once_with("actions/checkout", "4", NO_BOUND)
         self.assert_path_logged(workflow_yml)
-        self.assert_pinned_logged(workflow_yml, "actions/checkout", "4.1.1", NEW_SHA, line=1)
+        self.assert_pinned_logged("actions/checkout", "4.1.1", NEW_SHA, Location(workflow_yml, 1))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -127,7 +133,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
         mock_get_latest_version.assert_called_once_with("actions/checkout", "4.1.1", NO_BOUND)
         self.assert_path_logged(workflow_yml)
-        self.assert_pinned_logged(workflow_yml, "actions/checkout", "4.1.1", NEW_SHA, line=1)
+        self.assert_pinned_logged("actions/checkout", "4.1.1", NEW_SHA, Location(workflow_yml, 1))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -141,7 +147,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
             f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: allow[update<5]\n"
         )
         mock_get_latest_version.assert_called_once_with("actions/checkout", "4", bound(Verb.ALLOW, "update<5"))
-        self.assert_pinned_logged(workflow_yml, "actions/checkout", "4.2.0", NEW_SHA, line=1)
+        self.assert_pinned_logged("actions/checkout", "4.2.0", NEW_SHA, Location(workflow_yml, 1))
         self.assert_no_warnings_logged()  # a `<5` bound on a v4 pin is live, so no redundancy warning
 
     def test_level_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -154,7 +160,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
             f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: ignore[major-update]\n"
         )
         mock_get_latest_version.assert_called_once_with("actions/checkout", "4", bound(Verb.IGNORE, "major-update"))
-        self.assert_pinned_logged(workflow_yml, "actions/checkout", "4.2.0", NEW_SHA, line=1)
+        self.assert_pinned_logged("actions/checkout", "4.2.0", NEW_SHA, Location(workflow_yml, 1))
         self.assert_no_warnings_logged()  # a major-update bound on a v4 pin is live, so no redundancy warning
 
     def test_inline_ignore_marker_pins_action(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -164,7 +170,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         update_github_actions(GITHUB_DIR)
         workflow_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_ignored_logged(workflow_yml, "action/action", line=1)
+        self.assert_ignored_logged("action/action", Location(workflow_yml, 1))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -175,7 +181,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         update_github_actions(GITHUB_DIR)
         workflow_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_ignored_logged(workflow_yml, "action/action", line=2)
+        self.assert_ignored_logged("action/action", Location(workflow_yml, 2))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -187,10 +193,9 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions(GITHUB_DIR)
         workflow_yml.write_text.assert_not_called()  # the pin is held back
-        self.assert_stale_dependency_logged(
-            workflow_yml, "action/action", "1.1", line=1
-        )  # but staleness is still checked
-        self.assert_ignored_logged(workflow_yml, "action/action", line=1)
+        location = Location(workflow_yml, 1)
+        self.assert_stale_dependency_logged("action/action", "1.1", location)  # but staleness is still checked
+        self.assert_ignored_logged("action/action", location)
 
     def test_ignore_stale_marker_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[stale]` repins the action but skips the staleness check even for an old release."""
@@ -202,8 +207,9 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_once_with(
             f"uses: action/action@{NEW_SHA} # v1.1  # update-time: ignore[stale]\n"
         )
-        self.assert_new_version_logged(workflow_yml, "action/action", "1.1", line=1)
-        self.assert_ignored_staleness_logged(workflow_yml, "action/action", "ignore[stale]", line=1)
+        location = Location(workflow_yml, 1)
+        self.assert_new_version_logged("action/action", "1.1", location)
+        self.assert_ignored_staleness_logged("action/action", location, "ignore[stale]")
         self.assert_no_warnings_logged()  # staleness skipped despite the old release
 
     def test_unpinned_action_without_sha_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):

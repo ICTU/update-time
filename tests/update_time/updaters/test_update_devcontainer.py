@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import ANY, Mock, patch
 
+from update_time.primitives.location import Location
 from update_time.updaters.update_devcontainer import (
     DEVCONTAINER_GLOBS,
     FEATURE_RE,
@@ -37,7 +38,7 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
         devcontainer.write_text.assert_called_once_with(
             f'    "ghcr.io/devcontainers/features/node:2.1@{DIGEST1}": {{}}\n'
         )
-        self.assert_new_version_logged(devcontainer, "ghcr.io/devcontainers/features/node", "2.1", line=1)
+        self.assert_new_version_logged("ghcr.io/devcontainers/features/node", "2.1", Location(devcontainer, 1))
         self.assert_no_warnings_logged()
 
     def test_feature_pinned_when_already_latest(self):
@@ -48,7 +49,7 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
         devcontainer.write_text.assert_called_once_with(
             f'    "ghcr.io/devcontainers/features/node:2@{DIGEST3}": {{}}\n'
         )
-        self.assert_pinned_logged(devcontainer, "ghcr.io/devcontainers/features/node", "2", DIGEST3, line=1)
+        self.assert_pinned_logged("ghcr.io/devcontainers/features/node", "2", DIGEST3, Location(devcontainer, 1))
         self.assert_no_warnings_logged()
 
     def test_untagged_image_left_alone(self):
