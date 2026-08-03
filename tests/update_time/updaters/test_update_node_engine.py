@@ -1,7 +1,7 @@
 """Unit tests for the Node engine update script."""
 
 from pathlib import Path
-from unittest.mock import Mock, patch
+from typing import TYPE_CHECKING
 
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
@@ -15,11 +15,15 @@ from tests.update_time.helpers import (
     mock_path,
     patch_pathlib_path,
 )
-from tests.update_time.registry import mock_docker_registry
+from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
+
+if TYPE_CHECKING:
+    from unittest.mock import Mock
 
 
+@mock_docker_hub_auth
 @patch_pathlib_path("rglob", cwd=Path("/"))
-class UpdateNodeEnginesTest(LoggingTestCase):
+class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     """Unit tests for the update Node engines function."""
 
     def create_package_json(self, contents: str = '{"engines": {"node": "18" }}\n') -> Mock:
@@ -75,9 +79,8 @@ class UpdateNodeEnginesTest(LoggingTestCase):
         """Assert the engine is updated to the latest Node release on Docker Hub, with no local version to derive."""
         mock_package_json = self.create_package_json()  # Its engine is node 18.
         mock_glob.return_value = [mock_package_json]
-        registry = Mock(side_effect=mock_docker_registry(docker_tag("20", DIGEST)))
-        with mock_docker_hub_auth, patch("requests.get", registry), patch("requests.head", registry):
-            update_node_engines()
+        self.requests.side_effect = mock_docker_registry(docker_tag("20", DIGEST))
+        update_node_engines()
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "20" }}\n')
         self.assert_path_logged(mock_package_json)
         self.assert_new_version_logged("node", "20", Location(mock_package_json, 1))

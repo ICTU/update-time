@@ -28,6 +28,8 @@ from update_time.sources.oci import _tag_names as oci_tag_names
 from update_time.sources.pypi import project_metadata as pypi_project_metadata
 from update_time.sources.pypi import release_metadata as pypi_release_metadata
 
+from tests.update_time.fixtures import COMMIT_SHA
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
@@ -376,17 +378,22 @@ def mock_path(content: str, parent: Path | None = None) -> Mock:
     return path
 
 
+def pyproject(spec: str) -> str:
+    """Return a minimal valid pyproject.toml pinning the given dependency."""
+    return f'[project]\ndependencies = ["{spec}"]\n'
+
+
 def github_release_json(tag_name: str, **extra: object) -> dict[str, object]:
     """Return a GitHub release API result for the tag, eligible (not a draft or prerelease) unless overridden."""
     return {"draft": False, "prerelease": False, "tag_name": tag_name, "body": None, "published_at": None, **extra}
 
 
-def github_tag_json(name: str, sha: str = "sha") -> dict[str, object]:
+def github_tag_json(name: str, sha: str = COMMIT_SHA) -> dict[str, object]:
     """Return a GitHub tags API result for the tag, carrying the tagged commit's SHA."""
     return {"name": name, "commit": {"sha": sha}}
 
 
-def github_commits_json(sha: str = "sha", date: str = "") -> dict[str, object]:
+def github_commits_json(sha: str = COMMIT_SHA, date: str = "") -> dict[str, object]:
     """Return a GitHub commits API result carrying a tag's commit SHA and, when given, its committer date."""
     return {"sha": sha, **({"commit": {"committer": {"date": date}}} if date else {})}
 

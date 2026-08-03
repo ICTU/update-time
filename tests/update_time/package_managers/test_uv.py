@@ -15,12 +15,7 @@ from update_time.package_managers.uv import (
     configure_cooldown,
 )
 
-from tests.update_time.helpers import LoggingTestCase, mock_path, patch_environ
-
-
-def pyproject(spec: str) -> str:
-    """Return a minimal valid pyproject.toml pinning the given dependency."""
-    return f'[project]\ndependencies = ["{spec}"]\n'
+from tests.update_time.helpers import LoggingTestCase, mock_path, patch_environ, pyproject
 
 
 def marked(cooldown: str) -> str:

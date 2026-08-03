@@ -20,6 +20,7 @@ from update_time.sources.github import (
     newest_publication_date,
 )
 
+from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA1, COMMIT_SHA2
 from tests.update_time.helpers import (
     CacheClearingTestCase,
     LoggingTestCase,
@@ -106,12 +107,12 @@ class GetLatestVersionTest(LoggingTestCase):
     @patch_github(releases=[github_release_json("1.0", body="changelog")], tags=[], commit=github_commits_json())
     def test_unchanged(self):
         """Test that a release matching the current version resolves to that version and its commit SHA."""
-        self.assert_version(get_latest_version("owner/repository", "1.0", NO_BOUND), "1.0", "changelog", "sha")
+        self.assert_version(get_latest_version("owner/repository", "1.0", NO_BOUND), "1.0", "changelog", COMMIT_SHA)
 
     @patch_github(releases=[github_release_json("1.1", body="changelog")], tags=[], commit=github_commits_json())
     def test_newer(self):
         """Test that a newer release is resolved, with its changelog and commit SHA."""
-        self.assert_version(get_latest_version("owner/repository", "1.0", NO_BOUND), "1.1", "changelog", "sha")
+        self.assert_version(get_latest_version("owner/repository", "1.0", NO_BOUND), "1.1", "changelog", COMMIT_SHA)
 
     @patch_github(releases=[github_release_json("1.1", published_at=OLD_ISO)], tags=[], commit=github_commits_json())
     def test_publication_date(self):
@@ -124,7 +125,7 @@ class GetLatestVersionTest(LoggingTestCase):
     def test_bound_narrows_candidates(self):
         """Test that a version bound drops out-of-bound releases so a bounded release wins over a higher one."""
         version_bound = bound(Verb.ALLOW, "update<2")
-        self.assert_version(get_latest_version("owner/bounded", "1.0", version_bound), "1.1", "", "sha")
+        self.assert_version(get_latest_version("owner/bounded", "1.0", version_bound), "1.1", "", COMMIT_SHA)
 
     @patch_github(releases=[github_release_json("0.9")], tags=[])
     def test_older_release_kept(self):
@@ -181,20 +182,20 @@ class GetLatestVersionTest(LoggingTestCase):
     def test_skip_releases_within_cooldown(self):
         """Test that a release published within the cooldown is skipped in favor of an older, eligible release."""
         latest = get_latest_version("owner/with cooldown", "1.0", NO_BOUND)
-        self.assert_version(latest, "1.1", "", "sha")
+        self.assert_version(latest, "1.1", "", COMMIT_SHA)
         self.assertEqual(OLD_DATE, latest.published)
 
     @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=github_commits_json(date=OLD_ISO))
     def test_tag_without_release(self):
         """Test that a version that is tagged but not released is resolved, with its SHA from the tags list."""
         latest = get_latest_version("owner/tags only", "1.0", NO_BOUND)
-        self.assert_version(latest, "1.1", "", "sha")
+        self.assert_version(latest, "1.1", "", COMMIT_SHA)
         self.assertEqual(latest.published, OLD_DATE)  # The tagged commit's committer date
         self.assertEqual(latest.newest_published, OLD_DATE)  # Also feeds the staleness check
 
     @patch_github(
         releases=[github_release_json("v1.1", body="changelog", published_at=OLD_ISO)],
-        tags=[github_tag_json("v1.1", sha="tag sha")],
+        tags=[github_tag_json("v1.1", sha=COMMIT_SHA)],
     )
     def test_tag_with_release(self):
         """Test that a tag with a release keeps the release's metadata, its SHA from the tags list (no commits fetch).
@@ -202,17 +203,17 @@ class GetLatestVersionTest(LoggingTestCase):
         The commits endpoint is unreachable in this test, so needing it for the SHA or the date would fail the test.
         """
         latest = get_latest_version("owner/tag with release", "1.0", NO_BOUND)
-        self.assert_version(latest, "1.1", "changelog", "tag sha")
+        self.assert_version(latest, "1.1", "changelog", COMMIT_SHA)
         self.assertEqual(latest.published, OLD_DATE)
 
     @patch_github(
         releases=[github_release_json("v1.0", published_at=OLD_ISO)],
-        tags=[github_tag_json("v2.0", sha="new sha"), github_tag_json("v1.0", sha="old sha")],
+        tags=[github_tag_json("v2.0", sha=COMMIT_SHA2), github_tag_json("v1.0", sha=COMMIT_SHA1)],
         commit=github_commits_json(date=OLD_ISO),
     )
     def test_tags_running_ahead_of_releases(self):
         """Test that a repo whose releases (v1.0) fell behind its tags (v2.0) is updated to the newest tag."""
-        self.assert_version(get_latest_version("owner/mixed", "1.0", NO_BOUND), "2.0", "", "new sha")
+        self.assert_version(get_latest_version("owner/mixed", "1.0", NO_BOUND), "2.0", "", COMMIT_SHA2)
 
     @patch_github(releases=[], tags=[github_tag_json("v2.0.0-alpha.8")])
     def test_skip_prerelease_tags(self):
@@ -267,12 +268,12 @@ class GetLatestVersionTest(LoggingTestCase):
 
     @patch_github(
         releases=[github_release_json("v5.0.0", body="changelog", published_at=OLD_ISO)],
-        tags=[github_tag_json("v5"), github_tag_json("v5.0.0", sha="release sha")],
+        tags=[github_tag_json("v5"), github_tag_json("v5.0.0", sha=COMMIT_SHA)],
     )
     def test_release_wins_over_bare_tag_of_the_same_version(self):
         """Test that a moving major tag (v5) does not shadow the release of the same version (v5.0.0)."""
         latest = get_latest_version("owner/moving tag", "5.0.0", NO_BOUND)
-        self.assert_version(latest, "5.0.0", "changelog", "release sha")
+        self.assert_version(latest, "5.0.0", "changelog", COMMIT_SHA)
 
 
 class NewestPublicationDateTest(LoggingTestCase):
