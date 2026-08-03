@@ -72,7 +72,9 @@ options:
                         inline script metadata, .python-version, and jsDelivr
                         versions (default: 7)
   --stale-after DAYS    warn when a dependency's newest release is older than
-                        this many days; 0 disables the check (default: 365)
+                        this many days; 0 disables the check, except for
+                        references that set a threshold of their own with an #
+                        update-time: ignore[stale<DAYS] marker (default: 365)
   --exclude-path PATHS  comma-separated list of directories, relative to the
                         scan root, to exclude from the scan, for example
                         vendor,packages/legacy. Every file under an excluded
@@ -342,7 +344,7 @@ To avoid adopting releases that are too fresh to trust, Update-time honours a co
 
 ## ⚠️ Stale dependencies
 
-Keeping a pin on the latest version doesn't help if that latest version is itself years old: the project may have been abandoned or superseded. Alongside updating, Update-time warns when a dependency's newest release is older than a threshold, so you can decide whether to keep it, replace it, or vendor it. The threshold defaults to **365 days** and is set with `--stale-after DAYS`; pass `--stale-after 0` to disable the check entirely. The warning is informational only — it never changes a file and never affects the exit status — and is logged at level `WARNING`. For example, a pin whose newest release came out well over a year ago is reported as:
+Keeping a pin on the latest version doesn't help if that latest version is itself years old: the project may have been abandoned or superseded. Alongside updating, Update-time warns when a dependency's newest release is older than a threshold, so you can decide whether to keep it, replace it, or vendor it. The threshold defaults to **365 days** and is set with `--stale-after DAYS`; pass `--stale-after 0` to disable the check. A single reference can carry a threshold of its own, which wins over whatever `--stale-after` says (see [Controlling updates per reference](#-controlling-updates-per-reference)). The warning is informational only — it never changes a file and never affects the exit status — and is logged at level `WARNING`. For example, a pin whose newest release came out well over a year ago is reported as:
 
 ```console
 WARNING Stale dependency humanize in docs/requirements.txt: newest release 4.15.0 was published 512 days ago (> 365)
@@ -370,6 +372,8 @@ Which dependencies are checked follows from where a yank can be observed. Python
 
 Comments of the form `# update-time: <directive>` let you steer what happens to an individual reference — most often to hold it back, but also to bound how far it may move, or to opt it into behaviour that is off by default. To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
 
+### Holding a reference back
+
 By default the marker holds a reference back from version updates, the [staleness](#-stale-dependencies) check, and the [yank](#-yanked-dependencies) check. Add a bracketed scope to narrow it to just one:
 
 | Marker | Version update | Staleness warning | Yank warning |
@@ -387,7 +391,28 @@ A yank can only be observed where the dependency's source reports one, so of the
 WARNING Redundant update-time marker ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept, so the marker holds nothing back
 ```
 
+### Setting a staleness threshold
+
+`ignore[stale]` silences the staleness warning altogether. To keep the warning but on a different schedule, give the scope a number of days: `# update-time: ignore[stale<90]` warns once that reference's newest release is more than 90 days old, and is a per-reference `--stale-after 90`. Use it for a critical dependency you want to hear about early, or for a low-churn library that shouldn't be flagged for years:
+
+```text
+humanize==4.15.0  # update-time: ignore[stale<90] (critical, warn early)
+```
+
+```dockerfile
+# update-time: ignore[stale<1095]
+FROM python:3.12
+```
+
+The threshold applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--stale-after` whatever that is set to, `--stale-after 0` included: no command-line option overrides a marker, so disabling the check globally still leaves a reference with its own threshold checked. To disable the check for one reference, `ignore[stale<0]` does what `--stale-after 0` does globally, and `ignore[stale]` is the plainer way to spell it.
+
+`allow` and `ignore` are complements here as elsewhere, so `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`. Reversing the operator would warn while a release is fresh and go quiet once it is old, so neither `allow[stale<90]` nor `ignore[stale>=90]` sets a threshold. `allow[stale<90]` is reported as invalid, which leaves the reference unchanged. `ignore[stale>=90]` is not recognised at all, so it falls back to a bare `ignore` and holds back the update and the yank warning too. A day count must be a whole number of days, so `ignore[stale<-5]` and `ignore[stale<1.5]` are reported as invalid too. Where an `ignore[stale]` applies to the same reference, it wins and the warning is suppressed whatever the threshold says.
+
+### Adopting hash drift
+
 One further marker does the opposite of holding a reference back. `# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting what it now points at, so a re-pushed image tag's new digest, or the commit a moved version tag points at, is pinned instead of only warned about (see [Hash drift](#hash-drift)). It follows the same placement rules as the other markers, and the global `--allow-hash-drift` flag applies it to every reference at once. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.
+
+### Bounding how far a reference may update
 
 `ignore[update]` freezes a reference at its current version. Sometimes you want the middle ground: keep receiving updates *within a range* while blocking a jump you're not ready for — for example, keep getting `python:3.12` patch releases but hold off on `3.13` until you've migrated. Add a [PEP 440](https://peps.python.org/pep-0440/) version specifier directly after `update` inside the brackets, either to allow or ignore updates: `# update-time: allow[update<specifier>]` **keeps only** the updates whose version satisfies the specifier, and `# update-time: ignore[update<specifier>]` **drops** the updates whose version satisfies it (the plain `ignore[update]` is the drop-everything case).
 
@@ -411,6 +436,8 @@ The specifier filters the candidate versions *before* the highest is picked, so 
 
 Choose the operator deliberately. To keep `3.12` together with its patch releases while blocking `3.13`, use `<3.13`, `==3.12.*`, or `~=3.12.0`. Don't use `<=3.12` if you want to stay on `3.12`: since `3.12.1 > 3.12` in PEP 440, it also blocks `3.12.1`, which is rarely what "stay on 3.12" means.
 
+### Bounding by update level
+
 A bound with a specifier names the version it must not reach, so it goes stale: after migrating to `3.13`, an `allow[update<3.13]` blocks every update (Update-time warns about it) until the comment is rewritten. To express the policy ("no major jumps") rather than the fence ("not past 3.13"), bound the update by its *level* instead: `# update-time: ignore[major-update]` or `ignore[minor-update]`, or their complements `allow[minor-update]` and `allow[patch-update]`. An update's level is the most significant version component it changes relative to the currently pinned version: a major update changes the first component, a minor update the second, and a patch update the third. A component the current version doesn't have counts as zero, so `node:22` followed by `23` is a major update, and `22` followed by `22.1` a minor one. `ignore` holds back updates of the named level *or more significant*, `allow` keeps updates of the named level *or less significant* — "block minor but allow major" is never meaningful — which makes the two verbs exact complements, just like specifier bounds:
 
 | Directive | Effect | Complement |
@@ -427,6 +454,8 @@ FROM python:3.12.1-bookworm-slim
 
 The levels are positional, not semantic: they refer to the component's position in the version, not to the project's compatibility promises. Projects may ship breaking changes in releases that bump the *second* component, so "stay on Python 3.12" is `ignore[minor-update]` despite Python 3.13 shipping breaking changes (it removed 19 legacy modules from the standard library). The same caution applies to projects using calendar versioning. And as with specifier bounds, the level applies to a Docker tag's main version; a version embedded in the suffix (the `3.23` in `alpine3.23`) is unaffected by the bound.
 
+### How a bound interacts with the other markers
+
 A few rules govern how a bound — with a specifier or level-based — interacts with the other markers and checks:
 
 - A bare `# update-time: ignore` (or `# update-time: ignore[update]` with no specifier) holds back *all* updates and wins over any bound on the same reference.
@@ -438,6 +467,8 @@ A few rules govern how a bound — with a specifier or level-based — interacts
 Update-time logs a `WARNING` when a bound is redundant. That may happen in two ways:
 - Either the bound **never has an effect**, so removing it would change nothing: the current version and every version above it satisfy the bound, for example `allow[update>=3.12]` on a `3.12` pin, or `allow[major-update]` on any pin (it allows every update, so it says nothing).
 - Or the bound **blocks every update**, so it is just a frozen `ignore[update]` in disguise (use that instead if the freeze is intended): no version above the current one satisfies the bound, for example `ignore[update>=3.12]` on a `3.12` pin, or `ignore[patch-update]` on any pin.
+
+### Where to put a marker
 
 Any of these markers can be placed two ways:
 
@@ -468,9 +499,11 @@ Any of these markers can be placed two ways:
 
 This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, `.pre-commit-config.yaml` files, `devcontainer.json` files, `requirements.txt` files, `.python-version` files, and the jsDelivr URLs in a Sphinx `conf.py`. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it. In a `.pre-commit-config.yaml`, an inline marker follows the `# frozen:` comment on the `rev:` line when both are present. In a `.python-version` file both forms are recognised, but uv rejects an inline comment on a `.python-version` line (it then ignores the entry and silently resolves a different Python), so the line-above form is the safer placement for a uv project; either way the marker wins over a version derived from the Dockerfile, so a deliberately held-back development version is never dragged forward by an image update.
 
-Run with `--log-level DEBUG` to confirm a marker is recognised: every recognised marker is logged as `Recognised update-time marker ...`, and every update or warning it holds back is logged on a line of its own. A recognised line means the marker was read and understood. A hold-back line means it actually suppressed something: an `ignore[yanked]` on a version that was never yanked produces none. A missing hold-back line therefore tells you the marker did nothing this run. Since the marker is case-sensitive, a typo (or wrong case) produces no `Recognised` line at all and the reference is updated as usual.
-
 For `pyproject.toml`, `package.json`, and PEP 723 inline script metadata — which are updated through uv, npm, and pnpm rather than line by line — the marker does not apply. Opt a dependency out there by pinning it with a maximum or non-`==` version specifier instead (for example `package<=3.12`).
+
+### Confirming a marker was understood
+
+Run with `--log-level DEBUG` to confirm a marker is recognised: every recognised marker is logged as `Recognised update-time marker ...`, and every update or warning it holds back is logged on a line of its own. A recognised line means the marker was read and understood. A hold-back line means it actually suppressed something: an `ignore[yanked]` on a version that was never yanked produces none. A missing hold-back line therefore tells you the marker did nothing this run. Since the marker is case-sensitive, a typo (or wrong case) produces no `Recognised` line at all and the reference is updated as usual.
 
 ## 📮 Point of contact
 

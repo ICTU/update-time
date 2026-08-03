@@ -16,6 +16,7 @@ from pathlib import Path
 
 from update_time.domain.drift import DriftedPin
 from update_time.domain.marker import Marker
+from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import DependencyVersion, Reference, Yank
 from update_time.io.log import DEPENDENCY_DELIMITER, LOCATION_DELIMITER, Logger
 from update_time.primitives.location import Location
@@ -76,7 +77,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     published = datetime.now(UTC) - timedelta(days=_STALE_DAYS, hours=1)
     stale = DependencyVersion("4.15.0", newest_published=published)
-    log.warn_if_stale("humanize", stale, Location(Path("docs/requirements.txt")))
+    log.warn_if_stale("humanize", stale, Location(Path("docs/requirements.txt")), STALE_AFTER.get())
     staleness = capture.take()
 
     yanked = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="accidentally broke Python 3.10 support"))

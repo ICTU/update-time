@@ -86,7 +86,8 @@ def parse_args() -> argparse.Namespace:
         type=days,
         default=STALE_AFTER.default,
         metavar="DAYS",
-        help="warn when a dependency's newest release is older than this many days; 0 disables the check "
+        help="warn when a dependency's newest release is older than this many days; 0 disables the check, except "
+        "for references that set a threshold of their own with an # update-time: ignore[stale<DAYS] marker "
         "(default: %(default)s)",
     )
     parser.add_argument(

@@ -21,14 +21,13 @@ def staleness_days(published: datetime) -> int:
     return (datetime.now(UTC) - published).days
 
 
-def is_stale(published: datetime | None) -> bool:
-    """Return whether a version published on the given date is stale (older than the threshold).
+def is_stale(published: datetime | None, threshold: int) -> bool:
+    """Return whether a version published on the given date is stale (older than the threshold in days).
 
-    A threshold of 0 disables the check, and an unknown publication date never counts as stale, so neither ever
-    produces a warning. Whole days are compared (via `staleness_days`), the same count the warning reports, so the
-    "> threshold" decision and the "N days ago (> threshold)" message never disagree at the fractional boundary.
+    A threshold of 0 disables the check, and an unknown publication date never counts as stale. Whole days are
+    compared (via `staleness_days`), so a fractional day over the threshold is not stale yet.
     """
-    if (threshold := STALE_AFTER.get()) == 0 or published is None:
+    if threshold == 0 or published is None:
         return False
     return staleness_days(published) > threshold
 
@@ -45,22 +44,18 @@ def newest_datetime(timestamps: Iterable[str]) -> datetime | None:
 def warn_about_stale_dependencies(
     files: Iterable[Path],
     newest_releases: Callable[[Path], Iterable[tuple[DependencyName, DependencyVersion | None]]],
-    warn: Callable[[DependencyName, DependencyVersion, Location], None],
+    warn: Callable[[DependencyName, DependencyVersion, Location, int], None],
 ) -> None:
-    """Run the staleness pass the manifest updaters share (`pyproject.toml`, `package.json`).
+    """Run the staleness pass shared by the updaters that delegate to a package manager.
 
-    The line-by-line updaters check staleness inline (via `references.rewrite`), but a manifest updater delegates
-    the update to uv/npm/pnpm and never calls a source per dependency, so it makes its own pass: `newest_releases(file)`
-    yields the file's declared dependencies as `(name, newest release)` pairs — resolving each release from a registry,
-    None when the dependency isn't a registry package — and `warn` reports the stale ones (typically
-    `Logger.warn_if_stale`) at the file's location. A manifest is delegated to a package manager, which never surfaces
-    a per-dependency line, so the location carries no line number. Skipped entirely when the check is disabled, so the
-    resolver never runs and makes no registry request. Callback-driven so `domain` stays free of the I/O the resolver
-    and warning perform, like `first_eligible`.
+    Delegating to uv, npm, or pnpm means never calling a source per dependency, so these updaters make their own
+    pass. The location carries no line number, since a delegated file surfaces no per-dependency line. The threshold
+    is the global one, which a delegated dependency has no marker to override. Skipped entirely when the check is
+    disabled, so the resolver never runs and makes no registry request. Callback-driven so `domain` stays free of I/O.
     """
-    if STALE_AFTER.get() == 0:
+    if (threshold := STALE_AFTER.get()) == 0:
         return
     for file in files:
         for name, release in newest_releases(file):
             if release is not None:
-                warn(name, release, Location(file))
+                warn(name, release, Location(file), threshold)

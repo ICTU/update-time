@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Warn when the version tag a GitHub Action or pre-commit hook is pinned to points at another commit than the pinned one. Part of [#179](https://github.com/ICTU/update-time/issues/179).
 - Warn when the Subresource Integrity hash a jsDelivr URL declares is not the one jsDelivr serves for that version. Part of [#179](https://github.com/ICTU/update-time/issues/179).
 - Adopt the commit a moved tag points at, instead of only warning about it, when a GitHub Action or pre-commit hook is marked `# update-time: allow[hash-drift]` or `--allow-hash-drift` is passed. Part of [#179](https://github.com/ICTU/update-time/issues/179).
+- Override the stale-after period for a single reference with `# update-time: ignore[stale<90]`. Closes [#192](https://github.com/ICTU/update-time/issues/192).
 
 ### Changed
 

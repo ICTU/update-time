@@ -7,6 +7,8 @@ from archunitpython import assert_passes, project_files
 
 from update_time.io.log import Logger
 
+from tests.update_time import fixtures
+
 
 class DependenciesTest(unittest.TestCase):
     """Unit test for module dependencies within the tool."""
@@ -30,6 +32,29 @@ class DependenciesTest(unittest.TestCase):
         """
         rule = project_files("src/").with_name("version.py").should_not().depend_on_files().in_folder("domain")
         assert_passes(rule)
+
+
+class TestSupportTest(unittest.TestCase):
+    """Test the split between the two shared test modules.
+
+    `fixtures.py` holds values the tests reuse and `helpers.py` holds behaviour — base test cases, builders,
+    decorators — so a test looking for something reusable knows which of the two to read. Keeping the values free of
+    behaviour is what lets `helpers.py` build on them without the dependency ever running the other way.
+    """
+
+    def test_fixtures_do_not_depend_on_helpers(self):
+        """Test that fixtures.py doesn't import helpers.py, so the dependency only runs from helpers to fixtures."""
+        rule = project_files("tests/").with_name("fixtures.py").should_not().depend_on_files().with_name("helpers.py")
+        assert_passes(rule)
+
+    def test_fixtures_define_no_behaviour(self):
+        """Test that fixtures.py defines no function or class, so behaviour is only ever added to helpers.py."""
+        defined_here = [
+            name
+            for name, value in vars(fixtures).items()
+            if (inspect.isfunction(value) or inspect.isclass(value)) and value.__module__ == fixtures.__name__
+        ]
+        self.assertEqual(defined_here, [])
 
 
 class LayeringTest(unittest.TestCase):

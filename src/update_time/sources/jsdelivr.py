@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
 from update_time.domain.yank import yank_reporting
 from update_time.io.fetch import fetch
@@ -59,13 +58,10 @@ def version_getter(filename: str) -> NewVersionGetter:
         )
         # When the run leaves the reference on its current version, attach that version's deprecation as a yank so a
         # pin left on a deprecated release can be warned about; whether to warn is decided by `warn_if_yanked`.
-        # Reading the deprecation fetches the npm registry document (once, cached), which the date below reuses.
         if latest.version == current_version_string:
             latest = replace(latest, yank=deprecation(dependency, current_version_string))
-        # Attach the newest npm publication date for the staleness check, skipping the attachment when the check is
-        # disabled; `is_stale` remains the single gate on whether a warning is emitted.
-        newest_published = newest_publication_date(dependency) if STALE_AFTER.get() > 0 else None
-        return replace(latest, newest_published=newest_published)
+        # Attach the newest npm publication date for the staleness check.
+        return replace(latest, newest_published=newest_publication_date(dependency))
 
     return yank_reporting(get_latest_version)
 

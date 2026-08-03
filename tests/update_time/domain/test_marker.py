@@ -8,6 +8,8 @@ from update_time.domain.line import Line
 from update_time.domain.marker import Marker, parse_marker
 from update_time.primitives.location import Location
 
+from tests.update_time.fixtures import BARE_IGNORE
+
 
 def line(text: str, previous_text: str = "") -> Line:
     """Return the text as a line of a file, with the text of the line above it."""
@@ -58,6 +60,42 @@ class ParseMarkerScopeTest(unittest.TestCase):
         """Test that `ignore[yanked]` holds back only the yank warning, leaving the update and staleness live."""
         marker = parse_marker(line("humanize==4.15.0  # update-time: ignore[yanked]"))
         self.assertEqual(marker, Marker(ignore_yanked=True))
+
+
+class ParseMarkerStaleThresholdTest(unittest.TestCase):
+    """Unit tests for the staleness threshold a `stale` bracket item sets for the reference carrying it."""
+
+    def test_day_count_sets_the_threshold(self):
+        """Test that `ignore[stale<90]` sets the reference's own staleness threshold to 90 days."""
+        marker = parse_marker(line("humanize==4.15.0  # update-time: ignore[stale<90]"))
+        self.assertEqual(marker, Marker(stale_after_days=90))
+
+    def test_the_complement_verb_spells_the_same_threshold(self):
+        """Test that `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`.
+
+        The verbs are exact complements, so the two spellings name the same ages to warn about: 90 days and older.
+        """
+        marker = parse_marker(line("humanize==4.15.0  # update-time: allow[stale>=90]"))
+        self.assertEqual(marker, Marker(stale_after_days=90))
+
+    def test_inverted_directions_set_no_threshold(self):
+        """Test that `allow[stale<90]` and `ignore[stale>=90]` set no threshold."""
+        allowed = parse_marker(line("humanize==4.15.0  # update-time: allow[stale<90]"))
+        self.assertEqual(allowed, Marker(invalid_specifier="stale<90"))
+        ignored = parse_marker(line("humanize==4.15.0  # update-time: ignore[stale>=90]"))
+        self.assertEqual(ignored, BARE_IGNORE)
+
+    def test_malformed_day_count_is_rejected(self):
+        """Test that a day count that is not a whole number of days is reported rather than held back silently.
+
+        A typo'd keyword such as `ignore[updaet]` degrades to a bare `ignore`, which suppresses everything silently.
+        A malformed day count instead takes the route a malformed `update` specifier takes: it is carried out as an
+        invalid specifier, so the user is warned and the reference is left unchanged.
+        """
+        for item in ("stale<-5", "stale<1.5", "stale<10,<30"):
+            with self.subTest(item=item):
+                marker = parse_marker(line(f"humanize==4.15.0  # update-time: ignore[{item}]"))
+                self.assertEqual(marker, Marker(invalid_specifier=item))
 
 
 class ParseMarkerRawTest(unittest.TestCase):
