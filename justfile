@@ -98,12 +98,15 @@ publish version *flags: (check-version version) check-repo test check
 
 # === Run tests ===
 
-# Run the unit tests.
+# A full run goes through coverage and must reach 100%: the text and HTML reports are written first, then `xml` applies the gate. A named subset cannot reach 100%, so it runs without coverage and leaves the reports from the last full run in place.
+test_command(tests) := if tests == "" { coverage + " run -m unittest --quiet && " + coverage + " report --fail-under=0 && " + coverage + " html --quiet --fail-under=0 && " + coverage + " xml --quiet" } else { uv_run + " python -m unittest --quiet " + tests }
+
+# Run the unit tests, all of them or only the ones named, e.g. `just test tests.update_time.io.test_log`.
 [env("PYTHONDEVMODE", "1")]
 [env("PYTHONPATH", "src")]
 test *tests: install-py-dependencies
-    # Show a spinner while running; suppress output unless the run fails; with coverage, also write the reports (xml fails if coverage is too low, but only after the text and HTML reports have been generated).
-    {{ start_progress() }} {{ coverage }} run -m unittest --quiet {{ tests }} && {{ coverage }} report --fail-under=0 && {{ coverage }} html --quiet --fail-under=0 && {{ coverage }} xml --quiet {{ end_progress("test") }}
+    # Show a spinner while running and suppress the output unless the run fails.
+    {{ start_progress() }} {{ test_command(tests) }} {{ end_progress("test") }}
 
 # === Run checks ===
 
@@ -183,7 +186,7 @@ check-readme: (py-check "check-readme" f"PYTHONPATH=src {{uv_run}} python -m doc
 check-sentence-complexity:
     {{ start_capture() }} {{ uv_run }} --script tools/sentence_complexity_check.py {{ code }} {{ end_capture("check-sentence-complexity") }}
 
-# Run the quality checks
+# Run the quality checks. Run one by name for a quicker loop, e.g. `just ruff` or `just mypy`.
 [parallel]
 check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-readme check-sentence-complexity yamllint zizmor
 
@@ -240,15 +243,13 @@ code := "src tests docs"
 
 # === Output functions ===
 
-# Prefix and suffix that wrap a command (such as a check): `{{ start_capture() }} <cmd> {{ end_capture(name) }}` captures stdout+stderr, prints `<recipe-name> [<folder>/ ]PASS` or `FAIL`, and replays the captured output on failure. Neither token contains the other, so a run's outcome cannot be misread by matching on a substring.
-folder_prefix(folder) := if folder == "" { "" } else if folder == "." { "" } else { " " + trim_end_match(folder, "/") + "/" }
-
 # Pick a tool-flag value based on `$_color` set by `start_capture`. Useful for tools whose color flag values aren't `auto`/`always`/`never` (e.g. bandit's `screen`/`txt`, yamllint's `colored`/`auto`).
 when_color(yes, no) := f'$([ "$_color" = always ] && echo {{yes}} || echo {{no}})'
 
+# Prefix and suffix that wrap a command (such as a check): `{{ start_capture() }} <cmd> {{ end_capture(name) }}` captures stdout+stderr, prints `<recipe-name> PASS` or `FAIL`, and replays the captured output on failure. Neither token contains the other, so a run's outcome cannot be misread by matching on a substring.
 start_capture() := f'_color=auto; [ -t 1 ] && { _color=always; export FORCE_COLOR=1; }; output=$({'
-end_capture(name) := f'; } 2>&1) || { printf "%s {{RED}}FAIL{{NORMAL}}\n%s\n" {{name}} "$output"; exit 1; }; printf "%s%s {{GREEN}}PASS{{NORMAL}}\n" {{name}}'
+end_capture(name) := f'; } 2>&1) || { printf "%s {{RED}}FAIL{{NORMAL}}\n%s\n" {{name}} "$output"; exit 1; }; printf "%s {{GREEN}}PASS{{NORMAL}}\n" {{name}}'
 
-# Like start_capture/end_capture, but for slow commands (e.g. tests): run them in the background and animate a spinner while they run. The spinner only shows for an unlabelled run on a terminal (a direct, interactive `just test`); labelled runs (a parallel `ci` or fan-out) skip it, so it never smears into their atomic PASS/FAIL lines.
+# Like start_capture/end_capture, but for slow commands (e.g. tests): run them in the background and animate a spinner while they run. The spinner only shows on a terminal (a direct, interactive `just test`); a parallel `ci` run isn't one, so it never smears into those atomic PASS/FAIL lines.
 start_progress() := f'if [ -t 1 ]; then spin=1; else spin=; fi; tmp=$(mktemp); trap "rm -f $tmp" EXIT; { '
-end_progress(name) := f'; } > "$tmp" 2>&1 & pid=$!; sp="|/-\\"; while kill -0 "$pid" 2>/dev/null; do [ -n "$spin" ] && printf "\r%c" "$sp"; sp="${sp#?}${sp%???}"; sleep 0.1; done; [ -n "$spin" ] && printf "\r"; wait "$pid" && printf "%s%s {{GREEN}}PASS{{NORMAL}}\n" {{name}} || { printf "%s%s {{RED}}FAIL{{NORMAL}}\n%s\n" {{name}} "$(cat "$tmp")"; exit 1; }'
+end_progress(name) := f'; } > "$tmp" 2>&1 & pid=$!; sp="|/-\\"; while kill -0 "$pid" 2>/dev/null; do [ -n "$spin" ] && printf "\r%c" "$sp"; sp="${sp#?}${sp%???}"; sleep 0.1; done; [ -n "$spin" ] && printf "\r"; wait "$pid" && { count=$(grep -m1 "^Ran " "$tmp" | cut -d" " -f2); printf "%s {{GREEN}}PASS{{NORMAL}} (%s tests)\n" {{name}} "${count:-?}"; } || { printf "%s {{RED}}FAIL{{NORMAL}}\n%s\n" {{name}} "$(cat "$tmp")"; exit 1; }'
