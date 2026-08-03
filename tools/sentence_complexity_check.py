@@ -110,12 +110,29 @@ def extract_prose_from_python(python_file: Path) -> Iterator[Prose]:
             yield Prose(python_file, text, line_number)
 
 
+def _matching_files(path: Path, glob: str) -> Iterator[Path]:
+    """Yield the files the glob matches: the path itself when it is a file, its matches when it is a directory."""
+    if path.is_file():
+        if path.match(glob):
+            yield path
+    else:
+        yield from sorted(path.rglob(glob))
+
+
 def extract_prose(*paths: Path) -> Iterator[Prose]:
-    """Extract the prose from the files in the paths."""
-    extractors = {"py": extract_prose_from_python, "md": extract_prose_from_markdown}
+    """Extract the prose from the files in the paths, each of which may be a file or a directory to search.
+
+    A Markdown template is read as Markdown: `README.md` is generated from `README.md.in`, and reporting the
+    sentence at the template's line is what lets it be edited where the edit survives regeneration.
+    """
+    extractors = {
+        "*.py": extract_prose_from_python,
+        "*.md": extract_prose_from_markdown,
+        "*.md.in": extract_prose_from_markdown,
+    }
     for path in paths:
-        for file_type, extractor in extractors.items():
-            for file_path in sorted(path.rglob(f"*.{file_type}")):
+        for glob, extractor in extractors.items():
+            for file_path in _matching_files(path, glob):
                 yield from extractor(file_path)
 
 

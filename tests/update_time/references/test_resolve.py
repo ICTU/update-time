@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES, Verb
 from update_time.domain.marker import Marker
+from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import DependencyVersion, Reference
 from update_time.domain.yank import yank_reporting
 from update_time.references.resolve import latest_version
@@ -70,9 +71,16 @@ class LatestVersionTest(unittest.TestCase):
         self.log.warn_if_redundant_bound.assert_called_once_with("python", marker, "3.14", self.path)
 
     def test_warns_about_staleness(self):
-        """Test that the resolved version is checked for staleness."""
+        """Test that the resolved version is checked for staleness, against the global threshold by default."""
         self.latest_version()
-        self.log.warn_if_stale.assert_called_once_with("python", DependencyVersion(version="3.15"), self.path)
+        self.log.warn_if_stale.assert_called_once_with(
+            "python", DependencyVersion(version="3.15"), self.path, STALE_AFTER.default
+        )
+
+    def test_the_markers_threshold_is_used_for_the_staleness_warning(self):
+        """Test that a reference carrying its own staleness threshold is judged by that one, not the global one."""
+        self.latest_version(Marker(stale_after_days=90))
+        self.log.warn_if_stale.assert_called_once_with("python", DependencyVersion(version="3.15"), self.path, 90)
 
     def test_warns_about_yank(self):
         """Test that the resolved version is checked for a yank."""
@@ -90,7 +98,15 @@ class LatestVersionTest(unittest.TestCase):
         marker = Marker(ignore_stale=True, raw="ignore[stale]")
         self.latest_version(marker)
         self.log.ignored_staleness.assert_called_once_with(
-            "python", DependencyVersion(version="3.15"), marker, self.path
+            "python", DependencyVersion(version="3.15"), marker, self.path, STALE_AFTER.default
+        )
+
+    def test_the_markers_threshold_is_used_for_the_held_back_staleness_warning(self):
+        """Test that the hold-back is judged by the same threshold as the warning it stands in for."""
+        marker = Marker(ignore_stale=True, stale_after_days=90, raw="ignore[stale] ignore[stale<90]")
+        self.latest_version(marker)
+        self.log.ignored_staleness.assert_called_once_with(
+            "python", DependencyVersion(version="3.15"), marker, self.path, 90
         )
 
     def test_ignore_yanked_skips_the_yank_warning(self):

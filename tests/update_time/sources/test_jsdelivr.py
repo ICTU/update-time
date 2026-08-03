@@ -163,13 +163,14 @@ class GetLatestVersionTest(LoggingTestCase):
         mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": old})]
         self.assertEqual(datetime.fromisoformat(old), get_latest_version("clipboard", "1.0", FILENAME).newest_published)
 
-    def test_newest_published_skipped_when_disabled(self, mock_get: Mock):
-        """Test that no newest-release date is attached when the staleness check is disabled.
+    def test_newest_published_attached_when_globally_disabled(self, mock_get: Mock):
+        """Test that the date is attached even with the global check disabled, so a marker can set its own threshold.
 
-        The npm registry is still fetched to check the stay-put pin's deprecation, but its `time` map is not read
-        for a staleness date.
+        The two mocked responses are all the source may make: reading the `time` map costs no extra request, because
+        the npm registry document was already fetched for the stay-put pin's deprecation.
         """
-        mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": ELIGIBLE})]
+        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": old})]
         with staleness_disabled:
             latest_version = get_latest_version("clipboard", "1.0", FILENAME)
-        self.assertIsNone(latest_version.newest_published)
+        self.assertEqual(datetime.fromisoformat(old), latest_version.newest_published)

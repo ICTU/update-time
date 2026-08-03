@@ -14,7 +14,7 @@ from rich.logging import RichHandler
 from rich.theme import Theme
 
 from update_time.domain.bound import NO_BOUND, Verb
-from update_time.domain.staleness import STALE_AFTER, is_stale, staleness_days
+from update_time.domain.staleness import is_stale, staleness_days
 from update_time.domain.version import SHA256_DIGEST
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
@@ -393,13 +393,14 @@ class Logger:
         "%(days)d days ago (> %(threshold)d)",
     )
 
-    def warn_if_stale(self, dependency: str, version: DependencyVersion, location: Location) -> None:
+    def warn_if_stale(self, dependency: str, version: DependencyVersion, location: Location, threshold: int) -> None:
         """Warn if the dependency's newest release is old enough that the project may have gone quiet.
 
         Does nothing when the newest release date is unknown or within the threshold (or the check is disabled),
-        so callers can hand off every resolved version unconditionally.
+        so callers can hand off every resolved version unconditionally. Both the decision and the reported day count
+        are whole days, so the count in the message always exceeds the threshold beside it.
         """
-        if (published := version.newest_published) is None or not is_stale(published):
+        if (published := version.newest_published) is None or not is_stale(published, threshold):
             return
         self._log(
             self._MESSAGE_STALE,
@@ -407,7 +408,7 @@ class Logger:
             location=location,
             version=version.version,
             days=staleness_days(published),
-            threshold=STALE_AFTER.get(),
+            threshold=threshold,
         )
 
     _MESSAGE_IGNORED_STALENESS = LogMessage(
@@ -415,14 +416,14 @@ class Logger:
     )
 
     def ignored_staleness(
-        self, dependency: str, version: DependencyVersion, marker: Marker, location: Location
+        self, dependency: str, version: DependencyVersion, marker: Marker, location: Location, threshold: int
     ) -> None:
         """Log that the marker held back a staleness warning that would otherwise have been logged.
 
         Guards on the same condition as `warn_if_stale`, so callers can hand off every reference unconditionally and
         a marker that suppresses nothing stays silent.
         """
-        if is_stale(version.newest_published):
+        if is_stale(version.newest_published, threshold):
             self._log_ignored(self._MESSAGE_IGNORED_STALENESS, dependency, marker, location)
 
     _MESSAGE_YANKED = LogMessage(

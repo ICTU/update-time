@@ -117,27 +117,27 @@ py-check name check: install-py-dependencies
 
 # Run ty to type check Python code.
 [private]
-ty: (py-check "ty" f"{{ty}} {{code}}")
+ty: (py-check "ty" f"{{ ty }} {{ code }}")
 
 # Run mypy to type check Python code.
 [private]
-mypy: (py-check "mypy" f"{{uv_run}} mypy {{code}}")
+mypy: (py-check "mypy" f"{{ uv_run }} mypy {{ code }}")
 
 # Run fixit to lint Python code, after checking the local fixit rules with their own test cases.
 [private]
-fixit: (py-check "fixit" f"{{fixit}} test .tools.fixit_rules && {{fixit}} lint {{code}}")
+fixit: (py-check "fixit" f"{{ fixit }} test .tools.fixit_rules && {{ fixit }} lint {{ code }}")
 
 # Run ruff to lint and check the formatting of Python code.
 [private]
-ruff: (py-check "ruff" f"{{ruff}} format --check {{code}} && {{ruff}} check {{code}}")
+ruff: (py-check "ruff" f"{{ ruff }} format --check {{ code }} && {{ ruff }} check {{ code }}")
 
 # Run pyproject-fmt to check the formatting of pyproject.toml files.
 [private]
-pyproject-fmt: (py-check "pyproject-fmt" f"{{pyproject_fmt}} --check pyproject.toml")
+pyproject-fmt: (py-check "pyproject-fmt" f"{{ pyproject_fmt }} --check pyproject.toml")
 
 # Run troml to the check the classifiers in pyproject.toml files.
 [private]
-troml: (py-check "troml" f"{{troml}} check")
+troml: (py-check "troml" f"{{ troml }} check")
 
 # Run pip-audit to check Python dependencies for known security vulnerabilities.
 [private]
@@ -152,15 +152,15 @@ uv-audit: (py-check "uv-audit" f"uv audit --locked --quiet")
 
 # Run bandit to check Python code for security vulnerabilities.
 [private]
-bandit: (py-check "bandit" f"{{uv_run}} bandit --configfile pyproject.toml --quiet --recursive --format {{when_color("screen", "txt")}} {{code}}")
+bandit: (py-check "bandit" f"{{ uv_run }} bandit --configfile pyproject.toml --quiet --recursive --format {{ when_color("screen", "txt") }} {{ code }}")
 
 # Run vulture to check for dead Python code.
 [private]
-vulture: (py-check "vulture" f"{{vulture}} {{code}} {{vulture_whitelist}}")
+vulture: (py-check "vulture" f"{{ vulture }} {{ code }} {{ vulture_whitelist }}")
 
 # Run codespell to check for common misspellings.
 [private]
-codespell: (py-check "codespell" f"{{uv_run}} codespell")
+codespell: (py-check "codespell" f"{{ uv_run }} codespell")
 
 # Run yamllint to lint YAML files such as workflow definitions.
 [private]
@@ -179,12 +179,12 @@ check-justfile:
 
 # Check that README.md and the log-output screenshot are what regenerating them produces.
 [private]
-check-readme: (py-check "check-readme" f"PYTHONPATH=src {{uv_run}} python -m docs.generate_readme --check")
+check-readme: (py-check "check-readme" f"PYTHONPATH=src {{ uv_run }} python -m docs.generate_readme --check")
 
 # Check prose for too complex sentences.
 [private]
 check-sentence-complexity:
-    {{ start_capture() }} {{ uv_run }} --script tools/sentence_complexity_check.py {{ code }} {{ end_capture("check-sentence-complexity") }}
+    {{ start_capture() }} {{ uv_run }} --script tools/sentence_complexity_check.py {{ code }} .claude/CLAUDE.md {{ end_capture("check-sentence-complexity") }}
 
 # Run the quality checks. Run one by name for a quicker loop, e.g. `just ruff` or `just mypy`.
 [parallel]
@@ -244,12 +244,12 @@ code := "src tests docs"
 # === Output functions ===
 
 # Pick a tool-flag value based on `$_color` set by `start_capture`. Useful for tools whose color flag values aren't `auto`/`always`/`never` (e.g. bandit's `screen`/`txt`, yamllint's `colored`/`auto`).
-when_color(yes, no) := f'$([ "$_color" = always ] && echo {{yes}} || echo {{no}})'
+when_color(yes, no) := f'$([ "$_color" = always ] && echo {{ yes }} || echo {{ no }})'
 
 # Prefix and suffix that wrap a command (such as a check): `{{ start_capture() }} <cmd> {{ end_capture(name) }}` captures stdout+stderr, prints `<recipe-name> PASS` or `FAIL`, and replays the captured output on failure. Neither token contains the other, so a run's outcome cannot be misread by matching on a substring.
 start_capture() := f'_color=auto; [ -t 1 ] && { _color=always; export FORCE_COLOR=1; }; output=$({'
-end_capture(name) := f'; } 2>&1) || { printf "%s {{RED}}FAIL{{NORMAL}}\n%s\n" {{name}} "$output"; exit 1; }; printf "%s {{GREEN}}PASS{{NORMAL}}\n" {{name}}'
+end_capture(name) := f'; } 2>&1) || { printf "%s {{ RED }}FAIL{{ NORMAL }}\n%s\n" {{ name }} "$output"; exit 1; }; printf "%s {{ GREEN }}PASS{{ NORMAL }}\n" {{ name }}'
 
 # Like start_capture/end_capture, but for slow commands (e.g. tests): run them in the background and animate a spinner while they run. The spinner only shows on a terminal (a direct, interactive `just test`); a parallel `ci` run isn't one, so it never smears into those atomic PASS/FAIL lines.
 start_progress() := f'if [ -t 1 ]; then spin=1; else spin=; fi; tmp=$(mktemp); trap "rm -f $tmp" EXIT; { '
-end_progress(name) := f'; } > "$tmp" 2>&1 & pid=$!; sp="|/-\\"; while kill -0 "$pid" 2>/dev/null; do [ -n "$spin" ] && printf "\r%c" "$sp"; sp="${sp#?}${sp%???}"; sleep 0.1; done; [ -n "$spin" ] && printf "\r"; wait "$pid" && { count=$(grep -m1 "^Ran " "$tmp" | cut -d" " -f2); printf "%s {{GREEN}}PASS{{NORMAL}} (%s tests)\n" {{name}} "${count:-?}"; } || { printf "%s {{RED}}FAIL{{NORMAL}}\n%s\n" {{name}} "$(cat "$tmp")"; exit 1; }'
+end_progress(name) := f'; } > "$tmp" 2>&1 & pid=$!; sp="|/-\\"; while kill -0 "$pid" 2>/dev/null; do [ -n "$spin" ] && printf "\r%c" "$sp"; sp="${sp#?}${sp%???}"; sleep 0.1; done; [ -n "$spin" ] && printf "\r"; wait "$pid" && { count=$(grep -m1 "^Ran " "$tmp" | cut -d" " -f2); printf "%s {{ GREEN }}PASS{{ NORMAL }} (%s tests)\n" {{ name }} "${count:-?}"; } || { printf "%s {{ RED }}FAIL{{ NORMAL }}\n%s\n" {{ name }} "$(cat "$tmp")"; exit 1; }'

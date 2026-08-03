@@ -218,16 +218,19 @@ class LoggerTests(TestCase):
         )
 
     def test_warn_if_stale(self, mock_log: Mock):
-        """Test that an old newest release is warned about at warning level."""
+        """Test that an old newest release is warned about at warning level, against the threshold passed in.
+
+        The 90 differs from the global default, so the reported `(> 90)` can only have come from the argument.
+        """
         published = datetime.now(UTC) - timedelta(days=512, hours=1)
         version = DependencyVersion("4.15.0", newest_published=published)
         location = create_location("requirements.txt", 9)
-        Logger("stale").warn_if_stale("humanize", version, location)
+        Logger("stale").warn_if_stale("humanize", version, location, 90)
         self.assert_message(
             mock_log,
             Logger._MESSAGE_STALE,
             f"Stale dependency {dependency('humanize')} in {at('requirements.txt:9')}: "
-            "newest release 4.15.0 was published 512 days ago (> 365)",
+            "newest release 4.15.0 was published 512 days ago (> 90)",
         )
 
     def test_warn_if_stale_does_nothing_when_not_stale(self, mock_log: Mock):
@@ -236,8 +239,8 @@ class LoggerTests(TestCase):
         undated = DependencyVersion("4.15.0")
         logger = Logger("stale")
         location = create_location("requirements.txt", 9)
-        logger.warn_if_stale("humanize", recent, location)
-        logger.warn_if_stale("humanize", undated, location)
+        logger.warn_if_stale("humanize", recent, location, 90)
+        logger.warn_if_stale("humanize", undated, location, 90)
         mock_log.assert_not_called()
 
     def test_warn_if_yanked_without_reason(self, mock_log: Mock):
@@ -369,12 +372,16 @@ class LoggerTests(TestCase):
         )
 
     def test_ignored_staleness(self, mock_log: Mock):
-        """Test that a held-back staleness warning is logged at debug level, with the `ignore` directive as written."""
-        published = datetime.now(UTC) - timedelta(days=512, hours=1)
+        """Test that a held-back staleness warning is logged at debug level, with the `ignore` directive as written.
+
+        The release is 100 days old, which is stale against the 90 passed in and not against the global default, so
+        the line is logged only when the given threshold is the one applied.
+        """
+        published = datetime.now(UTC) - timedelta(days=100, hours=1)
         version = DependencyVersion("4.15.0", newest_published=published)
         marker = Marker(ignore_stale=True, raw="ignore[stale] allow[hash-drift]")
         location = create_location("requirements.txt", 9)
-        Logger("stale").ignored_staleness("humanize", version, marker, location)
+        Logger("stale").ignored_staleness("humanize", version, marker, location, 90)
         self.assert_message(
             mock_log,
             Logger._MESSAGE_IGNORED_STALENESS,
@@ -389,8 +396,8 @@ class LoggerTests(TestCase):
         logger = Logger("stale")
         marker = Marker(ignore_stale=True, raw="ignore[stale]")
         location = create_location("requirements.txt", 9)
-        logger.ignored_staleness("humanize", recent, marker, location)
-        logger.ignored_staleness("humanize", undated, marker, location)
+        logger.ignored_staleness("humanize", recent, marker, location, 90)
+        logger.ignored_staleness("humanize", undated, marker, location, 90)
         mock_log.assert_not_called()
 
     def test_ignored_yank(self, mock_log: Mock):

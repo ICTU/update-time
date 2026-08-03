@@ -9,6 +9,7 @@ re-pushed digest to adopt) layers those on top of the version this decision reso
 from typing import TYPE_CHECKING
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES
+from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.yank import reports_yanks
 
 if TYPE_CHECKING:
@@ -26,18 +27,11 @@ def latest_version(
     location: Location,
     log: Logger,
 ) -> DependencyVersion | None:
-    """Return the latest version to update the reference to, or None to leave it unchanged.
+    """Return the latest version to update the reference to, or None when the marker holds the update back.
 
-    Warns about a marker that can have no effect — a redundant version bound, or a yank scope on a reference whose
-    source has no yank to report — then resolves the latest version through `get_new_version` (passing the marker's
-    version bound so the source only picks a version the bound admits), and warns about staleness and about a yanked
-    version, each unless the marker holds that one back, in which case the hold-back is logged at the debug level
-    instead, so a run reports what a marker actually suppressed. A marker holding the update back passes
-    `BLOCK_ALL_UPDATES` instead of its own bound, so the source keeps the reference on its current version and reports
-    on the version the reference stays on: a frozen pin that was yanked is still warned about. Returns None only when
-    the marker holds the update back — after the staleness and yank checks, which an `ignore[update]` leaves live.
-    A resolved version equal to the current one is still returned, not turned into None: it may carry a newer digest
-    worth pinning, and weighing that is left out of this version decision.
+    The source is queried even for a held-back reference, so the staleness and yank warnings still run for the
+    version the reference stays on. If the source resolves a version equal to the current one, it is still returned,
+    since it may carry a hash worth pinning.
     """
     dependency, current_version = reference.dependency, reference.current_version
     log.warn_if_redundant_bound(dependency, marker, current_version, location)
@@ -45,10 +39,11 @@ def latest_version(
         log.redundant_yank_scope(dependency, marker, location)
     version_bound = BLOCK_ALL_UPDATES if marker.ignore_update else marker.version_bound
     latest = get_new_version(dependency, current_version, version_bound)
+    threshold = STALE_AFTER.get() if marker.stale_after_days is None else marker.stale_after_days
     if marker.ignore_stale:
-        log.ignored_staleness(dependency, latest, marker, location)
+        log.ignored_staleness(dependency, latest, marker, location, threshold)
     else:
-        log.warn_if_stale(dependency, latest, location)
+        log.warn_if_stale(dependency, latest, location, threshold)
     if marker.ignore_yanked:
         log.ignored_yank(dependency, latest, marker, location)
     else:
