@@ -170,9 +170,11 @@ class ParseLevelBoundTest(unittest.TestCase):
     def test_valid_levels(self):
         """Test that each level name parses into a bound carrying the level and the verb."""
         for name in ("major", "minor", "patch"):
-            self.assertEqual(
-                parse_bound(Verb.ALLOW, f"{name}-update"), VersionBound(Verb.ALLOW, level=UpdateLevel[name.upper()])
-            )
+            with self.subTest(name=name):
+                self.assertEqual(
+                    parse_bound(Verb.ALLOW, f"{name}-update"),
+                    VersionBound(Verb.ALLOW, level=UpdateLevel[name.upper()]),
+                )
 
     def test_ignore_verb(self):
         """Test that the verb distinguishes an `ignore` bound from an `allow` bound."""
@@ -221,9 +223,11 @@ class LevelBoundTest(unittest.TestCase):
         allow_minor = VersionBound(Verb.ALLOW, level=UpdateLevel.MINOR)
         ignore_major = VersionBound(Verb.IGNORE, level=UpdateLevel.MAJOR)
         for candidate in ("3.12.9", "3.99.0", "4.0.0"):
-            self.assertEqual(
-                allow_minor.keeps(Version(candidate), "3.12.1"), ignore_major.keeps(Version(candidate), "3.12.1")
-            )
+            with self.subTest(candidate=candidate):
+                self.assertEqual(
+                    allow_minor.keeps(Version(candidate), "3.12.1"),
+                    ignore_major.keeps(Version(candidate), "3.12.1"),
+                )
 
     def test_ignore_minor_keeps_the_minor_line(self):
         """Test that `ignore[minor-update]` keeps updates within the current minor line and drops the rest."""

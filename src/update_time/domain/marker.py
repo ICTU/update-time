@@ -75,7 +75,7 @@ class Marker:
         )
 
 
-# The marker a bare `ignore` (or a single unrecognised ignore bracket) expresses: hold everything back.
+# The marker a bare `ignore` expresses: hold everything back.
 _BARE_IGNORE = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True)
 
 # The keyword bracket items each verb recognises, and the marker each expresses.
@@ -98,10 +98,11 @@ _MARKER_PREFIX = re.compile(rf"(?:{'|'.join(re.escape(lead) for lead in _COMMENT
 
 # A single directive in a marker's directive list: a verb, optionally followed by a bracket. The `verb` group's
 # text is a `Verb` member value; the `\b` keeps a word merely starting with a verb (`ignores`) from matching. The
-# `bracket` group captures everything between the square brackets. It is optional only after `ignore`: the
-# lookahead requires a bracket after `allow`, so a bare `allow` is not a directive. The trailing whitespace lets
+# `bracket` group captures everything between the square brackets, and `unterminated` everything after a `[` that
+# is never closed, to the end of the line. The lookahead requires a `[` after `allow`, so a bare `allow` is not a
+# directive and a match with neither bracket group can only be an `ignore`. The trailing whitespace lets
 # consecutive directives be matched one after another.
-_DIRECTIVE = re.compile(r"(?P<verb>ignore\b|allow(?=\[))(?:\[(?P<bracket>[^\]]*)\])?\s*")
+_DIRECTIVE = re.compile(r"(?P<verb>ignore\b|allow(?=\[))(?:\[(?P<bracket>[^\]]*)\]|\[(?P<unterminated>[^\]]*))?\s*")
 
 # A `stale` bracket item: the `stale` keyword, a comparison operator, and a number of days (`stale<90`). The day
 # count is captured loosely, so a malformed one is still recognised as a `stale` item and can be reported as malformed.
@@ -149,34 +150,26 @@ def _parse_marker_contents(text: str) -> Marker:
 def _parse_directive(directive: re.Match[str]) -> Marker:
     """Return the marker expressed by a single parsed directive.
 
-    A directive without a bracket degrades to its verb's default: a bare `ignore`, holding back everything, or the
-    `allow` no-op, which expresses nothing. For `ignore` the bracketless form is the documented bare `ignore`. For
-    `allow` it is an `allow[` whose bracket was never closed, since the lookahead in `_DIRECTIVE` guarantees a `[`
-    follows the verb but not that a bracket was consumed. Nothing was captured, so there is no item to report as
-    invalid, and the malformed directive is left as a no-op reason. A closed bracket, even one holding only an
-    unrecognised item, is handled by `_parse_bracket` instead.
+    A bracket left unclosed is reported as an invalid item, keeping its `[` so the message shows that the bracket
+    was never closed. A directive with no bracket at all is the documented bare `ignore`, holding back everything.
+    A closed bracket, even one holding only an unrecognised item, is handled by `_parse_bracket` instead.
     """
-    verb = Verb(directive.group("verb"))
+    if (unterminated := directive.group("unterminated")) is not None:
+        return Marker(invalid_specifier=f"[{unterminated}")
     if (bracket := directive.group("bracket")) is None:
-        return _BARE_IGNORE if verb is Verb.IGNORE else Marker()  # A bare `ignore`, or an unterminated `allow[`.
-    return _parse_bracket(verb, bracket)
+        return _BARE_IGNORE
+    return _parse_bracket(Verb(directive.group("verb")), bracket)
 
 
 def _parse_bracket(verb: Verb, bracket: str) -> Marker:
     """Return the marker for a directive's bracket: its comma-separated items parsed for the verb and merged.
 
-    A single unrecognised item under `ignore` degrades to a bare `ignore`, so a typo can't accidentally un-hold a
-    held-back reference. Every other unrecognised item — one under `allow`, or any in a comma list — is reported
-    as `invalid_specifier`, so a mistyped bound (`allow[patch-updates]`, `ignore[stale, updaet]`) warns and leaves
-    the reference unchanged rather than silently dropping the bound. Only `ignore`'s hold-back has a safe direction
-    to fail towards, so only it falls back rather than warning.
+    An unrecognised item becomes an `invalid_specifier`, so a mistyped scope or bound (`ignore[updaet]`,
+    `allow[patch-updates]`) can be warned about.
     """
-    items = _bracket_items(bracket)
-    markers = [_parse_bracket_item(verb, item) for item in items]
-    if markers == [None] and verb is Verb.IGNORE:
-        return _BARE_IGNORE
     marker = Marker()
-    for item, item_marker in zip(items, markers, strict=True):
+    for item in _bracket_items(bracket):
+        item_marker = _parse_bracket_item(verb, item)
         marker = marker.merge(item_marker if item_marker is not None else Marker(invalid_specifier=item))
     return marker
 
@@ -216,8 +209,8 @@ def _parse_stale_item(verb: Verb, item: str) -> Marker | None:
 
     Both `ignore[stale<90]` and `allow[stale>=90]` set a threshold of 90 days. The verb's other operator names the
     fresh ages rather than the old ones, which no threshold can express, so the item is returned for the caller to
-    report. An unreadable day count raises `InvalidSpecifier`, and is judged before the direction, since a count
-    that is not an age leaves nothing to call backwards.
+    report. An unreadable day count raises `InvalidSpecifier`, and is judged before the direction, so `stale>=1.5`
+    is reported as an unreadable count rather than as an inverted comparison.
     """
     match = _STALE_ITEM.fullmatch(item)
     if match is None:

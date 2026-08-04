@@ -239,7 +239,8 @@ class RequirementsGlobPatternsTest(unittest.TestCase):
     def test_recognized_flat_names(self):
         """Test that the flat requirements naming conventions match."""
         for name in ("requirements.txt", "requirements-dev.txt", "dev-requirements.txt"):
-            self.assertTrue(self.matches(name), name)
+            with self.subTest(name=name):
+                self.assertTrue(self.matches(name))
 
     def test_nested_requirements_directory(self):
         """Test that a requirements file in a nested `requirements/` directory matches."""
@@ -252,7 +253,8 @@ class RequirementsGlobPatternsTest(unittest.TestCase):
         not treated as requirements files (only `requirements-foo.txt` / `foo-requirements.txt` are).
         """
         for name in ("notes.txt", "constraints.txt", "requirements.in", "requirementsfoo.txt", "foorequirements.txt"):
-            self.assertFalse(self.matches(name), name)
+            with self.subTest(name=name):
+                self.assertFalse(self.matches(name))
 
     def test_case_sensitive(self):
         """Test that matching is case-sensitive, so a differently-cased name does not match."""

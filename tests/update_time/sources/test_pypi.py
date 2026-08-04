@@ -58,19 +58,23 @@ class GetChangesTest(LoggingTestCase):
         """Test that the changes are returned if a changelog URL is returned by PyPI."""
         changelog = "Changelog\n## 1.1\n- Fixed foo\n"
         for key in CHANGELOG_URL_KEYS:
-            self.create_mock_response(mock_get, {"info": {"project_urls": {key: "https://changes"}}}, text=changelog)
-            self.assertEqual(get_changes(f"package-2-{key}", "1.1"), "## 1.1\n- Fixed foo")
+            with self.subTest(key=key):
+                self.create_mock_response(
+                    mock_get, {"info": {"project_urls": {key: "https://changes"}}}, text=changelog
+                )
+                self.assertEqual(get_changes(f"package-2-{key}", "1.1"), "## 1.1\n- Fixed foo")
 
     def test_changelog_url_gives_error(self, mock_get: Mock):
         """Test that changelog URLs are skipped if they result in an HTTP error."""
         for status_code in (HTTPStatus.BAD_REQUEST, HTTPStatus.NOT_FOUND):
             for key in CHANGELOG_URL_KEYS:
-                self.create_mock_response(
-                    mock_get,
-                    {"info": {"description": "Package-foo description", "project_urls": {key: "https://changes"}}},
-                    status_code=status_code,
-                )
-                self.assertEqual(get_changes(f"package-3-{status_code}-{key}", "1.1"), "")
+                with self.subTest(status_code=status_code, key=key):
+                    self.create_mock_response(
+                        mock_get,
+                        {"info": {"description": "Package-foo description", "project_urls": {key: "https://changes"}}},
+                        status_code=status_code,
+                    )
+                    self.assertEqual(get_changes(f"package-3-{status_code}-{key}", "1.1"), "")
 
     def test_repository_url_found(self, mock_get: Mock):
         """Test that the changes are returned if a repository URL is returned by PyPI."""
@@ -78,13 +82,14 @@ class GetChangesTest(LoggingTestCase):
         repo = "https://github.com/org/repo"
         docs = "https://docs"
         for key in REPOSITORY_URL_KEYS:
-            self.create_mock_response(
-                mock_get,
-                {"info": {"project_urls": {"docs": docs, key: repo}}},
-                [github_release_json("1.1", body=changelog)],
-                github_commits_json(),
-            )
-            self.assertEqual(get_changes(f"package-4-{key}", "1.1"), changelog)
+            with self.subTest(key=key):
+                self.create_mock_response(
+                    mock_get,
+                    {"info": {"project_urls": {"docs": docs, key: repo}}},
+                    [github_release_json("1.1", body=changelog)],
+                    github_commits_json(),
+                )
+                self.assertEqual(get_changes(f"package-4-{key}", "1.1"), changelog)
 
     def test_changelog_in_description(self, mock_get: Mock):
         """Test that the changelog from the description is returned."""

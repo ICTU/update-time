@@ -391,6 +391,14 @@ A yank can only be observed where the dependency's source reports one, so of the
 WARNING Redundant update-time marker ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept, so the marker holds nothing back
 ```
 
+A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — is reported as an invalid item, also at `WARNING`, as is a bracket left unclosed:
+
+```console
+WARNING Invalid 'stlae' in the update-time marker for python in Dockerfile:2; leaving the reference unchanged
+```
+
+The reference is left as it is, because an item Update-time cannot read may have been meant to bound or silence anything, so acting on the rest of the marker would be guessing. Once the marker is corrected, the reference is updated as usual.
+
 ### Setting a staleness threshold
 
 `ignore[stale]` silences the staleness warning altogether. To keep the warning but on a different schedule, give the scope a number of days: `# update-time: ignore[stale<90]` warns once that reference's newest release is more than 90 days old, and is a per-reference `--stale-after 90`. Use it for a critical dependency you want to hear about early, or for a low-churn library that shouldn't be flagged for years:
@@ -406,13 +414,13 @@ FROM python:3.12
 
 The threshold applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--stale-after` whatever that is set to, `--stale-after 0` included: no command-line option overrides a marker, so disabling the check globally still leaves a reference with its own threshold checked. To disable the check for one reference, `ignore[stale<0]` does what `--stale-after 0` does globally, and `ignore[stale]` is the plainer way to spell it.
 
-`allow` and `ignore` are complements here as elsewhere, so `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`. Reversing the operator would warn while a release is fresh and go quiet once it is old, so neither `allow[stale<90]` nor `ignore[stale>=90]` sets a threshold. Update-time reports a reversed comparison at `WARNING` and holds nothing back, so the reference updates as usual and the global threshold applies to it:
+`allow` and `ignore` are complements here as elsewhere, so `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`. Inverting the operator would warn while a release is fresh and go quiet once it is old, so neither `allow[stale<90]` nor `ignore[stale>=90]` sets a threshold. Update-time reports an inverted comparison at `WARNING` and holds nothing back, so the reference updates as usual and the global threshold applies to it:
 
 ```console
 WARNING Incorrect 'stale>=90' in the update-time marker for python in Dockerfile:2: this comparison warns while a release is fresh and goes quiet once it is old, so it sets no threshold
 ```
 
-A day count must be a whole number of days, whichever way the comparison runs, so `ignore[stale<-5]` and `ignore[stale>=1.5]` are reported as invalid and leave the reference unchanged. An unreadable count is judged before the direction, since a count that is not an age leaves nothing to call backwards. Where an `ignore[stale]` applies to the same reference, it wins and the warning is suppressed whatever the threshold says. Use a single `stale` directive per reference; pairing one with another, say an `ignore[stale<90]` with an `ignore[stale>=30]`, is undefined.
+A day count must be a whole number of days, whichever way the comparison runs, so `ignore[stale<-5]` and `ignore[stale>=1.5]` are reported as invalid and leave the reference unchanged. An unreadable count is judged before the direction, so `ignore[stale>=1.5]` is reported as an unreadable count rather than as an inverted comparison. Where an `ignore[stale]` applies to the same reference, it wins and the warning is suppressed whatever the threshold says. Use a single `stale` directive per reference; pairing one with another, say an `ignore[stale<90]` with an `ignore[stale>=30]`, is undefined.
 
 ### Adopting hash drift
 
@@ -509,7 +517,13 @@ For `pyproject.toml`, `package.json`, and PEP 723 inline script metadata — whi
 
 ### Confirming a marker was understood
 
-Run with `--log-level DEBUG` to confirm a marker is recognised: every recognised marker is logged as `Recognised update-time marker ...`, and every update or warning it holds back is logged on a line of its own. A recognised line means the marker was read and understood. A hold-back line means it actually suppressed something: an `ignore[yanked]` on a version that was never yanked produces none. A missing hold-back line therefore tells you the marker did nothing this run. Since the marker is case-sensitive, a typo (or wrong case) produces no `Recognised` line at all and the reference is updated as usual.
+Run with `--log-level DEBUG` to confirm a marker is recognised: every recognised marker is logged, and so is every update or warning it holds back, each on a line of its own. A marker Update-time recognised is reported as:
+
+```console
+DEBUG Recognised update-time marker ignore[stale] for python in Dockerfile:2
+```
+
+A recognised line means the marker was read and understood. A hold-back line means it actually suppressed something: an `ignore[yanked]` on a version that was never yanked produces none. A missing hold-back line therefore tells you the marker did nothing this run. Since the marker is case-sensitive, a typo (or wrong case) in the `# update-time:` prefix or in a verb produces no `Recognised` line at all, and the reference is updated as usual. A typo inside the brackets produces no `Recognised` line either, but is reported at `WARNING` as an invalid item (see [Holding a reference back](#holding-a-reference-back)).
 
 ## 📮 Point of contact
 
