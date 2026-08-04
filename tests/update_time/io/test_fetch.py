@@ -7,7 +7,7 @@ import requests
 
 from update_time.io.fetch import fetch, next_page_url
 
-from tests.update_time.helpers import mock_response
+from tests.helpers import mock_response
 
 
 class FetchTest(unittest.TestCase):

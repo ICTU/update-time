@@ -9,8 +9,9 @@ from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_jsdelivr import update_jsdelivrs
 
+from tests.helpers import mock_path, mock_response
 from tests.update_time.fixtures import HASH1, HASH2
-from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, mock_path, mock_response, npm_registry
+from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, npm_registry
 
 FILENAME = "/dist/clipboard.min.js"
 

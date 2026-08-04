@@ -13,7 +13,8 @@ from update_time.sources.npmjs import (
     newest_release,
 )
 
-from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase, patch_get
+from tests.helpers import patch_get
+from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase
 
 if TYPE_CHECKING:
     from update_time.domain.version import DependencyVersion

@@ -11,9 +11,10 @@ from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_github_action import update_github_actions
 
+from tests.helpers import mock_path, patch_environ
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
-from tests.update_time.helpers import LoggingTestCase, bound, mock_path, patch_environ
+from tests.update_time.helpers import LoggingTestCase, bound
 
 GITHUB_DIR = Path("/repo/.github")
 

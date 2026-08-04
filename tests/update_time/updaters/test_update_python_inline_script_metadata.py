@@ -8,14 +8,8 @@ from unittest.mock import Mock, patch
 from update_time.primitives.location import Location
 from update_time.updaters.update_python_inline_script_metadata import update_python_inline_script_metadatas
 
-from tests.update_time.helpers import (
-    LoggingTestCase,
-    mock_path,
-    mock_response,
-    patch_pathlib_path,
-    pypi_index,
-    staleness_disabled,
-)
+from tests.helpers import mock_path, mock_response, patch_pathlib_path
+from tests.update_time.helpers import LoggingTestCase, pypi_index, staleness_disabled
 
 if TYPE_CHECKING:
     from update_time.primitives.command import Command

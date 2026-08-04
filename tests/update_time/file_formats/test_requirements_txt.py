@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, Mock
 
 from update_time.file_formats import requirements_txt
 
-from tests.update_time.helpers import mock_path
+from tests.helpers import mock_path
 
 
 class IsCompiledTest(unittest.TestCase):

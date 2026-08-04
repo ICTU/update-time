@@ -9,13 +9,11 @@ from unittest.mock import Mock, patch
 from update_time.primitives.location import Location
 from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 
+from tests.helpers import mock_path, mock_response, patch_pathlib_path
 from tests.update_time.helpers import (
     LoggingTestCase,
     github_commits_json,
     github_release_json,
-    mock_path,
-    mock_response,
-    patch_pathlib_path,
     pyproject,
     staleness_disabled,
 )
@@ -67,7 +65,8 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         uv_lock = next(command for command in commands if command[:2] == ("uv", "lock"))
         self.assertNotIn("--frozen", uv_tree)  # --frozen would make uv tree --outdated ignore the cooldown
         for command in (uv_tree, uv_lock):
-            self.assertNotIn("--exclude-newer", command)
+            with self.subTest(command=command[:2]):
+                self.assertNotIn("--exclude-newer", command)
 
     def test_update(self, run: Mock, get: Mock, glob: Mock):
         """Test updating a pyproject.toml, with Update-time's cooldown passed to uv."""

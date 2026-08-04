@@ -13,12 +13,13 @@ from update_time.domain.version import DependencyVersion, Reference
 from update_time.primitives.location import Location
 from update_time.references.rewrite import rewrite_match, update_references_in_lines
 
+from tests.helpers import patch_environ
 from tests.update_time.fixtures import BARE_IGNORE, DIGEST
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.fixtures import DIGEST1 as OLD_DIGEST
 from tests.update_time.fixtures import DIGEST2 as NEW_DIGEST
-from tests.update_time.helpers import bound, new_version_getter, patch_environ
+from tests.update_time.helpers import bound, new_version_getter
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter

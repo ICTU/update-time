@@ -4,9 +4,10 @@ from unittest.mock import Mock
 
 from update_time.updaters.update_gitlab_ci_config import update_gitlab_ci_config
 
+from tests.helpers import mock_path
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import docker_tag, mock_docker_hub_auth, mock_path
+from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
 from tests.update_time.registry import mock_docker_registry
 
 

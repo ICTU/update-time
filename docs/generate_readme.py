@@ -75,5 +75,5 @@ def main() -> None:
         sys.exit(f"{names} out of date, run `just readme` to regenerate")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

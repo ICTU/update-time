@@ -12,7 +12,7 @@ from update_time.io.filesystem import EXCLUDE_PATHS
 from update_time.io.log import LOG_LEVEL
 from update_time.updaters.update import PARALLEL_SCRIPTS, SEQUENTIAL_SCRIPTS, main, run_script, update_dependencies
 
-from tests.update_time.helpers import patch_environ, patch_pathlib_path
+from tests.helpers import patch_environ, patch_pathlib_path
 
 
 @patch("subprocess.run")

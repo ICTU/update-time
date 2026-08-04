@@ -10,9 +10,10 @@ from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_pre_commit_config import update_pre_commit_configs
 
+from tests.helpers import mock_path
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
-from tests.update_time.helpers import LoggingTestCase, bound, mock_path
+from tests.update_time.helpers import LoggingTestCase, bound
 
 HOOKS = "hooks:\n      - id: trailing-whitespace\n"
 

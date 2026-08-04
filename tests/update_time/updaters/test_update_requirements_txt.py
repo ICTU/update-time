@@ -8,10 +8,10 @@ from unittest.mock import MagicMock, Mock, patch
 from update_time.primitives.location import Location
 from update_time.updaters.update_requirements_txt import REQUIREMENTS_GLOB_PATTERNS, update_requirements_txts
 
+from tests.helpers import mock_path
 from tests.update_time.helpers import (
     PYPI_OLD_UPLOAD,
     LoggingTestCase,
-    mock_path,
     pypi_index,
     pypi_release,
     staleness_disabled,

@@ -10,14 +10,9 @@ from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_python_version_file import update_python_version_files
 
+from tests.helpers import mock_path, patch_pathlib_path
 from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import (
-    LoggingTestCase,
-    docker_tag,
-    mock_docker_hub_auth,
-    mock_path,
-    patch_pathlib_path,
-)
+from tests.update_time.helpers import LoggingTestCase, docker_tag, mock_docker_hub_auth
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
 
 

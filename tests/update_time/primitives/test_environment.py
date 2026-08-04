@@ -5,7 +5,7 @@ import unittest
 
 from update_time.primitives.environment import EnvVar
 
-from tests.update_time.helpers import patch_environ
+from tests.helpers import patch_environ
 
 INT_VAR: EnvVar[int] = EnvVar("_UPDATE_TIME_TEST_INT", default=7, parse=int)
 BOOL_VAR: EnvVar[bool] = EnvVar(

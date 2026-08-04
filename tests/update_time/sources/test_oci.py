@@ -10,8 +10,9 @@ import requests
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.sources.oci import Tag, _registry_token, get_latest_tag, is_docker_hub_image
 
+from tests.helpers import mock_response, patch_environ
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
-from tests.update_time.helpers import LoggingTestCase, bound, docker_tag, mock_response, patch_environ
+from tests.update_time.helpers import LoggingTestCase, bound, docker_tag
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
 
 
@@ -95,8 +96,9 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         tags_list_urls = [call.args[0] for call in self.requests.call_args_list if "/tags/list" in call.args[0]]
         self.assertTrue(tags_list_urls)
         for url in tags_list_urls:
-            self.assertIn("https://mcr.microsoft.com/v2/devcontainers/typescript-node/tags/list", url)
-            self.assertNotIn("/v2/mcr.microsoft.com/", url)  # The host must not leak into the repository path.
+            with self.subTest(url=url):
+                self.assertIn("https://mcr.microsoft.com/v2/devcontainers/typescript-node/tags/list", url)
+                self.assertNotIn("/v2/mcr.microsoft.com/", url)  # The host must not leak into the repository path.
 
     def test_explicit_docker_hub_host(self):
         """Test that an image with an explicit docker.io host is updated, querying the host-less Docker Hub URL."""

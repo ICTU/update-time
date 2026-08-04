@@ -9,14 +9,9 @@ from update_time.domain.version import DependencyVersion, Yank
 from update_time.io.log import Logger
 from update_time.sources.jsdelivr import version_getter
 
+from tests.helpers import mock_response
 from tests.update_time.fixtures import HASH1, HASH2
-from tests.update_time.helpers import (
-    LoggingTestCase,
-    jsdelivr_versions,
-    mock_response,
-    npm_registry,
-    staleness_disabled,
-)
+from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, npm_registry, staleness_disabled
 
 # The file referenced in the jsDelivr URL, and a flat package listing as returned by the API with ?structure=flat.
 FILENAME = "/dist/clipboard.min.js"
