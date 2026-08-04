@@ -22,7 +22,8 @@ class IsDockerHubImageTest(unittest.TestCase):
         """Test that images without a registry host, or with an explicit Docker Hub host, are Docker Hub images."""
         images = ("python", "library/ubuntu", "cimg/go", "docker.io/library/redis", "index.docker.io/org/app")
         for image in images:
-            self.assertTrue(is_docker_hub_image(image), image)
+            with self.subTest(image=image):
+                self.assertTrue(is_docker_hub_image(image))
 
     def test_other_registry_images(self):
         """Test that images with a registry host as their first path component are not Docker Hub images.
@@ -30,22 +31,31 @@ class IsDockerHubImageTest(unittest.TestCase):
         A host is recognised by a dot, a colon, the name `localhost`, or an uppercase character.
         """
         for image in ("registry.gitlab.com/group/image", "gcr.io/proj/image", "localhost:5000/i", "Host/image"):
-            self.assertFalse(is_docker_hub_image(image), image)
+            with self.subTest(image=image):
+                self.assertFalse(is_docker_hub_image(image))
 
 
 class TagTest(unittest.TestCase):
     """Unit tests for tags."""
 
     def test_sort_tag(self):
-        """Test tag sorting."""
-        self.assertLess(Tag("1"), Tag("2"))
-        self.assertLess(Tag("1.3"), Tag("1.4"))
-        self.assertLess(Tag("1.3.1"), Tag("1.3.2"))
-        self.assertLess(Tag("1.3"), Tag("1.3.1"))
-        self.assertLess(Tag("1.3"), Tag("1.3.0"))
-        self.assertLess(Tag("python1.3"), Tag("python1.3.0"))
-        self.assertLess(Tag("python1.3-alpine2.3"), Tag("python1.3.0-alpine2.3"))
-        self.assertLess(Tag("python1.3.0-alpine2.3"), Tag("python1.3.0-alpine2.3.0"))
+        """Test that a tag sorts below one with a higher version, or a more precise version of the same release.
+
+        A tag's main version decides, and its suffix's version when the main versions are equal.
+        """
+        lower_and_higher = (
+            ("1", "2"),
+            ("1.3", "1.4"),
+            ("1.3.1", "1.3.2"),
+            ("1.3", "1.3.1"),
+            ("1.3", "1.3.0"),
+            ("python1.3", "python1.3.0"),
+            ("python1.3-alpine2.3", "python1.3.0-alpine2.3"),  # the main version decides
+            ("python1.3.0-alpine2.3", "python1.3.0-alpine2.3.0"),  # ...and the suffix's when the main ones are equal
+        )
+        for lower, higher in lower_and_higher:
+            with self.subTest(lower=lower, higher=higher):
+                self.assertLess(Tag(lower), Tag(higher))
 
 
 @patch_environ()

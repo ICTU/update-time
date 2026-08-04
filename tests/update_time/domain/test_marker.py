@@ -52,12 +52,22 @@ class RawTextTest(unittest.TestCase):
 
 
 class ParseMarkerScopeTest(unittest.TestCase):
-    """Unit tests for the scopes an `ignore` directive's bracket narrows the hold-back to."""
+    """Unit tests for what an `ignore` directive's bracket expresses."""
 
     def test_ignore_yanked(self):
         """Test that `ignore[yanked]` holds back only the yank warning, leaving the update and staleness live."""
         marker = parse_marker(line("humanize==4.15.0  # update-time: ignore[yanked]"))
         self.assertEqual(marker, Marker(ignore_yanked=True))
+
+    def test_unrecognised_scope_is_reported_as_invalid(self):
+        """Test that a typo'd scope is reported as an invalid item rather than standing in for a bare `ignore`."""
+        marker = parse_marker(line("humanize==4.15.0  # update-time: ignore[updaet]"))
+        self.assertEqual(marker, Marker(invalid_specifier="updaet"))
+
+    def test_unterminated_bracket_is_reported_as_invalid(self):
+        """Test that a bracket left unclosed is reported as an invalid item, the item keeping its `[`."""
+        marker = parse_marker(line("humanize==4.15.0  # update-time: ignore[update<4"))
+        self.assertEqual(marker, Marker(invalid_specifier="[update<4"))
 
 
 class ParseMarkerStaleThresholdTest(unittest.TestCase):
@@ -86,10 +96,8 @@ class ParseMarkerStaleThresholdTest(unittest.TestCase):
     def test_malformed_day_count_is_rejected(self):
         """Test that a day count that is not a whole number of days is reported, whichever way the comparison runs.
 
-        A typo'd keyword such as `ignore[updaet]` degrades to a bare `ignore`, which suppresses everything silently.
-        An unreadable day count is reported instead, like a malformed `update` specifier, so the user is warned and
-        the reference is left unchanged. An unreadable count is judged before the direction, since a count that is
-        not an age leaves nothing to call backwards.
+        The count is judged before the direction, so `stale>=1.5` is reported as an unreadable count rather than as
+        an inverted comparison.
         """
         for item in ("stale<-5", "stale<1.5", "stale<10,<30", "stale>=-5", "stale>=1.5"):
             with self.subTest(item=item):
@@ -111,7 +119,7 @@ class ParseMarkerRawTest(unittest.TestCase):
         self.assertEqual(marker.raw, "allow[update<3.15, hash-drift]")
 
     def test_unrecognised_scope_kept_as_written(self):
-        """Test that a typo'd scope is kept as written even though it parses as a bare `ignore`."""
+        """Test that a typo'd scope is kept as written, so the user is shown the item they actually typed."""
         marker = parse_marker(line("image: python:3.12  # update-time: ignore[updaet]"))
         self.assertEqual(marker.raw, "ignore[updaet]")
 

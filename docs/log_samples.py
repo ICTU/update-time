@@ -1,10 +1,10 @@
-"""Render the sample warnings the README quotes, by logging them through Update-time's own `Logger`.
+"""Render the sample log lines the README quotes, by logging them through Update-time's own `Logger`.
 
-The README shows what a drifted hash pin, a stale dependency, a yanked version, and a redundant marker are reported
-as. Logging those samples here rather than transcribing them into the template is what keeps them true: a reworded
-message rewrites the README on the next `just readme`, instead of leaving it quoting output the tool no longer
-produces. The lines are rendered as the plain `LEVEL message` the README's `console` blocks show, so unlike the
-screenshot (see `generate_log_svg`) they carry neither colour nor a timestamp.
+The README quotes what Update-time logs for a drifted hash pin, a stale dependency, a yanked version, and the
+markers it reads. Logging those samples here rather than transcribing them into the template is what keeps them
+true: a reworded message rewrites the README on the next `just readme`, instead of leaving it quoting output the
+tool no longer produces. The lines are rendered as the plain `LEVEL message` the README's `console` blocks show, so
+unlike the screenshot (see `generate_log_svg`) they carry neither colour nor a timestamp.
 
 An elided value stands in where a real one would be noise: a digest, a commit, and an integrity hash say only that
 two of them differ, and their full length would wrap the line several times over.
@@ -46,8 +46,8 @@ class _Capture(logging.Handler):
         return block
 
 
-def sample_warnings() -> dict[str, str]:
-    """Return the README's sample warning blocks, keyed by the placeholder each one fills.
+def sample_log_lines() -> dict[str, str]:
+    """Return the README's sample log blocks, keyed by the placeholder each one fills.
 
     The samples log to a logger of their own, which collects them and passes them on to nobody: they are the
     README's content, not diagnostics about generating it, and its own level keeps them independent of whatever
@@ -89,11 +89,19 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     )
     redundant = capture.take()
 
+    log.invalid_specifier("python", "stlae", Location(Path("Dockerfile"), 2))
+    unrecognised = capture.take()
+
     log.inverted_stale_item("python", "stale>=90", Location(Path("Dockerfile"), 2))
+    inverted = capture.take()
+
+    log.recognised_marker("python", Marker(ignore_stale=True, raw="ignore[stale]"), Location(Path("Dockerfile"), 2))
     return {
         "@@DRIFT_WARNINGS@@": drift,
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@REDUNDANT_MARKER_WARNING@@": redundant,
-        "@@INVERTED_STALE_WARNING@@": capture.take(),
+        "@@UNRECOGNISED_ITEM_WARNING@@": unrecognised,
+        "@@INVERTED_STALE_WARNING@@": inverted,
+        "@@RECOGNISED_MARKER@@": capture.take(),
     }

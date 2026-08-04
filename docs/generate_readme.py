@@ -5,7 +5,7 @@ The template's placeholders are substituted so the machine-generated parts of th
 - `@@HELP_OUTPUT@@` — the output of `update-time -h`, wrapped to 80 columns.
 - `@@LOG_OUTPUT@@`  — the sample log output as text, from `generate_log_svg`, which also renders the screenshot
   embedded above that fallback.
-- the sample warnings the sections below quote, from `log_samples`, each filling the placeholder it names.
+- the sample log lines the sections below quote, from `log_samples`, each filling the placeholder it names.
 
 Regenerate the README (and the screenshot) with `just readme`. Run with `--check` to report the generated files that
 are out of date.
@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 from docs.generate_log_svg import generate as generate_log_output
-from docs.log_samples import sample_warnings
+from docs.log_samples import sample_log_lines
 from update_time.domain.staleness import STALE_AFTER
 
 _THIS_FILE = Path(__file__)
@@ -52,8 +52,8 @@ def render() -> dict[Path, str]:
     STALE_AFTER.set(STALE_AFTER.default)  # Pin the threshold the samples report, whatever the environment holds
     log_output = generate_log_output()
     readme = _TEMPLATE.read_text().replace("@@HELP_OUTPUT@@", _help_output()).replace("@@LOG_OUTPUT@@", log_output.text)
-    for placeholder, warning in sample_warnings().items():
-        readme = readme.replace(placeholder, warning)
+    for placeholder, log_lines in sample_log_lines().items():
+        readme = readme.replace(placeholder, log_lines)
     return {_README: readme, _SCREENSHOT: log_output.svg}
 
 

@@ -359,14 +359,6 @@ class UpdateReferencesTest(unittest.TestCase):
         marker = Marker(version_bound=bound(Verb.IGNORE, "patch-update"))
         self.logger.warn_if_redundant_bound.assert_called_once_with("python", marker, "3.12", Location(self.path, 1))
 
-    def test_unknown_level_in_ignore_falls_back_to_bare_ignore(self):
-        """Test that an unknown level name in an `ignore` bracket (a typo) falls back to a bare `ignore`."""
-        get_new_version = Mock()
-        lines = ["image: python:3.12  # update-time: ignore[mega-update]"]
-        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
-        get_new_version.assert_not_called()
-        self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
-
     def test_bound_marker_above_line_passes_bound(self):
         """Test that a standalone `allow[update<…>]` comment bounds the reference on the line below it."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.12.9"))
@@ -412,46 +404,34 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.warn_if_stale.assert_not_called()  # the `ignore[stale]` before the typo is honoured
         self.logger.digest_drift.assert_called_once()  # the mistyped drift opt-in is not, so the drift only warns
 
-    def test_unknown_ignore_scope_falls_back_to_bare_ignore(self):
-        """Test that an unrecognised `ignore` scope (a typo) falls back to a bare `ignore`, pinning the line."""
+    def assert_invalid_item(self, directive: str, item: str) -> None:
+        """Assert that Update-time warns about the item, leaving the reference neither held back nor understood."""
+        self.logger.reset_mock()
         get_new_version = Mock()
-        lines = ["image: python:3.12  # update-time: ignore[updaet]"]
-        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
-        get_new_version.assert_not_called()
-        self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
-
-    def test_unterminated_allow_bracket_expresses_nothing(self):
-        """Test that an `allow[` whose bracket is never closed expresses nothing, leaving the reference to update.
-
-        With no closing `]` the marker regex captures no bracket, so there is no item to report as invalid. The
-        malformed directive is a no-op reason and the reference updates as if unmarked. A closed `allow[typo]`,
-        which does have an item, warns instead; see `test_unknown_allow_item_warns_and_leaves_reference_unchanged`.
-        """
-        lines = ["image: python:3.14  # update-time: allow[update<4"]
-        new_lines = self.rewrite(lines, REGEXP, new_version_getter("3.15"))
-        self.assertEqual(new_lines, ["image: python:3.15  # update-time: allow[update<4"])  # updated, not frozen
-        self.logger.ignored.assert_not_called()
-        self.logger.invalid_specifier.assert_not_called()
-
-    def test_unknown_allow_item_warns_and_leaves_reference_unchanged(self):
-        """Test that a single unrecognised `allow` item (a level-bound typo) warns and leaves the reference unchanged.
-
-        Unlike the `ignore` typo above, which fails safe to a bare `ignore`, a mistyped `allow` bound must not
-        silently drop the bound and let the reference update unbounded; it is reported like any malformed bound.
-        """
-        get_new_version = Mock()
-        lines = ["image: python:3.12.1  # update-time: allow[patch-updates]"]  # plural typo of `patch-update`
+        lines = [f"image: python:3.12.1  # update-time: {directive}"]
         self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)  # left unchanged, not updated
         get_new_version.assert_not_called()
-        self.logger.invalid_specifier.assert_called_once_with("python", "patch-updates", Location(self.path, 1))
+        self.logger.invalid_specifier.assert_called_once_with("python", item, Location(self.path, 1))
+        self.logger.ignored.assert_not_called()  # reported as invalid, not frozen as a bare `ignore`
+        self.logger.recognised_marker.assert_not_called()
 
-    def test_unterminated_ignore_bracket_falls_back_to_bare_ignore(self):
-        """Test that an `ignore[` whose bracket is never closed falls back to a bare `ignore`, pinning the line."""
-        get_new_version = Mock()
-        lines = ["image: python:3.14  # update-time: ignore[update<4"]
-        self.assertEqual(self.rewrite(lines, REGEXP, get_new_version), lines)
-        get_new_version.assert_not_called()
-        self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
+    def test_unrecognised_item_warns_and_leaves_reference_unchanged(self):
+        """Test that a single unrecognised bracket item warns and leaves the reference unchanged, under either verb."""
+        items = {
+            "ignore[updaet]": "updaet",  # a scope typo
+            "ignore[mega-update]": "mega-update",  # a level-name typo
+            "allow[patch-updates]": "patch-updates",  # a plural typo of `patch-update`
+            "ignore[]": "",  # a bracket with nothing in it to recognise
+        }
+        for directive, item in items.items():
+            with self.subTest(directive=directive):
+                self.assert_invalid_item(directive, item)
+
+    def test_unterminated_bracket_warns_and_leaves_reference_unchanged(self):
+        """Test that a bracket left unclosed warns under either verb, reporting the unclosed bracket."""
+        for directive in ("ignore[update<4", "allow[update<4"):
+            with self.subTest(directive=directive):
+                self.assert_invalid_item(directive, "[update<4")
 
     def test_comma_separated_items_combine_in_one_bracket(self):
         """Test that a bracket combines comma-separated items: `ignore[stale, update>=3.13]` bounds and silences."""

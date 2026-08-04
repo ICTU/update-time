@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Changed
 
 - Rename the digest-drift opt-in to `# update-time: allow[hash-drift]` and `--allow-hash-drift`, so it names what an image digest, a commit SHA, and an integrity hash have in common. Part of [#179](https://github.com/ICTU/update-time/issues/179).
+- Warn about an `# update-time:` marker Update-time cannot read, such as a mistyped `ignore[stlae]` or a bracket that is never closed, instead of silently freezing the reference or dropping the bound it holds. Closes [#195](https://github.com/ICTU/update-time/issues/195).
 
 ### Fixed
 
