@@ -1,9 +1,3 @@
-# /// script
-# requires-python = ">=3.14"
-# dependencies = [
-#     "nltk>=3.10.0",
-# ]
-# ///
 """Report hard-to-read sentences in the prose of the Python and Markdown files under a directory."""
 
 import ast
@@ -13,11 +7,13 @@ import re
 import sys
 import textwrap
 import tokenize
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import nltk
-from nltk.tokenize import PunktTokenizer
+# nltk ships no `py.typed` marker, so mypy has no types to resolve for it.
+import nltk  # type: ignore[import-untyped]
+from nltk.tokenize import PunktTokenizer  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -32,6 +28,9 @@ _ABBREVIATIONS = frozenset({"e.g", "i.e", "etc"})
 
 # Below this many words a ratio says more about a sentence's length than about its density.
 _RATIO_WORDS = 15
+
+# Above this many backslashes a string reads as a regular expression rather than as prose.
+_REGEXP_BACKSLASHES = 5
 
 
 class Prose:
@@ -86,7 +85,31 @@ def _is_standalone(comment: tokenize.TokenInfo) -> bool:
 
 def _is_regexp(text: str) -> bool:
     """Return whether the text reads as a regular expression rather than as prose."""
-    return text.count("\\") > 5
+    return text.count("\\") > _REGEXP_BACKSLASHES
+
+
+def _is_code(text: str) -> bool:
+    """Return whether the text reads as Python source rather than as prose.
+
+    A lint rule's test cases hold the code they lint as string literals, which parse as Python where prose does not.
+    A call is required as well, since a bare word parses as a name and is more likely prose than code.
+    """
+    try:
+        tree = ast.parse(textwrap.dedent(text).strip())
+    except SyntaxError:
+        return False
+    return any(isinstance(node, ast.Call) for node in ast.walk(tree))
+
+
+@dataclass(order=True)
+class _Fragment:
+    """A comment or string from a Python file, and the line it starts on.
+
+    Ordered, since the comments and the strings are collected in separate passes and sorted back into file order.
+    """
+
+    line_number: int
+    text: str
 
 
 def extract_prose_from_python(python_file: Path) -> Iterator[Prose]:
@@ -94,7 +117,7 @@ def extract_prose_from_python(python_file: Path) -> Iterator[Prose]:
     source_code = python_file.read_text()
     # Comments come from the token stream, as the parse tree discards them. A block of standalone comment lines
     # joins into one fragment, so a sentence running across two of them is measured whole, brackets and all.
-    fragments = []
+    fragments: list[_Fragment] = []
     previous_line = None  # The line of the comment before this one, when that one stood alone.
     for token in tokenize.generate_tokens(io.StringIO(source_code).readline):
         if token.type != tokenize.COMMENT:
@@ -102,9 +125,9 @@ def extract_prose_from_python(python_file: Path) -> Iterator[Prose]:
         line_number, comment = token.start[0], token.string.lstrip("#")
         standalone = _is_standalone(token)
         if standalone and previous_line == line_number - 1 and fragments:
-            fragments[-1][1] += comment
+            fragments[-1].text += comment
         else:
-            fragments.append([line_number, comment])
+            fragments.append(_Fragment(line_number, comment))
         previous_line = line_number if standalone else None
     # Strings come from the parse tree, which folds implicitly concatenated literals into one node.
     for node in ast.walk(ast.parse(source_code)):
@@ -112,14 +135,16 @@ def extract_prose_from_python(python_file: Path) -> Iterator[Prose]:
             literals = [
                 part.value for part in node.values if isinstance(part, ast.Constant) and isinstance(part.value, str)
             ]
-            fragments.append([node.lineno, "".join(literals)])
+            fragments.append(_Fragment(node.lineno, "".join(literals)))
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
             source = ast.get_source_segment(source_code, node) or ""
             if source.startswith(('"', "'")):  # A quoted string is prose; a raw string (a regexp, say) is not.
-                fragments.append([node.lineno, inspect.cleandoc(node.value)])
-    for line_number, fragment in sorted(fragments):
-        if (text := _INTERPOLATION.sub("", fragment).strip()) and not _is_regexp(fragment):
-            yield Prose(python_file, text, line_number)
+                fragments.append(_Fragment(node.lineno, inspect.cleandoc(node.value)))
+    for fragment in sorted(fragments):
+        if (text := _INTERPOLATION.sub("", fragment.text).strip()) and not (
+            _is_regexp(fragment.text) or _is_code(fragment.text)
+        ):
+            yield Prose(python_file, text, fragment.line_number)
 
 
 def _matching_files(path: Path, glob: str) -> Iterator[Path]:
@@ -240,5 +265,5 @@ def main(max_complexity: int = 3, max_words: int = 50, max_density: float = 0.13
     return exit_code
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())

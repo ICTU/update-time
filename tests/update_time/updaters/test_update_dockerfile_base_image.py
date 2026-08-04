@@ -6,9 +6,10 @@ from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS
 from update_time.primitives.location import Location
 from update_time.updaters.update_dockerfile_base_image import update_dockerfiles
 
+from tests.helpers import mock_path
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST2
-from tests.update_time.helpers import docker_tag, mock_docker_hub_auth, mock_path
+from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
 from tests.update_time.registry import mock_docker_registry
 
 

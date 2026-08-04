@@ -15,7 +15,8 @@ from update_time.package_managers.uv import (
     configure_cooldown,
 )
 
-from tests.update_time.helpers import LoggingTestCase, mock_path, patch_environ, pyproject
+from tests.helpers import mock_path, patch_environ
+from tests.update_time.helpers import LoggingTestCase, pyproject
 
 
 def marked(cooldown: str) -> str:

@@ -99,7 +99,7 @@ publish version *flags: (check-version version) check-repo test check
 # === Run tests ===
 
 # A full run goes through coverage and must reach 100%: the text and HTML reports are written first, then `xml` applies the gate. A named subset cannot reach 100%, so it runs without coverage and leaves the reports from the last full run in place.
-test_command(tests) := if tests == "" { coverage + " run -m unittest --quiet && " + coverage + " report --fail-under=0 && " + coverage + " html --quiet --fail-under=0 && " + coverage + " xml --quiet" } else { uv_run + " python -m unittest --quiet " + tests }
+test_command(tests) := if tests == "" { coverage + " run -m unittest --quiet && " + coverage + " report --show-missing --fail-under=0 && " + coverage + " html --quiet --fail-under=0 && " + coverage + " xml --quiet" } else { uv_run + " python -m unittest --quiet " + tests }
 
 # Run the unit tests, all of them or only the ones named, e.g. `just test tests.update_time.io.test_log`.
 [env("PYTHONDEVMODE", "1")]
@@ -184,7 +184,7 @@ check-readme: (py-check "check-readme" f"PYTHONPATH=src {{ uv_run }} python -m d
 # Check prose for too complex sentences.
 [private]
 check-sentence-complexity:
-    {{ start_capture() }} {{ uv_run }} --script tools/sentence_complexity_check.py {{ code }} .claude/CLAUDE.md {{ end_capture("check-sentence-complexity") }}
+    {{ start_capture() }} {{ uv_run }} python tools/sentence_complexity_check.py {{ code }} .claude/CLAUDE.md {{ end_capture("check-sentence-complexity") }}
 
 # Run the quality checks. Run one by name for a quicker loop, e.g. `just ruff` or `just mypy`.
 [parallel]
@@ -239,7 +239,7 @@ _ci: _sonarcloud check
 
 # === Folders ===
 
-code := "src tests docs"
+code := "src tests docs tools"
 
 # === Output functions ===
 

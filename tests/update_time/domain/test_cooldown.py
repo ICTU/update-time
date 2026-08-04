@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 from update_time.domain.cooldown import COOLDOWN, within_cooldown
 
-from tests.update_time.helpers import patch_environ
+from tests.helpers import patch_environ
 
 
 class WithinCooldownTest(unittest.TestCase):

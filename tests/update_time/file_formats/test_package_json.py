@@ -5,7 +5,7 @@ import unittest
 
 from update_time.file_formats import package_json
 
-from tests.update_time.helpers import mock_path
+from tests.helpers import mock_path
 
 
 class ReadTest(unittest.TestCase):

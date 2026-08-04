@@ -11,9 +11,10 @@ from update_time.updaters.update_devcontainer import (
     update_devcontainers,
 )
 
+from tests.helpers import mock_path
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST3
-from tests.update_time.helpers import docker_tag, mock_docker_hub_auth, mock_path
+from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
 from tests.update_time.registry import mock_docker_registry
 
 

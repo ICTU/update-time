@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 from update_time.io.filesystem import EXCLUDE_PATHS, first_line_match, glob, inside_git_repository
 
-from tests.update_time.helpers import patch_environ, patch_pathlib_path
+from tests.helpers import patch_environ, patch_pathlib_path
 
 
 @patch_pathlib_path("glob", cwd=Path("/"))

@@ -4,7 +4,8 @@ from unittest.mock import Mock, patch
 
 from update_time.sources.docker_hub import api_headers
 
-from tests.update_time.helpers import LoggingTestCase, mock_response, patch_environ
+from tests.helpers import mock_response, patch_environ
+from tests.update_time.helpers import LoggingTestCase
 
 
 class ApiHeadersTest(LoggingTestCase):

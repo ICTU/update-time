@@ -16,6 +16,7 @@ from update_time.sources.pypi import (
     newest_publication_date,
 )
 
+from tests.helpers import mock_response, patch_get
 from tests.update_time.helpers import (
     PYPI_OLD_UPLOAD,
     CacheClearingTestCase,
@@ -23,8 +24,6 @@ from tests.update_time.helpers import (
     bound,
     github_commits_json,
     github_release_json,
-    mock_response,
-    patch_get,
     pypi_index,
     pypi_release,
     yanked_file,

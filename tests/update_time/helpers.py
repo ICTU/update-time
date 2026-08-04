@@ -5,7 +5,7 @@ import pkgutil
 import unittest
 from functools import cache
 from logging import DEBUG, ERROR, WARNING
-from typing import TYPE_CHECKING, TypeVar, cast
+from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, call, patch
 
 import update_time
@@ -28,17 +28,15 @@ from update_time.sources.oci import _tag_names as oci_tag_names
 from update_time.sources.pypi import project_metadata as pypi_project_metadata
 from update_time.sources.pypi import release_metadata as pypi_release_metadata
 
+from tests.helpers import mock_response, patch_environ
 from tests.update_time.fixtures import COMMIT_SHA
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
-    from unittest.mock import _Call, _patch, _patch_dict
+    from unittest.mock import _Call, _patch
 
     from update_time.domain.drift import DriftedPin
-
-# A test method or class a patch decorator is applied to and returns unchanged (see `patch_pathlib_path`).
-_Decorated = TypeVar("_Decorated", bound="Callable[..., object]")
 
 
 @cache
@@ -313,69 +311,14 @@ def bound(verb: Verb, item: str) -> VersionBound:
     return version_bound
 
 
-def mock_response(json: Mapping | list | None = None, **kwargs: object) -> Mock:
-    """Return a mock requests Response whose .json() returns the given value.
-
-    Extra response attributes (text, status_code, headers, ...) can be set via keyword arguments.
-    """
-    response = Mock(json=Mock(return_value=json))
-    response.links = {}  # requests parses the Link header into `.links`; default to none, override per test.
-    response.configure_mock(**kwargs)
-    return response
-
-
 # Reusable class decorator that mocks the Docker Hub auth token request made by sources.docker_hub.api_headers
 # when DOCKER_HUB_USERNAME/DOCKER_HUB_TOKEN are set, so the image updater tests never make a real network call.
 mock_docker_hub_auth = patch("requests.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec[B105]
 
 
-def patch_get(json: Mapping | list | None = None, **kwargs: object) -> _patch:
-    """Patch requests.get to return a mock requests Response whose .json() returns the given value.
-
-    Extra response attributes (text, status_code, headers, ...) can be set via keyword arguments.
-    """
-    return patch("requests.get", Mock(return_value=mock_response(json, **kwargs)))
-
-
-def patch_environ(environment_variables: dict[str, str] | None = None, *, clear: bool | None = None) -> _patch_dict:
-    """Mock os.environ with the given environment variables.
-
-    If none are given, clear the environment, unless overridden by an explicit clear=True or clear=False.
-    """
-    clear = not environment_variables if clear is None else clear
-    return patch.dict("os.environ", environment_variables or {}, clear=clear)
-
-
-def patch_pathlib_path(*methods: str, **methods_and_return_values: object) -> Callable[[_Decorated], _Decorated]:
-    """Patch one or more pathlib.Path methods, each to return the given value, for the test's duration.
-
-    Usable as a decorator on a test method or class (like `unittest.mock.patch`, by stacking one patch per method);
-    it adds no mock argument. Each keyword names a pathlib.Path method and gives the value it should return, so
-    several can be patched at once, for example `@patch_pathlib_path(exists=True, read_text="file contents")`.
-    """
-
-    def decorate(target: _Decorated) -> _Decorated:
-        decorated: Callable[..., object] = target
-        for method in methods:
-            decorated = patch(f"pathlib.Path.{method}")(decorated)
-        for method, return_value in methods_and_return_values.items():
-            decorated = patch(f"pathlib.Path.{method}", Mock(return_value=return_value))(decorated)
-        return cast("_Decorated", decorated)
-
-    return decorate
-
-
 # Reusable decorator that disables the staleness check, for update tests that focus on the update flow and would
 # otherwise trigger the staleness pass's own registry requests. The staleness pass has its own dedicated tests.
 staleness_disabled = patch_environ({STALE_AFTER.name: "0"})
-
-
-def mock_path(content: str, parent: Path | None = None) -> Mock:
-    """Return a mock Path with the given text content, an optional parent, and a no-op relative_to()."""
-    path = Mock(relative_to=Mock(return_value=Mock(parts=[])), read_text=Mock(return_value=content))
-    if parent is not None:
-        path.parent = parent
-    return path
 
 
 def pyproject(spec: str) -> str:

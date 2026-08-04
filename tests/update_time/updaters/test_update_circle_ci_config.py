@@ -7,9 +7,10 @@ from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_circle_ci_config import update_circle_ci_config
 
+from tests.helpers import mock_path
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import docker_tag, mock_docker_hub_auth, mock_path
+from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
 from tests.update_time.registry import mock_docker_registry
 
 CIRCLE_CI_DIR = Path("/repo/.circleci")

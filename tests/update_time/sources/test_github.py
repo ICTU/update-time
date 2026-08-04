@@ -20,6 +20,7 @@ from update_time.sources.github import (
     newest_publication_date,
 )
 
+from tests.helpers import mock_response, patch_get
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA1, COMMIT_SHA2
 from tests.update_time.helpers import (
     CacheClearingTestCase,
@@ -28,8 +29,6 @@ from tests.update_time.helpers import (
     github_commits_json,
     github_release_json,
     github_tag_json,
-    mock_response,
-    patch_get,
     patch_github,
 )
 

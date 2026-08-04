@@ -16,8 +16,9 @@ from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
 from update_time.domain.version import Reference
 from update_time.primitives.location import Location
 
+from tests.helpers import mock_path, mock_response, patch_environ
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
-from tests.update_time.helpers import LoggingTestCase, docker_tag, mock_path, mock_response, patch_environ
+from tests.update_time.helpers import LoggingTestCase, docker_tag
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command' | grep -qE 'just +(check|test)[^|;]*\\|[^|;]*(grep +-[[:alpha:]]*c|wc\\b|grep[^|;]*\\b(PASS|FAIL)\\b)' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Run it once and read the output: the exit code already reports pass/fail, so counting the PASS lines or grepping for FAIL says nothing the exit status does not.\"}}' || true"
+          },
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command' | grep -qE '(^|[^[:alnum:]_.-])python3' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Use uv run python, never the system python3, for anything pointed at this repository (see the Git section of CLAUDE.md).\"}}' || true"
+          }
+        ]
+      }
+    ]
+  }
+}

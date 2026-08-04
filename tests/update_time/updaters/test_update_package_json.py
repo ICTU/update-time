@@ -12,15 +12,8 @@ from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.updaters.update_package_json import update_package_jsons
 
-from tests.update_time.helpers import (
-    LoggingTestCase,
-    github_commits_json,
-    github_release_json,
-    mock_path,
-    mock_response,
-    patch_pathlib_path,
-    staleness_disabled,
-)
+from tests.helpers import mock_path, mock_response, patch_pathlib_path
+from tests.update_time.helpers import LoggingTestCase, github_commits_json, github_release_json, staleness_disabled
 
 NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN.default}"  # the cooldown npm option Update-time adds by default
 PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN.default * 24 * 60}"  # pnpm's, in minutes

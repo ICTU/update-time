@@ -4,6 +4,7 @@ import inspect
 import unittest
 
 import libcst as cst
+import libcst.matchers as m
 from fixit import Invalid, LintRule, Valid
 
 
@@ -23,6 +24,9 @@ def _compares_actual_to_expected(assert_method_name: str) -> bool:
 _EQUALITY_ASSERT_METHODS = frozenset(
     name for name in dir(unittest.TestCase) if name.startswith("assert") and _compares_actual_to_expected(name)
 )
+
+# The number of positional arguments an equality assertion compares, and so the fewest it can be reported on.
+_COMPARED_ARGUMENTS = 2
 
 _LITERAL_NAMES = frozenset({"True", "False", "None"})
 _LITERAL_TYPES = (cst.SimpleString, cst.ConcatenatedString, cst.FormattedString, cst.Integer, cst.Float, cst.Imaginary)
@@ -44,6 +48,13 @@ def _is_expected_like(node: cst.BaseExpression) -> bool:
     if isinstance(node, cst.BinaryOperation):
         return _is_expected_like(node.left) and _is_expected_like(node.right)
     return False
+
+
+def _self_call_names(node: cst.CSTNode) -> set[str]:
+    """Return the names of the `self.<name>(...)` methods called anywhere inside the node."""
+    calls = m.findall(node, m.Call(func=m.Attribute(value=m.Name("self"))))
+    functions = (cst.ensure_type(call, cst.Call).func for call in calls)
+    return {cst.ensure_type(function, cst.Attribute).attr.value for function in functions}
 
 
 def _test_method(*body: str) -> str:
@@ -98,9 +109,7 @@ class AssertEqualActualFirst(LintRule):
         # An annotated assignment binds the expected value just as a plain one does.
         Invalid(
             _test_method('expected: str = "Version 1.0"', "self.assertEqual(expected, changes())"),
-            expected_replacement=_test_method(
-                'expected: str = "Version 1.0"', "self.assertEqual(changes(), expected)"
-            ),
+            expected_replacement=_test_method('expected: str = "Version 1.0"', "self.assertEqual(changes(), expected)"),
         ),
         # An annotation carrying no value binds nothing, so it leaves the earlier binding in place.
         Invalid(
@@ -151,7 +160,7 @@ class AssertEqualActualFirst(LintRule):
         if not (isinstance(node.func, cst.Attribute) and node.func.attr.value in _EQUALITY_ASSERT_METHODS):
             return
         positional = [argument for argument in node.args if argument.keyword is None and not argument.star]
-        if len(positional) < 2:
+        if len(positional) < _COMPARED_ARGUMENTS:
             return
         expected, actual = positional[0], positional[1]
         if not self._reads_as_expected(expected.value) or self._reads_as_expected(actual.value):
@@ -160,3 +169,78 @@ class AssertEqualActualFirst(LintRule):
         arguments[arguments.index(expected)] = expected.with_changes(value=actual.value)
         arguments[arguments.index(actual)] = actual.with_changes(value=expected.value)
         self.report(node, replacement=node.with_changes(args=arguments))
+
+
+class SubTestPerCase(LintRule):
+    """Require a loop that asserts to name each of its cases with a `subTest`.
+
+    A loop over a table of cases runs one assertion per case, so without a `subTest` the first case to fail hides
+    every case after it and the failure names none of them. A `subTest` per case makes each one run and report
+    under its own label.
+    """
+
+    MESSAGE = "Wrap each case in `with self.subTest(...)`, so a failing case names itself and the rest still run"
+
+    VALID = [
+        # A loop that asserts nothing has no cases to name.
+        Valid(_test_method("for line in lines:", "    self.rewrite(line)")),
+        # A nested case table, its cases named on the inner loop.
+        Valid(
+            _test_method(
+                "for status in statuses:",
+                "    for key in keys:",
+                "        with self.subTest(status=status, key=key):",
+                "            self.assertEqual(changes(status, key), expected)",
+            )
+        ),
+    ]
+    INVALID = [
+        Invalid(_test_method("for name in names:", "    self.assertTrue(matches(name))")),
+    ]
+
+    def visit_For(self, node: cst.For) -> None:
+        """Report a loop that asserts somewhere inside it without calling `subTest` anywhere inside it.
+
+        Looking anywhere inside the loop means a nested case table is reported at most once: a `subTest` on the
+        inner loop keeps the outer loop from being reported as well.
+        """
+        called = _self_call_names(node)
+        if any(name.startswith("assert") for name in called) and "subTest" not in called:
+            self.report(node)
+
+
+class SubTestOutsideLoop(LintRule):
+    """Require a `subTest` in an `assert*` helper to sit inside a loop over cases the helper itself owns.
+
+    Wrapping a helper's whole body in a `subTest` makes an `assert*` method record a failure instead of raising
+    one, so a caller asserting a single case carries on as though it had passed. Where a `subTest` does belong is
+    a helper that loops over cases of its own.
+    """
+
+    MESSAGE = "Move the `subTest` onto the loop over the cases, so this helper still raises for a single case"
+
+    VALID = [
+        # A helper that owns the loop names each of its cases with it.
+        Valid(
+            "def assert_layers(self, *layers):\n"
+            "    for layer in layers:\n"
+            "        with self.subTest(layer=layer):\n"
+            "            self.assertTrue(depends_on(layer))\n"
+        ),
+    ]
+    INVALID = [
+        # A helper asserting one case must raise, rather than record the failure and let its caller continue.
+        Invalid(
+            "def assert_invalid_item(self, item):\n"
+            "    with self.subTest(item=item):\n"
+            "        self.assertTrue(reported(item))\n"
+        ),
+    ]
+
+    def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
+        """Report an `assert*` helper that calls `subTest` without a loop of its own carrying one."""
+        if not node.name.value.startswith("assert"):
+            return
+        loops = m.findall(node, m.For())
+        if "subTest" in _self_call_names(node) and not any("subTest" in _self_call_names(loop) for loop in loops):
+            self.report(node)

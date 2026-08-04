@@ -12,7 +12,7 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.io.cli import parse_args
 from update_time.io.log import LOG_LEVEL
 
-from tests.update_time.helpers import patch_pathlib_path
+from tests.helpers import patch_pathlib_path
 
 if TYPE_CHECKING:
     import argparse
