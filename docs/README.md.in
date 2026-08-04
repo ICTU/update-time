@@ -337,7 +337,13 @@ FROM python:3.12
 
 The threshold applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--stale-after` whatever that is set to, `--stale-after 0` included: no command-line option overrides a marker, so disabling the check globally still leaves a reference with its own threshold checked. To disable the check for one reference, `ignore[stale<0]` does what `--stale-after 0` does globally, and `ignore[stale]` is the plainer way to spell it.
 
-`allow` and `ignore` are complements here as elsewhere, so `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`. Reversing the operator would warn while a release is fresh and go quiet once it is old, so neither `allow[stale<90]` nor `ignore[stale>=90]` sets a threshold. `allow[stale<90]` is reported as invalid, which leaves the reference unchanged. `ignore[stale>=90]` is not recognised at all, so it falls back to a bare `ignore` and holds back the update and the yank warning too. A day count must be a whole number of days, so `ignore[stale<-5]` and `ignore[stale<1.5]` are reported as invalid too. Where an `ignore[stale]` applies to the same reference, it wins and the warning is suppressed whatever the threshold says.
+`allow` and `ignore` are complements here as elsewhere, so `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`. Reversing the operator would warn while a release is fresh and go quiet once it is old, so neither `allow[stale<90]` nor `ignore[stale>=90]` sets a threshold. Update-time reports a reversed comparison at `WARNING` and holds nothing back, so the reference updates as usual and the global threshold applies to it:
+
+```console
+@@INVERTED_STALE_WARNING@@
+```
+
+A day count must be a whole number of days, whichever way the comparison runs, so `ignore[stale<-5]` and `ignore[stale>=1.5]` are reported as invalid and leave the reference unchanged. An unreadable count is judged before the direction, since a count that is not an age leaves nothing to call backwards. Where an `ignore[stale]` applies to the same reference, it wins and the warning is suppressed whatever the threshold says. Use a single `stale` directive per reference; pairing one with another, say an `ignore[stale<90]` with an `ignore[stale>=30]`, is undefined.
 
 ### Adopting hash drift
 

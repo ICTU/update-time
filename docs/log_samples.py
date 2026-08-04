@@ -87,9 +87,13 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.redundant_yank_scope(
         "python", Marker(ignore_yanked=True, raw="ignore[yanked]"), Location(Path("Dockerfile"), 2)
     )
+    redundant = capture.take()
+
+    log.inverted_stale_item("python", "stale>=90", Location(Path("Dockerfile"), 2))
     return {
         "@@DRIFT_WARNINGS@@": drift,
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
-        "@@REDUNDANT_MARKER_WARNING@@": capture.take(),
+        "@@REDUNDANT_MARKER_WARNING@@": redundant,
+        "@@INVERTED_STALE_WARNING@@": capture.take(),
     }

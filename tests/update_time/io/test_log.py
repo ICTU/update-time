@@ -283,6 +283,17 @@ class LoggerTests(TestCase):
             "leaving the reference unchanged",
         )
 
+    def test_inverted_stale_item(self, mock_log: Mock):
+        """Test that a `stale` item comparing the wrong way round is warned about at warning level."""
+        location = create_location("Dockerfile", 2)
+        Logger("stale").inverted_stale_item("python", "stale>=90", location)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_INVERTED_STALE_ITEM,
+            f"Incorrect 'stale>=90' in the update-time marker for {dependency('python')} in {at('Dockerfile:2')}: "
+            "this comparison warns while a release is fresh and goes quiet once it is old, so it sets no threshold",
+        )
+
     def test_warn_if_redundant_bound(self, mock_log: Mock):
         """Test that a redundant bound is warned about at warning level, showing the bound and how it is redundant."""
         version_bound = bound(Verb.ALLOW, "update>=3.12")  # never has an effect on a 3.12 pin

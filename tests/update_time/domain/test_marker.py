@@ -8,8 +8,6 @@ from update_time.domain.line import Line
 from update_time.domain.marker import Marker, parse_marker
 from update_time.primitives.location import Location
 
-from tests.update_time.fixtures import BARE_IGNORE
-
 
 def line(text: str, previous_text: str = "") -> Line:
     """Return the text as a line of a file, with the text of the line above it."""
@@ -81,18 +79,19 @@ class ParseMarkerStaleThresholdTest(unittest.TestCase):
     def test_inverted_directions_set_no_threshold(self):
         """Test that `allow[stale<90]` and `ignore[stale>=90]` set no threshold."""
         allowed = parse_marker(line("humanize==4.15.0  # update-time: allow[stale<90]"))
-        self.assertEqual(allowed, Marker(invalid_specifier="stale<90"))
+        self.assertEqual(allowed, Marker(inverted_stale_item="stale<90"))
         ignored = parse_marker(line("humanize==4.15.0  # update-time: ignore[stale>=90]"))
-        self.assertEqual(ignored, BARE_IGNORE)
+        self.assertEqual(ignored, Marker(inverted_stale_item="stale>=90"))
 
     def test_malformed_day_count_is_rejected(self):
-        """Test that a day count that is not a whole number of days is reported rather than held back silently.
+        """Test that a day count that is not a whole number of days is reported, whichever way the comparison runs.
 
         A typo'd keyword such as `ignore[updaet]` degrades to a bare `ignore`, which suppresses everything silently.
-        A malformed day count instead takes the route a malformed `update` specifier takes: it is carried out as an
-        invalid specifier, so the user is warned and the reference is left unchanged.
+        An unreadable day count is reported instead, like a malformed `update` specifier, so the user is warned and
+        the reference is left unchanged. An unreadable count is judged before the direction, since a count that is
+        not an age leaves nothing to call backwards.
         """
-        for item in ("stale<-5", "stale<1.5", "stale<10,<30"):
+        for item in ("stale<-5", "stale<1.5", "stale<10,<30", "stale>=-5", "stale>=1.5"):
             with self.subTest(item=item):
                 marker = parse_marker(line(f"humanize==4.15.0  # update-time: ignore[{item}]"))
                 self.assertEqual(marker, Marker(invalid_specifier=item))

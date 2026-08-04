@@ -82,6 +82,15 @@ class LatestVersionTest(unittest.TestCase):
         self.latest_version(Marker(stale_after_days=90))
         self.log.warn_if_stale.assert_called_once_with("python", DependencyVersion(version="3.15"), self.path, 90)
 
+    def test_warns_about_an_inverted_stale_item(self):
+        """Test that a `stale` item comparing the wrong way is reported, and the global threshold is used."""
+        marker = Marker(inverted_stale_item="stale>=90", raw="ignore[stale>=90]")
+        self.latest_version(marker)
+        self.log.inverted_stale_item.assert_called_once_with("python", "stale>=90", self.path)
+        self.log.warn_if_stale.assert_called_once_with(
+            "python", DependencyVersion(version="3.15"), self.path, STALE_AFTER.default
+        )
+
     def test_warns_about_yank(self):
         """Test that the resolved version is checked for a yank."""
         self.latest_version()

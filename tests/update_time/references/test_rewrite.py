@@ -241,6 +241,14 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.warn_if_stale.assert_not_called()  # staleness skipped
         self.logger.ignored.assert_not_called()  # the update is not held back, so nothing is logged as ignored
 
+    def test_inverted_stale_item_holds_nothing_back(self):
+        """Test that a `stale` item whose comparison is inverted is reported while the reference still updates."""
+        lines = ["image: python:3.14  # update-time: ignore[stale>=90]"]
+        new_lines = self.rewrite(lines, REGEXP, new_version_getter("3.15"))
+        self.assertEqual(new_lines, ["image: python:3.15  # update-time: ignore[stale>=90]"])  # version bumped
+        self.logger.inverted_stale_item.assert_called_once_with("python", "stale>=90", Location(self.path, 1))
+        self.logger.ignored.assert_not_called()  # the update is not held back, so nothing is logged as ignored
+
     def test_allow_hash_drift_marker_adopts_new_digest(self):
         """Test that an inline `allow[hash-drift]` marker re-pins a re-pushed tag's digest instead of warning."""
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[hash-drift]"]
