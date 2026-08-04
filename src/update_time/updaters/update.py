@@ -61,9 +61,9 @@ def configure_excluded_paths(paths: list[Path]) -> None:
 
     The walk runs inside each subprocess, so the excluded set travels through the environment (like the cooldown and
     log level). Logging happens here, in the parent, so each excluded path is reported once rather than once per
-    subprocess. Existence is checked relative to the scan root (the parent has already chdir'd there); a path that
-    does not exist is not an error — layouts vary between checkouts — but it is surfaced at WARNING and left out of
-    the environment, so what is passed down reflects what is actually held back.
+    subprocess. Existence is checked relative to the scan root, where the parent has already chdir'd. A path that
+    does not exist is not an error, since layouts vary between checkouts, but it is surfaced at WARNING and left out
+    of the environment, so what is passed down reflects what is actually held back.
     """
     logger = get_logger(__name__)
     existing = []

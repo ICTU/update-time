@@ -412,9 +412,9 @@ def get_release(owner: str, repository: str, package: str, version: str) -> Tagg
     """Get the release matching the package and version from the GitHub releases API.
 
     Tries tag names in order of specificity:
-    1. `<package>-v<version>` (monorepo, e.g. `puppeteer-core-v25.0.4`)
-    2. `v<version>` (e.g. `v25.0.4`)
-    3. `<version>` (e.g. `25.0.4`)
+    1. `<package>-v<version>` (monorepo, e.g. `puppeteer-core-v25.0.4`).
+    2. `v<version>` (e.g. `v25.0.4`).
+    3. `<version>` (e.g. `25.0.4`).
     """
     releases_by_tag = {release["tag_name"]: release for release in (_list_releases(owner, repository) or ())}
     for tag in (f"{package}-v{version}", f"v{version}", version):

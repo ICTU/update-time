@@ -45,9 +45,10 @@ def latest_pin(reference: Reference, marker: Marker, location: Location, log: Lo
 
     Which version to update to is `latest_version`'s decision, resolving through `sources.github`; layered on top
     here is what is specific to a SHA-pinned reference. Returns None — leave the reference as it is — when the
-    current version is invalid (a branch name, or a bare SHA without a version comment), the marker holds the
-    update back, no commit SHA is available to pin to, or the reference is already pinned and up to date. A
-    reference that stays on its version is handed to `_drifted_pin`, since its tag may have moved. Otherwise it logs
+    marker holds the update back, when no commit SHA is available to pin to, or when the reference is already up
+    to date. It returns None for an invalid current version too, such as a branch name or a bare SHA without a
+    version comment. A reference that stays on its version is handed to `_drifted_pin`, since its tag may have
+    moved. Otherwise it logs
     the change (a pin for a previously unpinned reference, a new version for an already-pinned one) and returns the
     resolved version for the caller to format into its own syntax.
     """

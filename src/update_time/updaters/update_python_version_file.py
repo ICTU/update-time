@@ -30,9 +30,10 @@ PYTHON_VERSION_FILE = ".python-version"
 # (the file holds only a bare version), so it is supplied here rather than captured from the line.
 PYTHON = "python"
 
-# A `.python-version` entry that is a plain CPython version, `X.Y` or `X.Y.Z` (e.g. `3.12` or `3.12.6`), alone on its
-# line except for an optional trailing `#` comment — which lets an inline `# update-time:` marker be recognised (and
-# preserved when the version is rewritten). Everything else is left untouched: alternative implementations
+# A `.python-version` entry that is a plain CPython version, `X.Y` or `X.Y.Z` (e.g. `3.12` or `3.12.6`), alone on
+# its line except for an optional trailing `#` comment. That comment is what lets an inline `# update-time:` marker
+# be recognised, and preserved when the version is rewritten. Everything else is left untouched: alternative
+# implementations
 # (`pypy3.10-…`), free-threaded/variant suffixes (`3.13t`), prefixed forms (`cpython@3.12`, `>=3.10`), sentinels
 # (`system`), and any other trailing text.
 VERSION_RE = re.compile(r"^\s*(?P<version>\d+\.\d+(?:\.\d+)?)\s*(?:#.*)?$")
@@ -62,11 +63,11 @@ def _find_python_base_image_version(version_file: Path) -> str:
 def _image_version_getter(image_version: str) -> NewVersionGetter:
     """Return a new-version getter that offers the Dockerfile's Python base image version, honouring the marker's bound.
 
-    The image is the source of truth in the Dockerfile tier, so the entry adopts its version — but only when the
-    image is newer than the current entry (never a downgrade) and the entry's own version bound admits it, so an
-    `# update-time: allow[update<3.13]` on the entry still wins over an image that jumped to `3.13`. The cooldown and
-    staleness check have already been applied to the image itself, so the offered version carries no dates and is
-    neither held back nor flagged here.
+    The image is the source of truth in the Dockerfile tier, so the entry adopts its version. That happens only
+    when the image is newer than the current entry, never a downgrade, and when the entry's own version bound admits
+    it, so an `# update-time: allow[update<3.13]` on the entry still wins over an image that jumped to `3.13`.
+    The cooldown and staleness check have already been applied to the image itself, so the version carries no
+    dates and is neither held back nor flagged here.
     """
 
     def get_new_version(_dependency: str, current_version: str, version_bound: VersionBound) -> DependencyVersion:

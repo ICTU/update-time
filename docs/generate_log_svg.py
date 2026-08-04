@@ -41,10 +41,10 @@ class _FixedTime(logging.Filter):
 def _portable(svg: str) -> str:
     """Make Rich's SVG render inline on GitHub, where it is embedded as an `<img>` from raw.githubusercontent.com.
 
-    Two tweaks: copy the `viewBox` size onto the `<svg>` element (Rich emits none, so a size-less SVG shows as a
-    broken image in Safari and renders tiny elsewhere), and drop each `@font-face`'s external CDN `url(...)` source
-    (loading it is blocked by the raw host's `sandbox` CSP, and some renderers reject an SVG with external resources
-    outright), leaving only the `local(...)` source so text falls back to a system monospace font.
+    Two tweaks. The first copies the `viewBox` size onto the `<svg>` element, since Rich emits none and a
+    size-less SVG shows as a broken image in Safari and renders tiny elsewhere. The second drops each
+    `@font-face`'s external CDN `url(...)` source, which the raw host's `sandbox` CSP blocks and some renderers
+    reject outright, leaving only the `local(...)` source so text falls back to a system monospace font.
     """
     match = re.search(r'viewBox="0 0 (\S+) (\S+)"', svg)
     if match is None:  # pragma: no cover - Rich always emits a viewBox

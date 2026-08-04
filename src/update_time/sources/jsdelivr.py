@@ -1,8 +1,8 @@
 """jsDelivr CDN (limited to the npm packages referenced from a Sphinx config at the moment).
 
-The version list and per-file Subresource Integrity hashes come from jsDelivr's package API (data.jsdelivr.com);
-the publication date used for the cooldown comes from the npm registry (via the `npmjs` source), because jsDelivr
-doesn't expose it.
+The version list and per-file Subresource Integrity hashes come from jsDelivr's package API at data.jsdelivr.com.
+The publication date used for the cooldown comes from the npm registry, through the `npmjs` source, because
+jsDelivr doesn't expose it.
 """
 
 from dataclasses import replace
@@ -31,7 +31,7 @@ def version_getter(filename: str) -> NewVersionGetter:
     """Return a new-version getter for the file a jsDelivr URL references.
 
     The file is part of the reference rather than of the dependency, and the `NewVersionGetter` contract leaves no
-    room for it, so each reference closes over its own: the integrity hash resolved has to be the hash of the file
+    room for it, so each reference closes over its own. The integrity hash resolved has to be the hash of the file
     the URL points at, not of the package's default entry point. Every getter is registered as yank-reporting, since
     the versions it resolves can carry npm's per-version deprecation as their yank.
     """

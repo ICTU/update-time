@@ -1,10 +1,10 @@
 """Rewrite pinned version references in text, line by line.
 
-The updaters that edit files line by line (Dockerfiles, CI configs, manifests, requirements, workflows, ...) share
-this engine: given a regexp that captures a reference and a function that returns its new version, it rewrites each
-matched reference in place — touching only the captured spans and skipping any line pinned by an `# update-time:
-ignore` marker. Which version a reference should update to is `resolve.latest_version`'s decision; this module owns
-the text surgery around it, reporting what it changed through a `Logger`.
+The updaters that edit files line by line share this engine: Dockerfiles, CI configs, manifests, requirements,
+workflows, and the rest. Given a regexp that captures a reference and a function that returns its new version, it
+rewrites each matched reference in place, touching only the captured spans and skipping any line pinned by an
+`# update-time: ignore` marker. Which version a reference should update to is `resolve.latest_version`'s
+decision; this module owns the text surgery around it, reporting what it changed through a `Logger`.
 """
 
 import re
@@ -47,8 +47,7 @@ class _Rewriter:
         `updated_lines` has already matched the reference, so its line is `match.string` and its `location` points at
         that line. Which version to update to — honouring the reference's `# update-time:` marker — is
         `latest_version`'s decision, or None to leave the line unchanged. A reference that is already up to date is
-        checked for digest drift (see `_handle_drift`); one with an update, or without its available digest, is
-        rewritten (see `_apply_update`).
+        checked for digest drift, and one with an update, or without its available digest, is rewritten.
         """
         reference = matched_reference(match, self.dependency)
         latest = latest_version(reference, self.get_new_version, marker, location, self.logger)
@@ -82,8 +81,8 @@ class _Rewriter:
         """Return the line rewritten to the latest version and digest, logging the change.
 
         With `pin_unpinned` the regexp has an optional `sha` group that did not match, so the reference is unpinned
-        and the available digest is appended to pin it, even when the version itself is already up to date;
-        otherwise the version (and the digest of an already-pinned reference) is replaced in place.
+        and the available digest is appended to pin it, even when the version itself is already up to date.
+        Otherwise the version is replaced in place, and so is the digest of an already-pinned reference.
         """
         dependency = matched_dependency(match, self.dependency)
         version_changed = latest.version != match.group("version")
@@ -157,7 +156,7 @@ def apply_marker(
     Otherwise the marker is reported as recognised at the debug level, as is the held-back update when the marker
     holds the update back, so users can tell a marker that was understood from one that suppressed something. A
     marker holding back every scope — the update, the staleness warning, and the yank warning — returns the line
-    without calling `update_line`, so the source is never even queried; any other marker is handed to `update_line`
+    without calling `update_line`, so the source is never even queried. Any other marker is handed to `update_line`
     along with the match and the line's location, so the checks it doesn't hold back still run, with its bound and
     its `allow` directives. The dependency comes from the regexp's `dependency` group; a regexp that captures none —
     a pre-commit `rev:` takes it from the `repo:` above, a `.python-version` entry is a bare version — names it in

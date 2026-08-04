@@ -4,7 +4,7 @@
 #     "nltk>=3.10.0",
 # ]
 # ///
-"""Report overly complex sentences in the prose of the Python and Markdown files under a directory."""
+"""Report hard-to-read sentences in the prose of the Python and Markdown files under a directory."""
 
 import ast
 import inspect
@@ -22,81 +22,93 @@ from nltk.tokenize import PunktTokenizer
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+_INLINE_CODE = re.compile(r"`[^`]*`")
+
+# A printf-style interpolation, such as a log message's `%(location)s`: a value rather than prose.
+_INTERPOLATION = re.compile(r"%\(\w+\)[a-z]")
+
+# Abbreviations the splitter would otherwise take for the end of a sentence, spelled without their trailing period.
+_ABBREVIATIONS = frozenset({"e.g", "i.e", "etc"})
+
+# Below this many words a ratio says more about a sentence's length than about its density.
+_RATIO_WORDS = 15
+
 
 class Prose:
-    """Prose holds prose extracted from files and keeps track of the line where the prose starts."""
+    """A run of prose from a file, and the line it starts on."""
 
     def __init__(self, file_path: Path, text: str, line_number: int) -> None:
-        """Keep track of file path, text and line number, making sure text ends with punctuation."""
+        """Store the prose, ending the text with punctuation so the tokenizer reads it as a sentence."""
         self.file_path = file_path
         self.text = text if text[-1] in ".?!" else text + "."
         self.line_number = line_number
 
     @property
     def location(self) -> str:
-        """Return the location of the text."""
+        """Return the `path:line` the prose starts at."""
         return f"{self.file_path}:{self.line_number}"
 
 
-def _drop_inline_markup(text: str) -> str:
-    """Drop inline Markdown markup (images, links, and inline code) so it is not scored as prose.
+def _drop_markup(text: str, code: str = "") -> str:
+    """Drop Markdown images, reduce links to their text, and replace each run of inline code with `code`.
 
-    Comments and docstrings are written in the same style as Markdown, so both prose sources need this cleanup.
+    Comments and docstrings are written in the same style as Markdown, so both prose sources need this.
     """
     text = re.sub(r" ?!\[[^\]]*\]\([^)]*\)", "", text)  # Images.
-    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)  # Links, reduced to their link text.
-    return re.sub(r" ?`[^`]*`", "", text)  # Inline code.
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)  # Links, reduced to their text.
+    return _INLINE_CODE.sub(code, text)
 
 
 def _drop_irrelevant_parentheses(text: str) -> str:
-    """Drop parentheses that are not real asides: those without word content, and word-attached groups like `(re)writes`."""
-    text = re.sub(r" ?\([^\w()]*\)", "", text)  # Parentheses with no word content, e.g. `(/)` left by removed inline code.
+    """Drop parentheses that are no aside: those without word content, and word-attached ones like `(re)writes`."""
+    text = re.sub(r" ?\([^\w()]*\)", "", text)  # Left empty by dropped inline code, e.g. `(/)`.
     return re.sub(r"(?<=\w)\([^()]*\)|\([^()]*\)(?=\w)", lambda match: match[0].strip("()"), text)
 
 
 def extract_prose_from_markdown(markdown_file: Path) -> Iterator[Prose]:
-    """Extract the prose from the Markdown file with its line number, with the markup reduced away."""
+    """Yield the prose in the Markdown file, with the line each run starts on."""
     in_code_block = False
     for line_number, line in enumerate(markdown_file.read_text().splitlines(), start=1):
-        if line.startswith("```"):  # A fenced code block delimiter, toggling whether we are inside one.
+        if line.startswith("```"):
             in_code_block = not in_code_block
             continue
-        if in_code_block or line.startswith("|"):  # Code block content or a table row: not prose.
+        if in_code_block or line.startswith("|"):  # Code, or a table row: not prose.
             continue
-        heading = re.match(r"#+ (.+)", line)  # A heading becomes a sentence of its own.
-        prose = heading[1] if heading else line
-        if text := prose.strip():
+        heading = re.match(r"#+ (.+)", line)  # A heading is a sentence of its own.
+        if text := (heading[1] if heading else line).strip():
             yield Prose(markdown_file, text, line_number)
 
 
-def _standalone_comments(*comment_tokens: tokenize.TokenInfo | None) -> bool:
-    """Return whether the comment tokens are standalone comments."""
-    for token in comment_tokens:
-        if token is None:
-            continue
-        if token.line[: token.start[1]].strip() != "":
-            return False
-    return True
+def _is_standalone(comment: tokenize.TokenInfo) -> bool:
+    """Return whether the comment has its line to itself."""
+    return comment.line[: comment.start[1]].strip() == ""
+
+
+def _is_regexp(text: str) -> bool:
+    """Return whether the text reads as a regular expression rather than as prose."""
+    return text.count("\\") > 5
 
 
 def extract_prose_from_python(python_file: Path) -> Iterator[Prose]:
-    """Yield the prose in the Python code with its line number: the text of its comments and strings."""
+    """Yield the prose in the Python file, its comments and strings, with the line each starts on."""
     source_code = python_file.read_text()
-    # Comments come from the token stream, as the parse tree discards them.
+    # Comments come from the token stream, as the parse tree discards them. A block of standalone comment lines
+    # joins into one fragment, so a sentence running across two of them is measured whole, brackets and all.
     fragments = []
-    previous_token = None
+    previous_line = None  # The line of the comment before this one, when that one stood alone.
     for token in tokenize.generate_tokens(io.StringIO(source_code).readline):
-        if token.type == tokenize.COMMENT:
-            line_number = token.start[0]
-            comment = token.string.lstrip("#")
-            if _standalone_comments(token, previous_token) and fragments and fragments[-1][0] + 1 == line_number:
-                fragments[-1][1] += comment  # Comment continuation
-            else:
-                fragments.append([line_number, comment])
-        previous_token = token
-    # Strings come from the parse tree, which folds implicitly concatenated literals into a single node.
+        if token.type != tokenize.COMMENT:
+            continue
+        line_number, comment = token.start[0], token.string.lstrip("#")
+        standalone = _is_standalone(token)
+        if standalone and previous_line == line_number - 1 and fragments:
+            fragments[-1][1] += comment
+        else:
+            fragments.append([line_number, comment])
+        previous_line = line_number if standalone else None
+    # Strings come from the parse tree, which folds implicitly concatenated literals into one node.
     for node in ast.walk(ast.parse(source_code)):
-        if isinstance(node, ast.JoinedStr):  # An f-string: keep its literal parts, drop its interpolations.
+        if isinstance(node, ast.JoinedStr):  # An f-string: keep the literal parts, drop the interpolations.
             literals = [
                 part.value for part in node.values if isinstance(part, ast.Constant) and isinstance(part.value, str)
             ]
@@ -106,12 +118,12 @@ def extract_prose_from_python(python_file: Path) -> Iterator[Prose]:
             if source.startswith(('"', "'")):  # A quoted string is prose; a raw string (a regexp, say) is not.
                 fragments.append([node.lineno, inspect.cleandoc(node.value)])
     for line_number, fragment in sorted(fragments):
-        if text := fragment.strip():
+        if (text := _INTERPOLATION.sub("", fragment).strip()) and not _is_regexp(fragment):
             yield Prose(python_file, text, line_number)
 
 
 def _matching_files(path: Path, glob: str) -> Iterator[Path]:
-    """Yield the files the glob matches: the path itself when it is a file, its matches when it is a directory."""
+    """Yield the path itself when it is a file the glob matches, or its matches when it is a directory."""
     if path.is_file():
         if path.match(glob):
             yield path
@@ -120,10 +132,10 @@ def _matching_files(path: Path, glob: str) -> Iterator[Path]:
 
 
 def extract_prose(*paths: Path) -> Iterator[Prose]:
-    """Extract the prose from the files in the paths, each of which may be a file or a directory to search.
+    """Yield the prose in the files under the paths, each of which may be a file or a directory.
 
-    A Markdown template is read as Markdown: `README.md` is generated from `README.md.in`, and reporting the
-    sentence at the template's line is what lets it be edited where the edit survives regeneration.
+    `README.md.in` is read as Markdown, so a sentence is reported at the template's line, where editing it survives
+    regeneration.
     """
     extractors = {
         "*.py": extract_prose_from_python,
@@ -138,7 +150,7 @@ def extract_prose(*paths: Path) -> Iterator[Prose]:
 
 def sentence_complexity(sentence: str) -> int:
     """Return the sentence complexity: one, plus a cost per aside or clause join that grows with nesting depth."""
-    sentence = _drop_irrelevant_parentheses(_drop_inline_markup(sentence))
+    sentence = _drop_irrelevant_parentheses(_drop_markup(sentence))
     if not sentence:
         return 0
     em_dash_count = sentence.count("—")
@@ -166,21 +178,64 @@ def sentence_complexity(sentence: str) -> int:
     return complexity
 
 
-def main(max_complexity: int = 4) -> int:
-    """Report too complex sentences in the Python and Markdown files under the starting directory."""
-    exit_code = 0
+def sentence_words(sentence: str) -> int:
+    """Return how many words the sentence has, a run of inline code counting as one and a link as its own text."""
+    return len(_drop_markup(sentence, "code").split())
+
+
+def sentence_density(complexity: int, words: int) -> float:
+    """Return the asides and clause joins per word, or zero for a sentence too short to read a ratio off.
+
+    Complexity starts at one, so it is the count above that which the ratio measures.
+    """
+    return (complexity - 1) / words if words >= _RATIO_WORDS else 0.0
+
+
+def _faults(sentence: str, max_complexity: int, max_words: int, max_density: float) -> str:
+    """Return what makes the sentence hard to read, or empty when nothing does."""
+    complexity, words = sentence_complexity(sentence), sentence_words(sentence)
+    faults = []
+    if complexity > max_complexity:
+        faults.append(f"complexity {complexity}")
+    if words > max_words:
+        faults.append(f"{words} words")
+    if (density := sentence_density(complexity, words)) > max_density:
+        faults.append(f"{density:.2f} complexity-density")
+    return " and ".join(faults)
+
+
+def _sentences(tokenizer: PunktTokenizer, text: str) -> list[str]:
+    """Split the text into sentences, keeping each run of inline code whole.
+
+    A period inside a run such as `==3.12.*` otherwise ends a sentence for the splitter, leaving fragments with a
+    backtick they never close. Masking each run with filler of its own length keeps the offsets, so the sentences
+    can be sliced from the original text.
+    """
+    masked = _INLINE_CODE.sub(lambda match: "x" * len(match[0]), text)
+    return [text[start:end] for start, end in tokenizer.span_tokenize(masked)]
+
+
+def _sentence_tokenizer() -> PunktTokenizer:
+    """Return the sentence splitter, taught the abbreviations that would otherwise end a sentence for it."""
     nltk.data.path.append(".nltk")
     try:
         tokenizer = PunktTokenizer()
     except LookupError:
         nltk.download("punkt_tab", quiet=True, download_dir=".nltk")
         tokenizer = PunktTokenizer()
+    tokenizer._params.abbrev_types.update(_ABBREVIATIONS)  # noqa: SLF001
+    return tokenizer
+
+
+def main(max_complexity: int = 3, max_words: int = 50, max_density: float = 0.13) -> int:
+    """Report the sentences over any limit, in the files under the paths given or the current directory."""
+    exit_code = 0
+    tokenizer = _sentence_tokenizer()
     paths = [Path(start) for start in sys.argv[1:] or ["."]]
     for prose in extract_prose(*paths):
-        for sentence in tokenizer.tokenize(prose.text):
-            if (complexity := sentence_complexity(sentence)) > max_complexity:
-                wrapped_sentence = textwrap.fill(sentence, width=100)
-                sys.stdout.write(f"{prose.location}: complexity {complexity}:\n{wrapped_sentence}\n\n")
+        for sentence in _sentences(tokenizer, prose.text):
+            if faults := _faults(sentence, max_complexity, max_words, max_density):
+                sys.stdout.write(f"{prose.location}: {faults}:\n{textwrap.fill(sentence, width=100)}\n\n")
                 exit_code = 1
     return exit_code
 

@@ -173,11 +173,11 @@ def get_changes(package: str, version: str) -> str:
     """Return the changelog for the PyPI package and version.
 
     Since there's no standardized way that PyPI packages refer to a changelog, apply several heuristics to find it:
-    - Check for changelog URLs in attributes typically used to refer to the changelog
-    - Check for GitHub repository URLs in attributes typically used to refer to the source repository
-      and use that to find GitHub releases
-    - Check for a changelog in the package description
-    - Check for a GitHub URL in the package description and use that to find GitHub releases
+    - Check for changelog URLs in attributes typically used to refer to the changelog.
+    - Check for GitHub repository URLs in attributes typically used to refer to the source repository,
+      and use that to find GitHub releases.
+    - Check for a changelog in the package description.
+    - Check for a GitHub URL in the package description and use that to find GitHub releases.
     """
     metadata = release_metadata(package, version)
     if metadata is None:

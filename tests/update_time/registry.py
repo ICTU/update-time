@@ -83,10 +83,11 @@ def mock_docker_registry(
 ) -> Callable[..., Mock]:
     """Return a requests.get/.head side effect that mimics an OCI registry plus Docker Hub's per-tag metadata.
 
-    It models the full flow: the `/v2/` probe answers the OCI auth challenge pointing at the registry's token
-    endpoint, the token request returns a token, `tags/list` returns the tag names (the names of the given tags
-    unless overridden), a manifest `HEAD` returns the tag's digest in the `Docker-Content-Digest` header (or a 404
-    if unknown), and Docker Hub's proprietary per-tag request returns that tag's push date (or a 404 if unknown).
+    It models the full flow. The `/v2/` probe answers the OCI auth challenge pointing at the registry's token
+    endpoint, the token request returns a token, and `tags/list` returns the names of the given tags unless
+    overridden. A manifest `HEAD` returns the tag's digest in the `Docker-Content-Digest` header, and Docker Hub's
+    proprietary per-tag request returns that tag's push date. Each of the last two answers 404 for a tag it
+    doesn't know.
     The same callable is assigned to both `requests.get` and `requests.head`; it routes purely on the URL.
 
     Knobs for the less common flows:

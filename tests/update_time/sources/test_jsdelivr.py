@@ -41,10 +41,10 @@ FRESH = (datetime.now(UTC) - timedelta(days=1)).isoformat()  # still within the 
 class GetLatestVersionTest(LoggingTestCase):
     """Unit tests for the get latest jsdelivr version function.
 
-    The source makes its requests in a fixed order, so each test's `mock_get.side_effect` mirrors it:
-    first the jsDelivr package API (the version list), then — newest-first — one npm registry call per candidate to
-    read its publication date, stopping at the first eligible one, then the jsDelivr flat-files API for the chosen
-    version's integrity hash. A test supplies only as many responses as reaching its expected version requires.
+    The source makes its requests in a fixed order, so each test's `mock_get.side_effect` mirrors it. First the
+    jsDelivr package API for the version list, then one npm registry call per candidate, newest first, to read its
+    publication date and stop at the first eligible one, then the jsDelivr flat-files API for the chosen version's
+    integrity hash. A test supplies only as many responses as reaching its expected version requires.
     """
 
     def test_unchanged_when_current_is_newest(self, mock_get: Mock):
