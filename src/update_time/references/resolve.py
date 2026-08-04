@@ -37,6 +37,8 @@ def latest_version(
     log.warn_if_redundant_bound(dependency, marker, current_version, location)
     if marker.ignore_yanked and not reports_yanks(get_new_version):
         log.redundant_yank_scope(dependency, marker, location)
+    if marker.inverted_stale_item is not None:
+        log.inverted_stale_item(dependency, marker.inverted_stale_item, location)
     version_bound = BLOCK_ALL_UPDATES if marker.ignore_update else marker.version_bound
     latest = get_new_version(dependency, current_version, version_bound)
     threshold = STALE_AFTER.get() if marker.stale_after_days is None else marker.stale_after_days
