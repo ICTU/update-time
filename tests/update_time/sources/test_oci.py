@@ -141,9 +141,9 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
     def test_equal_version_alias_tag_does_not_lend_its_digest(self):
         """Test that the current spelling keeps its own digest, not a co-listed alias tag's differing digest.
 
-        The alias `22.15` (digest DIGEST2) is listed before the exact `22.15.0` (digest DIGEST1), so were the tie
-        broken by listing order the alias would resolve first and lend its digest to the `22.15.0` name; the tag
-        ordering prefers the more precise spelling instead, so its own digest is pinned.
+        The alias `22.15` carries DIGEST2 and the exact `22.15.0` carries DIGEST1, and the alias is listed first.
+        Were the tie broken by listing order, the alias would resolve first and lend its digest to the `22.15.0`
+        name. The tag ordering prefers the more precise spelling instead, so its own digest is pinned.
         """
         self.requests.side_effect = mock_docker_registry(docker_tag("22.15", DIGEST2), docker_tag("22.15.0", DIGEST1))
         latest = get_latest_tag("alias", "22.15.0", NO_BOUND)

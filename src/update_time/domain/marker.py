@@ -56,7 +56,7 @@ class Marker:
         """Return this marker combined with another one.
 
         The boolean hold-backs and opt-ins combine as unions, so `ignore[update]` and `ignore[stale]` together hold
-        back as much as a bare `ignore`; of two values that cannot combine — a version bound, a staleness threshold,
+        back as much as a bare `ignore`. Of two values that cannot combine — a version bound, a staleness threshold,
         an inverted or invalid item — this marker's wins, and the `raw` texts concatenate in order, this marker's
         first. A default `Marker()` leaves every field unset, so it is the identity: merging it with any marker
         returns that marker's values. This lets markers fold at every level — each item into a bracket's marker,
@@ -150,9 +150,9 @@ def _parse_directive(directive: re.Match[str]) -> Marker:
     """Return the marker expressed by a single parsed directive.
 
     A directive without a bracket degrades to its verb's default: a bare `ignore`, holding back everything, or the
-    `allow` no-op, which expresses nothing. For `ignore` the bracketless form is the documented bare `ignore`; for
+    `allow` no-op, which expresses nothing. For `ignore` the bracketless form is the documented bare `ignore`. For
     `allow` it is an `allow[` whose bracket was never closed, since the lookahead in `_DIRECTIVE` guarantees a `[`
-    follows the verb, but not that a bracket was consumed — nothing was captured, so there is no item to report as
+    follows the verb but not that a bracket was consumed. Nothing was captured, so there is no item to report as
     invalid, and the malformed directive is left as a no-op reason. A closed bracket, even one holding only an
     unrecognised item, is handled by `_parse_bracket` instead.
     """
@@ -166,9 +166,9 @@ def _parse_bracket(verb: Verb, bracket: str) -> Marker:
     """Return the marker for a directive's bracket: its comma-separated items parsed for the verb and merged.
 
     A single unrecognised item under `ignore` degrades to a bare `ignore`, so a typo can't accidentally un-hold a
-    held-back reference. Every other unrecognised item — one under `allow`, or any in a comma list — is carried out
+    held-back reference. Every other unrecognised item — one under `allow`, or any in a comma list — is reported
     as `invalid_specifier`, so a mistyped bound (`allow[patch-updates]`, `ignore[stale, updaet]`) warns and leaves
-    the reference unchanged rather than silently dropping the bound; only `ignore`'s hold-back has a safe direction
+    the reference unchanged rather than silently dropping the bound. Only `ignore`'s hold-back has a safe direction
     to fail towards, so only it falls back rather than warning.
     """
     items = _bracket_items(bracket)

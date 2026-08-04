@@ -3,7 +3,7 @@
 Every source talks to a flaky external registry, so a single slow or unreachable host must not abort the whole run
 with a traceback. `fetch` turns transport-level failures (timeouts, connection errors) into a logged `None`, so the
 caller can leave the reference unchanged and the run continues. By default a non-OK status is treated as a failure
-too (logged and reported as `None`); callers that inspect the status themselves — such as the OCI auth probe, which
+too, logged and reported as `None`. Callers that inspect the status themselves — such as the OCI auth probe, which
 expects a `401` — pass `require_ok=False` to get the response back whatever its status. It lives in `io` (next to the
 file and process I/O) so that network access is centralized: sources and updaters go through it rather than calling
 `requests` directly, which the architecture tests enforce.

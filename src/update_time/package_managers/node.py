@@ -82,7 +82,7 @@ class PackageManager:
         cooldown = self.cooldown_options(package_json.parent)
         outdated = run(Command(*self.outdated, *cooldown), package_json.parent)
         if not outdated.ok:
-            return  # The outdated check failed (e.g. the registry is unreachable); update and list would fail too.
+            return  # The outdated check failed, e.g. the registry is unreachable, so update and list would too.
         parsed = outdated.json
         outdated_packages = parsed if isinstance(parsed, dict) else {}
         run(Command(*self.update, *cooldown), cwd=package_json.parent)

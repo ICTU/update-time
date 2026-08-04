@@ -47,14 +47,14 @@ LOG_LEVEL = EnvVar("_UPDATE_TIME_LOG_LEVEL", default="INFO", parse=str)
 # removes it. `Logger` wraps each name in it; `LogHighlighter` styles the wrapped run and strips the delimiters.
 DEPENDENCY_DELIMITER = ""
 
-# Private-use-area character that brackets a file location (a `path` or `path:line`) in a log message, so the
-# highlighter can colour the whole run — directory, filename, and line number — as one token instead of the
-# several fragments Rich's default rules would produce (a `repr.path` prefix, a `repr.filename`, and a
-# `repr.number` for the line). It is not matched by shape for the same reason the digest is dropped and the
-# dependency name is delimited: the path is known exactly when the message is built, whereas a regex over the
-# finished message can't tell it apart from the version numbers and digests around it, and a bare filename such
-# as `Dockerfile` carries no path marker to anchor on. A distinct code point from `DEPENDENCY_DELIMITER`, so the
-# two runs never collide. `Logger` wraps each location in it; `LogHighlighter` styles the run and strips them.
+# Private-use-area character that brackets a file location (a `path` or `path:line`) in a log message. The
+# highlighter can then colour the whole run — directory, filename, and line number — as one token, instead of the
+# several fragments Rich's default rules produce: a `repr.path` prefix, a `repr.filename`, and a `repr.number` for
+# the line. It is not matched by shape for the same reason the digest is dropped and the dependency name is
+# delimited. The path is known exactly when the message is built, whereas a regex over the finished message can't
+# tell it apart from the version numbers and digests around it, and a bare filename such as `Dockerfile` carries
+# no path marker to anchor on. A distinct code point from `DEPENDENCY_DELIMITER`, so the two runs never collide.
+# `Logger` wraps each location in it, and `LogHighlighter` styles the run and strips them.
 LOCATION_DELIMITER = ""
 
 
@@ -67,8 +67,8 @@ class LogHighlighter(ReprHighlighter):
     every other message keeps Rich's default highlighting of version numbers and the like.
 
     A dependency name can't be matched by shape, and a file location can't be told apart from the versions and digests
-    around it, so `Logger` brackets each with its own delimiter. A bracketed dependency name is styled (as
-    `repr.dependency`) keeping Rich's inner highlighting; a bracketed location is styled (as `repr.filename`) with its
+    around it, so `Logger` brackets each with its own delimiter. A bracketed dependency name is styled as
+    `repr.dependency`, keeping Rich's inner highlighting. A bracketed location is styled as `repr.filename` with its
     inner fragments dropped, so the whole `path:line` reads as one unit. Either way the delimiters are stripped, so
     only the colouring reaches the output.
     """
@@ -93,9 +93,9 @@ class LogHighlighter(ReprHighlighter):
 
         The run is rebuilt from slices of the original text (rather than matched by a pattern) so Rich remaps the
         surrounding spans across the removed delimiters automatically. With `keep_inner`, the run's existing
-        highlighting is kept and `style` layered on top (a dependency name keeps Rich's inner colours); without it,
-        the inner spans are dropped first so the whole run takes `style` uniformly (a location's `path:line` reads as
-        one token rather than a separate path, filename, and number).
+        highlighting is kept and `style` layered on top, so a dependency name keeps Rich's inner colours. Without it,
+        the inner spans are dropped first and the whole run takes `style` uniformly, so a location's `path:line`
+        reads as one token rather than a separate path, filename, and number.
         """
         matches = list(pattern.finditer(text.plain))
         if not matches:

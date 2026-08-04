@@ -1,8 +1,8 @@
 """Read, edit, and rewrite pyproject.toml files, preserving their formatting.
 
-This module owns everything that knows the pyproject.toml *format*: parsing it (via the standard library's tomllib)
-and reading or editing individual `[tool.<name>]` keys and pinned dependency versions while keeping the rest of the
-file — comments, ordering, and whitespace — untouched (via tomlkit). What those edits *mean* (which cooldown to
+This module owns everything that knows the pyproject.toml *format*: parsing it with the standard library's tomllib,
+and reading or editing individual `[tool.<name>]` keys and pinned dependency versions with tomlkit, which keeps the
+rest of the file — comments, ordering, and whitespace — untouched. What those edits *mean* (which cooldown to
 write, which versions to bump to) is the caller's concern, not this module's.
 """
 
