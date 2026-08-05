@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.23 - 2026-08-05
+
 ### Added
 
 - Warn when the version tag a GitHub Action or pre-commit hook is pinned to points at another commit than the pinned one. Part of [#179](https://github.com/ICTU/update-time/issues/179).
