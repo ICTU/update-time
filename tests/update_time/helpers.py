@@ -1,18 +1,14 @@
 """Shared test helpers."""
 
-import importlib
-import pkgutil
 import unittest
-from functools import cache
 from logging import DEBUG, ERROR, WARNING
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, call, patch
 
-import update_time
 from update_time.domain.bound import NewVersionGetter, Verb, VersionBound, parse_bound
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import DependencyVersion, VersionString
-from update_time.io.log import Logger, LogMessage
+from update_time.io.log import Logger, LogMessage, reset_changelog_suppression
 from update_time.primitives.location import Location
 from update_time.sources.docker_hub import api_headers as docker_hub_headers
 from update_time.sources.github import _get_commit as github_get_commit
@@ -37,17 +33,6 @@ if TYPE_CHECKING:
     from unittest.mock import _Call, _patch
 
     from update_time.domain.drift import DriftedPin
-
-
-@cache
-def _module_loggers() -> tuple[Logger, ...]:
-    """Return every module-level `LOG` logger in the update_time package, discovered by walking it."""
-    loggers = []
-    for module_info in pkgutil.walk_packages(update_time.__path__, f"{update_time.__name__}."):
-        module = importlib.import_module(module_info.name)
-        if isinstance(log := getattr(module, "LOG", None), Logger):
-            loggers.append(log)
-    return tuple(loggers)
 
 
 class CacheClearingTestCase(unittest.TestCase):
@@ -78,8 +63,7 @@ class CacheClearingTestCase(unittest.TestCase):
         super().setUp()
         for cached_function in self.CACHES:
             cached_function.cache_clear()
-        for logger in _module_loggers():
-            logger.logged_changes.clear()
+        reset_changelog_suppression()
 
 
 class LoggingTestCase(CacheClearingTestCase):

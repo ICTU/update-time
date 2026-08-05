@@ -22,9 +22,9 @@ if TYPE_CHECKING:
 
     from update_time.domain.bound import NewVersionGetter, VersionBound
 
-LOG = get_logger("jsdelivr")
-HEADERS = {"User-Agent": "Update-time dependency update tool (https://github.com/ICTU/update-time)"}
-JSDELIVR_PACKAGE_API = "https://data.jsdelivr.com/v1/packages/npm"
+_LOG = get_logger("jsdelivr")
+_HEADERS = {"User-Agent": "Update-time dependency update tool (https://github.com/ICTU/update-time)"}
+_JSDELIVR_PACKAGE_API = "https://data.jsdelivr.com/v1/packages/npm"
 
 
 def version_getter(filename: str) -> NewVersionGetter:
@@ -83,7 +83,7 @@ def _eligible_version(
         return None
     if integrity := integrity_hash(dependency, version_string, filename):
         return DependencyVersion(version_string, sha=integrity, published=published)
-    LOG.no_integrity_hash(dependency, version_string, filename)
+    _LOG.no_integrity_hash(dependency, version_string, filename)
     return DependencyVersion(version=current_version_string)
 
 
@@ -91,7 +91,7 @@ def _candidate_versions(
     dependency: str, current_version_string: VersionString, version_bound: VersionBound
 ) -> list[Version]:
     """Return the stable versions newer than the current one that the bound admits (`first_eligible` orders them)."""
-    response = fetch(f"{JSDELIVR_PACKAGE_API}/{dependency}", LOG, headers=HEADERS)
+    response = fetch(f"{_JSDELIVR_PACKAGE_API}/{dependency}", _LOG, headers=_HEADERS)
     if response is None:
         return []
     current_version = Version(current_version_string)
@@ -125,8 +125,8 @@ def integrity_hash(dependency: DependencyName, version: VersionString, filename:
     The hash must match the file referenced in the URL, not the package's default entry point (which jsDelivr does
     not always list as a hashable file). An empty string signals the caller to leave the reference unchanged.
     """
-    url = f"{JSDELIVR_PACKAGE_API}/{dependency}@{version}?structure=flat"
-    response = fetch(url, LOG, headers=HEADERS)
+    url = f"{_JSDELIVR_PACKAGE_API}/{dependency}@{version}?structure=flat"
+    response = fetch(url, _LOG, headers=_HEADERS)
     if response is None:
         return ""
     hashes = {entry["name"]: entry["hash"] for entry in response.json()["files"]}

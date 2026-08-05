@@ -13,10 +13,10 @@ from update_time.io.cli import parse_args
 from update_time.io.filesystem import EXCLUDE_PATHS, inside_git_repository
 from update_time.io.log import LOG_LEVEL, get_logger
 
-SRC = Path(__file__).parent
+_SRC = Path(__file__).parent
 
 # These scripts update different files, so they can run concurrently.
-PARALLEL_SCRIPTS = (
+_PARALLEL_SCRIPTS = (
     "dockerfile_base_image",
     "pyproject_toml",
     "requirements_txt",
@@ -32,12 +32,12 @@ PARALLEL_SCRIPTS = (
 # node_engine and package_json both rewrite the package.json files, so they run sequentially (after the
 # parallel scripts and after each other) to avoid concurrent writes to the same files. Also, node_engine
 # and python_version read a version from the Dockerfile, so they can't run in parallel with dockerfile_base_image.
-SEQUENTIAL_SCRIPTS = ("node_engine", "package_json", "python_version_file")
+_SEQUENTIAL_SCRIPTS = ("node_engine", "package_json", "python_version_file")
 
-# A new updater script must be registered in PARALLEL_SCRIPTS or SEQUENTIAL_SCRIPTS above, or it would silently
+# A new updater script must be registered in _PARALLEL_SCRIPTS or _SEQUENTIAL_SCRIPTS above, or it would silently
 # never run; fail fast on import when the registered names and the `update_<name>.py` scripts on disk disagree.
-_REGISTERED = set(PARALLEL_SCRIPTS + SEQUENTIAL_SCRIPTS)
-_ON_DISK = {path.stem.removeprefix("update_") for path in SRC.glob("update_*.py")}
+_REGISTERED = set(_PARALLEL_SCRIPTS + _SEQUENTIAL_SCRIPTS)
+_ON_DISK = {path.stem.removeprefix("update_") for path in _SRC.glob("update_*.py")}
 if _REGISTERED != _ON_DISK:  # pragma: no cover
     _message = f"The registered updater scripts and the scripts on disk differ: {sorted(_REGISTERED ^ _ON_DISK)}"
     raise RuntimeError(_message)
@@ -45,14 +45,14 @@ if _REGISTERED != _ON_DISK:  # pragma: no cover
 
 def run_script(name: str) -> int:
     """Run the updater script with the given name and return its exit code."""
-    return subprocess.run([sys.executable, str(SRC / f"update_{name}.py")], check=False).returncode  # noqa: S603 # nosec: B603
+    return subprocess.run([sys.executable, str(_SRC / f"update_{name}.py")], check=False).returncode  # noqa: S603 # nosec: B603
 
 
 def update_dependencies() -> int:
     """Run all updater scripts and return the highest exit code."""
     with ThreadPoolExecutor() as executor:
-        results = list(executor.map(run_script, PARALLEL_SCRIPTS))
-    results.extend(run_script(name) for name in SEQUENTIAL_SCRIPTS)
+        results = list(executor.map(run_script, _PARALLEL_SCRIPTS))
+    results.extend(run_script(name) for name in _SEQUENTIAL_SCRIPTS)
     return max(results, default=0)
 
 

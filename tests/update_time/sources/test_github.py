@@ -35,10 +35,10 @@ from tests.update_time.helpers import (
 if TYPE_CHECKING:
     from update_time.domain.version import DependencyVersion, VersionString
 
-OLD_DATE = datetime.now(UTC) - timedelta(days=10)  # A publication date outside the cooldown window
-OLD_ISO = OLD_DATE.isoformat()
-RECENT_DATE = datetime.now(UTC) - timedelta(days=1)  # A publication date within the cooldown window
-RECENT_ISO = RECENT_DATE.isoformat()
+_OLD_DATE = datetime.now(UTC) - timedelta(days=10)  # A publication date outside the cooldown window
+_OLD_ISO = _OLD_DATE.isoformat()
+_RECENT_DATE = datetime.now(UTC) - timedelta(days=1)  # A publication date within the cooldown window
+_RECENT_ISO = _RECENT_DATE.isoformat()
 
 
 class GitHubURLtoRawTest(unittest.TestCase):
@@ -113,10 +113,10 @@ class GetLatestVersionTest(LoggingTestCase):
         """Test that a newer release is resolved, with its changelog and commit SHA."""
         self.assert_version(get_latest_version("owner/repository", "1.0", NO_BOUND), "1.1", "changelog", COMMIT_SHA)
 
-    @patch_github(releases=[github_release_json("1.1", published_at=OLD_ISO)], tags=[], commit=github_commits_json())
+    @patch_github(releases=[github_release_json("1.1", published_at=_OLD_ISO)], tags=[], commit=github_commits_json())
     def test_publication_date(self):
         """Test that the resolved release's publication date is captured."""
-        self.assertEqual(get_latest_version("owner/repository", "1.0", NO_BOUND).published, OLD_DATE)
+        self.assertEqual(get_latest_version("owner/repository", "1.0", NO_BOUND).published, _OLD_DATE)
 
     @patch_github(
         releases=[github_release_json("1.1"), github_release_json("2.0")], tags=[], commit=github_commits_json()
@@ -172,8 +172,8 @@ class GetLatestVersionTest(LoggingTestCase):
 
     @patch_github(
         releases=[
-            github_release_json("2.0", published_at=RECENT_ISO),
-            github_release_json("1.1", published_at=OLD_ISO),
+            github_release_json("2.0", published_at=_RECENT_ISO),
+            github_release_json("1.1", published_at=_OLD_ISO),
         ],
         tags=[],
         commit=github_commits_json(),
@@ -182,18 +182,18 @@ class GetLatestVersionTest(LoggingTestCase):
         """Test that a release published within the cooldown is skipped in favor of an older, eligible release."""
         latest = get_latest_version("owner/with cooldown", "1.0", NO_BOUND)
         self.assert_version(latest, "1.1", "", COMMIT_SHA)
-        self.assertEqual(OLD_DATE, latest.published)
+        self.assertEqual(_OLD_DATE, latest.published)
 
-    @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=github_commits_json(date=OLD_ISO))
+    @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=github_commits_json(date=_OLD_ISO))
     def test_tag_without_release(self):
         """Test that a version that is tagged but not released is resolved, with its SHA from the tags list."""
         latest = get_latest_version("owner/tags only", "1.0", NO_BOUND)
         self.assert_version(latest, "1.1", "", COMMIT_SHA)
-        self.assertEqual(latest.published, OLD_DATE)  # The tagged commit's committer date
-        self.assertEqual(latest.newest_published, OLD_DATE)  # Also feeds the staleness check
+        self.assertEqual(latest.published, _OLD_DATE)  # The tagged commit's committer date
+        self.assertEqual(latest.newest_published, _OLD_DATE)  # Also feeds the staleness check
 
     @patch_github(
-        releases=[github_release_json("v1.1", body="changelog", published_at=OLD_ISO)],
+        releases=[github_release_json("v1.1", body="changelog", published_at=_OLD_ISO)],
         tags=[github_tag_json("v1.1", sha=COMMIT_SHA)],
     )
     def test_tag_with_release(self):
@@ -203,12 +203,12 @@ class GetLatestVersionTest(LoggingTestCase):
         """
         latest = get_latest_version("owner/tag with release", "1.0", NO_BOUND)
         self.assert_version(latest, "1.1", "changelog", COMMIT_SHA)
-        self.assertEqual(latest.published, OLD_DATE)
+        self.assertEqual(latest.published, _OLD_DATE)
 
     @patch_github(
-        releases=[github_release_json("v1.0", published_at=OLD_ISO)],
+        releases=[github_release_json("v1.0", published_at=_OLD_ISO)],
         tags=[github_tag_json("v2.0", sha=COMMIT_SHA2), github_tag_json("v1.0", sha=COMMIT_SHA1)],
-        commit=github_commits_json(date=OLD_ISO),
+        commit=github_commits_json(date=_OLD_ISO),
     )
     def test_tags_running_ahead_of_releases(self):
         """Test that a repo whose releases (v1.0) fell behind its tags (v2.0) is updated to the newest tag."""
@@ -220,7 +220,7 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual(get_latest_version("owner/only a prerelease tag", "1.0", NO_BOUND).version, "1.0")
         self.assert_error_logged(Logger._MESSAGE_NO_VERSION, dependency="owner/only a prerelease tag")
 
-    @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=github_commits_json(date=RECENT_ISO))
+    @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=github_commits_json(date=_RECENT_ISO))
     def test_skip_tags_within_cooldown(self):
         """Test that a tag whose commit falls within the cooldown is skipped."""
         self.assert_version(get_latest_version("owner/fresh tag", "1.0", NO_BOUND), "1.0", "", "")
@@ -266,7 +266,7 @@ class GetLatestVersionTest(LoggingTestCase):
         )
 
     @patch_github(
-        releases=[github_release_json("v5.0.0", body="changelog", published_at=OLD_ISO)],
+        releases=[github_release_json("v5.0.0", body="changelog", published_at=_OLD_ISO)],
         tags=[github_tag_json("v5"), github_tag_json("v5.0.0", sha=COMMIT_SHA)],
     )
     def test_release_wins_over_bare_tag_of_the_same_version(self):
@@ -280,15 +280,15 @@ class NewestPublicationDateTest(LoggingTestCase):
 
     @patch_github(
         releases=[
-            github_release_json("2.0b1", prerelease=True, published_at=RECENT_ISO),
-            github_release_json("1.1", published_at=OLD_ISO),
+            github_release_json("2.0b1", prerelease=True, published_at=_RECENT_ISO),
+            github_release_json("1.1", published_at=_OLD_ISO),
             github_release_json("1.0"),  # A draft-like release with no publication date is ignored.
         ],
         tags=[],
     )
     def test_newest_across_releases(self):
         """Test that the most recent publication date wins, including pre-releases and ignoring undated releases."""
-        self.assertEqual(newest_publication_date("owner", "active"), RECENT_DATE)
+        self.assertEqual(newest_publication_date("owner", "active"), _RECENT_DATE)
 
     @patch_github(releases=[], tags=[])
     def test_no_releases(self):
@@ -301,27 +301,27 @@ class NewestPublicationDateTest(LoggingTestCase):
         self.assertIsNone(newest_publication_date("owner", "unreachable"))
         self.assertEqual(len(self.records(WARNING)), 2)  # One could-not-fetch warning per endpoint
 
-    @patch_github(releases=[], tags=[github_tag_json("v1.0")], commit=github_commits_json(date=RECENT_ISO))
+    @patch_github(releases=[], tags=[github_tag_json("v1.0")], commit=github_commits_json(date=_RECENT_ISO))
     def test_tag_without_release(self):
         """Test that a repo that tags without releasing takes its newest date from the tagged commit."""
-        self.assertEqual(newest_publication_date("owner", "tags only"), RECENT_DATE)
+        self.assertEqual(newest_publication_date("owner", "tags only"), _RECENT_DATE)
 
     @patch_github(
-        releases=[github_release_json("1.0", published_at=OLD_ISO)],
+        releases=[github_release_json("1.0", published_at=_OLD_ISO)],
         tags=[github_tag_json("v2.0")],
-        commit=github_commits_json(date=RECENT_ISO),
+        commit=github_commits_json(date=_RECENT_ISO),
     )
     def test_tag_running_ahead_of_releases(self):
         """Test that a repo whose releases fell behind its tags takes its newest date from the newest tagged commit."""
-        self.assertEqual(newest_publication_date("owner", "mixed"), RECENT_DATE)
+        self.assertEqual(newest_publication_date("owner", "mixed"), _RECENT_DATE)
 
-    @patch_github(releases=[github_release_json("2.0", published_at=OLD_ISO)], tags=[github_tag_json("v1.0")])
+    @patch_github(releases=[github_release_json("2.0", published_at=_OLD_ISO)], tags=[github_tag_json("v1.0")])
     def test_tag_behind_releases_needs_no_commit(self):
         """Test that a repo whose releases cover its newest version needs no commits fetch for the newest date.
 
         The commits endpoint is unreachable in this test, so fetching the tag's commit date would fail the test.
         """
-        self.assertEqual(newest_publication_date("owner", "released"), OLD_DATE)
+        self.assertEqual(newest_publication_date("owner", "released"), _OLD_DATE)
         self.assert_no_warnings_logged()
 
 

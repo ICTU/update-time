@@ -24,17 +24,17 @@ if TYPE_CHECKING:
 
     from update_time.io.log import Logger
 
-LOG = get_logger("pyproject.toml")
+_LOG = get_logger("pyproject.toml")
 # Signals that a pyproject.toml is managed by a tool other than uv. Running uv on such a project would mishandle it
 # (e.g. write a stray uv.lock alongside the real lockfile), so those files are skipped for now.
-NON_UV_TOOL_SECTIONS = ("poetry", "pdm")  # `[tool.poetry]` / `[tool.pdm]`
-NON_UV_LOCKFILES = {"poetry.lock": "poetry", "pdm.lock": "pdm"}
+_NON_UV_TOOL_SECTIONS = ("poetry", "pdm")  # `[tool.poetry]` / `[tool.pdm]`
+_NON_UV_LOCKFILES = {"poetry.lock": "poetry", "pdm.lock": "pdm"}
 
 # Update-time writes its cooldown into `[tool.uv] exclude-newer` with this comment. The comment both explains the
 # line and marks it as Update-time's own: a value carrying the marker is kept in sync with `--cooldown`, one without
 # it is the user's and left untouched. Detection is on the lower-cased `update-time` token, so the prose can change.
-EXCLUDE_NEWER_COMMENT = "managed by Update-time — remove this comment to prevent Update-time from changing it"
-EXCLUDE_NEWER_MARKER = "update-time"
+_EXCLUDE_NEWER_COMMENT = "managed by Update-time — remove this comment to prevent Update-time from changing it"
+_EXCLUDE_NEWER_MARKER = "update-time"
 
 
 def python_manager(pyproject_toml: Path, config: dict) -> str:
@@ -44,10 +44,10 @@ def python_manager(pyproject_toml: Path, config: dict) -> str:
     already-parsed `config` is passed in so the file isn't read again.
     """
     tool = config.get("tool", {})
-    for section in NON_UV_TOOL_SECTIONS:
+    for section in _NON_UV_TOOL_SECTIONS:
         if section in tool:
             return section
-    for lockfile, manager in NON_UV_LOCKFILES.items():
+    for lockfile, manager in _NON_UV_LOCKFILES.items():
         if (pyproject_toml.parent / lockfile).exists():
             return manager
     return "uv"
@@ -83,12 +83,12 @@ def _persist_exclude_newer(pyproject_toml: Path) -> None:
     cooldown = f"{COOLDOWN.get()} days"
     if existing is not None:
         value, comment = existing
-        if EXCLUDE_NEWER_MARKER not in comment.lower():
+        if _EXCLUDE_NEWER_MARKER not in comment.lower():
             return  # A user-set exclude-newer: leave it alone.
         if value == cooldown:
             return  # Already Update-time's and already current.
-    pyproject_toml_format.set_tool_key(pyproject_toml, "uv", "exclude-newer", cooldown, comment=EXCLUDE_NEWER_COMMENT)
-    LOG.configured_uv_cooldown(pyproject_toml, cooldown)
+    pyproject_toml_format.set_tool_key(pyproject_toml, "uv", "exclude-newer", cooldown, comment=_EXCLUDE_NEWER_COMMENT)
+    _LOG.configured_uv_cooldown(pyproject_toml, cooldown)
 
 
 def _workspace_root(pyproject_toml: Path) -> Path:
@@ -228,6 +228,6 @@ def newest_pypi_releases(path: Path) -> Iterable[tuple[str, DependencyVersion]]:
 
 def update_uv_lock(pyproject_toml: Path) -> None:
     """Update the uv.lock file for the pyproject.toml."""
-    LOG.path(pyproject_toml.parent / "uv.lock")
+    _LOG.path(pyproject_toml.parent / "uv.lock")
     uv_lock = Command("uv", "lock", "--directory", str(pyproject_toml.parent), "--upgrade", "--quiet", "--no-progress")
     run(uv_lock)

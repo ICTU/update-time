@@ -17,21 +17,21 @@ if TYPE_CHECKING:
     from update_time.domain.line import Line
     from update_time.domain.version import DependencyVersion, Reference
 
-LOG = get_logger("pre-commit config")
+_LOG = get_logger("pre-commit config")
 
 # The pre-commit configuration file, read from the repository root but supported per sub-project too (a monorepo can
 # carry one per package), so it is looked up recursively from the scan root.
-PRE_COMMIT_CONFIG = ".pre-commit-config.yaml"
+_PRE_COMMIT_CONFIG = ".pre-commit-config.yaml"
 
 # Match a `repo:` key and capture its value: a repository URL (`https://github.com/owner/repo`), or the `local` /
 # `meta` sentinels that carry no `rev:`. The value sets the repository the following `rev:` lines belong to.
-REPO_RE = re.compile(r"repo:\s*(?P<repo>\S+)")
+_REPO_RE = re.compile(r"repo:\s*(?P<repo>\S+)")
 # Match a `rev:` value that is either already pinned to a commit SHA with a pre-commit `# frozen: <version>` comment
 # (`rev: <sha> # frozen: v4.5.0`) or unpinned to a version tag (`rev: v4.5.0`, optionally quoted). A bare commit SHA
 # without a frozen comment doesn't resolve to a version, so it falls through to the tag branch and is rejected as a
 # non-version by the `is_valid` check in `_update_rev`, like a branch name. The tag stops at whitespace, a quote, or
 # a `#`, so a trailing `# update-time:` marker (or any comment) is left outside the match and preserved.
-REV_RE = re.compile(
+_REV_RE = re.compile(
     r"rev:\s*"
     r"(?:(?P<sha>[0-9a-f]{40})\s*#\s*frozen:\s*(?P<version>\S+)|(?P<quote>['\"]?)(?P<tag>[^\s'\"#]+)(?P=quote))"
 )
@@ -54,7 +54,7 @@ def _spell_rev(reference: Reference, latest: DependencyVersion) -> str:
     return f"rev: {latest.sha}  # frozen: {frozen_version}"
 
 
-_REV = PinUpdater(_spell_rev, LOG)
+_REV = PinUpdater(_spell_rev, _LOG)
 
 
 def _updated_lines(lines: list[Line]) -> list[str]:
@@ -67,12 +67,12 @@ def _updated_lines(lines: list[Line]) -> list[str]:
     result = []
     dependency = ""  # The GitHub owner/repository of the `repo:` in scope, or "" for a local/meta/non-GitHub repo.
     for line in lines:
-        if repo_match := REPO_RE.search(line.text):
+        if repo_match := _REPO_RE.search(line.text):
             dependency = _dependency_from_repo(repo_match.group("repo"))
             result.append(line.text)
-        elif (rev_match := REV_RE.search(line.text)) and dependency:
+        elif (rev_match := _REV_RE.search(line.text)) and dependency:
             update_line = partial(_REV.update_line, dependency=dependency)
-            result.append(apply_marker(line, rev_match, update_line, LOG, dependency))
+            result.append(apply_marker(line, rev_match, update_line, _LOG, dependency))
         else:
             result.append(line.text)
     return result
@@ -80,8 +80,8 @@ def _updated_lines(lines: list[Line]) -> list[str]:
 
 def update_pre_commit_configs(start: Path | None = None) -> None:
     """Update the hook revs in all `.pre-commit-config.yaml` files found recursively from the start directory."""
-    for config in glob(PRE_COMMIT_CONFIG, start=start):
-        rewrite_file(config, _updated_lines, LOG)
+    for config in glob(_PRE_COMMIT_CONFIG, start=start):
+        rewrite_file(config, _updated_lines, _LOG)
 
 
 def main() -> None:  # pragma: no cover

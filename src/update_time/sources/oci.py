@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
     from update_time.domain.bound import VersionBound
 
-LOG = get_logger("oci")
+_LOG = get_logger("oci")
 
 # A Docker image reference as it appears in files: `dependency:version` with an optional `@sha256:digest`. Updaters
 # prefix this with the keyword that introduces the reference in their file format (e.g. `FROM ` or `image: `). The
@@ -43,15 +43,15 @@ YAML_IMAGE_REFERENCE = rf"image: {IMAGE_REFERENCE}"
 
 # Image references without a registry host are on Docker Hub, whose OCI registry host differs from the user-facing
 # `docker.io` alias and whose images live under an implicit `library/` namespace.
-DOCKER_HUB_OCI_HOST = "registry-1.docker.io"
+_DOCKER_HUB_OCI_HOST = "registry-1.docker.io"
 
 # The page size for the registry's tag listing. `_tag_names` follows the registry's pagination links, so this only
 # sizes the pages, it does not cap how many tags are considered.
-TAGS_PAGE_SIZE = 1000
+_TAGS_PAGE_SIZE = 1000
 
 # Media types offered when resolving a manifest digest, so the registry returns the multi-arch index digest (the
 # digest to pin) when the image is multi-arch, and the single image-manifest digest otherwise.
-MANIFEST_MEDIA_TYPES = (
+_MANIFEST_MEDIA_TYPES = (
     "application/vnd.oci.image.index.v1+json",
     "application/vnd.oci.image.manifest.v1+json",
     "application/vnd.docker.distribution.manifest.list.v2+json",
@@ -326,7 +326,7 @@ def _registry_host(image: str) -> str:
     """Return the OCI registry API host for an image reference, defaulting to Docker Hub's registry."""
     host, _ = _split_domain(image)
     # In the else branch `_is_docker_hub_host` was False, so `host` is a real (non-None) registry host.
-    return DOCKER_HUB_OCI_HOST if _is_docker_hub_host(host) else cast("str", host)
+    return _DOCKER_HUB_OCI_HOST if _is_docker_hub_host(host) else cast("str", host)
 
 
 def _repository(image: str) -> str:
@@ -364,10 +364,10 @@ def _tag_names(image: str) -> list[str]:
     host = _registry_host(image)
     repository = _repository(image)
     headers = _auth_headers(host, repository, _credentials(image))
-    url: str | None = f"https://{host}/v2/{repository}/tags/list?n={TAGS_PAGE_SIZE}"
+    url: str | None = f"https://{host}/v2/{repository}/tags/list?n={_TAGS_PAGE_SIZE}"
     names: list[str] = []
     while url:
-        response = fetch(url, LOG, headers=headers)
+        response = fetch(url, _LOG, headers=headers)
         if response is None:
             break
         names.extend(response.json().get("tags") or [])
@@ -398,8 +398,8 @@ def _manifest_digest(image: str, tag: str) -> str:
     """
     host = _registry_host(image)
     repository = _repository(image)
-    headers = {"Accept": ", ".join(MANIFEST_MEDIA_TYPES), **_auth_headers(host, repository, _credentials(image))}
-    response = fetch(f"https://{host}/v2/{repository}/manifests/{tag}", LOG, method="head", headers=headers)
+    headers = {"Accept": ", ".join(_MANIFEST_MEDIA_TYPES), **_auth_headers(host, repository, _credentials(image))}
+    response = fetch(f"https://{host}/v2/{repository}/manifests/{tag}", _LOG, method="head", headers=headers)
     if response is None:
         return ""
     return response.headers.get("Docker-Content-Digest", "")
@@ -421,7 +421,7 @@ def _registry_token(host: str, repository: str, credentials: tuple[str, str] | N
     ...). Registries that allow anonymous access (e.g. mcr.microsoft.com) don't challenge, so None is returned and
     requests are made without a token. The given credentials, if any, authenticate the token request.
     """
-    probe = fetch(f"https://{host}/v2/", LOG, require_ok=False)
+    probe = fetch(f"https://{host}/v2/", _LOG, require_ok=False)
     if probe is None:
         return None
     challenge = probe.headers.get("WWW-Authenticate", "")
@@ -433,7 +433,7 @@ def _registry_token(host: str, repository: str, credentials: tuple[str, str] | N
     params = dict(re.findall(r'(\w++)="([^"]*)"', challenge))
     realm = params.pop("realm", "")
     params["scope"] = f"repository:{repository}:pull"
-    response = fetch(realm, LOG, params=params, auth=credentials)
+    response = fetch(realm, _LOG, params=params, auth=credentials)
     if response is None:
         return None
     token = response.json()

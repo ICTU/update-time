@@ -14,14 +14,14 @@ from functools import cache
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 
-LOG = get_logger("docker hub")
+_LOG = get_logger("docker hub")
 
 # Docker Hub's proprietary tags API; the only source of a tag's real push date (the OCI protocol exposes none).
-REGISTRY = "https://registry.hub.docker.com"
+_REGISTRY = "https://registry.hub.docker.com"
 
 # The token endpoint the credentials are exchanged at; note that it lives on the user-facing hub.docker.com host,
-# not on the REGISTRY host above.
-AUTH_URL = "https://hub.docker.com/v2/auth/token"
+# not on the _REGISTRY host above.
+_AUTH_URL = "https://hub.docker.com/v2/auth/token"
 
 
 def credentials() -> tuple[str, str] | None:
@@ -36,7 +36,7 @@ def api_headers() -> dict[str, str]:
     """Return Docker Hub API request headers with a bearer token if DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN are set."""
     if creds := credentials():
         username, token = creds
-        response = fetch(AUTH_URL, LOG, method="post", json={"identifier": username, "secret": token})
+        response = fetch(_AUTH_URL, _LOG, method="post", json={"identifier": username, "secret": token})
         if response is not None:
             return {"Authorization": f"Bearer {response.json()['access_token']}"}
     return {}
@@ -50,8 +50,8 @@ def last_pushed(repository: str, tag: str) -> datetime | None:
     returned, which means no cooldown is applied to the tag.
     """
     namespace, repo = repository.split("/", maxsplit=1)
-    url = f"{REGISTRY}/v2/namespaces/{namespace}/repositories/{repo}/tags/{tag}"
-    response = fetch(url, LOG, headers=api_headers())
+    url = f"{_REGISTRY}/v2/namespaces/{namespace}/repositories/{repo}/tags/{tag}"
+    response = fetch(url, _LOG, headers=api_headers())
     if response is None:
         return None
     pushed = response.json().get("tag_last_pushed")

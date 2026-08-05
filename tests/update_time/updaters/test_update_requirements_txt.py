@@ -6,7 +6,7 @@ from pathlib import PurePath
 from unittest.mock import MagicMock, Mock, patch
 
 from update_time.primitives.location import Location
-from update_time.updaters.update_requirements_txt import REQUIREMENTS_GLOB_PATTERNS, update_requirements_txts
+from update_time.updaters.update_requirements_txt import update_requirements_txts
 
 from tests.helpers import mock_path
 from tests.update_time.helpers import (
@@ -18,7 +18,10 @@ from tests.update_time.helpers import (
     yanked_file,
 )
 
-PUBLISHED = "1.1, published: 2020-01-01 00:00"  # How PYPI_OLD_UPLOAD is rendered in the log.
+_PUBLISHED = "1.1, published: 2020-01-01 00:00"  # How PYPI_OLD_UPLOAD is rendered in the log.
+
+# The globs the updater discovers requirements files with, spelled out here and pinned to the updater below.
+_GLOB_PATTERNS = ("requirements.txt", "requirements-*.txt", "*-requirements.txt", "requirements/*.txt")
 
 
 @patch("requests.get")
@@ -135,7 +138,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         requirements_txt.write_text.assert_called_once_with("flask==1.1\n")
         self.assert_path_logged(requirements_txt)
-        self.assert_new_version_logged("flask", PUBLISHED, Location(requirements_txt, 1))
+        self.assert_new_version_logged("flask", _PUBLISHED, Location(requirements_txt, 1))
         self.assert_no_warnings_logged()
 
     def test_preserves_extras_marker_and_comment(self, mock_rglob: Mock, mock_get: Mock):
@@ -146,7 +149,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         requirements_txt.write_text.assert_called_once_with('flask[async]==1.1 ; python_version < "3.12"  # keep\n')
         self.assert_path_logged(requirements_txt)
-        self.assert_new_version_logged("flask", PUBLISHED, Location(requirements_txt, 1))
+        self.assert_new_version_logged("flask", _PUBLISHED, Location(requirements_txt, 1))
         self.assert_no_warnings_logged()
 
     def test_spaces_around_equals_preserved(self, mock_rglob: Mock, mock_get: Mock):
@@ -234,7 +237,14 @@ class RequirementsGlobPatternsTest(unittest.TestCase):
 
     def matches(self, path: str) -> bool:
         """Return whether any requirements glob pattern matches the path, case-sensitively (as `glob` matches)."""
-        return any(PurePath(path).full_match(pattern, case_sensitive=True) for pattern in REQUIREMENTS_GLOB_PATTERNS)
+        return any(PurePath(path).full_match(pattern, case_sensitive=True) for pattern in _GLOB_PATTERNS)
+
+    @patch("update_time.updaters.update_requirements_txt.glob")
+    def test_the_updater_looks_for_these_patterns(self, mock_glob: Mock):
+        """Test that the updater discovers files with the very patterns the tests below match paths against."""
+        mock_glob.return_value = []
+        update_requirements_txts()
+        mock_glob.assert_called_once_with(*_GLOB_PATTERNS, case_sensitive=True)
 
     def test_recognized_flat_names(self):
         """Test that the flat requirements naming conventions match."""

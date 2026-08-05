@@ -29,13 +29,13 @@ if TYPE_CHECKING:
 
     from update_time.domain.bound import VersionBound
 
-LOG = get_logger("pypi")
+_LOG = get_logger("pypi")
 
 # The PyPI host, serving both the JSON API (`/pypi/…/json`) and the Index API (`/simple/…`).
-PYPI = "https://pypi.org"
+_PYPI = "https://pypi.org"
 
-CHANGELOG_URL_KEYS = {"changes", "changelog", "release notes"}
-REPOSITORY_URL_KEYS = {"repository", "source", "homepage"}
+_CHANGELOG_URL_KEYS = {"changes", "changelog", "release notes"}
+_REPOSITORY_URL_KEYS = {"repository", "source", "homepage"}
 
 
 class Distribution(TypedDict):
@@ -63,7 +63,7 @@ class Release(TypedDict):
 @cache
 def release_metadata(package: str, version: str) -> Release | None:
     """Get the release metadata from PyPI, or None if it can't be fetched."""
-    response = fetch(f"{PYPI}/pypi/{package}/{version}/json", LOG)
+    response = fetch(f"{_PYPI}/pypi/{package}/{version}/json", _LOG)
     return response.json() if response is not None else None
 
 
@@ -77,7 +77,7 @@ def project_metadata(package: str) -> dict:
     and `newest_publication_date` share this single request.
     """
     headers = {"Accept": "application/vnd.pypi.simple.v1+json"}
-    response = fetch(f"{PYPI}/simple/{package}/", LOG, headers=headers)
+    response = fetch(f"{_PYPI}/simple/{package}/", _LOG, headers=headers)
     return response.json() if response is not None else {}
 
 
@@ -185,10 +185,10 @@ def get_changes(package: str, version: str) -> str:
     info = metadata["info"]
     urls = info.get("project_urls", {})
     for url_key, url in urls.items():
-        if url_key.lower() in CHANGELOG_URL_KEYS and (changelog := changelog_from_url(url, version)):
+        if url_key.lower() in _CHANGELOG_URL_KEYS and (changelog := changelog_from_url(url, version)):
             return changelog
     for url_key, url in urls.items():
-        if url_key.lower() in REPOSITORY_URL_KEYS and (
+        if url_key.lower() in _REPOSITORY_URL_KEYS and (
             changelog := changelog_from_github_releases(url, package, version)
         ):
             return changelog
@@ -206,7 +206,7 @@ def get_publication_datetime(package: str, version: str) -> datetime | None:
 
 def changelog_from_url(url: str, version: str) -> str:
     """Get the changelog from the URL."""
-    changelog_response = fetch(github_to_raw(url), LOG)
+    changelog_response = fetch(github_to_raw(url), _LOG)
     if changelog_response is None:
         return ""
     if changelog_response.headers["Content-Type"].startswith("text/html"):

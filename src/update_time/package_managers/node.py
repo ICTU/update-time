@@ -16,11 +16,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-LOG = get_logger("package.json")
-COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
+_LOG = get_logger("package.json")
+_COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
 
 # pnpm measures its cooldown (`minimumReleaseAge`) in minutes, while Update-time's --cooldown option is in days.
-MINUTES_PER_DAY = 24 * 60
+_MINUTES_PER_DAY = 24 * 60
 
 
 def _npm_installed_versions(listed: dict | list) -> dict[str, str]:
@@ -77,7 +77,7 @@ class PackageManager:
 
     def update_package_json(self, package_json: Path) -> None:
         """Update the package.json and its lockfile using this package manager."""
-        LOG.path(package_json)
+        _LOG.path(package_json)
         original_contents = package_json.read_text()
         cooldown = self.cooldown_options(package_json.parent)
         outdated = run(Command(*self.outdated, *cooldown), package_json.parent)
@@ -98,7 +98,7 @@ class PackageManager:
                 published = get_publication_datetime(package, new_version)
                 package_version = DependencyVersion(new_version, changes, published=published)
                 # npm/pnpm own the rewrite, so no per-dependency line is surfaced: report the manifest, no line number.
-                LOG.new_version(package, package_version, Location(package_json))
+                _LOG.new_version(package, package_version, Location(package_json))
         # The manager normalizes specs (e.g. npm rewrites git URLs to the github: shorthand) whenever it saves
         # package.json. When nothing was actually updated, restore the original manifest so reformatting doesn't
         # produce a spurious diff.
@@ -106,10 +106,10 @@ class PackageManager:
             package_json.write_text(original_contents)
 
 
-NPM = PackageManager(
-    outdated=Command("npm", "outdated", "--json", *COMMON_NPM_OPTIONS),
-    update=Command("npm", "update", "--save", *COMMON_NPM_OPTIONS),
-    installed=Command("npm", "list", "--json", "--depth=0", *COMMON_NPM_OPTIONS),
+_NPM = PackageManager(
+    outdated=Command("npm", "outdated", "--json", *_COMMON_NPM_OPTIONS),
+    update=Command("npm", "update", "--save", *_COMMON_NPM_OPTIONS),
+    installed=Command("npm", "list", "--json", "--depth=0", *_COMMON_NPM_OPTIONS),
     config_get=Command("npm", "config", "get"),
     # npm config keys that hold back fresh releases. If the project sets either, we leave its cooldown alone (and
     # `min-release-age` can't be combined with `before`, so a project-level `before` also means we add nothing).
@@ -118,7 +118,7 @@ NPM = PackageManager(
     cooldown_option=lambda days: f"--min-release-age={days}",
     installed_versions=_npm_installed_versions,
 )
-PNPM = PackageManager(
+_PNPM = PackageManager(
     outdated=Command("pnpm", "outdated", "--format", "json"),
     # Deliberately without `--latest`, which would cross the version ranges declared in package.json; without it,
     # pnpm stays within the declared ranges, like `npm update` does.
@@ -127,10 +127,10 @@ PNPM = PackageManager(
     config_get=Command("pnpm", "config", "get"),
     cooldown_config_keys=("minimumReleaseAge",),
     cooldown_unset="undefined",  # `pnpm config get` reports an unset key as `undefined` (not its built-in default).
-    cooldown_option=lambda days: f"--config.minimumReleaseAge={days * MINUTES_PER_DAY}",
+    cooldown_option=lambda days: f"--config.minimumReleaseAge={days * _MINUTES_PER_DAY}",
     installed_versions=_pnpm_installed_versions,
 )
 # The managers Update-time can update, keyed by name. The updater resolves a detected manager name against this
 # catalog and skips a project whose manager isn't here (yarn, bun) rather than mishandling it by running npm (which
 # would write a stray package-lock.json and ignore the real lock).
-SUPPORTED_MANAGERS = {"npm": NPM, "pnpm": PNPM}
+SUPPORTED_MANAGERS = {"npm": _NPM, "pnpm": _PNPM}

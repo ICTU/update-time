@@ -7,8 +7,6 @@ from unittest.mock import Mock, patch
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.version import Yank
 from update_time.sources.pypi import (
-    CHANGELOG_URL_KEYS,
-    REPOSITORY_URL_KEYS,
     changelog_from_url,
     get_changes,
     get_latest_version,
@@ -56,7 +54,7 @@ class GetChangesTest(LoggingTestCase):
     def test_changelog_url_found(self, mock_get: Mock):
         """Test that the changes are returned if a changelog URL is returned by PyPI."""
         changelog = "Changelog\n## 1.1\n- Fixed foo\n"
-        for key in CHANGELOG_URL_KEYS:
+        for key in ("changes", "changelog", "release notes"):
             with self.subTest(key=key):
                 self.create_mock_response(
                     mock_get, {"info": {"project_urls": {key: "https://changes"}}}, text=changelog
@@ -66,7 +64,7 @@ class GetChangesTest(LoggingTestCase):
     def test_changelog_url_gives_error(self, mock_get: Mock):
         """Test that changelog URLs are skipped if they result in an HTTP error."""
         for status_code in (HTTPStatus.BAD_REQUEST, HTTPStatus.NOT_FOUND):
-            for key in CHANGELOG_URL_KEYS:
+            for key in ("changes", "changelog", "release notes"):
                 with self.subTest(status_code=status_code, key=key):
                     self.create_mock_response(
                         mock_get,
@@ -80,7 +78,7 @@ class GetChangesTest(LoggingTestCase):
         changelog = "Changelog\n## 1.1\n- Fixed foo\n"
         repo = "https://github.com/org/repo"
         docs = "https://docs"
-        for key in REPOSITORY_URL_KEYS:
+        for key in ("repository", "source", "homepage"):
             with self.subTest(key=key):
                 self.create_mock_response(
                     mock_get,

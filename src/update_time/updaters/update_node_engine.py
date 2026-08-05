@@ -15,10 +15,10 @@ from update_time.sources.oci import get_latest_tag
 if TYPE_CHECKING:
     from pathlib import Path
 
-LOG = get_logger("node engine")
-NODE_IMAGE_RE = r"FROM node:(?P<version>[\d\.]+)"
-NODE_BASE_IMAGE_RE = r"FROM node:(?P<tag>\S+)"
-NODE_ENGINE_RE = r'"(?P<dependency>node)": "(?P<version>[\d\.]+)"'
+_LOG = get_logger("node engine")
+_NODE_IMAGE_RE = r"FROM node:(?P<version>[\d\.]+)"
+_NODE_BASE_IMAGE_RE = r"FROM node:(?P<tag>\S+)"
+_NODE_ENGINE_RE = r'"(?P<dependency>node)": "(?P<version>[\d\.]+)"'
 
 
 def has_node_engine(package_json: Path) -> bool:
@@ -33,12 +33,12 @@ def node_base_image_version(dockerfile: Path) -> str:
     Returns an empty string if the Dockerfile is missing, has no Node base image, or its Node base image uses a
     non-numeric tag such as 'node:lts' (from which no concrete version can be derived).
     """
-    return first_line_match(dockerfile, NODE_IMAGE_RE, "version")
+    return first_line_match(dockerfile, _NODE_IMAGE_RE, "version")
 
 
 def node_base_image_tag(dockerfile: Path) -> str:
     """Return the tag of the Node base image (e.g. '22.1.0', '22-alpine' or 'lts'), or empty string if none."""
-    return first_line_match(dockerfile, NODE_BASE_IMAGE_RE, "tag")
+    return first_line_match(dockerfile, _NODE_BASE_IMAGE_RE, "tag")
 
 
 def find_node_dockerfile(package_json: Path) -> Path:
@@ -66,15 +66,18 @@ def update_node_engine(package_json: Path) -> None:
     dockerfile = find_node_dockerfile(package_json)
     if version := node_base_image_version(dockerfile):
         update_file(
-            package_json, NODE_ENGINE_RE, get_new_version=lambda *_args: DependencyVersion(version=version), logger=LOG
+            package_json,
+            _NODE_ENGINE_RE,
+            get_new_version=lambda *_args: DependencyVersion(version=version),
+            logger=_LOG,
         )
         return
     if tag := node_base_image_tag(dockerfile):
         # A Node base image exists but uses a non-numeric tag (e.g. 'node:lts'); we can't derive a concrete
         # version to sync the engine to, so skip without failing the run.
-        LOG.non_numeric_node_base_image(dockerfile, tag)
+        _LOG.non_numeric_node_base_image(dockerfile, tag)
         return
-    update_file(package_json, NODE_ENGINE_RE, get_new_version=get_latest_tag, logger=LOG)
+    update_file(package_json, _NODE_ENGINE_RE, get_new_version=get_latest_tag, logger=_LOG)
 
 
 def update_node_engines() -> None:

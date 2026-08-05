@@ -16,7 +16,7 @@ from update_time.package_managers import uv
 if TYPE_CHECKING:
     from pathlib import Path
 
-LOG = get_logger("python inline script metadata")
+_LOG = get_logger("python inline script metadata")
 # PEP 723 inline metadata opens with a line that is exactly `# /// script` (a `# /// <type>` block of type `script`).
 _SCRIPT_BLOCK = re.compile(r"^# /// script\s*$", re.MULTILINE)
 
@@ -30,10 +30,10 @@ def update_python_inline_script_metadatas() -> None:
     """Find all .py files with inline script metadata and update the exact pins in their `# /// script` blocks."""
     scripts = [script for script in glob("*.py") if _has_script_block(script)]
     for script in scripts:
-        uv.update_python_inline_script_metadata(script, LOG)
+        uv.update_python_inline_script_metadata(script, _LOG)
     # Check staleness after the update, so it reads the `==` pins uv settled on, reusing the PyPI source (the same
     # one the pyproject.toml and requirements.txt updaters use).
-    warn_about_stale_dependencies(scripts, uv.newest_pypi_releases, LOG.warn_if_stale)
+    warn_about_stale_dependencies(scripts, uv.newest_pypi_releases, _LOG.warn_if_stale)
 
 
 def main() -> None:  # pragma: no cover

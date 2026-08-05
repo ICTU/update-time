@@ -4,12 +4,7 @@ import unittest
 from unittest.mock import ANY, Mock, patch
 
 from update_time.primitives.location import Location
-from update_time.updaters.update_devcontainer import (
-    DEVCONTAINER_GLOBS,
-    FEATURE_RE,
-    IMAGE_RE,
-    update_devcontainers,
-)
+from update_time.updaters.update_devcontainer import update_devcontainers
 
 from tests.helpers import mock_path
 from tests.update_time import registry
@@ -82,13 +77,22 @@ class ScannedDevcontainersTest(unittest.TestCase):
         """Test that the top-level, `.devcontainer/`, and per-configuration subfolder locations are all scanned."""
         mock_glob.return_value = []
         update_devcontainers()
-        mock_glob.assert_called_once_with(*DEVCONTAINER_GLOBS)
+        mock_glob.assert_called_once_with(
+            ".devcontainer.json", ".devcontainer/devcontainer.json", ".devcontainer/*/devcontainer.json"
+        )
 
     @patch("update_time.updaters.update_devcontainer.update_file", return_value=0)
     @patch("update_time.updaters.update_devcontainer.glob")
     def test_image_and_features_are_updated(self, mock_glob: Mock, mock_update_file: Mock):
-        """Test that each devcontainer.json is scanned for both its image and its feature references in one pass."""
+        """Test that each devcontainer.json is scanned for both its image and its feature references in one pass.
+
+        The two patterns are checked by what they match rather than by identity, so the test says which references
+        each one picks up instead of repeating the expressions the updater builds them from.
+        """
         mock_file = mock_path("{}")
         mock_glob.return_value = [mock_file]
         update_devcontainers()
-        mock_update_file.assert_called_once_with(mock_file, IMAGE_RE, FEATURE_RE, get_new_version=ANY, logger=ANY)
+        mock_update_file.assert_called_once_with(mock_file, ANY, ANY, get_new_version=ANY, logger=ANY)
+        image_pattern, feature_pattern = mock_update_file.call_args.args[1:3]
+        self.assertRegex('"image": "python:3.12"', image_pattern)
+        self.assertRegex('"ghcr.io/devcontainers/features/node:1": {', feature_pattern)

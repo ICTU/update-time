@@ -13,7 +13,7 @@ from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
 from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
 from tests.update_time.registry import mock_docker_registry
 
-CIRCLE_CI_DIR = Path("/repo/.circleci")
+_CIRCLE_CI_DIR = Path("/repo/.circleci")
 
 
 @mock_docker_hub_auth
@@ -27,7 +27,7 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
     def run_updater(self, mock_file: Mock) -> None:
         """Run the CircleCI updater with the mock file as the only YAML file under the CircleCI directory."""
         with patch("pathlib.Path.glob", side_effect=[[mock_file], []]):
-            update_circle_ci_config(CIRCLE_CI_DIR)
+            update_circle_ci_config(_CIRCLE_CI_DIR)
 
     def test_multiple_files(self):
         """Test that images are updated in all YAML files under the CircleCI directory, not just config.yml."""
@@ -35,7 +35,7 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         config_yml = mock_path(f"image: cimg/go:1.26.1@{DIGEST1}\n")
         next_yml = mock_path(f"image: cimg/go:1.26.1@{DIGEST1}\n")
         with patch("pathlib.Path.glob", side_effect=[[config_yml], [next_yml]]):
-            update_circle_ci_config(CIRCLE_CI_DIR)
+            update_circle_ci_config(_CIRCLE_CI_DIR)
         config_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         next_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         self.assert_path_logged(next_yml)

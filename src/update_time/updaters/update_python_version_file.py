@@ -19,16 +19,16 @@ if TYPE_CHECKING:
 
     from update_time.domain.bound import NewVersionGetter, VersionBound
 
-LOG = get_logger("python version file")
+_LOG = get_logger("python version file")
 
 # The Python version file, read from the repository root but supported per package too (a monorepo can carry one per
 # package), so it is looked up recursively from the scan root. It is a hidden (dot-prefixed) file, but naming it in
 # the glob pattern makes `glob` visit it anyway.
-PYTHON_VERSION_FILE = ".python-version"
+_PYTHON_VERSION_FILE = ".python-version"
 
 # The dependency name reported for every `.python-version` entry. Unlike most references, the name is not in the file
 # (the file holds only a bare version), so it is supplied here rather than captured from the line.
-PYTHON = "python"
+_PYTHON = "python"
 
 # A `.python-version` entry that is a plain CPython version, `X.Y` or `X.Y.Z` (e.g. `3.12` or `3.12.6`), alone on
 # its line except for an optional trailing `#` comment. That comment is what lets an inline `# update-time:` marker
@@ -36,13 +36,13 @@ PYTHON = "python"
 # implementations
 # (`pypy3.10-…`), free-threaded/variant suffixes (`3.13t`), prefixed forms (`cpython@3.12`, `>=3.10`), sentinels
 # (`system`), and any other trailing text.
-VERSION_RE = re.compile(r"^\s*(?P<version>\d+\.\d+(?:\.\d+)?)\s*(?:#.*)?$")
+_VERSION_RE = re.compile(r"^\s*(?P<version>\d+\.\d+(?:\.\d+)?)\s*(?:#.*)?$")
 
 # A `FROM python:<version>` base image in a Dockerfile, capturing the numeric main version at the precision the tag
 # provides (`3.14` from `python:3.14`, `3.14.2` from `python:3.14.2-slim@sha256:…`). An optional `--platform=…` flag
 # is matched but not captured. A non-numeric tag (`python:slim`, `python:latest`) doesn't match, so the entry falls
 # back to Docker Hub instead. Only the official `python` image is recognised; other Python base images fall back too.
-PYTHON_IMAGE_RE = re.compile(r"FROM (?:--platform=\S+\s+)?python:(?P<version>\d+\.\d+(?:\.\d+)?)")
+_PYTHON_IMAGE_RE = re.compile(r"FROM (?:--platform=\S+\s+)?python:(?P<version>\d+\.\d+(?:\.\d+)?)")
 
 
 def _find_python_base_image_version(version_file: Path) -> str:
@@ -55,7 +55,7 @@ def _find_python_base_image_version(version_file: Path) -> str:
     """
     local_dockerfile = version_file.parent / DOCKERFILE_NAME
     for dockerfile in (local_dockerfile, *glob(*DOCKERFILE_GLOB_PATTERNS)):
-        if version := first_line_match(dockerfile, PYTHON_IMAGE_RE, "version"):
+        if version := first_line_match(dockerfile, _PYTHON_IMAGE_RE, "version"):
             return version
     return ""
 
@@ -82,10 +82,10 @@ def _image_version_getter(image_version: str) -> NewVersionGetter:
 
 def update_python_version_files(start: Path | None = None) -> None:
     """Update the CPython version in all `.python-version` files found recursively from the start directory."""
-    for version_file in glob(PYTHON_VERSION_FILE, start=start):
+    for version_file in glob(_PYTHON_VERSION_FILE, start=start):
         image_version = _find_python_base_image_version(version_file)
         get_new_version = _image_version_getter(image_version) if image_version else get_latest_tag
-        update_file(version_file, VERSION_RE, get_new_version=get_new_version, logger=LOG, dependency=PYTHON)
+        update_file(version_file, _VERSION_RE, get_new_version=get_new_version, logger=_LOG, dependency=_PYTHON)
 
 
 def main() -> None:  # pragma: no cover

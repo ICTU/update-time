@@ -193,7 +193,11 @@ class Logger:
     def __init__(self, name: str) -> None:
         """Initialize the logger."""
         self.log = logging.getLogger(name)
-        self.logged_changes: set[tuple[str, DependencyVersion]] = set()
+        self._logged_changes: set[tuple[str, DependencyVersion]] = set()
+
+    def forget_shown_changelogs(self) -> None:
+        """Forget which changelogs were shown, so reporting one of them again shows it rather than suppressing it."""
+        self._logged_changes.clear()
 
     def _log(self, message: LogMessage, **fields: object) -> None:
         """Emit a log record at the message's own level, attributing it to the updater that triggered it.
@@ -279,11 +283,11 @@ class Logger:
 
     def new_version(self, dependency: str, version: DependencyVersion, location: Location) -> None:
         """Log the availability of a new version for a dependency in a file, with its UTC publication date if known."""
-        if (dependency, version) in self.logged_changes:
+        if (dependency, version) in self._logged_changes:
             changes = self._SUPPRESSING_CHANGELOG
         else:
             changes = version.changes or self._NO_CHANGELOG
-        self.logged_changes.add((dependency, version))
+        self._logged_changes.add((dependency, version))
         self._log(
             self._MESSAGE_NEW_VERSION, dependency=dependency, location=location, version=str(version), changes=changes
         )
@@ -682,6 +686,21 @@ class Logger:
         self._log(self._MESSAGE_COMMAND_STDERR, command=command, stderr=stderr)
 
 
+# The loggers handed out so far, so their changelog-suppression state can be reset without hunting for the module
+# constants holding them. A run resets nothing; the tests do, between test cases sharing this process.
+_LOGGERS: list[Logger] = []
+
+
+def reset_changelog_suppression() -> None:
+    """Forget which changelogs were shown, so the next report of one shows it again.
+
+    A logger suppresses a changelog it has already shown, which lasts as long as the logger does. The loggers are
+    module constants, and so outlive a single test, hence this way of putting them back as they started.
+    """
+    for logger in _LOGGERS:
+        logger.forget_shown_changelogs()
+
+
 def get_logger(name: str) -> Logger:
     """Initialize a logger, configuring the root logger to send all diagnostics to stderr on the first call.
 
@@ -697,4 +716,6 @@ def get_logger(name: str) -> Logger:
         logging.basicConfig(
             level=LOG_LEVEL.get(), datefmt=LOG_TIME_FORMAT, format=LOG_MESSAGE_FORMAT, handlers=[handler]
         )
-    return Logger(name)
+    logger = Logger(name)
+    _LOGGERS.append(logger)
+    return logger

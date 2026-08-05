@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
     from update_time.primitives.command import Command
 
-LOG = get_logger("process")
+_LOG = get_logger("process")
 
 
 def run(command: Command, cwd: Path | None = None) -> Result:
@@ -25,12 +25,12 @@ def run(command: Command, cwd: Path | None = None) -> Result:
     try:
         completed = subprocess.run(command, capture_output=True, text=True, check=True, cwd=cwd)  # noqa: S603 # nosec
     except FileNotFoundError:
-        LOG.command_not_found(command)
+        _LOG.command_not_found(command)
         return Result("", "", succeeded=False)
     except subprocess.CalledProcessError as error:
         result = Result(error.stdout, error.stderr, succeeded=False)
     else:
         result = Result(completed.stdout, completed.stderr, succeeded=True)
     if not result.ok and result.stderr:
-        LOG.command_stderr(command, result.stderr)
+        _LOG.command_stderr(command, result.stderr)
     return result
