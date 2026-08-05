@@ -28,16 +28,16 @@ if TYPE_CHECKING:
     from update_time.domain.version import DependencyVersion, Reference
     from update_time.primitives.location import Location
 
-LOG = get_logger("jsdelivr")
+_LOG = get_logger("jsdelivr")
 
 # A jsDelivr npm URL. The file path after the version is captured so its (instead of the package default's) integrity
 # hash is what gets updated.
-URL_RE = re.compile(r'https://cdn\.jsdelivr\.net/npm/(?P<dependency>[\w-]+)@(?P<version>[\d.]+)(?P<filename>/[^"]*)')
+_URL_RE = re.compile(r'https://cdn\.jsdelivr\.net/npm/(?P<dependency>[\w-]+)@(?P<version>[\d.]+)(?P<filename>/[^"]*)')
 
 # The attribute dictionary a URL is accompanied by, and the Subresource Integrity hash it declares. The hash is
 # optional, so a dictionary that declares none matches too; pinning it inserts the key in front of the entries it
 # already has, which is what replacing `open` does.
-ATTRIBUTES_RE = re.compile(r'(?P<open>\{)(?:"integrity": "(?P<sha>sha\d+-[A-Za-z0-9+/=]+)", )?')
+_ATTRIBUTES_RE = re.compile(r'(?P<open>\{)(?:"integrity": "(?P<sha>sha\d+-[A-Za-z0-9+/=]+)", )?')
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,7 @@ class _ResolvedURL:
         """
         sha = self.latest.sha or integrity_hash(self.reference.dependency, self.latest.version, self.filename)
         if not self.version_moved:
-            LOG.pinned(self.reference.dependency, replace(self.latest, sha=sha), self.location)
+            _LOG.pinned(self.reference.dependency, replace(self.latest, sha=sha), self.location)
         return rewrite_line(match, {"open": f'{{"integrity": "{sha}", '})
 
     def _refresh(self, match: re.Match[str]) -> str:
@@ -94,7 +94,7 @@ class _ResolvedURL:
         dependency, version = self.reference.dependency, self.reference.current_version
         served_hash = integrity_hash(dependency, version, self.filename)
         if hash_drifted(served_hash, declared_hash):
-            LOG.hash_mismatch(dependency, version, declared_hash, served_hash, self.location)
+            _LOG.hash_mismatch(dependency, version, declared_hash, served_hash, self.location)
 
 
 @dataclass
@@ -117,13 +117,13 @@ class _Rewriter:
         """
         reference = matched_reference(match)
         filename = match.group("filename")
-        latest = latest_version(reference, version_getter(filename), marker, location, LOG)
+        latest = latest_version(reference, version_getter(filename), marker, location, _LOG)
         if latest is None:
             return match.string
         self.resolved = _ResolvedURL(reference, latest, filename, location)
         if not self.resolved.version_moved:
             return match.string
-        LOG.new_version(reference.dependency, latest, location)
+        _LOG.new_version(reference.dependency, latest, location)
         return rewrite_line(match, {"version": latest.version})
 
     def updated_lines(self, lines: list[Line]) -> list[str]:
@@ -136,10 +136,10 @@ class _Rewriter:
         """
         result = []
         for line in lines:
-            if url_match := URL_RE.search(line.text):
+            if url_match := _URL_RE.search(line.text):
                 self._end_entry()
-                result.append(apply_marker(line, url_match, self.update_url, LOG))
-            elif (resolved := self.resolved) and (attributes_match := ATTRIBUTES_RE.search(line.text)):
+                result.append(apply_marker(line, url_match, self.update_url, _LOG))
+            elif (resolved := self.resolved) and (attributes_match := _ATTRIBUTES_RE.search(line.text)):
                 self.resolved = None
                 result.append(resolved.update_attributes(attributes_match))
             else:
@@ -154,14 +154,14 @@ class _Rewriter:
         below never inherits a hash resolved for the one above.
         """
         if self.resolved is not None:
-            LOG.cannot_pin(self.resolved.reference.dependency, self.resolved.location)
+            _LOG.cannot_pin(self.resolved.reference.dependency, self.resolved.location)
             self.resolved = None
 
 
 def update_jsdelivrs() -> None:
     """Find the Sphinx config files under docs/ and update the jsDelivr URLs in them."""
     for sphinx_config_py in glob("conf.py", start=Path.cwd() / "docs"):
-        rewrite_file(sphinx_config_py, _Rewriter().updated_lines, LOG)
+        rewrite_file(sphinx_config_py, _Rewriter().updated_lines, _LOG)
 
 
 def main() -> None:  # pragma: no cover

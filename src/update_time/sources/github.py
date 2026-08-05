@@ -25,13 +25,13 @@ from update_time.io.log import get_logger
 if TYPE_CHECKING:
     from update_time.domain.bound import VersionBound
 
-LOG = get_logger("github")
+_LOG = get_logger("github")
 
 # The GitHub REST API's per-repository base URL, shared by the releases, tags, and commits endpoints.
-GITHUB_API = "https://api.github.com/repos"
+_GITHUB_API = "https://api.github.com/repos"
 # GitHub's maximum page size, for the releases and tags endpoints. Only the first page of each is fetched, so at
 # most this many of the most recent releases and tags are considered.
-PER_PAGE = 100
+_PER_PAGE = 100
 
 
 class ReleaseJSON(TypedDict):
@@ -157,7 +157,7 @@ class TaggedVersion:
         dependency = self.dependency
         commit, reason = _get_commit(self.owner, self.repository, self.tag_name)
         if commit is None:
-            LOG.no_commit_sha(
+            _LOG.no_commit_sha(
                 dependency, self.tag_name, reason, f"https://github.com/{dependency}/releases/tag/{self.tag_name}"
             )
             return None
@@ -236,8 +236,8 @@ def _list_releases(owner: str, repository: str) -> tuple[ReleaseJSON, ...] | Non
     An empty tuple means the repo was reached but has no releases; None means the fetch itself failed (already
     logged by `fetch`). Distinguishing the two lets callers avoid reporting a network problem a second time.
     """
-    releases_url = f"{GITHUB_API}/{owner}/{repository}/releases?per_page={PER_PAGE}"
-    response = fetch(releases_url, LOG, headers=_github_headers())
+    releases_url = f"{_GITHUB_API}/{owner}/{repository}/releases?per_page={_PER_PAGE}"
+    response = fetch(releases_url, _LOG, headers=_github_headers())
     return tuple(response.json()) if response is not None else None
 
 
@@ -248,8 +248,8 @@ def _list_tags(owner: str, repository: str) -> tuple[TagJSON, ...] | None:
     Mirrors `_list_releases`: an empty tuple means the repo was reached but has no tags; None means the fetch
     itself failed (already logged by `fetch`).
     """
-    tags_url = f"{GITHUB_API}/{owner}/{repository}/tags?per_page={PER_PAGE}"
-    response = fetch(tags_url, LOG, headers=_github_headers())
+    tags_url = f"{_GITHUB_API}/{owner}/{repository}/tags?per_page={_PER_PAGE}"
+    response = fetch(tags_url, _LOG, headers=_github_headers())
     return tuple(response.json()) if response is not None else None
 
 
@@ -262,8 +262,8 @@ def _get_commit(owner: str, repository: str, ref: str) -> tuple[CommitJSON | Non
     response, so each caller can report the failure, with the returned reason, in its own terms. A non-OK GitHub
     response explains itself in its body's `message` (e.g. "API rate limit exceeded for …"), so that is included.
     """
-    commits_url = f"{GITHUB_API}/{owner}/{repository}/commits/{ref}"
-    response = fetch(commits_url, LOG, headers=_github_headers(), require_ok=False)
+    commits_url = f"{_GITHUB_API}/{owner}/{repository}/commits/{ref}"
+    response = fetch(commits_url, _LOG, headers=_github_headers(), require_ok=False)
     if response is None:
         return None, "the request failed"
     if not response.ok:
@@ -336,7 +336,7 @@ def get_latest_version(
         return unchanged  # Couldn't reach GitHub; the fetches already logged a warning.
     valid_versions = [version for version in tagged_versions if version.is_candidate]
     if not valid_versions:
-        LOG.no_version(f"{owner}/{repository}")
+        _LOG.no_version(f"{owner}/{repository}")
         return unchanged
     current = Version(current_version)
     candidates = [
@@ -357,7 +357,7 @@ def _eligible_version(tagged_version: TaggedVersion) -> DependencyVersion | None
     adopted with the cooldown unchecked.
     """
     if (reason := tagged_version.missing_date_reason) is not None:
-        LOG.no_tag_date(tagged_version.dependency, tagged_version.tag_name, reason)
+        _LOG.no_tag_date(tagged_version.dependency, tagged_version.tag_name, reason)
         return None
     published = tagged_version.publication_date
     if within_cooldown(published) or (sha := tagged_version.commit_sha) is None:

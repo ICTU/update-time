@@ -14,11 +14,11 @@ if TYPE_CHECKING:
     from update_time.domain.line import Line
     from update_time.domain.version import DependencyVersion, Reference
 
-LOG = get_logger("github action")
+_LOG = get_logger("github action")
 # Match a `uses:` reference that is either already pinned to a commit SHA with a version comment
 # (`<sha> # vX.Y.Z`) or unpinned to a version tag (`@vX` / `@vX.Y.Z`). Branch references (e.g. `@main`) and
 # local actions (no `@`) don't carry a resolvable version, so they don't match and are left untouched.
-ACTION_RE = re.compile(
+_ACTION_RE = re.compile(
     r"uses: (?P<dependency>[\w\d\./-]+)@"
     r"(?:(?P<sha>[a-f0-9]{40}) # v?(?P<version>[\d\w\.\-]+)|v(?P<tag>[\d\w\.\-]+))"
 )
@@ -32,18 +32,18 @@ def _spell_action(reference: Reference, latest: DependencyVersion) -> str:
     return f"uses: {reference.dependency}@{latest.sha} # v{latest.version}"
 
 
-_ACTION = PinUpdater(_spell_action, LOG)
+_ACTION = PinUpdater(_spell_action, _LOG)
 
 
 def _updated_lines(lines: list[Line]) -> list[str]:
     """Return the file's lines with every `uses:` reference pinned or bumped, honouring markers."""
-    return updated_lines(lines, ACTION_RE, _ACTION.update_line, LOG)
+    return updated_lines(lines, _ACTION_RE, _ACTION.update_line, _LOG)
 
 
 def update_github_actions(github_dir: Path) -> None:
     """Update the GitHub Actions in all YAML files under the GitHub directory, including composite actions."""
     for yaml_file in glob(*YAML_GLOB_PATTERNS, start=github_dir):
-        rewrite_file(yaml_file, _updated_lines, LOG)
+        rewrite_file(yaml_file, _updated_lines, _LOG)
 
 
 def main() -> None:  # pragma: no cover

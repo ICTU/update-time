@@ -15,12 +15,12 @@ from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.helpers import LoggingTestCase, bound
 
-HOOKS = "hooks:\n      - id: trailing-whitespace\n"
+_HOOKS = "hooks:\n      - id: trailing-whitespace\n"
 
 
 def config(rev_block: str) -> str:
     """Return a pre-commit config with a single GitHub-hosted hook repository carrying the given rev block."""
-    return f"repos:\n  - repo: https://github.com/pre-commit/pre-commit-hooks\n    {rev_block}    {HOOKS}"
+    return f"repos:\n  - repo: https://github.com/pre-commit/pre-commit-hooks\n    {rev_block}    {_HOOKS}"
 
 
 @patch("update_time.references.github.get_latest_version")

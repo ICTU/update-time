@@ -192,6 +192,11 @@ check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture 
 
 # === Fix issues ===
 
+# Format and lint-fix Python code, the part of `just fix` a quicker loop needs after an edit.
+format: install-py-dependencies
+    {{ ruff }} format {{ code }}
+    {{ ruff }} check --fix {{ code }}
+
 # Fix quality issues that can be fixed automatically
 fix: install-py-dependencies
     {{ ty }} --fix {{ code }}

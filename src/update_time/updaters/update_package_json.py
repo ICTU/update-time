@@ -15,12 +15,12 @@ if TYPE_CHECKING:
 
     from update_time.domain.version import DependencyVersion
 
-LOG = get_logger("package.json")
+_LOG = get_logger("package.json")
 # Lockfiles that signal which package manager a project uses, checked when there is no corepack `packageManager`
 # field. pnpm is handled like npm; yarn and bun are detected only to be skipped (see node.SUPPORTED_MANAGERS). npm's
 # `package-lock.json` is deliberately absent: npm is the default when nothing else matches, so listing it would be a
 # no-op, and leaving it out lets a real non-npm lockfile win over a stale `package-lock.json` left by a migration.
-LOCKFILES = {"pnpm-lock.yaml": "pnpm", "yarn.lock": "yarn", "bun.lockb": "bun"}
+_LOCKFILES = {"pnpm-lock.yaml": "pnpm", "yarn.lock": "yarn", "bun.lockb": "bun"}
 
 
 def package_manager(package_json: Path) -> str:
@@ -31,7 +31,7 @@ def package_manager(package_json: Path) -> str:
     """
     if declared := package_json_format.read(package_json).get("packageManager", ""):
         return declared.split("@", maxsplit=1)[0]
-    for lockfile, manager in LOCKFILES.items():
+    for lockfile, manager in _LOCKFILES.items():
         if (package_json.parent / lockfile).exists():
             return manager
     return "npm"
@@ -42,11 +42,11 @@ def update_package_jsons() -> None:
     supported = []
     for package_json in glob("package.json"):
         if (manager := node.SUPPORTED_MANAGERS.get(name := package_manager(package_json))) is None:
-            LOG.unsupported_package_manager(package_json, name, " and ".join(node.SUPPORTED_MANAGERS))
+            _LOG.unsupported_package_manager(package_json, name, " and ".join(node.SUPPORTED_MANAGERS))
         else:
             manager.update_package_json(package_json)
             supported.append(package_json)
-    warn_about_stale_dependencies(supported, _newest_releases, LOG.warn_if_stale)
+    warn_about_stale_dependencies(supported, _newest_releases, _LOG.warn_if_stale)
 
 
 def _newest_releases(package_json: Path) -> Iterable[tuple[str, DependencyVersion | None]]:

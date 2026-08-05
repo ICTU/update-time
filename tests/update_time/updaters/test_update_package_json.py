@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN
-from update_time.package_managers.node import COMMON_NPM_OPTIONS
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.updaters.update_package_json import update_package_jsons
@@ -15,10 +14,10 @@ from update_time.updaters.update_package_json import update_package_jsons
 from tests.helpers import mock_path, mock_response, patch_pathlib_path
 from tests.update_time.helpers import LoggingTestCase, github_commits_json, github_release_json, staleness_disabled
 
-NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN.default}"  # the cooldown npm option Update-time adds by default
-PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN.default * 24 * 60}"  # pnpm's, in minutes
-NPM_UNSET = "null\n"  # what `npm config get <cooldown key>` prints when the key is not set
-PNPM_UNSET = "undefined\n"  # what `pnpm config get minimumReleaseAge` prints when the key is not set
+_NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN.default}"  # the cooldown npm option Update-time adds by default
+_PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN.default * 24 * 60}"  # pnpm's, in minutes
+_NPM_UNSET = "null\n"  # what `npm config get <cooldown key>` prints when the key is not set
+_PNPM_UNSET = "undefined\n"  # what `pnpm config get minimumReleaseAge` prints when the key is not set
 
 
 def package_lookup_responses() -> Mock:
@@ -70,16 +69,16 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
 
         Both probes return `null`, so Update-time finds no project cooldown and adds its own to outdated/update.
         """
-        return [Mock(stdout=NPM_UNSET), Mock(stdout=NPM_UNSET), *results]
+        return [Mock(stdout=_NPM_UNSET), Mock(stdout=_NPM_UNSET), *results]
 
     def assert_npm_called(self, mock_run: Mock, *, cooldown: bool = True) -> None:
         """Assert npm outdated, update, and list were called (with the cooldown option when expected)."""
-        cooldown_option = [NPM_COOLDOWN_OPTION] if cooldown else []
+        cooldown_option = [_NPM_COOLDOWN_OPTION] if cooldown else []
         assert_manager_called(
             mock_run,
-            Command("npm", "outdated", "--json", *COMMON_NPM_OPTIONS, *cooldown_option),
-            Command("npm", "update", "--save", *COMMON_NPM_OPTIONS, *cooldown_option),
-            Command("npm", "list", "--json", "--depth=0", *COMMON_NPM_OPTIONS),
+            Command("npm", "outdated", "--json", "--include=dev", "--silent", *cooldown_option),
+            Command("npm", "update", "--save", "--include=dev", "--silent", *cooldown_option),
+            Command("npm", "list", "--json", "--depth=0", "--include=dev", "--silent"),
         )
 
     def test_unchanged(self, mock_run: Mock, mock_glob: Mock):
@@ -233,11 +232,11 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
 
         The probe returns `undefined`, so Update-time finds no project cooldown and adds its own (in minutes).
         """
-        return [Mock(stdout=PNPM_UNSET), *results]
+        return [Mock(stdout=_PNPM_UNSET), *results]
 
     def assert_pnpm_called(self, mock_run: Mock, *, cooldown: bool = True) -> None:
         """Assert pnpm outdated, update, and list were called (with the cooldown option when expected)."""
-        cooldown_option = [PNPM_COOLDOWN_OPTION] if cooldown else []
+        cooldown_option = [_PNPM_COOLDOWN_OPTION] if cooldown else []
         assert_manager_called(
             mock_run,
             Command("pnpm", "outdated", "--format", "json", *cooldown_option),
@@ -360,8 +359,8 @@ class StaleDependencyTest(LoggingTestCase):
     def stub_no_update(mock_run: Mock) -> None:
         """Stub npm to report no updates: two unset cooldown probes, then empty outdated/update/list."""
         mock_run.side_effect = [
-            Mock(stdout=NPM_UNSET),
-            Mock(stdout=NPM_UNSET),
+            Mock(stdout=_NPM_UNSET),
+            Mock(stdout=_NPM_UNSET),
             Mock(stdout="{}"),
             Mock(stdout=""),
             Mock(stdout='{"dependencies": {}}'),

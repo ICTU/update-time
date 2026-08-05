@@ -13,7 +13,7 @@ from tests.helpers import mock_path, mock_response
 from tests.update_time.fixtures import HASH1, HASH2
 from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, npm_registry
 
-FILENAME = "/dist/clipboard.min.js"
+_FILENAME = "/dist/clipboard.min.js"
 
 
 def served(*hashes: str) -> Mock:
@@ -21,22 +21,22 @@ def served(*hashes: str) -> Mock:
 
     Passing no hash models a listing that doesn't mention the referenced file at all, so no hash can be resolved.
     """
-    return mock_response({"default": FILENAME, "files": [{"name": FILENAME, "hash": served} for served in hashes]})
+    return mock_response({"default": _FILENAME, "files": [{"name": _FILENAME, "hash": served} for served in hashes]})
 
 
 # An npm publication date comfortably past the cooldown, relative to now so the decision doesn't depend on the clock.
-ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN.default + 1)).isoformat()
+_ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN.default + 1)).isoformat()
 
 # The deprecation npm reports for clipboard 2.0.11: the reason the registry states, and the yank it becomes.
-DEPRECATION_REASON = "use 3.0 instead"
-DEPRECATED = Yank(yanked=True, reason=DEPRECATION_REASON)
+_DEPRECATION_REASON = "use 3.0 instead"
+_DEPRECATED = Yank(yanked=True, reason=_DEPRECATION_REASON)
 
 
 # The lines a jsDelivr reference is declared with, formatted as Ruff would format them: the URL, and below it the
 # attribute dictionary, either declaring the Subresource Integrity hash or, unpinned, declaring none.
-URL = '"https://cdn.jsdelivr.net/npm/clipboard@2.0.11/dist/clipboard.min.js",'
-INTEGRITY = f'{{"integrity": "sha256-{HASH1}", "crossorigin": "anonymous"}},'
-NO_INTEGRITY = '{"crossorigin": "anonymous"},'
+_URL = '"https://cdn.jsdelivr.net/npm/clipboard@2.0.11/dist/clipboard.min.js",'
+_INTEGRITY = f'{{"integrity": "sha256-{HASH1}", "crossorigin": "anonymous"}},'
+_NO_INTEGRITY = '{"crossorigin": "anonymous"},'
 
 
 def entry(*lines: str) -> str:
@@ -49,7 +49,7 @@ def conf(*entries: str) -> str:
     return "html_js_files = [\n" + "".join(f"    {declared}\n" for declared in entries) + '    "copy_button.js",\n]\n'
 
 
-CONF = conf(entry(URL, INTEGRITY))
+_CONF = conf(entry(_URL, _INTEGRITY))
 
 
 @patch("pathlib.Path.rglob")
@@ -68,7 +68,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
     def offer_versions(
         mock_get: Mock,
         *versions: str,
-        published: str = ELIGIBLE,
+        published: str = _ELIGIBLE,
         deprecated: dict[str, str] | None = None,
         served_hash: str = HASH2,
     ) -> None:
@@ -94,7 +94,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
     def test_new_version_and_hash_reported_at_the_url_line(self, mock_get: Mock, mock_glob: Mock):
         """Test that the version and the integrity hash are updated on a bump, and reported at the URL's line."""
         self.offer_versions(mock_get, "2.0.12", "2.0.11")
-        mock_conf = self.update(CONF, mock_glob)
+        mock_conf = self.update(_CONF, mock_glob)
         new_content = self.written(mock_conf)
         self.assert_path_logged(mock_conf)
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", new_content)
@@ -111,7 +111,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         between is neither taken for the pin nor rewritten along with it.
         """
         self.offer_versions(mock_get, "2.0.12", "2.0.11")
-        mock_conf = self.update(conf(entry(URL, "# do not remove 2.0.11 note", INTEGRITY)), mock_glob)
+        mock_conf = self.update(conf(entry(_URL, "# do not remove 2.0.11 note", _INTEGRITY)), mock_glob)
         new_content = self.written(mock_conf)
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", new_content)  # the pin is bumped
         self.assertIn("# do not remove 2.0.11 note", new_content)  # the lookalike is preserved
@@ -122,7 +122,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
     def test_unchanged(self, mock_get: Mock, mock_glob: Mock):
         """Test that the config is not rewritten if there is no new version."""
         self.offer_versions(mock_get, "2.0.11", served_hash=HASH1)
-        mock_conf = self.update(CONF, mock_glob)
+        mock_conf = self.update(_CONF, mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_path_logged(mock_conf)
         self.assert_no_new_version_logged()
@@ -134,7 +134,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         The config declares HASH1 for the version it sits on, while jsDelivr serves HASH2 for that same version.
         """
         self.offer_versions(mock_get, "2.0.11")
-        mock_conf = self.update(CONF, mock_glob)
+        mock_conf = self.update(_CONF, mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_hash_mismatch_logged(
             "clipboard", "2.0.11", f"sha256-{HASH1}", f"sha256-{HASH2}", Location(mock_conf, 3)
@@ -142,15 +142,15 @@ class UpdateJsdelivrsTest(LoggingTestCase):
 
     def test_unresolvable_hash_is_not_a_mismatch(self, mock_get: Mock, mock_glob: Mock):
         """Test that a file jsDelivr doesn't list leaves nothing to compare, so no mismatch is reported."""
-        mock_get.side_effect = [jsdelivr_versions("2.0.11"), npm_registry({"2.0.11": ELIGIBLE}), served()]
-        mock_conf = self.update(CONF, mock_glob)
+        mock_get.side_effect = [jsdelivr_versions("2.0.11"), npm_registry({"2.0.11": _ELIGIBLE}), served()]
+        mock_conf = self.update(_CONF, mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_no_warnings_logged()
 
     def test_url_without_an_integrity_hash_is_pinned(self, mock_get: Mock, mock_glob: Mock):
         """Test that a URL whose attribute dictionary carries no integrity hash gains one, logged as a pin."""
         self.offer_versions(mock_get, "2.0.11")
-        mock_conf = self.update(conf(entry(URL, NO_INTEGRITY)), mock_glob)
+        mock_conf = self.update(conf(entry(_URL, _NO_INTEGRITY)), mock_glob)
         self.assertIn(f'{{"integrity": "sha256-{HASH2}", "crossorigin": "anonymous"}},', self.written(mock_conf))
         self.assert_pinned_logged("clipboard", "2.0.11", f"sha256-{HASH2}", Location(mock_conf, 3))
         self.assert_no_warnings_logged()
@@ -162,7 +162,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         top of it.
         """
         self.offer_versions(mock_get, "2.0.12", "2.0.11")
-        mock_conf = self.update(conf(entry(URL, NO_INTEGRITY)), mock_glob)
+        mock_conf = self.update(conf(entry(_URL, _NO_INTEGRITY)), mock_glob)
         new_content = self.written(mock_conf)
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", new_content)
         self.assertIn(f'{{"integrity": "sha256-{HASH2}", "crossorigin": "anonymous"}},', new_content)
@@ -176,7 +176,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         rewriting a line, so the URL is left as it is and the reason is reported instead.
         """
         self.offer_versions(mock_get, "2.0.11")
-        mock_conf = self.update(conf(URL), mock_glob)
+        mock_conf = self.update(conf(_URL), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_cannot_pin_logged("clipboard", Location(mock_conf, 2))
         self.assert_no_warnings_logged()
@@ -189,11 +189,11 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         """
         mock_get.side_effect = [
             jsdelivr_versions("2.0.11"),
-            npm_registry({"2.0.11": ELIGIBLE}),
+            npm_registry({"2.0.11": _ELIGIBLE}),
             jsdelivr_versions("2.0.11"),  # the second URL's version list; the npm registry document is cached
             served(HASH1),  # the second URL stays on its version, so its declared hash is compared against this one
         ]
-        mock_conf = self.update(conf(URL, entry(URL, INTEGRITY)), mock_glob)
+        mock_conf = self.update(conf(_URL, entry(_URL, _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_cannot_pin_logged("clipboard", Location(mock_conf, 2))
         self.assert_no_warnings_logged()
@@ -205,8 +205,8 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         alone rather than pinned to a hash resolved for a different reference.
         """
         self.offer_versions(mock_get, "2.0.11")
-        held_back = entry(f"{URL}  # update-time: ignore", NO_INTEGRITY)
-        mock_conf = self.update(conf(URL, held_back), mock_glob)
+        held_back = entry(f"{_URL}  # update-time: ignore", _NO_INTEGRITY)
+        mock_conf = self.update(conf(_URL, held_back), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_cannot_pin_logged("clipboard", Location(mock_conf, 2))
         self.assert_ignored_logged("clipboard", Location(mock_conf, 4))
@@ -215,16 +215,16 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         """Test that a jsDelivr package whose newest release is old is warned about, without rewriting the URL."""
         old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
         self.offer_versions(mock_get, "2.0.11", published=old, served_hash=HASH1)
-        mock_conf = self.update(CONF, mock_glob)
+        mock_conf = self.update(_CONF, mock_glob)
         mock_conf.write_text.assert_not_called()  # no newer version, so no rewrite
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(mock_conf, 3))
 
     def test_deprecated_dependency_warned(self, mock_get: Mock, mock_glob: Mock):
         """Test that a jsDelivr URL left on a deprecated version is warned about, without rewriting the URL."""
-        self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": DEPRECATION_REASON}, served_hash=HASH1)
-        mock_conf = self.update(CONF, mock_glob)
+        self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": _DEPRECATION_REASON}, served_hash=HASH1)
+        mock_conf = self.update(_CONF, mock_glob)
         mock_conf.write_text.assert_not_called()  # no newer version, so no rewrite
-        self.assert_yanked_dependency_logged("clipboard", "2.0.11", Location(mock_conf, 3), DEPRECATED)
+        self.assert_yanked_dependency_logged("clipboard", "2.0.11", Location(mock_conf, 3), _DEPRECATED)
 
     def test_marker_holds_the_pin_back_as_well_as_the_update(self, mock_get: Mock, mock_glob: Mock):
         """Test that an `# update-time: ignore` marker leaves an unpinned URL unpinned, looking nothing up.
@@ -232,7 +232,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         A URL whose dictionary declares no hash would otherwise have one looked up and inserted, so holding the
         update back is not enough: the marker has to hold the pin back too, before any source is queried.
         """
-        mock_conf = self.update(conf(entry(f"{URL}  # update-time: ignore", NO_INTEGRITY)), mock_glob)
+        mock_conf = self.update(conf(entry(f"{_URL}  # update-time: ignore", _NO_INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         mock_get.assert_not_called()
         self.assert_ignored_logged("clipboard", Location(mock_conf, 3))
@@ -241,7 +241,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
 
     def test_marker_above_the_url_holds_it_back(self, mock_get: Mock, mock_glob: Mock):
         """Test that an `# update-time: ignore` comment above a jsDelivr URL holds it back, looking up no version."""
-        mock_conf = self.update(conf(entry("# update-time: ignore", URL, INTEGRITY)), mock_glob)
+        mock_conf = self.update(conf(entry("# update-time: ignore", _URL, _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         mock_get.assert_not_called()
         self.assert_ignored_logged("clipboard", Location(mock_conf, 4))
@@ -250,7 +250,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
 
     def test_inline_marker_holds_the_url_back(self, mock_get: Mock, mock_glob: Mock):
         """Test that an `# update-time: ignore` comment on the URL's own line holds it back too."""
-        mock_conf = self.update(conf(entry(f"{URL}  # update-time: ignore", INTEGRITY)), mock_glob)
+        mock_conf = self.update(conf(entry(f"{_URL}  # update-time: ignore", _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         mock_get.assert_not_called()
         self.assert_ignored_logged("clipboard", Location(mock_conf, 3))
@@ -260,7 +260,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
     def test_bound_limits_the_update(self, mock_get: Mock, mock_glob: Mock):
         """Test that a version bound on the URL is honoured, so the URL advances only as far as the bound allows."""
         self.offer_versions(mock_get, "3.0.0", "2.0.12", "2.0.11")
-        mock_conf = self.update(conf(entry(f"{URL}  # update-time: allow[update<3]", INTEGRITY)), mock_glob)
+        mock_conf = self.update(conf(entry(f"{_URL}  # update-time: allow[update<3]", _INTEGRITY)), mock_glob)
         new_content = self.written(mock_conf)
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", new_content)
         self.assertNotIn("3.0.0", new_content)
@@ -273,11 +273,11 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         The scope narrows the marker to the update, so a URL deliberately frozen on a deprecated version is still
         reported as one, rather than going quiet along with the update.
         """
-        self.offer_versions(mock_get, "2.0.12", "2.0.11", deprecated={"2.0.11": DEPRECATION_REASON})
-        mock_conf = self.update(conf(entry(f"{URL}  # update-time: ignore[update]", INTEGRITY)), mock_glob)
+        self.offer_versions(mock_get, "2.0.12", "2.0.11", deprecated={"2.0.11": _DEPRECATION_REASON})
+        mock_conf = self.update(conf(entry(f"{_URL}  # update-time: ignore[update]", _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()  # the newer version is held back
         location = Location(mock_conf, 3)
-        self.assert_yanked_dependency_logged("clipboard", "2.0.11", location, DEPRECATED)
+        self.assert_yanked_dependency_logged("clipboard", "2.0.11", location, _DEPRECATED)
         self.assert_ignored_logged("clipboard", location, "ignore[update]")
 
     def test_ignore_stale_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
@@ -288,7 +288,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         """
         old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
         self.offer_versions(mock_get, "2.0.12", "2.0.11", published=old)
-        mock_conf = self.update(conf(entry(f"{URL}  # update-time: ignore[stale]", INTEGRITY)), mock_glob)
+        mock_conf = self.update(conf(entry(f"{_URL}  # update-time: ignore[stale]", _INTEGRITY)), mock_glob)
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", self.written(mock_conf))
         self.assert_no_warnings_logged()
         self.assert_ignored_staleness_logged("clipboard", Location(mock_conf, 3), "ignore[stale]")
@@ -299,8 +299,8 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         The hold-back is logged at debug level, and no warning survives, so npm reporting deprecations means the
         marker is not reported as redundant either.
         """
-        self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": DEPRECATION_REASON}, served_hash=HASH1)
-        mock_conf = self.update(conf(entry(f"{URL}  # update-time: ignore[yanked]", INTEGRITY)), mock_glob)
+        self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": _DEPRECATION_REASON}, served_hash=HASH1)
+        mock_conf = self.update(conf(entry(f"{_URL}  # update-time: ignore[yanked]", _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_no_warnings_logged()
         self.assert_ignored_yank_logged("clipboard", Location(mock_conf, 3), "ignore[yanked]")

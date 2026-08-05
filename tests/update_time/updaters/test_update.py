@@ -10,9 +10,26 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.drift import ALLOW_HASH_DRIFT
 from update_time.io.filesystem import EXCLUDE_PATHS
 from update_time.io.log import LOG_LEVEL
-from update_time.updaters.update import PARALLEL_SCRIPTS, SEQUENTIAL_SCRIPTS, main, run_script, update_dependencies
+from update_time.updaters.update import main, run_script, update_dependencies
 
 from tests.helpers import patch_environ, patch_pathlib_path
+
+# The updaters that must run, spelled out so this pins which ones rather than echoing the registry back at itself.
+# `update.py` fails on import when these names and the `update_*.py` scripts on disk disagree.
+_PARALLEL_SCRIPT_NAMES = (
+    "dockerfile_base_image",
+    "pyproject_toml",
+    "requirements_txt",
+    "github_action",
+    "circle_ci_config",
+    "gitlab_ci_config",
+    "manifest_images",
+    "devcontainer",
+    "jsdelivr",
+    "python_inline_script_metadata",
+    "pre_commit_config",
+)
+_SEQUENTIAL_SCRIPT_NAMES = ("node_engine", "package_json", "python_version_file")
 
 
 @patch("subprocess.run")
@@ -36,9 +53,10 @@ class UpdateDependenciesTest(unittest.TestCase):
         mock_run.return_value = Mock(returncode=0)
         self.assertEqual(update_dependencies(), 0)
         scripts_run = [run_call.args[0][-1].split("/")[-1] for run_call in mock_run.call_args_list]
-        expected = [f"update_{name}.py" for name in (*PARALLEL_SCRIPTS, *SEQUENTIAL_SCRIPTS)]
+        expected = [f"update_{name}.py" for name in (*_PARALLEL_SCRIPT_NAMES, *_SEQUENTIAL_SCRIPT_NAMES)]
         self.assertEqual(sorted(expected), sorted(scripts_run))
-        self.assertEqual([f"update_{name}.py" for name in SEQUENTIAL_SCRIPTS], scripts_run[-len(SEQUENTIAL_SCRIPTS) :])
+        sequential = [f"update_{name}.py" for name in _SEQUENTIAL_SCRIPT_NAMES]
+        self.assertEqual(sequential, scripts_run[-len(_SEQUENTIAL_SCRIPT_NAMES) :])
 
     def test_sequential_scripts_run_in_order(self, mock_run: Mock):
         """Test that node_engine runs before package_json (they share the package.json they both rewrite)."""

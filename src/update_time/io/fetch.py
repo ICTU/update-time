@@ -17,7 +17,7 @@ import requests
 if TYPE_CHECKING:
     from update_time.io.log import Logger
 
-TIMEOUT = 10  # Seconds to wait for a registry before giving up on the request.
+_TIMEOUT = 10  # Seconds to wait for a registry before giving up on the request.
 
 
 def fetch(
@@ -30,7 +30,7 @@ def fetch(
     `requests.get`/`.head`/`.post` still apply. Pass `require_ok=False` to receive the response regardless of status.
     """
     try:
-        response = getattr(requests, method)(url, timeout=TIMEOUT, **kwargs)
+        response = getattr(requests, method)(url, timeout=_TIMEOUT, **kwargs)
     except requests.exceptions.Timeout:
         logger.timeout(url)
         return None

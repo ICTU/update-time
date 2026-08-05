@@ -12,24 +12,24 @@ from update_time.io.log import get_logger
 from update_time.references.file import update_file
 from update_time.sources.oci import IMAGE_REFERENCE, get_latest_tag
 
-LOG = get_logger("devcontainer")
+_LOG = get_logger("devcontainer")
 
 # The base image, as a JSON string value: `"image": "mcr.microsoft.com/devcontainers/typescript-node:1"`.
-IMAGE_RE = rf'"image":\s*"{IMAGE_REFERENCE}"'
+_IMAGE_RE = rf'"image":\s*"{IMAGE_REFERENCE}"'
 # A feature, as a JSON object key: `"ghcr.io/devcontainers/features/node:1": { ... }`. The trailing `: {` anchors
 # the match to a feature key (an OCI reference mapping to an options object), so ordinary string values whose text
 # happens to look like `name:version` (e.g. `"appPort": "3000:3000"`) are not matched.
-FEATURE_RE = rf'"{IMAGE_REFERENCE}":\s*{{'
+_FEATURE_RE = rf'"{IMAGE_REFERENCE}":\s*{{'
 
 # Standard devcontainer.json locations: a top-level file, the conventional `.devcontainer/` folder, and
 # per-configuration subfolders under it. `glob` visits these dot-paths because they are named in the patterns.
-DEVCONTAINER_GLOBS = (".devcontainer.json", ".devcontainer/devcontainer.json", ".devcontainer/*/devcontainer.json")
+_DEVCONTAINER_GLOBS = (".devcontainer.json", ".devcontainer/devcontainer.json", ".devcontainer/*/devcontainer.json")
 
 
 def update_devcontainers() -> None:
     """Update the base image and feature references in the repository's devcontainer.json files."""
-    for devcontainer in glob(*DEVCONTAINER_GLOBS):
-        update_file(devcontainer, IMAGE_RE, FEATURE_RE, get_new_version=get_latest_tag, logger=LOG)
+    for devcontainer in glob(*_DEVCONTAINER_GLOBS):
+        update_file(devcontainer, _IMAGE_RE, _FEATURE_RE, get_new_version=get_latest_tag, logger=_LOG)
 
 
 def main() -> None:  # pragma: no cover

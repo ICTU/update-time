@@ -8,7 +8,6 @@ from unittest.mock import ANY, Mock, call, patch
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
 from update_time.package_managers.uv import (
-    EXCLUDE_NEWER_COMMENT,
     _persist_exclude_newer,
     _workspace_root,
     _workspace_table,
@@ -18,10 +17,13 @@ from update_time.package_managers.uv import (
 from tests.helpers import mock_path, patch_environ
 from tests.update_time.helpers import LoggingTestCase, pyproject
 
+# The comment Update-time tags its own `exclude-newer` value with, spelled out so the test pins the wording.
+_MARKER_COMMENT = "managed by Update-time — remove this comment to prevent Update-time from changing it"
+
 
 def marked(cooldown: str) -> str:
     """Return a `[tool.uv] exclude-newer` block with the given cooldown, carrying Update-time's marker comment."""
-    return f'\n[tool.uv]\nexclude-newer = "{cooldown}" # {EXCLUDE_NEWER_COMMENT}\n'
+    return f'\n[tool.uv]\nexclude-newer = "{cooldown}" # {_MARKER_COMMENT}\n'
 
 
 class PersistExcludeNewerTest(LoggingTestCase):
@@ -38,7 +40,7 @@ class PersistExcludeNewerTest(LoggingTestCase):
         pyproject_toml = self.persist(pyproject("a==1.0"))
         written = pyproject_toml.write_text.call_args.args[0]
         self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', written)
-        self.assertIn(EXCLUDE_NEWER_COMMENT, written)
+        self.assertIn(_MARKER_COMMENT, written)
         self.assert_logged(Logger._MESSAGE_UV_COOLDOWN, cooldown=f"{COOLDOWN.default} days", location=ANY)
 
     def test_creates_tool_uv_section_when_absent(self):

@@ -23,6 +23,7 @@ from update_time.io.log import (
     LogHighlighter,
     LogMessage,
     get_logger,
+    reset_changelog_suppression,
 )
 from update_time.primitives.location import Location
 from update_time.references import file
@@ -172,6 +173,19 @@ class LoggerTests(TestCase):
         self.assert_message(mock_log, message, available + "Changelog")
         logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), location)
         self.assert_last_message(mock_log, message, available + "Suppressing changelog already shown, see above")
+
+    def test_reset_changelog_suppression(self, mock_log: Mock):
+        """Test that resetting the suppression makes a logger show a changelog it has already shown."""
+        message = Logger._MESSAGE_NEW_VERSION
+        location = create_location("pyproject.toml", 5)
+        available = f"New version available for {dependency('dependency')} in {at('pyproject.toml:5')}: 1.0\n"
+        logger = get_logger("reset suppression")
+        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), location)
+        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), location)
+        self.assert_last_message(mock_log, message, available + "Suppressing changelog already shown, see above")
+        reset_changelog_suppression()
+        logger.new_version("dependency", DependencyVersion("1.0", "Changelog"), location)
+        self.assert_last_message(mock_log, message, available + "Changelog")
 
     def test_new_version_without_publication_date(self, mock_log: Mock):
         """Test that the version is logged without a publication date when it is unknown."""

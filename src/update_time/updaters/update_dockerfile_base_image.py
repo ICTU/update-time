@@ -5,16 +5,16 @@ from update_time.io.log import get_logger
 from update_time.references.file import update_files
 from update_time.sources.oci import IMAGE_REFERENCE, get_latest_tag
 
-LOG = get_logger("dockerfile")
+_LOG = get_logger("dockerfile")
 # Allow an optional `--platform=…` flag between `FROM` and the image reference (common in multi-arch builds). The flag
 # is matched but not captured, so only the image reference is rewritten and the flag is left untouched.
-IMAGE_RE = rf"FROM (?:--platform=\S+\s+)?{IMAGE_REFERENCE}"
+_IMAGE_RE = rf"FROM (?:--platform=\S+\s+)?{IMAGE_REFERENCE}"
 
 
 def update_dockerfiles() -> None:
     """Update the base image of Dockerfiles."""
     update_files(
-        *DOCKERFILE_GLOB_PATTERNS, regexp=IMAGE_RE, get_new_version=get_latest_tag, logger=LOG, case_sensitive=False
+        *DOCKERFILE_GLOB_PATTERNS, regexp=_IMAGE_RE, get_new_version=get_latest_tag, logger=_LOG, case_sensitive=False
     )
 
 
