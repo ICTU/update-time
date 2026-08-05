@@ -70,7 +70,9 @@ options:
                         image, GitHub Action, pre-commit hook,
                         requirements.txt, npm, pnpm, pyproject.toml, Python
                         inline script metadata, .python-version, and jsDelivr
-                        versions (default: 7)
+                        versions, except for references that set a cooldown of
+                        their own with an # update-time: ignore[cooldown<DAYS]
+                        marker (default: 7)
   --stale-after DAYS    warn when a dependency's newest release is older than
                         this many days; 0 disables the check, except for
                         references that set a threshold of their own with an #
@@ -334,7 +336,7 @@ An integrity hash mismatch is never adopted, whatever you opt in to: the whole p
 
 ## ⏳ Cooldown
 
-To avoid adopting releases that are too fresh to trust, Update-time honours a cooldown period during which newly published versions are not yet picked up. It defaults to **7 days** and can be changed with the `--cooldown` option, for example `update-time --cooldown 14`. How the cooldown is applied depends on the dependency type:
+To avoid adopting releases that are too fresh to trust, Update-time honours a cooldown period during which newly published versions are not yet picked up. It defaults to **7 days** and can be changed with the `--cooldown` option, for example `update-time --cooldown 14`. A single reference can carry a cooldown of its own, which wins over whatever `--cooldown` says (see [Controlling updates per reference](#-controlling-updates-per-reference)). How the cooldown is applied depends on the dependency type:
 
 - **Docker images, GitHub Actions, pre-commit hooks, `requirements.txt` dependencies, jsDelivr npm URLs, and `.python-version` files** — Update-time enforces the cooldown itself, based on each image tag's push date and each release's publication date. For a GitHub Action or pre-commit hook version that was tagged without a GitHub release, the tagged commit's date is used. A `.python-version` entry updated from Docker Hub honours the cooldown through the Python image tag's push date; when it instead follows a Dockerfile, the cooldown was already applied when the image was updated.
 - **npm dependencies** — Update-time passes the cooldown to `npm` via npm's `min-release-age` option, also measured in days, which npm added in 11.10.0. Older npm versions ignore the option, so updates still run but without a cooldown. If your project already configures a cooldown in its `.npmrc` (`min-release-age` or `before`), Update-time leaves that in place instead of overriding it.
@@ -421,6 +423,31 @@ WARNING Incorrect 'stale>=90' in the update-time marker for python in Dockerfile
 ```
 
 A day count must be a whole number of days, whichever way the comparison runs, so `ignore[stale<-5]` and `ignore[stale>=1.5]` are reported as invalid and leave the reference unchanged. An unreadable count is judged before the direction, so `ignore[stale>=1.5]` is reported as an unreadable count rather than as an inverted comparison. Where an `ignore[stale]` applies to the same reference, it wins and the warning is suppressed whatever the threshold says. Use a single `stale` directive per reference; pairing one with another, say an `ignore[stale<90]` with an `ignore[stale>=30]`, is undefined.
+
+### Setting a cooldown period
+
+The [cooldown](#-cooldown) holds back releases that are too fresh to trust. To put one reference on a different window from the rest, give a `cooldown` scope a number of days: `# update-time: ignore[cooldown<30]` drops update candidates published less than 30 days ago, and is a per-reference `--cooldown 30`. Use it for a dependency you have been burned by, or one you trust enough to adopt sooner than the rest:
+
+```text
+some-flaky-lib==2.1.0  # update-time: ignore[cooldown<30] (burned by 2.0.0)
+```
+
+```dockerfile
+# update-time: ignore[cooldown<30]
+FROM python:3.12
+```
+
+The cooldown applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--cooldown` whatever that is set to. `allow` and `ignore` are complements here as elsewhere, so `allow[cooldown>=30]` sets the same 30-day window as `ignore[cooldown<30]`. To adopt new releases for one reference as soon as they ship, write `allow[cooldown>=0]` or `ignore[cooldown<0]`: a zero-day window holds nothing back, which is what `--cooldown 0` means globally.
+
+Inverting the operator would adopt a release only while it is fresh and hold it back once it is old, so neither `allow[cooldown<30]` nor `ignore[cooldown>=30]` sets a cooldown. Update-time reports an inverted comparison at `WARNING` and holds nothing back, so the reference updates as usual and the global cooldown applies to it:
+
+```console
+WARNING Incorrect 'cooldown>=30' in the update-time marker for python in Dockerfile:2: this comparison adopts a release only while it is fresh and holds it back once it is old, so it sets no cooldown
+```
+
+A bare `ignore[cooldown]` can be understood in two ways: adopt at once, or never adopt at all. Rather than guess, Update-time reports it as invalid and leaves the reference unchanged. `allow[cooldown]` is reported the same way. Write `allow[cooldown>=0]` to adopt at once, and `ignore[update]` to freeze the reference. A day count must be a whole number of days, so `ignore[cooldown<-5]` and `ignore[cooldown<1.5]` are reported as invalid too. Use a single `cooldown` directive per reference; pairing one with another is undefined.
+
+The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)), nor for a `.python-version` entry or Node engine version derived from the project's Dockerfile, whose cooldown was already applied when the image was updated. It does nothing for an image outside Docker Hub either, since no cooldown applies there at all: the registry exposes no push date to measure one against.
 
 ### Adopting hash drift
 

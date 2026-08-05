@@ -10,6 +10,7 @@ import unittest
 from typing import TYPE_CHECKING
 
 from archunitpython import assert_passes, project_files
+from archunitpython.files.assertion import CustomFileViolation
 
 from update_time.io.log import Logger
 
@@ -18,7 +19,12 @@ from tests.update_time import fixtures
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
 
+    from archunitpython.files.assertion import CustomFileCondition, FileInfo
+
 _MANIFEST_PARSERS = ("tomllib", "tomlkit", "yaml")
+
+# What a file violating the settings rule did, named once so the rule and the test of the rule report it alike.
+_READS_A_SETTING = "reads a setting the command line configures a run with"
 
 # The layers, innermost rank first; the layers sharing a rank are siblings.
 _RANKS = (
@@ -71,15 +77,21 @@ def _python_files() -> list[pathlib.Path]:
     return sorted(path for path in files if path.as_posix() not in _GENERATED_FILES)
 
 
-def _public_constants(tree: ast.Module) -> Iterator[str]:
-    """Yield the public module-level constants the module assigns."""
+def _module_level_assignments(tree: ast.Module) -> Iterator[tuple[list[ast.expr], ast.expr | None]]:
+    """Yield the targets and assigned value of each module-level assignment, annotated or not.
+
+    An annotation without a value (`NAME: int`) assigns nothing, so its value is None.
+    """
     for node in tree.body:
         if isinstance(node, ast.Assign):
-            targets = node.targets
+            yield node.targets, node.value
         elif isinstance(node, ast.AnnAssign):
-            targets = [node.target]
-        else:
-            continue
+            yield [node.target], node.value
+
+
+def _public_constants(tree: ast.Module) -> Iterator[str]:
+    """Yield the public module-level constants the module assigns."""
+    for targets, _value in _module_level_assignments(tree):
         for target in targets:
             if isinstance(target, ast.Name) and not target.id.startswith("_") and target.id.isupper():
                 yield target.id
@@ -113,6 +125,36 @@ def _module_local_constants(files: list[pathlib.Path]) -> list[str]:
         if constant not in mentioned
         and not any(path.as_posix().endswith(module_file) and constant == name for module_file, name in imported)
     )
+
+
+def _env_var_globals(files: list[pathlib.Path]) -> set[str]:
+    """Return the names assigned an `EnvVar`: the settings the command line configures a run with.
+
+    Discovered rather than listed, so a setting added later is covered without this test being edited.
+    """
+    names: set[str] = set()
+    for path in files:
+        for targets, value in _module_level_assignments(ast.parse(path.read_text())):
+            if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "EnvVar":
+                names.update(target.id for target in targets if isinstance(target, ast.Name))
+    return names
+
+
+def _reads_one_of(names: set[str]) -> CustomFileCondition:
+    """Return a rule condition holding for a file that reads one of the names, by import or as an attribute.
+
+    A condition rather than a rule of its own because archunitpython records a dependency on the module a name
+    comes from, not on the name, and a source may use `cooldown.within_cooldown` while reading no setting.
+    """
+
+    def reads_one_of(file_info: FileInfo) -> bool:
+        return any(
+            (isinstance(node, ast.ImportFrom) and any(alias.name in names for alias in node.names))
+            or (isinstance(node, ast.Attribute) and node.attr in names)
+            for node in ast.walk(ast.parse(file_info.content))
+        )
+
+    return reads_one_of
 
 
 @contextlib.contextmanager
@@ -278,6 +320,45 @@ class LayeringTest(unittest.TestCase):
             with self.subTest(layer="updaters", module=module):
                 rule = project_files("src/").in_folder("updaters").should_not().depend_on_external_modules()
                 assert_passes(rule.matching(_module_pattern(module)))
+
+
+class SourceConfigurationTest(unittest.TestCase):
+    """Test that a source is told what a run is configured with rather than reading it.
+
+    Every setting a source honours — the cooldown, and any added later — reaches it as an argument of the
+    `NewVersionGetter` contract, decided once by `references.resolve.latest_version`. A source reading the global
+    itself would answer with the run's setting where the caller asked for another, which is what a per-reference
+    override needs the source not to do.
+    """
+
+    def test_sources_read_no_configuration_global(self):
+        """Test that no source reads a setting, and that there are settings to be read.
+
+        The settings are discovered from `src` alone, since the tests declare `EnvVar`s of their own to exercise the
+        class, and those are not settings a run is configured with.
+        """
+        settings = _env_var_globals(sorted(pathlib.Path("src").rglob("*.py")))
+        self.assertIn("COOLDOWN", settings)  # Assert the settings were found, so an empty scan can't pass silently.
+        sources = project_files("src/").in_folder("sources")
+        assert_passes(sources.should_not().adhere_to(_reads_one_of(settings), _READS_A_SETTING))
+
+    def test_a_module_reading_a_setting_is_reported(self):
+        """Test that a module is reported whether it imports the setting or reads it off its module.
+
+        Without this the rule above would pass just as well when the condition found nothing whatever a source does.
+        """
+        files = {
+            "settings.py": "SETTING = EnvVar('X')\n",
+            "importer.py": "from settings import SETTING\n",
+            "attribute.py": "import settings\n\nsettings.SETTING.get()\n",
+            "reader.py": "from settings import read_setting\n",
+        }
+        with _project(files) as directory:
+            settings = _env_var_globals(sorted(pathlib.Path(directory).rglob("*.py")))
+            rule = project_files(directory).should_not().adhere_to(_reads_one_of(settings), _READS_A_SETTING)
+            violations = [violation for violation in rule.check() if isinstance(violation, CustomFileViolation)]
+            reported = sorted(pathlib.Path(violation.file_info.path).name for violation in violations)
+        self.assertEqual(reported, ["attribute.py", "importer.py"])
 
 
 class SubmoduleImportTest(unittest.TestCase):

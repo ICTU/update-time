@@ -14,6 +14,27 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class DayCount:
+    """What a day-count bracket item — a `stale` or a `cooldown` — sets for the reference carrying it.
+
+    `days` is the number of days the item sets for this reference alone, overriding the global one; None when the
+    reference sets none. `inverted_item` is the item as the user spelled it when its comparison runs the wrong way,
+    so the caller can warn and fall back to the global count; None when the reference carries no such item. An item
+    sets one or the other, never both, which is why they travel together.
+    """
+
+    days: int | None = None
+    inverted_item: str | None = None
+
+    def merge(self, other: DayCount) -> DayCount:
+        """Return this day count combined with another one, this one's values winning where it sets them."""
+        return DayCount(
+            days=other.days if self.days is None else self.days,
+            inverted_item=other.inverted_item if self.inverted_item is None else self.inverted_item,
+        )
+
+
+@dataclass(frozen=True)
 class Marker:
     """The `# update-time:` directives affecting a line (see `parse_marker`).
 
@@ -23,10 +44,9 @@ class Marker:
     `allow_drift` is whether an `allow[hash-drift]` directive opts the reference into adopting a drifted hash pin.
     `version_bound` is the version bound from an `allow`/`ignore` directive (see `VersionBound`), defaulting to
     `NO_BOUND` (keep every candidate) when there is none.
-    `stale_after_days` is the staleness threshold in days a `stale` item such as `ignore[stale<90]` sets for this
-    reference alone, overriding the global one; None when the reference sets none.
-    `inverted_stale_item` is a `stale` item whose comparison runs the wrong way, as the user spelled it, so the
-    caller can warn and fall back to the global threshold; None when the reference carries no such item.
+    `stale` and `cooldown` are what the reference's `stale` and `cooldown` items set (see `DayCount`): a staleness
+    threshold such as `ignore[stale<90]` sets, a cooldown such as `ignore[cooldown<30]` sets, or the item to report
+    when either comparison runs the wrong way.
     `invalid_specifier` is the raw text of a bracket item that could not be parsed — an invalid version specifier,
     or an unrecognised item in a comma list — so the caller can warn and leave the reference unchanged; None otherwise.
     `raw` is the marker's whole directive text exactly as it appears in the file, so the reference's marker can be
@@ -38,8 +58,8 @@ class Marker:
     ignore_yanked: bool = False
     allow_drift: bool = False
     version_bound: VersionBound = NO_BOUND
-    stale_after_days: int | None = None
-    inverted_stale_item: str | None = None
+    stale: DayCount = DayCount()
+    cooldown: DayCount = DayCount()
     invalid_specifier: str | None = None
     raw: str = field(compare=False, default="")
 
@@ -56,22 +76,23 @@ class Marker:
         """Return this marker combined with another one.
 
         The boolean hold-backs and opt-ins combine as unions, so `ignore[update]` and `ignore[stale]` together hold
-        back as much as a bare `ignore`. Of two values that cannot combine — a version bound, a staleness threshold,
-        an inverted or invalid item — this marker's wins, and the `raw` texts concatenate in order, this marker's
-        first. A default `Marker()` leaves every field unset, so it is the identity: merging it with any marker
-        returns that marker's values. This lets markers fold at every level — each item into a bracket's marker,
-        each directive into a text's, and the inline and comment-above texts into the line's.
+        back as much as a bare `ignore`. A value that cannot combine — a version bound, an invalid item, and the day
+        counts `DayCount.merge` folds — is taken from the other marker only where this one leaves it unset, so this
+        marker's wins; the `raw` texts concatenate in order, this marker's first. A default `Marker()` leaves every
+        field unset, so it is the identity: merging it with any marker returns that marker's values. This lets markers
+        fold at every level — each item into a bracket's marker, each directive into a text's, and the inline and
+        comment-above texts into the line's.
         """
         return Marker(
-            self.ignore_update or other.ignore_update,
-            self.ignore_stale or other.ignore_stale,
-            self.ignore_yanked or other.ignore_yanked,
-            self.allow_drift or other.allow_drift,
-            other.version_bound if self.version_bound == NO_BOUND else self.version_bound,
-            other.stale_after_days if self.stale_after_days is None else self.stale_after_days,
-            self.inverted_stale_item if self.inverted_stale_item is not None else other.inverted_stale_item,
-            self.invalid_specifier if self.invalid_specifier is not None else other.invalid_specifier,
-            " ".join(part for part in (self.raw, other.raw) if part),
+            ignore_update=self.ignore_update or other.ignore_update,
+            ignore_stale=self.ignore_stale or other.ignore_stale,
+            ignore_yanked=self.ignore_yanked or other.ignore_yanked,
+            allow_drift=self.allow_drift or other.allow_drift,
+            version_bound=other.version_bound if self.version_bound == NO_BOUND else self.version_bound,
+            stale=self.stale.merge(other.stale),
+            cooldown=self.cooldown.merge(other.cooldown),
+            invalid_specifier=other.invalid_specifier if self.invalid_specifier is None else self.invalid_specifier,
+            raw=" ".join(part for part in (self.raw, other.raw) if part),
         )
 
 
@@ -104,15 +125,16 @@ _MARKER_PREFIX = re.compile(rf"(?:{'|'.join(re.escape(lead) for lead in _COMMENT
 # consecutive directives be matched one after another.
 _DIRECTIVE = re.compile(r"(?P<verb>ignore\b|allow(?=\[))(?:\[(?P<bracket>[^\]]*)\]|\[(?P<unterminated>[^\]]*))?\s*")
 
-# A `stale` bracket item: the `stale` keyword, a comparison operator, and a number of days (`stale<90`). The day
-# count is captured loosely, so a malformed one is still recognised as a `stale` item and can be reported as malformed.
-_STALE_ITEM = re.compile(r"stale(?P<operator><|>=)(?P<days>.*)")
+# A day-count bracket item: a keyword, a comparison operator, and a number of days (`stale<90`, `cooldown<30`). The
+# day count is captured loosely, so a malformed one is still recognised as such an item and reported as malformed.
+_DAY_COUNT_ITEM = re.compile(r"(?P<keyword>stale|cooldown)(?P<operator><|>=)(?P<days>.*)")
 
 _DAY_COUNT = re.compile(r"\d+")
 
-# The operator each verb sets a threshold with: `ignore[stale<90]` and `allow[stale>=90]` both mean "warn once the
-# newest release is more than 90 days old".
-_STALE_THRESHOLD_OPERATOR = {Verb.IGNORE: "<", Verb.ALLOW: ">="}
+# The operator each verb names a day count with. Both items are sensible only when they name the ages from the count
+# upwards, so `ignore[stale<90]` and `allow[stale>=90]` set the same threshold, as do `ignore[cooldown<30]` and
+# `allow[cooldown>=30]`.
+_DAY_COUNT_OPERATOR = {Verb.IGNORE: "<", Verb.ALLOW: ">="}
 
 
 def parse_marker(line: Line) -> Marker:
@@ -195,28 +217,30 @@ def _parse_bracket_item(verb: Verb, item: str) -> Marker | None:
     if (keyword_marker := _KEYWORD_ITEMS.get((verb, item))) is not None:
         return keyword_marker
     try:
-        if (stale_marker := _parse_stale_item(verb, item)) is not None:
-            return stale_marker
+        if (day_count_marker := _parse_day_count_item(verb, item)) is not None:
+            return day_count_marker
         version_bound = parse_bound(verb, item)
     except InvalidSpecifier:
-        # The `update` prefix is dropped so a bound reports its specifier; a `stale` item has none and reports whole.
+        # The `update` prefix is dropped so a bound reports its specifier; a day-count item has none, so it reports
+        # whole.
         return Marker(invalid_specifier=item.removeprefix("update"))
     return Marker(version_bound=version_bound) if version_bound is not None else None
 
 
-def _parse_stale_item(verb: Verb, item: str) -> Marker | None:
-    """Return the marker a `stale` bracket item expresses, or None when the item is not one.
+def _parse_day_count_item(verb: Verb, item: str) -> Marker | None:
+    """Return the marker a day-count bracket item expresses, or None when the item is not a day-count.
 
-    Both `ignore[stale<90]` and `allow[stale>=90]` set a threshold of 90 days. The verb's other operator names the
-    fresh ages rather than the old ones, which no threshold can express, so the item is returned for the caller to
-    report. An unreadable day count raises `InvalidSpecifier`, and is judged before the direction, so `stale>=1.5`
-    is reported as an unreadable count rather than as an inverted comparison.
+    Both `ignore[stale<90]` and `allow[stale>=90]` set a staleness threshold of 90 days, and both
+    `ignore[cooldown<30]` and `allow[cooldown>=30]` set a cooldown of 30 days. The verb's other operator names the
+    fresh ages rather than the old ones, which neither item can express, so an inverted item of either keyword is
+    returned for the caller to report. An unreadable day count raises `InvalidSpecifier`, and is judged before the
+    direction, so `stale>=1.5` is reported as an unreadable count rather than as an inverted comparison.
     """
-    match = _STALE_ITEM.fullmatch(item)
+    match = _DAY_COUNT_ITEM.fullmatch(item)
     if match is None:
         return None
     if _DAY_COUNT.fullmatch(days := match.group("days")) is None:
         raise InvalidSpecifier(item)
-    if match.group("operator") != _STALE_THRESHOLD_OPERATOR[verb]:
-        return Marker(inverted_stale_item=item)
-    return Marker(stale_after_days=int(days))
+    inverted = match.group("operator") != _DAY_COUNT_OPERATOR[verb]
+    day_count = DayCount(inverted_item=item) if inverted else DayCount(days=int(days))
+    return Marker(stale=day_count) if match.group("keyword") == "stale" else Marker(cooldown=day_count)

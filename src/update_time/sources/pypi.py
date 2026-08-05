@@ -10,7 +10,6 @@ from packaging.version import Version
 
 from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.staleness import newest_datetime
 from update_time.domain.version import (
     DependencyName,
     DependencyVersion,
@@ -22,6 +21,7 @@ from update_time.domain.version import (
 from update_time.domain.yank import yank_reporting
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
+from update_time.primitives.timestamp import newest_timestamp
 from update_time.sources.github import changes_from_release, github_owner_and_repository, github_to_raw
 
 if TYPE_CHECKING:
@@ -94,17 +94,17 @@ def newest_publication_date(package: str) -> datetime | None:
     that recently shipped a pre-release or a back-ported patch still counts as active and is not flagged as stale.
     """
     files = project_metadata(package).get("files", [])
-    return newest_datetime(file["upload-time"] for file in files if file.get("upload-time"))
+    return newest_timestamp(file.get("upload-time") for file in files)
 
 
 def release_datetime(urls: list[Distribution]) -> datetime | None:
     """Return the latest upload datetime of a release's distribution files, or None if there are none."""
-    return newest_datetime(url["upload_time_iso_8601"] for url in urls)
+    return newest_timestamp(url["upload_time_iso_8601"] for url in urls)
 
 
 @yank_reporting
 def get_latest_version(
-    package: DependencyName, current_version: VersionString, version_bound: VersionBound
+    package: DependencyName, current_version: VersionString, version_bound: VersionBound, cooldown_days: int
 ) -> DependencyVersion:
     """Return the latest stable release of the package that is available outside the cooldown window.
 
@@ -122,7 +122,9 @@ def get_latest_version(
         and not version.is_devrelease
         and version_bound.keeps(version, current_version)
     ]
-    latest = first_eligible(candidates, lambda version: _eligible_release(package, version), current_version)
+    latest = first_eligible(
+        candidates, lambda version: _eligible_release(package, version, cooldown_days), current_version
+    )
     # Always attach the newest release date so an already-up-to-date pin can still be flagged as stale. It rides on
     # the Index API response fetched above, so it costs no extra request; whether it counts as stale (and whether the
     # check is enabled at all) is decided by `is_stale` where the warning would be logged.
@@ -157,13 +159,13 @@ def _distribution_version(filename: str) -> Version | None:
         return None
 
 
-def _eligible_release(package: str, version: Version) -> DependencyVersion | None:
+def _eligible_release(package: str, version: Version, cooldown_days: int) -> DependencyVersion | None:
     """Return the release as a DependencyVersion when it's eligible, or None when it's yanked or too fresh."""
     metadata = release_metadata(package, str(version))
     if metadata is None:
         return None
     published = release_datetime(metadata["urls"])
-    if metadata["info"].get("yanked") or published is None or within_cooldown(published):
+    if metadata["info"].get("yanked") or published is None or within_cooldown(published, cooldown_days):
         return None
     latest = str(version)
     return DependencyVersion(latest, changes=get_changes(package, latest), published=published)

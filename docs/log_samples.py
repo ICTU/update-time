@@ -95,6 +95,9 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.inverted_stale_item("python", "stale>=90", Location(Path("Dockerfile"), 2))
     inverted = capture.take()
 
+    log.inverted_cooldown_item("python", "cooldown>=30", Location(Path("Dockerfile"), 2))
+    inverted_cooldown = capture.take()
+
     log.recognised_marker("python", Marker(ignore_stale=True, raw="ignore[stale]"), Location(Path("Dockerfile"), 2))
     return {
         "@@DRIFT_WARNINGS@@": drift,
@@ -103,5 +106,6 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@REDUNDANT_MARKER_WARNING@@": redundant,
         "@@UNRECOGNISED_ITEM_WARNING@@": unrecognised,
         "@@INVERTED_STALE_WARNING@@": inverted,
+        "@@INVERTED_COOLDOWN_WARNING@@": inverted_cooldown,
         "@@RECOGNISED_MARKER@@": capture.take(),
     }

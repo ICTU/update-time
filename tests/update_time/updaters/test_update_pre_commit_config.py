@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
+from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.drift import DriftedPin
 from update_time.domain.version import DependencyVersion, Reference
 from update_time.io.log import Logger
@@ -41,7 +42,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.6.0\n"))
-        mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", NO_BOUND)
+        mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", NO_BOUND, COOLDOWN.default)
         self.assert_path_logged(config_file)
         self.assert_pinned_logged(self.HOOK, "4.6.0", NEW_SHA, Location(config_file, 3))
         self.assert_no_new_version_logged()
@@ -65,7 +66,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: 24.1.0\n"))
-        mock_get_latest_version.assert_called_once_with(self.HOOK, "22.10.0", NO_BOUND)
+        mock_get_latest_version.assert_called_once_with(self.HOOK, "22.10.0", NO_BOUND, COOLDOWN.default)
         self.assert_pinned_logged(self.HOOK, "24.1.0", NEW_SHA, Location(config_file, 3))
 
     def test_pin_quoted_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -75,7 +76,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.5.0\n"))
-        mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", NO_BOUND)
+        mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", NO_BOUND, COOLDOWN.default)
 
     def test_bump_frozen_rev(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a rev already pinned to a SHA with a frozen comment is bumped to the latest version's SHA."""
@@ -84,7 +85,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.6.0\n"))
-        mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", NO_BOUND)
+        mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", NO_BOUND, COOLDOWN.default)
         self.assert_new_version_logged(self.HOOK, "4.6.0", Location(config_file, 3))
         self.assert_no_warnings_logged()
 
@@ -203,7 +204,10 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         )
         self.assertEqual(
             mock_get_latest_version.call_args_list,
-            [((self.HOOK, "v4.5.0", NO_BOUND),), (("psf/black", "22.10.0", NO_BOUND),)],
+            [
+                ((self.HOOK, "v4.5.0", NO_BOUND, COOLDOWN.default),),
+                (("psf/black", "22.10.0", NO_BOUND, COOLDOWN.default),),
+            ],
         )
 
     def test_config_without_hooks(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -294,7 +298,9 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         config_file.write_text.assert_called_once_with(
             config(f"rev: {NEW_SHA}  # frozen: v4.6.0  # update-time: allow[update<5]\n")
         )
-        mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", bound(Verb.ALLOW, "update<5"))
+        mock_get_latest_version.assert_called_once_with(
+            self.HOOK, "v4.5.0", bound(Verb.ALLOW, "update<5"), COOLDOWN.default
+        )
         self.assert_pinned_logged(self.HOOK, "4.6.0", NEW_SHA, Location(config_file, 3))
         self.assert_no_warnings_logged()
 
@@ -307,7 +313,9 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         config_file.write_text.assert_called_once_with(
             config(f"rev: {NEW_SHA}  # frozen: v4.6.0  # update-time: ignore[major-update]\n")
         )
-        mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", bound(Verb.IGNORE, "major-update"))
+        mock_get_latest_version.assert_called_once_with(
+            self.HOOK, "v4.5.0", bound(Verb.IGNORE, "major-update"), COOLDOWN.default
+        )
         self.assert_pinned_logged(self.HOOK, "4.6.0", NEW_SHA, Location(config_file, 3))
         self.assert_no_warnings_logged()
 

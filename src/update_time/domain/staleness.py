@@ -1,13 +1,14 @@
 """Dependency staleness helpers."""
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
+from update_time.primitives.timestamp import days_since
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
+    from datetime import datetime
     from pathlib import Path
 
     from update_time.domain.version import DependencyName, DependencyVersion
@@ -16,29 +17,15 @@ if TYPE_CHECKING:
 STALE_AFTER = EnvVar("_UPDATE_TIME_STALE_AFTER_DAYS", default=365, parse=int)
 
 
-def staleness_days(published: datetime) -> int:
-    """Return how many whole days ago the version was published."""
-    return (datetime.now(UTC) - published).days
-
-
 def is_stale(published: datetime | None, threshold: int) -> bool:
     """Return whether a version published on the given date is stale (older than the threshold in days).
 
     A threshold of 0 disables the check, and an unknown publication date never counts as stale. Whole days are
-    compared (via `staleness_days`), so a fractional day over the threshold is not stale yet.
+    compared (via `days_since`), so a fractional day over the threshold is not stale yet.
     """
     if threshold == 0 or published is None:
         return False
-    return staleness_days(published) > threshold
-
-
-def newest_datetime(timestamps: Iterable[str]) -> datetime | None:
-    """Return the most recent of the ISO-8601 timestamps, or None if there are none.
-
-    Sources derive their "newest release" date (the one the staleness check compares against) from the publication
-    dates they list — PyPI file upload times, GitHub release dates, npm publish times — so they share this here.
-    """
-    return max((datetime.fromisoformat(timestamp) for timestamp in timestamps), default=None)
+    return days_since(published) > threshold
 
 
 def warn_about_stale_dependencies(

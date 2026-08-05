@@ -5,13 +5,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock
 
-from update_time.domain.staleness import (
-    STALE_AFTER,
-    is_stale,
-    newest_datetime,
-    staleness_days,
-    warn_about_stale_dependencies,
-)
+from update_time.domain.staleness import STALE_AFTER, is_stale, warn_about_stale_dependencies
 from update_time.domain.version import DependencyVersion
 from update_time.primitives.location import Location
 
@@ -58,27 +52,6 @@ class IsStaleTest(unittest.TestCase):
         """Test that an old timestamp in a non-UTC timezone is stale."""
         old = datetime.now(timezone(timedelta(hours=5))) - timedelta(days=STALE_AFTER.default + 1)
         self.assertTrue(is_stale(old, STALE_AFTER.default))
-
-
-class StalenessDaysTest(unittest.TestCase):
-    """Unit tests for the staleness_days helper."""
-
-    def test_days_ago(self):
-        """Test that the number of whole days since publication is returned."""
-        self.assertEqual(staleness_days(datetime.now(UTC) - timedelta(days=10, hours=1)), 10)
-
-
-class NewestDatetimeTest(unittest.TestCase):
-    """Unit tests for the newest_datetime helper."""
-
-    def test_empty(self):
-        """Test that no timestamps yields None."""
-        self.assertIsNone(newest_datetime([]))
-
-    def test_newest(self):
-        """Test that the most recent of several ISO-8601 timestamps is returned, whatever their order."""
-        timestamps = ["2020-01-01T00:00:00Z", "2024-06-01T12:00:00Z", "2022-03-03T03:03:03Z"]
-        self.assertEqual(datetime(2024, 6, 1, 12, tzinfo=UTC), newest_datetime(timestamps))
 
 
 class WarnAboutStaleDependenciesTest(unittest.TestCase):

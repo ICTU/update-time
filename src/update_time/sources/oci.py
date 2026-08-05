@@ -172,13 +172,12 @@ class Tag:
             len(other.sortable_suffix_version.release),
         )
 
-    @property
-    def within_cooldown(self) -> bool:
-        """Return whether the tag was pushed within the configured cooldown period.
+    def _within_cooldown(self, cooldown_days: int) -> bool:
+        """Return whether the tag was pushed within a cooldown period of the given number of days.
 
         Only Docker Hub exposes a push date; for tags without one (other registries) no cooldown is applied.
         """
-        return within_cooldown(self.last_pushed)
+        return within_cooldown(self.last_pushed, cooldown_days)
 
     def with_version(self, version: Version, suffix: str) -> Tag:
         """Return a new Tag with this tag's prefix, the given main version, and the given suffix.
@@ -221,13 +220,12 @@ class Tag:
             return False  # Ignore tags whose suffix label differs so we don't change e.g. fat to slim, or alpine to fat
         return self.is_newer_or_equal(current)
 
-    @property
-    def is_eligible(self) -> bool:
+    def is_eligible(self, cooldown_days: int) -> bool:
         """Return whether this tag (with metadata fetched) can be used: it has a digest and is past the cooldown.
 
         The name-only checks have already been made by `is_candidate_for` before the metadata was fetched.
         """
-        return bool(self.digest) and not self.within_cooldown
+        return bool(self.digest) and not self._within_cooldown(cooldown_days)
 
 
 def _split_domain(image: str) -> tuple[str | None, str]:
@@ -262,7 +260,9 @@ def is_docker_hub_image(image: str) -> bool:
     return _is_docker_hub_host(host)
 
 
-def get_latest_tag(image: DependencyName, current_tag: VersionString, version_bound: VersionBound) -> DependencyVersion:
+def get_latest_tag(
+    image: DependencyName, current_tag: VersionString, version_bound: VersionBound, cooldown_days: int
+) -> DependencyVersion:
     """Find the latest compatible tag for an image. Keeps the same non-numerical parts while upgrading the version.
 
     Resolves images on any OCI registry (Docker Hub, ghcr.io, mcr.microsoft.com, quay.io, ...). Returns the digest
@@ -283,7 +283,9 @@ def get_latest_tag(image: DependencyName, current_tag: VersionString, version_bo
     tags = [Tag(name=name) for name in _tag_names(image)]
     compatible = [tag for tag in tags if tag.is_candidate_for(current)]
     candidates = [tag for tag in compatible if version_bound.keeps(cast("Version", tag.version), current_tag)]
-    latest = first_eligible(candidates, lambda candidate: _eligible_tag(image, current, candidate), current_tag)
+    latest = first_eligible(
+        candidates, lambda candidate: _eligible_tag(image, current, candidate, cooldown_days), current_tag
+    )
     # Staleness is measured against all compatible tags, not just the bounded candidates, so a version bound narrows
     # the update only: a reference kept on an old line by a bound is still warned about when the image has gone quiet
     # overall, and never merely because the bounded line has.
@@ -306,14 +308,14 @@ def _newest_tag_push_date(image: str, compatible: list[Tag]) -> datetime | None:
     return resolved.last_pushed if resolved else None
 
 
-def _eligible_tag(image: str, current: Tag, candidate: Tag) -> DependencyVersion | None:
+def _eligible_tag(image: str, current: Tag, candidate: Tag, cooldown_days: int) -> DependencyVersion | None:
     """Resolve the candidate's digest and push date and return it when eligible, or None when it isn't.
 
     A candidate that equals the current tag on every version axis is the current version under another tag spelling
     (an alias such as `22.15` for `22.15.0`), so the current spelling is kept and only its digest is adopted.
     """
     latest = _get_tag(image, candidate.name)
-    if latest is None or not latest.is_eligible:
+    if latest is None or not latest.is_eligible(cooldown_days):
         return None
     if current.is_newer_or_equal(latest):  # The candidate is never older (see `is_candidate_for`), so this is equality.
         name = current.name

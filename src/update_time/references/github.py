@@ -16,8 +16,9 @@ from packaging.version import Version
 
 from update_time.domain.drift import DriftedPin, hash_drifted, report_drift
 from update_time.domain.version import Reference, is_valid
+from update_time.primitives.text import replace_match
 from update_time.references.resolve import latest_version
-from update_time.references.rewrite import matched_dependency, replace_reference
+from update_time.references.rewrite import matched_dependency
 from update_time.sources.github import get_latest_version
 
 if TYPE_CHECKING:
@@ -106,4 +107,4 @@ class PinUpdater:
         latest = latest_pin(reference, marker, location, self.logger)
         if latest is None:
             return match.string
-        return replace_reference(match, self.spell(reference, latest))
+        return replace_match(match, self.spell(reference, latest))

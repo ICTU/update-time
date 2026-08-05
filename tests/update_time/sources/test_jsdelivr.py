@@ -18,13 +18,16 @@ _FILENAME = "/dist/clipboard.min.js"
 _FLAT_FILES = {"default": _FILENAME, "files": [{"name": _FILENAME, "hash": HASH2}]}
 
 
-def get_latest_version(dependency: str, current_version: str, filename: str) -> DependencyVersion:
+def get_latest_version(
+    dependency: str, current_version: str, filename: str, cooldown_days: int = COOLDOWN.default
+) -> DependencyVersion:
     """Return the version the source resolves for the file the URL references, unbounded.
 
-    The source hands out a getter per referenced file (`version_getter`); the tests below vary the file and the
-    current version rather than the bound, so they go through this one call instead of repeating the two steps.
+    The source hands out a getter per referenced file (`version_getter`); the tests below vary the file, the current
+    version, and the cooldown rather than the bound, so they go through this one call instead of repeating the two
+    steps.
     """
-    return version_getter(filename)(dependency, current_version, NO_BOUND)
+    return version_getter(filename)(dependency, current_version, NO_BOUND, cooldown_days)
 
 
 # npm publication dates, relative to now so the cooldown decision is independent of the wall clock.
@@ -77,6 +80,20 @@ class GetLatestVersionTest(LoggingTestCase):
         latest_version = get_latest_version("clipboard", "1.0", _FILENAME)
         self.assertEqual(latest_version.version, "1.0")
         self.assertEqual(latest_version.sha, "")
+
+    def test_cooldown_decides_eligibility(self, mock_get: Mock):
+        """Test that a version is held back or adopted according to the cooldown the getter is passed."""
+        published = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+        for cooldown_days, expected in ((30, "1.0"), (5, "1.1")):
+            with self.subTest(cooldown_days=cooldown_days):
+                mock_get.side_effect = [
+                    jsdelivr_versions("1.1", "1.0"),
+                    npm_registry({"1.1": published}),
+                    mock_response(_FLAT_FILES),
+                ]
+                dependency = f"clipboard{cooldown_days}"  # A fresh name per case, as the npm fetches are cached.
+                latest = get_latest_version(dependency, "1.0", _FILENAME, cooldown_days)
+                self.assertEqual(latest.version, expected)
 
     def test_deprecated_version_skipped(self, mock_get: Mock):
         """Test that a newer version that is deprecated on npm is not adopted as an update."""

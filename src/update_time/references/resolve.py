@@ -9,6 +9,7 @@ re-pushed digest to adopt) layers those on top of the version this decision reso
 from typing import TYPE_CHECKING
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES
+from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.yank import reports_yanks
 
@@ -17,7 +18,17 @@ if TYPE_CHECKING:
     from update_time.domain.marker import Marker
     from update_time.domain.version import DependencyVersion, Reference
     from update_time.io.log import Logger
+    from update_time.primitives.environment import EnvVar
     from update_time.primitives.location import Location
+
+
+def _days(marker_days: int | None, setting: EnvVar[int]) -> int:
+    """Return the day count for this reference: its marker's when it carries one, the run's setting otherwise.
+
+    The cooldown and the staleness threshold are both overridable per reference, and a marker wins over the command
+    line for both, so they ask the same question here rather than each spelling out the precedence.
+    """
+    return setting.get() if marker_days is None else marker_days
 
 
 def latest_version(
@@ -37,11 +48,14 @@ def latest_version(
     log.warn_if_redundant_bound(dependency, marker, current_version, location)
     if marker.ignore_yanked and not reports_yanks(get_new_version):
         log.redundant_yank_scope(dependency, marker, location)
-    if marker.inverted_stale_item is not None:
-        log.inverted_stale_item(dependency, marker.inverted_stale_item, location)
+    if marker.stale.inverted_item is not None:
+        log.inverted_stale_item(dependency, marker.stale.inverted_item, location)
+    if marker.cooldown.inverted_item is not None:
+        log.inverted_cooldown_item(dependency, marker.cooldown.inverted_item, location)
     version_bound = BLOCK_ALL_UPDATES if marker.ignore_update else marker.version_bound
-    latest = get_new_version(dependency, current_version, version_bound)
-    threshold = STALE_AFTER.get() if marker.stale_after_days is None else marker.stale_after_days
+    cooldown = _days(marker.cooldown.days, COOLDOWN)
+    latest = get_new_version(dependency, current_version, version_bound, cooldown)
+    threshold = _days(marker.stale.days, STALE_AFTER)
     if marker.ignore_stale:
         log.ignored_staleness(dependency, latest, marker, location, threshold)
     else:

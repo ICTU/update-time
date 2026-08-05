@@ -1,10 +1,11 @@
 """Unit tests for the PyPI module."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
+from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.version import Yank
 from update_time.sources.pypi import (
     changelog_from_url,
@@ -186,68 +187,70 @@ class GetLatestVersionTest(LoggingTestCase):
 
     def test_invalid_current_version(self, mock_get: Mock):
         """Test that an invalid current version is returned unchanged without querying PyPI."""
-        self.assertEqual(get_latest_version("package", "not a version", NO_BOUND).version, "not a version")
+        self.assertEqual(
+            get_latest_version("package", "not a version", NO_BOUND, COOLDOWN.default).version, "not a version"
+        )
         mock_get.assert_not_called()
 
     def test_no_newer_version(self, mock_get: Mock):
         """Test that the current version is returned when it is already the latest."""
         mock_get.side_effect = [pypi_index("1.0")]
-        self.assertEqual(get_latest_version("no_newer", "1.0", NO_BOUND).version, "1.0")
+        self.assertEqual(get_latest_version("no_newer", "1.0", NO_BOUND, COOLDOWN.default).version, "1.0")
 
     def test_new_version(self, mock_get: Mock):
         """Test that the latest version is returned, with its publication date."""
         mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release()]
-        latest = get_latest_version("new_version", "1.0", NO_BOUND)
+        latest = get_latest_version("new_version", "1.0", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "1.1")
         self.assertEqual(datetime(2020, 1, 1, tzinfo=UTC), latest.published)
 
     def test_highest_version(self, mock_get: Mock):
         """Test that the highest of multiple newer versions is returned."""
         mock_get.side_effect = [pypi_index("1.0", "1.2", "1.1"), pypi_release()]
-        self.assertEqual(get_latest_version("highest", "1.0", NO_BOUND).version, "1.2")
+        self.assertEqual(get_latest_version("highest", "1.0", NO_BOUND, COOLDOWN.default).version, "1.2")
 
     def test_newest_published_attached(self, mock_get: Mock):
         """Test that the newest release date is attached, so an up-to-date pin can still be flagged as stale."""
         mock_get.side_effect = [pypi_index("1.0", files=[{"upload-time": PYPI_OLD_UPLOAD}])]
-        latest = get_latest_version("stale", "1.0", NO_BOUND)
+        latest = get_latest_version("stale", "1.0", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "1.0")
         self.assertEqual(datetime(2020, 1, 1, tzinfo=UTC), latest.newest_published)
 
     def test_prerelease_ignored(self, mock_get: Mock):
         """Test that pre-releases are ignored without fetching their metadata."""
         mock_get.side_effect = [pypi_index("1.0", "2.0b1")]
-        self.assertEqual(get_latest_version("prerelease", "1.0", NO_BOUND).version, "1.0")
+        self.assertEqual(get_latest_version("prerelease", "1.0", NO_BOUND, COOLDOWN.default).version, "1.0")
 
     def test_bound_narrows_candidates(self, mock_get: Mock):
         """Test that a version bound drops out-of-bound candidates so a bounded version wins over a higher one."""
         mock_get.side_effect = [pypi_index("1.0", "1.9", "2.0"), pypi_release()]
         version_bound = bound(Verb.ALLOW, "update<2")
-        self.assertEqual(get_latest_version("bounded", "1.0", version_bound).version, "1.9")
+        self.assertEqual(get_latest_version("bounded", "1.0", version_bound, COOLDOWN.default).version, "1.9")
 
     def test_yanked_release_ignored(self, mock_get: Mock):
         """Test that yanked releases are ignored."""
         mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(yanked=True)]
-        self.assertEqual(get_latest_version("yanked", "1.0", NO_BOUND).version, "1.0")
+        self.assertEqual(get_latest_version("yanked", "1.0", NO_BOUND, COOLDOWN.default).version, "1.0")
 
     def test_yanked_current_version_attached(self, mock_get: Mock):
         """Test that when the pin stays put on a yanked version, its yank reason is attached from the Index API."""
         mock_get.side_effect = [
             pypi_index("1.0", files=[yanked_file("yanked_pin-1.0.tar.gz", reason="broke Python 3.10")])
         ]
-        latest = get_latest_version("yanked_pin", "1.0", NO_BOUND)
+        latest = get_latest_version("yanked_pin", "1.0", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "1.0")
         self.assertEqual(latest.yank, Yank(yanked=True, reason="broke Python 3.10"))
 
     def test_yanked_current_version_without_reason(self, mock_get: Mock):
         """Test that a yanked pin with no maintainer reason is flagged as yanked with an empty reason."""
         mock_get.side_effect = [pypi_index("1.0", files=[yanked_file("yanked_pin-1.0-py3-none-any.whl")])]
-        self.assertEqual(get_latest_version("yanked_pin", "1.0", NO_BOUND).yank, Yank(yanked=True))
+        self.assertEqual(get_latest_version("yanked_pin", "1.0", NO_BOUND, COOLDOWN.default).yank, Yank(yanked=True))
 
     def test_no_yank_when_the_update_moves_away(self, mock_get: Mock):
         """Test that a run updating away from a yanked pin reports no yank, since the pin no longer sits on one."""
         files = [yanked_file("moved-1.0.tar.gz", reason="broke Python 3.10")]
         mock_get.side_effect = [pypi_index("1.0", "1.1", files=files), pypi_release()]
-        latest = get_latest_version("moved", "1.0", NO_BOUND)
+        latest = get_latest_version("moved", "1.0", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "1.1")
         self.assertEqual(latest.yank, Yank())
 
@@ -255,25 +258,28 @@ class GetLatestVersionTest(LoggingTestCase):
         """Test that a yanked file of another version, or an unparsable filename, leaves the pin unyanked."""
         files = [yanked_file("pin-0.9.tar.gz", reason="old"), yanked_file("not-a-distribution")]
         mock_get.side_effect = [pypi_index("1.0", files=files)]
-        self.assertFalse(get_latest_version("pin", "1.0", NO_BOUND).yank.yanked)
+        self.assertFalse(get_latest_version("pin", "1.0", NO_BOUND, COOLDOWN.default).yank.yanked)
 
     def test_release_without_files_ignored(self, mock_get: Mock):
         """Test that releases without distribution files are ignored."""
         mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(upload_time="")]
-        self.assertEqual(get_latest_version("no_files", "1.0", NO_BOUND).version, "1.0")
+        self.assertEqual(get_latest_version("no_files", "1.0", NO_BOUND, COOLDOWN.default).version, "1.0")
 
     def test_release_metadata_unavailable_ignored(self, mock_get: Mock):
         """Test that a candidate whose metadata can't be fetched is skipped instead of crashing the run."""
         mock_get.side_effect = [pypi_index("1.0", "1.1"), mock_response(ok=False)]
-        self.assertEqual(get_latest_version("metadata_error", "1.0", NO_BOUND).version, "1.0")
+        self.assertEqual(get_latest_version("metadata_error", "1.0", NO_BOUND, COOLDOWN.default).version, "1.0")
 
     def test_invalid_release_ignored(self, mock_get: Mock):
         """Test that releases with an invalid version are ignored without fetching their metadata."""
         mock_get.side_effect = [pypi_index("1.0", "not-a-version")]
-        self.assertEqual(get_latest_version("invalid_release", "1.0", NO_BOUND).version, "1.0")
+        self.assertEqual(get_latest_version("invalid_release", "1.0", NO_BOUND, COOLDOWN.default).version, "1.0")
 
-    def test_release_within_cooldown_ignored(self, mock_get: Mock):
-        """Test that a release published within the cooldown period is held back."""
-        recent = datetime.now(UTC).isoformat()
-        mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(recent)]
-        self.assertEqual(get_latest_version("cooldown", "1.0", NO_BOUND).version, "1.0")
+    def test_cooldown_decides_eligibility(self, mock_get: Mock):
+        """Test that a release is held back or adopted according to the cooldown the getter is passed."""
+        published = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+        for cooldown_days, expected in ((30, "1.0"), (5, "1.1")):
+            with self.subTest(cooldown_days=cooldown_days):
+                mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(published)]
+                package = f"cooldown_argument_{cooldown_days}"  # A fresh name per case, as the fetches are cached.
+                self.assertEqual(get_latest_version(package, "1.0", NO_BOUND, cooldown_days).version, expected)

@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Warn when the Subresource Integrity hash a jsDelivr URL declares is not the one jsDelivr serves for that version. Part of [#179](https://github.com/ICTU/update-time/issues/179).
 - Adopt the commit a moved tag points at, instead of only warning about it, when a GitHub Action or pre-commit hook is marked `# update-time: allow[hash-drift]` or `--allow-hash-drift` is passed. Part of [#179](https://github.com/ICTU/update-time/issues/179).
 - Override the stale-after period for a single reference with `# update-time: ignore[stale<90]`. Closes [#192](https://github.com/ICTU/update-time/issues/192).
+- Override the cooldown period for a single reference with `# update-time: ignore[cooldown<30]`. Closes [#193](https://github.com/ICTU/update-time/issues/193).
 
 ### Changed
 
@@ -21,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Fixed
 
 - Leave a file's line endings alone when updating a reference in it: CRLF endings are no longer rewritten to LF, and a file without a final newline no longer gains one. Part of [#181](https://github.com/ICTU/update-time/issues/181).
+- Apply a very large cooldown, from `--cooldown` or an `# update-time: ignore[cooldown<DAYS]` marker, instead of aborting the run with an error. Part of [#193](https://github.com/ICTU/update-time/issues/193).
 
 ## 0.0.22 - 2026-07-28
 

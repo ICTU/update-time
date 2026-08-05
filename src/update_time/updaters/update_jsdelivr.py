@@ -17,9 +17,10 @@ from typing import TYPE_CHECKING
 from update_time.domain.drift import hash_drifted
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
+from update_time.primitives.text import rewrite_string
 from update_time.references.file import rewrite_file
 from update_time.references.resolve import latest_version
-from update_time.references.rewrite import apply_marker, matched_reference, rewrite_line
+from update_time.references.rewrite import apply_marker, matched_reference
 from update_time.sources.jsdelivr import integrity_hash, version_getter
 
 if TYPE_CHECKING:
@@ -69,7 +70,7 @@ class _ResolvedURL:
         sha = self.latest.sha or integrity_hash(self.reference.dependency, self.latest.version, self.filename)
         if not self.version_moved:
             _LOG.pinned(self.reference.dependency, replace(self.latest, sha=sha), self.location)
-        return rewrite_line(match, {"open": f'{{"integrity": "{sha}", '})
+        return rewrite_string(match, {"open": f'{{"integrity": "{sha}", '})
 
     def _refresh(self, match: re.Match[str]) -> str:
         """Return the dictionary with its declared hash rewritten to the resolved version's, or left as it is.
@@ -78,7 +79,7 @@ class _ResolvedURL:
         hash is compared against the one jsDelivr serves instead (see `_warn_if_hash_mismatches`).
         """
         if self.version_moved:
-            return rewrite_line(match, {"sha": self.latest.sha})
+            return rewrite_string(match, {"sha": self.latest.sha})
         self._warn_if_hash_mismatches(match.group("sha"))
         return match.string
 
@@ -124,7 +125,7 @@ class _Rewriter:
         if not self.resolved.version_moved:
             return match.string
         _LOG.new_version(reference.dependency, latest, location)
-        return rewrite_line(match, {"version": latest.version})
+        return rewrite_string(match, {"version": latest.version})
 
     def updated_lines(self, lines: list[Line]) -> list[str]:
         """Return the config's lines with every jsDelivr URL and its integrity hash updated, honouring markers.

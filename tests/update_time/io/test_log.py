@@ -308,6 +308,18 @@ class LoggerTests(TestCase):
             "this comparison warns while a release is fresh and goes quiet once it is old, so it sets no threshold",
         )
 
+    def test_inverted_cooldown_item(self, mock_log: Mock):
+        """Test that a `cooldown` item comparing the wrong way round is warned about at warning level."""
+        location = create_location("Dockerfile", 2)
+        Logger("cooldown").inverted_cooldown_item("python", "cooldown>=30", location)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_INVERTED_COOLDOWN_ITEM,
+            f"Incorrect 'cooldown>=30' in the update-time marker for {dependency('python')} in {at('Dockerfile:2')}: "
+            "this comparison adopts a release only while it is fresh and holds it back once it is old, "
+            "so it sets no cooldown",
+        )
+
     def test_warn_if_redundant_bound(self, mock_log: Mock):
         """Test that a redundant bound is warned about at warning level, showing the bound and how it is redundant."""
         version_bound = bound(Verb.ALLOW, "update>=3.12")  # never has an effect on a 3.12 pin
