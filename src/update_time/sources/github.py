@@ -220,9 +220,9 @@ def github_to_raw(url: str) -> str:
 
 
 def github_owner_and_repository(url: str) -> tuple[str, str]:
-    """Parse the GitHub owner and repository from a URL, including npm-style `git+https` and `.git` URLs."""
+    """Parse the GitHub owner and repository from a URL, including npm-style `git+https`, `git+ssh`, and `.git` URLs."""
     parsed = urlparse(url.removeprefix("git+"))
-    if parsed.netloc == "github.com":
+    if parsed.hostname == "github.com":
         path_parts = parsed.path.lstrip("/").split("/")
         if len(path_parts) > 1:
             return path_parts[0], path_parts[1].removesuffix(".git")

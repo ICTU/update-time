@@ -124,6 +124,22 @@ mutate-help:
     @echo "\nExits 0 when the mutation was caught (a test failed, so it is guarded), 1 when it survived (nothing"
     @echo "guards it), and 2 when the probe never ran (the snippet is not in FILE exactly once)."
 
+# Run Python with the package importable, to probe how it behaves. See `just help py`.
+[env("PYTHONPATH", "src")]
+py *args:
+    {{ uv_run }} python "$@"
+
+[private]
+py-help:
+    @echo "\nRun Python with src on the PYTHONPATH, so the package can be imported without installing it. Pass a"
+    @echo "snippet with -c, or a lone - to read a script from stdin:"
+    @echo "\n    just py -c \"from update_time.sources.github import github_to_raw as raw; print(raw('https://github.com/org/repo/blob/main/CHANGELOG.md'))\""
+    @echo "\n    just py - <<'EOF'"
+    @echo "    from update_time.sources.npmjs import get_changes"
+    @echo "    print(get_changes('react-grid-layout', '2.2.4'))"
+    @echo "    EOF"
+    @echo "\nARGS goes to the interpreter untouched, so a script path and its arguments work too."
+
 # === Run checks ===
 
 # Run a Python check.
