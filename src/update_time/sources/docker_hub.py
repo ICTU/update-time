@@ -8,11 +8,15 @@ generic OCI client in `oci` uses it only for that push date and for credentials 
 """
 
 import os
-from datetime import datetime
 from functools import cache
+from typing import TYPE_CHECKING
 
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
+from update_time.primitives.timestamp import parse_timestamp
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 _LOG = get_logger("docker hub")
 
@@ -54,5 +58,4 @@ def last_pushed(repository: str, tag: str) -> datetime | None:
     response = fetch(url, _LOG, headers=api_headers())
     if response is None:
         return None
-    pushed = response.json().get("tag_last_pushed")
-    return datetime.fromisoformat(pushed) if pushed else None
+    return parse_timestamp(response.json().get("tag_last_pushed"))

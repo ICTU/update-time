@@ -40,11 +40,11 @@ def update_circle_ci_yaml(config_file: Path) -> None:
     machine = machine_images(yaml_format.read(config_file))
 
     def get_new_version(
-        dependency: DependencyName, version: VersionString, version_bound: VersionBound
+        dependency: DependencyName, version: VersionString, version_bound: VersionBound, cooldown_days: int
     ) -> DependencyVersion:
         if f"{dependency}:{version}" in machine:
             return DependencyVersion(version=version)  # Leave machine images unchanged; they aren't on a registry
-        return get_latest_tag(dependency, version, version_bound)
+        return get_latest_tag(dependency, version, version_bound, cooldown_days)
 
     update_file(config_file, YAML_IMAGE_REFERENCE, get_new_version=get_new_version, logger=_LOG)
 

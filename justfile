@@ -108,6 +108,22 @@ test *tests: install-py-dependencies
     # Show a spinner while running and suppress the output unless the run fails.
     {{ start_progress() }} {{ test_command(tests) }} {{ end_progress("test") }}
 
+# Check that a test guards a behaviour: break the code it names, run the tests, and restore the file. See `just help mutate`.
+mutate file *command:
+    {{ uv_run }} python tools/mutate.py "$@"
+
+[private]
+mutate-help:
+    @echo "\nBreak FILE by replacing a snippet in it, run COMMAND (default: just test), and restore FILE whatever"
+    @echo "happens. Reads the snippet to replace and its replacement from stdin, separated by a line holding only @@:"
+    @echo "\n    just mutate src/pkg/module.py <<'EOF'"
+    @echo "    the code the test names"
+    @echo "    @@"
+    @echo "    a broken version of it"
+    @echo "    EOF"
+    @echo "\nExits 0 when the mutation was caught (a test failed, so it is guarded), 1 when it survived (nothing"
+    @echo "guards it), and 2 when the probe never ran (the snippet is not in FILE exactly once)."
+
 # === Run checks ===
 
 # Run a Python check.

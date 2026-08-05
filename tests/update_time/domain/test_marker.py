@@ -5,8 +5,10 @@ from pathlib import Path
 
 from update_time.domain.bound import Verb
 from update_time.domain.line import Line
-from update_time.domain.marker import Marker, parse_marker
+from update_time.domain.marker import DayCount, Marker, parse_marker
 from update_time.primitives.location import Location
+
+from tests.update_time.helpers import bound
 
 
 def line(text: str, previous_text: str = "") -> Line:
@@ -76,7 +78,7 @@ class ParseMarkerStaleThresholdTest(unittest.TestCase):
     def test_day_count_sets_the_threshold(self):
         """Test that `ignore[stale<90]` sets the reference's own staleness threshold to 90 days."""
         marker = parse_marker(line("humanize==4.15.0  # update-time: ignore[stale<90]"))
-        self.assertEqual(marker, Marker(stale_after_days=90))
+        self.assertEqual(marker, Marker(stale=DayCount(days=90)))
 
     def test_the_complement_verb_spells_the_same_threshold(self):
         """Test that `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`.
@@ -84,25 +86,92 @@ class ParseMarkerStaleThresholdTest(unittest.TestCase):
         The verbs are exact complements, so the two spellings name the same ages to warn about: 90 days and older.
         """
         marker = parse_marker(line("humanize==4.15.0  # update-time: allow[stale>=90]"))
-        self.assertEqual(marker, Marker(stale_after_days=90))
+        self.assertEqual(marker, Marker(stale=DayCount(days=90)))
 
     def test_inverted_directions_set_no_threshold(self):
         """Test that `allow[stale<90]` and `ignore[stale>=90]` set no threshold."""
         allowed = parse_marker(line("humanize==4.15.0  # update-time: allow[stale<90]"))
-        self.assertEqual(allowed, Marker(inverted_stale_item="stale<90"))
+        self.assertEqual(allowed, Marker(stale=DayCount(inverted_item="stale<90")))
         ignored = parse_marker(line("humanize==4.15.0  # update-time: ignore[stale>=90]"))
-        self.assertEqual(ignored, Marker(inverted_stale_item="stale>=90"))
+        self.assertEqual(ignored, Marker(stale=DayCount(inverted_item="stale>=90")))
+
+
+class ParseMarkerCooldownTest(unittest.TestCase):
+    """Unit tests for the cooldown a `cooldown` bracket item sets for the reference carrying it."""
+
+    def test_day_count_sets_the_cooldown(self):
+        """Test that `ignore[cooldown<30]` sets the reference's own cooldown to 30 days."""
+        marker = parse_marker(line("humanize==4.15.0  # update-time: ignore[cooldown<30]"))
+        self.assertEqual(marker, Marker(cooldown=DayCount(days=30)))
+
+    def test_the_complement_verb_spells_the_same_cooldown(self):
+        """Test that `allow[cooldown>=30]` sets the same 30-day cooldown as `ignore[cooldown<30]`.
+
+        The verbs are exact complements, so the two spellings name the same ages to adopt: 30 days and older.
+        """
+        marker = parse_marker(line("humanize==4.15.0  # update-time: allow[cooldown>=30]"))
+        self.assertEqual(marker, Marker(cooldown=DayCount(days=30)))
+
+    def test_inverted_directions_set_no_cooldown(self):
+        """Test that `allow[cooldown<30]` and `ignore[cooldown>=30]` set no cooldown."""
+        allowed = parse_marker(line("humanize==4.15.0  # update-time: allow[cooldown<30]"))
+        self.assertEqual(allowed, Marker(cooldown=DayCount(inverted_item="cooldown<30")))
+        ignored = parse_marker(line("humanize==4.15.0  # update-time: ignore[cooldown>=30]"))
+        self.assertEqual(ignored, Marker(cooldown=DayCount(inverted_item="cooldown>=30")))
+
+    def test_a_bare_cooldown_item_is_rejected(self):
+        """Test that `cooldown` without a day count sets no cooldown, whichever verb it follows.
+
+        Read as English, "ignore the cooldown" asks to adopt at once; read through the grammar, where `ignore` drops
+        what it names, the directive drops every candidate, which is a freeze. The two readings are opposites, so
+        rather than guess at one, Update-time reports the item and leaves the reference unchanged.
+        """
+        for verb in Verb:
+            with self.subTest(verb=verb):
+                marker = parse_marker(line(f"humanize==4.15.0  # update-time: {verb}[cooldown]"))
+                self.assertEqual(marker, Marker(invalid_specifier="cooldown"))
+
+
+class ParseMarkerDayCountTest(unittest.TestCase):
+    """Unit tests for the day count both the `stale` and the `cooldown` bracket items take."""
 
     def test_malformed_day_count_is_rejected(self):
-        """Test that a day count that is not a whole number of days is reported, whichever way the comparison runs.
+        """Test that a day count that is not a whole number of days is reported, for either item and either operator.
 
-        The count is judged before the direction, so `stale>=1.5` is reported as an unreadable count rather than as
-        an inverted comparison.
+        The count is judged before the direction, so `stale>=1.5` and `cooldown>=1.5` are reported as unreadable
+        counts rather than as inverted comparisons.
         """
-        for item in ("stale<-5", "stale<1.5", "stale<10,<30", "stale>=-5", "stale>=1.5"):
-            with self.subTest(item=item):
-                marker = parse_marker(line(f"humanize==4.15.0  # update-time: ignore[{item}]"))
-                self.assertEqual(marker, Marker(invalid_specifier=item))
+        for keyword in ("stale", "cooldown"):
+            for operator in ("<", ">="):
+                for days in ("-5", "1.5", "10,<30"):
+                    item = f"{keyword}{operator}{days}"
+                    with self.subTest(item=item):
+                        marker = parse_marker(line(f"humanize==4.15.0  # update-time: ignore[{item}]"))
+                        self.assertEqual(marker, Marker(invalid_specifier=item))
+
+
+class ParseMarkerPrecedenceTest(unittest.TestCase):
+    """Unit tests that a directive on the reference's own line wins over one on the line above."""
+
+    def test_an_inline_directive_beats_one_on_the_line_above(self):
+        """Test that of two markers setting the same value, the inline one wins, for every value one can carry.
+
+        These are the values that cannot combine: the three a reference sets deliberately, and the three reporting
+        a comparison or an item Update-time could not honour. The hold-backs combine as unions instead, so there is
+        nothing for one line to win over the other about.
+        """
+        cases = (
+            ("allow[update<3.13]", "allow[update<4]", Marker(version_bound=bound(Verb.ALLOW, "update<3.13"))),
+            ("ignore[stale<30]", "ignore[stale<90]", Marker(stale=DayCount(days=30))),
+            ("ignore[cooldown<30]", "ignore[cooldown<90]", Marker(cooldown=DayCount(days=30))),
+            ("ignore[stale>=30]", "ignore[stale>=90]", Marker(stale=DayCount(inverted_item="stale>=30"))),
+            ("ignore[cooldown>=30]", "ignore[cooldown>=90]", Marker(cooldown=DayCount(inverted_item="cooldown>=30"))),
+            ("ignore[stlae]", "ignore[updaet]", Marker(invalid_specifier="stlae")),
+        )
+        for inline, above, expected in cases:
+            with self.subTest(inline=inline):
+                marker = parse_marker(line(f"image: python:3.12  # update-time: {inline}", f"# update-time: {above}"))
+                self.assertEqual(marker, expected)
 
 
 class ParseMarkerRawTest(unittest.TestCase):

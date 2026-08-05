@@ -221,7 +221,7 @@ def newest_pypi_releases(path: Path) -> Iterable[tuple[str, DependencyVersion]]:
     caller hands this to `warn_about_stale_dependencies` after the update, so it reads the pins uv settled on.
     """
     return (
-        (name, get_latest_version(name, version, NO_BOUND))
+        (name, get_latest_version(name, version, NO_BOUND, COOLDOWN.get()))
         for name, version in pyproject_toml_format.pinned_versions(path).items()
     )
 

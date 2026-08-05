@@ -70,7 +70,9 @@ def _image_version_getter(image_version: str) -> NewVersionGetter:
     dates and is neither held back nor flagged here.
     """
 
-    def get_new_version(_dependency: str, current_version: str, version_bound: VersionBound) -> DependencyVersion:
+    def get_new_version(
+        _dependency: str, current_version: str, version_bound: VersionBound, _cooldown_days: int
+    ) -> DependencyVersion:
         candidate = Version(image_version)
         newer = is_valid(current_version) and candidate > Version(current_version)
         if newer and version_bound.keeps(candidate, current_version):

@@ -3,7 +3,6 @@
 import os
 from contextlib import suppress
 from dataclasses import dataclass, replace
-from datetime import datetime
 from functools import cache, cached_property, total_ordering
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 from urllib.parse import urlparse
@@ -11,7 +10,6 @@ from urllib.parse import urlparse
 from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.staleness import newest_datetime
 from update_time.domain.version import (
     DependencyName,
     DependencyVersion,
@@ -21,8 +19,11 @@ from update_time.domain.version import (
 )
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
+from update_time.primitives.timestamp import newest_timestamp, parse_timestamp
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from update_time.domain.bound import VersionBound
 
 _LOG = get_logger("github")
@@ -98,7 +99,6 @@ class TaggedVersion:
     @classmethod
     def from_release(cls, owner: str, repository: str, release: ReleaseJSON) -> TaggedVersion:
         """Create a TaggedVersion from a GitHub releases endpoint result."""
-        published_at = release["published_at"]
         return cls(
             owner=owner,
             repository=repository,
@@ -106,7 +106,7 @@ class TaggedVersion:
             body=release["body"] or "",
             draft=release["draft"],
             prerelease=release["prerelease"],
-            published_at=datetime.fromisoformat(published_at) if published_at else None,
+            published_at=parse_timestamp(release["published_at"]),
         )
 
     @classmethod
@@ -279,9 +279,7 @@ def _commit_datetime(owner: str, repository: str, ref: str) -> datetime | None:
     commit, _reason = _get_commit(owner, repository, ref)
     git_commit = commit.get("commit") if commit else None
     committer = git_commit["committer"] if git_commit else None
-    if committer and (date := committer.get("date")):
-        return datetime.fromisoformat(date)
-    return None
+    return parse_timestamp(committer.get("date")) if committer else None
 
 
 def _tagged_versions(owner: str, repository: str) -> list[TaggedVersion] | None:
@@ -312,7 +310,7 @@ def _tagged_versions(owner: str, repository: str) -> list[TaggedVersion] | None:
 
 @cache
 def get_latest_version(
-    action: DependencyName, current_version: VersionString, version_bound: VersionBound
+    action: DependencyName, current_version: VersionString, version_bound: VersionBound, cooldown_days: int
 ) -> DependencyVersion:
     """Return the latest eligible version for the GitHub action, or the current version unchanged.
 
@@ -344,11 +342,11 @@ def get_latest_version(
         for version in valid_versions
         if version.version >= current and version_bound.keeps(version.version, current_version)
     ]
-    latest = first_eligible(candidates, _eligible_version, current_version)
+    latest = first_eligible(candidates, lambda version: _eligible_version(version, cooldown_days), current_version)
     return replace(latest, newest_published=newest_published)
 
 
-def _eligible_version(tagged_version: TaggedVersion) -> DependencyVersion | None:
+def _eligible_version(tagged_version: TaggedVersion, cooldown_days: int) -> DependencyVersion | None:
     """Resolve the candidate's publication date and commit SHA and return it as a DependencyVersion when eligible.
 
     Eligible means past the cooldown and with a resolvable commit SHA to pin to. Otherwise None, so `first_eligible`
@@ -360,7 +358,7 @@ def _eligible_version(tagged_version: TaggedVersion) -> DependencyVersion | None
         _LOG.no_tag_date(tagged_version.dependency, tagged_version.tag_name, reason)
         return None
     published = tagged_version.publication_date
-    if within_cooldown(published) or (sha := tagged_version.commit_sha) is None:
+    if within_cooldown(published, cooldown_days) or (sha := tagged_version.commit_sha) is None:
         return None
     return DependencyVersion(str(tagged_version.version), tagged_version.body, sha, published)
 
@@ -402,7 +400,7 @@ def newest_publication_date(owner: str, repository: str) -> datetime | None:
     backport below that tag's version is knowingly missed.
     """
     releases = _list_releases(owner, repository) or ()
-    dates = [newest_datetime(published for release in releases if (published := release["published_at"]))]
+    dates = [newest_timestamp(release["published_at"] for release in releases)]
     if (tag := _newest_tag_beyond_releases(owner, repository)) is not None:
         dates.append(_commit_datetime(owner, repository, tag["commit"]["sha"]))
     return max((date for date in dates if date is not None), default=None)

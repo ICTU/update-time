@@ -79,7 +79,8 @@ def parse_args() -> argparse.Namespace:
         metavar="DAYS",
         help="number of days to hold back newly published Docker image, GitHub Action, pre-commit hook, "
         "requirements.txt, npm, pnpm, pyproject.toml, Python inline script metadata, .python-version, and jsDelivr "
-        "versions (default: %(default)s)",
+        "versions, except for references that set a cooldown of their own with an # update-time: "
+        "ignore[cooldown<DAYS] marker (default: %(default)s)",
     )
     parser.add_argument(
         "--stale-after",

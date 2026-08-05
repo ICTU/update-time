@@ -3,10 +3,10 @@
 from datetime import datetime
 from functools import cache
 
-from update_time.domain.staleness import newest_datetime
 from update_time.domain.version import DependencyVersion, Yank
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
+from update_time.primitives.timestamp import newest_timestamp
 from update_time.sources.github import changes_from_release, github_owner_and_repository
 
 _LOG = get_logger("npmjs")
@@ -65,7 +65,7 @@ def newest_publication_date(package: str) -> datetime | None:
     reflects the latest version actually published.
     """
     times = _package_metadata(package).get("time", {})
-    return newest_datetime(time for key, time in times.items() if key not in _TIME_BOOKKEEPING_KEYS)
+    return newest_timestamp(time for key, time in times.items() if key not in _TIME_BOOKKEEPING_KEYS)
 
 
 def deprecation(package: str, version: str) -> Yank:

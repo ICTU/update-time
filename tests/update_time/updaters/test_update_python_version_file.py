@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND
+from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.version import DependencyVersion
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
@@ -189,7 +190,7 @@ class UpdatePythonVersionFilesFallbackTest(RegistryRequestsMixin, LoggingTestCas
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_called_once_with("3.13.2\n")
-        mock_get_latest_tag.assert_called_once_with("python", "3.12.6", NO_BOUND)
+        mock_get_latest_tag.assert_called_once_with("python", "3.12.6", NO_BOUND, COOLDOWN.default)
         self.assert_new_version_logged("python", "3.13.2", Location(version_file, 1))
         self.assert_no_warnings_logged()
 

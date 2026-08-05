@@ -14,10 +14,11 @@ from rich.logging import RichHandler
 from rich.theme import Theme
 
 from update_time.domain.bound import NO_BOUND, Verb
-from update_time.domain.staleness import is_stale, staleness_days
+from update_time.domain.staleness import is_stale
 from update_time.domain.version import SHA256_DIGEST
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
+from update_time.primitives.timestamp import days_since
 
 if TYPE_CHECKING:
     from types import FrameType
@@ -411,7 +412,7 @@ class Logger:
             dependency=dependency,
             location=location,
             version=version.version,
-            days=staleness_days(published),
+            days=days_since(published),
             threshold=threshold,
         )
 
@@ -520,15 +521,27 @@ class Logger:
         """Warn that a marker carried an invalid version specifier or item, so the reference is left unchanged."""
         self._log(self._MESSAGE_INVALID_SPECIFIER, specifier=specifier, dependency=dependency, location=location)
 
+    # What both inverted day-count items are reported as; each names what its own comparison does instead.
+    _INVERTED_ITEM = "Incorrect %(item)r in the update-time marker for %(dependency)s in %(location)s: this comparison "
+
     _MESSAGE_INVERTED_STALE_ITEM = LogMessage(
         WARNING,
-        "Incorrect %(item)r in the update-time marker for %(dependency)s in %(location)s: this comparison warns "
-        "while a release is fresh and goes quiet once it is old, so it sets no threshold",
+        _INVERTED_ITEM + "warns while a release is fresh and goes quiet once it is old, so it sets no threshold",
     )
 
     def inverted_stale_item(self, dependency: str, item: str, location: Location) -> None:
         """Warn that a `stale` item compares the wrong way round, so it sets no threshold."""
         self._log(self._MESSAGE_INVERTED_STALE_ITEM, item=item, dependency=dependency, location=location)
+
+    _MESSAGE_INVERTED_COOLDOWN_ITEM = LogMessage(
+        WARNING,
+        _INVERTED_ITEM + "adopts a release only while it is fresh and holds it back once it is old, so it sets no "
+        "cooldown",
+    )
+
+    def inverted_cooldown_item(self, dependency: str, item: str, location: Location) -> None:
+        """Warn that a `cooldown` item compares the wrong way round, so it sets no cooldown."""
+        self._log(self._MESSAGE_INVERTED_COOLDOWN_ITEM, item=item, dependency=dependency, location=location)
 
     _MESSAGE_REDUNDANT_BOUND = LogMessage(
         WARNING, "Redundant update bound %(bound)s on %(dependency)s %(version)s in %(location)s: it %(redundancy)s"

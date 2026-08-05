@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
+from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
 from update_time.domain.version import DependencyVersion, Reference
 from update_time.io.log import Logger
@@ -119,7 +120,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions(_GITHUB_DIR)
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
-        mock_get_latest_version.assert_called_once_with("actions/checkout", "4", NO_BOUND)
+        mock_get_latest_version.assert_called_once_with("actions/checkout", "4", NO_BOUND, COOLDOWN.default)
         self.assert_path_logged(workflow_yml)
         self.assert_pinned_logged("actions/checkout", "4.1.1", NEW_SHA, Location(workflow_yml, 1))
         self.assert_no_new_version_logged()
@@ -132,7 +133,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions(_GITHUB_DIR)
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
-        mock_get_latest_version.assert_called_once_with("actions/checkout", "4.1.1", NO_BOUND)
+        mock_get_latest_version.assert_called_once_with("actions/checkout", "4.1.1", NO_BOUND, COOLDOWN.default)
         self.assert_path_logged(workflow_yml)
         self.assert_pinned_logged("actions/checkout", "4.1.1", NEW_SHA, Location(workflow_yml, 1))
         self.assert_no_new_version_logged()
@@ -147,7 +148,9 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_with(
             f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: allow[update<5]\n"
         )
-        mock_get_latest_version.assert_called_once_with("actions/checkout", "4", bound(Verb.ALLOW, "update<5"))
+        mock_get_latest_version.assert_called_once_with(
+            "actions/checkout", "4", bound(Verb.ALLOW, "update<5"), COOLDOWN.default
+        )
         self.assert_pinned_logged("actions/checkout", "4.2.0", NEW_SHA, Location(workflow_yml, 1))
         self.assert_no_warnings_logged()  # a `<5` bound on a v4 pin is live, so no redundancy warning
 
@@ -160,7 +163,9 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_with(
             f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: ignore[major-update]\n"
         )
-        mock_get_latest_version.assert_called_once_with("actions/checkout", "4", bound(Verb.IGNORE, "major-update"))
+        mock_get_latest_version.assert_called_once_with(
+            "actions/checkout", "4", bound(Verb.IGNORE, "major-update"), COOLDOWN.default
+        )
         self.assert_pinned_logged("actions/checkout", "4.2.0", NEW_SHA, Location(workflow_yml, 1))
         self.assert_no_warnings_logged()  # a major-update bound on a v4 pin is live, so no redundancy warning
 

@@ -13,10 +13,10 @@ from update_time.domain.version import DependencyName, DependencyVersion, Versio
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-# The contract every updater binds and every source implements: given a dependency, its current version, and a
-# version bound (NO_BOUND when the reference carries no bound), return the latest version to use. Implemented by
-# e.g. sources.oci.get_latest_tag and sources.pypi.get_latest_version.
-type NewVersionGetter = Callable[[DependencyName, VersionString, VersionBound], DependencyVersion]
+# The contract every updater binds and every source implements: given a dependency, its current version, a version
+# bound (NO_BOUND when the reference carries no bound), and a cooldown in days, return the latest version to use.
+# The bound and the cooldown are the two constraints on the candidates, by version and by age.
+type NewVersionGetter = Callable[[DependencyName, VersionString, VersionBound, int], DependencyVersion]
 
 # A version higher than any real one, used to probe whether a bound caps anything above the current version.
 _SENTINEL_VERSION = Version("9" * 18)

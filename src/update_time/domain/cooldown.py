@@ -3,16 +3,21 @@
 from datetime import UTC, datetime, timedelta
 
 from update_time.primitives.environment import EnvVar
+from update_time.primitives.timestamp import days_since
 
 # Private channel that passes --cooldown from the CLI to the updater subprocesses.
 COOLDOWN = EnvVar("_UPDATE_TIME_COOLDOWN_DAYS", default=7, parse=int)
 
 
-def within_cooldown(timestamp: datetime | None) -> bool:
-    """Return whether the timestamp falls within the cooldown period."""
+def within_cooldown(timestamp: datetime | None, cooldown_days: int) -> bool:
+    """Return whether the timestamp falls within a cooldown period of the given number of days.
+
+    Whole days are compared, so a cooldown of more days than a `timedelta` can hold is honoured rather than
+    overflowing: the count comes from a marker in a file as well as from the command line.
+    """
     if timestamp is None:
         return False
-    return datetime.now(UTC) - timestamp < timedelta(days=COOLDOWN.get())
+    return days_since(timestamp) < cooldown_days
 
 
 def cooldown_cutoff() -> str:
@@ -21,5 +26,12 @@ def cooldown_cutoff() -> str:
     This is the cooldown expressed the way uv's `--exclude-newer` wants it — an absolute instant rather than a
     duration — for callers that pass the cooldown to uv on the command line (the inline-script-metadata updater,
     which has no lockfile to write `exclude-newer` into, unlike the pyproject.toml updater).
+
+    A cooldown reaching further back than a date can express is clamped to the earliest instant there is. Such a
+    cooldown excludes every release anyway, which is what that instant tells uv, so clamping keeps the meaning.
     """
-    return (datetime.now(UTC) - timedelta(days=COOLDOWN.get())).isoformat()
+    now = datetime.now(UTC)
+    earliest = datetime.min.replace(tzinfo=UTC)
+    if (cooldown_days := COOLDOWN.get()) > (now - earliest).days:
+        return earliest.isoformat()
+    return (now - timedelta(days=cooldown_days)).isoformat()

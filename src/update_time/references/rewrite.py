@@ -16,6 +16,7 @@ from update_time.domain.drift import DriftedPin, hash_drifted, report_drift
 from update_time.domain.line import located_lines
 from update_time.domain.marker import parse_marker
 from update_time.domain.version import Reference
+from update_time.primitives.text import rewrite_string
 from update_time.references.resolve import latest_version
 
 if TYPE_CHECKING:
@@ -73,7 +74,7 @@ class _Rewriter:
         adopted = report_drift(
             marker, partial(self.logger.digest_drift, drifted), partial(self.logger.adopted_drift, drifted)
         )
-        return rewrite_line(match, {"sha": latest.sha}) if adopted else match.string
+        return rewrite_string(match, {"sha": latest.sha}) if adopted else match.string
 
     def _apply_update(
         self, match: re.Match[str], latest: DependencyVersion, location: Location, *, pin_unpinned: bool
@@ -98,7 +99,7 @@ class _Rewriter:
             replacements = {"version": latest.version}
             if match.groupdict().get("sha") is not None:
                 replacements["sha"] = latest.sha
-        return rewrite_line(match, replacements)
+        return rewrite_string(match, replacements)
 
     def updated_lines(self, lines: list[Line], regexp: str | re.Pattern[str]) -> list[str]:
         """Return the lines with every reference the regexp matches updated, honouring each one's marker."""
@@ -113,32 +114,6 @@ def matched_dependency(match: re.Match[str], dependency: str = "") -> str:
 def matched_reference(match: re.Match[str], dependency: str = "") -> Reference:
     """Return the reference the match captured in its `dependency` and `version` named groups."""
     return Reference(matched_dependency(match, dependency), match.group("version"))
-
-
-def replace_reference(match: re.Match[str], replacement: str) -> str:
-    """Return the whole line with the matched reference replaced by `replacement`."""
-    line = match.string
-    return line[: match.start()] + replacement + line[match.end() :]
-
-
-def rewrite_line(match: re.Match[str], replacements: dict[str, str]) -> str:
-    """Return the matched reference's whole line with the named groups replaced, leaving the rest of it untouched."""
-    return replace_reference(match, rewrite_match(match, replacements))
-
-
-def rewrite_match(match: re.Match[str], replacements: dict[str, str]) -> str:
-    """Return the matched text with the named groups replaced, leaving the rest of the match untouched.
-
-    Only the spans the regex captured are rewritten, so a value that also occurs elsewhere within the match — the
-    `18` in `FROM node:18 AS build-18` — is left alone. Groups are replaced right-to-left so an earlier replacement
-    doesn't shift the spans still to come.
-    """
-    text = match.group(0)
-    offset = match.start()
-    for group in sorted(replacements, key=match.start, reverse=True):
-        start, end = match.span(group)
-        text = text[: start - offset] + replacements[group] + text[end - offset :]
-    return text
 
 
 def apply_marker(

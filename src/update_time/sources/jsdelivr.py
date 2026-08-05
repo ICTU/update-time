@@ -37,7 +37,10 @@ def version_getter(filename: str) -> NewVersionGetter:
     """
 
     def get_latest_version(
-        dependency: DependencyName, current_version_string: VersionString, version_bound: VersionBound
+        dependency: DependencyName,
+        current_version_string: VersionString,
+        version_bound: VersionBound,
+        cooldown_days: int,
     ) -> DependencyVersion:
         """Return the latest jsDelivr version published outside the cooldown, with the file's integrity hash.
 
@@ -53,7 +56,7 @@ def version_getter(filename: str) -> NewVersionGetter:
         candidates = _candidate_versions(dependency, current_version_string, version_bound)
         latest = first_eligible(
             candidates,
-            lambda version: _eligible_version(dependency, version, filename, current_version_string),
+            lambda version: _eligible_version(dependency, version, filename, current_version_string, cooldown_days),
             current_version_string,
         )
         # When the run leaves the reference on its current version, attach that version's deprecation as a yank so a
@@ -67,7 +70,7 @@ def version_getter(filename: str) -> NewVersionGetter:
 
 
 def _eligible_version(
-    dependency: str, version: Version, filename: str, current_version_string: VersionString
+    dependency: str, version: Version, filename: str, current_version_string: VersionString, cooldown_days: int
 ) -> DependencyVersion | None:
     """Return the version with its integrity hash when it's eligible, or None when it's too fresh or deprecated.
 
@@ -76,7 +79,7 @@ def _eligible_version(
     Subresource Integrity check.
     """
     published = _publication_datetime(dependency, version)
-    if published is None or within_cooldown(published):
+    if published is None or within_cooldown(published, cooldown_days):
         return None
     version_string = str(version)
     if deprecation(dependency, version_string).yanked:
