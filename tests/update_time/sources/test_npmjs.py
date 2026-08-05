@@ -126,8 +126,14 @@ class GetChangesRepositoryTest(CacheClearingTestCase):
         """Test that a repository object without a url yields no changelog instead of crashing."""
         self.assertEqual(get_changes("no_url", "1.0"), "")
 
-    @patch("update_time.sources.npmjs.changes_from_release", Mock(return_value="Changelog"))
-    @patch_get({"repository": {"url": "git+https://github.com/org/package.git"}})
-    def test_repository_object_url_is_used(self):
-        """Test that a repository object's url is parsed and used to find the changelog."""
-        self.assertEqual(get_changes("with_repo", "1.0"), "Changelog")
+    @patch("update_time.sources.npmjs.changes_from_release", return_value="Changelog")
+    def test_repository_object_url_is_used(self, changes_from_release: Mock):
+        """Test that a repository object's url is parsed and used to find the changelog, whether https or ssh."""
+        for package, url in (
+            ("https_repo", "git+https://github.com/org/package.git"),
+            ("ssh_repo", "git+ssh://git@github.com/org/package.git"),
+        ):
+            with self.subTest(url=url), patch_get({"repository": {"url": url}}):
+                self.assertEqual(get_changes(package, "1.0"), "Changelog")
+                changes_from_release.assert_called_once_with("org", "package", package, "1.0")
+                changes_from_release.reset_mock()

@@ -82,6 +82,12 @@ class GitHubOwnerAndRepositoryTest(unittest.TestCase):
             github_owner_and_repository("git+https://github.com/ICTU/update-time.git"), ("ICTU", "update-time")
         )
 
+    def test_npm_ssh_url(self):
+        """Test that an npm-style git+ssh URL, whose user information precedes the host, is parsed."""
+        self.assertEqual(
+            github_owner_and_repository("git+ssh://git@github.com/ICTU/update-time.git"), ("ICTU", "update-time")
+        )
+
     def test_url_with_fragment(self):
         """Test that a URL with a trailing fragment (as npm uses) is parsed."""
         self.assertEqual(

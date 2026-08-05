@@ -147,6 +147,18 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         mock_get_latest_version.assert_not_called()
         self.assert_no_warnings_logged()
 
+    def test_ssh_repo_is_updated(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that a hook repository given as an ssh URL is updated."""
+        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
+        repo = f"repos:\n  - repo: ssh://git@github.com/{self.HOOK}\n"
+        config_file = mock_path(f"{repo}    rev: v4.5.0\n")
+        mock_glob.return_value = [config_file]
+        update_pre_commit_configs()
+        config_file.write_text.assert_called_once_with(f"{repo}    rev: {NEW_SHA}  # frozen: v4.6.0\n")
+        mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", NO_BOUND, COOLDOWN.default)
+        self.assert_pinned_logged(self.HOOK, "4.6.0", NEW_SHA, Location(config_file, 3))
+        self.assert_no_warnings_logged()
+
     def test_branch_rev_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a rev that is a branch name rather than a version is left untouched."""
         config_file = mock_path(config("rev: main\n"))
