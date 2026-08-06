@@ -98,7 +98,12 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.inverted_cooldown_item("python", "cooldown>=30", Location(Path("Dockerfile"), 2))
     inverted_cooldown = capture.take()
 
-    log.recognised_marker("python", Marker(ignore_stale=True, raw="ignore[stale]"), Location(Path("Dockerfile"), 2))
+    marker = Marker(ignore_stale=True, raw="ignore[stale]")
+    dockerfile = Location(Path("Dockerfile"), 2)
+    log.recognised_marker("python", marker, dockerfile)
+    recognised = capture.take()
+
+    log.ignored_staleness("python", stale, marker, dockerfile, STALE_AFTER.get())
     return {
         "@@DRIFT_WARNINGS@@": drift,
         "@@STALE_WARNING@@": staleness,
@@ -107,5 +112,6 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@UNRECOGNISED_ITEM_WARNING@@": unrecognised,
         "@@INVERTED_STALE_WARNING@@": inverted,
         "@@INVERTED_COOLDOWN_WARNING@@": inverted_cooldown,
-        "@@RECOGNISED_MARKER@@": capture.take(),
+        "@@RECOGNISED_MARKER@@": recognised,
+        "@@HELD_BACK_MARKER@@": capture.take(),
     }

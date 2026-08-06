@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 import nltk  # type: ignore[import-untyped]
 from nltk.tokenize import PunktTokenizer  # type: ignore[import-untyped]
 
+from tools.markdown import lines_without_code_blocks
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -66,12 +68,8 @@ def _drop_irrelevant_parentheses(text: str) -> str:
 
 def extract_prose_from_markdown(markdown_file: Path) -> Iterator[Prose]:
     """Yield the prose in the Markdown file, with the line each run starts on."""
-    in_code_block = False
-    for line_number, line in enumerate(markdown_file.read_text().splitlines(), start=1):
-        if line.startswith("```"):
-            in_code_block = not in_code_block
-            continue
-        if in_code_block or line.startswith("|"):  # Code, or a table row: not prose.
+    for line_number, line in lines_without_code_blocks(markdown_file.read_text()):
+        if line.startswith("|"):  # A table row: not prose.
             continue
         heading = re.match(r"#+ (.+)", line)  # A heading is a sentence of its own.
         if text := (heading[1] if heading else line).strip():

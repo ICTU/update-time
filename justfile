@@ -110,7 +110,7 @@ test *tests: install-py-dependencies
 
 # Check that a test guards a behaviour: break the code it names, run the tests, and restore the file. See `just help mutate`.
 mutate file *command:
-    {{ uv_run }} python tools/mutate.py "$@"
+    {{ uv_run }} python -m tools.mutate "$@"
 
 [private]
 mutate-help:
@@ -211,16 +211,21 @@ check-justfile:
 
 # Check that README.md and the log-output screenshot are what regenerating them produces.
 [private]
-check-readme: (py-check "check-readme" f"PYTHONPATH=src {{ uv_run }} python -m docs.generate_readme --check")
+check-readme-is-up-to-date: (py-check "check-readme-is-up-to-date" f"PYTHONPATH=src {{ uv_run }} python -m tools.generate_readme --check")
+
+# Check that the README documents every dependency type the same way, and that its internal links resolve.
+[private]
+check-readme-structure:
+    {{ start_capture() }} {{ uv_run }} python -m tools.readme_structure_check docs/README.md.in {{ end_capture("check-readme-structure") }}
 
 # Check prose for too complex sentences.
 [private]
 check-sentence-complexity:
-    {{ start_capture() }} {{ uv_run }} python tools/sentence_complexity_check.py {{ code }} .claude/CLAUDE.md {{ end_capture("check-sentence-complexity") }}
+    {{ start_capture() }} {{ uv_run }} python -m tools.sentence_complexity_check {{ code }} docs .claude/CLAUDE.md {{ end_capture("check-sentence-complexity") }}
 
 # Run the quality checks. Run one by name for a quicker loop, e.g. `just ruff` or `just mypy`.
 [parallel]
-check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-readme check-sentence-complexity yamllint zizmor
+check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-readme-is-up-to-date check-readme-structure check-sentence-complexity yamllint zizmor
 
 # === Fix issues ===
 
@@ -262,7 +267,7 @@ alias update-deps := update-dependencies
 # Regenerate README.md from docs/README.md.in (fills in `update-time -h` and the log output; rewrites the screenshot).
 [env("PYTHONPATH", "src")]
 readme:
-    {{ uv_run }} python -m docs.generate_readme
+    {{ uv_run }} python -m tools.generate_readme
 
 # === CI ===
 
@@ -276,7 +281,9 @@ _ci: _sonarcloud check
 
 # === Folders ===
 
-code := "src tests docs tools"
+# The folders holding Python code. `docs` holds the README template and the screenshot, so it is checked for
+# prose but has no Python to check.
+code := "src tests tools"
 
 # === Output functions ===
 

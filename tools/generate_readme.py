@@ -2,6 +2,7 @@
 
 The template's placeholders are substituted so the machine-generated parts of the README:
 
+- `@@TABLE_OF_CONTENTS@@` — the table of contents chapter, linking to each of the template's chapters.
 - `@@HELP_OUTPUT@@` — the output of `update-time -h`, wrapped to 80 columns.
 - `@@LOG_OUTPUT@@`  — the sample log output as text, from `generate_log_svg`, which also renders the screenshot
   embedded above that fallback.
@@ -17,15 +18,16 @@ import os
 import sys
 from pathlib import Path
 
-from docs.generate_log_svg import generate as generate_log_output
-from docs.log_samples import sample_log_lines
+from tools.generate_log_svg import generate as generate_log_output
+from tools.log_samples import sample_log_lines
+from tools.markdown import anchor, headings
 from update_time.domain.staleness import STALE_AFTER
 
-_THIS_FILE = Path(__file__)
-_ROOT = _THIS_FILE.parents[1]
+_ROOT = Path(__file__).parents[1]
+_DOCS = _ROOT / "docs"
 _README = _ROOT / "README.md"
-_TEMPLATE = _THIS_FILE.with_name("README.md.in")
-_SCREENSHOT = _THIS_FILE.with_name("log-output.svg")
+_TEMPLATE = _DOCS / "README.md.in"
+_SCREENSHOT = _DOCS / "log-output.svg"
 
 
 def _help_output() -> str:
@@ -47,11 +49,25 @@ def _help_output() -> str:
     return buffer.getvalue().rstrip()
 
 
+def _table_of_contents(template: str, depth: int = 3) -> str:
+    """Return the table of contents: its own chapter heading, then a link per heading, in the template's order.
+
+    The depth is the deepest heading level listed, so a depth of 2 lists the chapters (`##`) alone and a depth of
+    3 adds the sections within them, indented under the chapter they belong to. The heading is generated rather
+    than written in the template, so that scanning the template can't find it and list the table of contents in
+    itself.
+    """
+    entries = [f"{'  ' * (level - 2)}- [{title}]({anchor(title)})" for level, title in headings(template, 2, depth)]
+    return "\n".join(["## 📑 Table of contents", "", *entries])
+
+
 def render() -> dict[Path, str]:
     """Return the content each generated file should have, keyed by the file it belongs in."""
     STALE_AFTER.set(STALE_AFTER.default)  # Pin the threshold the samples report, whatever the environment holds
     log_output = generate_log_output()
-    readme = _TEMPLATE.read_text().replace("@@HELP_OUTPUT@@", _help_output()).replace("@@LOG_OUTPUT@@", log_output.text)
+    template = _TEMPLATE.read_text()
+    readme = template.replace("@@TABLE_OF_CONTENTS@@", _table_of_contents(template))
+    readme = readme.replace("@@HELP_OUTPUT@@", _help_output()).replace("@@LOG_OUTPUT@@", log_output.text)
     for placeholder, log_lines in sample_log_lines().items():
         readme = readme.replace(placeholder, log_lines)
     return {_README: readme, _SCREENSHOT: log_output.svg}

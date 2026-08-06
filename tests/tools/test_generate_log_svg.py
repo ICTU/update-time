@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime
 from unittest.mock import patch
 
-from docs.generate_log_svg import LogOutput, _FixedTime, _portable, generate
+from tools.generate_log_svg import LogOutput, _FixedTime, _portable, generate
 
 from tests.helpers import log_record
 
