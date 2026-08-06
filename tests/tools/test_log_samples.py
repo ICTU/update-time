@@ -3,7 +3,7 @@
 import logging
 import unittest
 
-from docs.log_samples import _Capture
+from tools.log_samples import _Capture
 
 from update_time.io.log import DEPENDENCY_DELIMITER, LOCATION_DELIMITER
 

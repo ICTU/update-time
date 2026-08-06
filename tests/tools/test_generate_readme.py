@@ -5,16 +5,16 @@ import sys
 import unittest
 from unittest.mock import Mock, patch
 
-from docs.generate_log_svg import LogOutput
-from docs.generate_readme import _README, _SCREENSHOT, _TEMPLATE, _help_output, main, render
-from docs.log_samples import sample_log_lines
+from tools.generate_log_svg import LogOutput
+from tools.generate_readme import _README, _SCREENSHOT, _TEMPLATE, _help_output, _table_of_contents, main, render
+from tools.log_samples import sample_log_lines
 
 from tests.helpers import patch_environ
 
 _PLACEHOLDER = re.compile(r"@@\w+@@")
 
 # The placeholders `render` fills itself, rather than from the log samples.
-_FILLED_BY_RENDER = frozenset({"@@HELP_OUTPUT@@", "@@LOG_OUTPUT@@"})
+_FILLED_BY_RENDER = frozenset({"@@HELP_OUTPUT@@", "@@LOG_OUTPUT@@", "@@TABLE_OF_CONTENTS@@"})
 
 
 class PlaceholderTest(unittest.TestCase):
@@ -53,10 +53,10 @@ class HelpOutputTest(unittest.TestCase):
         self.assertEqual(sys.argv, started_with)
 
 
-@patch("docs.generate_readme.sample_log_lines")
-@patch("docs.generate_readme._help_output")
-@patch("docs.generate_readme.generate_log_output")
-@patch("docs.generate_readme._TEMPLATE")
+@patch("tools.generate_readme.sample_log_lines")
+@patch("tools.generate_readme._help_output")
+@patch("tools.generate_readme.generate_log_output")
+@patch("tools.generate_readme._TEMPLATE")
 class RenderTest(unittest.TestCase):
     """Unit tests for the content each generated file is given."""
 
@@ -70,8 +70,37 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(generated[_README], "Usage\nthe help\nOutput\nthe sample output\nWarning\nthe warning\n")
         self.assertEqual(generated[_SCREENSHOT], "<svg/>")
 
+    def test_table_of_contents_lists_the_chapters(self, template: Mock, log: Mock, help_output: Mock, samples: Mock):
+        """Test that the table of contents links to each chapter, in the order the template has them."""
+        template.read_text.return_value = "@@TABLE_OF_CONTENTS@@\n\n## ⚡ Usage\n\n## 📌 Pinning\n"
+        log.return_value = LogOutput(svg="<svg/>", text="")
+        help_output.return_value = ""
+        samples.return_value = {}
+        contents = "## 📑 Table of contents\n\n- [⚡ Usage](#-usage)\n- [📌 Pinning](#-pinning)"
+        self.assertEqual(render()[_README], f"{contents}\n\n## ⚡ Usage\n\n## 📌 Pinning\n")
 
-@patch("docs.generate_readme.render")
+
+class TableOfContentsTest(unittest.TestCase):
+    """Unit tests for the chapters the table of contents lists."""
+
+    def test_only_chapters_are_listed_at_depth_two(self):
+        """Test that a section or subsection heading gets no entry, so the table of contents lists chapters only."""
+        contents = _table_of_contents("## ⚡ Usage\n\n### Workflow\n\n#### Detail\n", depth=2)
+        self.assertEqual(contents, "## 📑 Table of contents\n\n- [⚡ Usage](#-usage)")
+
+    def test_deeper_headings_are_listed_indented(self):
+        """Test that a deeper table of contents adds the sections under their chapter, and stops at the depth."""
+        contents = _table_of_contents("## ⚡ Usage\n\n### Workflow\n\n#### Detail\n", depth=3)
+        expected = "## 📑 Table of contents\n\n- [⚡ Usage](#-usage)\n  - [Workflow](#workflow)"
+        self.assertEqual(contents, expected)
+
+    def test_heading_in_a_code_block_is_not_listed(self):
+        """Test that a `##` line in a fenced code block gets no entry, since it is sample content, not a chapter."""
+        contents = _table_of_contents("## ⚡ Usage\n\n```console\n## not a chapter\n```\n")
+        self.assertEqual(contents, "## 📑 Table of contents\n\n- [⚡ Usage](#-usage)")
+
+
+@patch("tools.generate_readme.render")
 class MainTest(unittest.TestCase):
     """Unit tests for writing the generated files, and for naming the ones that are out of date."""
 

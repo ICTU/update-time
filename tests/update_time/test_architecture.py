@@ -72,7 +72,7 @@ _GENERATED_FILES = ("tools/vulture-whitelist.py",)
 
 def _python_files() -> list[pathlib.Path]:
     """Return the Python files the visibility check reads names and references from."""
-    roots = ("src", "tests", "tools", "docs")
+    roots = ("src", "tests", "tools")
     files = (path for root in roots for path in pathlib.Path(root).rglob("*.py"))
     return sorted(path for path in files if path.as_posix() not in _GENERATED_FILES)
 
@@ -361,6 +361,20 @@ class SourceConfigurationTest(unittest.TestCase):
         self.assertEqual(reported, ["attribute.py", "importer.py"])
 
 
+class ToolInvocationTest(unittest.TestCase):
+    """Test that the tools are run as modules rather than as scripts.
+
+    Running `python tools/thing.py` puts `tools` itself on the import path, where the package by that name can't be
+    found, so the script dies on its first `from tools...` import. The tests import the tools as a package and so
+    never meet it, which leaves the recipe running them as the only place it shows.
+    """
+
+    def test_tools_are_run_as_modules(self):
+        """Test that no recipe runs a tool as a script, reporting the recipe lines that do."""
+        lines = pathlib.Path("justfile").read_text().splitlines()
+        self.assertEqual([line.strip() for line in lines if "python tools/" in line], [])
+
+
 class SubmoduleImportTest(unittest.TestCase):
     """Test that the rules naming an external module see the submodule form this project imports them in.
 
@@ -430,7 +444,7 @@ class VisibilityTest(unittest.TestCase):
 
         A constant the tests alone import is public for their benefit, which widens what the module offers without
         anything outside the tests asking for it. Leaving the tests out of the scan is what surfaces those, since
-        the constant then has no caller left. The `docs` scripts count as callers, so what they import stays public.
+        the constant then has no caller left. The `tools` scripts count as callers, so what they import stays public.
         """
         self.assertEqual(_module_local_constants([f for f in _python_files() if f.parts[0] != "tests"]), [])
 
