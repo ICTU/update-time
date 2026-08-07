@@ -289,10 +289,10 @@ class LoggerTests(TestCase):
     def test_invalid_specifier(self, mock_log: Mock):
         """Test that an unparsable version bound specifier is warned about at warning level."""
         location = create_location("Dockerfile", 2)
-        Logger("bound").invalid_specifier("python", "@@@", location)
+        Logger("bound").invalid_bracket_item("python", "@@@", location)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_INVALID_SPECIFIER,
+            Logger._MESSAGE_INVALID_BRACKET_ITEM,
             f"Invalid '@@@' in the update-time marker for {dependency('python')} in {at('Dockerfile:2')}; "
             "leaving the reference unchanged",
         )
@@ -318,6 +318,18 @@ class LoggerTests(TestCase):
             f"Incorrect 'cooldown>=30' in the update-time marker for {dependency('python')} in {at('Dockerfile:2')}: "
             "this comparison adopts a release only while it is fresh and holds it back once it is old, "
             "so it sets no cooldown",
+        )
+
+    def test_inverted_vulnerable_item(self, mock_log: Mock):
+        """Test that a `vulnerable` item comparing the wrong way round is warned about at warning level."""
+        location = create_location("Dockerfile", 2)
+        Logger("vulnerable").inverted_vulnerable_item("python", "vulnerable>=high", location)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_INVERTED_VULNERABLE_ITEM,
+            f"Incorrect 'vulnerable>=high' in the update-time marker for {dependency('python')} in "
+            f"{at('Dockerfile:2')}: this comparison warns about the mild vulnerabilities and stays quiet about the "
+            "severe ones, so it sets no risk level",
         )
 
     def test_warn_if_redundant_bound(self, mock_log: Mock):

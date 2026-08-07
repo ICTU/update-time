@@ -1,15 +1,18 @@
 """Unit tests for the inline-script-metadata updater (discovery and orchestration of the uv package manager)."""
 
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from update_time.primitives.location import Location
 from update_time.updaters.update_python_inline_script_metadata import update_python_inline_script_metadatas
 
 from tests.helpers import mock_path, mock_response, patch_pathlib_path
-from tests.update_time.helpers import LoggingTestCase, pypi_index, staleness_disabled
+from tests.update_time.helpers import (
+    LoggingTestCase,
+    no_vulnerabilities,
+    staleness_disabled,
+)
 
 if TYPE_CHECKING:
     from update_time.primitives.command import Command
@@ -30,6 +33,14 @@ def script(*specs: str, requires_python: str = ">=3.11") -> str:
     )
 
 
+def discovered_script(glob: Mock, spec: str) -> Mock:
+    """Return the single mock .py file the scan discovers, its inline block pinning the given dependency."""
+    script_file = mock_path(script(spec), parent=Path("/"))
+    glob.return_value = [script_file]
+    return script_file
+
+
+@no_vulnerabilities
 @staleness_disabled
 @patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("requests.get")
@@ -143,42 +154,18 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
 @patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("requests.get")
 @patch("subprocess.run")
-class StaleInlineScriptDependencyTest(LoggingTestCase):
-    """Unit tests for the inline-script-metadata staleness check, a PyPI pass over the block's `==` pins.
+class CheckedInlineScriptPinsTest(LoggingTestCase):
+    """Unit test for handing the discovered scripts to the checks uv-delegated updaters share.
 
-    uv is stubbed to report no update (`package v1.0` with no `(latest: …)`), so the only PyPI request comes from
-    the staleness pass; its Index API response carries the newest release's file upload time.
+    What those checks then report is `WarnAboutPinsTest`'s to pin; what this updater owns is running them over the
+    scripts it found, once uv has settled their pins.
     """
 
-    def mock_script(self, glob: Mock) -> Mock:
-        """Discover a single mock .py file whose inline block pins `package==1.0`."""
-        script_file = mock_path(script("package==1.0"), parent=Path("/"))
-        glob.return_value = [script_file]
-        return script_file
-
-    def test_stale_dependency_warned(self, run: Mock, get: Mock, glob: Mock):
-        """Test that a pinned dependency whose newest release is old is warned about."""
-        run.return_value = Mock(stdout="package v1.0\n")
-        get.return_value = pypi_index(
-            "1.0", files=[{"upload-time": (datetime.now(UTC) - timedelta(days=512)).isoformat()}]
-        )
-        script_file = self.mock_script(glob)
-        update_python_inline_script_metadatas()
-        self.assert_stale_dependency_logged("package", "1.0", Location(script_file))
-
-    def test_recent_dependency_not_warned(self, run: Mock, get: Mock, glob: Mock):
-        """Test that a pinned dependency whose newest release is recent is not warned about as stale."""
-        run.return_value = Mock(stdout="package v1.0\n")
-        get.return_value = pypi_index("1.0", files=[{"upload-time": datetime.now(UTC).isoformat()}])
-        self.mock_script(glob)
-        update_python_inline_script_metadatas()
-        self.assert_no_warnings_logged()
-
-    @staleness_disabled
-    def test_disabled_makes_no_pypi_request(self, run: Mock, get: Mock, glob: Mock):
-        """Test that `--stale-after 0` skips the staleness pass entirely, so it makes no PyPI request."""
-        run.return_value = Mock(stdout="package v1.0\n")
-        self.mock_script(glob)
+    @patch("update_time.updaters.update_python_inline_script_metadata.warn_about_pins")
+    def test_the_discovered_scripts_are_checked(self, warn: Mock, run: Mock, get: Mock, glob: Mock):
+        """Test that the checks are handed every script the scan found, whether uv updated it or not."""
+        run.return_value = Mock(stdout="django v3.2.0\n")
+        script_file = discovered_script(glob, "django==3.2.0")
         update_python_inline_script_metadatas()
         get.assert_not_called()
-        self.assert_no_warnings_logged()
+        warn.assert_called_once_with([script_file], ANY)

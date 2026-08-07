@@ -16,6 +16,7 @@ from rich.logging import RichHandler
 
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import SHA256_HEX_CHARS, DependencyVersion
+from update_time.domain.vulnerability import Vulnerability
 from update_time.io.log import LOG_MESSAGE_FORMAT, LOG_THEME, LOG_TIME_FORMAT, Logger, LogHighlighter
 from update_time.primitives.location import Location
 
@@ -80,6 +81,10 @@ def generate() -> LogOutput:
     long_ago = datetime.now(UTC) - timedelta(days=512, hours=1)
     stale = DependencyVersion("1.3.0", newest_published=long_ago)
     log.warn_if_stale("left-pad", stale, Location(Path("package.json")), STALE_AFTER.get())
+    vulnerability = Vulnerability(
+        "GHSA-2gwj-7jmv-h26r", "SQL Injection in Django", "critical", "https://osv.dev/GHSA-2gwj-7jmv-h26r"
+    )
+    log.vulnerable_dependency("django", "3.2.0", vulnerability, Location(Path("docs/requirements.txt"), 12))
 
     plain_text = console.export_text(clear=False)  # capture before the export clears the recording
     svg = console.export_svg(title="update-time", unique_id="update-time-log")

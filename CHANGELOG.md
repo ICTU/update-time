@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Warn when the version a Python dependency or a jsDelivr URL is left on has a known vulnerability, according to the [OSV](https://osv.dev) database. Closes [#210](https://github.com/ICTU/update-time/issues/210).
 
 ## 0.0.24 - 2026-08-07
 
@@ -204,7 +206,7 @@ No changes yet.
 
 ### Added
 
-- Add a `--log-level` option (`DEBUG`, `INFO`, `WARNING`, or `ERROR`; default `INFO`) to control how much is logged.
+- Add a `--log-level` option (`DEBUG`, `INFO`, `WARNING`, or `ERROR`) to control how much is logged. Default log level is `INFO`.
 
 ### Changed
 

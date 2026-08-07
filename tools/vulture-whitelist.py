@@ -1,4 +1,4 @@
-_.created  # unused attribute (docs/generate_log_svg.py:37)
+database_specific  # unused variable (src/update_time/sources/osv.py:34)
 upload_time_iso_8601  # unused variable (src/update_time/sources/pypi.py:44)
 AssertEqualActualFirst  # unused class (tools/fixit_rules.py:65)
 VALID  # unused variable (tools/fixit_rules.py:77)

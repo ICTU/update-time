@@ -22,6 +22,7 @@ _SUBSECTIONS = (
     "Cooldown",
     "Stale dependencies",
     "Yanked dependencies",
+    "Vulnerable dependencies",
     "Markers",
 )
 

@@ -1,10 +1,10 @@
 """Find uv-managed pyproject.toml files and update their dependencies and lockfiles."""
 
-from update_time.domain.staleness import warn_about_stale_dependencies
 from update_time.file_formats import pyproject_toml as pyproject_toml_format
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.package_managers import uv
+from update_time.updaters.uv_pins import warn_about_pins
 
 _LOG = get_logger("pyproject.toml")
 
@@ -28,9 +28,7 @@ def update_pyproject_tomls() -> None:
     updated = [pyproject_toml for pyproject_toml in files if uv.update_pyproject_toml(pyproject_toml, _LOG)]
     for pyproject_toml in updated:
         uv.update_uv_lock(pyproject_toml)
-    # Check staleness after the update, so it reads the `==` pins uv settled on, reusing the PyPI source (the same
-    # one the requirements.txt updater uses).
-    warn_about_stale_dependencies(files, uv.newest_pypi_releases, _LOG.warn_if_stale)
+    warn_about_pins(files, _LOG)
 
 
 def main() -> None:  # pragma: no cover

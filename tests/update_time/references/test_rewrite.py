@@ -402,14 +402,14 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.warn_if_stale.assert_not_called()  # the `ignore[stale]` before the typo is honoured
         self.logger.digest_drift.assert_called_once()  # the mistyped drift opt-in is not, so the drift only warns
 
-    def assert_invalid_item(self, directive: str, item: str) -> None:
-        """Assert that Update-time warns about the item, leaving the reference neither held back nor understood."""
+    def assert_invalid_bracket_item(self, directive: str, bracket_item: str) -> None:
+        """Assert that the bracket item is logged as invalid, leaving the reference neither held back nor understood."""
         self.logger.reset_mock()
         get_new_version = Mock()
         lines = [f"image: python:3.12.1  # update-time: {directive}"]
         self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)  # left unchanged, not updated
         get_new_version.assert_not_called()
-        self.logger.invalid_specifier.assert_called_once_with("python", item, Location(self.path, 1))
+        self.logger.invalid_bracket_item.assert_called_once_with("python", bracket_item, Location(self.path, 1))
         self.logger.ignored.assert_not_called()  # reported as invalid, not frozen as a bare `ignore`
         self.logger.recognised_marker.assert_not_called()
 
@@ -423,13 +423,13 @@ class UpdateReferencesTest(unittest.TestCase):
         }
         for directive, item in items.items():
             with self.subTest(directive=directive):
-                self.assert_invalid_item(directive, item)
+                self.assert_invalid_bracket_item(directive, item)
 
     def test_unterminated_bracket_warns_and_leaves_reference_unchanged(self):
         """Test that a bracket left unclosed warns under either verb, reporting the unclosed bracket."""
         for directive in ("ignore[update<4", "allow[update<4"):
             with self.subTest(directive=directive):
-                self.assert_invalid_item(directive, "[update<4")
+                self.assert_invalid_bracket_item(directive, "[update<4")
 
     def test_comma_separated_items_combine_in_one_bracket(self):
         """Test that a bracket combines comma-separated items: `ignore[stale, update>=3.13]` bounds and silences."""
@@ -461,7 +461,8 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_combined_ignore_scopes_hold_back_everything(self):
         """Test that every `ignore` scope combined holds back as much as a bare `ignore`."""
         get_new_version = Mock()
-        lines = ["image: python:3.12  # update-time: ignore[update] ignore[stale] ignore[yanked]"]
+        scopes = "ignore[update] ignore[stale] ignore[yanked] ignore[vulnerable]"
+        lines = [f"image: python:3.12  # update-time: {scopes}"]
         self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()  # Every aspect is held back, so the source is not even queried.
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
@@ -472,7 +473,7 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = ["image: python:3.12  # update-time: allow[drift, update<3.13]"]
         self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
-        self.logger.invalid_specifier.assert_called_once_with("python", "drift", Location(self.path, 1))
+        self.logger.invalid_bracket_item.assert_called_once_with("python", "drift", Location(self.path, 1))
 
     def test_repeated_marker_prefixes_still_combine(self):
         """Test that the older form of combining directives, repeating the `# update-time:` prefix, still works."""
@@ -504,7 +505,7 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = ["image: python:3.12  # update-time: allow[update@@@]"]
         self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
-        self.logger.invalid_specifier.assert_called_once_with("python", "@@@", Location(self.path, 1))
+        self.logger.invalid_bracket_item.assert_called_once_with("python", "@@@", Location(self.path, 1))
 
     def test_invalid_specifier_above_line_is_logged_and_leaves_reference_unchanged(self):
         """Test that an unparsable specifier in a comment above the reference is reported for the reference below."""
@@ -512,21 +513,15 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = ["# update-time: allow[update@@@]", "image: python:3.12"]
         self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
-        self.logger.invalid_specifier.assert_called_once_with("python", "@@@", Location(self.path, 2))
+        self.logger.invalid_bracket_item.assert_called_once_with("python", "@@@", Location(self.path, 2))
 
     def test_invalid_ignore_specifier_warns_rather_than_freezing(self):
-        """Test that a malformed `ignore` bound warns and leaves the reference unchanged, not silently freezes.
-
-        A mistyped `ignore[update…]` bound must be reported like any invalid item, not fall back to a bare
-        `ignore` that freezes the reference with no warning. The malformed-bound-versus-unrecognised-item verdict
-        reaches the marker parser as the `InvalidSpecifier` the bound constructor raises; were it collapsed to a
-        plain not-a-bound, this reference would freeze silently.
-        """
+        """Test that a malformed `ignore` bound warns and leaves the reference unchanged, not silently freezes."""
         get_new_version = Mock()
         lines = ["image: python:3.12  # update-time: ignore[update@@@]"]
         self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
-        self.logger.invalid_specifier.assert_called_once_with("python", "@@@", Location(self.path, 1))
+        self.logger.invalid_bracket_item.assert_called_once_with("python", "@@@", Location(self.path, 1))
         self.logger.ignored.assert_not_called()  # reported as invalid, not frozen as a bare `ignore`
 
 

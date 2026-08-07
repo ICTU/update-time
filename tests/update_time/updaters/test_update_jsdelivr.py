@@ -11,7 +11,14 @@ from update_time.updaters.update_jsdelivr import update_jsdelivrs
 
 from tests.helpers import mock_path, mock_response
 from tests.update_time.fixtures import HASH1, HASH2
-from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, npm_registry
+from tests.update_time.helpers import (
+    LoggingTestCase,
+    jsdelivr_versions,
+    no_vulnerabilities,
+    npm_registry,
+    osv,
+    osv_vulnerability,
+)
 
 _FILENAME = "/dist/clipboard.min.js"
 
@@ -30,6 +37,9 @@ _ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN.default + 1)).isoformat
 # The deprecation npm reports for clipboard 2.0.11: the reason the registry states, and the yank it becomes.
 _DEPRECATION_REASON = "use 3.0 instead"
 _DEPRECATED = Yank(yanked=True, reason=_DEPRECATION_REASON)
+
+# An advisory affecting the URL's version, for the tests that need OSV to report one, and what it is read as.
+_ADVISORY, _VULNERABILITY = osv_vulnerability("GHSA-1111-1111-1111", "Cross-site scripting in clipboard", "moderate")
 
 
 # The lines a jsDelivr reference is declared with, formatted as Ruff would format them: the URL, and below it the
@@ -52,6 +62,7 @@ def conf(*entries: str) -> str:
 _CONF = conf(entry(_URL, _INTEGRITY))
 
 
+@no_vulnerabilities
 @patch("pathlib.Path.rglob")
 @patch("requests.get")
 class UpdateJsdelivrsTest(LoggingTestCase):
@@ -107,8 +118,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
     def test_line_between_the_url_and_its_hash_is_left_untouched(self, mock_get: Mock, mock_glob: Mock):
         """Test that the hash still follows the URL across an intervening line, which is itself left alone.
 
-        The hash belongs to the URL above it however many lines separate the two, so a version-lookalike on a line in
-        between is neither taken for the pin nor rewritten along with it.
+        The line in between holds a version-lookalike, which is neither taken for the pin nor rewritten with it.
         """
         self.offer_versions(mock_get, "2.0.12", "2.0.11")
         mock_conf = self.update(conf(entry(_URL, "# do not remove 2.0.11 note", _INTEGRITY)), mock_glob)
@@ -156,11 +166,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_out_of_date_url_without_an_integrity_hash_is_bumped_and_pinned(self, mock_get: Mock, mock_glob: Mock):
-        """Test that a URL that is both out of date and unpinned is bumped and gains its hash, reported once.
-
-        The version change is the headline, as it is for an unpinned image reference, so the pin is not reported on
-        top of it.
-        """
+        """Test that a URL that is both out of date and unpinned is bumped and gains its hash, reported once."""
         self.offer_versions(mock_get, "2.0.12", "2.0.11")
         mock_conf = self.update(conf(entry(_URL, _NO_INTEGRITY)), mock_glob)
         new_content = self.written(mock_conf)
@@ -170,11 +176,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_bare_url_string_cannot_be_pinned(self, mock_get: Mock, mock_glob: Mock):
-        """Test that a URL declared as a bare string, without an attribute dictionary, is reported as unpinnable.
-
-        Pinning it would mean restructuring the string into a `(url, {"integrity": ...})` tuple, which is more than
-        rewriting a line, so the URL is left as it is and the reason is reported instead.
-        """
+        """Test that a URL declared as a bare string, without an attribute dictionary, is reported as unpinnable."""
         self.offer_versions(mock_get, "2.0.11")
         mock_conf = self.update(conf(_URL), mock_glob)
         mock_conf.write_text.assert_not_called()
@@ -182,11 +184,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_bare_url_followed_by_another_url_is_still_reported(self, mock_get: Mock, mock_glob: Mock):
-        """Test that a bare URL string is reported even when another jsDelivr URL follows it.
-
-        Each URL becomes the one awaiting an attribute dictionary, so a bare URL has to be reported when the next
-        URL arrives rather than only when the lines run out.
-        """
+        """Test that a bare URL string is reported even when another jsDelivr URL follows it."""
         mock_get.side_effect = [
             jsdelivr_versions("2.0.11"),
             npm_registry({"2.0.11": _ELIGIBLE}),
@@ -199,11 +197,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_bare_url_does_not_pin_the_entry_below_it(self, mock_get: Mock, mock_glob: Mock):
-        """Test that a bare URL's hash is not written into the next entry's dictionary when that entry is held back.
-
-        The bare URL is reported and forgotten, so the dictionary below it belongs to the held-back URL and is left
-        alone rather than pinned to a hash resolved for a different reference.
-        """
+        """Test that a bare URL's hash is not written into the next entry's dictionary when that entry is held back."""
         self.offer_versions(mock_get, "2.0.11")
         held_back = entry(f"{_URL}  # update-time: ignore", _NO_INTEGRITY)
         mock_conf = self.update(conf(_URL, held_back), mock_glob)
@@ -226,12 +220,16 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         mock_conf.write_text.assert_not_called()  # no newer version, so no rewrite
         self.assert_yanked_dependency_logged("clipboard", "2.0.11", Location(mock_conf, 3), _DEPRECATED)
 
-    def test_marker_holds_the_pin_back_as_well_as_the_update(self, mock_get: Mock, mock_glob: Mock):
-        """Test that an `# update-time: ignore` marker leaves an unpinned URL unpinned, looking nothing up.
+    def test_vulnerable_dependency_warned(self, mock_get: Mock, mock_glob: Mock):
+        """Test that a URL left on a version OSV reports an advisory for is warned about, without rewriting the URL."""
+        self.offer_versions(mock_get, "2.0.11", served_hash=HASH1)
+        with osv(_ADVISORY):
+            mock_conf = self.update(_CONF, mock_glob)
+        mock_conf.write_text.assert_not_called()  # no newer version, so no rewrite
+        self.assert_vulnerable_dependency_logged("clipboard", "2.0.11", _VULNERABILITY, Location(mock_conf, 3))
 
-        A URL whose dictionary declares no hash would otherwise have one looked up and inserted, so holding the
-        update back is not enough: the marker has to hold the pin back too, before any source is queried.
-        """
+    def test_marker_holds_the_pin_back_as_well_as_the_update(self, mock_get: Mock, mock_glob: Mock):
+        """Test that an `# update-time: ignore` marker leaves an unpinned URL unpinned, looking nothing up."""
         mock_conf = self.update(conf(entry(f"{_URL}  # update-time: ignore", _NO_INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         mock_get.assert_not_called()
@@ -268,11 +266,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_ignore_update_marker_holds_the_update_back_but_still_warns(self, mock_get: Mock, mock_glob: Mock):
-        """Test that `ignore[update]` leaves the URL on its version but still warns that the version was deprecated.
-
-        The scope narrows the marker to the update, so a URL deliberately frozen on a deprecated version is still
-        reported as one, rather than going quiet along with the update.
-        """
+        """Test that `ignore[update]` leaves the URL on its version but still warns that the version was deprecated."""
         self.offer_versions(mock_get, "2.0.12", "2.0.11", deprecated={"2.0.11": _DEPRECATION_REASON})
         mock_conf = self.update(conf(entry(f"{_URL}  # update-time: ignore[update]", _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()  # the newer version is held back
@@ -281,11 +275,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_ignored_logged("clipboard", location, "ignore[update]")
 
     def test_ignore_stale_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
-        """Test that an `ignore[stale]` marker on the URL's line holds the staleness warning back, but not the update.
-
-        The hold-back is logged at debug level. The scope narrows the marker to the warning, so a package whose
-        newest release is long in the past is silently updated to it rather than warned about.
-        """
+        """Test that an `ignore[stale]` marker on the URL's line holds the warning back, but not the update."""
         old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
         self.offer_versions(mock_get, "2.0.12", "2.0.11", published=old)
         mock_conf = self.update(conf(entry(f"{_URL}  # update-time: ignore[stale]", _INTEGRITY)), mock_glob)
@@ -294,13 +284,20 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_ignored_staleness_logged("clipboard", Location(mock_conf, 3), "ignore[stale]")
 
     def test_ignore_yanked_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
-        """Test that an `ignore[yanked]` marker on the URL's line holds back the deprecation warning.
-
-        The hold-back is logged at debug level, and no warning survives, so npm reporting deprecations means the
-        marker is not reported as redundant either.
-        """
+        """Test that an `ignore[yanked]` marker on the URL's line holds back the deprecation warning."""
         self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": _DEPRECATION_REASON}, served_hash=HASH1)
         mock_conf = self.update(conf(entry(f"{_URL}  # update-time: ignore[yanked]", _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_no_warnings_logged()
         self.assert_ignored_yank_logged("clipboard", Location(mock_conf, 3), "ignore[yanked]")
+
+    def test_ignore_vulnerable_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
+        """Test that an `ignore[vulnerable]` marker holds back the vulnerability warning and nothing else."""
+        self.offer_versions(mock_get, "2.0.12", "2.0.11")
+        marked_url = f"{_URL}  # update-time: ignore[vulnerable]"
+        with osv(_ADVISORY) as mock_post:
+            mock_conf = self.update(conf(entry(marked_url, _INTEGRITY)), mock_glob)
+        self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", self.written(mock_conf))
+        mock_post.assert_called()
+        self.assert_no_warnings_logged()
+        self.assert_ignored_vulnerability_logged("clipboard", Location(mock_conf, 3), "ignore[vulnerable]")

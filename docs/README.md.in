@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/update-time?logo=pypi&logoColor=white)](https://pypi.org/project/update-time/) [![Python versions](https://img.shields.io/pypi/pyversions/update-time?logo=python&logoColor=white)](https://pypi.org/project/update-time/) [![License](https://img.shields.io/pypi/l/update-time)](https://github.com/ICTU/update-time/blob/main/LICENSE)
 
-Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for [dependencies](#-what-is-updated) and updates them to their latest versions. Where possible, it adds a [hash pin](#-pinning) to references. To protect against supply-chain attacks, it applies a [cooldown](#-cooldown) period. And it warns you about [stale dependencies](#-stale-dependencies) and [yanked versions](#-yanked-dependencies).
+Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for [dependencies](#-what-is-updated) and updates them to their latest versions. Where possible, it adds a [hash pin](#-pinning) to references. To protect against supply-chain attacks, it applies a [cooldown](#-cooldown) period. And it warns you about [stale dependencies](#-stale-dependencies), [yanked versions](#-yanked-dependencies), and [vulnerable dependencies](#-vulnerable-dependencies).
 
 Update-time rewrites the files in place and logs what it did:
 
@@ -46,14 +46,14 @@ $ update-time -h
 
 </details>
 
-Update-time logs at four levels. `--log-level` sets the lowest one shown, which by default is `INFO`:
+Update-time logs at four levels. `--log-level` sets the lowest one shown, which by default is `INFO`.
 
 | | Level | What is logged |
 | :-: | :---- | :------------- |
-| 🔍 | `DEBUG` | What Update-time is doing: each file it checks, each [marker](#-controlling-updates-per-reference) it recognises, and everything those markers held back |
-| ℹ️ | `INFO` | What Update-time changed: a version updated, a [hash pinned](#-pinning) |
-| ⚠️ | `WARNING` | What needs your attention: a [stale](#-stale-dependencies) or [yanked](#-yanked-dependencies) dependency, [hash drift](#hash-drift), a source it could not reach, a marker that is invalid, incorrect, or redundant |
-| ❌ | `ERROR` | Failures that stop an update, such as a package manager that is not installed |
+| 🔍 | `DEBUG` | what Update-time is doing: each file it checks, each directory `--exclude-path` skips, each [marker](#-controlling-updates-and-warnings-per-reference) it recognises, and everything a marker or `--ignore-vulnerability` held back |
+| ℹ️ | `INFO` | what Update-time changed: a version updated, a [hash pinned](#-pinning) |
+| ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), or [vulnerable](#-vulnerable-dependencies) dependency, [hash drift](#hash-drift), a source it could not reach, a marker that is invalid, incorrect, or redundant |
+| ❌ | `ERROR` | failures that stop an update, such as a package manager that is not installed |
 
 ### Workflow
 
@@ -64,9 +64,10 @@ The recommended workflow is to run Update-time on a dedicated branch, push it, a
 3. Commit the changes and open a pull request.
 4. Let your tests and checks run in CI to confirm nothing is broken before merging.
 
-Because Update-time rewrites files in place, it expects to make updates inside a git repository, allowing for changes to be reverted. Update-time refuses to run when the directory to scan is not inside a git repository; printing an error and exiting with a non-zero status without touching any files. Pass `--force` to override.
+Because Update-time rewrites files in place, it expects to make updates inside a git repository, allowing for changes to be reverted. By default, Update-time refuses to run when the directory to scan is not inside a git repository; printing an error and exiting with a non-zero status without touching any files. Pass `--force` to override.
 
-Note that being inside a repository only guarantees revertability relative to the last commit. Update-time does not check for uncommitted edits before running.
+> [!NOTE]
+> Being inside a repository only guarantees revertability relative to the last commit. Update-time does not check for uncommitted edits before running.
 
 ### Increasing rate limits
 
@@ -75,34 +76,40 @@ To raise API rate limits while updating, set the following environment variables
 - `GITHUB_TOKEN` — increases the GitHub API rate limit when updating GitHub Actions. The token only needs to read public release and commit data, so no specific scope is required: both a classic token with no scopes selected and a fine-grained token with default read-only access to public repositories work.
 - `DOCKER_HUB_USERNAME` and `DOCKER_HUB_TOKEN` — authenticate to the Docker Hub API (both must be set) to increase its rate limit when updating Docker images.
 
-## 📦 What is updated
+## 🔄 Updating
 
-Update-time updates the following types of dependencies, found in the listed files, and using the listed sources:
+Update-time scans your repository for version pins, moves each one to the newest version its source offers once that version is past the cooldown, and adds a hash pin wherever the reference can hold one.
 
-| Dependency type | Files | Source |
-| :-------------- | :---- | :----- |
-| [Python dependencies](#python-dependencies) | `pyproject.toml`, `requirements.txt`, and PEP 723 inline script metadata (`# /// script` blocks in `*.py` files) | [PyPI](https://pypi.org) |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | `package.json` (and their lock files) | [npm registry](https://registry.npmjs.org) |
-| [Node engine version](#node-engine-version-and-python-version) | `package.json` | the Node base image in the project's Dockerfile, or the latest [Node](https://hub.docker.com/_/node) release on Docker Hub |
-| [Python version](#node-engine-version-and-python-version) | `.python-version` | the Python base image in the project's Dockerfile, or the latest [Python](https://hub.docker.com/_/python) release on Docker Hub |
-| [Docker images](#docker-images) | Dockerfiles, CircleCI configs, `.gitlab-ci.yml`, Docker Compose files, Helm charts, and devcontainer configs | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) |
-| [GitHub Actions](#github-actions-and-pre-commit-hooks) | YAML files under `.github/` | [GitHub API](https://api.github.com) |
-| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | `.pre-commit-config.yaml` | [GitHub API](https://api.github.com) |
-| [jsDelivr npm URLs](#jsdelivr-npm-urls) | Sphinx config | [npm registry](https://registry.npmjs.org) |
+### 📦 What is updated
 
-Each type links to its own section under [Details per dependency type](#-details-per-dependency-type), which covers the files and dependencies it updates, and how pinning, the cooldown, staleness, yanks, and markers apply to it.
+Update-time updates the following types of dependencies, found in the listed files, and using the listed sources. Where a package manager manages the dependencies, Update-time delegates the updating to the package manager. Other dependency types it updates itself:
 
-## 📌 Pinning
+| Dependency type | Files | Source | Updated by |
+| :-------------- | :---- | :----- | :--------- |
+| [Python dependencies](#python-dependencies) | `pyproject.toml`, `requirements.txt`, and PEP 723 inline script metadata (`# /// script` blocks in `*.py` files) | [PyPI](https://pypi.org) | Update-time for `requirements.txt`, delegated to uv for the other two |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | `package.json` (and their lock files) | [npm registry](https://registry.npmjs.org) | delegated to npm or pnpm, whichever manages the `package.json` |
+| [Node engine version](#node-engine-version-and-python-version) | `package.json` | the Node base image in the project's Dockerfile, or the latest [Node](https://hub.docker.com/_/node) release on Docker Hub | Update-time |
+| [Python version](#node-engine-version-and-python-version) | `.python-version` | the Python base image in the project's Dockerfile, or the latest [Python](https://hub.docker.com/_/python) release on Docker Hub | Update-time |
+| [Docker images](#docker-images) | Dockerfiles, CircleCI configs, `.gitlab-ci.yml`, Docker Compose files, Helm charts, and devcontainer configs | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) | Update-time |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | YAML files under `.github/` | [GitHub API](https://api.github.com) | Update-time |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | `.pre-commit-config.yaml` | [GitHub API](https://api.github.com) | Update-time |
+| [jsDelivr npm URLs](#jsdelivr-npm-urls) | Sphinx config | [npm registry](https://registry.npmjs.org) | Update-time |
+
+Dependency types that Update-time updates itself, it rewrites line by line: it picks the new version from the source and edits the reference in place. Dependency types it delegates, it hands to uv, npm, or pnpm, which resolves the versions itself and keeps the project's lock file in step where there is one. Update-time runs that package manager for you, so a delegated dependency is updated by the same `update-time` run as every other one. Two things follow for a delegated dependency: the version specifier in the file decides how far it may move, since there is no line to carry a [marker](#-controlling-updates-and-warnings-per-reference), and the [cooldown](#-cooldown) is handed to the manager, which applies it per run rather than per reference.
+
+Each type links to its own section under [Details per dependency type](#-details-per-dependency-type), which covers the files and dependencies it updates, and how pinning, the cooldown, staleness, yanks, vulnerabilities, and markers apply to it.
+
+### 📌 Pinning
 
 *Pinning* means specifying exactly what a reference should resolve to, rather than leaving that to whatever its source serves at the time. Two things can be pinned: the version a reference resolves to, and the artefact that the version resolves to.
 
-A **version pin** names an exact version instead of something that floats: `python:3.14` instead of `python:latest`, `humanize==4.15.0` instead of `humanize>=4`. That is what Update-time scans for and updates.
+A **version pin** names an exact version instead of something that floats: `python:3.14` instead of `python:latest`, `humanize==4.15.0` instead of `humanize>=4`. Update-time scans and updates version pins, not floating pins.
 
 A **hash pin** adds a cryptographic hash of the artefact the version resolves to — an image digest, a commit SHA, or an integrity hash. The difference with a version pin is immutability: a version pin can be re-pointed under you, because a tag can be moved or re-pushed, while a hash pin can only match the one thing it was computed from. That is what protects against a supply-chain attack, and Update-time strives to add a hash pin where possible.
 
 Update-time works on both version pins and hash pins: it moves a version pin forward, taking the most precise spelling the source has for the version it lands on, and adds a hash pin to any reference that can hold one.
 
-### Version precision
+#### Version precision
 
 When a version pin is updated, and the source offers a more precise new version, that version is chosen. For example, when `python:3.12` is updated and both `python:3.13` and `python:3.13.0` are available, `python:3.13.0` is applied. Every kind of version pin gains precision this way: a `.python-version` entry of `3.12` becomes `3.13.2`, and `actions/checkout@v4` moves to the exact version that tag resolves to.
 
@@ -110,7 +117,7 @@ However, more precision is not guaranteed: if a newer version is less precise, i
 
 Precision is only gained by updating, so a more precise spelling of the version a pin already names is left alone: `python:3.12` stays as it is when the newest matching tag is `3.12.0`, and so does `humanize==4.15` as long as `4.15.0` is the latest release.
 
-### Which dependencies get a hash pin
+#### Which dependencies get a hash pin
 
 What Update-time adds depends on what the reference can hold:
 
@@ -125,9 +132,9 @@ What Update-time adds depends on what the reference can hold:
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | the commit SHA of the version, with the version in a `# frozen:` comment |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | the SRI `integrity` hash of the file the URL points at |
 
-Each type's own section explains which of its references can carry one.
+Each type's own section explains further which of its references can hold a hash pin.
 
-### Hash drift
+#### Hash drift
 
 Sometimes a reference already carries a hash pin and only what it points at has changed. Update-time warns about that and leaves the pin unchanged, so a changed target is never silently adopted (which would defeat the immutability a pin exists to provide). It takes three forms, one per kind of hash pin:
 
@@ -137,19 +144,19 @@ Sometimes a reference already carries a hash pin and only what it points at has 
 
 *Digest drift* means an image tag was re-pushed (rebuilt) under the same name and version, so the registry now serves a different digest.
 
-*Tag drift* means the version tag of a GitHub Action or pre-commit hook was moved onto another commit than the one the reference pins — a git tag is mutable, so whoever controls the repository can move `v4.1.1`. This is what pinning to a commit SHA exists to catch: the pin keeps the run on the commit it was pinned to whatever the tag does, which is the point, but without the warning nothing tells you that tag and pin have parted company.
+*Tag drift* means the version tag of a GitHub Action or pre-commit hook was moved onto another commit than the one the reference pins — a git tag is mutable, so whoever controls the repository can move it. This is what pinning to a commit SHA exists to catch: the pin keeps the reference on the commit it was pinned to whatever the tag does, which is the point, and the warning tells you that tag and pin have parted company.
 
-An *integrity hash mismatch* means the hash a jsDelivr URL declares is not the one jsDelivr serves for the version the URL sits on. Unlike the other two this rarely means anything upstream changed, since npm does not allow a published version to be republished; the declared hash is more likely wrong — mistyped, copied from another file, or tampered with. It is also the most urgent, because the browser silently refuses to load the script until the hash matches, which no build step catches. Checking it costs one extra request per up-to-date URL that declares a hash.
+An *integrity hash mismatch* means the hash a jsDelivr URL declares is not the one jsDelivr serves for the version the URL sits on. Unlike the other two this rarely means anything upstream changed, since npm does not allow a published version to be republished. More likely, the declared hash is wrong; mistyped, copied from another file, or tampered with. It is also the most urgent, because the browser silently refuses to load the script until the hash matches, which no build step catches.
 
-A reference with no image digest, commit SHA, or integrity hash has nothing that can drift, so a `requirements.txt` pin, a `.python-version` entry, and the Node engine version are not checked; nor are the dependencies Update-time updates through uv, npm, and pnpm.
+A reference without hash pin has nothing that can drift, so a `requirements.txt` pin, a `.python-version` entry, and the Node engine version are not checked; nor are the dependencies Update-time updates through a package manager such as uv or npm.
 
-To adopt the new value instead, opt the reference in with a marker (see [Controlling updates per reference](#-controlling-updates-per-reference)): an image reference then adopts the re-pushed digest, and a GitHub Action or pre-commit hook adopts the commit its tag was moved to. Alternatively, pass `--allow-hash-drift` to opt every reference in the scan in at once. Adopted drift is logged at `INFO`, like any other change. A marker that holds the reference back wins over both, so a reference you deliberately froze is never re-pinned.
+To adopt the new value, opt the reference in with a marker (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)): an image reference then adopts the re-pushed digest, and a GitHub Action or pre-commit hook adopts the commit its tag was moved to. Alternatively, pass `--allow-hash-drift` to opt every reference in the scan in at once. A marker that holds the reference back wins over both, so a reference you deliberately froze is never re-pinned. Adopted drift is logged at `INFO`, like any other change.
 
 An integrity hash mismatch is never adopted, whatever you opt in to: the whole point of the hash is to refuse content that doesn't match it, so Update-time reports it and leaves correcting it to you.
 
-## ⏳ Cooldown
+### ⏳ Cooldown
 
-To avoid adopting releases that are too fresh to trust, Update-time honours a cooldown period during which newly published versions are not yet picked up. It defaults to **7 days** and can be changed with the `--cooldown` option, for example `update-time --cooldown 14`. A single reference can carry a cooldown of its own, which wins over whatever `--cooldown` says (see [Controlling updates per reference](#-controlling-updates-per-reference)). Who applies it depends on the dependency type:
+To avoid adopting releases that are too fresh to trust, Update-time honours a cooldown period during which newly published versions are not yet picked up. It defaults to **7 days** and can be changed with the `--cooldown` option, for example `update-time --cooldown 14`. A single reference can carry a cooldown of its own, which wins over whatever `--cooldown` says (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). Who applies it depends on the dependency type:
 
 | Dependency type | Applied by | Measured against |
 | :-------------- | :--------- | :--------------- |
@@ -166,15 +173,19 @@ Where Update-time applies the cooldown itself, it holds back every version publi
 
 Where a package manager applies it, Update-time hands the value to uv, npm, or pnpm, each of which takes it per run rather than per dependency, and each of which leaves a cooldown your project already configures in place. What that means per type is described under [Python dependencies](#python-dependencies) and [npm and pnpm dependencies](#npm-and-pnpm-dependencies).
 
-## ⚠️ Stale dependencies
+## ⚠️ Warnings
 
-Keeping a pin on the latest version doesn't help if that latest version is itself years old: the project may have been abandoned or superseded. Alongside updating, Update-time warns when a dependency's newest release is older than a threshold, so you can decide whether to keep it, replace it, or vendor it. The threshold defaults to **365 days** and is set with `--stale-after DAYS`; pass `--stale-after 0` to disable the check. A single reference can carry a threshold of its own, which wins over whatever `--stale-after` says (see [Controlling updates per reference](#-controlling-updates-per-reference)). The warning is informational only: it never changes a file and never affects the exit status. For example, a pin whose newest release came out well over a year ago is reported as:
+Update-time also reports what updating cannot put right: a dependency whose newest release is years old, a version its maintainer withdrew, and a version a security advisory names. These warnings are informational, so they change no file and do not affect the exit status.
+
+### 🕸️ Stale dependencies
+
+Keeping a pin on the latest version doesn't help if that latest version is itself years old: the project may have been abandoned or superseded. Alongside updating, Update-time warns when a dependency's newest release is older than a threshold, so you can decide whether to keep it, replace it, or vendor it. The threshold defaults to **365 days** and is set with `--stale-after DAYS`; pass `--stale-after 0` to disable the check. A single reference can carry a threshold of its own, which wins over whatever `--stale-after` says (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). For example, a pin whose newest release came out well over a year ago is reported as:
 
 ```console
 @@STALE_WARNING@@
 ```
 
-The date compared against the threshold is the publication date of the dependency's *newest* release. This way a project that has just published a release is never reported as stale, not even when that release is still within the [cooldown](#-cooldown) window. A reference can also be left out of the check altogether by a marker, which is a separate choice from holding back its updates (see [Controlling updates per reference](#-controlling-updates-per-reference)).
+The date compared against the threshold is the publication date of the dependency's *newest* release. This way a project that has just published a release is never reported as stale, not even when that release is still within the [cooldown](#-cooldown) window. A reference can also be left out of the check altogether by a marker, which is a separate choice from holding back its updates (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
 
 Every kind of dependency Update-time updates is checked for staleness, against the date its own source reports:
 
@@ -189,9 +200,9 @@ Every kind of dependency Update-time updates is checked for staleness, against t
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | the newest version's release date, or its tagged commit's date |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | the newest release of the package on the npm registry |
 
-## 🚫 Yanked dependencies
+### 🚫 Yanked dependencies
 
-A yank means "stop using this": a release the maintainer withdrew because it was broken, botched, or insecure. An exact pin keeps installing a yanked release anyway — pip and uv honour it by design — so Update-time warns when the version a dependency is pinned to has been yanked. Like the staleness warning, it is informational only: it never changes a file and never affects the exit status. The maintainer's reason is included when they gave one:
+A yank means "stop using this": a release the maintainer withdrew because it was broken, botched, or insecure. An exact pin keeps installing a yanked release anyway — pip and uv honour it by design — so Update-time warns when the version a dependency is pinned to has been yanked. The maintainer's reason is included when they gave one:
 
 ```console
 @@YANKED_WARNING@@
@@ -199,7 +210,7 @@ A yank means "stop using this": a release the maintainer withdrew because it was
 
 When no reason was given, the message reports `(reason not specified)` instead.
 
-The warning is only given when the run leaves the reference on the yanked version, because the replacement is still within the [cooldown](#-cooldown), a marker holds it back, or the yanked release is the newest one and there is nothing to move to. When the run updates away from the yanked version, the warning would be noise and is not given. A yank is never a reason to adopt a release that is too fresh to trust: the cooldown still applies, so Update-time warns and leaves the decision to update to you. A reference can also be left out of the check altogether by a marker (see [Controlling updates per reference](#-controlling-updates-per-reference)).
+The warning is only given when the run leaves the reference on the yanked version, because the replacement is still within the [cooldown](#-cooldown), a marker holds it back, or the yanked release is the newest one and there is nothing to move to. When the run updates away from the yanked version, the warning would be noise and is not given. A yank is never a reason to adopt a release that is too fresh to trust: the cooldown still applies, so Update-time warns and leaves the decision to update to you. A reference can also be left out of the check altogether by a marker (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
 
 Which dependencies are checked follows from where a yank can be observed. PyPI reports one as [PEP 592](https://peps.python.org/pep-0592/) yank metadata. On npm there is no yank, but a per-version *deprecation* is the same signal, and is reported in the same wording as one. Where a withdrawal can be observed, that version is skipped when picking a new one, and a reference left on it is warned about:
 
@@ -214,28 +225,78 @@ Which dependencies are checked follows from where a yank can be observed. PyPI r
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | none: its source has no yank concept |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | against the npm registry's deprecation of the pinned version |
 
-## 🎛️ Controlling updates per reference
+### 🛡️ Vulnerable dependencies
 
-Comments of the form `# update-time: <directive>` let you steer what happens to an individual reference — most often to hold it back, but also to bound how far it may move, or to opt it into behaviour that is off by default. To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
+A pin on the newest version is no protection when that version has a known security defect. Update-time looks the pinned version up in the [OSV](https://osv.dev) database, which aggregates GitHub's advisory database, PyPA's, and others, and warns when an advisory names that version as affected. It names the risk level, what the advisory says, and where to read the advisory in full:
+
+```console
+@@VULNERABILITY_WARNING@@
+```
+
+Several of the databases that OSV aggregates carry the same defect, each under an identifier of its own, so OSV answers with a record per database. A defect is warned about once, whichever of them reported it, because the records of one defect name each other's identifiers and Update-time reads them as one. The databases rate a defect independently, and only some rate it at all, so the warning names the record that rates it most severely, and the defect is reported and filtered at that level.
+
+The risk level is the one the advisory's reviewers gave it: `low`, `moderate`, `high`, or `critical`. Where they gave none, the level is derived from the advisory's CVSS base score, banded the same way, so `0.1` to `3.9` is low, `4.0` to `6.9` moderate, `7.0` to `8.9` high, and `9.0` to `10.0` critical. An advisory carrying both a CVSS v3 and a v4 vector is read at its v4 score, the newer of the two assessments. An advisory whose risk level Update-time cannot read at all is reported as `a vulnerability of unknown severity`. An advisory that gives no summary, which many do not, is reported without the quotation; its id and URL say which defect it is.
+
+A reference marked `# update-time: ignore[vulnerable]` is still looked up at OSV, and what OSV answers is silenced rather than warned about. It is looked up because the answer is the only thing that can tell you the marker has gone stale: a suppression outlives the defect it was written for, and without the lookup there is nothing to compare it against. When the version turns out to have no vulnerability at all, Update-time reports the marker as holding nothing back:
+
+```console
+@@REDUNDANT_VULNERABILITY_WARNING@@
+```
+
+Run with `--log-level DEBUG` to see what the marker silenced. To silence one advisory rather than every one, name it in the marker (see [Silencing specific vulnerabilities](#silencing-specific-vulnerabilities)). A reference marked with a bare `# update-time: ignore` is not looked up at OSV at all, since that marker holds every check back and queries no source whatsoever. A reference frozen with `# update-time: ignore[update]` is checked and warned about as usual, so a pin you deliberately hold back keeps telling you that its version is vulnerable (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
+
+The version checked is the one the run leaves the reference on: the new version when the reference moved, the current version when it did not. So a vulnerability the run updated away from is never reported, and one the run updated into always is. Only the version a dependency is pinned to is checked, since auditing the transitive dependencies in a lock file is what `uv audit`, `pip-audit`, and `npm audit` are for.
+
+To silence one advisory across the whole scan, rather than on the one reference that carries a marker, pass `--ignore-vulnerability`, which takes a comma-separated list: `--ignore-vulnerability GHSA-2gwj-7jmv-h26r,CVE-2021-31542`. It names an advisory the way a marker does, so any identifier the defect is known by will do, and what it silenced is logged at `DEBUG`. Where a reference's own marker silences the same advisory, the marker is the one reported.
+
+Every risk level is warned about by default. To hear only about the more severe ones, raise the threshold with `--warn-vulnerability-level`, for example `--warn-vulnerability-level high`. A vulnerability whose risk level Update-time cannot read is warned about whatever the threshold is, since leaving the defects nobody has rated out of the warnings would hide exactly the ones nobody has looked at.
+
+Looking a pin up sends its package name and version to OSV. Pass `--warn-vulnerability-level none` to switch the check off, which stops those requests altogether. A reference that sets a level of its own is still looked up though, since no command-line option overrides a marker (see [Setting a risk level](#setting-a-risk-level)).
+
+Which dependencies are checked follows from what OSV can match a pinned version against:
+
+| Dependency type | Vulnerability check |
+| :-------------- | :------------------ |
+| [Python dependencies](#python-dependencies) | `requirements.txt`, `pyproject.toml`, and inline script metadata pins, against OSV's PyPI advisories |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: those dependencies are declared as ranges and resolved in the lock file, which Update-time does not read |
+| [Node engine version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
+| [Python version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
+| [Docker images](#docker-images) | none: OSV has no ecosystem for container images |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | none: OSV holds advisories for actions but matches no version against them, so silence here is not safety |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | none: a hook repository is not an OSV package |
+| [jsDelivr npm URLs](#jsdelivr-npm-urls) | the version in the URL, against OSV's npm advisories |
+
+## 🎛️ Controlling updates and warnings per reference
+
+Comments of the form `# update-time: <directive>` let you steer what happens to an individual reference — to hold it back, but also to bound how far it may move, or to opt it into behaviour that is off by default. To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
 
 ### Holding a reference back
 
-By default the marker holds a reference back from version updates, the [staleness](#-stale-dependencies) check, and the [yank](#-yanked-dependencies) check. Add a bracketed scope to narrow it to just one:
+By default the marker holds a reference back from version updates, the [staleness](#-stale-dependencies) check, the [yank](#-yanked-dependencies) check, and the [vulnerability](#-vulnerable-dependencies) check. Add a bracketed scope to narrow it to just one:
 
-| Marker | Version update | Staleness warning | Yank warning |
-| :----- | :------------- | :---------------- | :----------- |
-| `# update-time: ignore` | held back | held back | held back |
-| `# update-time: ignore[update]` | held back | still checked | still checked |
-| `# update-time: ignore[stale]` | applied | held back | still checked |
-| `# update-time: ignore[yanked]` | applied | still checked | held back |
+| Marker | Version update | ⚠️ Staleness warning | 🚫 Yank warning | 🛡️ Vulnerability warning |
+| :----- | :------------- | :---------------- | :----------- | :-------------------- |
+| `# update-time: ignore` | held back | held back | held back | held back |
+| `# update-time: ignore[update]` | held back | still checked | still checked | still checked |
+| `# update-time: ignore[stale]` | applied | held back | still checked | still checked |
+| `# update-time: ignore[yanked]` | applied | still checked | held back | still checked |
+| `# update-time: ignore[vulnerable]` | applied | still checked | still checked | held back |
 
-So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet or its version was withdrawn, `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version, and `# update-time: ignore[yanked]` does the same for a yank you have decided to live with. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
+So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet or its version was withdrawn, `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version, and `# update-time: ignore[yanked]` does the same for a yank you have decided to live with. `# update-time: ignore[vulnerable]` silences the vulnerability warning for a defect you have assessed, while the reference keeps updating. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
 
 A yank can only be observed where the dependency's source reports one, so of the references that accept a marker, `ignore[yanked]` has something to hold back on a `requirements.txt` pin and on a jsDelivr URL (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so Update-time logs it as redundant at `WARNING`:
 
 ```console
 @@REDUNDANT_MARKER_WARNING@@
 ```
+
+The `vulnerable` scope tells the same story: of the references that accept a marker, only a `requirements.txt` pin and a jsDelivr URL are looked up at OSV (see [Vulnerable dependencies](#-vulnerable-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry, every form of the scope is reported as redundant — `ignore[vulnerable]` on its own, one naming an advisory, and one setting a risk level alike:
+
+```console
+@@REDUNDANT_SOURCE_WARNING@@
+```
+
+A bare `# update-time: ignore` is reported as redundant for neither scope, wherever it sits. It queries no source at all, and a marker is only judged against what a source answered.
 
 A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — is logged at `WARNING` as an invalid item:
 
@@ -245,7 +306,7 @@ A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — i
 
 The reference is left as it is, because an item Update-time cannot read may have been meant to bound or silence anything, so acting on the rest of the marker would be guessing. Once the marker is corrected, the reference is updated as usual.
 
-### Setting a staleness threshold
+#### Setting a staleness threshold
 
 `ignore[stale]` silences the staleness warning altogether. To keep the warning but on a different schedule, give the scope a number of days: `# update-time: ignore[stale<90]` warns once that reference's newest release is more than 90 days old, and is a per-reference `--stale-after 90`. Use it for a critical dependency you want to hear about early, or for a low-churn library that shouldn't be flagged for years:
 
@@ -266,9 +327,9 @@ The threshold applies to the reference carrying it, and every other reference in
 @@INVERTED_STALE_WARNING@@
 ```
 
-A day count must be a whole number of days, whichever way the comparison runs, so `ignore[stale<-5]` and `ignore[stale>=1.5]` are reported as invalid and leave the reference unchanged. An unreadable count is judged before the direction, so `ignore[stale>=1.5]` is reported as an unreadable count rather than as an inverted comparison. Where a reference carries both a threshold and a bare `ignore[stale]`, the `ignore[stale]` wins and the warning is suppressed whatever the threshold says. Use a single threshold per reference; pairing one with another, say an `ignore[stale<90]` with an `allow[stale>=30]`, is undefined.
+A day count must be a whole number of days, so `ignore[stale<-5]` and `ignore[stale>=1.5]` are reported as invalid and leave the reference unchanged. An unreadable count is judged before the direction, so `ignore[stale>=1.5]` is reported as an unreadable count rather than as an inverted comparison. Where a reference carries both a threshold and a bare `ignore[stale]`, the `ignore[stale]` wins and the warning is suppressed whatever the threshold says. Use a single threshold per reference; the result of pairing one with another, say an `ignore[stale<90]` with an `allow[stale>=30]`, is undefined.
 
-### Setting a cooldown period
+#### Setting a cooldown period
 
 The [cooldown](#-cooldown) holds back releases that are too fresh to trust. To put one reference on a different window from the rest, give a `cooldown` scope a number of days: `# update-time: ignore[cooldown<30]` drops update candidates published less than 30 days ago, and is a per-reference `--cooldown 30`. Use it for a dependency you have been burned by, or one you trust enough to adopt sooner than the rest:
 
@@ -289,15 +350,67 @@ Inverting the operator would adopt a release only while it is fresh and hold it 
 @@INVERTED_COOLDOWN_WARNING@@
 ```
 
-A bare `ignore[cooldown]` can be understood in two ways: adopt at once, or never adopt at all. Rather than guess, Update-time reports it as invalid and leaves the reference unchanged. `allow[cooldown]` is reported the same way. Write `allow[cooldown>=0]` to adopt at once, and `ignore[update]` to freeze the reference. A day count must be a whole number of days, so `ignore[cooldown<-5]` and `ignore[cooldown<1.5]` are reported as invalid too. Use a single `cooldown` directive per reference; pairing one with another is undefined.
+A bare `ignore[cooldown]` can be understood in two ways: adopt at once, or never adopt at all. Rather than guess, Update-time reports it as invalid and leaves the reference unchanged. `allow[cooldown]` is reported the same way. Write `allow[cooldown>=0]` to adopt at once, and `ignore[update]` to freeze the reference. A day count must be a whole number of days, so `ignore[cooldown<-5]` and `ignore[cooldown<1.5]` are reported as invalid too. Use a single `cooldown` directive per reference; the result of pairing one with another is undefined.
 
 The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)), nor for a `.python-version` entry or Node engine version derived from the project's Dockerfile, whose cooldown was already applied when the image was updated. It does nothing for an image outside Docker Hub either, since no cooldown applies there at all: the registry exposes no publication date to measure one against.
+
+#### Silencing specific vulnerabilities
+
+`ignore[vulnerable]` silences every [vulnerability](#-vulnerable-dependencies) warning a reference gets. To silence just one of them — a defect you have assessed and decided to live with — name the advisory after the scope:
+
+```text
+django==3.2.0  # update-time: ignore[vulnerable=GHSA-2gwj-7jmv-h26r] (assessed, we don't use the affected query API)
+```
+
+Any identifier the defect is known by will do: OSV holds a record per database, each under an id of its own, so a marker naming the `CVE-…` silences a warning reported under the `GHSA-…`.
+
+To silence a second advisory, add a second item: `# update-time: ignore[vulnerable=GHSA-2gwj-7jmv-h26r, vulnerable=CVE-2021-31542]`. The comma separates the bracket's items, so each identifier needs a `vulnerable=` of its own: `ignore[vulnerable=GHSA-…,CVE-…]` reads the second identifier as an item, reports it as invalid, and leaves the reference unchanged.
+
+When none of the version's defects answers to the identifier — the defect was fixed by an update, or the identifier was mistyped — Update-time reports the marker as holding nothing back:
+
+```console
+@@REDUNDANT_ADVISORY_WARNING@@
+```
+
+A marker naming several advisories is judged as one, so it is reported only once none of them names a defect the version has.
+
+Only `ignore` names an advisory here. `allow` naming one would keep that warning and drop the warning about every other advisory, which is not a rule the language offers, so `allow[vulnerable=GHSA-…]` is reported as an invalid item and the reference is left unchanged.
+
+The reference keeps updating, and every other advisory affecting the version it lands on is still warned about, so a defect that comes to light after you wrote the marker still reaches you. Run with `--log-level DEBUG` to see what the marker silenced. To silence an advisory wherever it turns up instead of on this one reference, pass `--ignore-vulnerability` (see [Vulnerable dependencies](#-vulnerable-dependencies)).
+
+#### Setting a risk level
+
+`ignore[vulnerable]` silences every vulnerability warning a reference gets. To keep the warnings but only from a given severity up, give the scope a risk level: `# update-time: ignore[vulnerable<high]` warns about that reference's `high` and `critical` vulnerabilities and stays quiet about its `low` and `moderate` ones, and is a per-reference `--warn-vulnerability-level high`. Use it for a dependency whose milder advisories you have assessed and decided not to act on:
+
+```text
+django==3.2.0  # update-time: ignore[vulnerable<high] (assessed the moderate ones, acting on high and worse)
+```
+
+The level applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--warn-vulnerability-level` whatever that is set to, `--warn-vulnerability-level none` included: no command-line option overrides a marker, so switching the check off globally still leaves a reference with its own level looked up at OSV and warned about. As with the global level, a vulnerability whose risk level Update-time cannot read is warned about whatever the level in force, since leaving the defects nobody has rated out of the warnings would hide exactly the ones nobody has looked at.
+
+When none of the version's vulnerabilities falls below the level, Update-time reports the marker as holding nothing back, since a level that silences nothing is one the reference no longer needs:
+
+```console
+@@REDUNDANT_LEVEL_WARNING@@
+```
+
+`allow` and `ignore` are complements here as elsewhere, so `allow[vulnerable>=high]` sets the same level as `ignore[vulnerable<high]`. Inverting the operator would warn about the mild vulnerabilities and stay quiet about the severe ones, so neither `allow[vulnerable<high]` nor `ignore[vulnerable>=high]` sets a level. Update-time logs an inverted comparison at `WARNING` and holds nothing back, so the reference is warned about at the global level:
+
+```console
+@@INVERTED_VULNERABLE_WARNING@@
+```
+
+A level must be one of `low`, `moderate`, `high`, and `critical`, spelled in lower case, so `ignore[vulnerable<hgih]` is reported as invalid and leaves the reference unchanged. `none` is a value for `--warn-vulnerability-level` rather than a level, so it is reported as invalid too: to switch the warning off for one reference, write `ignore[vulnerable]`. An unreadable level is judged before the direction, so `ignore[vulnerable>=hgih]` is reported as an unreadable level rather than as an inverted comparison. Use a single level per reference; the result of pairing one with another is undefined.
 
 ### Adopting hash drift
 
 One further marker does the opposite of holding a reference back. `# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting what it now points at, so a re-pushed image tag's new digest, or the commit a moved version tag points at, is pinned instead of only warned about (see [Hash drift](#hash-drift)). It follows the same placement rules as the other markers, and the global `--allow-hash-drift` flag applies it to every reference at once. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.
 
-### Bounding how far a reference may update
+### Bounding an update
+
+A bound lets a reference keep updating while ruling out the jump you are not ready for: name the versions it may move to, or the level of update it may not make.
+
+#### Bounding how far a reference may update
 
 `ignore[update]` freezes a reference at its current version. Sometimes you want the middle ground: keep receiving updates *within a range* while blocking a jump you're not ready for — for example, keep getting `python:3.12` patch releases but hold off on `3.13` until you've migrated. Add a [PEP 440](https://peps.python.org/pep-0440/) version specifier directly after `update` inside the brackets, either to allow or ignore updates: `# update-time: allow[update<specifier>]` **keeps only** the updates whose version satisfies the specifier, and `# update-time: ignore[update<specifier>]` **drops** the updates whose version satisfies it (the plain `ignore[update]` is the drop-everything case).
 
@@ -321,7 +434,7 @@ Update-time filters the candidate versions *before* the highest is picked, so a 
 
 Choose the operator deliberately. To keep `3.12` together with its patch releases while blocking `3.13`, use `<3.13`, `==3.12.*`, or `~=3.12.0`. Don't use `<=3.12` if you want to stay on `3.12`: since `3.12.1 > 3.12` in PEP 440, it also blocks `3.12.1`, which is rarely what "stay on 3.12" means.
 
-### Bounding by update level
+#### Bounding by update level
 
 A bound with a specifier names the version it must not reach, so it goes stale: after migrating to `3.13`, an `allow[update<3.13]` blocks every update (Update-time warns about it) until the comment is rewritten. To express the policy ("no major jumps") rather than the fence ("not past 3.13"), bound the update by its *level* instead: `# update-time: ignore[major-update]` or `ignore[minor-update]`, or their complements `allow[minor-update]` and `allow[patch-update]`. An update's level is the most significant version component it changes relative to the currently pinned version: a major update changes the first component, a minor update the second, and a patch update the third. A component the current version doesn't have counts as zero, so `node:22` followed by `23` is a major update, and `22` followed by `22.1` a minor one. `ignore` holds back updates of the named level *or more significant*, `allow` keeps updates of the named level *or less significant* — "block minor but allow major" is never meaningful — which makes the two verbs exact complements, just like specifier bounds:
 
@@ -339,7 +452,7 @@ FROM python:3.12.1-bookworm-slim
 
 The levels are positional, not semantic: they refer to the component's position in the version, not to the project's compatibility promises. Projects may ship breaking changes in releases that bump the *second* component, so "stay on Python 3.12" is `ignore[minor-update]` despite Python 3.13 shipping breaking changes (it removed 19 legacy modules from the standard library). The same caution applies to projects using calendar versioning. And as with specifier bounds, the level applies to a Docker tag's main version; a version embedded in the suffix (the `3.23` in `alpine3.23`) is unaffected by the bound.
 
-### How a bound interacts with the other markers
+#### How a bound interacts with the other markers
 
 A few rules govern how a bound — with a specifier or level-based — interacts with the other markers and checks:
 
@@ -353,7 +466,11 @@ Update-time logs a redundant bound at `WARNING`. That may happen in two ways:
 - Either the bound **never has an effect**, so removing it would change nothing: the current version and every version above it satisfy the bound, for example `allow[update>=3.12]` on a `3.12` pin, or `allow[major-update]` on any pin (it allows every update, so it says nothing).
 - Or the bound **blocks every update**, so it is just a frozen `ignore[update]` in disguise (use that instead if the freeze is intended): no version above the current one satisfies the bound, for example `ignore[update>=3.12]` on a `3.12` pin, or `ignore[patch-update]` on any pin.
 
-### Where to put a marker
+### Writing a marker
+
+Where a marker goes depends on the file it sits in, and a run at `--log-level DEBUG` reports which markers Update-time read.
+
+#### Where to put a marker
 
 Any of these markers can be placed two ways:
 
@@ -386,7 +503,7 @@ This works for every reference Update-time rewrites line by line: Dockerfiles, D
 
 A dependency updated through uv, npm, or pnpm takes no marker, because those updates don't go line by line. Opt one out with a version specifier instead, as described under [Python dependencies](#python-dependencies) and [npm and pnpm dependencies](#npm-and-pnpm-dependencies).
 
-### Confirming a marker was understood
+#### Confirming a marker was understood
 
 Run with `--log-level DEBUG` to confirm a marker is recognised: every recognised marker is logged, and so is every update or warning it holds back, each on a line of its own. A marker Update-time recognised is reported as:
 
@@ -404,7 +521,7 @@ A hold-back line means the marker actually suppressed something: an `ignore[yank
 
 ## 📖 Details per dependency type
 
-For each dependency type, this chapter answers the same eight questions: what files, dependencies, and versions are updated, how pinning, cooldown, and stale and yanked dependencies are handled, and how markers can be placed. Two sections cover a pair of types that behave alike, which is why the eight types have six sections.
+For each dependency type, this chapter answers the same questions: what files, dependencies, and versions are updated, how pinning, the cooldown, staleness, yanks, and vulnerabilities are handled, and how markers can be placed. Two sections cover a pair of types that behave alike, so there are fewer sections than types.
 
 ### Python dependencies
 
@@ -446,9 +563,13 @@ Every Python pin is checked against the newest release of its package on PyPI, w
 
 A `requirements.txt` pin is checked against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI: a yanked release is skipped when picking a new version, and a pin left on one is warned about. Dependencies in `pyproject.toml` and inline script metadata are not checked, because uv handles yanked releases itself.
 
+#### Vulnerable dependencies
+
+Each exact pin a Python file declares is checked against OSV's PyPI advisories, whichever of the three file kinds it sits in. A compiled or hash-pinned `requirements.txt` is the exception: Update-time skips it whole, as described under What files are updated? above, so its pins are neither updated nor checked. The transitive dependencies those pins pull in are not checked, so a vulnerability that reaches your project through one goes unreported here; reading a resolved dependency tree is what `uv audit` and `pip-audit` are for. A `requirements.txt` pin is reported at its line, and an `ignore[vulnerable]` marker silences that warning. A `pyproject.toml` or inline script metadata pin is reported at the file without a line number, as its staleness warning is, and takes no marker, because uv rewrites it rather than Update-time rewriting its line.
+
 #### Markers
 
-A `requirements.txt` pin takes an inline marker on its own line, as in `humanize==4.15.0  # update-time: ignore`; see [Controlling updates per reference](#-controlling-updates-per-reference) for the directives and where they go. Dependencies in `pyproject.toml` and inline script metadata take no marker, because uv updates them rather than Update-time rewriting their lines. Opt one of those out by pinning it with a maximum or non-`==` specifier instead, for example `package<=3.12`.
+A `requirements.txt` pin takes an inline marker on its own line, as in `humanize==4.15.0  # update-time: ignore`; see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference) for the directives and where they go. Dependencies in `pyproject.toml` and inline script metadata take no marker, because uv updates them rather than Update-time rewriting their lines. Opt one of those out by pinning it with a maximum or non-`==` specifier instead, for example `package<=3.12`.
 
 ### npm and pnpm dependencies
 
@@ -481,6 +602,10 @@ Each dependency is checked against its newest release on the npm registry. Depen
 #### Yanked dependencies
 
 There is no yank on npm, and the per-version deprecation that plays the same role is handled by npm and pnpm themselves when they resolve an update, so Update-time doesn't check `package.json` dependencies for it.
+
+#### Vulnerable dependencies
+
+A `package.json` dependency is not checked. It declares a range rather than a version, and the version that range resolves to is recorded in the lock file, which Update-time does not read; auditing that lock file is what `npm audit` is for.
 
 #### Markers
 
@@ -525,6 +650,10 @@ Staleness is measured against the newest version overall: its release's publicat
 #### Yanked dependencies
 
 GitHub has no yank concept, so neither an action nor a hook `rev:` is checked for one, and an `ignore[yanked]` marker on either is reported as redundant.
+
+#### Vulnerable dependencies
+
+Neither is checked. OSV does hold advisories for actions, but their affected entries enumerate no versions, so asking OSV about a version of an action comes back empty however that version is spelled: silence there says nothing about whether the action is safe. A hook repository is not an OSV package at all. A `vulnerable` scope on either is reported as redundant.
 
 #### Markers
 
@@ -575,6 +704,10 @@ Both are indirect cases. When the version is derived from the project's Dockerfi
 #### Yanked dependencies
 
 Neither source has a yank concept, so neither is checked for one, and an `ignore[yanked]` marker on a `.python-version` entry is reported as redundant.
+
+#### Vulnerable dependencies
+
+Neither is checked: both name a version of a runtime rather than a release of a package, which is not something OSV matches an advisory against. A `vulnerable` scope on a `.python-version` entry is reported as redundant.
 
 #### Markers
 
@@ -641,6 +774,10 @@ Image tags are only checked on Docker Hub, for the same reason the cooldown is. 
 
 An OCI registry has no yank concept, so an image is not checked for one, and an `ignore[yanked]` marker on an image reference is reported as redundant.
 
+#### Vulnerable dependencies
+
+An image is not checked, because OSV has no ecosystem for container images. Reporting the vulnerabilities of the packages inside an image is what an image scanner is for. A `vulnerable` scope on an image reference is reported as redundant.
+
 #### Markers
 
 In a Dockerfile the marker goes on the line above the `FROM`, since Dockerfiles don't allow inline comments. In the YAML formats — CircleCI, GitLab CI, Docker Compose, and Helm — it can go inline on the image's own line, and in a `devcontainer.json` it goes in a `//` comment.
@@ -678,6 +815,10 @@ The URL's package is checked against its newest release on the npm registry.
 #### Yanked dependencies
 
 There is no yank on npm, but a per-version deprecation is the same signal, so it is reported in the same wording. A deprecated version is skipped when picking a new one, and a URL left on a deprecated version is warned about.
+
+#### Vulnerable dependencies
+
+The version in the URL is checked against OSV's npm advisories, and a URL the run leaves on a version an advisory names is warned about at its line. An `ignore[vulnerable]` marker silences that warning.
 
 #### Markers
 

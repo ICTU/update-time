@@ -1,13 +1,15 @@
 """Shared test helpers."""
 
 import unittest
+from http import HTTPStatus
 from logging import DEBUG, ERROR, WARNING
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import ANY, Mock, call, patch
 
 from update_time.domain.bound import NewVersionGetter, Verb, VersionBound, parse_bound
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import DependencyVersion, VersionString
+from update_time.domain.vulnerability import NO_RISK_LEVEL, WARN_VULNERABILITY_LEVEL, Vulnerability
 from update_time.io.log import Logger, LogMessage, reset_changelog_suppression
 from update_time.primitives.location import Location
 from update_time.sources.docker_hub import api_headers as docker_hub_headers
@@ -71,7 +73,8 @@ class LoggingTestCase(CacheClearingTestCase):
 
     It mocks the logger's log method, exposed as the mock_log attribute, and offers the assert_*_logged helpers below.
     This spares tests from patching (and threading through method arguments) the log method, and from silencing
-    expected diagnostics by hand.
+    expected diagnostics by hand. The mock lives for the whole test, so a `subTest` table whose cases each assert on
+    the records of their own run resets it between them with `self.mock_log.reset_mock()`.
     """
 
     def setUp(self) -> None:
@@ -147,14 +150,21 @@ class LoggingTestCase(CacheClearingTestCase):
             changes=changes,
         )
 
+    def records_of(self, message: LogMessage) -> list[_Call]:
+        """Return the records logged for the message, ignoring the other records at its level."""
+        return [record for record in self.records(message.level) if record.args[:1] == (message,)]
+
     def new_version_records(self) -> list[_Call]:
         """Return the records reporting an available new version, ignoring the other records at their level."""
-        message = Logger._MESSAGE_NEW_VERSION
-        return [record for record in self.records(message.level) if record.args[:1] == (message,)]
+        return self.records_of(Logger._MESSAGE_NEW_VERSION)
+
+    def assert_none_logged(self, message: LogMessage, what: str) -> None:
+        """Assert the message was not logged at all, whatever else was logged at its level."""
+        self.assertEqual(self.records_of(message), [], f"Expected no {what} to be logged")
 
     def assert_no_new_version_logged(self) -> None:
         """Assert that no new version was logged (other records at the same level are allowed)."""
-        self.assertEqual(self.new_version_records(), [], "Expected no new version to be logged")
+        self.assert_none_logged(Logger._MESSAGE_NEW_VERSION, "new version")
 
     def assert_pinned_logged(self, dependency: str, version: str, sha: str, location: Location) -> None:
         """Assert that pinning a previously unpinned reference to a digest was logged for the file."""
@@ -220,6 +230,85 @@ class LoggingTestCase(CacheClearingTestCase):
             Logger._MESSAGE_YANKED, dependency=dependency, location=location, version=version, reason=reason
         )
 
+    def assert_vulnerable_dependency_logged(
+        self,
+        dependency: str,
+        version: str,
+        vulnerability: Vulnerability,
+        location: Location,
+        *,
+        among_others: bool = False,
+    ) -> None:
+        """Assert that a pin left on a vulnerable version was warned about, as the file's only warning by default."""
+        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
+        assert_logged(
+            Logger._MESSAGE_VULNERABLE_DEPENDENCY,
+            **Logger._vulnerability_fields(dependency, version, vulnerability, location),
+        )
+
+    def assert_inverted_vulnerable_item_logged(self, dependency: str, item: str, location: Location) -> None:
+        """Assert that a `vulnerable` item comparing the wrong way round was warned about, among the other records."""
+        self.assert_logged_among_others(
+            Logger._MESSAGE_INVERTED_VULNERABLE_ITEM, item=item, dependency=dependency, location=location
+        )
+
+    @staticmethod
+    def _redundant_suppression_fields(
+        dependency: str, version: str, location: Location, directive: object
+    ) -> dict[str, object]:
+        """Return the fields every redundant vulnerability suppression is warned with."""
+        return {"directive": directive, "dependency": dependency, "location": location, "version": version}
+
+    def assert_redundant_vulnerable_scope_logged(
+        self, dependency: str, version: str, location: Location, directive: object = ANY
+    ) -> None:
+        """Assert that a vulnerability scope with nothing left to hold back was warned about once for the file."""
+        self.assert_logged(
+            Logger._MESSAGE_REDUNDANT_VULNERABLE_SCOPE,
+            **self._redundant_suppression_fields(dependency, version, location, directive),
+        )
+
+    def assert_redundant_vulnerable_advisory_logged(
+        self, dependency: str, version: str, location: Location, directive: object = ANY
+    ) -> None:
+        """Assert that a suppression naming an advisory the version does not have was warned about, among the others."""
+        self.assert_logged_among_others(
+            Logger._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY,
+            **self._redundant_suppression_fields(dependency, version, location, directive),
+        )
+
+    def assert_redundant_vulnerable_level_logged(
+        self, dependency: str, version: str, level: str, location: Location, directive: object = ANY
+    ) -> None:
+        """Assert that a risk level no vulnerability fell below was warned about, among the other records."""
+        self.assert_logged_among_others(
+            Logger._MESSAGE_REDUNDANT_VULNERABLE_LEVEL,
+            **self._redundant_suppression_fields(dependency, version, location, directive),
+            level=level,
+        )
+
+    def assert_redundant_vulnerable_source_logged(
+        self, dependency: str, location: Location, directive: object = ANY
+    ) -> None:
+        """Assert that a vulnerability scope the dependency's source can never honour was warned about for the file."""
+        self.assert_logged(
+            Logger._MESSAGE_REDUNDANT_VULNERABLE_SOURCE,
+            directive=directive,
+            dependency=dependency,
+            location=location,
+        )
+
+    def assert_no_redundant_suppression_logged(self) -> None:
+        """Assert that no vulnerability suppression was reported as holding nothing back, whatever else was logged."""
+        for message in (
+            Logger._MESSAGE_REDUNDANT_VULNERABLE_SCOPE,
+            Logger._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY,
+            Logger._MESSAGE_REDUNDANT_VULNERABLE_LEVEL,
+            Logger._MESSAGE_REDUNDANT_VULNERABLE_SOURCE,
+        ):
+            with self.subTest(message=message):
+                self.assert_none_logged(message, "redundant vulnerability suppression")
+
     def assert_redundant_yank_scope_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
         """Assert that a yank scope the dependency's source can never honour was warned about once for the file."""
         self.assert_logged(
@@ -242,6 +331,33 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that a staleness warning held back by a marker was logged, among the other records."""
         self.assert_logged_among_others(
             Logger._MESSAGE_IGNORED_STALENESS, dependency=dependency, location=location, directive=directive
+        )
+
+    def assert_no_ignored_vulnerability_logged(self) -> None:
+        """Assert that no vulnerability warning was reported as held back, whatever else was logged at that level."""
+        self.assert_none_logged(Logger._MESSAGE_IGNORED_VULNERABILITY, "vulnerability warning held back by a marker")
+
+    def assert_ignored_vulnerability_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
+        """Assert that a vulnerability warning held back by a marker was logged, among the other records."""
+        self.assert_logged_among_others(
+            Logger._MESSAGE_IGNORED_VULNERABILITY, dependency=dependency, location=location, directive=directive
+        )
+
+    def assert_no_globally_ignored_vulnerability_logged(self) -> None:
+        """Assert that no vulnerability warning was reported as held back run-wide, whatever else was logged."""
+        self.assert_none_logged(
+            Logger._MESSAGE_GLOBALLY_IGNORED_VULNERABILITY, "vulnerability warning held back run-wide"
+        )
+
+    def assert_globally_ignored_vulnerability_logged(
+        self, dependency: str, location: Location, advisory: object = ANY
+    ) -> None:
+        """Assert that a vulnerability warning held back run-wide was logged, among the other records at its level."""
+        self.assert_logged_among_others(
+            Logger._MESSAGE_GLOBALLY_IGNORED_VULNERABILITY,
+            dependency=dependency,
+            advisory=advisory,
+            location=location,
         )
 
     def assert_ignored_yank_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
@@ -361,6 +477,90 @@ def patch_github(
 def jsdelivr_versions(*version_strings: str) -> Mock:
     """Return a mock jsDelivr package API response listing the given versions (newest first)."""
     return mock_response({"versions": [{"version": version} for version in version_strings]})
+
+
+def osv_advisory(
+    advisory: str,
+    summary: str,
+    level: str = "",
+    aliases: list[str] | None = None,
+    vectors: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Return an OSV advisory record, carrying the risk level a GitHub-reviewed advisory reports when given.
+
+    An advisory nobody reviewed for severity carries no `database_specific` section at all, which is the shape OSV
+    returns for the PYSEC records among others; it states a CVSS vector at best, which `vectors` gives per CVSS
+    version. `aliases` are the identifiers the other databases name the defect by.
+    """
+    reviewed = {"database_specific": {"severity": level}} if level else {}
+    named = {"aliases": aliases} if aliases else {}
+    severities = [{"type": version, "score": vector} for version, vector in (vectors or {}).items()]
+    scored = {"severity": severities} if severities else {}
+    return {"id": advisory, "summary": summary, **reviewed, **named, **scored}
+
+
+def vulnerability(advisory: str, summary: str, level: str, aliases: list[str] | None = None) -> Vulnerability:
+    """Return the vulnerability Update-time reads an advisory as, known by the aliases where a defect has them."""
+    return Vulnerability(advisory, summary, level, f"https://osv.dev/{advisory}", frozenset(aliases or []))
+
+
+def osv_vulnerability(advisory: str, summary: str, level: str) -> tuple[dict[str, object], Vulnerability]:
+    """Return an OSV advisory record and the vulnerability Update-time reads it as.
+
+    Returned as a pair because a test that needs one needs the other: the record is what the mocked API serves, and
+    the vulnerability is what the warning is asserted to carry. `level` is spelled the lower-case way Update-time
+    reads it, since OSV states it upper-case.
+    """
+    return osv_advisory(advisory, summary, level.upper()), vulnerability(advisory, summary, level)
+
+
+# The advisory the updater tests pin django to a vulnerable version for, and what Update-time reads it as. Shared,
+# since the requirements.txt, pyproject.toml, and inline-script tests all check the same pin against the same answer.
+DJANGO_ADVISORY, DJANGO_VULNERABILITY = osv_vulnerability("GHSA-2gwj-7jmv-h26r", "SQL Injection in Django", "critical")
+
+
+def osv_response(*advisories: dict[str, object]) -> Mock:
+    """Return a mock OSV response listing the advisories that affect a version."""
+    return mock_response({"vulns": list(advisories)})
+
+
+def osv_api(*advisories: dict[str, object]) -> Mock:
+    """Return a requests.post mock serving both OSV endpoints, reporting the advisories for every version queried.
+
+    Routing by URL keeps tests independent of how many of each request the source makes: the batch endpoint answers
+    which of the queried versions are affected, and the details endpoint answers with the advisories in full.
+    """
+
+    def serve(url: str, **kwargs: object) -> Mock:
+        if not url.endswith("/querybatch"):
+            return osv_response(*advisories)
+        queries = cast("dict[str, list]", kwargs["json"])["queries"]
+        affected = {"vulns": [{"id": advisory["id"]} for advisory in advisories]} if advisories else {}
+        return mock_response({"results": [affected for _query in queries]})
+
+    return Mock(side_effect=serve)
+
+
+def osv(*advisories: dict[str, object]) -> _patch:
+    """Return a patch answering OSV with the advisories affecting a version, and with none when given none."""
+    return patch("requests.post", osv_api(*advisories))
+
+
+def unreachable_osv() -> _patch:
+    """Return a patch failing every OSV request, as an OSV a run cannot reach does."""
+    status = HTTPStatus.SERVICE_UNAVAILABLE
+    unreachable = mock_response(ok=False, status_code=status, reason=status.phrase, url="https://api.osv.dev")
+    return patch("requests.post", Mock(return_value=unreachable))
+
+
+# Reusable class decorator that answers OSV with no advisories, for update tests that focus on the update flow.
+# Without it their pins are looked up at OSV for real, since nothing else in those tests patches `requests.post`.
+no_vulnerabilities = osv()
+
+
+# Reusable decorator that switches the vulnerability check off, for update tests that focus on the update flow and
+# would otherwise trigger the vulnerability pass's own OSV request.
+vulnerability_check_disabled = patch_environ({WARN_VULNERABILITY_LEVEL.name: NO_RISK_LEVEL})
 
 
 def npm_registry(published: dict[str, str], deprecated: dict[str, str] | None = None) -> Mock:

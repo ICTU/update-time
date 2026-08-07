@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from packaging.specifiers import InvalidSpecifier
 
 from update_time.domain.bound import NO_BOUND, Verb, parse_bound
+from update_time.domain.vulnerability import RISK_LEVELS
 
 if TYPE_CHECKING:
     from update_time.domain.bound import VersionBound
@@ -14,22 +15,31 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class DayCount:
-    """What a day-count bracket item — a `stale` or a `cooldown` — sets for the reference carrying it.
+class Threshold[T]:
+    """What a comparison bracket item — a `stale`, a `cooldown`, or a `vulnerable` — sets for the reference carrying it.
 
-    `days` is the number of days the item sets for this reference alone, overriding the global one; None when the
-    reference sets none. `inverted_item` is the item as the user spelled it when its comparison runs the wrong way,
-    so the caller can warn and fall back to the global count; None when the reference carries no such item. An item
-    sets one or the other, never both, which is why they travel together.
+    `value` is what the item sets for this reference alone, overriding the global setting: a number of days for a
+    `stale` or a `cooldown` item, a risk level for a `vulnerable` one; None when the reference sets none.
+    `inverted_item` is the item as the user spelled it when its comparison runs the wrong way, so the caller can warn
+    and fall back to the global setting; None when the reference carries no such item. An item sets one or the other,
+    never both, which is why they travel together.
     """
 
-    days: int | None = None
+    value: T | None = None
     inverted_item: str | None = None
 
-    def merge(self, other: DayCount) -> DayCount:
-        """Return this day count combined with another one, this one's values winning where it sets them."""
-        return DayCount(
-            days=other.days if self.days is None else self.days,
+    def value_or(self, setting: T) -> T:
+        """Return what the reference's own item set, or the run's setting when the reference sets none.
+
+        A marker wins over the command line, so this is the one place that precedence is decided, whichever check
+        asks.
+        """
+        return setting if self.value is None else self.value
+
+    def merge(self, other: Threshold[T]) -> Threshold[T]:
+        """Return this threshold combined with another one, this one's values winning where it sets them."""
+        return Threshold(
+            value=other.value if self.value is None else self.value,
             inverted_item=other.inverted_item if self.inverted_item is None else self.inverted_item,
         )
 
@@ -38,16 +48,20 @@ class DayCount:
 class Marker:
     """The `# update-time:` directives affecting a line (see `parse_marker`).
 
-    `ignore_update`, `ignore_stale`, and `ignore_yanked` are whether an `ignore` directive holds back the reference's
-    update, its staleness warning, and its yank warning. A bare `ignore` holds back all three, while
-    `ignore[update]`, `ignore[stale]`, and `ignore[yanked]` each hold back just one.
+    `ignore_update`, `ignore_stale`, `ignore_yanked`, and `ignore_vulnerable` are whether an `ignore` directive holds
+    back the reference's update, its staleness warning, its yank warning, and its vulnerability warning. A bare
+    `ignore` holds back all four, while `ignore[update]`, `ignore[stale]`, `ignore[yanked]`, and `ignore[vulnerable]`
+    each hold back just one.
+    `ignored_advisories` are the advisories an `ignore[vulnerable=ID]` directive holds the warning back for, each as
+    the identifier the user spelled it by; empty when the reference names none.
     `allow_drift` is whether an `allow[hash-drift]` directive opts the reference into adopting a drifted hash pin.
     `version_bound` is the version bound from an `allow`/`ignore` directive (see `VersionBound`), defaulting to
     `NO_BOUND` (keep every candidate) when there is none.
-    `stale` and `cooldown` are what the reference's `stale` and `cooldown` items set (see `DayCount`): a staleness
-    threshold such as `ignore[stale<90]` sets, a cooldown such as `ignore[cooldown<30]` sets, or the item to report
-    when either comparison runs the wrong way.
-    `invalid_specifier` is the raw text of a bracket item that could not be parsed — an invalid version specifier,
+    `stale`, `cooldown`, and `vulnerable` are what the reference's comparison items set (see `Threshold`).
+    `ignore[stale<90]` sets a staleness threshold in days, `ignore[cooldown<30]` sets a cooldown in days, and
+    `ignore[vulnerable<high]` sets the risk level to warn from. A comparison running the wrong way sets none of
+    them, and is carried as the item to report.
+    `invalid_item` is the raw text of a bracket item that could not be parsed — an invalid version specifier,
     or an unrecognised item in a comma list — so the caller can warn and leave the reference unchanged; None otherwise.
     `raw` is the marker's whole directive text exactly as it appears in the file, so the reference's marker can be
     echoed to the user verbatim: rendering the marker gives all of it, `raw_directives` gives one verb's directives.
@@ -56,16 +70,39 @@ class Marker:
     ignore_update: bool = False
     ignore_stale: bool = False
     ignore_yanked: bool = False
+    ignore_vulnerable: bool = False
+    ignored_advisories: frozenset[str] = frozenset()
     allow_drift: bool = False
     version_bound: VersionBound = NO_BOUND
-    stale: DayCount = DayCount()
-    cooldown: DayCount = DayCount()
-    invalid_specifier: str | None = None
+    stale: Threshold[int] = Threshold()
+    cooldown: Threshold[int] = Threshold()
+    vulnerable: Threshold[str] = Threshold()
+    invalid_item: str | None = None
     raw: str = field(compare=False, default="")
 
     def __str__(self) -> str:
         """Render the marker as its verbatim directive text, exactly as the user spelled it."""
         return self.raw
+
+    @property
+    def holds_everything_back(self) -> bool:
+        """Return whether the marker leaves no check to run, so no source need be queried for the reference at all.
+
+        The one place the scopes are enumerated, so a scope added to the fields above is weighed here rather than
+        leaving each caller to remember its own list. A marker holding back only some of them still needs its
+        sources, since the checks it leaves alone have to run.
+        """
+        return self.ignore_update and self.ignore_stale and self.ignore_yanked and self.ignore_vulnerable
+
+    @property
+    def suppresses_vulnerabilities(self) -> bool:
+        """Return whether the marker holds the vulnerability warning back, in whichever of its forms.
+
+        The one place the `vulnerable` scope's forms are enumerated: holding every warning back, holding back the
+        one about a named advisory, and setting the level to warn from. A comparison running the wrong way sets no
+        level, so it suppresses nothing and is reported as incorrect instead.
+        """
+        return self.ignore_vulnerable or bool(self.ignored_advisories) or self.vulnerable.value is not None
 
     def raw_directives(self, verb: Verb) -> str:
         """Return just the directives of one verb, as the user spelled them."""
@@ -76,34 +113,39 @@ class Marker:
         """Return this marker combined with another one.
 
         The boolean hold-backs and opt-ins combine as unions, so `ignore[update]` and `ignore[stale]` together hold
-        back as much as a bare `ignore`. A value that cannot combine — a version bound, an invalid item, and the day
-        counts `DayCount.merge` folds — is taken from the other marker only where this one leaves it unset, so this
-        marker's wins; the `raw` texts concatenate in order, this marker's first. A default `Marker()` leaves every
-        field unset, so it is the identity: merging it with any marker returns that marker's values. This lets markers
-        fold at every level — each item into a bracket's marker, each directive into a text's, and the inline and
-        comment-above texts into the line's.
+        back as much as a bare `ignore`, and so do the advisories named, so two `vulnerable=ID` items hold back the
+        warnings about both advisories. A value that cannot combine — a version bound, an invalid item, and the
+        thresholds `Threshold.merge` folds — is taken from the other marker only where this one leaves it unset, so
+        this marker's wins; the `raw` texts concatenate in order, this marker's first. A default `Marker()` leaves
+        every field unset, so it is the identity: merging it with any marker returns that marker's values. This lets
+        markers fold at every level — each item into a bracket's marker, each directive into a text's, and the
+        inline and comment-above texts into the line's.
         """
         return Marker(
             ignore_update=self.ignore_update or other.ignore_update,
             ignore_stale=self.ignore_stale or other.ignore_stale,
             ignore_yanked=self.ignore_yanked or other.ignore_yanked,
+            ignore_vulnerable=self.ignore_vulnerable or other.ignore_vulnerable,
+            ignored_advisories=self.ignored_advisories | other.ignored_advisories,
             allow_drift=self.allow_drift or other.allow_drift,
             version_bound=other.version_bound if self.version_bound == NO_BOUND else self.version_bound,
             stale=self.stale.merge(other.stale),
             cooldown=self.cooldown.merge(other.cooldown),
-            invalid_specifier=other.invalid_specifier if self.invalid_specifier is None else self.invalid_specifier,
+            vulnerable=self.vulnerable.merge(other.vulnerable),
+            invalid_item=other.invalid_item if self.invalid_item is None else self.invalid_item,
             raw=" ".join(part for part in (self.raw, other.raw) if part),
         )
 
 
 # The marker a bare `ignore` expresses: hold everything back.
-_BARE_IGNORE = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True)
+_BARE_IGNORE = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True, ignore_vulnerable=True)
 
 # The keyword bracket items each verb recognises, and the marker each expresses.
 _KEYWORD_ITEMS = {
     (Verb.IGNORE, "update"): Marker(ignore_update=True),
     (Verb.IGNORE, "stale"): Marker(ignore_stale=True),
     (Verb.IGNORE, "yanked"): Marker(ignore_yanked=True),
+    (Verb.IGNORE, "vulnerable"): Marker(ignore_vulnerable=True),
     (Verb.ALLOW, "update"): Marker(),  # bare `allow[update]`: the default no-op
     (Verb.ALLOW, "hash-drift"): Marker(allow_drift=True),
 }
@@ -131,10 +173,19 @@ _DAY_COUNT_ITEM = re.compile(r"(?P<keyword>stale|cooldown)(?P<operator><|>=)(?P<
 
 _DAY_COUNT = re.compile(r"\d+")
 
-# The operator each verb names a day count with. Both items are sensible only when they name the ages from the count
-# upwards, so `ignore[stale<90]` and `allow[stale>=90]` set the same threshold, as do `ignore[cooldown<30]` and
-# `allow[cooldown>=30]`.
-_DAY_COUNT_OPERATOR = {Verb.IGNORE: "<", Verb.ALLOW: ">="}
+# An advisory bracket item: the `vulnerable` scope narrowed to the advisory the identifier after the `=` names
+# (`vulnerable=GHSA-2gwj-7jmv-h26r`). The identifier is opaque to Update-time, so whatever follows the `=` is taken
+# as the user spelled it, and an item with nothing after the `=` names no advisory.
+_ADVISORY_ITEM = re.compile(r"vulnerable=(?P<advisory>.+)")
+
+# A risk level bracket item: the `vulnerable` scope, a comparison operator, and a risk level (`vulnerable<high`). The
+# level is captured loosely, so a misspelled one is still recognised as such an item and reported as unreadable.
+_RISK_LEVEL_ITEM = re.compile(r"vulnerable(?P<operator><|>=)(?P<level>.*)")
+
+# The operator each verb names a threshold with. A threshold is sensible only when it names the values from the
+# threshold upwards, so `ignore[stale<90]` and `allow[stale>=90]` set the same threshold, as do
+# `ignore[cooldown<30]` and `allow[cooldown>=30]`, and `ignore[vulnerable<high]` and `allow[vulnerable>=high]`.
+_THRESHOLD_OPERATOR = {Verb.IGNORE: "<", Verb.ALLOW: ">="}
 
 
 def parse_marker(line: Line) -> Marker:
@@ -177,7 +228,7 @@ def _parse_directive(directive: re.Match[str]) -> Marker:
     A closed bracket, even one holding only an unrecognised item, is handled by `_parse_bracket` instead.
     """
     if (unterminated := directive.group("unterminated")) is not None:
-        return Marker(invalid_specifier=f"[{unterminated}")
+        return Marker(invalid_item=f"[{unterminated}")
     if (bracket := directive.group("bracket")) is None:
         return _BARE_IGNORE
     return _parse_bracket(Verb(directive.group("verb")), bracket)
@@ -186,13 +237,13 @@ def _parse_directive(directive: re.Match[str]) -> Marker:
 def _parse_bracket(verb: Verb, bracket: str) -> Marker:
     """Return the marker for a directive's bracket: its comma-separated items parsed for the verb and merged.
 
-    An unrecognised item becomes an `invalid_specifier`, so a mistyped scope or bound (`ignore[updaet]`,
+    An unrecognised item becomes an `invalid_item`, so a mistyped scope or bound (`ignore[updaet]`,
     `allow[patch-updates]`) can be warned about.
     """
     marker = Marker()
     for item in _bracket_items(bracket):
         item_marker = _parse_bracket_item(verb, item)
-        marker = marker.merge(item_marker if item_marker is not None else Marker(invalid_specifier=item))
+        marker = marker.merge(item_marker if item_marker is not None else Marker(invalid_item=item))
     return marker
 
 
@@ -216,15 +267,59 @@ def _parse_bracket_item(verb: Verb, item: str) -> Marker | None:
     """Return the marker for one bracket item of the given verb, or None when the item is unrecognised."""
     if (keyword_marker := _KEYWORD_ITEMS.get((verb, item))) is not None:
         return keyword_marker
+    if (advisory_marker := _parse_advisory_item(verb, item)) is not None:
+        return advisory_marker
     try:
+        if (risk_level_marker := _parse_risk_level_item(verb, item)) is not None:
+            return risk_level_marker
         if (day_count_marker := _parse_day_count_item(verb, item)) is not None:
             return day_count_marker
         version_bound = parse_bound(verb, item)
     except InvalidSpecifier:
-        # The `update` prefix is dropped so a bound reports its specifier; a day-count item has none, so it reports
-        # whole.
-        return Marker(invalid_specifier=item.removeprefix("update"))
+        # A bound's `update` names the item rather than the version it bounds, so the item reports its specifier.
+        return Marker(invalid_item=item.removeprefix("update"))
     return Marker(version_bound=version_bound) if version_bound is not None else None
+
+
+def _parse_advisory_item(verb: Verb, item: str) -> Marker | None:
+    """Return the marker an advisory bracket item expresses, or None when the item names no advisory.
+
+    Only `ignore` names an advisory, dropping the warning about the one it names. `allow` naming one would keep that
+    warning and drop the warning about every other advisory, which is a rule the language does not offer, so
+    `allow[vulnerable=ID]` names no advisory.
+    """
+    match = _ADVISORY_ITEM.fullmatch(item)
+    if match is None or verb is not Verb.IGNORE:
+        return None
+    return Marker(ignored_advisories=frozenset({match.group("advisory")}))
+
+
+def _threshold[T](verb: Verb, match: re.Match[str], value: T) -> Threshold[T]:
+    """Return the threshold the matched comparison item sets, or the item itself when it compares the wrong way.
+
+    Each verb names a threshold with one operator (see `_THRESHOLD_OPERATOR`), so the other operator sets nothing and
+    leaves the item to be reported. Said once here, since every comparison item is read this way.
+    """
+    if match.group("operator") != _THRESHOLD_OPERATOR[verb]:
+        return Threshold(inverted_item=match.group())
+    return Threshold(value=value)
+
+
+def _parse_risk_level_item(verb: Verb, item: str) -> Marker | None:
+    """Return the marker a risk level bracket item expresses, or None when the item names no risk level.
+
+    Both `ignore[vulnerable<high]` and `allow[vulnerable>=high]` set a threshold of `high`, so the reference is
+    warned about from that level up. The verb's other operator names the levels below the threshold rather than the
+    ones from it up, which the item cannot express, so an inverted item is returned for the caller to report. A level
+    outside `RISK_LEVELS` makes the item an invalid one, and is judged before the direction, so `vulnerable>=hgih` is
+    reported as an unreadable level rather than as an inverted comparison.
+    """
+    match = _RISK_LEVEL_ITEM.fullmatch(item)
+    if match is None:
+        return None
+    if (level := match.group("level")) not in RISK_LEVELS:
+        return Marker(invalid_item=item)
+    return Marker(vulnerable=_threshold(verb, match, level))
 
 
 def _parse_day_count_item(verb: Verb, item: str) -> Marker | None:
@@ -233,14 +328,13 @@ def _parse_day_count_item(verb: Verb, item: str) -> Marker | None:
     Both `ignore[stale<90]` and `allow[stale>=90]` set a staleness threshold of 90 days, and both
     `ignore[cooldown<30]` and `allow[cooldown>=30]` set a cooldown of 30 days. The verb's other operator names the
     fresh ages rather than the old ones, which neither item can express, so an inverted item of either keyword is
-    returned for the caller to report. An unreadable day count raises `InvalidSpecifier`, and is judged before the
-    direction, so `stale>=1.5` is reported as an unreadable count rather than as an inverted comparison.
+    returned for the caller to report. An unreadable day count makes the item an invalid one, and is judged before
+    the direction, so `stale>=1.5` is reported as an unreadable count rather than as an inverted comparison.
     """
     match = _DAY_COUNT_ITEM.fullmatch(item)
     if match is None:
         return None
     if _DAY_COUNT.fullmatch(days := match.group("days")) is None:
-        raise InvalidSpecifier(item)
-    inverted = match.group("operator") != _DAY_COUNT_OPERATOR[verb]
-    day_count = DayCount(inverted_item=item) if inverted else DayCount(days=int(days))
+        return Marker(invalid_item=item)
+    day_count = _threshold(verb, match, int(days))
     return Marker(stale=day_count) if match.group("keyword") == "stale" else Marker(cooldown=day_count)

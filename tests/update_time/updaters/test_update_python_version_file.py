@@ -165,8 +165,8 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         version_file.write_text.assert_not_called()
         # The marker sits on line 1 and the entry it governs on line 2; the warning points at the entry's line.
         self.assert_logged(
-            Logger._MESSAGE_INVALID_SPECIFIER,
-            specifier="<<3.13",
+            Logger._MESSAGE_INVALID_BRACKET_ITEM,
+            bracket_item="<<3.13",
             dependency="python",
             location=Location(version_file, 2),
         )

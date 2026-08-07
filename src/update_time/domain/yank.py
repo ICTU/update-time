@@ -6,26 +6,6 @@ can be reported as redundant instead of silently holding nothing back. Only the 
 reference take part.
 """
 
-from typing import TYPE_CHECKING
+from update_time.domain.capability import capability
 
-if TYPE_CHECKING:
-    from update_time.domain.bound import NewVersionGetter
-
-# The attribute `yank_reporting` marks a getter with and `reports_yanks` reads back. It rides on the getter itself
-# rather than on a registry, so a source that hands out a getter per reference marks each one it builds.
-_REPORTS_YANKS = "reports_yanks"
-
-
-def yank_reporting(get_new_version: NewVersionGetter) -> NewVersionGetter:
-    """Mark the source's new-version getter as one whose versions can carry a yank state, and return it.
-
-    Applied as a decorator on the getter, so each source states the fact once, next to the code that observes the
-    yank, rather than every updater repeating it where it wires the source up.
-    """
-    setattr(get_new_version, _REPORTS_YANKS, True)
-    return get_new_version
-
-
-def reports_yanks(get_new_version: NewVersionGetter) -> bool:
-    """Return whether the versions the getter resolves can carry a yank state."""
-    return getattr(get_new_version, _REPORTS_YANKS, False)
+yank_reporting, reports_yanks = capability("reports_yanks")
