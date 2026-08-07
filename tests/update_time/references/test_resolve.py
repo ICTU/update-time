@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.marker import DayCount, Marker
+from update_time.domain.marker import Marker, Threshold
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import DependencyVersion, Reference
 from update_time.domain.yank import yank_reporting
@@ -76,7 +76,7 @@ class LatestVersionTest(unittest.TestCase):
     def test_the_markers_cooldown_is_passed_to_the_getter(self):
         """Test that a reference carrying its own cooldown is resolved with that one, not the global one."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.15"))
-        self.latest_version(Marker(cooldown=DayCount(days=30)), get_new_version)
+        self.latest_version(Marker(cooldown=Threshold(value=30)), get_new_version)
         get_new_version.assert_called_once_with("python", "3.14", NO_BOUND, 30)
 
     def test_warns_about_a_redundant_bound(self):
@@ -100,12 +100,12 @@ class LatestVersionTest(unittest.TestCase):
 
     def test_the_markers_threshold_is_used_for_the_staleness_warning(self):
         """Test that a reference carrying its own staleness threshold is judged by that one, not the global one."""
-        self.latest_version(Marker(stale=DayCount(days=90)))
+        self.latest_version(Marker(stale=Threshold(value=90)))
         self.log.warn_if_stale.assert_called_once_with("python", DependencyVersion(version="3.15"), self.path, 90)
 
     def test_warns_about_an_inverted_stale_item(self):
         """Test that a `stale` item comparing the wrong way is reported, and the global threshold is used."""
-        marker = Marker(stale=DayCount(inverted_item="stale>=90"), raw="ignore[stale>=90]")
+        marker = Marker(stale=Threshold(inverted_item="stale>=90"), raw="ignore[stale>=90]")
         self.latest_version(marker)
         self.log.inverted_stale_item.assert_called_once_with("python", "stale>=90", self.path)
         self.log.warn_if_stale.assert_called_once_with(
@@ -115,10 +115,16 @@ class LatestVersionTest(unittest.TestCase):
     def test_warns_about_an_inverted_cooldown_item(self):
         """Test that a `cooldown` item comparing the wrong way is reported, and the global cooldown is used."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.15"))
-        marker = Marker(cooldown=DayCount(inverted_item="cooldown>=30"), raw="ignore[cooldown>=30]")
+        marker = Marker(cooldown=Threshold(inverted_item="cooldown>=30"), raw="ignore[cooldown>=30]")
         self.latest_version(marker, get_new_version)
         self.log.inverted_cooldown_item.assert_called_once_with("python", "cooldown>=30", self.path)
         get_new_version.assert_called_once_with("python", "3.14", NO_BOUND, COOLDOWN.default)
+
+    def test_warns_about_an_inverted_vulnerability_item(self):
+        """Test that a `vulnerable` item comparing the wrong way is reported."""
+        marker = Marker(vulnerable=Threshold(inverted_item="vulnerable>=high"), raw="ignore[vulnerable>=high]")
+        self.latest_version(marker)
+        self.log.inverted_vulnerable_item.assert_called_once_with("python", "vulnerable>=high", self.path)
 
     def test_warns_about_yank(self):
         """Test that the resolved version is checked for a yank."""
@@ -141,7 +147,7 @@ class LatestVersionTest(unittest.TestCase):
 
     def test_the_markers_threshold_is_used_for_the_held_back_staleness_warning(self):
         """Test that the hold-back is judged by the same threshold as the warning it stands in for."""
-        marker = Marker(ignore_stale=True, stale=DayCount(days=90), raw="ignore[stale] ignore[stale<90]")
+        marker = Marker(ignore_stale=True, stale=Threshold(value=90), raw="ignore[stale] ignore[stale<90]")
         self.latest_version(marker)
         self.log.ignored_staleness.assert_called_once_with(
             "python", DependencyVersion(version="3.15"), marker, self.path, 90

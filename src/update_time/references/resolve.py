@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.staleness import STALE_AFTER
+from update_time.domain.vulnerability import reports_vulnerabilities
 from update_time.domain.yank import reports_yanks
 
 if TYPE_CHECKING:
@@ -18,17 +19,23 @@ if TYPE_CHECKING:
     from update_time.domain.marker import Marker
     from update_time.domain.version import DependencyVersion, Reference
     from update_time.io.log import Logger
-    from update_time.primitives.environment import EnvVar
     from update_time.primitives.location import Location
 
 
-def _days(marker_days: int | None, setting: EnvVar[int]) -> int:
-    """Return the day count for this reference: its marker's when it carries one, the run's setting otherwise.
+def _warn_about_inverted_items(marker: Marker, dependency: str, location: Location, log: Logger) -> None:
+    """Warn about each comparison item whose operator runs the wrong way, so it sets nothing for the reference.
 
-    The cooldown and the staleness threshold are both overridable per reference, and a marker wins over the command
-    line for both, so they ask the same question here rather than each spelling out the precedence.
+    Every comparison item the marker language has is read here, so an item added to `Marker` is reported by naming
+    it and its message rather than by repeating the condition.
     """
-    return setting.get() if marker_days is None else marker_days
+    inverted_items = (
+        (marker.stale, log.inverted_stale_item),
+        (marker.cooldown, log.inverted_cooldown_item),
+        (marker.vulnerable, log.inverted_vulnerable_item),
+    )
+    for threshold, warn in inverted_items:
+        if threshold.inverted_item is not None:
+            warn(dependency, threshold.inverted_item, location)
 
 
 def latest_version(
@@ -48,14 +55,13 @@ def latest_version(
     log.warn_if_redundant_bound(dependency, marker, current_version, location)
     if marker.ignore_yanked and not reports_yanks(get_new_version):
         log.redundant_yank_scope(dependency, marker, location)
-    if marker.stale.inverted_item is not None:
-        log.inverted_stale_item(dependency, marker.stale.inverted_item, location)
-    if marker.cooldown.inverted_item is not None:
-        log.inverted_cooldown_item(dependency, marker.cooldown.inverted_item, location)
+    if marker.suppresses_vulnerabilities and not reports_vulnerabilities(get_new_version):
+        log.redundant_vulnerable_source(dependency, marker, location)
+    _warn_about_inverted_items(marker, dependency, location, log)
     version_bound = BLOCK_ALL_UPDATES if marker.ignore_update else marker.version_bound
-    cooldown = _days(marker.cooldown.days, COOLDOWN)
+    cooldown = marker.cooldown.value_or(COOLDOWN.get())
     latest = get_new_version(dependency, current_version, version_bound, cooldown)
-    threshold = _days(marker.stale.days, STALE_AFTER)
+    threshold = marker.stale.value_or(STALE_AFTER.get())
     if marker.ignore_stale:
         log.ignored_staleness(dependency, latest, marker, location, threshold)
     else:

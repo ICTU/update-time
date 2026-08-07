@@ -18,6 +18,7 @@ from update_time.domain.version import (
     first_eligible,
     is_valid,
 )
+from update_time.domain.vulnerability import vulnerability_reporting
 from update_time.domain.yank import yank_reporting
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
@@ -102,6 +103,7 @@ def release_datetime(urls: list[Distribution]) -> datetime | None:
     return newest_timestamp(url["upload_time_iso_8601"] for url in urls)
 
 
+@vulnerability_reporting
 @yank_reporting
 def get_latest_version(
     package: DependencyName, current_version: VersionString, version_bound: VersionBound, cooldown_days: int

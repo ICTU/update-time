@@ -7,6 +7,12 @@ from pathlib import Path
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.staleness import STALE_AFTER
+from update_time.domain.vulnerability import (
+    IGNORE_VULNERABILITIES,
+    NO_RISK_LEVEL,
+    RISK_LEVELS,
+    WARN_VULNERABILITY_LEVEL,
+)
 from update_time.io.filesystem import ALWAYS_IGNORED_DIRECTORIES, inside_git_repository
 from update_time.io.log import LOG_LEVEL, LOG_LEVELS
 
@@ -46,6 +52,11 @@ def exclude_paths(value: str) -> list[Path]:
             raise argparse.ArgumentTypeError(message)
         paths.append(normalized)
     return paths
+
+
+def advisories(value: str) -> frozenset[str]:
+    """Parse a comma-separated list of advisory identifiers, each naming an advisory not to warn about."""
+    return frozenset(stripped for entry in value.split(",") if (stripped := entry.strip()))
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,6 +101,28 @@ def parse_args() -> argparse.Namespace:
         help="warn when a dependency's newest release is older than this many days; 0 disables the check, except "
         "for references that set a threshold of their own with an # update-time: ignore[stale<DAYS] marker "
         "(default: %(default)s)",
+    )
+    parser.add_argument(
+        "--warn-vulnerability-level",
+        type=str.lower,
+        choices=[*RISK_LEVELS, NO_RISK_LEVEL],
+        default=WARN_VULNERABILITY_LEVEL.default,
+        metavar="LEVEL",
+        help="warn about a known vulnerability in the version a dependency is pinned to when the advisory's risk "
+        f"level is at least this severe, one of {', '.join(RISK_LEVELS)}; a vulnerability whose risk level cannot be "
+        f"read is always warned about. Pass {NO_RISK_LEVEL} to switch the check off, which queries the advisory "
+        "database not at all, except for references that set a level of their own with an # update-time: "
+        "ignore[vulnerable<LEVEL] marker (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--ignore-vulnerability",
+        type=advisories,
+        default=IGNORE_VULNERABILITIES.default,
+        metavar="IDS",
+        help="comma-separated list of advisories to never warn about, wherever in the scan they turn up, for "
+        "example GHSA-2gwj-7jmv-h26r,CVE-2021-31542. An advisory can be named by any of the identifiers it is known "
+        "by. To silence one for a single reference instead, mark that reference with an # update-time: "
+        "ignore[vulnerable=ID] marker",
     )
     parser.add_argument(
         "--exclude-path",

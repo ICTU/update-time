@@ -1,4 +1,4 @@
-<svg class="rich-terminal" width="1238" height="294.0" viewBox="0 0 1238 294.0" xmlns="http://www.w3.org/2000/svg">
+<svg class="rich-terminal" width="1238" height="367.2" viewBox="0 0 1238 367.2" xmlns="http://www.w3.org/2000/svg">
     <!-- Generated with Rich https://www.textualize.io -->
     <style>
 
@@ -36,11 +36,13 @@
 .update-time-log-r6 { fill: #68a0b3;font-weight: bold }
 .update-time-log-r7 { fill: #868887 }
 .update-time-log-r8 { fill: #d0b344 }
+.update-time-log-r9 { fill: #98a84b }
+.update-time-log-r10 { fill: #1984e9;text-decoration: underline; }
     </style>
 
     <defs>
     <clipPath id="update-time-log-clip-terminal">
-      <rect x="0" y="0" width="1219.0" height="243.0" />
+      <rect x="0" y="0" width="1219.0" height="316.2" />
     </clipPath>
     <clipPath id="update-time-log-line-0">
     <rect x="0" y="1.5" width="1220" height="24.65"/>
@@ -69,9 +71,18 @@
 <clipPath id="update-time-log-line-8">
     <rect x="0" y="196.7" width="1220" height="24.65"/>
             </clipPath>
+<clipPath id="update-time-log-line-9">
+    <rect x="0" y="221.1" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="update-time-log-line-10">
+    <rect x="0" y="245.5" width="1220" height="24.65"/>
+            </clipPath>
+<clipPath id="update-time-log-line-11">
+    <rect x="0" y="269.9" width="1220" height="24.65"/>
+            </clipPath>
     </defs>
 
-    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1236" height="292" rx="8"/><text class="update-time-log-title" fill="#c5c8c6" text-anchor="middle" x="618" y="27">update-time</text>
+    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1236" height="365.2" rx="8"/><text class="update-time-log-title" fill="#c5c8c6" text-anchor="middle" x="618" y="27">update-time</text>
             <g transform="translate(26,22)">
             <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
             <circle cx="22" cy="0" r="7" fill="#febc2e"/>
@@ -91,6 +102,9 @@
 </text><text class="update-time-log-r3" x="244" y="190.8" textLength="976" clip-path="url(#update-time-log-line-7)">No&#160;changelog&#160;available!&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="update-time-log-r3" x="1220" y="190.8" textLength="12.2" clip-path="url(#update-time-log-line-7)">
 </text><text class="update-time-log-r8" x="134.2" y="215.2" textLength="97.6" clip-path="url(#update-time-log-line-8)">WARNING&#160;</text><text class="update-time-log-r3" x="244" y="215.2" textLength="207.4" clip-path="url(#update-time-log-line-8)">Stale&#160;dependency&#160;</text><text class="update-time-log-r4" x="451.4" y="215.2" textLength="97.6" clip-path="url(#update-time-log-line-8)">left-pad</text><text class="update-time-log-r3" x="549" y="215.2" textLength="48.8" clip-path="url(#update-time-log-line-8)">&#160;in&#160;</text><text class="update-time-log-r5" x="597.8" y="215.2" textLength="146.4" clip-path="url(#update-time-log-line-8)">package.json</text><text class="update-time-log-r3" x="744.2" y="215.2" textLength="207.4" clip-path="url(#update-time-log-line-8)">:&#160;newest&#160;release&#160;</text><text class="update-time-log-r6" x="951.6" y="215.2" textLength="36.6" clip-path="url(#update-time-log-line-8)">1.3</text><text class="update-time-log-r3" x="988.2" y="215.2" textLength="12.2" clip-path="url(#update-time-log-line-8)">.</text><text class="update-time-log-r6" x="1000.4" y="215.2" textLength="12.2" clip-path="url(#update-time-log-line-8)">0</text><text class="update-time-log-r3" x="1012.6" y="215.2" textLength="207.4" clip-path="url(#update-time-log-line-8)">&#160;was&#160;published&#160;&#160;&#160;</text><text class="update-time-log-r3" x="1220" y="215.2" textLength="12.2" clip-path="url(#update-time-log-line-8)">
 </text><text class="update-time-log-r6" x="244" y="239.6" textLength="36.6" clip-path="url(#update-time-log-line-9)">512</text><text class="update-time-log-r3" x="280.6" y="239.6" textLength="122" clip-path="url(#update-time-log-line-9)">&#160;days&#160;ago&#160;</text><text class="update-time-log-r4" x="402.6" y="239.6" textLength="12.2" clip-path="url(#update-time-log-line-9)">(</text><text class="update-time-log-r3" x="414.8" y="239.6" textLength="24.4" clip-path="url(#update-time-log-line-9)">&gt;&#160;</text><text class="update-time-log-r6" x="439.2" y="239.6" textLength="36.6" clip-path="url(#update-time-log-line-9)">365</text><text class="update-time-log-r4" x="475.8" y="239.6" textLength="12.2" clip-path="url(#update-time-log-line-9)">)</text><text class="update-time-log-r3" x="1220" y="239.6" textLength="12.2" clip-path="url(#update-time-log-line-9)">
+</text><text class="update-time-log-r8" x="134.2" y="264" textLength="97.6" clip-path="url(#update-time-log-line-10)">WARNING&#160;</text><text class="update-time-log-r3" x="244" y="264" textLength="268.4" clip-path="url(#update-time-log-line-10)">Vulnerable&#160;dependency&#160;</text><text class="update-time-log-r4" x="512.4" y="264" textLength="73.2" clip-path="url(#update-time-log-line-10)">django</text><text class="update-time-log-r3" x="585.6" y="264" textLength="48.8" clip-path="url(#update-time-log-line-10)">&#160;in&#160;</text><text class="update-time-log-r5" x="634.4" y="264" textLength="292.8" clip-path="url(#update-time-log-line-10)">docs/requirements.txt:12</text><text class="update-time-log-r3" x="927.2" y="264" textLength="122" clip-path="url(#update-time-log-line-10)">:&#160;version&#160;</text><text class="update-time-log-r6" x="1049.2" y="264" textLength="36.6" clip-path="url(#update-time-log-line-10)">3.2</text><text class="update-time-log-r3" x="1085.8" y="264" textLength="12.2" clip-path="url(#update-time-log-line-10)">.</text><text class="update-time-log-r6" x="1098" y="264" textLength="12.2" clip-path="url(#update-time-log-line-10)">0</text><text class="update-time-log-r3" x="1110.2" y="264" textLength="109.8" clip-path="url(#update-time-log-line-10)">&#160;has&#160;a&#160;&#160;&#160;</text><text class="update-time-log-r3" x="1220" y="264" textLength="12.2" clip-path="url(#update-time-log-line-10)">
+</text><text class="update-time-log-r3" x="244" y="288.4" textLength="292.8" clip-path="url(#update-time-log-line-11)">critical&#160;vulnerability,&#160;</text><text class="update-time-log-r9" x="536.8" y="288.4" textLength="305" clip-path="url(#update-time-log-line-11)">&quot;SQL&#160;Injection&#160;in&#160;Django&quot;</text><text class="update-time-log-r4" x="854" y="288.4" textLength="12.2" clip-path="url(#update-time-log-line-11)">(</text><text class="update-time-log-r3" x="866.2" y="288.4" textLength="122" clip-path="url(#update-time-log-line-11)">GHSA-2gwj-</text><text class="update-time-log-r6" x="988.2" y="288.4" textLength="24.4" clip-path="url(#update-time-log-line-11)">7j</text><text class="update-time-log-r3" x="1012.6" y="288.4" textLength="207.4" clip-path="url(#update-time-log-line-11)">mv-h26r,&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="update-time-log-r3" x="1220" y="288.4" textLength="12.2" clip-path="url(#update-time-log-line-11)">
+</text><text class="update-time-log-r10" x="244" y="312.8" textLength="427" clip-path="url(#update-time-log-line-12)">https://osv.dev/GHSA-2gwj-7jmv-h26r</text><text class="update-time-log-r10" x="671" y="312.8" textLength="12.2" clip-path="url(#update-time-log-line-12)">)</text><text class="update-time-log-r3" x="1220" y="312.8" textLength="12.2" clip-path="url(#update-time-log-line-12)">
 </text>
     </g>
     </g>

@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.drift import ALLOW_HASH_DRIFT
+from update_time.domain.vulnerability import IGNORE_VULNERABILITIES
 from update_time.io.filesystem import EXCLUDE_PATHS
 from update_time.io.log import LOG_LEVEL
 from update_time.updaters.update import main, run_script, update_dependencies
@@ -132,6 +133,26 @@ class UpdateMainTest(unittest.TestCase):
         exit_code, environment = self.run_main(mock_run, "--allow-hash-drift")
         self.assertEqual(exit_code, 0)
         self.assertEqual(environment[ALLOW_HASH_DRIFT.name], "1")
+
+    def test_main_passes_ignored_vulnerabilities_to_subprocesses(self, mock_run: Mock):
+        """Test that main exports the advisories to ignore so the updater subprocesses inherit them.
+
+        They travel sorted, since the advisories are a set and so have no order of their own.
+        """
+        advisories = "GHSA-2gwj-7jmv-h26r,CVE-2022-28346"
+        exit_code, environment = self.run_main(mock_run, "--ignore-vulnerability", advisories)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[IGNORE_VULNERABILITIES.name], "CVE-2022-28346,GHSA-2gwj-7jmv-h26r")
+
+    def test_main_passes_no_ignored_vulnerabilities_by_default(self, mock_run: Mock):
+        """Test that main exports an empty variable when --ignore-vulnerability is not given.
+
+        Exported whether or not the option was passed, so a value left in the environment cannot reach the
+        subprocesses as if the run had asked for it.
+        """
+        exit_code, environment = self.run_main(mock_run)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[IGNORE_VULNERABILITIES.name], "")
 
     @patch_pathlib_path(exists=True)
     def test_main_passes_excluded_paths_to_subprocesses(self, mock_run: Mock):

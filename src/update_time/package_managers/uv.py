@@ -213,12 +213,20 @@ def update_python_inline_script_metadata(script: Path, log: Logger) -> bool:
     return _update_dependencies(uv_tree, script, log)
 
 
-def newest_pypi_releases(path: Path) -> Iterable[tuple[str, DependencyVersion]]:
-    """Yield each exact `==` pin in the file as a (name, newest PyPI release) pair, for the staleness check.
+def pinned_pypi_versions(path: Path) -> Iterable[tuple[str, str]]:
+    """Yield each exact `==` pin in the file as a (name, version) pair.
 
-    Shared by the pyproject.toml and inline-script-metadata updaters: both declare dependencies as quoted
-    `"name==version"` specs that `pinned_versions` reads the same way, and both resolve staleness against PyPI. The
-    caller hands this to `warn_about_stale_dependencies` after the update, so it reads the pins uv settled on.
+    A pyproject.toml and an inline script metadata block declare their dependencies as the same quoted
+    `"name==version"` specs, so one reader serves both.
+    """
+    return pyproject_toml_format.pinned_versions(path).items()
+
+
+def newest_pypi_releases(path: Path) -> Iterable[tuple[str, DependencyVersion]]:
+    """Yield each exact `==` pin in the file as a (name, newest PyPI release) pair.
+
+    Reads the pins `pinned_pypi_versions` reads, resolving each name against PyPI rather than reporting the version
+    the file records.
     """
     return (
         (name, get_latest_version(name, version, NO_BOUND, COOLDOWN.get()))

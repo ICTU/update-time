@@ -122,7 +122,8 @@ mutate-help:
     @echo "    a broken version of it"
     @echo "    EOF"
     @echo "\nExits 0 when the mutation was caught (a test failed, so it is guarded), 1 when it survived (nothing"
-    @echo "guards it), and 2 when the probe never ran (the snippet is not in FILE exactly once)."
+    @echo "guards it), 2 when the probe never ran (the snippet is not in FILE exactly once), and 3 when the run was"
+    @echo "caught but reported errors, which a stub that broke the file does as much as a guard that raised."
 
 # Run Python with the package importable, to probe how it behaves. See `just help py`.
 [env("PYTHONPATH", "src")]
@@ -218,10 +219,10 @@ check-readme-is-up-to-date: (py-check "check-readme-is-up-to-date" f"PYTHONPATH=
 check-readme-structure:
     {{ start_capture() }} {{ uv_run }} python -m tools.readme_structure_check docs/README.md.in {{ end_capture("check-readme-structure") }}
 
-# Check prose for too complex sentences.
+# Check prose for too complex sentences, in the code and documentation.
 [private]
 check-sentence-complexity:
-    {{ start_capture() }} {{ uv_run }} python -m tools.sentence_complexity_check {{ code }} docs .claude/CLAUDE.md {{ end_capture("check-sentence-complexity") }}
+    {{ start_capture() }} {{ uv_run }} python -m tools.sentence_complexity_check {{ code }} docs *.md .claude/CLAUDE.md {{ end_capture("check-sentence-complexity") }}
 
 # Run the quality checks. Run one by name for a quicker loop, e.g. `just ruff` or `just mypy`.
 [parallel]

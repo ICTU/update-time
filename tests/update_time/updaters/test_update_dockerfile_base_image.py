@@ -75,18 +75,29 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.requests.assert_not_called()
         self.assert_ignored_logged("ghcr.io/astral-sh/uv", Location(mock_dockerfile, 2))
         self.assert_no_new_version_logged()
+        self.assert_no_redundant_suppression_logged()
         self.assert_no_warnings_logged()
 
     def test_ignore_yanked_marker_is_reported_as_redundant(self):
-        """Test that an `ignore[yanked]` marker on a base image is reported: an image has no yank to hold back.
-
-        The scope holds back nothing but freezes nothing either, so the image is still bumped and pinned.
-        """
+        """Test that an `ignore[yanked]` marker on a base image is reported when an image has no yank to hold back."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
         mock_dockerfile = mock_path("# update-time: ignore[yanked]\nFROM python:3.14\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_called_with(f"# update-time: ignore[yanked]\nFROM python:3.15@{DIGEST2}\n")
         self.assert_redundant_yank_scope_logged("python", Location(mock_dockerfile, 2), "ignore[yanked]")
+
+    def test_vulnerable_scope_is_reported_as_redundant(self):
+        """Test that each `vulnerable` marker is reported when an image has no vulnerability to hold back."""
+        for directive in ("ignore[vulnerable]", "ignore[vulnerable=GHSA-2gwj-7jmv-h26r]", "ignore[vulnerable<high]"):
+            with self.subTest(directive=directive):
+                self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+                mock_dockerfile = mock_path(f"# update-time: {directive}\nFROM python:3.14\n")
+                self.run_updater(mock_dockerfile)
+                mock_dockerfile.write_text.assert_called_with(
+                    f"# update-time: {directive}\nFROM python:3.15@{DIGEST2}\n"
+                )
+                self.assert_redundant_vulnerable_source_logged("python", Location(mock_dockerfile, 2), directive)
+                self.mock_log.reset_mock()  # Judge each case on the records of its own run.
 
     def test_label_prefixed_base_image_bumped_and_pinned(self):
         """Test that a label-prefixed base image (ghcr.io/astral-sh/uv:python3.12-...) is bumped and pinned."""

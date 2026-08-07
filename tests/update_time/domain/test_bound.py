@@ -29,11 +29,7 @@ class ParseBoundTest(unittest.TestCase):
         )
 
     def test_invalid_specifier_raises(self):
-        """Test that an `update` bound with an unparsable specifier raises, distinct from a non-bound item's None.
-
-        The marker parser relies on this distinction to report a malformed bound while treating an unrecognised
-        item as not-a-bound; collapsing both to None would let a mistyped bound silently freeze a reference.
-        """
+        """Test that an `update` bound with an unparsable specifier raises, distinct from a non-bound item's None."""
         self.assertRaises(InvalidSpecifier, parse_bound, Verb.ALLOW, "update@@@")
 
     def test_item_that_is_no_bound(self):
@@ -73,8 +69,7 @@ class VersionBoundTest(unittest.TestCase):
     def test_str_renders_the_specifier_as_written(self):
         """Test that a bound parsed from a marker renders its specifier as the user wrote it, not normalised.
 
-        PEP 440 normalisation reorders a compound specifier's clauses (`>=3.10,<3.13` becomes `<3.13,>=3.10`),
-        which would show the user a specifier they did not enter.
+        The specifier here is a compound one, which PEP 440 normalisation would reorder to `<3.13,>=3.10`.
         """
         self.assertEqual(str(parse_bound(Verb.ALLOW, "update>=3.10,<3.13")), "allow[update>=3.10,<3.13]")
 
@@ -152,11 +147,7 @@ class VersionBoundTest(unittest.TestCase):
         self.assertIsNone(VersionBound(Verb.ALLOW, SpecifierSet("<3.13")).redundancy("not-a-version"))
 
     def test_redundancy_of_no_bound(self):
-        """Test that the keep-all NO_BOUND (an empty specifier) trivially never has an effect.
-
-        Whether that is worth reporting on is the logger's call: it stays silent about NO_BOUND, since that is the
-        no-op default of an unmarked reference rather than a bound the user wrote.
-        """
+        """Test that the keep-all NO_BOUND (an empty specifier) trivially never has an effect."""
         self.assertEqual(Redundancy.NO_EFFECT, NO_BOUND.redundancy("3.12"))
 
     def test_redundancy_with_non_pep440_boundary(self):

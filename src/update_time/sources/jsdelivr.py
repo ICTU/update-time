@@ -12,6 +12,7 @@ from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
+from update_time.domain.vulnerability import vulnerability_reporting
 from update_time.domain.yank import yank_reporting
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
@@ -33,7 +34,8 @@ def version_getter(filename: str) -> NewVersionGetter:
     The file is part of the reference rather than of the dependency, and the `NewVersionGetter` contract leaves no
     room for it, so each reference closes over its own. The integrity hash resolved has to be the hash of the file
     the URL points at, not of the package's default entry point. Every getter is registered as yank-reporting, since
-    the versions it resolves can carry npm's per-version deprecation as their yank.
+    the versions it resolves can carry npm's per-version deprecation as their yank, and as vulnerability-reporting,
+    since OSV holds advisories for the npm releases they name.
     """
 
     def get_latest_version(
@@ -66,7 +68,7 @@ def version_getter(filename: str) -> NewVersionGetter:
         # Attach the newest npm publication date for the staleness check.
         return replace(latest, newest_published=newest_publication_date(dependency))
 
-    return yank_reporting(get_latest_version)
+    return vulnerability_reporting(yank_reporting(get_latest_version))
 
 
 def _eligible_version(

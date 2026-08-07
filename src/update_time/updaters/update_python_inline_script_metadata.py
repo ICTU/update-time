@@ -8,10 +8,10 @@ natively and the same rewrite applies.
 import re
 from typing import TYPE_CHECKING
 
-from update_time.domain.staleness import warn_about_stale_dependencies
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.package_managers import uv
+from update_time.updaters.uv_pins import warn_about_pins
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -31,9 +31,7 @@ def update_python_inline_script_metadatas() -> None:
     scripts = [script for script in glob("*.py") if _has_script_block(script)]
     for script in scripts:
         uv.update_python_inline_script_metadata(script, _LOG)
-    # Check staleness after the update, so it reads the `==` pins uv settled on, reusing the PyPI source (the same
-    # one the pyproject.toml and requirements.txt updaters use).
-    warn_about_stale_dependencies(scripts, uv.newest_pypi_releases, _LOG.warn_if_stale)
+    warn_about_pins(scripts, _LOG)
 
 
 def main() -> None:  # pragma: no cover

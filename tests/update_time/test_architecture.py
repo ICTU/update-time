@@ -322,13 +322,14 @@ class LayeringTest(unittest.TestCase):
                 assert_passes(rule.matching(_module_pattern(module)))
 
 
-class SourceConfigurationTest(unittest.TestCase):
-    """Test that a source is told what a run is configured with rather than reading it.
+class ConfigurationReadingTest(unittest.TestCase):
+    """Test that a module which decides nothing about a run's configuration is told it rather than reading it.
 
     Every setting a source honours — the cooldown, and any added later — reaches it as an argument of the
     `NewVersionGetter` contract, decided once by `references.resolve.latest_version`. A source reading the global
     itself would answer with the run's setting where the caller asked for another, which is what a per-reference
-    override needs the source not to do.
+    override needs the source not to do. The marker parser is held to the same rule, for the reason its own test
+    gives.
     """
 
     def test_sources_read_no_configuration_global(self):
@@ -341,6 +342,18 @@ class SourceConfigurationTest(unittest.TestCase):
         self.assertIn("COOLDOWN", settings)  # Assert the settings were found, so an empty scan can't pass silently.
         sources = project_files("src/").in_folder("sources")
         assert_passes(sources.should_not().adhere_to(_reads_one_of(settings), _READS_A_SETTING))
+
+    def test_the_marker_parser_reads_no_configuration_global(self):
+        """Test that the marker parser reads no setting, so a marker means the same whatever a run is configured with.
+
+        `marker.py` imports `RISK_LEVELS` from the module that also defines `WARN_VULNERABILITY_LEVEL`, which puts a
+        setting one import away. Reading it while parsing would decide there whether a marker beats the command line,
+        where `Threshold.value_or` decides it once for whichever check asks.
+        """
+        settings = _env_var_globals(sorted(pathlib.Path("src").rglob("*.py")))
+        self.assertIn("COOLDOWN", settings)  # Assert the settings were found, so an empty scan can't pass silently.
+        marker_parser = project_files("src/").with_name("marker.py")
+        assert_passes(marker_parser.should_not().adhere_to(_reads_one_of(settings), _READS_A_SETTING))
 
     def test_a_module_reading_a_setting_is_reported(self):
         """Test that a module is reported whether it imports the setting or reads it off its module.

@@ -15,9 +15,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from update_time.domain.drift import DriftedPin
-from update_time.domain.marker import Marker
+from update_time.domain.marker import Marker, Threshold
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import DependencyVersion, Reference, Yank
+from update_time.domain.vulnerability import Vulnerability
 from update_time.io.log import DEPENDENCY_DELIMITER, LOCATION_DELIMITER, Logger
 from update_time.primitives.location import Location
 
@@ -80,26 +81,51 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.warn_if_stale("humanize", stale, Location(Path("docs/requirements.txt")), STALE_AFTER.get())
     staleness = capture.take()
 
+    requirements = Location(Path("docs/requirements.txt"), 12)
+    dockerfile = Location(Path("Dockerfile"), 2)
     yanked = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="accidentally broke Python 3.10 support"))
-    log.warn_if_yanked("humanize", yanked, Location(Path("docs/requirements.txt"), 12))
+    log.warn_if_yanked("humanize", yanked, requirements)
     yank = capture.take()
 
-    log.redundant_yank_scope(
-        "python", Marker(ignore_yanked=True, raw="ignore[yanked]"), Location(Path("Dockerfile"), 2)
+    vulnerability = Vulnerability(
+        "GHSA-2gwj-7jmv-h26r", "SQL Injection in Django", "critical", "https://osv.dev/GHSA-2gwj-7jmv-h26r"
     )
+    log.vulnerable_dependency("django", "3.2.0", vulnerability, requirements)
+    vulnerable = capture.take()
+
+    log.redundant_vulnerable_scope(
+        "django", "4.2.0", Marker(ignore_vulnerable=True, raw="ignore[vulnerable]"), requirements
+    )
+    redundant_vulnerability = capture.take()
+
+    advisory = "CVE-2022-28346"
+    suppression = Marker(ignored_advisories=frozenset({advisory}), raw=f"ignore[vulnerable={advisory}]")
+    log.redundant_vulnerable_advisory("django", "4.2.0", suppression, requirements)
+    redundant_advisory = capture.take()
+
+    level = Marker(vulnerable=Threshold(value="high"), raw="ignore[vulnerable<high]")
+    log.redundant_vulnerable_level("django", "4.2.0", level, requirements, "high")
+    redundant_level = capture.take()
+
+    log.redundant_vulnerable_source("python", Marker(ignore_vulnerable=True, raw="ignore[vulnerable]"), dockerfile)
+    redundant_source = capture.take()
+
+    log.redundant_yank_scope("python", Marker(ignore_yanked=True, raw="ignore[yanked]"), dockerfile)
     redundant = capture.take()
 
-    log.invalid_specifier("python", "stlae", Location(Path("Dockerfile"), 2))
+    log.invalid_bracket_item("python", "stlae", dockerfile)
     unrecognised = capture.take()
 
-    log.inverted_stale_item("python", "stale>=90", Location(Path("Dockerfile"), 2))
+    log.inverted_stale_item("python", "stale>=90", dockerfile)
     inverted = capture.take()
 
-    log.inverted_cooldown_item("python", "cooldown>=30", Location(Path("Dockerfile"), 2))
+    log.inverted_cooldown_item("python", "cooldown>=30", dockerfile)
     inverted_cooldown = capture.take()
 
+    log.inverted_vulnerable_item("django", "vulnerable>=high", requirements)
+    inverted_vulnerable = capture.take()
+
     marker = Marker(ignore_stale=True, raw="ignore[stale]")
-    dockerfile = Location(Path("Dockerfile"), 2)
     log.recognised_marker("python", marker, dockerfile)
     recognised = capture.take()
 
@@ -108,10 +134,16 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@DRIFT_WARNINGS@@": drift,
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
+        "@@VULNERABILITY_WARNING@@": vulnerable,
+        "@@REDUNDANT_VULNERABILITY_WARNING@@": redundant_vulnerability,
+        "@@REDUNDANT_ADVISORY_WARNING@@": redundant_advisory,
+        "@@REDUNDANT_LEVEL_WARNING@@": redundant_level,
+        "@@REDUNDANT_SOURCE_WARNING@@": redundant_source,
         "@@REDUNDANT_MARKER_WARNING@@": redundant,
         "@@UNRECOGNISED_ITEM_WARNING@@": unrecognised,
         "@@INVERTED_STALE_WARNING@@": inverted,
         "@@INVERTED_COOLDOWN_WARNING@@": inverted_cooldown,
+        "@@INVERTED_VULNERABLE_WARNING@@": inverted_vulnerable,
         "@@RECOGNISED_MARKER@@": recognised,
         "@@HELD_BACK_MARKER@@": capture.take(),
     }

@@ -125,13 +125,13 @@ def apply_marker(
 ) -> str:
     """Read a matched reference's `# update-time:` marker and update it, or leave the line unchanged when held back.
 
-    The marker gate shared by every line-based reference, and the one place that reads one, so no updater has to
-    remember the placement rule (see `parse_marker`). An item that could not be parsed is reported (here, where
-    the logger and location are available, unlike in the pure `parse_marker`) and leaves the reference unchanged.
+    The marker gate shared by every line-based reference, so no updater has to remember the placement rule (see
+    `parse_marker`). An item that could not be parsed is reported (here, where the logger and location are available,
+    unlike in the pure `parse_marker`) and leaves the reference unchanged.
     Otherwise the marker is reported as recognised at the debug level, as is the held-back update when the marker
     holds the update back, so users can tell a marker that was understood from one that suppressed something. A
-    marker holding back every scope — the update, the staleness warning, and the yank warning — returns the line
-    without calling `update_line`, so the source is never even queried. Any other marker is handed to `update_line`
+    marker holding back the update, the staleness warning, and the yank warning alike returns the line without
+    calling `update_line`, so the source is never even queried. Any other marker is handed to `update_line`
     along with the match and the line's location, so the checks it doesn't hold back still run, with its bound and
     its `allow` directives. The dependency comes from the regexp's `dependency` group; a regexp that captures none —
     a pre-commit `rev:` takes it from the `repo:` above, a `.python-version` entry is a bare version — names it in
@@ -140,8 +140,8 @@ def apply_marker(
     marker = parse_marker(line)
     location = line.location
     dependency = matched_dependency(match, dependency)
-    if marker.invalid_specifier is not None:
-        logger.invalid_specifier(dependency, marker.invalid_specifier, location)
+    if marker.invalid_item is not None:
+        logger.invalid_bracket_item(dependency, marker.invalid_item, location)
         return line.text
     logger.recognised_marker(dependency, marker, location)
     if marker.ignore_update:

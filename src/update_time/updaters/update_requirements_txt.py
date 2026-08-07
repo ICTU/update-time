@@ -10,6 +10,8 @@ from update_time.file_formats import requirements_txt as requirements_txt_format
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
+from update_time.references.vulnerability import warn_about_vulnerable_references
+from update_time.sources.osv import Ecosystem
 from update_time.sources.pypi import get_latest_version
 
 if TYPE_CHECKING:
@@ -34,7 +36,8 @@ def update_requirements_txt(requirements_txt: Path) -> None:
     if requirements_txt_format.is_compiled(requirements_txt):
         _LOG.skipped(requirements_txt, "compiled or hash-pinned requirements file")
         return
-    update_file(requirements_txt, _REQUIREMENT_RE, get_new_version=get_latest_version, logger=_LOG)
+    lines = update_file(requirements_txt, _REQUIREMENT_RE, get_new_version=get_latest_version, logger=_LOG)
+    warn_about_vulnerable_references(lines, _REQUIREMENT_RE, Ecosystem.PYPI, _LOG)
 
 
 def update_requirements_txts() -> None:

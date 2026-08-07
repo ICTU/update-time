@@ -21,7 +21,9 @@ from update_time.primitives.text import rewrite_string
 from update_time.references.file import rewrite_file
 from update_time.references.resolve import latest_version
 from update_time.references.rewrite import apply_marker, matched_reference
+from update_time.references.vulnerability import warn_about_vulnerable_references
 from update_time.sources.jsdelivr import integrity_hash, version_getter
+from update_time.sources.osv import Ecosystem
 
 if TYPE_CHECKING:
     from update_time.domain.line import Line
@@ -162,7 +164,8 @@ class _Rewriter:
 def update_jsdelivrs() -> None:
     """Find the Sphinx config files under docs/ and update the jsDelivr URLs in them."""
     for sphinx_config_py in glob("conf.py", start=Path.cwd() / "docs"):
-        rewrite_file(sphinx_config_py, _Rewriter().updated_lines, _LOG)
+        lines = rewrite_file(sphinx_config_py, _Rewriter().updated_lines, _LOG)
+        warn_about_vulnerable_references(lines, _URL_RE, Ecosystem.NPM, _LOG)
 
 
 def main() -> None:  # pragma: no cover
