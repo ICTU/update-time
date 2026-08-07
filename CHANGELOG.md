@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.24 - 2026-08-07
+
 ### Fixed
 
 - Report the changelog of a dependency whose repository URL is an ssh URL, instead of reporting that no changelog is available. Closes [#206](https://github.com/ICTU/update-time/issues/206).
