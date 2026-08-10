@@ -18,11 +18,11 @@ if TYPE_CHECKING:
 
 _ADVISORY = "PYSEC-2021-109"
 _SUMMARY = "SQL injection in QuerySet.order_by"
-# The summary of the second defect, and of the second record of one defect, for the tests that serve either.
+# The summary of the second vulnerability, and of a vulnerability's second advisory, for the tests that serve either.
 _OTHER_SUMMARY = "Denial of service in Django"
 _REFERENCE = Reference("django", "3.2.0")
-# Further advisory ids, for the tests that serve more than one record. OSV holds a record per database, and the
-# databases name one defect by a `GHSA`, a `CVE`, a `PYSEC`, and a `BIT` identifier.
+# Further advisory ids, for the tests that serve more than one advisory. OSV holds an advisory per database, and the
+# databases name one vulnerability by a `GHSA`, a `CVE`, a `PYSEC`, and a `BIT` identifier.
 _GHSA = "GHSA-1111-1111-1111"
 _CVE = "CVE-2021-1111"
 _BIT = "BIT-django-2021-1111"
@@ -33,10 +33,10 @@ _MALFORMED_VECTOR = "CVSS:3.1/AV:X/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
 def _expected_vulnerability(
     advisory: str, level: str, summary: str = _SUMMARY, aliases: list[str] | None = None
 ) -> Vulnerability:
-    """Return the vulnerability a defect reported at the advisory, at the level, and known by the aliases reads as.
+    """Return the vulnerability an advisory reports, at the level, and known by the aliases.
 
-    Defaults the summary these tests share, and orders its arguments as they vary, since every record here reports
-    the same defect at a different level.
+    Defaults the summary these tests share, and orders its arguments as they vary, since every advisory here reports
+    the same vulnerability at a different level.
     """
     return vulnerability(advisory, summary, level, aliases)
 
@@ -92,32 +92,33 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         """
         self.assert_level(mock_post, osv_advisory(_ADVISORY, _SUMMARY), "")
 
-    def test_a_defect_reported_twice_is_reported_once_at_its_rated_record(self, mock_post: Mock):
-        """Test that a defect several databases report is read as one vulnerability, at the record that rates it.
+    def test_a_vulnerability_reported_twice_is_reported_once_at_its_rated_advisory(self, mock_post: Mock):
+        """Test that a vulnerability several databases report is warned about once, at the advisory that rates it.
 
-        Only some of the databases rate a defect, so the order OSV happens to answer in must not decide whether the
-        warning names a risk level, not even when the rated record is the one tying the others together. A record
-        whose CVSS vector cannot be scored leaves the defect unrated, so the rated record wins there too.
+        Only some of the databases rate a vulnerability, so the order OSV happens to answer in must not decide
+        whether the warning names a risk level, not even when the rated advisory is the one tying the others
+        together. An advisory whose CVSS vector cannot be scored leaves it unrated, so the rated advisory wins there
+        too.
         """
         ghsa = osv_advisory(_GHSA, _SUMMARY, level="HIGH", aliases=[_CVE])
         pysec = osv_advisory(_ADVISORY, _SUMMARY, aliases=[_CVE])
         bit = osv_advisory(_BIT, _SUMMARY)
         tying_ghsa = osv_advisory(_GHSA, _SUMMARY, level="HIGH", aliases=[_CVE, _BIT])
         malformed = osv_advisory(_ADVISORY, _SUMMARY, aliases=[_CVE], vectors={"CVSS_V3": _MALFORMED_VECTOR})
-        two_records = [_expected_vulnerability(_GHSA, "high", aliases=[_CVE, _ADVISORY])]
-        three_records = [_expected_vulnerability(_GHSA, "high", aliases=[_CVE, _ADVISORY, _BIT])]
+        two_advisories = [_expected_vulnerability(_GHSA, "high", aliases=[_CVE, _ADVISORY])]
+        three_advisories = [_expected_vulnerability(_GHSA, "high", aliases=[_CVE, _ADVISORY, _BIT])]
         cases = {
-            "rated first": ((ghsa, pysec), two_records),
-            "rated second": ((pysec, ghsa), two_records),
-            "rated last, tying the others": ((pysec, bit, tying_ghsa), three_records),
-            "rated second, the other's vector malformed": ((malformed, ghsa), two_records),
+            "rated first": ((ghsa, pysec), two_advisories),
+            "rated second": ((pysec, ghsa), two_advisories),
+            "rated last, tying the others": ((pysec, bit, tying_ghsa), three_advisories),
+            "rated second, the other's vector malformed": ((malformed, ghsa), two_advisories),
         }
         for case, (advisories, expected) in cases.items():
             with self.subTest(case=case):
                 self.assert_vulnerabilities(mock_post, advisories, expected)
 
-    def test_a_defect_its_records_rate_differently_is_reported_at_the_most_severe(self, mock_post: Mock):
-        """Test that a defect the databases rate differently is read at its most severe rating, in either order."""
+    def test_a_vulnerability_its_advisories_rate_differently_is_reported_at_the_most_severe(self, mock_post: Mock):
+        """Test that a vulnerability the databases rate differently is read at its severest rating, in either order."""
         high = osv_advisory(_GHSA, _SUMMARY, level="HIGH", aliases=[_CVE])
         critical = osv_advisory(_ADVISORY, _OTHER_SUMMARY, level="CRITICAL", aliases=[_CVE])
         expected = [_expected_vulnerability(_ADVISORY, "critical", _OTHER_SUMMARY, aliases=[_CVE, _GHSA])]
@@ -126,16 +127,16 @@ class GetVulnerabilitiesTest(LoggingTestCase):
             with self.subTest(case=case):
                 self.assert_vulnerabilities(mock_post, advisories, expected)
 
-    def test_a_defect_its_records_rate_alike_is_reported_at_the_first_of_them(self, mock_post: Mock):
-        """Test that a defect the databases rate alike is read at the record OSV answered with first."""
+    def test_a_vulnerability_its_advisories_rate_alike_is_reported_at_the_first_of_them(self, mock_post: Mock):
+        """Test that a vulnerability the databases rate alike is read at the advisory OSV answered with first."""
         ghsa = osv_advisory(_GHSA, _SUMMARY, level="HIGH", aliases=[_CVE])
         pysec = osv_advisory(_ADVISORY, _OTHER_SUMMARY, level="HIGH", aliases=[_CVE])
         cases = {
-            "the GHSA record first": (
+            "the GHSAn advisory first": (
                 (ghsa, pysec),
                 [_expected_vulnerability(_GHSA, "high", aliases=[_CVE, _ADVISORY])],
             ),
-            "the PYSEC record first": (
+            "the PYSEC advisory first": (
                 (pysec, ghsa),
                 [_expected_vulnerability(_ADVISORY, "high", _OTHER_SUMMARY, aliases=[_CVE, _GHSA])],
             ),
@@ -144,8 +145,8 @@ class GetVulnerabilitiesTest(LoggingTestCase):
             with self.subTest(case=case):
                 self.assert_vulnerabilities(mock_post, advisories, expected)
 
-    def test_a_record_rated_by_a_cvss_vector_is_compared_at_the_level_it_bands_into(self, mock_post: Mock):
-        """Test that a record carrying a CVSS vector is ranked at the vector's level, above and below a stated one."""
+    def test_an_advisory_rated_by_a_cvss_vector_is_compared_at_the_level_it_bands_into(self, mock_post: Mock):
+        """Test that an advisory carrying a CVSS vector ranks at the vector's level, above and below a stated one."""
         stated_high = osv_advisory(_GHSA, _SUMMARY, level="HIGH", aliases=[_CVE])
         cases = {
             "banding above the stated level": (
@@ -163,10 +164,10 @@ class GetVulnerabilitiesTest(LoggingTestCase):
                 self.assert_vulnerabilities(mock_post, [stated_high, scored], expected)
 
     def test_an_advisory_naming_another_by_its_id_is_merged_with_it(self, mock_post: Mock):
-        """Test that a record naming another record's own id among its aliases is read as the same defect.
+        """Test that an advisory naming another advisory's own id among its aliases is read as the same vulnerability.
 
-        A database names the other databases' records of a defect by their own ids, so two records can be one defect
-        while sharing no alias with each other.
+        A database names the other databases' advisories by their own ids, so two advisories can report one
+        vulnerability while sharing no alias with each other.
         """
         ghsa = osv_advisory(_GHSA, _SUMMARY, level="HIGH", aliases=[_CVE])
         pysec = osv_advisory(_ADVISORY, _SUMMARY, aliases=[_GHSA])
@@ -176,19 +177,20 @@ class GetVulnerabilitiesTest(LoggingTestCase):
                 self.assert_vulnerabilities(mock_post, advisories, expected)
 
     def test_advisories_tied_together_only_through_a_third_are_reported_once(self, mock_post: Mock):
-        """Test that records naming nothing in common are read as one defect when a third record names both.
+        """Test that advisories naming nothing in common are read as one vulnerability when a third advisory names both.
 
-        OSV puts its records in no particular order, so the cases run the tying record before the two it ties,
-        between them, and after both, and tie defects that already hold several records each.
+        OSV puts its advisories in no particular order, so the cases run the tying advisory before the two it ties,
+        between them, and after both, and tie vulnerabilities that already hold several advisories each.
         """
         other_cve, third_cve = "CVE-2021-2222", "CVE-2021-3333"
         ghsa = osv_advisory(_GHSA, _SUMMARY, level="HIGH", aliases=[_CVE])
         pysec = osv_advisory(_ADVISORY, _SUMMARY, aliases=[_CVE, _BIT])
         bit = osv_advisory(_BIT, _SUMMARY)
         tied = [_expected_vulnerability(_GHSA, "high", aliases=[_CVE, _ADVISORY, _BIT])]
-        # Two defects of two records each, tied by a third naming one identifier of either. The second record of
-        # each pair carries what no other record does — an alias of its own, and the only risk level — so a merge
-        # that keeps just the record a defect was opened with is reported at another id, and at no level.
+        # Two vulnerabilities of two advisories each, tied by a third naming one identifier of either. The second
+        # advisory of each pair carries what no other does — an alias of its own, and the only risk level — so a
+        # merge that keeps just the advisory a vulnerability was opened with is reported at another id, and at no
+        # level.
         pysec_pair = (
             osv_advisory(_ADVISORY, _SUMMARY, aliases=[_CVE]),
             osv_advisory(_CVE, _SUMMARY, aliases=[third_cve]),
@@ -202,25 +204,26 @@ class GetVulnerabilitiesTest(LoggingTestCase):
             _expected_vulnerability(other_cve, "high", _OTHER_SUMMARY, [_ADVISORY, _CVE, third_cve, _BIT, _GHSA])
         ]
         cases = {
-            "the tying record first": ((pysec, ghsa, bit), tied),
-            "the tying record between": ((ghsa, pysec, bit), tied),
-            "the tying record last": ((ghsa, bit, pysec), tied),
-            "the tied defects hold several records each": ((*pysec_pair, *bit_pair, tying_ghsa), tied_pairs),
+            "the tying advisory first": ((pysec, ghsa, bit), tied),
+            "the tying advisory between": ((ghsa, pysec, bit), tied),
+            "the tying advisory last": ((ghsa, bit, pysec), tied),
+            "the tied vulnerabilities hold several advisories each": ((*pysec_pair, *bit_pair, tying_ghsa), tied_pairs),
         }
-        for case, (records, expected) in cases.items():
+        for case, (advisories, expected) in cases.items():
             with self.subTest(case):
-                self.assert_vulnerabilities(mock_post, records, expected)
+                self.assert_vulnerabilities(mock_post, advisories, expected)
 
-    def test_defects_naming_nothing_in_common_are_each_reported(self, mock_post: Mock):
-        """Test that two defects affecting one version stay two vulnerabilities, however alike their records read.
+    def test_vulnerabilities_naming_nothing_in_common_are_each_reported(self, mock_post: Mock):
+        """Test that two vulnerabilities affecting one version are each warned about, however alike their advisories.
 
-        The cases are two defects with different aliases, two naming no identifier at all, and a merged defect
-        beside one on its own, which also pins that a merge keeps the place of the earliest record it merged. No
-        record of that merged defect rates it, so it is reported at the record OSV answered with first, at no level.
+        The cases are two vulnerabilities with different aliases, two naming no identifier at all, and a merged
+        vulnerability beside one on its own, which also pins that a merge keeps the place of the earliest advisory
+        it merged. No advisory of that merged vulnerability rates it, so it is reported at the advisory OSV answered
+        with first, at no level.
         """
         other_cve = "CVE-2021-2222"
         cases = {
-            "one defect merged, one on its own": (
+            "one vulnerability merged, one on its own": (
                 (
                     osv_advisory(_ADVISORY, _SUMMARY, aliases=[_CVE]),
                     osv_advisory(_BIT, _SUMMARY),

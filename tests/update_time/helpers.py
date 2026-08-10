@@ -490,7 +490,7 @@ def osv_advisory(
 
     An advisory nobody reviewed for severity carries no `database_specific` section at all, which is the shape OSV
     returns for the PYSEC records among others; it states a CVSS vector at best, which `vectors` gives per CVSS
-    version. `aliases` are the identifiers the other databases name the defect by.
+    version. `aliases` are the identifiers the other databases name the vulnerability by.
     """
     reviewed = {"database_specific": {"severity": level}} if level else {}
     named = {"aliases": aliases} if aliases else {}
@@ -500,7 +500,7 @@ def osv_advisory(
 
 
 def vulnerability(advisory: str, summary: str, level: str, aliases: list[str] | None = None) -> Vulnerability:
-    """Return the vulnerability Update-time reads an advisory as, known by the aliases where a defect has them."""
+    """Return the vulnerability Update-time reads an advisory as, known by the aliases where it has them."""
     return Vulnerability(advisory, summary, level, f"https://osv.dev/{advisory}", frozenset(aliases or []))
 
 

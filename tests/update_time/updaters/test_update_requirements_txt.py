@@ -296,12 +296,12 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_no_warnings_logged()
         self.assert_ignored_vulnerability_logged("django", Location(requirements_txt, 1), directive)
 
-    def test_ignore_vulnerable_advisory_marker_accepts_any_identifier_of_the_defect(
+    def test_ignore_vulnerable_advisory_marker_accepts_any_identifier_of_the_vulnerability(
         self, mock_rglob: Mock, mock_get: Mock
     ):
-        """Test that the marker silences the warning when it names any identifier the defect is known by."""
+        """Test that the marker silences the warning when it names any identifier the vulnerability is known by."""
         cve, pysec, bit = "CVE-2021-1111", "PYSEC-2021-109", "BIT-django-2021-1111"
-        far_cve = "CVE-2021-4444"  # Named by the tied-in record alone, so only the merge brings it to the defect
+        far_cve = "CVE-2021-4444"  # Named by the tied-in advisory alone, so the merge brings it to the vulnerability
         reported = DJANGO_ADVISORY | {"aliases": [cve]}
         other_record = osv_advisory(pysec, DJANGO_VULNERABILITY.summary, aliases=[cve])
         tied_in = osv_advisory(bit, DJANGO_VULNERABILITY.summary, aliases=[far_cve])
@@ -335,10 +335,10 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_vulnerable_dependency_logged("django", "3.2.0", _OTHER_VULNERABILITY, Location(requirements_txt, 1))
         self.assert_ignored_vulnerability_logged("django", Location(requirements_txt, 1), directive)
 
-    def test_ignore_vulnerable_advisory_marker_is_redundant_when_no_defect_answers_to_it(
+    def test_ignore_vulnerable_advisory_marker_is_redundant_when_no_vulnerability_answers_to_it(
         self, mock_rglob: Mock, mock_get: Mock
     ):
-        """Test that a marker naming an advisory none of the version's defects answers to is reported as redundant."""
+        """Test that a marker naming an advisory none of the version's vulnerabilities answers to is redundant."""
         directive = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directive}\n")
         mock_get.side_effect = self.pypi("3.2.0")
