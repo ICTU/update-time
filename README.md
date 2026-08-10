@@ -347,17 +347,17 @@ Which dependencies are checked follows from where a yank can be observed. PyPI r
 
 ### 🛡️ Vulnerable dependencies
 
-A pin on the newest version is no protection when that version has a known security defect. Update-time looks the pinned version up in the [OSV](https://osv.dev) database, which aggregates GitHub's advisory database, PyPA's, and others, and warns when an advisory names that version as affected. It names the risk level, what the advisory says, and where to read the advisory in full:
+A pin on the newest version is no protection when that version has a known security vulnerability. Update-time looks the pinned version up in the [OSV](https://osv.dev) database, which aggregates GitHub's advisory database, PyPA's, and others, and warns when an advisory names that version as affected. It names the risk level, what the advisory says, and where to read the advisory in full:
 
 ```console
 WARNING Vulnerable dependency django in docs/requirements.txt:12: version 3.2.0 has a critical vulnerability, "SQL Injection in Django" (GHSA-2gwj-7jmv-h26r, https://osv.dev/GHSA-2gwj-7jmv-h26r)
 ```
 
-Several of the databases that OSV aggregates carry the same defect, each under an identifier of its own, so OSV answers with a record per database. A defect is warned about once, whichever of them reported it, because the records of one defect name each other's identifiers and Update-time reads them as one. The databases rate a defect independently, and only some rate it at all, so the warning names the record that rates it most severely, and the defect is reported and filtered at that level.
+Several of the databases that OSV aggregates carry the same vulnerability, each under an identifier of its own, so OSV answers with an advisory per database. A vulnerability is warned about once, whichever of them reported it, because the advisories of one vulnerability name each other's identifiers and Update-time reads them as one. The databases rate a vulnerability independently, and only some rate it at all, so the warning names the advisory that rates it most severely, and the vulnerability is reported and filtered at that level.
 
-The risk level is the one the advisory's reviewers gave it: `low`, `moderate`, `high`, or `critical`. Where they gave none, the level is derived from the advisory's CVSS base score, banded the same way, so `0.1` to `3.9` is low, `4.0` to `6.9` moderate, `7.0` to `8.9` high, and `9.0` to `10.0` critical. An advisory carrying both a CVSS v3 and a v4 vector is read at its v4 score, the newer of the two assessments. An advisory whose risk level Update-time cannot read at all is reported as `a vulnerability of unknown severity`. An advisory that gives no summary, which many do not, is reported without the quotation; its id and URL say which defect it is.
+The risk level is the one the advisory's reviewers gave it: `low`, `moderate`, `high`, or `critical`. Where they gave none, the level is derived from the advisory's CVSS base score, banded the same way, so `0.1` to `3.9` is low, `4.0` to `6.9` moderate, `7.0` to `8.9` high, and `9.0` to `10.0` critical. An advisory carrying both a CVSS v3 and a v4 vector is read at its v4 score, the newer of the two assessments. An advisory whose risk level Update-time cannot read at all is reported as `a vulnerability of unknown severity`. An advisory that gives no summary, which many do not, is reported without the quotation; its id and URL say which vulnerability it is.
 
-A reference marked `# update-time: ignore[vulnerable]` is still looked up at OSV, and what OSV answers is silenced rather than warned about. It is looked up because the answer is the only thing that can tell you the marker has gone stale: a suppression outlives the defect it was written for, and without the lookup there is nothing to compare it against. When the version turns out to have no vulnerability at all, Update-time reports the marker as holding nothing back:
+A reference marked `# update-time: ignore[vulnerable]` is still looked up at OSV, and what OSV answers is silenced rather than warned about. It is looked up because the answer is the only thing that can tell you the marker has gone stale: a suppression outlives the vulnerability it was written for, and without the lookup there is nothing to compare it against. When the version turns out to have no vulnerability at all, Update-time reports the marker as holding nothing back:
 
 ```console
 WARNING Redundant update-time marker ignore[vulnerable] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability, so the marker holds nothing back
@@ -367,9 +367,9 @@ Run with `--log-level DEBUG` to see what the marker silenced. To silence one adv
 
 The version checked is the one the run leaves the reference on: the new version when the reference moved, the current version when it did not. So a vulnerability the run updated away from is never reported, and one the run updated into always is. Only the version a dependency is pinned to is checked, since auditing the transitive dependencies in a lock file is what `uv audit`, `pip-audit`, and `npm audit` are for.
 
-To silence one advisory across the whole scan, rather than on the one reference that carries a marker, pass `--ignore-vulnerability`, which takes a comma-separated list: `--ignore-vulnerability GHSA-2gwj-7jmv-h26r,CVE-2021-31542`. It names an advisory the way a marker does, so any identifier the defect is known by will do, and what it silenced is logged at `DEBUG`. Where a reference's own marker silences the same advisory, the marker is the one reported.
+To silence one advisory across the whole scan, rather than on the one reference that carries a marker, pass `--ignore-vulnerability`, which takes a comma-separated list: `--ignore-vulnerability GHSA-2gwj-7jmv-h26r,CVE-2021-31542`. It names an advisory the way a marker does, so any identifier the vulnerability is known by will do, and what it silenced is logged at `DEBUG`. Where a reference's own marker silences the same advisory, the marker is the one reported.
 
-Every risk level is warned about by default. To hear only about the more severe ones, raise the threshold with `--warn-vulnerability-level`, for example `--warn-vulnerability-level high`. A vulnerability whose risk level Update-time cannot read is warned about whatever the threshold is, since leaving the defects nobody has rated out of the warnings would hide exactly the ones nobody has looked at.
+Every risk level is warned about by default. To hear only about the more severe ones, raise the threshold with `--warn-vulnerability-level`, for example `--warn-vulnerability-level high`. A vulnerability whose risk level Update-time cannot read is warned about whatever the threshold is, since leaving the vulnerabilities nobody has rated out of the warnings would hide exactly the ones nobody has looked at.
 
 Looking a pin up sends its package name and version to OSV. Pass `--warn-vulnerability-level none` to switch the check off, which stops those requests altogether. A reference that sets a level of its own is still looked up though, since no command-line option overrides a marker (see [Setting a risk level](#setting-a-risk-level)).
 
@@ -402,7 +402,7 @@ By default the marker holds a reference back from version updates, the [stalenes
 | `# update-time: ignore[yanked]` | applied | still checked | held back | still checked |
 | `# update-time: ignore[vulnerable]` | applied | still checked | still checked | held back |
 
-So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet or its version was withdrawn, `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version, and `# update-time: ignore[yanked]` does the same for a yank you have decided to live with. `# update-time: ignore[vulnerable]` silences the vulnerability warning for a defect you have assessed, while the reference keeps updating. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
+So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet or its version was withdrawn, `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version, and `# update-time: ignore[yanked]` does the same for a yank you have decided to live with. `# update-time: ignore[vulnerable]` silences the vulnerability warning for one you have assessed, while the reference keeps updating. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
 
 A yank can only be observed where the dependency's source reports one, so of the references that accept a marker, `ignore[yanked]` has something to hold back on a `requirements.txt` pin and on a jsDelivr URL (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so Update-time logs it as redundant at `WARNING`:
 
@@ -476,27 +476,27 @@ The override reaches the dependencies whose cooldown Update-time enforces itself
 
 #### Silencing specific vulnerabilities
 
-`ignore[vulnerable]` silences every [vulnerability](#-vulnerable-dependencies) warning a reference gets. To silence just one of them — a defect you have assessed and decided to live with — name the advisory after the scope:
+`ignore[vulnerable]` silences every [vulnerability](#-vulnerable-dependencies) warning a reference gets. To silence just one of them — a vulnerability you have assessed and decided to live with — name the advisory after the scope:
 
 ```text
 django==3.2.0  # update-time: ignore[vulnerable=GHSA-2gwj-7jmv-h26r] (assessed, we don't use the affected query API)
 ```
 
-Any identifier the defect is known by will do: OSV holds a record per database, each under an id of its own, so a marker naming the `CVE-…` silences a warning reported under the `GHSA-…`.
+Any identifier the vulnerability is known by will do: OSV holds an advisory per database, each under an id of its own, so a marker naming the `CVE-…` silences a warning reported under the `GHSA-…`.
 
 To silence a second advisory, add a second item: `# update-time: ignore[vulnerable=GHSA-2gwj-7jmv-h26r, vulnerable=CVE-2021-31542]`. The comma separates the bracket's items, so each identifier needs a `vulnerable=` of its own: `ignore[vulnerable=GHSA-…,CVE-…]` reads the second identifier as an item, reports it as invalid, and leaves the reference unchanged.
 
-When none of the version's defects answers to the identifier — the defect was fixed by an update, or the identifier was mistyped — Update-time reports the marker as holding nothing back:
+When none of the version's vulnerabilities answers to the identifier — the vulnerability was fixed by an update, or the identifier was mistyped — Update-time reports the marker as holding nothing back:
 
 ```console
 WARNING Redundant update-time marker ignore[vulnerable=CVE-2022-28346] for django in docs/requirements.txt:12: version 4.2.0 has no such vulnerability, so the marker holds nothing back
 ```
 
-A marker naming several advisories is judged as one, so it is reported only once none of them names a defect the version has.
+A marker naming several advisories is judged as one, so it is reported only once none of them names a vulnerability the version has.
 
 Only `ignore` names an advisory here. `allow` naming one would keep that warning and drop the warning about every other advisory, which is not a rule the language offers, so `allow[vulnerable=GHSA-…]` is reported as an invalid item and the reference is left unchanged.
 
-The reference keeps updating, and every other advisory affecting the version it lands on is still warned about, so a defect that comes to light after you wrote the marker still reaches you. Run with `--log-level DEBUG` to see what the marker silenced. To silence an advisory wherever it turns up instead of on this one reference, pass `--ignore-vulnerability` (see [Vulnerable dependencies](#-vulnerable-dependencies)).
+The reference keeps updating, and every other advisory affecting the version it lands on is still warned about, so a vulnerability that comes to light after you wrote the marker still reaches you. Run with `--log-level DEBUG` to see what the marker silenced. To silence an advisory wherever it turns up instead of on this one reference, pass `--ignore-vulnerability` (see [Vulnerable dependencies](#-vulnerable-dependencies)).
 
 #### Setting a risk level
 
@@ -506,7 +506,7 @@ The reference keeps updating, and every other advisory affecting the version it 
 django==3.2.0  # update-time: ignore[vulnerable<high] (assessed the moderate ones, acting on high and worse)
 ```
 
-The level applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--warn-vulnerability-level` whatever that is set to, `--warn-vulnerability-level none` included: no command-line option overrides a marker, so switching the check off globally still leaves a reference with its own level looked up at OSV and warned about. As with the global level, a vulnerability whose risk level Update-time cannot read is warned about whatever the level in force, since leaving the defects nobody has rated out of the warnings would hide exactly the ones nobody has looked at.
+The level applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--warn-vulnerability-level` whatever that is set to, `--warn-vulnerability-level none` included: no command-line option overrides a marker, so switching the check off globally still leaves a reference with its own level looked up at OSV and warned about. As with the global level, a vulnerability whose risk level Update-time cannot read is warned about whatever the level in force, since leaving the vulnerabilities nobody has rated out of the warnings would hide exactly the ones nobody has looked at.
 
 When none of the version's vulnerabilities falls below the level, Update-time reports the marker as holding nothing back, since a level that silences nothing is one the reference no longer needs:
 

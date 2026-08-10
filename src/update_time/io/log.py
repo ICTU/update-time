@@ -577,7 +577,7 @@ class Logger:
     def redundant_vulnerable_advisory(
         self, dependency: str, version: VersionString, marker: Marker, location: Location
     ) -> None:
-        """Warn that the marker names an advisory none of the pinned version's defects answers to."""
+        """Warn that the marker names an advisory none of the pinned version's vulnerabilities answers to."""
         self._log(
             self._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY,
             **self._redundant_suppression_fields(dependency, version, marker, location),

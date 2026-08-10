@@ -10,8 +10,8 @@ from update_time.primitives.location import Location
 
 from tests.update_time.helpers import bound
 
-# Advisory identifiers, for the tests of the `vulnerable=ID` bracket item. The databases hold their advisories under
-# identifiers of different shapes, and Update-time takes whichever the reader writes.
+# Advisory identifiers, for the tests of the `vulnerable=ID` bracket item. An advisory is known by identifiers of
+# different shapes, and Update-time takes whichever the reader writes.
 _GHSA = "GHSA-2gwj-7jmv-h26r"
 _CVE = "CVE-2022-28346"
 
