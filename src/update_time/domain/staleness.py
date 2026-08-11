@@ -3,7 +3,6 @@
 from typing import TYPE_CHECKING
 
 from update_time.primitives.environment import EnvVar
-from update_time.primitives.location import Location
 from update_time.primitives.timestamp import days_since
 
 if TYPE_CHECKING:
@@ -12,6 +11,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from update_time.domain.version import DependencyName, DependencyVersion
+    from update_time.primitives.location import Location
 
 # Private channel that passes --stale-after from the CLI to the updater subprocesses; 0 disables the check.
 STALE_AFTER = EnvVar("_UPDATE_TIME_STALE_AFTER_DAYS", default=365, parse=int)
@@ -30,19 +30,20 @@ def is_stale(published: datetime | None, threshold: int) -> bool:
 
 def warn_about_stale_dependencies(
     files: Iterable[Path],
-    newest_releases: Callable[[Path], Iterable[tuple[DependencyName, DependencyVersion | None]]],
+    newest_releases: Callable[[Path], Iterable[tuple[DependencyName, DependencyVersion | None, Location]]],
     warn: Callable[[DependencyName, DependencyVersion, Location, int], None],
 ) -> None:
     """Run the staleness pass shared by the updaters that delegate to a package manager.
 
     Delegating to uv, npm, or pnpm means never calling a source per dependency, so these updaters make their own
-    pass. The location carries no line number, since a delegated file surfaces no per-dependency line. The threshold
-    is the global one, which a delegated dependency has no marker to override. Skipped entirely when the check is
-    disabled, so the resolver never runs and makes no registry request. Callback-driven so `domain` stays free of I/O.
+    pass. Each dependency is located by the resolver that read it back from the file, which is the only party that
+    knows where in the file it sits. The threshold is the global one, which a delegated dependency has no marker to
+    override. Skipped entirely when the check is disabled, so the resolver never runs and makes no registry request.
+    Callback-driven so `domain` stays free of I/O.
     """
     if (threshold := STALE_AFTER.get()) == 0:
         return
     for file in files:
-        for name, release in newest_releases(file):
+        for name, release, location in newest_releases(file):
             if release is not None:
-                warn(name, release, Location(file), threshold)
+                warn(name, release, location, threshold)

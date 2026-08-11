@@ -39,9 +39,7 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         config_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         next_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         self.assert_path_logged(next_yml)
-        self.assert_new_version_logged(
-            "cimg/go", "1.26.2", Location(next_yml, 1), Logger._SUPPRESSING_CHANGELOG, once=False
-        )
+        self.assert_last_new_version_logged("cimg/go", "1.26.2", Location(next_yml, 1), Logger._SUPPRESSING_CHANGELOG)
         self.assert_no_warnings_logged()
 
     def test_machine_executor_alias_ignored(self):

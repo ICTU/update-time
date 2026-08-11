@@ -73,11 +73,10 @@ def generate() -> LogOutput:
     log.new_version("humanize", DependencyVersion("4.15.0", changelog), Location(Path("docs/requirements.txt"), 12))
     log.pinned("python", DependencyVersion("3.14.6", sha=digest), Location(Path("Dockerfile"), 1))
     log.new_version("actions/checkout", DependencyVersion("4.3.0"), Location(Path(".github/workflows/ci.yml"), 17))
-    # A manifest delegated to npm/pnpm, so no per-dependency line is surfaced: reported file-only, without a number.
     # The publication date is derived from the wall clock so the age it renders — 512 days — stays put as time passes.
     long_ago = datetime.now(UTC) - timedelta(days=512, hours=1)
     stale = DependencyVersion("1.3.0", newest_published=long_ago)
-    log.warn_if_stale("left-pad", stale, Location(Path("package.json")), STALE_AFTER.get())
+    log.warn_if_stale("left-pad", stale, Location(Path("package.json"), 24), STALE_AFTER.get())
     vulnerability = Vulnerability(
         "GHSA-2gwj-7jmv-h26r", "SQL Injection in Django", "critical", "https://osv.dev/GHSA-2gwj-7jmv-h26r"
     )

@@ -58,27 +58,28 @@ class WarnAboutStaleDependenciesTest(unittest.TestCase):
     """Unit tests for the warn_about_stale_dependencies helper the delegating updaters share."""
 
     def setUp(self):
-        """Create a file, a resolved release, and a mock warning callback for the tests to share."""
+        """Create a file, a location in it, a resolved release, and a mock warning callback for the tests to share."""
         self.file = Path("pyproject.toml")
+        self.location = Location(self.file, 4)
         self.release = DependencyVersion(version="1.0.0")
         self.warn = Mock()
 
     def test_warns_for_each_resolved_release(self):
-        """Test that the warn callback is called with the name, release, and file for every resolved dependency."""
-        newest_releases = Mock(return_value=[("humanize", self.release)])
+        """Test that the warn callback is passed the name, release, and the location the resolver reported."""
+        newest_releases = Mock(return_value=[("humanize", self.release, self.location)])
         warn_about_stale_dependencies([self.file], newest_releases, self.warn)
         newest_releases.assert_called_once_with(self.file)
-        self.warn.assert_called_once_with("humanize", self.release, Location(self.file), STALE_AFTER.default)
+        self.warn.assert_called_once_with("humanize", self.release, self.location, STALE_AFTER.default)
 
     def test_skips_unresolved_releases(self):
         """Test that a dependency whose newest release can't be resolved (None) is skipped, not warned about."""
-        newest_releases = Mock(return_value=[("humanize", None), ("rich", self.release)])
-        warn_about_stale_dependencies([self.file], newest_releases, self.warn)
-        self.warn.assert_called_once_with("rich", self.release, Location(self.file), STALE_AFTER.default)
+        releases = [("humanize", None, self.location), ("rich", self.release, self.location)]
+        warn_about_stale_dependencies([self.file], Mock(return_value=releases), self.warn)
+        self.warn.assert_called_once_with("rich", self.release, self.location, STALE_AFTER.default)
 
     def test_disabled(self):
         """Test that a threshold of 0 skips the pass entirely, so the resolver never runs and makes no request."""
-        newest_releases = Mock(return_value=[("humanize", self.release)])
+        newest_releases = Mock(return_value=[("humanize", self.release, self.location)])
         with staleness_disabled:
             warn_about_stale_dependencies([self.file], newest_releases, self.warn)
         newest_releases.assert_not_called()

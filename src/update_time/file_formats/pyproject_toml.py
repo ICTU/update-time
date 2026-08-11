@@ -12,8 +12,14 @@ from typing import TYPE_CHECKING
 
 import tomlkit
 
+from update_time.domain.version import Reference, normalized_name
+from update_time.primitives.location import Location
+from update_time.primitives.text import line_number
+
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from update_time.domain.version import DependencyName, VersionString
 
 # A pinned dependency spec as it appears in a dependencies array, e.g. `"package==1.0"`, capturing the distribution
 # name and the pinned version. Only `==` pins are matched; specs with other clauses (`<=`, `~=`, …) are left alone.
@@ -66,16 +72,17 @@ def set_tool_key(path: Path, table: str, key: str, value: str, *, comment: str =
     path.write_text(tomlkit.dumps(document))
 
 
-def rewrite_pinned_versions(path: Path, versions: dict[str, str]) -> None:
-    """Rewrite each `"name==<old>"` pin to `versions[name]` (name matched case-insensitively); write if changed.
+def rewrite_pinned_versions(path: Path, versions: dict[DependencyName, VersionString]) -> None:
+    """Rewrite each `"name==<old>"` pin to the version `versions` holds for it; write the file if changed.
 
-    Names absent from the mapping keep their pinned version, so only dependencies with a known newer version are
-    touched, and only the captured spec is rewritten — the rest of the file is left exactly as it was.
+    The mapping is keyed by normalized name, so a pin is found however the file spells the name, and keeps that
+    spelling. Names absent from the mapping keep their pinned version, so only dependencies with a known newer
+    version are touched, and only the captured spec is rewritten — the rest of the file is left exactly as it was.
     """
 
     def replace(match: re.Match[str]) -> str:
         name = match.group("name")
-        version = versions.get(name.lower(), match.group("version"))
+        version = versions.get(normalized_name(name), match.group("version"))
         return f'"{name}=={version}"'
 
     current = path.read_text()
@@ -84,11 +91,15 @@ def rewrite_pinned_versions(path: Path, versions: dict[str, str]) -> None:
         path.write_text(rewritten)
 
 
-def pinned_versions(path: Path) -> dict[str, str]:
-    """Return the `{name: version}` of every exact `name==version` pin in the file.
+def pinned_versions(path: Path) -> list[tuple[Reference, Location]]:
+    """Return every exact `name==version` pin in the file, with where it sits.
 
     Matches the same `==` specs `rewrite_pinned_versions` rewrites (looser specifiers like `<=` are excluded),
-    across every dependency array. Duplicate names collapse to the last occurrence, which is enough for callers
-    that only need one entry per dependency (e.g. the staleness check).
+    across every dependency array. A name pinned in more than one array is returned once per pin, so a pin is
+    never hidden by another pin of the same name.
     """
-    return {match["name"]: match["version"] for match in _PINNED_SPEC.finditer(path.read_text())}
+    contents = path.read_text()
+    return [
+        (Reference(match["name"], match["version"]), Location(path, line_number(contents, match.start())))
+        for match in _PINNED_SPEC.finditer(contents)
+    ]

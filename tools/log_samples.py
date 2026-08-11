@@ -76,13 +76,14 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.hash_mismatch("clipboard", "2.0.11", _ELIDED_INTEGRITY_HASH, _ELIDED_INTEGRITY_HASH, location)
     drift = capture.take()
 
-    published = datetime.now(UTC) - timedelta(days=_STALE_DAYS, hours=1)
-    stale = DependencyVersion("4.15.0", newest_published=published)
-    log.warn_if_stale("humanize", stale, Location(Path("docs/requirements.txt")), STALE_AFTER.get())
-    staleness = capture.take()
-
     requirements = Location(Path("docs/requirements.txt"), 12)
     dockerfile = Location(Path("Dockerfile"), 2)
+
+    published = datetime.now(UTC) - timedelta(days=_STALE_DAYS, hours=1)
+    stale = DependencyVersion("4.15.0", newest_published=published)
+    log.warn_if_stale("humanize", stale, requirements, STALE_AFTER.get())
+    staleness = capture.take()
+
     yanked = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="accidentally broke Python 3.10 support"))
     log.warn_if_yanked("humanize", yanked, requirements)
     yank = capture.take()

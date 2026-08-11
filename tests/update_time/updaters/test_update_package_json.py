@@ -4,7 +4,7 @@ import json
 import subprocess  # nosec
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import Mock, call, patch
+from unittest.mock import ANY, Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.primitives.command import Command
@@ -112,6 +112,65 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         )
         self.assert_no_warnings_logged()
 
+    @patch("requests.get", _package_lookup_responses())
+    def test_new_version_is_logged_at_the_line_declaring_the_dependency(self, mock_run: Mock, mock_glob: Mock):
+        """Test that the new version is logged at the line declaring the dependency npm updated."""
+        mock_package_json = self.create_package_json('{\n  "dependencies": {\n    "package": "^1.0.0"\n  }\n}\n')
+        mock_glob.return_value = [mock_package_json]
+        mock_run.side_effect = self.npm_runs(
+            _outdated_error("package", "1.0", "1.1"),
+            Mock(stdout=""),
+            Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
+        )
+        update_package_jsons()
+        self.assert_new_version_logged(
+            "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json, 3), "Changelog"
+        )
+
+    @patch("requests.get", _package_lookup_responses())
+    def test_new_version_is_logged_at_each_line_declaring_the_dependency(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a dependency two sections declare has its new version logged at each of those lines."""
+        contents = (
+            "{\n"
+            '  "dependencies": {\n    "package": "^1.0.0"\n  },\n'
+            '  "devDependencies": {\n    "package": "^1.0.0"\n  }\n'
+            "}\n"
+        )
+        mock_package_json = self.create_package_json(contents)
+        mock_glob.return_value = [mock_package_json]
+        mock_run.side_effect = self.npm_runs(
+            _outdated_error("package", "1.0", "1.1"),
+            Mock(stdout=""),
+            Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
+        )
+        update_package_jsons()
+        for line in (3, 6):
+            with self.subTest(line=line):
+                self.assert_new_version_logged_among_others(
+                    "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json, line), ANY
+                )
+
+    @patch("requests.get", _package_lookup_responses())
+    def test_new_version_of_a_dependency_the_manifest_declares_without_a_registry_spec(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a new version for a dependency that resolves to no registry release is logged at the file.
+
+        Such a dependency is left out of the manifest's locations, so there is no line to report it at.
+        """
+        contents = '{\n  "dependencies": {\n    "package": "git+https://github.com/org/package.git"\n  }\n}\n'
+        mock_package_json = self.create_package_json(contents)
+        mock_glob.return_value = [mock_package_json]
+        mock_run.side_effect = self.npm_runs(
+            _outdated_error("package", "1.0", "1.1"),
+            Mock(stdout=""),
+            Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
+        )
+        update_package_jsons()
+        self.assert_new_version_logged(
+            "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json), "Changelog"
+        )
+
     def test_restore_git_url_dependencies(self, mock_run: Mock, mock_glob: Mock):
         """Test that git+https URLs npm normalized to the github: shorthand are restored."""
         original = (
@@ -127,8 +186,9 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
             "  }\n}\n"
         )
         mock_package_json = self.create_package_json()
-        # Three reads: package_manager detection, the original snapshot, then the npm-normalized contents.
-        mock_package_json.read_text = Mock(side_effect=[original, original, normalized])
+        # Four reads: package_manager detection, the original snapshot, then the npm-normalized contents twice —
+        # once to locate the declarations, once to compare against the snapshot.
+        mock_package_json.read_text = Mock(side_effect=[original, original, normalized, normalized])
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = self.npm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout='{"dependencies": {}}'))
         update_package_jsons()
@@ -372,19 +432,36 @@ class StaleDependencyTest(LoggingTestCase):
         return mock_response({"dist-tags": {"latest": latest}, "time": {latest: published}})
 
     def package_json(self, glob: Mock) -> Mock:
-        """Discover a single mock package.json depending on `clipboard`."""
-        package_json = mock_path('{"dependencies": {"clipboard": "^2.0.11"}}', parent=Path("/"))
+        """Discover a single mock package.json depending on `clipboard`, whose entry sits on line 4."""
+        contents = '{\n  "name": "app",\n  "dependencies": {\n    "clipboard": "^2.0.11"\n  }\n}\n'
+        package_json = mock_path(contents, parent=Path("/"))
         glob.return_value = [package_json]
         return package_json
 
     @patch("requests.get")
     def test_stale_dependency_warned(self, get: Mock, mock_run: Mock, glob: Mock):
-        """Test that a direct dependency whose newest release is old is warned about."""
+        """Test that a direct dependency whose newest release is old is warned about, at the line it is declared on."""
         self.stub_no_update(mock_run)
         get.return_value = self.registry_doc("2.0.11", (datetime.now(UTC) - timedelta(days=512)).isoformat())
         package_json = self.package_json(glob)
         update_package_jsons()
-        self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json))
+        self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4))
+
+    @patch("requests.get")
+    def test_dependency_declared_in_two_sections(self, get: Mock, mock_run: Mock, glob: Mock):
+        """Test that a dependency two sections declare is warned about at each of the lines declaring it."""
+        self.stub_no_update(mock_run)
+        get.return_value = self.registry_doc("2.0.11", (datetime.now(UTC) - timedelta(days=512)).isoformat())
+        contents = (
+            "{\n"
+            '  "dependencies": {\n    "clipboard": "^2.0.11"\n  },\n'
+            '  "devDependencies": {\n    "clipboard": "^2.0.11"\n  }\n'
+            "}\n"
+        )
+        package_json = mock_path(contents, parent=Path("/"))
+        glob.return_value = [package_json]
+        update_package_jsons()
+        self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 3), Location(package_json, 6))
 
     @patch("requests.get")
     def test_recent_dependency_not_warned(self, get: Mock, mock_run: Mock, glob: Mock):

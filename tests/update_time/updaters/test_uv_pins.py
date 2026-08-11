@@ -51,11 +51,11 @@ class StalePinTest(PinnedFileTestCase):
         return mock_response({"versions": [version], "files": [{"upload-time": upload_time}]})
 
     def test_stale_pin_warned(self, get: Mock):
-        """Test that a pin whose newest release is old is warned about, located at the file without a line."""
+        """Test that a pin whose newest release is old is warned about, located at the line the pin sits on."""
         get.return_value = self.simple_api("1.0", (datetime.now(UTC) - timedelta(days=512)).isoformat())
         file = self.pinned_file("package==1.0")
         warn_about_pins([file], _LOG)
-        self.assert_stale_dependency_logged("package", "1.0", Location(file))
+        self.assert_stale_dependency_logged("package", "1.0", Location(file, 2))
 
     def test_recent_pin_not_warned(self, get: Mock):
         """Test that a pin whose newest release is recent is not warned about as stale."""
@@ -76,11 +76,25 @@ class VulnerablePinTest(PinnedFileTestCase):
     """Unit tests for the vulnerability half, whose OSV pass looks each pin up."""
 
     def test_vulnerable_pin_warned(self):
-        """Test that a pin OSV reports an advisory for is warned about, located at the file without a line."""
+        """Test that a pin OSV reports an advisory for is warned about, located at the line the pin sits on."""
         file = self.pinned_file("django==3.2.0")
         with osv(DJANGO_ADVISORY):
             warn_about_pins([file], _LOG)
-        self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(file))
+        self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(file, 2))
+
+    def test_a_name_pinned_twice(self):
+        """Test that every pin of a name is looked up, so one pin never hides another's vulnerability."""
+        file = mock_path(
+            '[project]\ndependencies = ["django==3.2.0"]\n[dependency-groups]\ndev = ["django==4.2.0"]\n',
+            parent=Path("/"),
+        )
+        with osv(DJANGO_ADVISORY):
+            warn_about_pins([file], _LOG)
+        for version, line in (("3.2.0", 2), ("4.2.0", 4)):
+            with self.subTest(version=version):
+                self.assert_vulnerable_dependency_logged(
+                    "django", version, DJANGO_VULNERABILITY, Location(file, line), among_others=True
+                )
 
     @vulnerability_check_disabled
     def test_disabled_makes_no_osv_request(self):

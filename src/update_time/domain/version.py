@@ -1,5 +1,6 @@
 """Dependency version domain object."""
 
+import re
 from dataclasses import dataclass
 from datetime import UTC
 from typing import TYPE_CHECKING
@@ -22,6 +23,19 @@ type VersionString = str
 # the log highlighter in `io/log.py`, so the two always agree on what a digest looks like.
 SHA256_HEX_CHARS = 64
 SHA256_DIGEST = rf"sha256:[0-9a-f]{{{SHA256_HEX_CHARS}}}"
+
+# The characters PyPI treats as one and the same separator within a distribution name (see `normalized_name`).
+_NAME_SEPARATORS = re.compile(r"[-_.]+")
+
+
+def normalized_name(name: DependencyName) -> DependencyName:
+    """Return the name as PyPI spells it, so a pin is matched however the manifest spells it.
+
+    PyPI names a distribution in lower case with each run of `-`, `_`, and `.` collapsed to a single `-`, as
+    https://peps.python.org/pep-0503/#normalized-names prescribes, and uv reports a package by that name. So a
+    `typing_extensions` pin and the `typing-extensions` uv reports for it are the same dependency.
+    """
+    return _NAME_SEPARATORS.sub("-", name).lower()
 
 
 def is_valid(version: VersionString) -> bool:

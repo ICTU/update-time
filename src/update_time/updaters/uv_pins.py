@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING
 
 from update_time.domain.staleness import warn_about_stale_dependencies
+from update_time.file_formats import pyproject_toml as pyproject_toml_format
 from update_time.package_managers import uv
 from update_time.references.vulnerability import warn_about_vulnerable_dependencies
 from update_time.sources.osv import Ecosystem
@@ -22,4 +23,4 @@ def warn_about_pins(files: Sequence[Path], log: Logger) -> None:
     files are a sequence rather than an iterable, since each check walks them again.
     """
     warn_about_stale_dependencies(files, uv.newest_pypi_releases, log.warn_if_stale)
-    warn_about_vulnerable_dependencies(files, uv.pinned_pypi_versions, Ecosystem.PYPI, log)
+    warn_about_vulnerable_dependencies(files, pyproject_toml_format.pinned_versions, Ecosystem.PYPI, log)
