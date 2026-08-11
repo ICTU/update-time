@@ -8,7 +8,7 @@ from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.version import Yank
 from update_time.sources.pypi import (
-    changelog_from_url,
+    _changelog_from_url,
     get_changes,
     get_latest_version,
     get_publication_datetime,
@@ -21,7 +21,6 @@ from tests.update_time.helpers import (
     CacheClearingTestCase,
     LoggingTestCase,
     bound,
-    github_commits_json,
     github_release_json,
     pypi_index,
     pypi_release,
@@ -40,12 +39,29 @@ class GetChangesTest(LoggingTestCase):
 
         The changelog heuristics make several requests off one release (the PyPI metadata, then a changelog URL or
         GitHub releases); the shared response returns the next JSON payload on each `.json()` and the same text and
-        status for all of them.
+        status for all of them. Since a failing status fails the PyPI metadata request too, which leaves the
+        heuristics with nothing to examine, a test that needs one request to fail and another to succeed uses
+        `create_mock_response_per_url`.
         """
         ok = status_code < HTTPStatus.BAD_REQUEST
         response = mock_response(text=text, status_code=status_code, ok=ok, headers={"Content-Type": "text/text"})
         response.json.side_effect = list(json)
         mock_get.return_value = response
+
+    def create_mock_response_per_url(self, mock_get: Mock, metadata: dict, unreachable_url: str) -> None:
+        """Point the mock requests.get at the release metadata, answering the unreachable URL with an HTTP error.
+
+        The requests are told apart, so the PyPI metadata is still fetched when the other URL fails.
+        """
+        unreachable = mock_response(status_code=HTTPStatus.NOT_FOUND, ok=False)
+        reachable = mock_response(metadata, status_code=HTTPStatus.OK, ok=True)
+        mock_get.side_effect = lambda url, **_kwargs: unreachable if url == unreachable_url else reachable
+
+    def assert_releases_requested(self, mock_get: Mock, *repositories: str) -> None:
+        """Assert that GitHub was asked for the releases of exactly these repositories, in this order."""
+        requested = [call.args[0] for call in mock_get.call_args_list if "/releases" in call.args[0]]
+        expected = [f"https://api.github.com/repos/{repository}/releases?per_page=100" for repository in repositories]
+        self.assertEqual(requested, expected)
 
     def test_no_url_found(self, mock_get: Mock):
         """Test that the changes are empty if no changelog URL is returned by PyPI."""
@@ -53,41 +69,85 @@ class GetChangesTest(LoggingTestCase):
         self.assertEqual(get_changes("package-1", "1.0"), "")
 
     def test_changelog_url_found(self, mock_get: Mock):
-        """Test that the changes are returned if a changelog URL is returned by PyPI."""
+        """Test that the changes are returned if PyPI returns a changelog URL, under any label read as one."""
         changelog = "Changelog\n## 1.1\n- Fixed foo\n"
-        for key in ("changes", "changelog", "release notes"):
+        for key in ("changelog", "changes", "whatsnew", "history", "What's New"):
             with self.subTest(key=key):
                 self.create_mock_response(
-                    mock_get, {"info": {"project_urls": {key: "https://changes"}}}, text=changelog
+                    mock_get,
+                    {"info": {"description": "Package-foo description", "project_urls": {key: "https://changes"}}},
+                    text=changelog,
                 )
                 self.assertEqual(get_changes(f"package-2-{key}", "1.1"), "## 1.1\n- Fixed foo")
 
     def test_changelog_url_gives_error(self, mock_get: Mock):
-        """Test that changelog URLs are skipped if they result in an HTTP error."""
-        for status_code in (HTTPStatus.BAD_REQUEST, HTTPStatus.NOT_FOUND):
-            for key in ("changes", "changelog", "release notes"):
-                with self.subTest(status_code=status_code, key=key):
-                    self.create_mock_response(
-                        mock_get,
-                        {"info": {"description": "Package-foo description", "project_urls": {key: "https://changes"}}},
-                        status_code=status_code,
-                    )
-                    self.assertEqual(get_changes(f"package-3-{status_code}-{key}", "1.1"), "")
+        """Test that a changelog URL that gives an HTTP error doesn't stop the later heuristics."""
+        changelog = "1.1\n- Fixed ...\n- Added ..."
+        project_urls = {"changelog": "https://changes"}
+        metadata = {"info": {"description": f"Package description\n{changelog}\n", "project_urls": project_urls}}
+        self.create_mock_response_per_url(mock_get, metadata, unreachable_url="https://changes")
+        self.assertEqual(get_changes("package-3", "1.1"), changelog)
 
     def test_repository_url_found(self, mock_get: Mock):
-        """Test that the changes are returned if a repository URL is returned by PyPI."""
+        """Test that the changes are returned if PyPI returns a repository URL, under any label read as one."""
         changelog = "Changelog\n## 1.1\n- Fixed foo\n"
         repo = "https://github.com/org/repo"
         docs = "https://docs"
-        for key in ("repository", "source", "homepage"):
+        for key in ("repository", "source", "homepage", "Source Code", "GitHub"):
             with self.subTest(key=key):
                 self.create_mock_response(
                     mock_get,
-                    {"info": {"project_urls": {"docs": docs, key: repo}}},
+                    {"info": {"description": "Package-foo description", "project_urls": {"docs": docs, key: repo}}},
                     [github_release_json("1.1", body=changelog)],
-                    github_commits_json(),
                 )
                 self.assertEqual(get_changes(f"package-4-{key}", "1.1"), changelog)
+
+    def test_github_project_url_under_another_label(self, mock_get: Mock):
+        """Test that a GitHub project URL is read as the repository, whatever label it carries."""
+        changelog = "Changelog\n## 1.1\n- Fixed foo\n"
+        project_urls = {"Documentation": "https://docs", "Bug Tracker": "https://github.com/org/repo"}
+        self.create_mock_response(
+            mock_get,
+            {"info": {"description": "Package-foo description", "project_urls": project_urls}},
+            [github_release_json("1.1", body=changelog)],
+        )
+        self.assertEqual(get_changes("package-8", "1.1"), changelog)
+
+    def test_labelled_repository_url_is_read_first(self, mock_get: Mock):
+        """Test that a project URL labelled as the repository is read before a GitHub URL under another label."""
+        changelog = "Changelog\n## 1.1\n- Fixed foo\n"
+        project_urls = {"Funding": "https://github.com/org/funding", "Source": "https://github.com/org/repo"}
+        self.create_mock_response(
+            mock_get,
+            {"info": {"description": "Package-foo description", "project_urls": project_urls}},
+            [github_release_json("1.1", body=changelog)],
+        )
+        self.assertEqual(get_changes("package-11", "1.1"), changelog)
+        self.assert_releases_requested(mock_get, "org/repo")
+
+    def test_source_url_is_read_before_the_homepage(self, mock_get: Mock):
+        """Test that a project URL labelled as the source is read before one labelled as the homepage."""
+        changelog = "Changelog\n## 1.1\n- Fixed foo\n"
+        project_urls = {"Homepage": "https://github.com/org/home", "Source": "https://github.com/org/repo"}
+        self.create_mock_response(
+            mock_get,
+            {"info": {"description": "Package-foo description", "project_urls": project_urls}},
+            [github_release_json("1.1", body=changelog)],
+        )
+        self.assertEqual(get_changes("package-12", "1.1"), changelog)
+        self.assert_releases_requested(mock_get, "org/repo")
+
+    def test_sponsors_project_url_is_not_a_repository(self, mock_get: Mock):
+        """Test that a GitHub sponsors URL is not asked for releases, and that the later heuristics still run."""
+        changelog = "1.1\n- Fixed ...\n- Added ..."
+        project_urls = {"Funding": "https://github.com/sponsors/owner"}
+        self.create_mock_response(
+            mock_get,
+            {"info": {"description": f"Package description\n{changelog}\n", "project_urls": project_urls}},
+            [],
+        )
+        self.assertEqual(get_changes("package-9", "1.1"), changelog)
+        self.assert_releases_requested(mock_get)
 
     def test_changelog_in_description(self, mock_get: Mock):
         """Test that the changelog from the description is returned."""
@@ -103,7 +163,6 @@ class GetChangesTest(LoggingTestCase):
             mock_get,
             {"info": {"description": f"Package description\n{github_url}\n"}},
             [github_release_json("1.1", body=changelog)],
-            github_commits_json(),
         )
         self.assertEqual(get_changes("package-6", "1.1"), changelog)
 
@@ -114,14 +173,26 @@ class GetChangesTest(LoggingTestCase):
             mock_get,
             {"info": {"description": f"Package description\n{github_url}\n"}},
             [github_release_json("1.1")],
-            github_commits_json(),
         )
         self.assertEqual(get_changes("package-7", "1.1"), "")
+
+    def test_sponsors_url_in_description_is_not_a_repository(self, mock_get: Mock):
+        """Test that a GitHub sponsors URL in the description is not asked for releases."""
+        sponsors_url = "https://github.com/sponsors/owner"
+        self.create_mock_response(mock_get, {"info": {"description": f"Package description\n{sponsors_url}\n"}}, [])
+        self.assertEqual(get_changes("package-10", "1.1"), "")
+        self.assert_releases_requested(mock_get)
+
+    def test_release_metadata_unreachable(self, mock_get: Mock):
+        """Test that the changes are empty, and no source is consulted, when PyPI doesn't serve the metadata."""
+        self.create_mock_response(mock_get, status_code=HTTPStatus.NOT_FOUND)
+        self.assertEqual(get_changes("package-13", "1.1"), "")
+        self.assert_releases_requested(mock_get)
 
     def test_changelog_url_unreachable(self, mock_get: Mock):
         """Test that an unreachable changelog URL yields an empty changelog instead of crashing."""
         self.create_mock_response(mock_get, status_code=HTTPStatus.NOT_FOUND)
-        self.assertEqual(changelog_from_url("https://changes", "1.0"), "")
+        self.assertEqual(_changelog_from_url("https://changes", "1.0"), "")
 
 
 class GetPublicationDateTimeTest(CacheClearingTestCase):
