@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Fixed
 
+- Read a GitHub repository URL in three more spellings: git's scp-like `git@github.com:owner/repo` form, npm's `github:owner/repo` host shorthand, and npm's bare `owner/repo` shorthand. A pre-commit hook whose repository uses the scp-like form is updated instead of being silently left alone. The changelog of a package whose npm `repository` uses any of the three is found instead of being reported missing. Closes [#224](https://github.com/ICTU/update-time/issues/224).
 - Look for the changelog of a Python dependency under every project URL PyPI publishes, matching their labels as [PEP 753](https://peps.python.org/pep-0753/) prescribes, and never read a GitHub sponsors URL as a repository. Closes [#225](https://github.com/ICTU/update-time/issues/225).
 
 ## 0.0.25 - 2026-08-10

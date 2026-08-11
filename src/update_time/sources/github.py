@@ -1,6 +1,7 @@
 """GitHub functions."""
 
 import os
+import re
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from functools import cache, cached_property, total_ordering
@@ -219,9 +220,18 @@ def github_to_raw(url: str) -> str:
     return url
 
 
+# Matches `git@github.com:` in `git@github.com:owner/repo.git`, capturing the user and host.
+_SCP_LIKE_RE = re.compile(r"^([^/@]+@[^/:]+):")
+
+
 def github_owner_and_repository(url: str) -> tuple[str, str]:
-    """Parse the GitHub owner and repository from a URL, including npm-style `git+https`, `git+ssh`, and `.git` URLs."""
-    parsed = urlparse(url.removeprefix("git+"))
+    """Parse the GitHub owner and repository from a URL.
+
+    Accepts npm-style `git+https`, `git+ssh`, and `.git` URLs, plus git's scp-like `git@github.com:owner/repo` form,
+    which is rewritten to an ssh URL so its host is read the same way as every other form's.
+    """
+    normalized_url = _SCP_LIKE_RE.sub(r"ssh://\1/", url.removeprefix("git+"))
+    parsed = urlparse(normalized_url)
     if parsed.hostname == "github.com":
         path_parts = parsed.path.lstrip("/").split("/")
         if len(path_parts) > 1:

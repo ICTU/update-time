@@ -111,29 +111,27 @@ class NpmjsDeprecationTest(LoggingTestCase):
 class GetChangesRepositoryTest(CacheClearingTestCase):
     """Unit tests for locating the changelog from npm's varied `repository` metadata."""
 
-    @patch_get({"name": "package"})  # no `repository` field
-    def test_missing_repository(self):
-        """Test that a package with no repository metadata yields no changelog instead of crashing."""
-        self.assertEqual(get_changes("no_repo", "1.0"), "")
-
-    @patch_get({"repository": "github:org/package"})
-    def test_string_repository_shorthand(self):
-        """Test that a repository given as an npm shorthand string doesn't crash the changelog lookup."""
-        self.assertEqual(get_changes("string_repo", "1.0"), "")
-
-    @patch_get({"repository": {"type": "git"}})
-    def test_repository_object_without_url(self):
-        """Test that a repository object without a url yields no changelog instead of crashing."""
-        self.assertEqual(get_changes("no_url", "1.0"), "")
+    def test_unreadable_repository(self):
+        """Test that repository metadata that names no GitHub URL yields no changelog, without raising."""
+        for package, metadata in (
+            ("no_repo", {"name": "package"}),  # no `repository` field
+            ("no_url", {"repository": {"type": "git"}}),
+            ("url_not_a_string", {"repository": {"url": 42}}),
+        ):
+            with self.subTest(metadata=metadata), patch_get(metadata):
+                self.assertEqual(get_changes(package, "1.0"), "")
 
     @patch("update_time.sources.npmjs.changes_from_release", return_value="Changelog")
-    def test_repository_object_url_is_used(self, changes_from_release: Mock):
-        """Test that a repository object's url is parsed and used to find the changelog, whether https or ssh."""
-        for package, url in (
-            ("https_repo", "git+https://github.com/org/package.git"),
-            ("ssh_repo", "git+ssh://git@github.com/org/package.git"),
+    def test_repository_naming_a_github_repository(self, changes_from_release: Mock):
+        """Test that every spelling of a GitHub repository npm allows is used to find the changelog."""
+        for package, repository in (
+            ("host_shorthand", "github:org/package"),
+            ("bare_shorthand", "org/package"),
+            ("https_repo", {"url": "git+https://github.com/org/package.git"}),
+            ("ssh_repo", {"url": "git+ssh://git@github.com/org/package.git"}),
+            ("scp_repo", {"url": "git@github.com:org/package.git"}),
         ):
-            with self.subTest(url=url), patch_get({"repository": {"url": url}}):
+            with self.subTest(repository=repository), patch_get({"repository": repository}):
                 self.assertEqual(get_changes(package, "1.0"), "Changelog")
                 changes_from_release.assert_called_once_with("org", "package", package, "1.0")
                 changes_from_release.reset_mock()
