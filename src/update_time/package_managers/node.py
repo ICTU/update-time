@@ -45,7 +45,7 @@ def _pnpm_installed_versions(listed: dict | list) -> dict[str, str]:
 
 
 @dataclass(frozen=True)
-class PackageManager:
+class _PackageManager:
     """A supported Node package manager and the commands Update-time runs for it.
 
     The three commands share the same shape across managers (detect outdated → update → read the installed
@@ -106,7 +106,7 @@ class PackageManager:
             package_json.write_text(original_contents)
 
 
-_NPM = PackageManager(
+_NPM = _PackageManager(
     outdated=Command("npm", "outdated", "--json", *_COMMON_NPM_OPTIONS),
     update=Command("npm", "update", "--save", *_COMMON_NPM_OPTIONS),
     installed=Command("npm", "list", "--json", "--depth=0", *_COMMON_NPM_OPTIONS),
@@ -118,7 +118,7 @@ _NPM = PackageManager(
     cooldown_option=lambda days: f"--min-release-age={days}",
     installed_versions=_npm_installed_versions,
 )
-_PNPM = PackageManager(
+_PNPM = _PackageManager(
     outdated=Command("pnpm", "outdated", "--format", "json"),
     # Deliberately without `--latest`, which would cross the version ranges declared in package.json; without it,
     # pnpm stays within the declared ranges, like `npm update` does.

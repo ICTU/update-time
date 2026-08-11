@@ -20,6 +20,7 @@ uv_run := "uv run --quiet"
 fixit := uv_run + " fixit --quiet"
 just_fmt := "just --unstable --fmt"
 pyproject_fmt := uv_run + " pyproject-fmt --no-generate-python-version-classifiers"
+python_m := uv_run + " python -m"
 ruff := uv_run + " ruff --quiet"
 troml := uv_run + " troml"
 ty := uv_run + ' ty check --no-progress --error-on-warning --color=${_color:-auto}'
@@ -99,7 +100,7 @@ publish version *flags: (check-version version) check-repo test check
 # === Run tests ===
 
 # A full run goes through coverage and must reach 100%: the text and HTML reports are written first, then `xml` applies the gate. A named subset cannot reach 100%, so it runs without coverage and leaves the reports from the last full run in place.
-test_command(tests) := if tests == "" { coverage + " run -m unittest --quiet && " + coverage + " report --show-missing --fail-under=0 && " + coverage + " html --quiet --fail-under=0 && " + coverage + " xml --quiet" } else { uv_run + " python -m unittest --quiet " + tests }
+test_command(tests) := if tests == "" { coverage + " run -m unittest --quiet && " + coverage + " report --show-missing --fail-under=0 && " + coverage + " html --quiet --fail-under=0 && " + coverage + " xml --quiet" } else { python_m + " unittest --quiet " + tests }
 
 # Run the unit tests, all of them or only the ones named, e.g. `just test tests.update_time.io.test_log`.
 [env("PYTHONDEVMODE", "1")]
@@ -110,7 +111,7 @@ test *tests: install-py-dependencies
 
 # Check that a test guards a behaviour: break the code it names, run the tests, and restore the file. See `just help mutate`.
 mutate file *command:
-    {{ uv_run }} python -m tools.mutate "$@"
+    {{ python_m }} tools.mutate "$@"
 
 [private]
 mutate-help:
@@ -212,17 +213,17 @@ check-justfile:
 
 # Check that README.md and the log-output screenshot are what regenerating them produces.
 [private]
-check-readme-is-up-to-date: (py-check "check-readme-is-up-to-date" f"PYTHONPATH=src {{ uv_run }} python -m tools.generate_readme --check")
+check-readme-is-up-to-date: (py-check "check-readme-is-up-to-date" f"{{ python_m }} tools.generate_readme --check")
 
 # Check that the README documents every dependency type the same way, and that its internal links resolve.
 [private]
 check-readme-structure:
-    {{ start_capture() }} {{ uv_run }} python -m tools.readme_structure_check docs/README.md.in {{ end_capture("check-readme-structure") }}
+    {{ start_capture() }} {{ python_m }} tools.readme_structure_check docs/README.md.in {{ end_capture("check-readme-structure") }}
 
 # Check prose for too complex sentences, in the code and documentation.
 [private]
 check-sentence-complexity:
-    {{ start_capture() }} {{ uv_run }} python -m tools.sentence_complexity_check {{ code }} docs *.md .claude/CLAUDE.md {{ end_capture("check-sentence-complexity") }}
+    {{ start_capture() }} {{ python_m }} tools.sentence_complexity_check {{ code }} docs *.md .claude/CLAUDE.md {{ end_capture("check-sentence-complexity") }}
 
 # Run the quality checks. Run one by name for a quicker loop, e.g. `just ruff` or `just mypy`.
 [parallel]
@@ -232,6 +233,28 @@ check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture 
 verify: test format check
 
 # === Fix issues ===
+
+# Rename a module-level name and every reference to it, in the files named. See `just help rename`.
+rename old new +files:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    before=$(cksum "${@:3}")
+    {{ python_m }} libcst.tool codemod rename.RenameCommand \
+        --old_name="$1" --new_name="$2" --no-format --hide-progress "${@:3}"
+    # LibCST counts the files it read rather than the ones it rewrote, and exits 0 whether it found the name or
+    # not, so a misspelled name is only caught by the files coming back unchanged.
+    if [ "$before" = "$(cksum "${@:3}")" ]; then
+        echo "Error: nothing was renamed; check the spelling of $1" >&2
+        exit 1
+    fi
+
+[private]
+rename-help:
+    @echo "\nRename OLD to NEW in FILES, resolving the name against each module's scopes, so the same word in a"
+    @echo "docstring, a help string, or an f-string is left alone, as is a parameter or a local of that name:"
+    @echo "\n    just rename release_metadata _release_metadata src/update_time/sources/pypi.py"
+    @echo "\nA name defined in one module and used in another is renamed only where the files named cover both, so"
+    @echo "name every file that refers to it. Read the diff afterwards, as with any rewrite."
 
 # Format and lint-fix Python code, the part of `just fix` a quicker loop needs after an edit.
 format: install-py-dependencies
@@ -269,16 +292,15 @@ alias update-deps := update-dependencies
 # === Documentation ===
 
 # Regenerate README.md from docs/README.md.in (fills in `update-time -h` and the log output; rewrites the screenshot).
-[env("PYTHONPATH", "src")]
 readme:
-    {{ uv_run }} python -m tools.generate_readme
+    {{ python_m }} tools.generate_readme
 
 # === CI ===
 
 # Run SonarCloud prerequisites
 _sonarcloud: test
     {{ coverage }} xml # SonarCloud needs a Cobertura compatible XML coverage report
-    {{ uv_run }} python -m xmlrunner discover --output-file build/xunit.xml  # SonarCloud needs a JUnit compatible XML report
+    {{ python_m }} xmlrunner discover --output-file build/xunit.xml  # SonarCloud needs a JUnit compatible XML report
 
 # Run everything in CI.
 _ci: _sonarcloud check

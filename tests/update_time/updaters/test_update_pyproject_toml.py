@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from update_time.sources.pypi import Release
 
 
-def discovered_pyproject_toml(glob: Mock, spec: str) -> Mock:
+def _discovered_pyproject_toml(glob: Mock, spec: str) -> Mock:
     """Return the single mock pyproject.toml the scan discovers, pinning the given dependency."""
     pyproject_toml = mock_path(pyproject(spec), parent=Path("/"))
     glob.return_value = [pyproject_toml]
@@ -242,7 +242,7 @@ class CheckedPinsTest(LoggingTestCase):
     def test_the_discovered_manifests_are_checked(self, warn: Mock, run: Mock, get: Mock, glob: Mock):
         """Test that the checks are handed every manifest the scan found, whether uv updated it or not."""
         run.return_value = Mock(stdout="| django\n")
-        pyproject_toml = discovered_pyproject_toml(glob, "django==3.2.0")
+        pyproject_toml = _discovered_pyproject_toml(glob, "django==3.2.0")
         update_pyproject_tomls()
         get.assert_not_called()
         warn.assert_called_once_with([pyproject_toml], ANY)

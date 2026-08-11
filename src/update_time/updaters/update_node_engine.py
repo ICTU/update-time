@@ -21,13 +21,13 @@ _NODE_BASE_IMAGE_RE = r"FROM node:(?P<tag>\S+)"
 _NODE_ENGINE_RE = r'"(?P<dependency>node)": "(?P<version>[\d\.]+)"'
 
 
-def has_node_engine(package_json: Path) -> bool:
+def _has_node_engine(package_json: Path) -> bool:
     """Return whether the package.json file contains a Node engine."""
     package_json_contents = package_json_format.read(package_json)
     return "engines" in package_json_contents and "node" in package_json_contents["engines"]
 
 
-def node_base_image_version(dockerfile: Path) -> str:
+def _node_base_image_version(dockerfile: Path) -> str:
     """Return the numeric Node base image version (e.g. '22' from 'node:22-alpine').
 
     Returns an empty string if the Dockerfile is missing, has no Node base image, or its Node base image uses a
@@ -36,12 +36,12 @@ def node_base_image_version(dockerfile: Path) -> str:
     return first_line_match(dockerfile, _NODE_IMAGE_RE, "version")
 
 
-def node_base_image_tag(dockerfile: Path) -> str:
+def _node_base_image_tag(dockerfile: Path) -> str:
     """Return the tag of the Node base image (e.g. '22.1.0', '22-alpine' or 'lts'), or empty string if none."""
     return first_line_match(dockerfile, _NODE_BASE_IMAGE_RE, "tag")
 
 
-def find_node_dockerfile(package_json: Path) -> Path:
+def _find_node_dockerfile(package_json: Path) -> Path:
     """Find the Dockerfile to derive the Node engine from.
 
     Prefers the Dockerfile next to the package.json; for package.json files without a local Node-base Dockerfile
@@ -53,18 +53,18 @@ def find_node_dockerfile(package_json: Path) -> Path:
     local_dockerfile = package_json.parent / DOCKERFILE_NAME
     candidates = [local_dockerfile, *glob(*DOCKERFILE_GLOB_PATTERNS)]
     for dockerfile in candidates:
-        if node_base_image_version(dockerfile):
+        if _node_base_image_version(dockerfile):
             return dockerfile
     for dockerfile in candidates:
-        if node_base_image_tag(dockerfile):
+        if _node_base_image_tag(dockerfile):
             return dockerfile
     return local_dockerfile
 
 
-def update_node_engine(package_json: Path) -> None:
+def _update_node_engine(package_json: Path) -> None:
     """Update the Node engine version to the Docker Node base image version, or the latest Node release."""
-    dockerfile = find_node_dockerfile(package_json)
-    if version := node_base_image_version(dockerfile):
+    dockerfile = _find_node_dockerfile(package_json)
+    if version := _node_base_image_version(dockerfile):
         update_file(
             package_json,
             _NODE_ENGINE_RE,
@@ -72,7 +72,7 @@ def update_node_engine(package_json: Path) -> None:
             logger=_LOG,
         )
         return
-    if tag := node_base_image_tag(dockerfile):
+    if tag := _node_base_image_tag(dockerfile):
         # A Node base image exists but uses a non-numeric tag (e.g. 'node:lts'); we can't derive a concrete
         # version to sync the engine to, so skip without failing the run.
         _LOG.non_numeric_node_base_image(dockerfile, tag)
@@ -83,8 +83,8 @@ def update_node_engine(package_json: Path) -> None:
 def update_node_engines() -> None:
     """Find all package.json files and update the Node engine."""
     for pkg_json in glob("package.json"):
-        if has_node_engine(pkg_json):
-            update_node_engine(pkg_json)
+        if _has_node_engine(pkg_json):
+            _update_node_engine(pkg_json)
 
 
 def main() -> None:  # pragma: no cover

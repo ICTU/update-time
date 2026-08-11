@@ -25,7 +25,7 @@ def days(value: str) -> int:
     return number
 
 
-def directory(value: str) -> Path:
+def _directory(value: str) -> Path:
     """Parse the value as the path to an existing directory."""
     if not (path := Path(value)).is_dir():
         message = f"{value} is not an existing directory"
@@ -33,7 +33,7 @@ def directory(value: str) -> Path:
     return path
 
 
-def exclude_paths(value: str) -> list[Path]:
+def _exclude_paths(value: str) -> list[Path]:
     """Parse a comma-separated list of directories to exclude from the walk, each relative to the scan root.
 
     Entries are normalised (trailing separators and redundant `.`/`..` segments collapsed). An absolute path, or one
@@ -54,7 +54,7 @@ def exclude_paths(value: str) -> list[Path]:
     return paths
 
 
-def advisories(value: str) -> frozenset[str]:
+def _advisories(value: str) -> frozenset[str]:
     """Parse a comma-separated list of advisory identifiers, each naming an advisory not to warn about."""
     return frozenset(stripped for entry in value.split(",") if (stripped := entry.strip()))
 
@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "path",
         nargs="?",
-        type=directory,
+        type=_directory,
         default=Path(),
         metavar="PATH",
         help="the directory to scan recursively for dependencies to update; paths in the log are reported relative to "
@@ -116,7 +116,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--ignore-vulnerability",
-        type=advisories,
+        type=_advisories,
         default=IGNORE_VULNERABILITIES.default,
         metavar="IDS",
         help="comma-separated list of advisories to never warn about, wherever in the scan they turn up, for "
@@ -126,7 +126,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--exclude-path",
-        type=exclude_paths,
+        type=_exclude_paths,
         default=[],
         metavar="PATHS",
         help="comma-separated list of directories, relative to the scan root, to exclude from the scan, for example "

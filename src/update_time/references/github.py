@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from update_time.primitives.location import Location
 
 
-def sha_pinned_reference(match: re.Match[str], dependency: str) -> Reference:
+def _sha_pinned_reference(match: re.Match[str], dependency: str) -> Reference:
     """Return the SHA-pinned GitHub reference the match captured.
 
     A pinned reference carries its version in the trailing comment's `version` group, an unpinned one in its `tag`
@@ -103,7 +103,7 @@ class PinUpdater:
         back, no commit SHA to pin to, and a reference already pinned and up to date. The dependency comes from the
         regexp's `dependency` group; a `rev:` takes it from the `repo:` above, so it names it in `dependency` instead.
         """
-        reference = sha_pinned_reference(match, matched_dependency(match, dependency))
+        reference = _sha_pinned_reference(match, matched_dependency(match, dependency))
         latest = latest_pin(reference, marker, location, self.logger)
         if latest is None:
             return match.string

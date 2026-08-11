@@ -20,7 +20,7 @@ _NPM_UNSET = "null\n"  # what `npm config get <cooldown key>` prints when the ke
 _PNPM_UNSET = "undefined\n"  # what `pnpm config get minimumReleaseAge` prints when the key is not set
 
 
-def package_lookup_responses() -> Mock:
+def _package_lookup_responses() -> Mock:
     """Return a `requests.get` mock for the npmjs/GitHub lookups that describe an update to version 1.1.
 
     After a manager reports a package updated to 1.1, Update-time resolves its changelog and push date via four
@@ -38,7 +38,7 @@ def package_lookup_responses() -> Mock:
     )
 
 
-def outdated_error(package: str, current: str, latest: str, **extra: object) -> subprocess.CalledProcessError:
+def _outdated_error(package: str, current: str, latest: str, **extra: object) -> subprocess.CalledProcessError:
     """Build the `CalledProcessError` npm/pnpm `outdated` raises for an available update (exit 1 with a JSON body).
 
     Extra per-package fields (e.g. pnpm's `dependencyType`) are merged into the package's object.
@@ -47,7 +47,7 @@ def outdated_error(package: str, current: str, latest: str, **extra: object) -> 
     return subprocess.CalledProcessError(cmd="", returncode=1, output=output, stderr="")
 
 
-def assert_manager_called(mock_run: Mock, outdated: Command, update: Command, list_cmd: Command) -> None:
+def _assert_manager_called(mock_run: Mock, outdated: Command, update: Command, list_cmd: Command) -> None:
     """Assert the manager's outdated, update, and list commands ran in order, each with the shared run kwargs."""
     run_kwargs = {"capture_output": True, "text": True, "check": True, "cwd": Path("/")}
     mock_run.assert_has_calls((call(outdated, **run_kwargs), call(update, **run_kwargs), call(list_cmd, **run_kwargs)))
@@ -74,7 +74,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
     def assert_npm_called(self, mock_run: Mock, *, cooldown: bool = True) -> None:
         """Assert npm outdated, update, and list were called (with the cooldown option when expected)."""
         cooldown_option = [_NPM_COOLDOWN_OPTION] if cooldown else []
-        assert_manager_called(
+        _assert_manager_called(
             mock_run,
             Command("npm", "outdated", "--json", "--include=dev", "--silent", *cooldown_option),
             Command("npm", "update", "--save", "--include=dev", "--silent", *cooldown_option),
@@ -92,7 +92,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    @patch("requests.get", package_lookup_responses())
+    @patch("requests.get", _package_lookup_responses())
     def test_update(self, mock_run: Mock, mock_glob: Mock):
         """Test that the installed version is logged, even when it is older than the latest version."""
         mock_package_json = self.create_package_json()
@@ -100,7 +100,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         # npm outdated results in a subprocess.CalledProcessError if there are updates. npm installs 1.1 rather than
         # the latest 1.2, for example because min-release-age holds back the fresh 1.2 release:
         mock_run.side_effect = self.npm_runs(
-            outdated_error("package", "1.0", "1.2"),
+            _outdated_error("package", "1.0", "1.2"),
             Mock(stdout=""),
             Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
         )
@@ -138,13 +138,13 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    @patch("requests.get", package_lookup_responses())
+    @patch("requests.get", _package_lookup_responses())
     def test_manifest_kept_when_a_dependency_is_updated(self, mock_run: Mock, mock_glob: Mock):
         """Test that npm's manifest (including any specs it normalized) is kept when a dependency is updated."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = self.npm_runs(
-            outdated_error("package", "1.0", "1.1"),
+            _outdated_error("package", "1.0", "1.1"),
             Mock(stdout=""),
             Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
         )
@@ -162,7 +162,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = self.npm_runs(
-            outdated_error("held", "1.0", "1.2"),
+            _outdated_error("held", "1.0", "1.2"),
             Mock(stdout=""),
             # "held" stayed at 1.0 (e.g. min-release-age held back every newer release), "untracked" has no version:
             Mock(stdout='{"dependencies": {"held": {"version": "1.0"}, "untracked": {"missing": true}}}'),
@@ -237,7 +237,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
     def assert_pnpm_called(self, mock_run: Mock, *, cooldown: bool = True) -> None:
         """Assert pnpm outdated, update, and list were called (with the cooldown option when expected)."""
         cooldown_option = [_PNPM_COOLDOWN_OPTION] if cooldown else []
-        assert_manager_called(
+        _assert_manager_called(
             mock_run,
             Command("pnpm", "outdated", "--format", "json", *cooldown_option),
             Command("pnpm", "update", *cooldown_option),
@@ -255,7 +255,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    @patch("requests.get", package_lookup_responses())
+    @patch("requests.get", _package_lookup_responses())
     def test_update(self, mock_run: Mock, mock_glob: Mock):
         """Test that a dev dependency's installed version is logged, using pnpm's list and outdated JSON shapes."""
         mock_package_json = self.create_package_json()
@@ -264,7 +264,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         # minimumReleaseAge holds back the fresh 1.2 release). pnpm list returns a list of projects and splits
         # dependencies over dependencies/devDependencies:
         mock_run.side_effect = self.pnpm_runs(
-            outdated_error("package", "1.0", "1.2", dependencyType="devDependencies"),
+            _outdated_error("package", "1.0", "1.2", dependencyType="devDependencies"),
             Mock(stdout=""),
             Mock(stdout='[{"name": "root", "devDependencies": {"package": {"version": "1.1"}}}]'),
         )
@@ -281,7 +281,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = self.pnpm_runs(
-            outdated_error("held", "1.0", "1.2"),
+            _outdated_error("held", "1.0", "1.2"),
             Mock(stdout=""),
             # "held" stayed at 1.0 (e.g. minimumReleaseAge held back every newer release), "untracked" has no version:
             Mock(

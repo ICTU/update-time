@@ -57,7 +57,7 @@ def update_dependencies() -> int:
     return max(results, default=0)
 
 
-def configure_excluded_paths(paths: list[Path]) -> None:
+def _configure_excluded_paths(paths: list[Path]) -> None:
     """Pass the excluded directories down to the updater subprocesses and log them once for the whole run.
 
     The walk runs inside each subprocess, so the excluded set travels through the environment (like the cooldown and
@@ -95,7 +95,7 @@ def main() -> int:
     scan_root = Path.cwd()
     if not inside_git_repository(scan_root):
         get_logger(__name__).forced_outside_git_repository(scan_root)
-    configure_excluded_paths(args.exclude_path)
+    _configure_excluded_paths(args.exclude_path)
     return update_dependencies()
 
 

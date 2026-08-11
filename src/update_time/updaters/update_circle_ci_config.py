@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 _LOG = get_logger("circleci")
 
 
-def machine_images(config: object) -> set[str]:
+def _machine_images(config: object) -> set[str]:
     """Return the machine-executor image references (the `image:` under any `machine:` key) in a parsed config."""
     images: set[str] = set()
     if isinstance(config, dict):
@@ -28,16 +28,16 @@ def machine_images(config: object) -> set[str]:
         if isinstance(machine, dict) and isinstance(image := machine.get("image"), str):
             images.add(image)
         for value in config.values():
-            images |= machine_images(value)
+            images |= _machine_images(value)
     elif isinstance(config, list):
         for item in config:
-            images |= machine_images(item)
+            images |= _machine_images(item)
     return images
 
 
-def update_circle_ci_yaml(config_file: Path) -> None:
+def _update_circle_ci_yaml(config_file: Path) -> None:
     """Update the Docker images in a single CircleCI YAML file, leaving machine-executor images unchanged."""
-    machine = machine_images(yaml_format.read(config_file))
+    machine = _machine_images(yaml_format.read(config_file))
 
     def get_new_version(
         dependency: DependencyName, version: VersionString, version_bound: VersionBound, cooldown_days: int
@@ -52,7 +52,7 @@ def update_circle_ci_yaml(config_file: Path) -> None:
 def update_circle_ci_config(circle_ci_dir: Path) -> None:
     """Update the images in all YAML files under the CircleCI directory."""
     for config_file in glob(*YAML_GLOB_PATTERNS, start=circle_ci_dir):
-        update_circle_ci_yaml(config_file)
+        _update_circle_ci_yaml(config_file)
 
 
 def main() -> None:  # pragma: no cover

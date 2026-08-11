@@ -21,7 +21,7 @@ from tests.update_time.helpers import LoggingTestCase, pyproject
 _MARKER_COMMENT = "managed by Update-time — remove this comment to prevent Update-time from changing it"
 
 
-def marked(cooldown: str) -> str:
+def _marked(cooldown: str) -> str:
     """Return a `[tool.uv] exclude-newer` block with the given cooldown, carrying Update-time's marker comment."""
     return f'\n[tool.uv]\nexclude-newer = "{cooldown}" # {_MARKER_COMMENT}\n'
 
@@ -65,13 +65,13 @@ class PersistExcludeNewerTest(LoggingTestCase):
 
     def test_does_not_rewrite_when_already_current(self):
         """Test that a marked value already matching the cooldown is not rewritten (no spurious file churn)."""
-        pyproject_toml = self.persist(pyproject("a==1.0") + marked(f"{COOLDOWN.default} days"))
+        pyproject_toml = self.persist(pyproject("a==1.0") + _marked(f"{COOLDOWN.default} days"))
         pyproject_toml.write_text.assert_not_called()
 
     @patch_environ({COOLDOWN.name: "14"})
     def test_syncs_own_value_to_the_cooldown(self):
         """Test that a previously Update-time-written value is rewritten when --cooldown changes."""
-        pyproject_toml = self.persist(pyproject("a==1.0") + marked("7 days"))
+        pyproject_toml = self.persist(pyproject("a==1.0") + _marked("7 days"))
         self.assertIn('exclude-newer = "14 days"', pyproject_toml.write_text.call_args.args[0])
 
 
