@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.version import DependencyVersion
-from update_time.file_formats.package_json import DEPENDENCY_SECTIONS
+from update_time.file_formats.package_json import DEPENDENCY_SECTIONS, dependency_locations
 from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.primitives.command import Command
@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from update_time.domain.version import DependencyName, VersionString
+
 _LOG = get_logger("package.json")
 _COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
 
@@ -23,13 +25,13 @@ _COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
 _MINUTES_PER_DAY = 24 * 60
 
 
-def _npm_installed_versions(listed: dict | list) -> dict[str, str]:
+def _npm_installed_versions(listed: dict | list) -> dict[DependencyName, VersionString]:
     """Return the installed top-level versions from `npm list --json` output."""
     dependencies = listed.get("dependencies", {}) if isinstance(listed, dict) else {}
     return {package: info["version"] for package, info in dependencies.items() if "version" in info}
 
 
-def _pnpm_installed_versions(listed: dict | list) -> dict[str, str]:
+def _pnpm_installed_versions(listed: dict | list) -> dict[DependencyName, VersionString]:
     """Return the installed top-level versions from `pnpm list --json` output.
 
     pnpm reports a list of projects (one per workspace package, so just the root here) and splits its dependencies
@@ -60,7 +62,7 @@ class _PackageManager:
     cooldown_config_keys: tuple[str, ...]
     cooldown_unset: str
     cooldown_option: Callable[[int], str]
-    installed_versions: Callable[[dict | list], dict[str, str]]
+    installed_versions: Callable[[dict | list], dict[DependencyName, VersionString]]
 
     def cooldown_options(self, directory: Path) -> list[str]:
         """Return the option that applies Update-time's cooldown, or nothing if the project configures its own.
@@ -89,6 +91,7 @@ class _PackageManager:
         # The manager may install an older version than "latest" (e.g. when the cooldown holds back fresh releases),
         # so log the version that was actually installed rather than the latest one reported by the outdated command.
         installed = self.installed_versions(run(self.installed, package_json.parent).json)
+        declarations = dependency_locations(package_json)
         updated = False
         for package, version in outdated_packages.items():
             new_version = installed.get(package)
@@ -97,8 +100,8 @@ class _PackageManager:
                 changes = get_changes(package, new_version)
                 published = get_publication_datetime(package, new_version)
                 package_version = DependencyVersion(new_version, changes, published=published)
-                # npm/pnpm own the rewrite, so no per-dependency line is surfaced: report the manifest, no line number.
-                _LOG.new_version(package, package_version, Location(package_json))
+                for location in declarations.get(package, [Location(package_json)]):
+                    _LOG.new_version(package, package_version, location)
         # The manager normalizes specs (e.g. npm rewrites git URLs to the github: shorthand) whenever it saves
         # package.json. When nothing was actually updated, restore the original manifest so reformatting doesn't
         # produce a spurious diff.

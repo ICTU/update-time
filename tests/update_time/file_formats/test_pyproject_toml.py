@@ -3,7 +3,9 @@
 import unittest
 from unittest.mock import Mock
 
+from update_time.domain.version import Reference
 from update_time.file_formats import pyproject_toml
+from update_time.primitives.location import Location
 
 from tests.helpers import mock_path
 
@@ -105,6 +107,13 @@ class RewritePinnedVersionsTest(unittest.TestCase):
         pyproject_file = self.rewrite('dependencies = ["Pkg==1.0"]\n', {"pkg": "1.1"})
         self.assertEqual(pyproject_file.write_text.call_args.args[0], 'dependencies = ["Pkg==1.1"]\n')
 
+    def test_matches_the_normalized_name(self):
+        """Test that a pin is matched however it spells the name's separators, keeping the file's own spelling."""
+        for spelling in ("typing-extensions", "typing_extensions", "typing.extensions", "Typing_Extensions"):
+            with self.subTest(spelling=spelling):
+                pyproject_file = self.rewrite(f'dependencies = ["{spelling}==1.0"]\n', {"typing-extensions": "1.1"})
+                self.assertEqual(pyproject_file.write_text.call_args.args[0], f'dependencies = ["{spelling}==1.1"]\n')
+
     def test_leaves_unknown_names_and_writes_nothing(self):
         """Test that a pin with no known newer version is left alone and the file is not rewritten."""
         pyproject_file = self.rewrite('dependencies = ["pkg==1.0"]\n', {})
@@ -115,17 +124,32 @@ class PinnedVersionsTest(unittest.TestCase):
     """Unit tests for reading the exact pins from a pyproject.toml."""
 
     def test_reads_exact_pins_across_arrays(self):
-        """Test that `==` pins are read from every dependency array."""
+        """Test that `==` pins are read from every dependency array, each with the line it sits on."""
         contents = (
             "[project]\n"
             'dependencies = ["pkg==1.0", "other>=2.0"]\n'  # only the `==` pin is returned
             '[project.optional-dependencies]\ndocs = ["sphinx==7.4"]\n'
             '[dependency-groups]\ndev = ["ruff==0.6.0"]\n'
         )
+        path = mock_path(contents)
         self.assertEqual(
-            pyproject_toml.pinned_versions(mock_path(contents)), {"pkg": "1.0", "sphinx": "7.4", "ruff": "0.6.0"}
+            pyproject_toml.pinned_versions(path),
+            [
+                (Reference("pkg", "1.0"), Location(path, 2)),
+                (Reference("sphinx", "7.4"), Location(path, 4)),
+                (Reference("ruff", "0.6.0"), Location(path, 6)),
+            ],
+        )
+
+    def test_reads_a_name_pinned_more_than_once(self):
+        """Test that a name pinned in two arrays is returned once per pin, so neither pin hides the other."""
+        contents = '[project]\ndependencies = ["pkg==1.0"]\n[dependency-groups]\ndev = ["pkg==2.0"]\n'
+        path = mock_path(contents)
+        self.assertEqual(
+            pyproject_toml.pinned_versions(path),
+            [(Reference("pkg", "1.0"), Location(path, 2)), (Reference("pkg", "2.0"), Location(path, 4))],
         )
 
     def test_no_pins(self):
-        """Test that a file with no exact pins yields an empty mapping."""
-        self.assertEqual(pyproject_toml.pinned_versions(mock_path('dependencies = ["pkg>=1.0"]\n')), {})
+        """Test that a file with no exact pins yields nothing."""
+        self.assertEqual(pyproject_toml.pinned_versions(mock_path('dependencies = ["pkg>=1.0"]\n')), [])

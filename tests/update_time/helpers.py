@@ -184,24 +184,31 @@ class LoggingTestCase(CacheClearingTestCase):
         self._error_expected = True
         self.assert_logged(message, **fields)
 
+    @staticmethod
+    def _new_version_fields(dependency: str, version: str, location: Location, changes: str) -> dict[str, object]:
+        """Return the fields the logger logs an available new version with."""
+        return {"dependency": dependency, "location": location, "version": version, "changes": changes}
+
     def assert_new_version_logged(
-        self,
-        dependency: str,
-        version: str,
-        location: Location,
-        changes: str = Logger._NO_CHANGELOG,
-        *,
-        once: bool = True,
+        self, dependency: str, version: str, location: Location, changes: str = Logger._NO_CHANGELOG
     ) -> None:
-        """Assert that the availability of a new version was logged for the dependency in the file."""
-        assert_logged = self.assert_logged if once else self.assert_last_logged
-        assert_logged(
-            Logger._MESSAGE_NEW_VERSION,
-            dependency=dependency,
-            location=location,
-            version=version,
-            changes=changes,
-        )
+        """Assert that a new version was the only record logged for the dependency in the file."""
+        fields = self._new_version_fields(dependency, version, location, changes)
+        self.assert_logged(Logger._MESSAGE_NEW_VERSION, **fields)
+
+    def assert_last_new_version_logged(
+        self, dependency: str, version: str, location: Location, changes: str = Logger._NO_CHANGELOG
+    ) -> None:
+        """Assert that a new version was the most recent record, for a run that logs several."""
+        fields = self._new_version_fields(dependency, version, location, changes)
+        self.assert_last_logged(Logger._MESSAGE_NEW_VERSION, **fields)
+
+    def assert_new_version_logged_among_others(
+        self, dependency: str, version: str, location: Location, changes: str = Logger._NO_CHANGELOG
+    ) -> None:
+        """Assert that a new version was logged, among the other records of a run that logs several."""
+        fields = self._new_version_fields(dependency, version, location, changes)
+        self.assert_logged_among_others(Logger._MESSAGE_NEW_VERSION, **fields)
 
     def records_of(self, message: LogMessage) -> list[_Call]:
         """Return the records logged for the message, ignoring the other records at its level."""
@@ -263,14 +270,16 @@ class LoggingTestCase(CacheClearingTestCase):
             served_hash=served_hash,
         )
 
-    def assert_stale_dependency_logged(self, dependency: str, version: str, location: Location) -> None:
-        """Assert that a stale dependency (its newest release too old) was warned about once for the file.
+    def assert_stale_dependency_logged(self, dependency: str, version: str, *locations: Location) -> None:
+        """Assert that a stale dependency was warned about at each of the locations, and nowhere else.
 
         The exact age and threshold vary with the wall clock, so they are matched with ANY.
         """
-        self.assert_logged(
-            Logger._MESSAGE_STALE, dependency=dependency, location=location, version=version, days=ANY, threshold=ANY
-        )
+        fields: dict[str, object] = {"dependency": dependency, "version": version, "days": ANY, "threshold": ANY}
+        expected = [
+            self._expected_call(Logger._MESSAGE_STALE, fields | {"location": location}) for location in locations
+        ]
+        self.assertEqual(self.records(Logger._MESSAGE_STALE.level), expected)
 
     def assert_yanked_dependency_logged(
         self, dependency: str, version: str, location: Location, reason: object = ANY

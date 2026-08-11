@@ -1,6 +1,8 @@
 """Unit tests for the sample log lines the README quotes."""
 
+import ast
 import logging
+import pathlib
 import unittest
 
 from tools.log_samples import _Capture
@@ -8,6 +10,43 @@ from tools.log_samples import _Capture
 from update_time.io.log import DEPENDENCY_DELIMITER, LOCATION_DELIMITER
 
 from tests.helpers import log_record
+
+# The generators that build the samples the README shows: its console blocks, and its log-output screenshot.
+_SAMPLE_GENERATORS = ("tools/log_samples.py", "tools/generate_log_svg.py")
+
+
+def _names_a_line(location: ast.Call) -> bool:
+    """Return whether the `Location(...)` call names a line number, whether positionally or by keyword."""
+    return bool(location.args[1:]) or any(keyword.arg == "line_number" for keyword in location.keywords)
+
+
+def _sample_locations() -> list[ast.Call]:
+    """Return every `Location(...)` the sample generators build."""
+    return [
+        node
+        for generator in _SAMPLE_GENERATORS
+        for node in ast.walk(ast.parse(pathlib.Path(generator).read_text()))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Location"
+    ]
+
+
+class SampleLocationTest(unittest.TestCase):
+    """Test that the samples locate a reference the way a run locates it.
+
+    A sample's location is written by hand rather than produced by a run, so nothing else notices when one drifts
+    from what Update-time prints: `just readme` keeps quoting the sample whatever it says, and the check that the
+    README is up to date compares it against itself.
+    """
+
+    def test_every_sample_location_names_a_line(self):
+        """Test that each location the samples build carries a line number.
+
+        Every reference the samples show is one Update-time reports at a line, so a location without one is a
+        sample that has gone stale. A sample deliberately reported at the file alone would have to be excepted here.
+        """
+        locations = _sample_locations()
+        self.assertNotEqual(locations, [])  # An empty scan would pass the check below without checking anything.
+        self.assertEqual([ast.unparse(location) for location in locations if not _names_a_line(location)], [])
 
 
 class CaptureTest(unittest.TestCase):

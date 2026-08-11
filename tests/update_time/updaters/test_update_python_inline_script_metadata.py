@@ -88,7 +88,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         glob.return_value = [mock_script]
         update_python_inline_script_metadatas()
         mock_script.write_text.assert_called_with(_script("package==1.1"))
-        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 12:08", Location(mock_script))
+        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 12:08", Location(mock_script, 4))
         self.assert_no_warnings_logged()
 
     def test_update_with_changelog(self, run: Mock, get: Mock, glob: Mock):
@@ -103,7 +103,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         update_python_inline_script_metadatas()
         mock_script.write_text.assert_called_with(_script("package_with_changelog==1.1"))
         self.assert_new_version_logged(
-            "package_with_changelog", "1.1, published: 2026-05-30 12:07", Location(mock_script), self.changelog
+            "package_with_changelog", "1.1, published: 2026-05-30 12:07", Location(mock_script, 4), self.changelog
         )
         self.assert_no_warnings_logged()
 

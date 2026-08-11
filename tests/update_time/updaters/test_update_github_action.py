@@ -40,12 +40,8 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
         composite_action_yaml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
         self.assert_path_logged(composite_action_yaml)
-        self.assert_new_version_logged(
-            "action/action",
-            "1.1",
-            Location(composite_action_yaml, 1),
-            Logger._SUPPRESSING_CHANGELOG,
-            once=False,
+        self.assert_last_new_version_logged(
+            "action/action", "1.1", Location(composite_action_yaml, 1), Logger._SUPPRESSING_CHANGELOG
         )
         self.assert_no_warnings_logged()
 

@@ -13,7 +13,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
 
-    from update_time.domain.version import DependencyVersion
+    from update_time.domain.version import DependencyName, DependencyVersion
+    from update_time.primitives.location import Location
 
 _LOG = get_logger("package.json")
 # Lockfiles that signal which package manager a project uses, checked when there is no corepack `packageManager`
@@ -49,9 +50,13 @@ def update_package_jsons() -> None:
     warn_about_stale_dependencies(supported, _newest_releases, _LOG.warn_if_stale)
 
 
-def _newest_releases(package_json: Path) -> Iterable[tuple[str, DependencyVersion | None]]:
-    """Yield each declared dependency as a (name, newest npm release | None) pair, for the staleness check."""
-    return ((name, npmjs.newest_release(name)) for name in package_json_format.dependency_names(package_json))
+def _newest_releases(package_json: Path) -> Iterable[tuple[DependencyName, DependencyVersion | None, Location]]:
+    """Yield each declared dependency as a (name, newest npm release | None, location) triple, for staleness."""
+    return (
+        (name, npmjs.newest_release(name), location)
+        for name, locations in package_json_format.dependency_locations(package_json).items()
+        for location in locations
+    )
 
 
 def main() -> None:  # pragma: no cover

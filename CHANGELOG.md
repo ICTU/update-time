@@ -9,9 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Changed
 
 - Remove the column that named the Update-time module each log line came from. Closes [#230](https://github.com/ICTU/update-time/issues/230).
+- Report a dependency that uv, npm, or pnpm updates at the line declaring it, instead of at the file: the new version available for it, and the staleness and vulnerability warnings it gets. Closes [#218](https://github.com/ICTU/update-time/issues/218).
 
 ### Fixed
 
+- Report every pin of a dependency that a `pyproject.toml` or PEP 723 inline script metadata file pins more than once, instead of only the last one, so no pin's available new version, staleness, or vulnerability goes unreported. Part of [#218](https://github.com/ICTU/update-time/issues/218).
+- Update a `pyproject.toml` or PEP 723 inline script metadata dependency whose name is spelled with a `_` or a `.`, such as `typing_extensions`, instead of reporting a new version for it and then leaving its pin unchanged. Part of [#218](https://github.com/ICTU/update-time/issues/218).
 - Read a GitHub repository URL in three more spellings: git's scp-like `git@github.com:owner/repo` form, npm's `github:owner/repo` host shorthand, and npm's bare `owner/repo` shorthand. A pre-commit hook whose repository uses the scp-like form is updated instead of being silently left alone. The changelog of a package whose npm `repository` uses any of the three is found instead of being reported missing. Closes [#224](https://github.com/ICTU/update-time/issues/224).
 - Look for the changelog of a Python dependency under every project URL PyPI publishes, matching their labels as [PEP 753](https://peps.python.org/pep-0753/) prescribes, and never read a GitHub sponsors URL as a repository. Closes [#225](https://github.com/ICTU/update-time/issues/225).
 

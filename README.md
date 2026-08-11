@@ -20,7 +20,7 @@ Update-time rewrites the files in place and logs what it did:
                     3.14.6@sha256:9f2c1e7bd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4
            INFO     New version available for actions/checkout in .github/workflows/ci.yml:17: 4.3.0
                     No changelog available!
-           WARNING  Stale dependency left-pad in package.json: newest release 1.3.0 was published
+           WARNING  Stale dependency left-pad in package.json:24: newest release 1.3.0 was published
                     512 days ago (> 365)
            WARNING  Vulnerable dependency django in docs/requirements.txt:12: version 3.2.0 has a
                     critical vulnerability, "SQL Injection in Django" (GHSA-2gwj-7jmv-h26r,
@@ -213,7 +213,7 @@ Update-time updates the following types of dependencies, found in the listed fil
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | `.pre-commit-config.yaml` | [GitHub API](https://api.github.com) | Update-time |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | Sphinx config | [npm registry](https://registry.npmjs.org) | Update-time |
 
-Dependency types that Update-time updates itself, it rewrites line by line: it picks the new version from the source and edits the reference in place. Dependency types it delegates, it hands to uv, npm, or pnpm, which resolves the versions itself and keeps the project's lock file in step where there is one. Update-time runs that package manager for you, so a delegated dependency is updated by the same `update-time` run as every other one. Two things follow for a delegated dependency: the version specifier in the file decides how far it may move, since there is no line to carry a [marker](#-controlling-updates-and-warnings-per-reference), and the [cooldown](#-cooldown) is handed to the manager, which applies it per run rather than per reference.
+Dependency types that Update-time updates itself, it rewrites line by line: it picks the new version from the source and edits the reference in place. Dependency types it delegates, it hands to uv, npm, or pnpm, which resolves the versions itself and keeps the project's lock file in step where there is one. Update-time runs that package manager for you, so a delegated dependency is updated by the same `update-time` run as every other one. Two things follow for a delegated dependency: the version specifier in the file decides how far it may move, since Update-time rewrites no line there to read a [marker](#-controlling-updates-and-warnings-per-reference) from, and the [cooldown](#-cooldown) is handed to the manager, which applies it per run rather than per reference.
 
 Each type links to its own section under [Details per dependency type](#-details-per-dependency-type), which covers the files and dependencies it updates, and how pinning, the cooldown, staleness, yanks, vulnerabilities, and markers apply to it.
 
@@ -302,7 +302,7 @@ Update-time also reports what updating cannot put right: a dependency whose newe
 Keeping a pin on the latest version doesn't help if that latest version is itself years old: the project may have been abandoned or superseded. Alongside updating, Update-time warns when a dependency's newest release is older than a threshold, so you can decide whether to keep it, replace it, or vendor it. The threshold defaults to **365 days** and is set with `--stale-after DAYS`; pass `--stale-after 0` to disable the check. A single reference can carry a threshold of its own, which wins over whatever `--stale-after` says (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). For example, a pin whose newest release came out well over a year ago is reported as:
 
 ```console
-WARNING Stale dependency humanize in docs/requirements.txt: newest release 4.15.0 was published 512 days ago (> 365)
+WARNING Stale dependency humanize in docs/requirements.txt:12: newest release 4.15.0 was published 512 days ago (> 365)
 ```
 
 The date compared against the threshold is the publication date of the dependency's *newest* release. This way a project that has just published a release is never reported as stale, not even when that release is still within the [cooldown](#-cooldown) window. A reference can also be left out of the check altogether by a marker, which is a separate choice from holding back its updates (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
@@ -661,7 +661,7 @@ In a PEP 723 inline script metadata block, only the pins in the `dependencies` a
 
 #### What versions are updated?
 
-Only versions specified with an exact match are updated, i.e. dependency versions pinned with `==`. Looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates.
+Only versions specified with an exact match are updated, i.e. dependency versions pinned with `==`. Looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. A new version for such a dependency is still reported, at the file rather than at a line.
 
 #### Pinning
 
@@ -677,7 +677,7 @@ For inline script metadata, Update-time also applies the cooldown through uv's `
 
 #### Stale dependencies
 
-Every Python pin is checked against the newest release of its package on PyPI, whichever of the three file kinds it sits in.
+Every Python pin is checked against the newest release of its package on PyPI, whichever of the three file kinds declares it, and a stale one is reported at the line the pin sits on.
 
 #### Yanked dependencies
 
@@ -685,7 +685,7 @@ A `requirements.txt` pin is checked against [PEP 592](https://peps.python.org/pe
 
 #### Vulnerable dependencies
 
-Each exact pin a Python file declares is checked against OSV's PyPI advisories, whichever of the three file kinds it sits in. A compiled or hash-pinned `requirements.txt` is the exception: Update-time skips it whole, as described under What files are updated? above, so its pins are neither updated nor checked. The transitive dependencies those pins pull in are not checked, so a vulnerability that reaches your project through one goes unreported here; reading a resolved dependency tree is what `uv audit` and `pip-audit` are for. A `requirements.txt` pin is reported at its line, and an `ignore[vulnerable]` marker silences that warning. A `pyproject.toml` or inline script metadata pin is reported at the file without a line number, as its staleness warning is, and takes no marker, because uv rewrites it rather than Update-time rewriting its line.
+Each exact pin a Python file declares is checked against OSV's PyPI advisories, whichever of the three file kinds it sits in. A compiled or hash-pinned `requirements.txt` is the exception: Update-time skips it whole, as described under What files are updated? above, so its pins are neither updated nor checked. The transitive dependencies those pins pull in are not checked, so a vulnerability that reaches your project through one goes unreported here; reading a resolved dependency tree is what `uv audit` and `pip-audit` are for. A `requirements.txt` pin is reported at its line, and an `ignore[vulnerable]` marker silences that warning. A `pyproject.toml` or inline script metadata pin is reported at its line as well, but takes no marker, because uv rewrites it rather than Update-time rewriting its line.
 
 #### Markers
 
@@ -717,7 +717,7 @@ For pnpm, Update-time passes the cooldown via pnpm's `minimumReleaseAge` setting
 
 #### Stale dependencies
 
-Each dependency is checked against its newest release on the npm registry. Dependencies given as git, file, link, workspace, alias, or GitHub-shorthand references are skipped, since they don't resolve to a registry release.
+Each dependency is checked against its newest release on the npm registry, and a stale one is reported at the line it is declared on. Dependencies given as git, file, link, workspace, alias, or GitHub-shorthand references are skipped, since they don't resolve to a registry release.
 
 #### Yanked dependencies
 

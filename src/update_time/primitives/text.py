@@ -1,9 +1,14 @@
-"""Rewriting the text a regular expression matched."""
+"""Locating and rewriting the text a regular expression matched."""
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import re
+
+
+def line_number(text: str, offset: int) -> int:
+    """Return the 1-based number of the line the offset falls on."""
+    return text.count("\n", 0, offset) + 1
 
 
 def rewrite_match(match: re.Match[str], replacements: dict[str, str]) -> str:

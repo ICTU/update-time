@@ -58,6 +58,14 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             "urls": [{"upload_time_iso_8601": "2026-05-30T12:07:03.123456Z"}],
         }
 
+    @staticmethod
+    def pypi_metadata_without_changelog() -> Release:
+        """Create PyPI release metadata without project URLs, so the test needs no changelog response mocked."""
+        return {
+            "info": {"description": "Package", "project_urls": {}},
+            "urls": [{"upload_time_iso_8601": "2026-05-30T12:08:53.123321Z"}],
+        }
+
     def create_pyproject_toml(self, contents: str) -> Mock:
         """Create a mock pyproject.toml file."""
         return mock_path(contents, parent=Path("/"))
@@ -80,16 +88,54 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
     def test_update(self, run: Mock, get: Mock, glob: Mock):
         """Test updating a pyproject.toml, with Update-time's cooldown passed to uv."""
         run.return_value = self.mock_update_on_stdout("package", "v1.1")
-        get.return_value = mock_response(
-            {"info": {"description": "Package"}, "urls": [{"upload_time_iso_8601": "2026-05-30T12:08:53.123321Z"}]}
-        )
+        get.return_value = mock_response(self.pypi_metadata_without_changelog())
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
         glob.return_value = [mock_pyproject_toml]
         update_pyproject_tomls()
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
-        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 12:08", Location(mock_pyproject_toml))
+        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 12:08", Location(mock_pyproject_toml, 2))
         self.assert_no_cli_cooldown(run)
+        self.assert_no_warnings_logged()
+
+    def test_update_of_a_pin_the_file_spells_its_own_way(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a pin uv names differently is found at its line and keeps the spelling the file gave it."""
+        for spelling, reported in (("Jinja2", "jinja2"), ("typing_extensions", "typing-extensions")):
+            with self.subTest(spelling=spelling):
+                self.mock_log.reset_mock()  # Assert on the records of this case alone.
+                run.return_value = self.mock_update_on_stdout(reported, "v1.1")
+                get.return_value = mock_response(self.pypi_metadata_without_changelog())
+                mock_pyproject_toml = self.create_pyproject_toml(pyproject(f"{spelling}==1.0"))
+                glob.return_value = [mock_pyproject_toml]
+                update_pyproject_tomls()
+                mock_pyproject_toml.write_text.assert_called_with(pyproject(f"{spelling}==1.1"))
+                self.assert_new_version_logged(
+                    reported, "1.1, published: 2026-05-30 12:08", Location(mock_pyproject_toml, 2)
+                )
+
+    def test_update_of_a_name_pinned_twice(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a name pinned in two arrays has its new version logged at each line pinning it."""
+        run.return_value = self.mock_update_on_stdout("package", "v1.1")
+        get.return_value = mock_response(self.pypi_metadata_without_changelog())
+        contents = '[project]\ndependencies = ["package==1.0"]\n[dependency-groups]\ndev = ["package==1.0"]\n'
+        mock_pyproject_toml = self.create_pyproject_toml(contents)
+        glob.return_value = [mock_pyproject_toml]
+        update_pyproject_tomls()
+        for line in (2, 4):
+            with self.subTest(line=line):
+                self.assert_new_version_logged_among_others(
+                    "package", "1.1, published: 2026-05-30 12:08", Location(mock_pyproject_toml, line), ANY
+                )
+
+    def test_update_of_a_dependency_without_an_exact_pin(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a dependency uv reports outdated that the file doesn't `==`-pin is logged at the file alone."""
+        run.return_value = self.mock_update_on_stdout("package", "v1.1")
+        get.return_value = mock_response(self.pypi_metadata_without_changelog())
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package>=1.0"))
+        glob.return_value = [mock_pyproject_toml]
+        update_pyproject_tomls()
+        mock_pyproject_toml.write_text.assert_not_called()
+        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 12:08", Location(mock_pyproject_toml))
         self.assert_no_warnings_logged()
 
     def test_update_with_changelog(self, run: Mock, get: Mock, glob: Mock):
@@ -107,7 +153,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_new_version_logged(
             "package_with_changelog",
             "1.1, published: 2026-05-30 12:07",
-            Location(mock_pyproject_toml),
+            Location(mock_pyproject_toml, 2),
             self.changelog,
         )
         self.assert_no_warnings_logged()
@@ -126,7 +172,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_html_changelog==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
-            "package_with_html_changelog", "1.1, published: 2026-05-30 12:07", Location(mock_pyproject_toml)
+            "package_with_html_changelog", "1.1, published: 2026-05-30 12:07", Location(mock_pyproject_toml, 2)
         )
         self.assert_no_warnings_logged()
 
@@ -146,7 +192,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_new_version_logged(
             "package_with_github_releases",
             "1.1, published: 2026-05-30 12:07",
-            Location(mock_pyproject_toml),
+            Location(mock_pyproject_toml, 2),
             self.changelog,
         )
         self.assert_no_warnings_logged()
@@ -163,7 +209,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_new_version_logged(
             "package_without_github_releases",
             "1.1, published: 2026-05-30 12:07",
-            Location(mock_pyproject_toml),
+            Location(mock_pyproject_toml, 2),
         )
         self.assert_no_warnings_logged()
 
