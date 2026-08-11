@@ -1,6 +1,7 @@
 """Local fixit rules, enabled via `[tool.fixit]` in pyproject.toml."""
 
 import inspect
+import re
 import unittest
 
 import libcst as cst
@@ -207,6 +208,128 @@ class SubTestPerCase(LintRule):
         called = _self_call_names(node)
         if any(name.startswith("assert") for name in called) and "subTest" not in called:
             self.report(node)
+
+
+# An identifier, as the code spells a name, and an identifier a docstring quotes between backticks. A backticked
+# run holding anything else — a `path:line`, an `# update-time: ignore` marker — is skipped here, and the twin
+# check would skip it in any case, since no name the code binds has that shape.
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_BACKTICKED_NAME = re.compile(f"`({_IDENTIFIER.pattern})`")
+
+
+def _twin(name: str) -> str:
+    """Return the name under the opposite visibility: the private spelling of a public name, and the other way on."""
+    return name.removeprefix("_") if name.startswith("_") else f"_{name}"
+
+
+def _quoted_words(module: cst.Module) -> set[str]:
+    """Return the identifier-shaped words the module's strings spell out, the backticked runs in them left out.
+
+    A word spelled out in a string is data the module works with — a path in a URL, a key, a word of a message —
+    so a docstring quoting that word quotes the data rather than a name the code binds.
+    """
+    strings = m.findall(module, m.SimpleString() | m.FormattedString())
+    sources = (_BACKTICKED_NAME.sub(" ", module.code_for_node(string)) for string in strings)
+    return {word for source in sources for word in _IDENTIFIER.findall(source)}
+
+
+_QUERY_ENDPOINT = '''\
+def _query(reference):
+    return {"version": reference}
+
+
+def reported_vulnerabilities(reference):
+    """Return what the `query` endpoint reports for the reference."""
+    return fetch("https://api.osv.dev/v1/query", json=_query(reference))
+'''
+
+_USED_NAME = '''\
+def _pin(reference):
+    return reference
+
+
+def pin(references):
+    """Return each reference pinned by `_pin`."""
+    return [_pin(reference) for reference in references]
+'''
+
+_NAME_FROM_ANOTHER_MODULE = '''\
+def changes(dependency):
+    """Return what `get_changes` reports for the dependency."""
+    return dependency
+'''
+
+_RENAMED_PIN = '''\
+def _latest_pin(reference):
+    return reference
+
+
+class PinUpdater:
+    def update_line(self, match):
+        """Return the line, unchanged in each case `latest_pin` declines."""
+        return _latest_pin(match)
+'''
+
+_MADE_PUBLIC = '''\
+def helper(value):
+    return value
+
+
+def caller(value):
+    """Return the value `_helper` produced."""
+    return helper(value)
+'''
+
+
+class RenamedNameInDocstring(LintRule):
+    """Require a name a docstring quotes between backticks to be spelled the way the code spells it.
+
+    Renaming a name leaves the docstrings quoting it untouched, `just rename` by design, so the old spelling
+    survives there and nothing else reports it. A quoted name the code has only under the opposite visibility is
+    one of those leftovers.
+    """
+
+    VALID = [
+        Valid(_QUERY_ENDPOINT),  # A word a string spells out is data, whatever the code binds beside it.
+        Valid(_USED_NAME),  # The code mentions the quoted name itself, so no rename moved it.
+        Valid(_NAME_FROM_ANOTHER_MODULE),  # Neither spelling is here, so the name belongs to another module.
+    ]
+    INVALID = [
+        Invalid(_RENAMED_PIN),  # The name was made private, and the docstring kept the public spelling.
+        Invalid(_MADE_PUBLIC),  # The same the other way on: made public, and the docstring kept the private one.
+    ]
+
+    def __init__(self) -> None:
+        """Start with no names, until the module they are read from is visited."""
+        super().__init__()
+        self._code_names: set[str] = set()
+        self._quoted_words: set[str] = set()
+
+    def visit_Module(self, node: cst.Module) -> None:
+        """Collect what the module names and what it spells out, then check its own docstring against them."""
+        self._code_names = {cst.ensure_type(name, cst.Name).value for name in m.findall(node, m.Name())}
+        self._quoted_words = _quoted_words(node)
+        self._report_renamed(node)
+
+    def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
+        """Check the function's docstring here, so a report lands on the function rather than on the module."""
+        self._report_renamed(node)
+
+    def visit_ClassDef(self, node: cst.ClassDef) -> None:
+        """Check the class's docstring here, so a report lands on the class rather than on the module."""
+        self._report_renamed(node)
+
+    def _report_renamed(self, node: cst.Module | cst.FunctionDef | cst.ClassDef) -> None:
+        """Report each name the docstring quotes that the code mentions only under the opposite visibility.
+
+        A word the module's strings spell out is data it works with, whatever the code binds beside it, so a
+        docstring quoting that word is left alone.
+        """
+        for name in _BACKTICKED_NAME.findall(node.get_docstring(clean=False) or ""):
+            if name in self._quoted_words:
+                continue
+            if name not in self._code_names and _twin(name) in self._code_names:
+                self.report(node, message=f"Rewrite `{name}` as `{_twin(name)}`: a rename left the docstring behind")
 
 
 class SubTestOutsideLoop(LintRule):

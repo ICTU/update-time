@@ -1,7 +1,7 @@
 """Render the log-output screenshot (docs/log-output.svg) shown in the README.
 
-A handful of representative log lines are emitted through Update-time's own `Logger` and rendered with its
-highlighter and theme, then exported as an SVG, so the README shows exactly how the coloured output looks.
+A handful of representative log lines are emitted through Update-time's own `Logger` and rendered by the handler
+and theme a run uses, then exported as an SVG, so the README shows exactly how the coloured output looks.
 """
 
 import io
@@ -12,12 +12,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from rich.console import Console
-from rich.logging import RichHandler
 
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import SHA256_HEX_CHARS, DependencyVersion
 from update_time.domain.vulnerability import Vulnerability
-from update_time.io.log import LOG_MESSAGE_FORMAT, LOG_THEME, LOG_TIME_FORMAT, Logger, LogHighlighter
+from update_time.io.log import LOG_THEME, Logger, configure_logging
 from update_time.primitives.location import Location
 
 
@@ -65,9 +64,7 @@ def generate() -> LogOutput:
         file=io.StringIO(),  # capture the live render; we only want the exported SVG and text, not stdout noise
         theme=LOG_THEME,
     )
-    handler = RichHandler(console=console, highlighter=LogHighlighter(), show_path=False)
-    handler.addFilter(_FixedTime())
-    logging.basicConfig(level="INFO", datefmt=LOG_TIME_FORMAT, format=LOG_MESSAGE_FORMAT, handlers=[handler])
+    configure_logging(console, "INFO").addFilter(_FixedTime())
     log = Logger("update-time")
 
     # A representative digest, padded to the exact length of a real one so `LogHighlighter` recognises and dims it.

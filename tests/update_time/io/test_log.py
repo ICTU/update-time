@@ -5,7 +5,6 @@ import logging
 import re
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import ANY, Mock, patch
 
@@ -27,12 +26,9 @@ from update_time.io.log import (
     reset_changelog_suppression,
 )
 from update_time.primitives.location import Location
-from update_time.references import file
-from update_time.references.github import latest_pin
-from update_time.references.resolve import latest_version
 
-from tests.update_time.fixtures import COMMIT_SHA, DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import bound, new_version_getter
+from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
+from tests.update_time.helpers import bound
 
 
 class GetLoggerTests(TestCase):
@@ -122,10 +118,7 @@ class RenderTests(TestCase):
         message = LogMessage(logging.INFO, "Skipping %(location)s: %(reason)s")
         Logger("fields")._log(message, location=_create_location("Dockerfile", 1), reason="it is compiled")
         mock_log.assert_called_once_with(
-            message.level,
-            message,
-            {"location": _at("Dockerfile:1"), "reason": "it is compiled"},
-            stacklevel=ANY,
+            message.level, message, {"location": _at("Dockerfile:1"), "reason": "it is compiled"}
         )
 
     @patch("logging.Logger.log")
@@ -137,12 +130,7 @@ class RenderTests(TestCase):
         """
         message = LogMessage(logging.ERROR, "No valid version found for %(dependency)s")
         Logger("fields")._log(message, dependency="actions/checkout")
-        mock_log.assert_called_once_with(
-            message.level,
-            message,
-            {"dependency": dependency("actions/checkout")},
-            stacklevel=ANY,
-        )
+        mock_log.assert_called_once_with(message.level, message, {"dependency": dependency("actions/checkout")})
 
 
 @patch("logging.Logger.log")
@@ -159,7 +147,7 @@ class LoggerTests(TestCase):
 
         Records emitted before the most recent one are ignored.
         """
-        mock_log.assert_called_with(message.level, message, ANY, stacklevel=ANY)
+        mock_log.assert_called_with(message.level, message, ANY)
         _level, template, fields = mock_log.call_args.args
         self.assertEqual(sorted(fields), sorted(re.findall(r"%\((\w+)\)", str(template))))
         self.assertEqual(str(template) % fields, rendered)
@@ -663,60 +651,6 @@ class LogHighlighterTests(TestCase):
         get_logger("theme")  # Ensure the root logger, and its themed RichHandler console, have been configured.
         handler = next(h for h in logging.getLogger().handlers if isinstance(h, RichHandler))
         self.assertEqual(str(handler.console.get_style("repr.dependency")), "bold white")
-
-
-class LogOriginTests(TestCase):
-    """Tests that log records are attributed to the originating updater, not to the shared machinery in between."""
-
-    def assert_origin_is_this_test(self, records: list[logging.LogRecord]) -> None:
-        """Assert that every record names this test file, the caller of the shared machinery, as its origin."""
-        self.assertEqual({Path(record.pathname).name for record in records}, {"test_log.py"})
-
-    def test_direct_call_is_attributed_to_the_caller(self):
-        """Test that a log method called directly reports the calling line as its origin."""
-        logger = Logger("origin direct")
-        with self.assertLogs(logger.log, level="DEBUG") as captured:
-            logger.path(Path.cwd())
-        self.assert_origin_is_this_test(captured.records)
-
-    def test_file_rewrite_is_attributed_to_the_caller(self):
-        """Test that logs emitted while rewriting a file report the rewriting's caller as their origin."""
-        logger = Logger("origin rewrite")
-        with TemporaryDirectory() as directory:
-            (Path(directory) / "config.yml").write_text("dependency: 1.0\n")
-            with (
-                patch("pathlib.Path.cwd", Mock(return_value=Path(directory))),
-                self.assertLogs(logger.log, level="DEBUG") as captured,
-            ):
-                file.update_files(
-                    "*.yml",
-                    regexp=r"(?P<dependency>dependency): (?P<version>[\d.]+)",
-                    get_new_version=new_version_getter("2.0"),
-                    logger=logger,
-                    start=Path(directory),
-                )
-        self.assert_origin_is_this_test(captured.records)
-
-    def test_version_decision_is_attributed_to_the_caller(self):
-        """Test that a warning from the shared version decision reports its caller, not the decision, as origin."""
-        logger = Logger("origin decision")
-        stale = DependencyVersion("2.0", newest_published=datetime.now(UTC) - timedelta(days=1000))
-        reference = Reference("dependency", "1.0")
-        with self.assertLogs(logger.log, level="DEBUG") as captured:
-            latest_version(reference, lambda *_args: stale, Marker(), Location(Path.cwd()), logger)
-        self.assert_origin_is_this_test(captured.records)
-
-    def test_github_pin_decision_is_attributed_to_the_caller(self):
-        """Test that a pin from the shared GitHub decision reports its caller, not the decision, as origin."""
-        logger = Logger("origin github")
-        latest = DependencyVersion("2.0", sha=COMMIT_SHA)
-        reference = Reference("owner/action", "1.0")
-        with (
-            patch("update_time.references.github.get_latest_version", Mock(return_value=latest)),
-            self.assertLogs(logger.log, level="DEBUG") as captured,
-        ):
-            latest_pin(reference, Marker(), Location(Path.cwd()), logger)
-        self.assert_origin_is_this_test(captured.records)
 
 
 class LoggerMessageTest(TestCase):

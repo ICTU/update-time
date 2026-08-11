@@ -2,10 +2,8 @@
 
 import logging
 import re
-import sys
 from dataclasses import dataclass
 from logging import DEBUG, ERROR, INFO, WARNING
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.console import Console
@@ -21,7 +19,7 @@ from update_time.primitives.location import Location
 from update_time.primitives.timestamp import days_since
 
 if TYPE_CHECKING:
-    from types import FrameType
+    from pathlib import Path
 
     from requests import Response
     from rich.text import Text
@@ -117,65 +115,23 @@ class LogHighlighter(ReprHighlighter):
 
 # The theme adds the styles `LogHighlighter` applies: `repr.digest` for a whole `sha256:` digest and `repr.dependency`
 # (bold white) for a dependency name; a file location reuses Rich's built-in `repr.filename`, so it needs no entry.
-# When colour is off, all render as plain text. The theme and formats are shared with `docs/generate_log_svg.py`,
-# which logs its sample through `Logger` itself, so the README screenshot renders exactly like the real output.
+# When colour is off, all render as plain text. The theme is shared with `tools/generate_log_svg.py`, which logs its
+# sample through `Logger` and `configure_logging`, so the README screenshot renders exactly like the real output.
 LOG_THEME = Theme({"repr.digest": "dim", "repr.dependency": "bold white"})
-LOG_TIME_FORMAT = "[%X]"
-LOG_MESSAGE_FORMAT = "%(message)s"
+_LOG_TIME_FORMAT = "[%X]"
+_LOG_MESSAGE_FORMAT = "%(message)s"
 
 
-# This wrapper, and the packages that log on behalf of the updaters (see `attribute_logs_to_caller`). Frames in
-# these are skipped when determining a log record's origin, so the reported origin is the updater that triggered the
-# log rather than this wrapper or the shared machinery in between.
-_wrapper_file = Path(__file__).resolve()
-_helper_packages: set[Path] = set()
-
-
-def attribute_logs_to_caller(package_file: str) -> None:
-    """Register a package whose frames should be skipped when determining a log record's origin.
-
-    A package whose modules log on behalf of the updaters registers itself, passing its `__init__.py`'s `__file__`,
-    so the frames of every module in it are walked past and a log record is attributed to the updater that triggered
-    it rather than to the shared machinery in between. Registration covers the whole package, so a module added to it
-    needs none of its own.
-    """
-    _helper_packages.add(Path(package_file).resolve().parent)
-
-
-def _is_helper_frame(filename: str) -> bool:
-    """Return whether the frame's file is this wrapper or a module in a registered package."""
-    path = Path(filename).resolve()
-    return path == _wrapper_file or any(path.is_relative_to(package) for package in _helper_packages)
-
-
-def _caller_stacklevel() -> int:
-    """Return the stacklevel of the first frame outside this wrapper and the registered packages.
-
-    A fixed stacklevel can't work because some log methods are called directly by an updater while others
-    are dispatched through a registered package (with extra comprehension frames in between), so walk
-    the stack to find the originating updater frame instead.
-    """
-    level = 1  # Start at the frame that emits the record (Logger._log) and skip helper frames from there.
-    try:
-        frame: FrameType | None = sys._getframe(level)  # noqa: SLF001
-    except ValueError:  # pragma: no cover
-        return level
-    while frame is not None and _is_helper_frame(frame.f_code.co_filename):
-        level += 1
-        frame = frame.f_back
-    return level
+def configure_logging(console: Console, level: str) -> RichHandler:
+    """Send every record at the level or above to the console, and return the handler that renders it there."""
+    handler = RichHandler(console=console, highlighter=LogHighlighter(), show_path=False)
+    logging.basicConfig(level=level, datefmt=_LOG_TIME_FORMAT, format=_LOG_MESSAGE_FORMAT, handlers=[handler])
+    return handler
 
 
 @dataclass(frozen=True)
 class LogMessage:
-    """A log message: the level it is logged at and the format string the arguments are interpolated into.
-
-    A message's level is a property of the message, not of the call that emits it, so the two are declared together
-    and `Logger._log` emits at the level the message names. The message object itself is logged, which is what the
-    standard library expects of a message that is not a string: it calls `str()` on it when a handler formats the
-    record. Passing the object rather than the format string keeps the level available to whoever holds the message,
-    such as the log tests and the screenshot generator.
-    """
+    """A log message: the level it is logged at and the format string the arguments are interpolated into."""
 
     level: int
     format: str
@@ -190,11 +146,7 @@ class LogMessage:
 
 
 def _redundant_marker(reason: str) -> str:
-    """Return the warning a marker that holds nothing back is reported as, for the reason the caller gives.
-
-    Every scope reports its own reason, and the sentence they share is spelled here, so the redundant markers read
-    alike whichever check found one inert.
-    """
+    """Return the warning a marker that holds nothing back is reported as, for the reason the caller gives."""
     return (
         f"Redundant update-time marker %(directive)s for %(dependency)s in %(location)s: {reason}, "
         "so the marker holds nothing back"
@@ -214,20 +166,12 @@ class Logger:
         self._logged_changes.clear()
 
     def _log(self, message: LogMessage, **fields: object) -> None:
-        """Emit a log record at the message's own level, attributing it to the updater that triggered it.
-
-        Every message interpolates its arguments by name (`%(location)s`), so the fields are passed as the single
-        mapping the standard library's `%`-formatting fills them from.
-        """
-        self.log.log(message.level, message, self._rendered(fields), stacklevel=_caller_stacklevel())
+        """Emit a log record at the message's own level."""
+        self.log.log(message.level, message, self._rendered(fields))
 
     @classmethod
     def _rendered(cls, fields: dict[str, object]) -> dict[str, object]:
-        """Return the fields with the ones the highlighter styles wrapped in their delimiter, and the rest as they are.
-
-        Rendering them here rather than in each log method is what keeps a message's arguments plain domain values at
-        the call site, and leaves one place that decides what the highlighter has to style.
-        """
+        """Return the fields with the ones the highlighter styles wrapped in their delimiter."""
         return {name: cls._render_field(name, value) for name, value in fields.items()}
 
     @classmethod
@@ -887,11 +831,7 @@ def get_logger(name: str) -> Logger:
     the root logger only the first time — when it has no handlers yet — instead of building a handler on every call.
     """
     if not logging.getLogger().handlers:
-        console = Console(stderr=True, theme=LOG_THEME)
-        handler = RichHandler(console=console, highlighter=LogHighlighter())
-        logging.basicConfig(
-            level=LOG_LEVEL.get(), datefmt=LOG_TIME_FORMAT, format=LOG_MESSAGE_FORMAT, handlers=[handler]
-        )
+        configure_logging(Console(stderr=True, theme=LOG_THEME), LOG_LEVEL.get())
     logger = Logger(name)
     _LOGGERS.append(logger)
     return logger

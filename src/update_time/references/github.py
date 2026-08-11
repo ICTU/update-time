@@ -41,7 +41,7 @@ def _sha_pinned_reference(match: re.Match[str], dependency: str) -> Reference:
     return Reference(dependency, match.group("version") if current_sha else match.group("tag"), current_sha)
 
 
-def latest_pin(reference: Reference, marker: Marker, location: Location, log: Logger) -> DependencyVersion | None:
+def _latest_pin(reference: Reference, marker: Marker, location: Location, log: Logger) -> DependencyVersion | None:
     """Return the latest version to (re)pin the GitHub reference to, or None to leave it unchanged.
 
     Which version to update to is `latest_version`'s decision, resolving through `sources.github`; layered on top
@@ -99,12 +99,12 @@ class PinUpdater:
     def update_line(self, match: re.Match[str], location: Location, marker: Marker, dependency: str = "") -> str:
         """Return the line with the reference (re)pinned to the latest version, or unchanged when it stays put.
 
-        Unchanged covers each case `latest_pin` declines: an invalid current version, a marker holding the update
+        Unchanged covers each case `_latest_pin` declines: an invalid current version, a marker holding the update
         back, no commit SHA to pin to, and a reference already pinned and up to date. The dependency comes from the
         regexp's `dependency` group; a `rev:` takes it from the `repo:` above, so it names it in `dependency` instead.
         """
         reference = _sha_pinned_reference(match, matched_dependency(match, dependency))
-        latest = latest_pin(reference, marker, location, self.logger)
+        latest = _latest_pin(reference, marker, location, self.logger)
         if latest is None:
             return match.string
         return replace_match(match, self.spell(reference, latest))
