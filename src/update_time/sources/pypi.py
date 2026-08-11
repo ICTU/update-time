@@ -1,6 +1,7 @@
 """Python Package Index."""
 
 import re
+import string
 from dataclasses import replace
 from functools import cache
 from typing import TYPE_CHECKING, NotRequired, TypedDict
@@ -35,8 +36,46 @@ _LOG = get_logger("pypi")
 # The PyPI host, serving both the JSON API (`/pypi/…/json`) and the Index API (`/simple/…`).
 _PYPI = "https://pypi.org"
 
-_CHANGELOG_URL_KEYS = {"changes", "changelog", "release notes"}
-_REPOSITORY_URL_KEYS = {"repository", "source", "homepage"}
+# The project-URL labels whose URL is fetched as a changelog file: PEP 753's `changelog` label with its aliases,
+# spelled as `_normalized_label` returns them.
+_CHANGELOG_URL_LABELS = {"changelog", "changes", "whatsnew", "history"}
+# The project-URL labels whose URL is read as the source repository, likeliest label first: PEP 753's `source` label
+# with its aliases, then its `homepage` label. All spelled as `_normalized_label` returns them.
+_REPOSITORY_URL_LABELS_BY_RANK = ({"source", "repository", "sourcecode", "github"}, {"homepage"})
+_LABEL_NORMALIZATION = str.maketrans("", "", string.punctuation + string.whitespace)
+# GitHub serves its sponsorship pages under this path, which it reserves, so no owner can go by this name.
+_GITHUB_SPONSORS_PATH = "sponsors"
+
+
+def _normalized_label(label: str) -> str:
+    """Return the project-URL label in the normalized form PEP 753 compares labels in.
+
+    Deleting the punctuation and whitespace and lower-casing what remains makes `Source Code`, `source-code`, and
+    `sourcecode` one label.
+    """
+    return label.translate(_LABEL_NORMALIZATION).lower()
+
+
+def _repository_rank(label: str) -> int:
+    """Return the rank of the project-URL label as a pointer to the source repository, the likeliest ranking lowest.
+
+    A label that is none of the repository labels ranks last, behind every label that is one.
+    """
+    normalized = _normalized_label(label)
+    for rank, labels in enumerate(_REPOSITORY_URL_LABELS_BY_RANK):
+        if normalized in labels:
+            return rank
+    return len(_REPOSITORY_URL_LABELS_BY_RANK)
+
+
+def _repository_urls(project_urls: dict[str, str]) -> list[str]:
+    """Return the project URLs to read as the source repository, the likeliest first.
+
+    Projects publish their repository under labels that say something else, from `Bug Tracker` to `Changelog`, so
+    every URL is a candidate. Reading them by rank keeps a project that labels its repository properly from being
+    read out of a lesser URL, and URLs of equal rank keep the order the project published them in.
+    """
+    return [url for _, url in sorted(project_urls.items(), key=lambda item: _repository_rank(item[0]))]
 
 
 class Distribution(TypedDict):
@@ -74,7 +113,7 @@ def project_metadata(package: str) -> dict:
 
     Uses the Index (Simple) API rather than the project JSON API's `releases` key, which is deprecated. See
     https://docs.pypi.org/api/json/ and https://docs.pypi.org/api/index-api/. The response carries both the
-    available `versions` (PEP 700) and each distribution file's `upload-time` (PEP 700), so `project_versions`
+    available `versions` (PEP 700) and each distribution file's `upload-time` (PEP 700), so `_project_versions`
     and `newest_publication_date` share this single request.
     """
     headers = {"Accept": "application/vnd.pypi.simple.v1+json"}
@@ -82,7 +121,7 @@ def project_metadata(package: str) -> dict:
     return response.json() if response is not None else {}
 
 
-def project_versions(package: str) -> list[str]:
+def _project_versions(package: str) -> list[str]:
     """Get all version strings of a package from PyPI's Index API, or an empty list if they can't be fetched."""
     return project_metadata(package).get("versions", [])
 
@@ -98,7 +137,7 @@ def newest_publication_date(package: str) -> datetime | None:
     return newest_timestamp(file.get("upload-time") for file in files)
 
 
-def release_datetime(urls: list[Distribution]) -> datetime | None:
+def _release_datetime(urls: list[Distribution]) -> datetime | None:
     """Return the latest upload datetime of a release's distribution files, or None if there are none."""
     return newest_timestamp(url["upload_time_iso_8601"] for url in urls)
 
@@ -115,7 +154,7 @@ def get_latest_version(
     if not is_valid(current_version):
         return DependencyVersion(version=current_version)
     current = Version(current_version)
-    versions = [Version(release) for release in project_versions(package) if is_valid(release)]
+    versions = [Version(release) for release in _project_versions(package) if is_valid(release)]
     candidates = [
         version
         for version in versions
@@ -166,7 +205,7 @@ def _eligible_release(package: str, version: Version, cooldown_days: int) -> Dep
     metadata = release_metadata(package, str(version))
     if metadata is None:
         return None
-    published = release_datetime(metadata["urls"])
+    published = _release_datetime(metadata["urls"])
     if metadata["info"].get("yanked") or published is None or within_cooldown(published, cooldown_days):
         return None
     latest = str(version)
@@ -177,9 +216,9 @@ def get_changes(package: str, version: str) -> str:
     """Return the changelog for the PyPI package and version.
 
     Since there's no standardized way that PyPI packages refer to a changelog, apply several heuristics to find it:
-    - Check for changelog URLs in attributes typically used to refer to the changelog.
-    - Check for GitHub repository URLs in attributes typically used to refer to the source repository,
-      and use that to find GitHub releases.
+    - Check the project URLs labelled as the changelog, fetching each as a changelog file.
+    - Check the GitHub releases of each project URL that points at GitHub, reading the URLs labelled as the
+      source repository before the rest.
     - Check for a changelog in the package description.
     - Check for a GitHub URL in the package description and use that to find GitHub releases.
     """
@@ -188,16 +227,14 @@ def get_changes(package: str, version: str) -> str:
         return ""
     info = metadata["info"]
     urls = info.get("project_urls", {})
-    for url_key, url in urls.items():
-        if url_key.lower() in _CHANGELOG_URL_KEYS and (changelog := changelog_from_url(url, version)):
+    for label, url in urls.items():
+        if _normalized_label(label) in _CHANGELOG_URL_LABELS and (changelog := _changelog_from_url(url, version)):
             return changelog
-    for url_key, url in urls.items():
-        if url_key.lower() in _REPOSITORY_URL_KEYS and (
-            changelog := changelog_from_github_releases(url, package, version)
-        ):
+    for url in _repository_urls(urls):
+        if changelog := _changelog_from_github_releases(url, package, version):
             return changelog
     description = info["description"]
-    return changelog_from_description(description, version) or changelog_from_github_url_in_description(
+    return _changelog_from_description(description, version) or _changelog_from_github_url_in_description(
         description, package, version
     )
 
@@ -205,10 +242,10 @@ def get_changes(package: str, version: str) -> str:
 def get_publication_datetime(package: str, version: str) -> datetime | None:
     """Return the datetime the version was published, or None if it can't be fetched or has no distribution files."""
     metadata = release_metadata(package, version)
-    return release_datetime(metadata["urls"]) if metadata is not None else None
+    return _release_datetime(metadata["urls"]) if metadata is not None else None
 
 
-def changelog_from_url(url: str, version: str) -> str:
+def _changelog_from_url(url: str, version: str) -> str:
     """Get the changelog from the URL."""
     changelog_response = fetch(github_to_raw(url), _LOG)
     if changelog_response is None:
@@ -218,20 +255,26 @@ def changelog_from_url(url: str, version: str) -> str:
     return get_version_changes_from_changelog(changelog_response.text, version)
 
 
-def changelog_from_description(description: str, version: str) -> str:
+def _changelog_from_description(description: str, version: str) -> str:
     """Get the changelog from the description."""
     return get_version_changes_from_changelog(description, version) if version in description else ""
 
 
-def changelog_from_github_url_in_description(description: str, package: str, version: str) -> str:
+def _changelog_from_github_url_in_description(description: str, package: str, version: str) -> str:
     """Get the changelog from the description posted to PyPI."""
     github_url = r"https://github\.com/([\w.-]+)/([\w.-]+)"
     if not (match := re.search(github_url, description)):
         return ""
-    return changelog_from_github_releases(match.group(), package, version)
+    return _changelog_from_github_releases(match.group(), package, version)
 
 
-def changelog_from_github_releases(url: str, package: str, version: str) -> str:
-    """Get the changelog from the GitHub releases."""
+def _changelog_from_github_releases(url: str, package: str, version: str) -> str:
+    """Get the changelog from the GitHub releases.
+
+    A `github.com/sponsors/…` URL parses as the repository `sponsors/<owner>`, which does not exist, so it is
+    skipped rather than asked for releases.
+    """
     owner, repository = github_owner_and_repository(url)
+    if owner == _GITHUB_SPONSORS_PATH:
+        return ""
     return changes_from_release(owner, repository, package, version)

@@ -228,6 +228,9 @@ check-sentence-complexity:
 [parallel]
 check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-readme-is-up-to-date check-readme-structure check-sentence-complexity yamllint zizmor
 
+# Run the tests, format the code, and run the checks: what a TDD step ends with.
+verify: test format check
+
 # === Fix issues ===
 
 # Format and lint-fix Python code, the part of `just fix` a quicker loop needs after an edit.
