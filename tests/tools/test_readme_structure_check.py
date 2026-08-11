@@ -18,7 +18,7 @@ from tools.readme_structure_check import (
 )
 
 
-def details_chapter(*section_titles: str, subsections: tuple[str, ...] = _SUBSECTIONS) -> str:
+def _details_chapter(*section_titles: str, subsections: tuple[str, ...] = _SUBSECTIONS) -> str:
     """Return a details chapter with the subsections repeated under each of the type sections."""
     markdown = ["## 📖 Details per dependency type"]
     for title in section_titles:
@@ -27,9 +27,9 @@ def details_chapter(*section_titles: str, subsections: tuple[str, ...] = _SUBSEC
     return "\n\n".join(markdown) + "\n"
 
 
-def chapter_without_markers() -> str:
+def _chapter_without_markers() -> str:
     """Return a details chapter with one type section that leaves the Markers subsection out."""
-    return details_chapter("Python dependencies", subsections=_SUBSECTIONS[:-1])
+    return _details_chapter("Python dependencies", subsections=_SUBSECTIONS[:-1])
 
 
 class SectionsTest(unittest.TestCase):
@@ -38,7 +38,7 @@ class SectionsTest(unittest.TestCase):
     def test_each_type_section_with_its_subsections(self):
         """Test that every type section is found, with its subsections in document order."""
         expected = {"Python dependencies": list(_SUBSECTIONS), "Docker images": list(_SUBSECTIONS)}
-        self.assertEqual(_sections(details_chapter("Python dependencies", "Docker images")), expected)
+        self.assertEqual(_sections(_details_chapter("Python dependencies", "Docker images")), expected)
 
 
 class ProblemsTest(unittest.TestCase):
@@ -46,12 +46,12 @@ class ProblemsTest(unittest.TestCase):
 
     def test_complete_document_has_no_problems(self):
         """Test that a document whose type sections all carry the expected subsections is reported as sound."""
-        self.assertEqual(_problems(details_chapter("Python dependencies", "Docker images")), [])
+        self.assertEqual(_problems(_details_chapter("Python dependencies", "Docker images")), [])
 
     def test_missing_subsection_is_reported(self):
         """Test that a type section without one of the subsections is reported, naming both."""
         expected = ["Python dependencies is missing the subsection 'Markers'"]
-        self.assertEqual(_problems(chapter_without_markers()), expected)
+        self.assertEqual(_problems(_chapter_without_markers()), expected)
 
     def test_document_without_type_sections_is_reported(self):
         """Test that a document with nothing to check is reported, rather than passing because nothing was found."""
@@ -65,17 +65,17 @@ class ProblemsTest(unittest.TestCase):
 
     def test_unexpected_subsection_is_reported(self):
         """Test that a type section with a subsection the other types don't have is reported, naming it."""
-        markdown = details_chapter("Python dependencies", subsections=(*_SUBSECTIONS, "Notes"))
+        markdown = _details_chapter("Python dependencies", subsections=(*_SUBSECTIONS, "Notes"))
         self.assertEqual(_problems(markdown), ["Python dependencies has an unexpected subsection 'Notes'"])
 
     def test_subsections_out_of_order_are_reported(self):
         """Test that a type section carrying the expected subsections in another order is reported."""
         swapped = (*_SUBSECTIONS[:3], _SUBSECTIONS[4], _SUBSECTIONS[3], *_SUBSECTIONS[5:])
         expected = ["Python dependencies has the subsection 'Cooldown' where 'Pinning' was expected"]
-        self.assertEqual(_problems(details_chapter("Python dependencies", subsections=swapped)), expected)
+        self.assertEqual(_problems(_details_chapter("Python dependencies", subsections=swapped)), expected)
 
 
-def dependency_type_table(header: str, *types: str) -> str:
+def _dependency_type_table(header: str, *types: str) -> str:
     """Return a table of dependency types, with the header naming what its second column answers."""
     rows = "\n".join(f"| {dependency_type} | an answer |" for dependency_type in types)
     return f"| Dependency type | {header} |\n| --- | --- |\n{rows}\n"
@@ -87,38 +87,40 @@ class TableTest(unittest.TestCase):
     def test_tables_listing_the_same_types_are_sound(self):
         """Test that every table is found with the types it lists, and that agreeing tables are reported as sound."""
         types = ("Python dependencies", "Docker images")
-        markdown = dependency_type_table("Files", *types) + "\n" + dependency_type_table("Yank check", *types)
+        markdown = _dependency_type_table("Files", *types) + "\n" + _dependency_type_table("Yank check", *types)
         self.assertEqual(_tables(markdown), {"Files": list(types), "Yank check": list(types)})
         self.assertEqual(_table_problems(markdown), [])
 
     def test_table_in_a_code_block_is_not_read(self):
         """Test that a table in a fenced code block is left out, since it is sample content rather than an answer."""
-        markdown = dependency_type_table("Files", "Python dependencies")
-        markdown += "\n```markdown\n" + dependency_type_table("Yank check", "Docker images") + "```\n"
+        markdown = _dependency_type_table("Files", "Python dependencies")
+        markdown += "\n```markdown\n" + _dependency_type_table("Yank check", "Docker images") + "```\n"
         self.assertEqual(_tables(markdown), {"Files": ["Python dependencies"]})
 
     def test_alignment_colons_in_the_separator_are_not_a_row(self):
         """Test that a separator row is skipped however it is written, so it is not compared as a dependency type."""
         aligned = "| Dependency type | Files |\n| :-------------- | :---- |\n| Python dependencies | a file |\n"
-        markdown = aligned + "\n" + dependency_type_table("Yank check", "Python dependencies")
+        markdown = aligned + "\n" + _dependency_type_table("Yank check", "Python dependencies")
         self.assertEqual(_table_problems(markdown), [])
 
     def test_missing_row_is_reported(self):
         """Test that a table leaving out a type the first table lists is reported, naming the table and the type."""
-        markdown = dependency_type_table("Files", "Python dependencies", "Docker images")
-        markdown += "\n" + dependency_type_table("Yank check", "Python dependencies")
+        markdown = _dependency_type_table("Files", "Python dependencies", "Docker images")
+        markdown += "\n" + _dependency_type_table("Yank check", "Python dependencies")
         self.assertEqual(_table_problems(markdown), ["the 'Yank check' table is missing the row 'Docker images'"])
 
     def test_unexpected_row_is_reported(self):
         """Test that a table listing a type the first table doesn't is reported, naming the table and the type."""
-        markdown = dependency_type_table("Files", "Python dependencies")
-        markdown += "\n" + dependency_type_table("Yank check", "Python dependencies", "Notes")
+        markdown = _dependency_type_table("Files", "Python dependencies")
+        markdown += "\n" + _dependency_type_table("Yank check", "Python dependencies", "Notes")
         self.assertEqual(_table_problems(markdown), ["the 'Yank check' table has an unexpected row 'Notes'"])
 
     def test_rows_out_of_order_are_reported(self):
         """Test that a table listing the same types in another order is reported, naming the row that moved."""
         types = ("Python dependencies", "Docker images")
-        markdown = dependency_type_table("Files", *types) + "\n" + dependency_type_table("Yank check", *reversed(types))
+        markdown = (
+            _dependency_type_table("Files", *types) + "\n" + _dependency_type_table("Yank check", *reversed(types))
+        )
         expected = ["the 'Yank check' table has the row 'Docker images' where 'Python dependencies' was expected"]
         self.assertEqual(_table_problems(markdown), expected)
 
@@ -150,7 +152,7 @@ class AnchorTest(unittest.TestCase):
 
     def document(self, link: str) -> str:
         """Return a sound details chapter followed by a paragraph carrying the link."""
-        return f"{details_chapter('Python dependencies')}\nSee [the details]({link}).\n"
+        return f"{_details_chapter('Python dependencies')}\nSee [the details]({link}).\n"
 
     def test_comment_in_a_code_block_provides_no_anchor(self):
         """Test that a comment in a fenced code block is not read as a heading, so a link can't resolve against it."""
@@ -186,9 +188,9 @@ class MainTest(unittest.TestCase):
 
     def test_sound_document_passes_silently(self):
         """Test that a document without problems is not reported and exits zero."""
-        self.assertEqual(self.run_main(details_chapter("Python dependencies")), (0, ""))
+        self.assertEqual(self.run_main(_details_chapter("Python dependencies")), (0, ""))
 
     def test_problem_is_reported_with_the_path_it_was_found_in(self):
         """Test that a problem is reported with the path of the document it was found in, and exits non-zero."""
         expected = "docs/README.md.in: Python dependencies is missing the subsection 'Markers'\n"
-        self.assertEqual(self.run_main(chapter_without_markers()), (1, expected))
+        self.assertEqual(self.run_main(_chapter_without_markers()), (1, expected))

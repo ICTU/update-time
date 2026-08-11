@@ -23,7 +23,7 @@ _LOG = get_logger("package.json")
 _LOCKFILES = {"pnpm-lock.yaml": "pnpm", "yarn.lock": "yarn", "bun.lockb": "bun"}
 
 
-def package_manager(package_json: Path) -> str:
+def _package_manager(package_json: Path) -> str:
     """Return the name of the project's package manager (npm, pnpm, yarn, bun), defaulting to npm.
 
     The corepack `packageManager` field (e.g. `"pnpm@9.15.0"`) is authoritative; otherwise a sibling lockfile is
@@ -41,7 +41,7 @@ def update_package_jsons() -> None:
     """Find all package.json files and update each with its (supported) package manager, skipping the rest."""
     supported = []
     for package_json in glob("package.json"):
-        if (manager := node.SUPPORTED_MANAGERS.get(name := package_manager(package_json))) is None:
+        if (manager := node.SUPPORTED_MANAGERS.get(name := _package_manager(package_json))) is None:
             _LOG.unsupported_package_manager(package_json, name, " and ".join(node.SUPPORTED_MANAGERS))
         else:
             manager.update_package_json(package_json)

@@ -201,12 +201,12 @@ def sentence_complexity(sentence: str) -> int:
     return complexity
 
 
-def sentence_words(sentence: str) -> int:
+def _sentence_words(sentence: str) -> int:
     """Return how many words the sentence has, a run of inline code counting as one and a link as its own text."""
     return len(_drop_markup(sentence, "code").split())
 
 
-def sentence_density(complexity: int, words: int) -> float:
+def _sentence_density(complexity: int, words: int) -> float:
     """Return the asides and clause joins per word, or zero for a sentence too short to read a ratio off.
 
     Complexity starts at one, so it is the count above that which the ratio measures.
@@ -216,13 +216,13 @@ def sentence_density(complexity: int, words: int) -> float:
 
 def _faults(sentence: str, max_complexity: int, max_words: int, max_density: float) -> str:
     """Return what makes the sentence hard to read, or empty when nothing does."""
-    complexity, words = sentence_complexity(sentence), sentence_words(sentence)
+    complexity, words = sentence_complexity(sentence), _sentence_words(sentence)
     faults = []
     if complexity > max_complexity:
         faults.append(f"complexity {complexity}")
     if words > max_words:
         faults.append(f"{words} words")
-    if (density := sentence_density(complexity, words)) > max_density:
+    if (density := _sentence_density(complexity, words)) > max_density:
         faults.append(f"{density:.2f} complexity-density")
     return " and ".join(faults)
 

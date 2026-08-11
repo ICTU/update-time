@@ -1,69 +1,122 @@
 """Shared test helpers."""
 
+import ast
+import contextlib
+import importlib
+import pathlib
+import pkgutil
+import tempfile
 import unittest
+from functools import cache
 from http import HTTPStatus
 from logging import DEBUG, ERROR, WARNING
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 from unittest.mock import ANY, Mock, call, patch
 
+import update_time
 from update_time.domain.bound import NewVersionGetter, Verb, VersionBound, parse_bound
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import DependencyVersion, VersionString
 from update_time.domain.vulnerability import NO_RISK_LEVEL, WARN_VULNERABILITY_LEVEL, Vulnerability
 from update_time.io.log import Logger, LogMessage, reset_changelog_suppression
 from update_time.primitives.location import Location
-from update_time.sources.docker_hub import api_headers as docker_hub_headers
-from update_time.sources.github import _get_commit as github_get_commit
-from update_time.sources.github import _list_releases as github_list_release
-from update_time.sources.github import _list_tags as github_list_tags
-from update_time.sources.github import get_latest_version as github_get_latest_version
-from update_time.sources.npmjs import _package_metadata as npmjs_package_metadata
-from update_time.sources.npmjs import get_changes as npmjs_get_changes
-from update_time.sources.npmjs import get_publication_datetime as npmjs_get_publication_datetime
-from update_time.sources.oci import _get_tag as oci_get_tag
-from update_time.sources.oci import _registry_token as oci_registry_token
-from update_time.sources.oci import _tag_names as oci_tag_names
-from update_time.sources.pypi import project_metadata as pypi_project_metadata
-from update_time.sources.pypi import release_metadata as pypi_release_metadata
 
 from tests.helpers import mock_response, patch_environ
 from tests.update_time.fixtures import COMMIT_SHA
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Generator, Iterator, Mapping, Sequence
     from pathlib import Path
+    from types import ModuleType
     from unittest.mock import _Call, _patch
 
     from update_time.domain.drift import DriftedPin
 
 
+def _module_level_assignments(tree: ast.Module) -> Iterator[tuple[list[ast.expr], ast.expr | None]]:
+    """Yield the targets and assigned value of each module-level assignment, annotated or not.
+
+    An annotation without a value (`NAME: int`) assigns nothing, so its value is None.
+    """
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            yield node.targets, node.value
+        elif isinstance(node, ast.AnnAssign):
+            yield [node.target], node.value
+
+
+@contextlib.contextmanager
+def _project(files: dict[str, str]) -> Generator[str]:
+    """Yield the path of a directory holding the given files, so a rule or a check has a project to scan.
+
+    Both are exercised against a project written for the purpose, since the tree they normally scan holds no
+    violation to find. Each key is a path relative to the directory, and the folders it names are created.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        for name, source in files.items():
+            path = pathlib.Path(directory) / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(source)
+        yield directory
+
+
+class _Cached(Protocol):
+    """A function whose results are cached, as `functools.cache` returns one, wrapping the function it caches."""
+
+    __wrapped__: object
+
+    def cache_clear(self) -> None:
+        """Empty the cache, so what one test cached is not served to the next."""
+
+
+@cache
+def _package_modules(package: ModuleType) -> tuple[ModuleType, ...]:
+    """Return the package and every module within it, walked once and remembered.
+
+    Walking reads the filesystem, which is too slow to repeat before each of the hundreds of tests that clear the
+    caches. What each module holds is read afresh every time, so a cache added to one is still found. This cache
+    survives the clearing itself as long as the module defining it sits outside `package`.
+    """
+    prefix = f"{package.__name__}."
+    return (
+        package,
+        *(importlib.import_module(found.name) for found in pkgutil.walk_packages(package.__path__, prefix)),
+    )
+
+
+def _all_cached_functions(package: ModuleType) -> list[_Cached]:
+    """Return every cached function the package's modules define, the package's own included.
+
+    Every module is scanned because `_cached_functions` attributes each cache to the module defining it, so a
+    module left out takes its caches with it.
+    """
+    return [function for module in _package_modules(package) for function in _cached_functions(module)]
+
+
+def _cached_functions(module: ModuleType) -> list[_Cached]:
+    """Return the cached functions the module defines, recognised by the `cache_clear` their decorator adds.
+
+    A cached function the module imported is left to the module defining it, so that scanning every module clears
+    each cache once.
+    """
+    return [
+        value
+        for value in vars(module).values()
+        if hasattr(value, "cache_clear") and getattr(value, "__module__", None) == module.__name__
+    ]
+
+
 class CacheClearingTestCase(unittest.TestCase):
     """Base test case that resets global state before each test to prevent cross-test leakage.
 
-    This clears the functools caches and the loggers' changelog-suppression state. This is the single place
-    where the cached functions need to be listed. Add new @cache'd functions here.
+    This clears the functools caches and the loggers' changelog-suppression state. The caches are discovered by
+    scanning the package, so adding a `@cache` to a source module needs nothing added here.
     """
-
-    CACHES = (
-        docker_hub_headers,
-        oci_get_tag,
-        oci_registry_token,
-        oci_tag_names,
-        github_get_commit,
-        github_get_latest_version,
-        github_list_release,
-        github_list_tags,
-        npmjs_get_changes,
-        npmjs_get_publication_datetime,
-        npmjs_package_metadata,
-        pypi_project_metadata,
-        pypi_release_metadata,
-    )
 
     def setUp(self) -> None:
         """Clear all caches and logger state so each test gets fresh results."""
         super().setUp()
-        for cached_function in self.CACHES:
+        for cached_function in _all_cached_functions(update_time):
             cached_function.cache_clear()
         reset_changelog_suppression()
 
@@ -441,7 +494,7 @@ def github_commits_json(sha: str = COMMIT_SHA, date: str = "") -> dict[str, obje
     return {"sha": sha, **({"commit": {"committer": {"date": date}}} if date else {})}
 
 
-def github_api(
+def _github_api(
     releases: list | None = None, tags: list | None = None, commit: Mapping | Mock | Exception | None = None
 ) -> Mock:
     """Return a requests.get mock that serves the GitHub releases, tags, and commits endpoints from the arguments.
@@ -470,8 +523,8 @@ def github_api(
 def patch_github(
     releases: list | None = None, tags: list | None = None, commit: Mapping | Mock | Exception | None = None
 ) -> _patch:
-    """Patch requests.get to serve the GitHub API endpoints from the given values (see `github_api`)."""
-    return patch("requests.get", github_api(releases, tags, commit))
+    """Patch requests.get to serve the GitHub API endpoints from the given values (see `_github_api`)."""
+    return patch("requests.get", _github_api(releases, tags, commit))
 
 
 def jsdelivr_versions(*version_strings: str) -> Mock:
@@ -519,7 +572,7 @@ def osv_vulnerability(advisory: str, summary: str, level: str) -> tuple[dict[str
 DJANGO_ADVISORY, DJANGO_VULNERABILITY = osv_vulnerability("GHSA-2gwj-7jmv-h26r", "SQL Injection in Django", "critical")
 
 
-def osv_response(*advisories: dict[str, object]) -> Mock:
+def _osv_response(*advisories: dict[str, object]) -> Mock:
     """Return a mock OSV response listing the advisories that affect a version."""
     return mock_response({"vulns": list(advisories)})
 
@@ -533,7 +586,7 @@ def osv_api(*advisories: dict[str, object]) -> Mock:
 
     def serve(url: str, **kwargs: object) -> Mock:
         if not url.endswith("/querybatch"):
-            return osv_response(*advisories)
+            return _osv_response(*advisories)
         queries = cast("dict[str, list]", kwargs["json"])["queries"]
         affected = {"vulns": [{"id": advisory["id"]} for advisory in advisories]} if advisories else {}
         return mock_response({"results": [affected for _query in queries]})

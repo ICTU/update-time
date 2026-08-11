@@ -138,7 +138,7 @@ def _workspace_includes(root_dir: Path, workspace: dict, project_dir: Path) -> b
 _TREE_PREFIX = re.compile(r"^[\s│├└─|]*")
 
 
-def parse_line_with_update(line: str) -> tuple[str, str]:
+def _parse_line_with_update(line: str) -> tuple[str, str]:
     """Parse the package name and latest version from a `uv tree --outdated` line, e.g. '├── package (latest: v1.1)'."""
     fields = _TREE_PREFIX.sub("", line).split()
     return fields[0], fields[-1].lstrip("v").rstrip(")")
@@ -159,13 +159,13 @@ def _update_dependencies(uv_tree: Command, path: Path, log: Logger) -> bool:
         return False
     lines_with_updates = [line for line in outdated.stdout.splitlines() if " (latest: " in line]
     for line in lines_with_updates:
-        package, version = parse_line_with_update(line)
+        package, version = _parse_line_with_update(line)
         changes = get_changes(package, version)
         published = get_publication_datetime(package, version)
         dependency_version = DependencyVersion(version, changes, published=published)
         # uv owns the rewrite, so no per-dependency line is surfaced: report the manifest without a line number.
         log.new_version(package, dependency_version, Location(path))
-    latest_versions = dict(parse_line_with_update(line) for line in lines_with_updates)
+    latest_versions = dict(_parse_line_with_update(line) for line in lines_with_updates)
     pyproject_toml_format.rewrite_pinned_versions(path, latest_versions)
     return True
 

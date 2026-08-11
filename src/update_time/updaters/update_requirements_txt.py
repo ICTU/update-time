@@ -31,7 +31,7 @@ _REQUIREMENT_RE = (
 _REQUIREMENTS_GLOB_PATTERNS = ("requirements.txt", "requirements-*.txt", "*-requirements.txt", "requirements/*.txt")
 
 
-def update_requirements_txt(requirements_txt: Path) -> None:
+def _update_requirements_txt(requirements_txt: Path) -> None:
     """Update the exact pins in a single requirements file, unless it is compiled or locked."""
     if requirements_txt_format.is_compiled(requirements_txt):
         _LOG.skipped(requirements_txt, "compiled or hash-pinned requirements file")
@@ -44,7 +44,7 @@ def update_requirements_txts() -> None:
     """Find all requirements files and update the exact pins in them."""
     requirements_files = set(glob(*_REQUIREMENTS_GLOB_PATTERNS, case_sensitive=True))
     for requirements_txt in requirements_files:
-        update_requirements_txt(requirements_txt)
+        _update_requirements_txt(requirements_txt)
 
 
 def main() -> None:  # pragma: no cover

@@ -30,20 +30,20 @@ class Ecosystem(StrEnum):
     NPM = "npm"
 
 
-class Severity(TypedDict):
+class _Severity(TypedDict):
     """A severity an advisory reports, as a CVSS vector string of the named version."""
 
     type: str
     score: str
 
 
-class Record(TypedDict):
+class _Record(TypedDict):
     """One database's OSV record: what it is about, how bad its reviewers judged it to be, and what else names it."""
 
     id: str
     aliases: NotRequired[list[str]]
     summary: NotRequired[str]
-    severity: NotRequired[list[Severity]]
+    severity: NotRequired[list[_Severity]]
     database_specific: NotRequired[dict[str, str]]
 
 
@@ -113,7 +113,7 @@ def _reported_vulnerabilities(reference: Reference, ecosystem: Ecosystem) -> lis
     return _folded([_vulnerability(record) for record in response.json().get("vulns", [])])
 
 
-def _vulnerability(record: Record) -> Vulnerability:
+def _vulnerability(record: _Record) -> Vulnerability:
     """Return the vulnerability the advisory record reports."""
     return Vulnerability(
         record["id"],
@@ -149,7 +149,7 @@ def _query(reference: Reference, ecosystem: Ecosystem) -> dict[str, object]:
     return {"package": package, "version": reference.current_version}
 
 
-def _risk_level(record: Record) -> str:
+def _risk_level(record: _Record) -> str:
     """Return the record's risk level, or no level at all when it reports none Update-time can read.
 
     A record GitHub reviewed states its level, upper-case, where Update-time reads it as the lower-case word the
@@ -161,7 +161,7 @@ def _risk_level(record: Record) -> str:
     return _banded_risk_level(record)
 
 
-def _banded_risk_level(record: Record) -> str:
+def _banded_risk_level(record: _Record) -> str:
     """Return the level the newest CVSS vector the record carries bands into, or none when it carries none."""
     vectors = {severity["type"]: severity["score"] for severity in record.get("severity", [])}
     for version, cvss in _CVSS_VERSIONS:

@@ -78,14 +78,14 @@ def _repository_urls(project_urls: dict[str, str]) -> list[str]:
     return [url for _, url in sorted(project_urls.items(), key=lambda item: _repository_rank(item[0]))]
 
 
-class Distribution(TypedDict):
+class _Distribution(TypedDict):
     """A distribution file uploaded for a PyPI release."""
 
     upload_time_iso_8601: str
     yanked: NotRequired[bool]
 
 
-class Info(TypedDict):
+class _Info(TypedDict):
     """PyPI release info."""
 
     description: str
@@ -96,8 +96,8 @@ class Info(TypedDict):
 class Release(TypedDict):
     """PyPI release metadata."""
 
-    info: Info
-    urls: list[Distribution]
+    info: _Info
+    urls: list[_Distribution]
 
 
 @cache
@@ -108,7 +108,7 @@ def release_metadata(package: str, version: str) -> Release | None:
 
 
 @cache
-def project_metadata(package: str) -> dict:
+def _project_metadata(package: str) -> dict:
     """Get the package's metadata from PyPI's Index API, or an empty dict if it can't be fetched.
 
     Uses the Index (Simple) API rather than the project JSON API's `releases` key, which is deprecated. See
@@ -123,7 +123,7 @@ def project_metadata(package: str) -> dict:
 
 def _project_versions(package: str) -> list[str]:
     """Get all version strings of a package from PyPI's Index API, or an empty list if they can't be fetched."""
-    return project_metadata(package).get("versions", [])
+    return _project_metadata(package).get("versions", [])
 
 
 def newest_publication_date(package: str) -> datetime | None:
@@ -133,11 +133,11 @@ def newest_publication_date(package: str) -> datetime | None:
     published anything at all. It is taken over every file (any version, including pre-releases), so a project
     that recently shipped a pre-release or a back-ported patch still counts as active and is not flagged as stale.
     """
-    files = project_metadata(package).get("files", [])
+    files = _project_metadata(package).get("files", [])
     return newest_timestamp(file.get("upload-time") for file in files)
 
 
-def _release_datetime(urls: list[Distribution]) -> datetime | None:
+def _release_datetime(urls: list[_Distribution]) -> datetime | None:
     """Return the latest upload datetime of a release's distribution files, or None if there are none."""
     return newest_timestamp(url["upload_time_iso_8601"] for url in urls)
 
@@ -184,7 +184,7 @@ def _yank_state(package: str, version: str) -> Yank:
     yanked when one of its files is. Files whose name doesn't parse to a version are skipped.
     """
     pinned = Version(version)
-    for file in project_metadata(package).get("files", []):
+    for file in _project_metadata(package).get("files", []):
         yanked = file.get("yanked")
         if yanked and _distribution_version(file.get("filename", "")) == pinned:
             return Yank(yanked=True, reason=yanked if isinstance(yanked, str) else "")

@@ -35,7 +35,7 @@ _GITHUB_API = "https://api.github.com/repos"
 _PER_PAGE = 100
 
 
-class ReleaseJSON(TypedDict):
+class _ReleaseJSON(TypedDict):
     """A release from the GitHub releases endpoint."""
 
     tag_name: str
@@ -45,36 +45,36 @@ class ReleaseJSON(TypedDict):
     published_at: str | None  # None for a draft, which hasn't been published
 
 
-class TaggedCommit(TypedDict):
+class _TaggedCommit(TypedDict):
     """The commit a tag points to, in a GitHub tags endpoint result."""
 
     sha: str
 
 
-class TagJSON(TypedDict):
+class _TagJSON(TypedDict):
     """A tag from the GitHub tags endpoint."""
 
     name: str
-    commit: TaggedCommit
+    commit: _TaggedCommit
 
 
-class Committer(TypedDict):
+class _Committer(TypedDict):
     """The committer of the git commit in a GitHub commits endpoint result."""
 
     date: NotRequired[str]
 
 
-class GitCommit(TypedDict):
+class _GitCommit(TypedDict):
     """The git commit inside a GitHub commits endpoint result."""
 
-    committer: Committer | None
+    committer: _Committer | None
 
 
-class CommitJSON(TypedDict):
+class _CommitJSON(TypedDict):
     """A commit from the GitHub commits endpoint."""
 
     sha: str
-    commit: NotRequired[GitCommit]
+    commit: NotRequired[_GitCommit]
 
 
 @total_ordering
@@ -97,7 +97,7 @@ class TaggedVersion:
     has_release: bool = True  # False for a version that was tagged but not published as a GitHub release
 
     @classmethod
-    def from_release(cls, owner: str, repository: str, release: ReleaseJSON) -> TaggedVersion:
+    def from_release(cls, owner: str, repository: str, release: _ReleaseJSON) -> TaggedVersion:
         """Create a TaggedVersion from a GitHub releases endpoint result."""
         return cls(
             owner=owner,
@@ -110,7 +110,7 @@ class TaggedVersion:
         )
 
     @classmethod
-    def from_tag(cls, owner: str, repository: str, tag: TagJSON, release: ReleaseJSON | None) -> TaggedVersion:
+    def from_tag(cls, owner: str, repository: str, tag: _TagJSON, release: _ReleaseJSON | None) -> TaggedVersion:
         """Create a TaggedVersion from a GitHub tags endpoint result, enriched with the tag's release when there is one.
 
         The tags endpoint lists each tag's commit SHA, so a version that came in as a tag never needs the commits
@@ -230,7 +230,7 @@ def github_owner_and_repository(url: str) -> tuple[str, str]:
 
 
 @cache
-def _list_releases(owner: str, repository: str) -> tuple[ReleaseJSON, ...] | None:
+def _list_releases(owner: str, repository: str) -> tuple[_ReleaseJSON, ...] | None:
     """Fetch the GitHub releases for a repo, or None when they couldn't be fetched.
 
     An empty tuple means the repo was reached but has no releases; None means the fetch itself failed (already
@@ -242,7 +242,7 @@ def _list_releases(owner: str, repository: str) -> tuple[ReleaseJSON, ...] | Non
 
 
 @cache
-def _list_tags(owner: str, repository: str) -> tuple[TagJSON, ...] | None:
+def _list_tags(owner: str, repository: str) -> tuple[_TagJSON, ...] | None:
     """Fetch the GitHub tags for a repo, or None when they couldn't be fetched.
 
     Mirrors `_list_releases`: an empty tuple means the repo was reached but has no tags; None means the fetch
@@ -254,7 +254,7 @@ def _list_tags(owner: str, repository: str) -> tuple[TagJSON, ...] | None:
 
 
 @cache
-def _get_commit(owner: str, repository: str, ref: str) -> tuple[CommitJSON | None, str]:
+def _get_commit(owner: str, repository: str, ref: str) -> tuple[_CommitJSON | None, str]:
     """Fetch the commit for the ref (a tag name or commit SHA): the commit and an empty string, or None and why not.
 
     Shared by the commit-SHA lookup for a release and the committer-date lookup for a tag without a release, so a
@@ -363,7 +363,7 @@ def _eligible_version(tagged_version: TaggedVersion, cooldown_days: int) -> Depe
     return DependencyVersion(str(tagged_version.version), tagged_version.body, sha, published)
 
 
-def _newest_tag_beyond_releases(owner: str, repository: str) -> TagJSON | None:
+def _newest_tag_beyond_releases(owner: str, repository: str) -> _TagJSON | None:
     """Return the highest-versioned tag when it runs ahead of every dated release, or None.
 
     This decides whether the repo's newest activity might be a tag rather than a release, so that

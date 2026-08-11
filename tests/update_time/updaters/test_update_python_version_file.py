@@ -17,7 +17,7 @@ from tests.update_time.helpers import LoggingTestCase, docker_tag, mock_docker_h
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
 
 
-def python_tag(last_pushed: str | None = None) -> dict[str, object]:
+def _python_tag(last_pushed: str | None = None) -> dict[str, object]:
     """Return a Docker Hub `python:3.13.2` tag with a digest, and optionally a push date, for the fallback tests."""
     return docker_tag("3.13.2", DIGEST, **({"tag_last_pushed": last_pushed} if last_pushed else {}))
 
@@ -209,7 +209,7 @@ class UpdatePythonVersionFilesFallbackTest(RegistryRequestsMixin, LoggingTestCas
         """Test the full Docker Hub fallback path: the entry follows the latest `python` tag, resolved for real."""
         version_file = self.create_version_file()
         mock_glob.return_value = [version_file]
-        self.requests.side_effect = mock_docker_registry(python_tag())
+        self.requests.side_effect = mock_docker_registry(_python_tag())
         update_python_version_files()
         version_file.write_text.assert_called_once_with("3.13.2\n")
         self.assert_new_version_logged("python", "3.13.2", Location(version_file, 1))
@@ -220,7 +220,7 @@ class UpdatePythonVersionFilesFallbackTest(RegistryRequestsMixin, LoggingTestCas
         old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
         version_file = self.create_version_file("3.13.2\n")
         mock_glob.return_value = [version_file]
-        self.requests.side_effect = mock_docker_registry(python_tag(last_pushed=old))
+        self.requests.side_effect = mock_docker_registry(_python_tag(last_pushed=old))
         update_python_version_files()
         version_file.write_text.assert_not_called()
         self.assert_stale_dependency_logged("python", "3.13.2", Location(version_file, 1))
