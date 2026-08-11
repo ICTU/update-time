@@ -1,5 +1,6 @@
 """npmjs."""
 
+import re
 from datetime import datetime
 from functools import cache
 
@@ -18,16 +19,30 @@ _REGISTRY = "https://registry.npmjs.org"
 _TIME_BOOKKEEPING_KEYS = frozenset({"created", "modified"})
 
 
-def _repository_url(metadata: dict) -> str:
-    """Return the repository URL from npm package metadata, tolerating a missing field or the string shorthand.
+_GITHUB_URL = "https://github.com/"
+# Matches `github:` in npm's `github:owner/repo` host shorthand.
+_HOST_SHORTHAND_RE = re.compile(r"^github:")
+# Matches npm's bare `owner/repo` shorthand in full, e.g. `bower/bower`. A git URL and git's scp-like
+# `git@github.com:owner/repo` never match, since `@` and `:` are outside the character class.
+_BARE_SHORTHAND_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
 
-    npm's `repository` may be an object (`{"url": ...}`), a string shorthand (`"github:org/repo"`, a git URL), or
-    absent. Any resulting string is handed to `github_owner_and_repository`, which resolves the ones it recognizes.
+
+def _expanded_shorthand(url: str) -> str:
+    """Return npm's `github:owner/repo` and bare `owner/repo` shorthands as GitHub URLs, leaving others unchanged."""
+    if _BARE_SHORTHAND_RE.match(url):
+        return f"{_GITHUB_URL}{url}"
+    return _HOST_SHORTHAND_RE.sub(_GITHUB_URL, url)
+
+
+def _repository_url(metadata: dict) -> str:
+    """Return the repository URL from npm package metadata, tolerating a missing field or one of npm's shorthands.
+
+    npm's `repository` may be an object (`{"url": ...}`), a string holding a git URL or one of npm's shorthands, or
+    absent. A shorthand is expanded to a GitHub URL; a missing or unreadable field yields an empty string.
     """
     repository = metadata.get("repository", "")
-    if isinstance(repository, dict):
-        return repository.get("url", "")
-    return repository if isinstance(repository, str) else ""
+    url = repository.get("url", "") if isinstance(repository, dict) else repository
+    return _expanded_shorthand(url) if isinstance(url, str) else ""
 
 
 @cache

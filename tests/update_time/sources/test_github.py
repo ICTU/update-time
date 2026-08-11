@@ -64,35 +64,41 @@ class GitHubURLtoRawTest(unittest.TestCase):
 class GitHubOwnerAndRepositoryTest(unittest.TestCase):
     """Unit tests for the GitHub owner and repository parse function."""
 
+    def assert_owner_and_repository(self, expected: tuple[str, str], *urls: str) -> None:
+        """Assert that each URL parses to the expected owner and repository."""
+        for url in urls:
+            with self.subTest(url=url):
+                self.assertEqual(github_owner_and_repository(url), expected)
+
     def test_non_github_url(self):
-        """Test that non-GitHub URLs return an empty owner and repository."""
-        self.assertEqual(github_owner_and_repository("https://example.org"), ("", ""))
+        """Test that a non-GitHub URL returns an empty owner and repository, scp-like ssh URLs included."""
+        self.assert_owner_and_repository(("", ""), "https://example.org", "git@gitlab.com:ICTU/update-time.git")
 
     def test_github_url(self):
         """Test that a GitHub URL returns an owner and repository."""
-        self.assertEqual(github_owner_and_repository("https://github.com/ICTU/quality-time"), ("ICTU", "quality-time"))
+        self.assert_owner_and_repository(("ICTU", "quality-time"), "https://github.com/ICTU/quality-time")
 
     def test_github_url_without_repo(self):
         """Test that a GitHub URL returns an empty owner and repository if the repository is missing."""
-        self.assertEqual(github_owner_and_repository("https://github.com/ICTU"), ("", ""))
+        self.assert_owner_and_repository(("", ""), "https://github.com/ICTU")
 
     def test_npm_git_url(self):
         """Test that an npm-style git+https URL with a .git suffix is parsed."""
-        self.assertEqual(
-            github_owner_and_repository("git+https://github.com/ICTU/update-time.git"), ("ICTU", "update-time")
-        )
+        self.assert_owner_and_repository(("ICTU", "update-time"), "git+https://github.com/ICTU/update-time.git")
 
     def test_npm_ssh_url(self):
         """Test that an npm-style git+ssh URL, whose user information precedes the host, is parsed."""
-        self.assertEqual(
-            github_owner_and_repository("git+ssh://git@github.com/ICTU/update-time.git"), ("ICTU", "update-time")
+        self.assert_owner_and_repository(("ICTU", "update-time"), "git+ssh://git@github.com/ICTU/update-time.git")
+
+    def test_scp_like_ssh_url(self):
+        """Test that the scp-like ssh form is parsed, with and without the `.git` suffix."""
+        self.assert_owner_and_repository(
+            ("ICTU", "update-time"), "git@github.com:ICTU/update-time.git", "git@github.com:ICTU/update-time"
         )
 
     def test_url_with_fragment(self):
         """Test that a URL with a trailing fragment (as npm uses) is parsed."""
-        self.assertEqual(
-            github_owner_and_repository("https://github.com/ICTU/update-time#readme"), ("ICTU", "update-time")
-        )
+        self.assert_owner_and_repository(("ICTU", "update-time"), "https://github.com/ICTU/update-time#readme")
 
 
 class GetLatestVersionTest(LoggingTestCase):
