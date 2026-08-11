@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Changed
+
+- Remove the column that named the Update-time module each log line came from. Closes [#230](https://github.com/ICTU/update-time/issues/230).
+
 ### Fixed
 
 - Read a GitHub repository URL in three more spellings: git's scp-like `git@github.com:owner/repo` form, npm's `github:owner/repo` host shorthand, and npm's bare `owner/repo` shorthand. A pre-commit hook whose repository uses the scp-like form is updated instead of being silently left alone. The changelog of a package whose npm `repository` uses any of the three is found instead of being reported missing. Closes [#224](https://github.com/ICTU/update-time/issues/224).

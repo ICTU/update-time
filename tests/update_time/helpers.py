@@ -165,7 +165,7 @@ class LoggingTestCase(CacheClearingTestCase):
         — a `Location` rather than its delimiter-wrapped text — and which fields carry a delimiter is asserted where
         that rendering itself is tested, in the logger's unit tests.
         """
-        return call(message, Logger._rendered(fields), stacklevel=ANY)
+        return call(message, Logger._rendered(fields))
 
     def assert_logged(self, message: LogMessage, **fields: object) -> None:
         """Assert the message was the only record logged at its level, with the given fields."""
