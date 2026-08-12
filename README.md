@@ -330,13 +330,13 @@ WARNING Yanked dependency humanize in docs/requirements.txt:12: version 4.15.0 w
 
 When no reason was given, the message reports `(reason not specified)` instead.
 
-The warning is only given when the run leaves the reference on the yanked version, because the replacement is still within the [cooldown](#-cooldown), a marker holds it back, or the yanked release is the newest one and there is nothing to move to. When the run updates away from the yanked version, the warning would be noise and is not given. A yank is never a reason to adopt a release that is too fresh to trust: the cooldown still applies, so Update-time warns and leaves the decision to update to you. A reference can also be left out of the check altogether by a marker (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
+The warning is only given when the run leaves the reference on the yanked version. This happens when the replacement is still within the [cooldown](#-cooldown), a marker holds it back, or the yanked release is the newest one and there is nothing to move to. A dependency a package manager updates stays on the yanked version for one more reason: the manager left the pin where it was. When the run updates away from the yanked version, the warning would be noise and is not given. A yank is never a reason to adopt a release that is too fresh to trust: the cooldown still applies, so Update-time warns and leaves the decision to update to you. A reference can also be left out of the check altogether by a marker (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
 
 Which dependencies are checked follows from where a yank can be observed. PyPI reports one as [PEP 592](https://peps.python.org/pep-0592/) yank metadata. On npm there is no yank, but a per-version *deprecation* is the same signal, and is reported in the same wording as one. Where a withdrawal can be observed, that version is skipped when picking a new one, and a reference left on it is warned about:
 
 | Dependency type | Yank check |
 | :-------------- | :--------- |
-| [Python dependencies](#python-dependencies) | `requirements.txt` pins, against PyPI's yank metadata; uv handles the other two file kinds |
+| [Python dependencies](#python-dependencies) | `requirements.txt`, `pyproject.toml`, and inline script metadata pins, against PyPI's yank metadata |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: npm and pnpm handle deprecated versions themselves |
 | [Node engine version](#node-engine-version-and-python-version) | none: its source has no yank concept |
 | [Python version](#node-engine-version-and-python-version) | none: its source has no yank concept |
@@ -661,7 +661,7 @@ In a PEP 723 inline script metadata block, only the pins in the `dependencies` a
 
 #### What versions are updated?
 
-Only versions specified with an exact match are updated, i.e. dependency versions pinned with `==`. Looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. A new version for such a dependency is still reported, at the file rather than at a line.
+Only versions specified with an exact match are updated, i.e. dependency versions pinned with `==`. Looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. In a `pyproject.toml` or an inline script metadata block, a new version for such a dependency is still reported; in a `requirements.txt` it is not reported at all.
 
 #### Pinning
 
@@ -677,15 +677,15 @@ For inline script metadata, Update-time also applies the cooldown through uv's `
 
 #### Stale dependencies
 
-Every Python pin is checked against the newest release of its package on PyPI, whichever of the three file kinds declares it, and a stale one is reported at the line the pin sits on.
+Every Python pin is checked against the newest release of its package on PyPI, whichever of the three file kinds declares it, and stale ones are reported.
 
 #### Yanked dependencies
 
-A `requirements.txt` pin is checked against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI: a yanked release is skipped when picking a new version, and a pin left on one is warned about. Dependencies in `pyproject.toml` and inline script metadata are not checked, because uv handles yanked releases itself.
+Each exact pin a Python file declares is checked against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI, whichever of the three file kinds it sits in. A yanked release is skipped when picking a new version: by Update-time for a `requirements.txt` pin, and by uv for the other two file kinds. The version checked is the one the file holds when the run ends, so a pin uv held back — because the project caps it, or sets an `exclude-newer` cutoff of its own — is warned about although PyPI has a newer release. A `requirements.txt` pin the run leaves on a yanked release is reported unless an `ignore[yanked]` marker silences that warning. A `pyproject.toml` or inline script metadata pin left on one is reported as well, but takes no marker, because uv rewrites it rather than Update-time.
 
 #### Vulnerable dependencies
 
-Each exact pin a Python file declares is checked against OSV's PyPI advisories, whichever of the three file kinds it sits in. A compiled or hash-pinned `requirements.txt` is the exception: Update-time skips it whole, as described under What files are updated? above, so its pins are neither updated nor checked. The transitive dependencies those pins pull in are not checked, so a vulnerability that reaches your project through one goes unreported here; reading a resolved dependency tree is what `uv audit` and `pip-audit` are for. A `requirements.txt` pin is reported at its line, and an `ignore[vulnerable]` marker silences that warning. A `pyproject.toml` or inline script metadata pin is reported at its line as well, but takes no marker, because uv rewrites it rather than Update-time rewriting its line.
+Each exact pin a Python file declares is checked against OSV's PyPI advisories, whichever of the three file kinds it sits in. A compiled or hash-pinned `requirements.txt` is the exception: Update-time skips it whole, as described under What files are updated? above, so its pins are neither updated nor checked. The transitive dependencies those pins pull in are not checked, so a vulnerability that reaches your project through one goes unreported here; reading a resolved dependency tree is what `uv audit` and `pip-audit` are for. A vulnerable `requirements.txt` pin is reported unless an `ignore[vulnerable]` marker silences that warning. A vulnerable `pyproject.toml` or inline script metadata pin is reported as well, but takes no marker, because uv rewrites it rather than Update-time.
 
 #### Markers
 
@@ -717,7 +717,7 @@ For pnpm, Update-time passes the cooldown via pnpm's `minimumReleaseAge` setting
 
 #### Stale dependencies
 
-Each dependency is checked against its newest release on the npm registry, and a stale one is reported at the line it is declared on. Dependencies given as git, file, link, workspace, alias, or GitHub-shorthand references are skipped, since they don't resolve to a registry release.
+Each dependency is checked against its newest release on the npm registry, and stale ones are reported. Dependencies given as git, file, link, workspace, alias, or GitHub-shorthand references are skipped, since they don't resolve to a registry release.
 
 #### Yanked dependencies
 
@@ -938,7 +938,7 @@ There is no yank on npm, but a per-version deprecation is the same signal, so it
 
 #### Vulnerable dependencies
 
-The version in the URL is checked against OSV's npm advisories, and a URL the run leaves on a version an advisory names is warned about at its line. An `ignore[vulnerable]` marker silences that warning.
+The version in the URL is checked against OSV's npm advisories, and a URL the run leaves on a version an advisory names is warned about unless an `ignore[vulnerable]` marker silences that warning.
 
 #### Markers
 

@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Warn about a pin left on a yanked release in a `pyproject.toml` or a PEP 723 inline script metadata block, as Update-time already does for a `requirements.txt` pin. Closes [#234](https://github.com/ICTU/update-time/issues/234).
 
 ## 0.0.26 - 2026-08-12
 
