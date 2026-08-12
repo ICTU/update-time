@@ -10,8 +10,6 @@ from update_time.updaters.update_python_inline_script_metadata import update_pyt
 from tests.helpers import mock_path, mock_response, patch_pathlib_path
 from tests.update_time.helpers import (
     LoggingTestCase,
-    no_vulnerabilities,
-    staleness_disabled,
 )
 
 if TYPE_CHECKING:
@@ -40,8 +38,10 @@ def _discovered_script(glob: Mock, spec: str) -> Mock:
     return script_file
 
 
-@no_vulnerabilities
-@staleness_disabled
+# The checks over the settled pins are stubbed out so these tests focus on the discovery/version-update flow: each
+# check makes registry requests of its own, and what they report is `test_uv_pins.py`'s to pin, while being handed
+# the scripts found is `CheckedInlineScriptPinsTest`'s below.
+@patch("update_time.updaters.update_python_inline_script_metadata.warn_about_pins", Mock())
 @patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("requests.get")
 @patch("subprocess.run")
@@ -157,7 +157,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
 class CheckedInlineScriptPinsTest(LoggingTestCase):
     """Unit test for handing the discovered scripts to the checks uv-delegated updaters share.
 
-    What those checks then report is `WarnAboutPinsTest`'s to pin; what this updater owns is running them over the
+    What those checks then report is `test_uv_pins.py`'s to pin; what this updater owns is running them over the
     scripts it found, once uv has settled their pins.
     """
 

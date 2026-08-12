@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING
 
 from update_time.domain.staleness import warn_about_stale_dependencies
+from update_time.domain.yank import warn_about_yanked_dependencies
 from update_time.file_formats import pyproject_toml as pyproject_toml_format
 from update_time.package_managers import uv
 from update_time.references.vulnerability import warn_about_vulnerable_dependencies
@@ -16,11 +17,15 @@ if TYPE_CHECKING:
 
 
 def warn_about_pins(files: Sequence[Path], log: Logger) -> None:
-    """Warn about the pins uv settled on, for the stale ones and for the vulnerable ones.
+    """Warn about the pins uv settled on, for the stale ones, the yanked ones, and the vulnerable ones.
 
-    Run after the update, so both checks read the `==` pins uv rewrote rather than the ones the file held before.
-    Stating the pair here is what keeps a file kind uv updates from being given one check and not the other. The
-    files are a sequence rather than an iterable, since each check walks them again.
+    Run after the update, so each check reads the `==` pins uv rewrote rather than the ones the file held before.
+    Stating the set here is what keeps a file kind uv updates from being given one check and not the others. The
+    files are a sequence rather than an iterable, since each check walks them again. The staleness check reads each
+    pin's newest release, while the yank check reads the release the pin itself names, since that is the one the run
+    leaves the pin on. Both read the package's PyPI index, which is cached for the run, so the second to run costs
+    no request of its own.
     """
     warn_about_stale_dependencies(files, uv.newest_pypi_releases, log.warn_if_stale)
+    warn_about_yanked_dependencies(files, uv.pinned_pypi_releases, log.warn_if_yanked)
     warn_about_vulnerable_dependencies(files, pyproject_toml_format.pinned_versions, Ecosystem.PYPI, log)

@@ -483,9 +483,10 @@ mock_docker_hub_auth = patch("requests.post", Mock(return_value=mock_response({"
 staleness_disabled = patch_environ({STALE_AFTER.name: "0"})
 
 
-def pyproject(spec: str) -> str:
-    """Return a minimal valid pyproject.toml pinning the given dependency."""
-    return f'[project]\ndependencies = ["{spec}"]\n'
+def pyproject(*specs: str) -> str:
+    """Return a minimal valid pyproject.toml pinning the given dependencies, in one dependencies array."""
+    dependencies = ", ".join(f'"{spec}"' for spec in specs)
+    return f"[project]\ndependencies = [{dependencies}]\n"
 
 
 def github_release_json(tag_name: str, **extra: object) -> dict[str, object]:

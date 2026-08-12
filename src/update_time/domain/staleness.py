@@ -35,9 +35,9 @@ def warn_about_stale_dependencies(
 ) -> None:
     """Run the staleness pass shared by the updaters that delegate to a package manager.
 
-    Delegating to uv, npm, or pnpm means never calling a source per dependency, so these updaters make their own
-    pass. Each dependency is located by the resolver that read it back from the file, which is the only party that
-    knows where in the file it sits. The threshold is the global one, which a delegated dependency has no marker to
+    An updater that delegates the update never calls a source per dependency, so it makes this pass itself. Each
+    dependency is located by the resolver that read it back from the file, which is the only party that knows where
+    in the file it sits. The threshold is the global one, which a delegated dependency has no marker to
     override. Skipped entirely when the check is disabled, so the resolver never runs and makes no registry request.
     Callback-driven so `domain` stays free of I/O.
     """

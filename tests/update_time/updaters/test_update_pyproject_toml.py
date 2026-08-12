@@ -13,9 +13,7 @@ from tests.update_time.helpers import (
     LoggingTestCase,
     github_commits_json,
     github_release_json,
-    no_vulnerabilities,
     pyproject,
-    staleness_disabled,
 )
 
 if TYPE_CHECKING:
@@ -31,10 +29,9 @@ def _discovered_pyproject_toml(glob: Mock, spec: str) -> Mock:
 
 # Persisting the cooldown into config is exercised by the uv package manager's tests; stub it out here so these tests
 # focus on the discovery/version-update flow (and don't try to write config to the mock pyproject.toml files). The
-# staleness pass is disabled here (it makes its own PyPI requests) and OSV answers with no advisory; each has its own
-# tests in StaleDependencyTest and VulnerableDependencyTest below.
-@no_vulnerabilities
-@staleness_disabled
+# checks over the settled pins are stubbed out for the same reason: each makes registry requests of its own, and
+# what they report is `test_uv_pins.py`'s to pin, while being handed the files found is `CheckedPinsTest`'s below.
+@patch("update_time.updaters.update_pyproject_toml.warn_about_pins", Mock())
 @patch("update_time.package_managers.uv.configure_cooldown", Mock())
 @patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("requests.get")
@@ -280,7 +277,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 class CheckedPinsTest(LoggingTestCase):
     """Unit test for handing the discovered manifests to the checks uv-delegated updaters share.
 
-    What those checks then report is `WarnAboutPinsTest`'s to pin; what this updater owns is running them over the
+    What those checks then report is `test_uv_pins.py`'s to pin; what this updater owns is running them over the
     files it found, once uv has settled their pins.
     """
 

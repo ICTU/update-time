@@ -17,7 +17,7 @@ from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
-from update_time.sources.pypi import get_changes, get_latest_version, get_publication_datetime
+from update_time.sources.pypi import get_changes, get_latest_version, get_publication_datetime, yank_state
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -252,6 +252,17 @@ def newest_pypi_releases(path: Path) -> Iterable[tuple[DependencyName, Dependenc
         )
         for reference, location in pyproject_toml_format.pinned_versions(path)
     )
+
+
+def pinned_pypi_releases(path: Path) -> Iterable[tuple[DependencyName, DependencyVersion, Location]]:
+    """Yield each exact `==` pin in the file as a (name, the release the pin names, location of the pin) triple.
+
+    The release carries the yank state PyPI reports for it. Its version is the one the file records rather than the
+    newest PyPI offers, so it is the version the run leaves the pin on, whichever version uv settled the pin on.
+    """
+    for reference, location in pyproject_toml_format.pinned_versions(path):
+        yank = yank_state(reference.dependency, reference.current_version)
+        yield reference.dependency, DependencyVersion(reference.current_version, yank=yank), location
 
 
 def update_uv_lock(pyproject_toml: Path) -> None:

@@ -173,16 +173,19 @@ def get_latest_version(
     # When the run leaves the reference on its current version, attach that version's yank state so a pin left on a
     # yanked release can be warned about; whether to warn is decided by `warn_if_yanked` where it would be logged.
     if latest.version == current_version:
-        latest = replace(latest, yank=_yank_state(package, current_version))
+        latest = replace(latest, yank=yank_state(package, current_version))
     return latest
 
 
-def _yank_state(package: str, version: str) -> Yank:
+def yank_state(package: str, version: str) -> Yank:
     """Return the version's yank state (PEP 592).
 
     The Index API lists each distribution file's yank state (`false`, `true`, or the reason string); a version is
-    yanked when one of its files is. Files whose name doesn't parse to a version are skipped.
+    yanked when one of its files is. Files whose name doesn't parse to a version are skipped. A version that doesn't
+    parse is reported unyanked, since there is nothing to match the files against.
     """
+    if not is_valid(version):
+        return Yank()
     pinned = Version(version)
     for file in _project_metadata(package).get("files", []):
         yanked = file.get("yanked")
