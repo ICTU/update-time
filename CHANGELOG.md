@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.26 - 2026-08-12
+
 ### Changed
 
 - Remove the column that named the Update-time module each log line came from. Closes [#230](https://github.com/ICTU/update-time/issues/230).
