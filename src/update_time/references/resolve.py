@@ -9,7 +9,7 @@ re-pushed digest to adopt) layers those on top of the version this decision reso
 from typing import TYPE_CHECKING
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES
-from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.cooldown import COOLDOWN, honours_cooldown
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import reports_vulnerabilities
 from update_time.domain.yank import reports_yanks
@@ -38,6 +38,24 @@ def _warn_about_inverted_items(marker: Marker, dependency: str, location: Locati
             warn(dependency, threshold.inverted_item, location)
 
 
+def _warn_about_directives_the_source_cannot_honour(
+    marker: Marker, get_new_version: NewVersionGetter, dependency: str, location: Location, log: Logger
+) -> None:
+    """Warn about each directive whose question the reference's source cannot answer, so it holds nothing back.
+
+    Every capability a source can register is read here, so a capability added to `domain` is reported by adding a
+    row for it rather than by repeating the condition.
+    """
+    directives = (
+        (marker.ignore_yanked, reports_yanks, log.redundant_yank_scope),
+        (marker.suppresses_vulnerabilities, reports_vulnerabilities, log.redundant_vulnerable_source),
+        (marker.cooldown.value is not None, honours_cooldown, log.redundant_cooldown_item),
+    )
+    for is_set, reports, warn in directives:
+        if is_set and not reports(get_new_version, dependency):
+            warn(dependency, marker, location)
+
+
 def latest_version(
     reference: Reference,
     get_new_version: NewVersionGetter,
@@ -53,10 +71,7 @@ def latest_version(
     """
     dependency, current_version = reference.dependency, reference.current_version
     log.warn_if_redundant_bound(dependency, marker, current_version, location)
-    if marker.ignore_yanked and not reports_yanks(get_new_version):
-        log.redundant_yank_scope(dependency, marker, location)
-    if marker.suppresses_vulnerabilities and not reports_vulnerabilities(get_new_version):
-        log.redundant_vulnerable_source(dependency, marker, location)
+    _warn_about_directives_the_source_cannot_honour(marker, get_new_version, dependency, location, log)
     _warn_about_inverted_items(marker, dependency, location, log)
     version_bound = BLOCK_ALL_UPDATES if marker.ignore_update else marker.version_bound
     cooldown = marker.cooldown.value_or(COOLDOWN.get())

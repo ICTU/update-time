@@ -14,7 +14,7 @@ from rich.text import Text
 
 from update_time.domain.bound import Verb
 from update_time.domain.drift import DriftedPin
-from update_time.domain.marker import Marker
+from update_time.domain.marker import Marker, Threshold
 from update_time.domain.version import DependencyVersion, Reference, Yank
 from update_time.io.log import (
     DEPENDENCY_DELIMITER,
@@ -457,6 +457,23 @@ class LoggerTests(TestCase):
         marker = Marker(ignore_yanked=True, raw="ignore[yanked]")
         Logger("yanked").ignored_yank("humanize", version, marker, _create_location("requirements.txt", 9))
         mock_log.assert_not_called()
+
+    def test_redundant_cooldown_item(self, mock_log: Mock):
+        """Test that a cooldown its source cannot apply names its own directive, not the one spelled beside it."""
+        location = _create_location(".python-version", 1)
+        for directive in ("ignore[cooldown<30]", "allow[cooldown>=30]"):
+            with self.subTest(directive=directive):
+                mock_log.reset_mock()
+                cooldown = Threshold(value=30, directive=directive)
+                marker = Marker(cooldown=cooldown, raw=f"{directive} allow[hash-drift]")
+                Logger("cooldown").redundant_cooldown_item("python", marker, location)
+                self.assert_message(
+                    mock_log,
+                    Logger._MESSAGE_REDUNDANT_COOLDOWN_ITEM,
+                    f"Redundant update-time marker {directive} for {dependency('python')} in "
+                    f"{_at('.python-version:1')}: this dependency's source reports no publication date to measure "
+                    "a cooldown against, so the marker holds nothing back",
+                )
 
     def test_redundant_yank_scope(self, mock_log: Mock):
         """Test that an inert yank scope is warned about, with the `ignore` directive as the user wrote it."""

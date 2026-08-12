@@ -472,7 +472,13 @@ WARNING Incorrect 'cooldown>=30' in the update-time marker for python in Dockerf
 
 A bare `ignore[cooldown]` can be understood in two ways: adopt at once, or never adopt at all. Rather than guess, Update-time reports it as invalid and leaves the reference unchanged. `allow[cooldown]` is reported the same way. Write `allow[cooldown>=0]` to adopt at once, and `ignore[update]` to freeze the reference. A day count must be a whole number of days, so `ignore[cooldown<-5]` and `ignore[cooldown<1.5]` are reported as invalid too. Use a single `cooldown` directive per reference; the result of pairing one with another is undefined.
 
-The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)), nor for a `.python-version` entry or Node engine version derived from the project's Dockerfile, whose cooldown was already applied when the image was updated. It does nothing for an image outside Docker Hub either, since no cooldown applies there at all: the registry exposes no publication date to measure one against.
+The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)). Where the reference's own source reports no publication date to measure a cooldown against, Update-time reports the marker as holding nothing back, and the reference is updated as usual:
+
+```console
+WARNING Redundant update-time marker ignore[cooldown<30] for python in .python-version:2: this dependency's source reports no publication date to measure a cooldown against, so the marker holds nothing back
+```
+
+Three kinds of reference get that warning. A `.python-version` entry whose version comes from the project's Dockerfile does, since its cooldown was already applied when the base image was updated. An image on a registry other than Docker Hub does too, since only Docker Hub reports a push date to measure a cooldown against, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves.
 
 #### Silencing specific vulnerabilities
 
@@ -815,7 +821,7 @@ Neither can carry a hash pin. Both name a version rather than one artefact — a
 
 #### Cooldown
 
-A version taken from Docker Hub honours the cooldown through the Node or Python image tag's push date. A version that instead follows the project's Dockerfile needs no cooldown of its own, since it was already applied when the base image was updated.
+A version taken from Docker Hub honours the cooldown through the Node or Python image tag's push date. A version that instead follows the project's Dockerfile needs no cooldown of its own, since it was already applied when the base image was updated, so a `cooldown` marker on such a `.python-version` entry is reported as redundant.
 
 #### Stale dependencies
 
@@ -884,7 +890,7 @@ Once an image is pinned, a tag re-pushed under the same name is reported as dige
 
 #### Cooldown
 
-A newer tag is adopted only once it is past the cooldown, provided the image is hosted on Docker Hub. Other registries (`ghcr.io`, `mcr.microsoft.com`, …) expose no publication date, so images there are updated without a cooldown.
+A newer tag is adopted only once it is past the cooldown, provided the image is hosted on Docker Hub. Other registries (`ghcr.io`, `mcr.microsoft.com`, …) expose no publication date, so images there are updated without a cooldown, and a `cooldown` marker on one of them is reported as redundant. So is a `cooldown` marker on a CircleCI machine-executor image, which no registry serves.
 
 #### Stale dependencies
 

@@ -23,10 +23,15 @@ class Threshold[T]:
     `inverted_item` is the item as the user spelled it when its comparison runs the wrong way, so the caller can warn
     and fall back to the global setting; None when the reference carries no such item. An item sets one or the other,
     never both, which is why they travel together.
+    `directive` is the directive that sets `value`, as the verb and item the user spelled (`ignore[cooldown<30]`), so
+    a warning about this item alone never shows the directives beside it, which may hold plenty back. Empty when the
+    reference sets no value, and left out of comparisons, so thresholds that set the same value compare as equal
+    however they were spelled.
     """
 
     value: T | None = None
     inverted_item: str | None = None
+    directive: str = field(compare=False, default="")
 
     def value_or(self, setting: T) -> T:
         """Return what the reference's own item set, or the run's setting when the reference sets none.
@@ -37,10 +42,16 @@ class Threshold[T]:
         return setting if self.value is None else self.value
 
     def merge(self, other: Threshold[T]) -> Threshold[T]:
-        """Return this threshold combined with another one, this one's values winning where it sets them."""
+        """Return this threshold combined with another one, this one's values winning where it sets them.
+
+        The directive spells the value, so both are taken from the threshold that sets the value, which keeps a
+        merged threshold from naming a directive that set nothing.
+        """
+        sets_value = self if self.value is not None else other
         return Threshold(
-            value=other.value if self.value is None else self.value,
+            value=sets_value.value,
             inverted_item=other.inverted_item if self.inverted_item is None else self.inverted_item,
+            directive=sets_value.directive,
         )
 
 
@@ -302,7 +313,7 @@ def _threshold[T](verb: Verb, match: re.Match[str], value: T) -> Threshold[T]:
     """
     if match.group("operator") != _THRESHOLD_OPERATOR[verb]:
         return Threshold(inverted_item=match.group())
-    return Threshold(value=value)
+    return Threshold(value=value, directive=f"{verb}[{match.group()}]")
 
 
 def _parse_risk_level_item(verb: Verb, item: str) -> Marker | None:

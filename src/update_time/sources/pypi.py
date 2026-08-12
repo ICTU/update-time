@@ -10,7 +10,7 @@ from packaging.utils import parse_sdist_filename, parse_wheel_filename
 from packaging.version import Version
 
 from update_time.domain.changelog import get_version_changes_from_changelog
-from update_time.domain.cooldown import within_cooldown
+from update_time.domain.cooldown import cooldown_honouring, within_cooldown
 from update_time.domain.version import (
     DependencyName,
     DependencyVersion,
@@ -142,6 +142,7 @@ def _release_datetime(urls: list[_Distribution]) -> datetime | None:
     return newest_timestamp(url["upload_time_iso_8601"] for url in urls)
 
 
+@cooldown_honouring
 @vulnerability_reporting
 @yank_reporting
 def get_latest_version(

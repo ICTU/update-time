@@ -95,6 +95,23 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=("FAILED (failures=1)\n",)), 0)
         self.assertNotIn("errors", self.reported.getvalue())
 
+    def test_a_run_that_only_the_coverage_gate_failed(self):
+        """Test that a run whose tests all passed is reported as unguarded, whatever the coverage gate did.
+
+        A mutation that leaves a line unreachable drops coverage below the gate, so the command fails although no
+        test caught anything.
+        """
+        outputs = ("Ran 997 tests\n\nOK\nCoverage failure: total of 99 is less than fail-under=100\n",)
+        self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=outputs), 4)
+        self.assertIn("no test caught the mutation", self.reported.getvalue())
+        self.assertNotIn("The mutation was caught", self.reported.getvalue())
+
+    def test_a_run_that_failed_a_test_and_the_coverage_gate(self):
+        """Test that a run reporting a failing test is a catch, whatever the coverage gate reported alongside it."""
+        outputs = ("Ran 997 tests\nFAILED (failures=1)\nCoverage failure: total of 99 is less than fail-under=100\n",)
+        self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=outputs), 0)
+        self.assertIn("The mutation was caught", self.reported.getvalue())
+
     def test_the_commands_output_is_written_through(self):
         """Test that what the command wrote reaches the reader, which capturing it would otherwise swallow."""
         self.probe(mock_path(_ORIGINAL), outputs=("Ran 928 tests\n",))

@@ -8,7 +8,7 @@ from update_time.updaters.update_dockerfile_base_image import update_dockerfiles
 
 from tests.helpers import mock_path
 from tests.update_time import registry
-from tests.update_time.fixtures import DIGEST2
+from tests.update_time.fixtures import DIGEST1, DIGEST2
 from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
 from tests.update_time.registry import mock_docker_registry
 
@@ -81,10 +81,21 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
     def test_ignore_yanked_marker_is_reported_as_redundant(self):
         """Test that an `ignore[yanked]` marker on a base image is reported when an image has no yank to hold back."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
-        mock_dockerfile = mock_path("# update-time: ignore[yanked]\nFROM python:3.14\n")
+        marker = self.marker_line("ignore[yanked]")
+        mock_dockerfile = mock_path(marker + self.reference("python:3.14"))
         self.run_updater(mock_dockerfile)
-        mock_dockerfile.write_text.assert_called_with(f"# update-time: ignore[yanked]\nFROM python:3.15@{DIGEST2}\n")
+        mock_dockerfile.write_text.assert_called_with(marker + self.reference(f"python:3.15@{DIGEST2}"))
         self.assert_redundant_yank_scope_logged("python", Location(mock_dockerfile, 2), "ignore[yanked]")
+
+    def test_redundant_cooldown_names_the_cooldown_directive_alone(self):
+        """Test that the warning names the `cooldown` directive, leaving out one on the same line that does apply."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        marker = self.marker_line("ignore[cooldown<30] allow[hash-drift]")
+        mock_dockerfile = mock_path(marker + self.reference(f"ghcr.io/owner/python:3.14@{DIGEST1}"))
+        self.run_updater(mock_dockerfile)
+        self.assert_redundant_cooldown_item_logged(
+            "ghcr.io/owner/python", Location(mock_dockerfile, 2), "ignore[cooldown<30]"
+        )
 
     def test_vulnerable_scope_is_reported_as_redundant(self):
         """Test that each `vulnerable` marker is reported when an image has no vulnerability to hold back."""

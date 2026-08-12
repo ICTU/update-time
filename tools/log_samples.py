@@ -97,22 +97,26 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.redundant_vulnerable_scope(
         "django", "4.2.0", Marker(ignore_vulnerable=True, raw="ignore[vulnerable]"), requirements
     )
-    redundant_vulnerability = capture.take()
+    redundant_vulnerable_scope = capture.take()
 
     advisory = "CVE-2022-28346"
     suppression = Marker(ignored_advisories=frozenset({advisory}), raw=f"ignore[vulnerable={advisory}]")
     log.redundant_vulnerable_advisory("django", "4.2.0", suppression, requirements)
-    redundant_advisory = capture.take()
+    redundant_vulnerable_advisory = capture.take()
 
     level = Marker(vulnerable=Threshold(value="high"), raw="ignore[vulnerable<high]")
     log.redundant_vulnerable_level("django", "4.2.0", level, requirements, "high")
-    redundant_level = capture.take()
+    redundant_vulnerable_level = capture.take()
 
     log.redundant_vulnerable_source("python", Marker(ignore_vulnerable=True, raw="ignore[vulnerable]"), dockerfile)
-    redundant_source = capture.take()
+    redundant_vulnerable_source = capture.take()
 
     log.redundant_yank_scope("python", Marker(ignore_yanked=True, raw="ignore[yanked]"), dockerfile)
-    redundant = capture.take()
+    redundant_yank_scope = capture.take()
+
+    cooldown = Marker(cooldown=Threshold(value=30, directive="ignore[cooldown<30]"), raw="ignore[cooldown<30]")
+    log.redundant_cooldown_item("python", cooldown, Location(Path(".python-version"), 2))
+    redundant_cooldown_item = capture.take()
 
     log.invalid_bracket_item("python", "stlae", dockerfile)
     unrecognised = capture.take()
@@ -136,11 +140,12 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@VULNERABILITY_WARNING@@": vulnerable,
-        "@@REDUNDANT_VULNERABILITY_WARNING@@": redundant_vulnerability,
-        "@@REDUNDANT_ADVISORY_WARNING@@": redundant_advisory,
-        "@@REDUNDANT_LEVEL_WARNING@@": redundant_level,
-        "@@REDUNDANT_SOURCE_WARNING@@": redundant_source,
-        "@@REDUNDANT_MARKER_WARNING@@": redundant,
+        "@@REDUNDANT_VULNERABLE_SCOPE_WARNING@@": redundant_vulnerable_scope,
+        "@@REDUNDANT_VULNERABLE_ADVISORY_WARNING@@": redundant_vulnerable_advisory,
+        "@@REDUNDANT_VULNERABLE_LEVEL_WARNING@@": redundant_vulnerable_level,
+        "@@REDUNDANT_VULNERABLE_SOURCE_WARNING@@": redundant_vulnerable_source,
+        "@@REDUNDANT_YANK_SCOPE_WARNING@@": redundant_yank_scope,
+        "@@REDUNDANT_COOLDOWN_ITEM_WARNING@@": redundant_cooldown_item,
         "@@UNRECOGNISED_ITEM_WARNING@@": unrecognised,
         "@@INVERTED_STALE_WARNING@@": inverted,
         "@@INVERTED_COOLDOWN_WARNING@@": inverted_cooldown,

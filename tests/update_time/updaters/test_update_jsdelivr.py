@@ -115,6 +115,14 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_new_version_logged("clipboard", ANY, Location(mock_conf, 3), Logger._NO_CHANGELOG)
         self.assert_no_warnings_logged()
 
+    def test_cooldown_marker_is_not_reported_as_redundant(self, mock_get: Mock, mock_glob: Mock):
+        """Test that a `cooldown` marker on a URL holds something back, since npm dates its releases."""
+        self.offer_versions(mock_get, "2.0.11", served_hash=HASH1)
+        marked_url = f"{_URL}  # update-time: ignore[cooldown<30]"
+        mock_conf = self.update(_conf(_entry(marked_url, _INTEGRITY)), mock_glob)
+        mock_conf.write_text.assert_not_called()
+        self.assert_no_warnings_logged()
+
     def test_line_between_the_url_and_its_hash_is_left_untouched(self, mock_get: Mock, mock_glob: Mock):
         """Test that the hash still follows the URL across an intervening line, which is itself left alone.
 

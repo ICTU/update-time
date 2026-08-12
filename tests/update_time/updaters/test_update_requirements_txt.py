@@ -88,6 +88,16 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
+    def test_cooldown_marker_is_not_reported_as_redundant(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a `cooldown` marker on a pin holds something back, since PyPI dates its releases."""
+        requirements_txt = self.discovered_requirements_txt(
+            mock_rglob, "flask==1.0  # update-time: ignore[cooldown<30]\n"
+        )
+        mock_get.side_effect = self.pypi("1.0")
+        update_requirements_txts()
+        requirements_txt.write_text.assert_not_called()
+        self.assert_no_warnings_logged()
+
     def test_stale_dependency_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin whose newest release is old is warned about, without being changed."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "humanize==4.15.0\n")

@@ -2,11 +2,17 @@
 
 from datetime import UTC, datetime, timedelta
 
+from update_time.domain.capability import capability
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.timestamp import days_since
 
 # Private channel that passes --cooldown from the CLI to the updater subprocesses.
 COOLDOWN = EnvVar("_UPDATE_TIME_COOLDOWN_DAYS", default=7, parse=int)
+
+# A source that dates its versions, so a cooldown can be measured against them, registers its getter with
+# `cooldown_honouring`, naming the dependencies it dates where it dates only some. `honours_cooldown` reads that
+# back for one dependency, so a `cooldown` item on a reference whose versions carry no date is reported as redundant.
+cooldown_honouring, honours_cooldown = capability("honours_cooldown")
 
 
 def within_cooldown(timestamp: datetime | None, cooldown_days: int) -> bool:

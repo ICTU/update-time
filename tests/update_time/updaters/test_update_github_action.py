@@ -15,7 +15,13 @@ from update_time.updaters.update_github_action import update_github_actions
 from tests.helpers import mock_path, patch_environ
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
-from tests.update_time.helpers import LoggingTestCase, bound
+from tests.update_time.helpers import (
+    LoggingTestCase,
+    bound,
+    github_commits_json,
+    github_release_json,
+    patch_github,
+)
 
 _GITHUB_DIR = Path("/repo/.github")
 
@@ -245,4 +251,23 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_get_latest_version.assert_not_called()
         self.assert_path_logged(workflow_yml)
         self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+
+@patch("pathlib.Path.glob")
+class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
+    """Unit tests for the actions updater resolving versions through the source rather than through a test double.
+
+    The suite above patches the source's getter, which carries none of the registrations the real one does, so the
+    cases that turn on those live here.
+    """
+
+    @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA))
+    def test_cooldown_marker_is_not_reported_as_redundant(self, mock_glob: Mock):
+        """Test that a `cooldown` marker on an action holds something back, since GitHub dates its releases."""
+        marker = "  # update-time: ignore[cooldown<30]"
+        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0{marker}\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        update_github_actions(_GITHUB_DIR)
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.1{marker}\n")
         self.assert_no_warnings_logged()

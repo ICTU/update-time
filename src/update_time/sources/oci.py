@@ -8,13 +8,13 @@ mcr.microsoft.com, quay.io, ...) by listing tag names, discovering the registry'
 
 import re
 from dataclasses import dataclass, replace
-from functools import cache, cached_property, total_ordering
+from functools import cache, cached_property, partial, total_ordering
 from http import HTTPStatus
 from typing import TYPE_CHECKING, cast
 
 from packaging.version import InvalidVersion, Version
 
-from update_time.domain.cooldown import within_cooldown
+from update_time.domain.cooldown import cooldown_honouring, within_cooldown
 from update_time.domain.version import (
     SHA256_DIGEST,
     DependencyName,
@@ -260,6 +260,7 @@ def is_docker_hub_image(image: str) -> bool:
     return _is_docker_hub_host(host)
 
 
+@partial(cooldown_honouring, when=is_docker_hub_image)
 def get_latest_tag(
     image: DependencyName, current_tag: VersionString, version_bound: VersionBound, cooldown_days: int
 ) -> DependencyVersion:

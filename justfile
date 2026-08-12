@@ -123,8 +123,9 @@ mutate-help:
     @echo "    a broken version of it"
     @echo "    EOF"
     @echo "\nExits 0 when the mutation was caught (a test failed, so it is guarded), 1 when it survived (nothing"
-    @echo "guards it), 2 when the probe never ran (the snippet is not in FILE exactly once), and 3 when the run was"
-    @echo "caught but reported errors, which a stub that broke the file does as much as a guard that raised."
+    @echo "guards it), 2 when the probe never ran (the snippet is not in FILE exactly once), 3 when the run was"
+    @echo "caught but reported errors, which a stub that broke the file does as much as a guard that raised, and 4"
+    @echo "when COMMAND failed with every test passing, so a gate such as coverage failed rather than a guard."
 
 # Run Python with the package importable, to probe how it behaves. See `just help py`.
 [env("PYTHONPATH", "src")]
