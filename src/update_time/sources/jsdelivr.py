@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
-from update_time.domain.cooldown import within_cooldown
+from update_time.domain.cooldown import cooldown_honouring, within_cooldown
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
 from update_time.domain.vulnerability import vulnerability_reporting
 from update_time.domain.yank import yank_reporting
@@ -68,7 +68,7 @@ def version_getter(filename: str) -> NewVersionGetter:
         # Attach the newest npm publication date for the staleness check.
         return replace(latest, newest_published=newest_publication_date(dependency))
 
-    return vulnerability_reporting(yank_reporting(get_latest_version))
+    return cooldown_honouring(vulnerability_reporting(yank_reporting(get_latest_version)))
 
 
 def _eligible_version(

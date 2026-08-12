@@ -558,6 +558,23 @@ class Logger:
             location=location,
         )
 
+    _MESSAGE_REDUNDANT_COOLDOWN_ITEM = LogMessage(
+        WARNING, _redundant_marker("this dependency's source reports no publication date to measure a cooldown against")
+    )
+
+    def redundant_cooldown_item(self, dependency: str, marker: Marker, location: Location) -> None:
+        """Warn that the marker's cooldown can never hold anything back for this dependency.
+
+        The `cooldown` directive alone is named, as the user spelled it, since either verb sets a cooldown and the
+        directives beside it may hold plenty back.
+        """
+        self._log(
+            self._MESSAGE_REDUNDANT_COOLDOWN_ITEM,
+            directive=marker.cooldown.directive,
+            dependency=dependency,
+            location=location,
+        )
+
     _MESSAGE_REDUNDANT_YANK_SCOPE = LogMessage(
         WARNING, _redundant_marker("this dependency's source has no yank concept")
     )

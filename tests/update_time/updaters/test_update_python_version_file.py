@@ -136,6 +136,25 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
+    def test_cooldown_marker_is_reported_as_redundant(self, mock_glob: Mock):
+        """Test that a `cooldown` marker on an entry following the Dockerfile is reported, and the entry updated."""
+        version_file = self.create_version_file("# update-time: ignore[cooldown<30]\n3.12.6\n")
+        mock_glob.return_value = [version_file]
+        update_python_version_files()
+        version_file.write_text.assert_called_once_with("# update-time: ignore[cooldown<30]\n3.14\n")
+        self.assert_redundant_cooldown_item_logged("python", Location(version_file, 2), "ignore[cooldown<30]")
+        self.assert_new_version_logged("python", "3.14", Location(version_file, 2))
+
+    @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
+    def test_the_reported_cooldown_directive_is_the_one_that_won(self, mock_glob: Mock):
+        """Test that where both placements set a cooldown, the warning names the inline one, which wins."""
+        above, inline = "# update-time: ignore[cooldown<90]", "# update-time: allow[cooldown>=30]"
+        version_file = self.create_version_file(f"{above}\n3.12.6  {inline}\n")
+        mock_glob.return_value = [version_file]
+        update_python_version_files()
+        self.assert_redundant_cooldown_item_logged("python", Location(version_file, 2), "allow[cooldown>=30]")
+
+    @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
     def test_inline_marker_ignore(self, mock_glob: Mock):
         """Test that an inline `# update-time: ignore` marker on the entry's own line holds it back too."""
         version_file = self.create_version_file("3.12.6  # update-time: ignore\n")
@@ -213,6 +232,16 @@ class UpdatePythonVersionFilesFallbackTest(RegistryRequestsMixin, LoggingTestCas
         update_python_version_files()
         version_file.write_text.assert_called_once_with("3.13.2\n")
         self.assert_new_version_logged("python", "3.13.2", Location(version_file, 1))
+        self.assert_no_warnings_logged()
+
+    def test_fallback_cooldown_marker_is_not_reported_as_redundant(self, mock_glob: Mock):
+        """Test that a `cooldown` marker on an entry following Docker Hub holds something back, since tags are dated."""
+        marker = "# update-time: ignore[cooldown<30]"
+        version_file = self.create_version_file(f"{marker}\n3.12.6\n")
+        mock_glob.return_value = [version_file]
+        self.requests.side_effect = mock_docker_registry(_python_tag())
+        update_python_version_files()
+        version_file.write_text.assert_called_once_with(f"{marker}\n3.13.2\n")
         self.assert_no_warnings_logged()
 
     def test_fallback_stale_warned(self, mock_glob: Mock):

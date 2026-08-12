@@ -1,8 +1,10 @@
 """Check that a test really guards a behaviour: replace a snippet in a file, run a command, and restore the file.
 
 A test's name is not evidence of what it guards, and neither is a green run. Breaking the code the test names is:
-a command that then fails has caught the mutation, one that still passes has not, so nothing guards that code. The
-file is restored whether the command passes, fails, or raises, so a probe never leaves the tree changed.
+a command that then fails a test has caught the mutation, one that still passes has not, so nothing guards that
+code. A command that fails with every test passing has caught nothing either, since a gate it applies beyond the
+tests is what failed. The file is restored whether the command passes, fails, or raises, so a probe never leaves
+the tree changed.
 
 Usage: `uv run python tools/mutate.py FILE [COMMAND ...]`, with the snippet to replace and its replacement read from
 standard input, separated by a line holding only the separator. COMMAND defaults to `just test`.
@@ -36,6 +38,13 @@ _NOT_RUN = 2
 # behaviour, so the catch is the run's to explain. A guard firing through an exception is an error too, which is why
 # this is neither a plain catch nor a probe that told nothing.
 _UNCERTAIN = 3
+
+# The exit code for a run that failed with every test passing: a gate the command applies beyond the tests, such as
+# coverage, is what failed. No test caught the mutation, so this says as little about the guard as a survival does.
+_UNGUARDED = 4
+
+# What unittest reports when every test it ran passed, whatever a gate the command applies afterwards then says.
+_ALL_TESTS_PASSED = re.compile(r"^OK\b", re.MULTILINE)
 
 _DEFAULT_COMMAND = ("just", "test")
 
@@ -78,8 +87,11 @@ def main() -> int:
     sys.stderr.write(result.stderr)
     caught = result.returncode != 0
     spelled = " ".join(command)
-    sys.stdout.write(f"The mutation was caught: {spelled} failed\n" if caught else f"The mutation survived {spelled}\n")
     output = result.stdout + result.stderr
+    if caught and _ALL_TESTS_PASSED.search(output):
+        sys.stdout.write(f"{spelled} failed with every test passing, so no test caught the mutation\n")
+        return _UNGUARDED
+    sys.stdout.write(f"The mutation was caught: {spelled} failed\n" if caught else f"The mutation survived {spelled}\n")
     if caught and (errors := _ERRORS.search(output)):
         return _report_errors(errors.group("errors"), output, command)
     return 0 if caught else 1

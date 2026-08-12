@@ -4,9 +4,11 @@ CircleCI machine-executor images (the `image:` under a `machine:` key, e.g. `ubu
 Docker Hub and have no registry to query, so they are detected by parsing the YAML and left unchanged.
 """
 
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from update_time.domain.cooldown import cooldown_honouring, honours_cooldown
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString
 from update_time.file_formats import yaml as yaml_format
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
@@ -38,7 +40,17 @@ def _machine_images(config: object) -> set[str]:
 def _update_circle_ci_yaml(config_file: Path) -> None:
     """Update the Docker images in a single CircleCI YAML file, leaving machine-executor images unchanged."""
     machine = _machine_images(yaml_format.read(config_file))
+    machine_names = {image.split(":", maxsplit=1)[0] for image in machine}
 
+    def dates_the_versions_of(image: DependencyName) -> bool:
+        """Return whether a cooldown can be measured for the image, which no machine image and no other registry has.
+
+        A machine image is recognised by name here rather than by name and version, since a capability is asked
+        about the dependency alone.
+        """
+        return image not in machine_names and honours_cooldown(get_latest_tag, image)
+
+    @partial(cooldown_honouring, when=dates_the_versions_of)
     def get_new_version(
         dependency: DependencyName, version: VersionString, version_bound: VersionBound, cooldown_days: int
     ) -> DependencyVersion:

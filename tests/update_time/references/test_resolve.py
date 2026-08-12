@@ -2,10 +2,10 @@
 
 import unittest
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
-from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.cooldown import COOLDOWN, cooldown_honouring
 from update_time.domain.marker import Marker, Threshold
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import DependencyVersion, Reference
@@ -30,12 +30,15 @@ class LatestVersionTest(unittest.TestCase):
         self.path = Mock()
 
     def latest_version(
-        self, marker: Marker | None = None, get_new_version: NewVersionGetter | None = None
+        self,
+        marker: Marker | None = None,
+        get_new_version: NewVersionGetter | None = None,
+        dependency: str = "python",
     ) -> DependencyVersion | None:
-        """Run the decision for a `python` reference at version 3.14, resolving 3.15 unless overridden."""
+        """Run the decision for the dependency's reference at version 3.14, resolving 3.15 unless overridden."""
         get_new_version = new_version_getter("3.15") if get_new_version is None else get_new_version
         return latest_version(
-            Reference("python", "3.14"), get_new_version, Marker() if marker is None else marker, self.path, self.log
+            Reference(dependency, "3.14"), get_new_version, Marker() if marker is None else marker, self.path, self.log
         )
 
     def test_returns_the_resolved_version(self):
@@ -176,6 +179,48 @@ class LatestVersionTest(unittest.TestCase):
         get_new_version = yank_reporting(new_version_getter("3.15"))
         self.latest_version(Marker(ignore_yanked=True), get_new_version)
         self.log.redundant_yank_scope.assert_not_called()
+
+    def test_warns_about_a_redundant_cooldown_item(self):
+        """Test that a `cooldown` item is reported as redundant when the source dates none of its versions."""
+        marker = Marker(cooldown=Threshold(value=30), raw="ignore[cooldown<30]")
+        latest = self.latest_version(marker)
+        self.log.redundant_cooldown_item.assert_called_once_with("python", marker, self.path)
+        self.assertEqual(latest, DependencyVersion(version="3.15"))
+
+    def test_no_redundant_cooldown_item_when_the_source_honours_the_cooldown(self):
+        """Test that a `cooldown` item is not reported when the source dates its versions."""
+        get_new_version = cooldown_honouring(new_version_getter("3.15"))
+        self.latest_version(Marker(cooldown=Threshold(value=30)), get_new_version)
+        self.log.redundant_cooldown_item.assert_not_called()
+
+    def test_the_cooldown_capability_is_judged_per_reference(self):
+        """Test that one getter dating some of its dependencies only is judged by the reference the marker sits on."""
+
+        def dates_the_versions_of(dependency: str) -> bool:
+            """Return whether the source dates the dependency's versions, which it does for `node` alone."""
+            return dependency == "node"
+
+        get_new_version = cooldown_honouring(new_version_getter("3.15"), when=dates_the_versions_of)
+        marker = Marker(cooldown=Threshold(value=30), raw="ignore[cooldown<30]")
+        for dependency, reported in (("node", False), ("python", True)):
+            with self.subTest(dependency=dependency):
+                self.log.reset_mock()  # Judge each reference on the calls of its own run.
+                self.latest_version(marker, get_new_version, dependency)
+                calls = self.log.redundant_cooldown_item.call_args_list
+                self.assertEqual(calls, [call(dependency, marker, self.path)] if reported else [])
+
+    def test_no_redundant_cooldown_item_when_the_marker_sets_no_cooldown(self):
+        """Test that a marker is not reported when it sets no cooldown, carrying no item or an inverted one."""
+        markers = {
+            "no cooldown item": Marker(),
+            "inverted cooldown item": Marker(
+                cooldown=Threshold(inverted_item="cooldown>=30"), raw="ignore[cooldown>=30]"
+            ),
+        }
+        for case, marker in markers.items():
+            with self.subTest(case=case):
+                self.latest_version(marker)
+                self.log.redundant_cooldown_item.assert_not_called()
 
     def test_ignore_update_returns_none(self):
         """Test that `ignore[update]` holds back the update, after the staleness check has still run."""

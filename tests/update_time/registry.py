@@ -136,6 +136,14 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         """Discover `mock_file` and run the updater."""
         raise NotImplementedError
 
+    def marker_line(self, directive: str) -> str:
+        """Return the directive as a marker on a line of its own, in the comment lead the file format takes.
+
+        The line-above placement is the one every format accepts, so a shared test can mark a reference whatever
+        format it is written in. A suite whose format is JSONC overrides this.
+        """
+        return f"# update-time: {directive}\n"
+
     @staticmethod
     def drifted(mock_file: Mock) -> DriftedPin:
         """Return the drifted pin the re-pushed `python:3.14` reference these tests use produces."""
@@ -150,6 +158,27 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.assert_path_logged(mock_file)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
+
+    def test_cooldown_marker_is_not_reported_as_redundant(self) -> None:
+        """Test that a `cooldown` marker on a Docker Hub image holds a freshly pushed tag back, unreported."""
+        pushed_today = datetime.now(UTC).isoformat()
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2, tag_last_pushed=pushed_today))
+        marked = self.marker_line("ignore[cooldown<30]") + self.reference(f"python:3.14@{DIGEST}")
+        mock_file = mock_path(marked)
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()  # 3.15 was pushed inside the marker's 30-day window
+        self.assert_no_warnings_logged()
+
+    def test_cooldown_marker_outside_docker_hub_is_reported_as_redundant(self) -> None:
+        """Test that a `cooldown` marker on an image off Docker Hub is reported, since no tag there carries a date."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        marker = self.marker_line("ignore[cooldown<30]")
+        mock_file = mock_path(marker + self.reference(f"ghcr.io/owner/python:3.14@{DIGEST1}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_called_once_with(marker + self.reference(f"ghcr.io/owner/python:3.15@{DIGEST2}"))
+        self.assert_redundant_cooldown_item_logged(
+            "ghcr.io/owner/python", Location(mock_file, 2), "ignore[cooldown<30]"
+        )
 
     def test_stale_image_warned(self) -> None:
         """Test that an image whose newest tag was pushed long ago is warned about as stale, without being rewritten."""

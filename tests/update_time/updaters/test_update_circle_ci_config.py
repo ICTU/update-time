@@ -62,6 +62,14 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
+    def test_cooldown_marker_on_a_machine_image_is_reported_as_redundant(self):
+        """Test that a `cooldown` marker on a machine-executor image is reported, since no registry dates it."""
+        marker = "      # update-time: ignore[cooldown<30]\n"
+        config_yml = mock_path(f"jobs:\n  build:\n    machine:\n{marker}      image: ubuntu-2204:2024.01.1\n")
+        self.run_updater(config_yml)
+        config_yml.write_text.assert_not_called()
+        self.assert_redundant_cooldown_item_logged("ubuntu-2204", Location(config_yml, 5), "ignore[cooldown<30]")
+
     def test_docker_image_with_auth_before_image(self):
         """Test that a Docker image is updated even when its list item lists `auth:` before `image:`."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST2))

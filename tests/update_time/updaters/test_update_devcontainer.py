@@ -21,6 +21,10 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
         """Return a devcontainer `"image"` value for the image."""
         return f'"image": "{image}"\n'
 
+    def marker_line(self, directive: str) -> str:
+        """Return the directive as a marker in the `//` comment devcontainer.json takes, being JSONC."""
+        return f"// update-time: {directive}\n"
+
     def run_updater(self, mock_file: Mock) -> None:
         """Run the devcontainer updater with the mock file as the only discovered devcontainer.json."""
         with patch("update_time.updaters.update_devcontainer.glob", return_value=[mock_file]):
