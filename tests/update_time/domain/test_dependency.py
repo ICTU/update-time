@@ -1,9 +1,9 @@
-"""Unit tests for the version module."""
+"""Unit tests for the dependency module."""
 
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from update_time.domain.version import DependencyVersion, Yank, first_eligible, is_valid
+from update_time.domain.dependency import DependencyVersion, Yank, first_eligible, is_valid
 
 
 class IsValidTest(unittest.TestCase):

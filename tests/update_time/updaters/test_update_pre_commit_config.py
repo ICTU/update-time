@@ -5,8 +5,8 @@ from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.dependency import DependencyVersion
 from update_time.domain.drift import DriftedPin
-from update_time.domain.version import DependencyVersion, Reference
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_pre_commit_config import update_pre_commit_configs
@@ -33,7 +33,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
 
     def drifted(self, config_file: Mock) -> DriftedPin:
         """Return the drifted pin the moved `4.5.0` tag of the hook repository these tests use produces."""
-        return DriftedPin(Reference(self.HOOK, "4.5.0", OLD_SHA), NEW_SHA, Location(config_file, 3))
+        return DriftedPin(self.HOOK, "4.5.0", Location(config_file, 3), OLD_SHA, new_sha=NEW_SHA)
 
     def test_pin_unpinned_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a rev given as a version tag only is pinned to the commit SHA with a frozen version comment."""

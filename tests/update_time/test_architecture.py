@@ -103,16 +103,16 @@ class DependenciesTest(unittest.TestCase):
         assert_passes(project_files("src/").should_not().depend_on_files().with_name("update_*.py"))
         assert_passes(project_files("src/").should_not().depend_on_files().in_path(_package_init("updaters")))
 
-    def test_version_module_is_a_leaf(self):
-        """Test that `version.py` depends on nothing else in `domain`, so the rest of `domain` can build on it.
+    def test_dependency_module_is_a_leaf(self):
+        """Test that `dependency.py` depends on nothing else in `domain`, so the rest of `domain` can build on it.
 
-        `version.py` holds the foundational types and helpers the rest of `domain` builds on: `bound.py` imports
-        `is_valid` and the type aliases from it. So `version.py` must import nothing back from `domain`, making it a
-        leaf within the layer. It may still build on the inner `primitives` layer, but not on its `domain` siblings.
+        `dependency.py` holds the foundational types and helpers the rest of `domain` builds on: `bound.py` imports
+        `is_valid` and the type aliases from it. So `dependency.py` must import nothing back from `domain`, making it
+        a leaf within the layer. It may still build on the inner `primitives` layer, but not on its `domain` siblings.
         `have_no_cycles` forbids only a two-way dependency, not a one-way inversion, so pinning the direction here
-        keeps `version.py` reasoned about and tested without the bound machinery.
+        keeps `dependency.py` reasoned about and tested without the bound machinery.
         """
-        rule = project_files("src/").with_name("version.py").should_not().depend_on_files().in_folder("domain")
+        rule = project_files("src/").with_name("dependency.py").should_not().depend_on_files().in_folder("domain")
         assert_passes(rule)
 
 

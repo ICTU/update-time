@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.version import DependencyVersion
+from update_time.domain.dependency import DependencyVersion
+from update_time.domain.reference import Reference
 from update_time.file_formats.package_json import DEPENDENCY_SECTIONS, dependency_locations
 from update_time.io.log import get_logger
 from update_time.io.process import run
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from update_time.domain.version import DependencyName, VersionString
+    from update_time.domain.dependency import DependencyName, VersionString
 
 _LOG = get_logger("package.json")
 _COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
@@ -100,8 +101,9 @@ class _PackageManager:
                 changes = get_changes(package, new_version)
                 published = get_publication_datetime(package, new_version)
                 package_version = DependencyVersion(new_version, changes, published=published)
+                current = version.get("current", "")
                 for location in declarations.get(package, [Location(package_json)]):
-                    _LOG.new_version(package, package_version, location)
+                    _LOG.new_version(Reference(package, current, location), package_version)
         # The manager normalizes specs (e.g. npm rewrites git URLs to the github: shorthand) whenever it saves
         # package.json. When nothing was actually updated, restore the original manifest so reformatting doesn't
         # produce a spurious diff.

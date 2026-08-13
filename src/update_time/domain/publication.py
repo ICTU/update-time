@@ -8,6 +8,6 @@ directive on a reference whose source dates nothing is then reported as redundan
 nothing.
 """
 
-from update_time.domain.capability import capability
+from update_time.primitives.capability import capability
 
 publication_date_reporting, reports_publication_dates = capability("reports_publication_dates")

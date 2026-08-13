@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.version import Yank
+from update_time.domain.dependency import Yank
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_jsdelivr import update_jsdelivrs

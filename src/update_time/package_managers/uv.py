@@ -11,18 +11,25 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
-from update_time.domain.version import DependencyVersion, normalized_name
+from update_time.domain.dependency import DependencyVersion
+from update_time.domain.reference import Reference, ResolvedReference
 from update_time.file_formats import pyproject_toml as pyproject_toml_format
 from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
-from update_time.sources.pypi import get_changes, get_latest_version, get_publication_datetime, yank_state
+from update_time.sources.pypi import (
+    get_changes,
+    get_latest_version,
+    get_publication_datetime,
+    normalized_name,
+    yank_state,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from update_time.domain.version import DependencyName, VersionString
+    from update_time.domain.dependency import DependencyName, VersionString
     from update_time.io.log import Logger
 
 _LOG = get_logger("pyproject.toml")
@@ -145,27 +152,31 @@ def _parse_line_with_update(line: str) -> tuple[DependencyName, VersionString]:
     return fields[0], fields[-1].lstrip("v").rstrip(")")
 
 
-def _pin_locations(path: Path) -> dict[DependencyName, list[Location]]:
-    """Return the lines each dependency is pinned on, keyed by the name uv reports the dependency under.
+def _pins(path: Path) -> dict[DependencyName, list[Reference]]:
+    """Return each pin of the file with its line, keyed by the name uv reports the dependency under.
 
-    A name carries a location per pin, so a dependency the file pins in more than one array keeps every line.
+    A name carries an entry per pin, so a dependency the file pins in more than one array keeps every line, and every
+    spelling those pins give it. Matching uv's name against the file's is done here, since uv names a package as PyPI
+    spells it while the file may spell it any of the ways that normalize to the same name.
     """
-    locations: dict[DependencyName, list[Location]] = {}
-    for reference, location in pyproject_toml_format.pinned_versions(path):
-        locations.setdefault(normalized_name(reference.dependency), []).append(location)
-    return locations
+    pins: dict[DependencyName, list[Reference]] = {}
+    for pin in pyproject_toml_format.pinned_versions(path):
+        pins.setdefault(normalized_name(pin.dependency), []).append(pin)
+    return pins
 
 
 def _log_new_version(log: Logger, package: DependencyName, version: VersionString, locations: list[Location]) -> None:
     """Log that a new version is available for the package, at each of the locations pinning it.
 
-    The changelog and publication date are fetched once, whichever locations the version is reported at.
+    The package is named as uv reports it, so one package is named one way however each line spells it. The changelog
+    and publication date are fetched once, whichever locations the version is reported at.
     """
     changes = get_changes(package, version)
     published = get_publication_datetime(package, version)
     dependency_version = DependencyVersion(version, changes, published=published)
     for location in locations:
-        log.new_version(package, dependency_version, location)
+        # This message renders no version the reference is pinned to, so the reference names none.
+        log.new_version(Reference(package, "", location), dependency_version)
 
 
 def _update_dependencies(uv_tree: Command, path: Path, log: Logger) -> bool:
@@ -182,14 +193,15 @@ def _update_dependencies(uv_tree: Command, path: Path, log: Logger) -> bool:
     if not outdated.ok:
         return False
     lines_with_updates = [line for line in outdated.stdout.splitlines() if " (latest: " in line]
-    pins = _pin_locations(path)
-    latest_versions = {}
+    pins = _pins(path)
+    latest_versions: dict[DependencyName, VersionString] = {}
     for line in lines_with_updates:
         package, version = _parse_line_with_update(line)
-        name = normalized_name(package)
-        latest_versions[name] = version
-        # uv reports a dependency the file declares without an exact pin too, `humanize>=4` say, which has no line.
-        _log_new_version(log, package, version, pins.get(name, [Location(path)]))
+        pinned = pins.get(normalized_name(package), [])
+        latest_versions.update({pin.dependency: version for pin in pinned})
+        # Only the exact pins are read back, so a dependency declared as `humanize>=4` say has no pin among them and
+        # its new version is reported at the file rather than at one of its lines.
+        _log_new_version(log, package, version, [pin.location for pin in pinned] or [Location(path)])
     pyproject_toml_format.rewrite_pinned_versions(path, latest_versions)
     return True
 
@@ -237,32 +249,31 @@ def update_python_inline_script_metadata(script: Path, log: Logger) -> bool:
     return _update_dependencies(uv_tree, script, log)
 
 
-def newest_pypi_releases(path: Path) -> Iterable[tuple[DependencyName, DependencyVersion, Location]]:
-    """Yield each exact `==` pin in the file as a (name, newest PyPI release, location of the pin) triple.
+def newest_pypi_releases(path: Path) -> Iterable[ResolvedReference]:
+    """Yield each exact `==` pin in the file, carrying the newest PyPI release of the package it names.
 
     Resolves each pin's name against PyPI rather than reporting the version the file records. A pyproject.toml and
     an inline script metadata block declare their dependencies as the same quoted `"name==version"` specs, so one
     reader serves both.
     """
     return (
-        (
-            reference.dependency,
-            get_latest_version(reference.dependency, reference.current_version, NO_BOUND, COOLDOWN.get()),
-            location,
+        ResolvedReference(
+            **vars(pin),
+            release=get_latest_version(pin.dependency, pin.current_version, NO_BOUND, COOLDOWN.get()),
         )
-        for reference, location in pyproject_toml_format.pinned_versions(path)
+        for pin in pyproject_toml_format.pinned_versions(path)
     )
 
 
-def pinned_pypi_releases(path: Path) -> Iterable[tuple[DependencyName, DependencyVersion, Location]]:
-    """Yield each exact `==` pin in the file as a (name, the release the pin names, location of the pin) triple.
+def pinned_pypi_releases(path: Path) -> Iterable[ResolvedReference]:
+    """Yield each exact `==` pin in the file, carrying the release the pin itself names.
 
     The release carries the yank state PyPI reports for it. Its version is the one the file records rather than the
     newest PyPI offers, so it is the version the run leaves the pin on, whichever version uv settled the pin on.
     """
-    for reference, location in pyproject_toml_format.pinned_versions(path):
-        yank = yank_state(reference.dependency, reference.current_version)
-        yield reference.dependency, DependencyVersion(reference.current_version, yank=yank), location
+    for pin in pyproject_toml_format.pinned_versions(path):
+        yank = yank_state(pin.dependency, pin.current_version)
+        yield ResolvedReference(**vars(pin), release=DependencyVersion(pin.current_version, yank=yank))
 
 
 def update_uv_lock(pyproject_toml: Path) -> None:

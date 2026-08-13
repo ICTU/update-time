@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING
 
+from update_time.domain.reference import ResolvedReference
 from update_time.domain.staleness import warn_about_stale_dependencies
 from update_time.file_formats import package_json as package_json_format
 from update_time.io.filesystem import glob
@@ -12,9 +13,6 @@ from update_time.sources import npmjs
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
-
-    from update_time.domain.version import DependencyName, DependencyVersion
-    from update_time.primitives.location import Location
 
 _LOG = get_logger("package.json")
 # Lockfiles that signal which package manager a project uses, checked when there is no corepack `packageManager`
@@ -50,12 +48,17 @@ def update_package_jsons() -> None:
     warn_about_stale_dependencies(supported, _newest_releases, _LOG.warn_if_stale)
 
 
-def _newest_releases(package_json: Path) -> Iterable[tuple[DependencyName, DependencyVersion | None, Location]]:
-    """Yield each declared dependency as a (name, newest npm release | None, location) triple, for staleness."""
+def _newest_releases(package_json: Path) -> Iterable[ResolvedReference]:
+    """Yield each declared dependency the npm registry has a newest release for, at each line declaring it.
+
+    The reference names no version: a `package.json` declares a range, and which version it resolves to is recorded
+    in the lock file. Staleness is measured against the package's newest release, so the range is not needed.
+    """
     return (
-        (name, npmjs.newest_release(name), location)
+        ResolvedReference(name, "", location, release=release)
         for name, locations in package_json_format.dependency_locations(package_json).items()
         for location in locations
+        if (release := npmjs.newest_release(name)) is not None
     )
 
 

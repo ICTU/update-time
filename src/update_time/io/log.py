@@ -13,7 +13,7 @@ from rich.theme import Theme
 
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.staleness import is_stale
-from update_time.domain.version import SHA256_DIGEST
+from update_time.primitives.digest import SHA256_DIGEST
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
 from update_time.primitives.timestamp import days_since
@@ -24,9 +24,10 @@ if TYPE_CHECKING:
     from requests import Response
     from rich.text import Text
 
+    from update_time.domain.dependency import DependencyVersion
     from update_time.domain.drift import DriftedPin
     from update_time.domain.marker import Marker
-    from update_time.domain.version import DependencyVersion, VersionString
+    from update_time.domain.reference import Reference, ResolvedReference
     from update_time.domain.vulnerability import Vulnerability
     from update_time.primitives.command import Command
 
@@ -196,6 +197,11 @@ class Logger:
         """Bracket a location's text in `LOCATION_DELIMITER` so the highlighter styles the whole run as one token."""
         return f"{LOCATION_DELIMITER}{location}{LOCATION_DELIMITER}"
 
+    @staticmethod
+    def _reference_fields(reference: Reference, **extra: object) -> dict[str, object]:
+        """Return the fields every message about a reference carries, plus the ones the message reporting it adds."""
+        return {"dependency": reference.dependency, "location": reference.location, **extra}
+
     def _log_ignored(self, message: LogMessage, dependency: str, marker: Marker, location: Location) -> None:
         """Log that a marker held a reference's update or one of its warnings back, at the message's own level.
 
@@ -236,24 +242,21 @@ class Logger:
     _SUPPRESSING_CHANGELOG = "Suppressing changelog already shown, see above"
     _NO_CHANGELOG = "No changelog available!"
 
-    def new_version(self, dependency: str, version: DependencyVersion, location: Location) -> None:
+    def new_version(self, reference: Reference, version: DependencyVersion) -> None:
         """Log the availability of a new version for a dependency in a file, with its UTC publication date if known."""
+        dependency = reference.dependency
         if (dependency, version) in self._logged_changes:
             changes = self._SUPPRESSING_CHANGELOG
         else:
             changes = version.changes or self._NO_CHANGELOG
         self._logged_changes.add((dependency, version))
-        self._log(
-            self._MESSAGE_NEW_VERSION, dependency=dependency, location=location, version=str(version), changes=changes
-        )
+        self._log(self._MESSAGE_NEW_VERSION, **self._reference_fields(reference, version=str(version), changes=changes))
 
     _MESSAGE_PINNED = LogMessage(INFO, "Pinned %(dependency)s in %(location)s to %(version)s@%(sha)s")
 
-    def pinned(self, dependency: str, version: DependencyVersion, location: Location) -> None:
+    def pinned(self, reference: Reference, version: DependencyVersion) -> None:
         """Log that a previously unpinned reference in a file was pinned to a digest, without changing its version."""
-        self._log(
-            self._MESSAGE_PINNED, dependency=dependency, location=location, version=version.version, sha=version.sha
-        )
+        self._log(self._MESSAGE_PINNED, **self._reference_fields(reference, version=version.version, sha=version.sha))
 
     _MESSAGE_CANNOT_PIN = LogMessage(
         INFO,
@@ -275,10 +278,10 @@ class Logger:
     def _drift_fields(drifted: DriftedPin, **extra: object) -> dict[str, object]:
         """Return the fields every drift message carries, plus the ones the message reporting it adds."""
         return {
-            "dependency": drifted.reference.dependency,
-            "version": drifted.reference.current_version,
+            "dependency": drifted.dependency,
+            "version": drifted.current_version,
             "location": drifted.location,
-            "current_sha": drifted.reference.current_sha,
+            "current_sha": drifted.current_sha,
             "new_sha": drifted.new_sha,
             **extra,
         }
@@ -352,66 +355,63 @@ class Logger:
         "%(days)d days ago (> %(threshold)d)",
     )
 
-    def warn_if_stale(self, dependency: str, version: DependencyVersion, location: Location, threshold: int) -> None:
+    def warn_if_stale(self, resolved: ResolvedReference, threshold: int) -> None:
         """Warn if the dependency's newest release is old enough that the project may have gone quiet.
 
         Does nothing when the newest release date is unknown or within the threshold (or the check is disabled),
         so callers can hand off every resolved version unconditionally. Both the decision and the reported day count
         are whole days, so the count in the message always exceeds the threshold beside it.
         """
-        if (published := version.newest_published) is None or not is_stale(published, threshold):
+        if (published := resolved.release.newest_published) is None or not is_stale(published, threshold):
             return
         self._log(
             self._MESSAGE_STALE,
-            dependency=dependency,
-            location=location,
-            version=version.version,
-            days=days_since(published),
-            threshold=threshold,
+            **self._reference_fields(
+                resolved, version=resolved.release.version, days=days_since(published), threshold=threshold
+            ),
         )
 
     _MESSAGE_IGNORED_STALENESS = LogMessage(
         DEBUG, "Ignoring the staleness warning for %(dependency)s in %(location)s (update-time: %(directive)s)"
     )
 
-    def ignored_staleness(
-        self, dependency: str, version: DependencyVersion, marker: Marker, location: Location, threshold: int
-    ) -> None:
+    def ignored_staleness(self, resolved: ResolvedReference, marker: Marker, threshold: int) -> None:
         """Log that the marker held back a staleness warning that would otherwise have been logged.
 
         Guards on the same condition as `warn_if_stale`, so callers can hand off every reference unconditionally and
         a marker that suppresses nothing stays silent.
         """
-        if is_stale(version.newest_published, threshold):
-            self._log_ignored(self._MESSAGE_IGNORED_STALENESS, dependency, marker, location)
+        if is_stale(resolved.release.newest_published, threshold):
+            self._log_ignored(self._MESSAGE_IGNORED_STALENESS, resolved.dependency, marker, resolved.location)
 
     _MESSAGE_YANKED = LogMessage(
         WARNING, "Yanked dependency %(dependency)s in %(location)s: version %(version)s was yanked (%(reason)s)"
     )
 
-    def warn_if_yanked(self, dependency: str, version: DependencyVersion, location: Location) -> None:
+    def warn_if_yanked(self, resolved: ResolvedReference) -> None:
         """Warn that the version the reference is pinned to has been yanked; do nothing when it was not yanked.
 
         The message shows the yank in parentheses, where it renders itself as the maintainer's reason.
         """
-        if not version.yank.yanked:
+        release = resolved.release
+        if not release.yank.yanked:
             return
         self._log(
-            self._MESSAGE_YANKED, dependency=dependency, location=location, version=version.version, reason=version.yank
+            self._MESSAGE_YANKED, **self._reference_fields(resolved, version=release.version, reason=release.yank)
         )
 
     _MESSAGE_IGNORED_YANK = LogMessage(
         DEBUG, "Ignoring the yank warning for %(dependency)s in %(location)s (update-time: %(directive)s)"
     )
 
-    def ignored_yank(self, dependency: str, version: DependencyVersion, marker: Marker, location: Location) -> None:
+    def ignored_yank(self, resolved: ResolvedReference, marker: Marker) -> None:
         """Log that the marker held back a yank warning that would otherwise have been logged.
 
         Guards on the same condition as `warn_if_yanked`, so callers can hand off every reference unconditionally and
         a marker that suppresses nothing stays silent.
         """
-        if version.yank.yanked:
-            self._log_ignored(self._MESSAGE_IGNORED_YANK, dependency, marker, location)
+        if resolved.release.yank.yanked:
+            self._log_ignored(self._MESSAGE_IGNORED_YANK, resolved.dependency, marker, resolved.location)
 
     _MESSAGE_MALFORMED_CVSS_VECTOR = LogMessage(
         WARNING,
@@ -428,113 +428,87 @@ class Logger:
         "(%(advisory)s, %(url)s)",
     )
 
-    @staticmethod
-    def _vulnerability_fields(
-        dependency: str, version: VersionString, vulnerability: Vulnerability, location: Location
-    ) -> dict[str, object]:
+    @classmethod
+    def _vulnerability_fields(cls, reference: Reference, vulnerability: Vulnerability) -> dict[str, object]:
         """Return the fields the vulnerability warning carries."""
-        return {
-            "dependency": dependency,
-            "location": location,
-            "version": version,
-            "vulnerability": str(vulnerability),
-            "advisory": vulnerability.advisory,
-            "url": vulnerability.url,
-        }
-
-    def vulnerable_dependency(
-        self, dependency: str, version: VersionString, vulnerability: Vulnerability, location: Location
-    ) -> None:
-        """Warn that the version the reference is pinned to has a known vulnerability, naming the advisory."""
-        self._log(
-            self._MESSAGE_VULNERABLE_DEPENDENCY,
-            **self._vulnerability_fields(dependency, version, vulnerability, location),
+        return cls._reference_fields(
+            reference,
+            version=reference.current_version,
+            vulnerability=str(vulnerability),
+            advisory=vulnerability.advisory,
+            url=vulnerability.url,
         )
+
+    def vulnerable_dependency(self, reference: Reference, vulnerability: Vulnerability) -> None:
+        """Warn that the version the reference is pinned to has a known vulnerability, naming the advisory."""
+        self._log(self._MESSAGE_VULNERABLE_DEPENDENCY, **self._vulnerability_fields(reference, vulnerability))
 
     _MESSAGE_IGNORED_VULNERABILITY = LogMessage(
         DEBUG, "Ignoring the vulnerability warning for %(dependency)s in %(location)s (update-time: %(directive)s)"
     )
 
-    def ignored_vulnerability(self, dependency: str, marker: Marker, location: Location) -> None:
+    def ignored_vulnerability(self, reference: Reference, marker: Marker) -> None:
         """Log that the marker held back a vulnerability warning that would otherwise have been logged.
 
         Called per vulnerability the risk level in force would have reported, so a marker suppressing nothing stays
         silent, as the staleness and yank hold-backs do. This is what the reference is looked up for although its
         warning is suppressed: without the lookup there is nothing to say the marker held anything back.
         """
-        self._log_ignored(self._MESSAGE_IGNORED_VULNERABILITY, dependency, marker, location)
+        self._log_ignored(self._MESSAGE_IGNORED_VULNERABILITY, reference.dependency, marker, reference.location)
 
     _MESSAGE_GLOBALLY_IGNORED_VULNERABILITY = LogMessage(
         DEBUG,
         "Ignoring the vulnerability warning for %(dependency)s in %(location)s (--ignore-vulnerability %(advisory)s)",
     )
 
-    def globally_ignored_vulnerability(self, dependency: str, advisory: str, location: Location) -> None:
+    def globally_ignored_vulnerability(self, reference: Reference, advisory: str) -> None:
         """Log that the run-wide option held back a vulnerability warning, naming the advisory it silenced.
 
         The advisory named is the one the warning would have reported, which the reader may have passed under
         another of its identifiers.
         """
-        self._log(
-            self._MESSAGE_GLOBALLY_IGNORED_VULNERABILITY,
-            dependency=dependency,
-            advisory=advisory,
-            location=location,
-        )
+        self._log(self._MESSAGE_GLOBALLY_IGNORED_VULNERABILITY, **self._reference_fields(reference, advisory=advisory))
 
-    @staticmethod
-    def _redundant_suppression_fields(
-        dependency: str, version: VersionString, directive: str, location: Location
-    ) -> dict[str, object]:
+    @classmethod
+    def _redundant_suppression_fields(cls, reference: Reference, directive: str) -> dict[str, object]:
         """Return the fields a vulnerability suppression that holds nothing back is reported with.
 
         The directive is the caller's, since each of these messages judges one form of the `vulnerable` scope and
         the forms beside it may hold plenty back.
         """
-        return {
-            "directive": directive,
-            "dependency": dependency,
-            "version": version,
-            "location": location,
-        }
+        return cls._reference_fields(reference, directive=directive, version=reference.current_version)
 
     _MESSAGE_REDUNDANT_VULNERABLE_SCOPE = LogMessage(
         WARNING, _redundant_marker("version %(version)s has no vulnerability")
     )
 
-    def redundant_vulnerable_scope(
-        self, dependency: str, version: VersionString, marker: Marker, location: Location
-    ) -> None:
+    def redundant_vulnerable_scope(self, reference: Reference, marker: Marker) -> None:
         """Warn that the marker's vulnerability scope found no vulnerability to hold back for the pinned version."""
         self._log(
             self._MESSAGE_REDUNDANT_VULNERABLE_SCOPE,
-            **self._redundant_suppression_fields(dependency, version, marker.vulnerable_scope_directive, location),
+            **self._redundant_suppression_fields(reference, marker.vulnerable_scope_directive),
         )
 
     _MESSAGE_REDUNDANT_VULNERABLE_ADVISORY = LogMessage(
         WARNING, _redundant_marker("version %(version)s has no such vulnerability")
     )
 
-    def redundant_vulnerable_advisory(
-        self, dependency: str, version: VersionString, marker: Marker, location: Location
-    ) -> None:
+    def redundant_vulnerable_advisory(self, reference: Reference, marker: Marker) -> None:
         """Warn that the marker names an advisory none of the pinned version's vulnerabilities answers to."""
         self._log(
             self._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY,
-            **self._redundant_suppression_fields(dependency, version, marker.advisory_directives, location),
+            **self._redundant_suppression_fields(reference, marker.advisory_directives),
         )
 
     _MESSAGE_REDUNDANT_VULNERABLE_LEVEL = LogMessage(
         WARNING, _redundant_marker("version %(version)s has no vulnerability below %(level)s")
     )
 
-    def redundant_vulnerable_level(
-        self, dependency: str, version: VersionString, marker: Marker, location: Location, level: str
-    ) -> None:
+    def redundant_vulnerable_level(self, reference: Reference, marker: Marker, level: str) -> None:
         """Warn that the marker's risk level left no vulnerability of the pinned version below it to hold back."""
         self._log(
             self._MESSAGE_REDUNDANT_VULNERABLE_LEVEL,
-            **self._redundant_suppression_fields(dependency, version, marker.vulnerable.directive, location),
+            **self._redundant_suppression_fields(reference, marker.vulnerable.directive),
             level=level,
         )
 
@@ -542,52 +516,44 @@ class Logger:
         WARNING, _redundant_marker("this dependency's source reports no vulnerabilities")
     )
 
-    def redundant_vulnerable_source(self, dependency: str, marker: Marker, location: Location) -> None:
+    def redundant_vulnerable_source(self, reference: Reference, marker: Marker) -> None:
         """Warn that the marker's vulnerability scope can never hold anything back for this dependency."""
         self._log(
             self._MESSAGE_REDUNDANT_VULNERABLE_SOURCE,
-            directive=marker.vulnerable_directives,
-            dependency=dependency,
-            location=location,
+            **self._reference_fields(reference, directive=marker.vulnerable_directives),
         )
 
     _MESSAGE_REDUNDANT_COOLDOWN_ITEM = LogMessage(
         WARNING, _redundant_marker("this dependency's source reports no publication date to measure a cooldown against")
     )
 
-    def redundant_cooldown_item(self, dependency: str, marker: Marker, location: Location) -> None:
+    def redundant_cooldown_item(self, reference: Reference, marker: Marker) -> None:
         """Warn that the marker's cooldown can never hold anything back for this dependency."""
         self._log(
             self._MESSAGE_REDUNDANT_COOLDOWN_ITEM,
-            directive=marker.cooldown_directive,
-            dependency=dependency,
-            location=location,
+            **self._reference_fields(reference, directive=marker.cooldown_directive),
         )
 
     _MESSAGE_REDUNDANT_STALE_SOURCE = LogMessage(
         WARNING, _redundant_marker("this dependency's source reports no publication date to measure staleness against")
     )
 
-    def redundant_stale_source(self, dependency: str, marker: Marker, location: Location) -> None:
+    def redundant_stale_source(self, reference: Reference, marker: Marker) -> None:
         """Warn that the marker's `stale` directive decides nothing here, in whichever form it was written."""
         self._log(
             self._MESSAGE_REDUNDANT_STALE_SOURCE,
-            directive=marker.stale_directive,
-            dependency=dependency,
-            location=location,
+            **self._reference_fields(reference, directive=marker.stale_directive),
         )
 
     _MESSAGE_REDUNDANT_YANK_SCOPE = LogMessage(
         WARNING, _redundant_marker("this dependency's source has no yank concept")
     )
 
-    def redundant_yank_scope(self, dependency: str, marker: Marker, location: Location) -> None:
+    def redundant_yank_scope(self, reference: Reference, marker: Marker) -> None:
         """Warn that the marker's yank scope can never hold anything back for this dependency."""
         self._log(
             self._MESSAGE_REDUNDANT_YANK_SCOPE,
-            directive=marker.yank_directive,
-            dependency=dependency,
-            location=location,
+            **self._reference_fields(reference, directive=marker.yank_directive),
         )
 
     _MESSAGE_NO_VERSION = LogMessage(ERROR, "No valid version found for %(dependency)s")
@@ -641,9 +607,9 @@ class Logger:
         _INVERTED_ITEM + "warns while a release is fresh and goes quiet once it is old, so it sets no threshold",
     )
 
-    def inverted_stale_item(self, dependency: str, item: str, location: Location) -> None:
+    def inverted_stale_item(self, reference: Reference, item: str) -> None:
         """Warn that a `stale` item compares the wrong way round, so it sets no threshold."""
-        self._log(self._MESSAGE_INVERTED_STALE_ITEM, item=item, dependency=dependency, location=location)
+        self._log(self._MESSAGE_INVERTED_STALE_ITEM, **self._reference_fields(reference, item=item))
 
     _MESSAGE_INVERTED_COOLDOWN_ITEM = LogMessage(
         WARNING,
@@ -651,9 +617,9 @@ class Logger:
         "cooldown",
     )
 
-    def inverted_cooldown_item(self, dependency: str, item: str, location: Location) -> None:
+    def inverted_cooldown_item(self, reference: Reference, item: str) -> None:
         """Warn that a `cooldown` item compares the wrong way round, so it sets no cooldown."""
-        self._log(self._MESSAGE_INVERTED_COOLDOWN_ITEM, item=item, dependency=dependency, location=location)
+        self._log(self._MESSAGE_INVERTED_COOLDOWN_ITEM, **self._reference_fields(reference, item=item))
 
     _MESSAGE_INVERTED_VULNERABLE_ITEM = LogMessage(
         WARNING,
@@ -661,17 +627,15 @@ class Logger:
         "risk level",
     )
 
-    def inverted_vulnerable_item(self, dependency: str, item: str, location: Location) -> None:
+    def inverted_vulnerable_item(self, reference: Reference, item: str) -> None:
         """Warn that a `vulnerable` item compares the wrong way round, so it sets no risk level."""
-        self._log(self._MESSAGE_INVERTED_VULNERABLE_ITEM, item=item, dependency=dependency, location=location)
+        self._log(self._MESSAGE_INVERTED_VULNERABLE_ITEM, **self._reference_fields(reference, item=item))
 
     _MESSAGE_REDUNDANT_BOUND = LogMessage(
         WARNING, "Redundant update bound %(bound)s on %(dependency)s %(version)s in %(location)s: it %(redundancy)s"
     )
 
-    def warn_if_redundant_bound(
-        self, dependency: str, marker: Marker, current_version: VersionString, location: Location
-    ) -> None:
+    def warn_if_redundant_bound(self, reference: Reference, marker: Marker) -> None:
         """Warn when the marker's version bound is redundant for the current version.
 
         The bound is redundant when it never has an effect or blocks every update (see `VersionBound.redundancy`).
@@ -680,15 +644,12 @@ class Logger:
         """
         if (bound := marker.version_bound) == NO_BOUND:
             return
+        current_version = reference.current_version
         if (redundancy := bound.redundancy(current_version)) is None:
             return
         self._log(
             self._MESSAGE_REDUNDANT_BOUND,
-            bound=bound,
-            dependency=dependency,
-            version=current_version,
-            location=location,
-            redundancy=redundancy,
+            **self._reference_fields(reference, bound=bound, version=current_version, redundancy=redundancy),
         )
 
     # --- File scanning and selection ---

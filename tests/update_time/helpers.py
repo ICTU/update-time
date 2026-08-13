@@ -15,8 +15,9 @@ from unittest.mock import ANY, Mock, call, patch
 
 import update_time
 from update_time.domain.bound import NewVersionGetter, Verb, VersionBound, parse_bound
+from update_time.domain.dependency import DependencyVersion, VersionString
+from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
-from update_time.domain.version import DependencyVersion, VersionString
 from update_time.domain.vulnerability import NO_RISK_LEVEL, WARN_VULNERABILITY_LEVEL, Vulnerability
 from update_time.io.log import Logger, LogMessage, reset_changelog_suppression
 from update_time.primitives.location import Location
@@ -303,10 +304,8 @@ class LoggingTestCase(CacheClearingTestCase):
     ) -> None:
         """Assert that a pin left on a vulnerable version was warned about, as the file's only warning by default."""
         assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
-        assert_logged(
-            Logger._MESSAGE_VULNERABLE_DEPENDENCY,
-            **Logger._vulnerability_fields(dependency, version, vulnerability, location),
-        )
+        reference = Reference(dependency, version, location)
+        assert_logged(Logger._MESSAGE_VULNERABLE_DEPENDENCY, **Logger._vulnerability_fields(reference, vulnerability))
 
     def assert_inverted_vulnerable_item_logged(self, dependency: str, item: str, location: Location) -> None:
         """Assert that a `vulnerable` item comparing the wrong way round was warned about, among the other records."""
@@ -469,6 +468,21 @@ class LoggingTestCase(CacheClearingTestCase):
     def assert_no_warnings_logged(self) -> None:
         """Assert that no warnings were logged."""
         self.assertEqual(self.records(WARNING), [])
+
+
+def reference(dependency: str, location: Location, version: str = "") -> Reference:
+    """Return the reference a log method is handed, for the dependency pinned at the location.
+
+    The version defaults to empty because most messages render only the dependency and its location.
+    """
+    return Reference(dependency, version, location)
+
+
+def resolved_reference(
+    dependency: str, location: Location, release: DependencyVersion, version: str = ""
+) -> ResolvedReference:
+    """Return the resolved reference a check is handed: the reference at the location, and its release."""
+    return ResolvedReference(dependency, version, location, release=release)
 
 
 def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGetter:

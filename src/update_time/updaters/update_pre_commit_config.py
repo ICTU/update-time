@@ -14,8 +14,9 @@ from update_time.sources.github import github_owner_and_repository
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from update_time.domain.dependency import DependencyVersion
     from update_time.domain.line import Line
-    from update_time.domain.version import DependencyVersion, Reference
+    from update_time.domain.reference import Reference
 
 _LOG = get_logger("pre-commit config")
 

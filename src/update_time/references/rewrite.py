@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.drift import DriftedPin, hash_drifted, report_drift
 from update_time.domain.line import located_lines
 from update_time.domain.marker import parse_marker
-from update_time.domain.version import Reference
+from update_time.domain.reference import Reference
 from update_time.primitives.text import rewrite_string
 from update_time.references.resolve import latest_version
 
@@ -23,9 +23,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from update_time.domain.bound import NewVersionGetter
+    from update_time.domain.dependency import DependencyVersion
     from update_time.domain.line import Line
     from update_time.domain.marker import Marker
-    from update_time.domain.version import DependencyVersion
     from update_time.io.log import Logger
     from update_time.primitives.location import Location
 
@@ -50,15 +50,15 @@ class _Rewriter:
         `latest_version`'s decision, or None to leave the line unchanged. A reference that is already up to date is
         checked for digest drift, and one with an update, or without its available digest, is rewritten.
         """
-        reference = matched_reference(match, self.dependency)
-        latest = latest_version(reference, self.get_new_version, marker, location, self.logger)
+        reference = matched_reference(match, location, self.dependency)
+        latest = latest_version(reference, self.get_new_version, marker, self.logger)
         if latest is None:
             return match.string
         has_sha_group = "sha" in match.groupdict()
         pin_unpinned = has_sha_group and match.group("sha") is None and bool(latest.sha)
         if latest.version == reference.current_version and not pin_unpinned:
             return self._handle_drift(match, marker, latest, location)
-        return self._apply_update(match, latest, location, pin_unpinned=pin_unpinned)
+        return self._apply_update(match, latest, reference, pin_unpinned=pin_unpinned)
 
     def _handle_drift(self, match: re.Match[str], marker: Marker, latest: DependencyVersion, location: Location) -> str:
         """Return the line for an up-to-date reference, adopting or warning about a re-pushed digest.
@@ -70,14 +70,14 @@ class _Rewriter:
         if current_sha is None or not hash_drifted(latest.sha, current_sha):
             return match.string
         dependency, version = matched_dependency(match, self.dependency), match.group("version")
-        drifted = DriftedPin(Reference(dependency, version, current_sha), latest.sha, location)
+        drifted = DriftedPin(dependency, version, location, current_sha, new_sha=latest.sha)
         adopted = report_drift(
             marker, partial(self.logger.digest_drift, drifted), partial(self.logger.adopted_drift, drifted)
         )
         return rewrite_string(match, {"sha": latest.sha}) if adopted else match.string
 
     def _apply_update(
-        self, match: re.Match[str], latest: DependencyVersion, location: Location, *, pin_unpinned: bool
+        self, match: re.Match[str], latest: DependencyVersion, reference: Reference, *, pin_unpinned: bool
     ) -> str:
         """Return the line rewritten to the latest version and digest, logging the change.
 
@@ -85,17 +85,16 @@ class _Rewriter:
         and the available digest is appended to pin it, even when the version itself is already up to date.
         Otherwise the version is replaced in place, and so is the digest of an already-pinned reference.
         """
-        dependency = matched_dependency(match, self.dependency)
         version_changed = latest.version != match.group("version")
         if pin_unpinned:
             # Append the digest to a previously unpinned reference, bumping the version too if one is available.
             if version_changed:
-                self.logger.new_version(dependency, latest, location)
+                self.logger.new_version(reference, latest)
             else:
-                self.logger.pinned(dependency, latest, location)
+                self.logger.pinned(reference, latest)
             replacements = {"version": f"{latest.version}@{latest.sha}"}
         else:
-            self.logger.new_version(dependency, latest, location)
+            self.logger.new_version(reference, latest)
             replacements = {"version": latest.version}
             if match.groupdict().get("sha") is not None:
                 replacements["sha"] = latest.sha
@@ -111,9 +110,9 @@ def matched_dependency(match: re.Match[str], dependency: str = "") -> str:
     return dependency or match.group("dependency")
 
 
-def matched_reference(match: re.Match[str], dependency: str = "") -> Reference:
-    """Return the reference the match captured in its `dependency` and `version` named groups."""
-    return Reference(matched_dependency(match, dependency), match.group("version"))
+def matched_reference(match: re.Match[str], location: Location, dependency: str = "") -> Reference:
+    """Return the reference the match captured in its `dependency` and `version` named groups, at its line."""
+    return Reference(matched_dependency(match, dependency), match.group("version"), location)
 
 
 def apply_marker(

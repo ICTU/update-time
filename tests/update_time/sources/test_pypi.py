@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.version import Yank
+from update_time.domain.dependency import Yank
 from update_time.sources.pypi import (
     _changelog_from_url,
     get_changes,

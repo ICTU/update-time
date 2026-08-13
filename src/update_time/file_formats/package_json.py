@@ -14,7 +14,7 @@ from update_time.primitives.text import line_number
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from update_time.domain.version import DependencyName
+    from update_time.domain.dependency import DependencyName
 
 # The dependency sections whose direct dependencies npm/pnpm install for this project (peerDependencies are
 # constraints on the consumer, not installed here, so they are left out). pnpm's `list --json` output splits its

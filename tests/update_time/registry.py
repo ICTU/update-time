@@ -13,7 +13,6 @@ from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
 from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
-from update_time.domain.version import Reference
 from update_time.primitives.location import Location
 
 from tests.helpers import mock_path, mock_response, patch_environ
@@ -147,7 +146,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
     @staticmethod
     def drifted(mock_file: Mock) -> DriftedPin:
         """Return the drifted pin the re-pushed `python:3.14` reference these tests use produces."""
-        return DriftedPin(Reference("python", "3.14", DIGEST1), DIGEST2, Location(mock_file, 1))
+        return DriftedPin("python", "3.14", Location(mock_file, 1), DIGEST1, new_sha=DIGEST2)
 
     def test_no_changes(self) -> None:
         """Test that an image already at the latest pinned tag is left unchanged."""

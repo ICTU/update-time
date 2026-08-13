@@ -12,14 +12,14 @@ from typing import TYPE_CHECKING
 
 import tomlkit
 
-from update_time.domain.version import Reference, normalized_name
+from update_time.domain.reference import Reference
 from update_time.primitives.location import Location
 from update_time.primitives.text import line_number
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from update_time.domain.version import DependencyName, VersionString
+    from update_time.domain.dependency import DependencyName, VersionString
 
 # A pinned dependency spec as it appears in a dependencies array, e.g. `"package==1.0"`, capturing the distribution
 # name and the pinned version. Only `==` pins are matched; specs with other clauses (`<=`, `~=`, …) are left alone.
@@ -27,11 +27,7 @@ _PINNED_SPEC = re.compile(r'"(?P<name>[A-Za-z0-9_.\-]+)==(?P<version>[A-Za-z0-9_
 
 
 def read(path: Path) -> dict | None:
-    """Return the parsed pyproject.toml, or None if it can't be read or isn't valid TOML.
-
-    Returning None (rather than raising) lets callers probe files that may not exist — e.g. walking up the tree for a
-    workspace root — or tolerate an unrelated, malformed pyproject.toml without aborting the run.
-    """
+    """Return the parsed pyproject.toml, or None when the file can't be read or isn't valid TOML."""
     try:
         text = path.read_text()
     except OSError:
@@ -75,14 +71,14 @@ def set_tool_key(path: Path, table: str, key: str, value: str, *, comment: str =
 def rewrite_pinned_versions(path: Path, versions: dict[DependencyName, VersionString]) -> None:
     """Rewrite each `"name==<old>"` pin to the version `versions` holds for it; write the file if changed.
 
-    The mapping is keyed by normalized name, so a pin is found however the file spells the name, and keeps that
-    spelling. Names absent from the mapping keep their pinned version, so only dependencies with a known newer
-    version are touched, and only the captured spec is rewritten — the rest of the file is left exactly as it was.
+    The mapping is keyed by the name exactly as this file spells it. A name absent from it keeps its pinned version,
+    so only dependencies with a known newer version are touched, and only the captured spec is rewritten — the rest
+    of the file is left exactly as it was.
     """
 
     def replace(match: re.Match[str]) -> str:
         name = match.group("name")
-        version = versions.get(normalized_name(name), match.group("version"))
+        version = versions.get(name, match.group("version"))
         return f'"{name}=={version}"'
 
     current = path.read_text()
@@ -91,7 +87,7 @@ def rewrite_pinned_versions(path: Path, versions: dict[DependencyName, VersionSt
         path.write_text(rewritten)
 
 
-def pinned_versions(path: Path) -> list[tuple[Reference, Location]]:
+def pinned_versions(path: Path) -> list[Reference]:
     """Return every exact `name==version` pin in the file, with where it sits.
 
     Matches the same `==` specs `rewrite_pinned_versions` rewrites (looser specifiers like `<=` are excluded),
@@ -100,6 +96,6 @@ def pinned_versions(path: Path) -> list[tuple[Reference, Location]]:
     """
     contents = path.read_text()
     return [
-        (Reference(match["name"], match["version"]), Location(path, line_number(contents, match.start())))
+        Reference(match["name"], match["version"], Location(path, line_number(contents, match.start())))
         for match in _PINNED_SPEC.finditer(contents)
     ]

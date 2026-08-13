@@ -8,8 +8,8 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from update_time.domain.dependency import DependencyName, DependencyVersion, VersionString
 from update_time.domain.publication import publication_date_reporting, reports_publication_dates
-from update_time.domain.version import DependencyName, DependencyVersion, VersionString
 from update_time.file_formats import yaml as yaml_format
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
 from update_time.io.log import get_logger

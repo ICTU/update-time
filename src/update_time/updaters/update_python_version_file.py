@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
-from update_time.domain.version import DependencyVersion, is_valid
+from update_time.domain.dependency import DependencyVersion, is_valid
 from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, first_line_match, glob
 from update_time.io.log import get_logger
 from update_time.references.file import update_file

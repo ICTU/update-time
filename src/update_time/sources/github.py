@@ -11,14 +11,14 @@ from urllib.parse import urlparse
 from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.publication import publication_date_reporting
-from update_time.domain.version import (
+from update_time.domain.dependency import (
     DependencyName,
     DependencyVersion,
     VersionString,
     first_eligible,
     is_valid,
 )
+from update_time.domain.publication import publication_date_reporting
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.primitives.timestamp import newest_timestamp, parse_timestamp

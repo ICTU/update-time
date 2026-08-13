@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 
-from update_time.domain.version import Yank
+from update_time.domain.dependency import Yank
 from update_time.sources.npmjs import (
     deprecation,
     get_changes,
@@ -17,7 +17,7 @@ from tests.helpers import patch_get
 from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase
 
 if TYPE_CHECKING:
-    from update_time.domain.version import DependencyVersion
+    from update_time.domain.dependency import DependencyVersion
 
 
 class NpmjsPublicationDatetimeTest(LoggingTestCase):
