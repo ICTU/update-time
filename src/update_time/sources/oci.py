@@ -3,7 +3,8 @@
 This is a generic OCI distribution client: it resolves image references on any registry (Docker Hub, ghcr.io,
 mcr.microsoft.com, quay.io, ...) by listing tag names, discovering the registry's auth via the OCI
 `WWW-Authenticate` challenge, and reading the digest to pin from the tag's manifest. Docker-Hub-specific behavior
-(the push date the cooldown relies on, and credentials that raise the rate limit) lives in `docker_hub`.
+(the push date the cooldown and the staleness check rely on, and credentials that raise the rate limit) lives in
+`docker_hub`.
 """
 
 import re
@@ -14,7 +15,8 @@ from typing import TYPE_CHECKING, cast
 
 from packaging.version import InvalidVersion, Version
 
-from update_time.domain.cooldown import cooldown_honouring, within_cooldown
+from update_time.domain.cooldown import within_cooldown
+from update_time.domain.publication import publication_date_reporting
 from update_time.domain.version import (
     SHA256_DIGEST,
     DependencyName,
@@ -260,7 +262,7 @@ def is_docker_hub_image(image: str) -> bool:
     return _is_docker_hub_host(host)
 
 
-@partial(cooldown_honouring, when=is_docker_hub_image)
+@partial(publication_date_reporting, when=is_docker_hub_image)
 def get_latest_tag(
     image: DependencyName, current_tag: VersionString, version_bound: VersionBound, cooldown_days: int
 ) -> DependencyVersion:

@@ -8,7 +8,7 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from update_time.domain.cooldown import cooldown_honouring, honours_cooldown
+from update_time.domain.publication import publication_date_reporting, reports_publication_dates
 from update_time.domain.version import DependencyName, DependencyVersion, VersionString
 from update_time.file_formats import yaml as yaml_format
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
@@ -43,14 +43,15 @@ def _update_circle_ci_yaml(config_file: Path) -> None:
     machine_names = {image.split(":", maxsplit=1)[0] for image in machine}
 
     def dates_the_versions_of(image: DependencyName) -> bool:
-        """Return whether a cooldown can be measured for the image, which no machine image and no other registry has.
+        """Return whether the image's versions carry a publication date.
 
-        A machine image is recognised by name here rather than by name and version, since a capability is asked
-        about the dependency alone.
+        A machine image carries none, since no registry serves it at all, and is recognised by name here rather
+        than by name and version, since a capability is asked about the dependency alone. Any other image is
+        judged by `get_latest_tag`, which resolves it.
         """
-        return image not in machine_names and honours_cooldown(get_latest_tag, image)
+        return image not in machine_names and reports_publication_dates(get_latest_tag, image)
 
-    @partial(cooldown_honouring, when=dates_the_versions_of)
+    @partial(publication_date_reporting, when=dates_the_versions_of)
     def get_new_version(
         dependency: DependencyName, version: VersionString, version_bound: VersionBound, cooldown_days: int
     ) -> DependencyVersion:

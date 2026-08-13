@@ -94,29 +94,32 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.vulnerable_dependency("django", "3.2.0", vulnerability, requirements)
     vulnerable = capture.take()
 
-    log.redundant_vulnerable_scope(
-        "django", "4.2.0", Marker(ignore_vulnerable=True, raw="ignore[vulnerable]"), requirements
-    )
+    # A redundancy warning names the directive it is about, spelled from what the marker parsed to, so these
+    # markers carry the scope or item they report and no `raw` text for it to be read from.
+    log.redundant_vulnerable_scope("django", "4.2.0", Marker(ignore_vulnerable=True), requirements)
     redundant_vulnerable_scope = capture.take()
 
-    advisory = "CVE-2022-28346"
-    suppression = Marker(ignored_advisories=frozenset({advisory}), raw=f"ignore[vulnerable={advisory}]")
+    suppression = Marker(ignored_advisories=frozenset({"CVE-2022-28346"}))
     log.redundant_vulnerable_advisory("django", "4.2.0", suppression, requirements)
     redundant_vulnerable_advisory = capture.take()
 
-    level = Marker(vulnerable=Threshold(value="high"), raw="ignore[vulnerable<high]")
+    level = Marker(vulnerable=Threshold(value="high", directive="ignore[vulnerable<high]"))
     log.redundant_vulnerable_level("django", "4.2.0", level, requirements, "high")
     redundant_vulnerable_level = capture.take()
 
-    log.redundant_vulnerable_source("python", Marker(ignore_vulnerable=True, raw="ignore[vulnerable]"), dockerfile)
+    log.redundant_vulnerable_source("python", Marker(ignore_vulnerable=True), dockerfile)
     redundant_vulnerable_source = capture.take()
 
-    log.redundant_yank_scope("python", Marker(ignore_yanked=True, raw="ignore[yanked]"), dockerfile)
+    log.redundant_yank_scope("python", Marker(ignore_yanked=True), dockerfile)
     redundant_yank_scope = capture.take()
 
-    cooldown = Marker(cooldown=Threshold(value=30, directive="ignore[cooldown<30]"), raw="ignore[cooldown<30]")
+    cooldown = Marker(cooldown=Threshold(value=30, directive="ignore[cooldown<30]"))
     log.redundant_cooldown_item("python", cooldown, Location(Path(".python-version"), 2))
     redundant_cooldown_item = capture.take()
+
+    stale_marker = Marker(stale=Threshold(value=90, directive="ignore[stale<90]"))
+    log.redundant_stale_source("ghcr.io/astral-sh/uv", stale_marker, dockerfile)
+    redundant_stale_source = capture.take()
 
     log.invalid_bracket_item("python", "stlae", dockerfile)
     unrecognised = capture.take()
@@ -146,6 +149,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@REDUNDANT_VULNERABLE_SOURCE_WARNING@@": redundant_vulnerable_source,
         "@@REDUNDANT_YANK_SCOPE_WARNING@@": redundant_yank_scope,
         "@@REDUNDANT_COOLDOWN_ITEM_WARNING@@": redundant_cooldown_item,
+        "@@REDUNDANT_STALE_SOURCE_WARNING@@": redundant_stale_source,
         "@@UNRECOGNISED_ITEM_WARNING@@": unrecognised,
         "@@INVERTED_STALE_WARNING@@": inverted,
         "@@INVERTED_COOLDOWN_WARNING@@": inverted_cooldown,

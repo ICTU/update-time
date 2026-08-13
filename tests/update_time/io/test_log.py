@@ -472,19 +472,78 @@ class LoggerTests(TestCase):
                     Logger._MESSAGE_REDUNDANT_COOLDOWN_ITEM,
                     f"Redundant update-time marker {directive} for {dependency('python')} in "
                     f"{_at('.python-version:1')}: this dependency's source reports no publication date to measure "
-                    "a cooldown against, so the marker holds nothing back",
+                    "a cooldown against",
                 )
 
-    def test_redundant_yank_scope(self, mock_log: Mock):
-        """Test that an inert yank scope is warned about, with the `ignore` directive as the user wrote it."""
-        marker = Marker(ignore_yanked=True, raw="ignore[yanked] allow[hash-drift]")
+    def test_redundant_stale_threshold(self, mock_log: Mock):
+        """Test that a threshold its source cannot measure names its own directive, not the one spelled beside it."""
         location = _create_location("Dockerfile", 2)
-        Logger("yanked").redundant_yank_scope("python", marker, location)
+        for directive in ("ignore[stale<90]", "allow[stale>=90]"):
+            with self.subTest(directive=directive):
+                mock_log.reset_mock()
+                marker = Marker(stale=Threshold(value=90, directive=directive), raw=f"{directive} allow[hash-drift]")
+                Logger("stale").redundant_stale_source("python", marker, location)
+                self.assert_message(
+                    mock_log,
+                    Logger._MESSAGE_REDUNDANT_STALE_SOURCE,
+                    f"Redundant update-time marker {directive} for {dependency('python')} in "
+                    f"{_at('Dockerfile:2')}: this dependency's source reports no publication date to measure "
+                    "staleness against",
+                )
+
+    def test_redundant_vulnerable_source_names_every_form_the_marker_carries(self, mock_log: Mock):
+        """Test that the warning names each `vulnerable` form the marker carries, the advisories sharing a bracket."""
+        marker = Marker(
+            ignore_vulnerable=True,
+            ignored_advisories=frozenset({"CVE-2", "CVE-1"}),
+            vulnerable=Threshold(value="high", directive="ignore[vulnerable<high]"),
+            raw="ignore[vulnerable, vulnerable=CVE-2, vulnerable=CVE-1, vulnerable<high]",
+        )
+        Logger("vulnerable").redundant_vulnerable_source("python", marker, _create_location("Dockerfile", 2))
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_REDUNDANT_VULNERABLE_SOURCE,
+            "Redundant update-time marker ignore[vulnerable] ignore[vulnerable=CVE-1, vulnerable=CVE-2] "
+            f"ignore[vulnerable<high] for {dependency('python')} in {_at('Dockerfile:2')}: this dependency's "
+            "source reports no vulnerabilities",
+        )
+
+    def test_redundant_stale_scope(self, mock_log: Mock):
+        """Test that an inert bare `stale` scope names its own directive, not an `ignore` beside it holding plenty."""
+        marker = Marker(ignore_stale=True, raw="ignore[update] ignore[stale]")
+        Logger("stale").redundant_stale_source("python", marker, _create_location("Dockerfile", 2))
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_REDUNDANT_STALE_SOURCE,
+            f"Redundant update-time marker ignore[stale] for {dependency('python')} in "
+            f"{_at('Dockerfile:2')}: this dependency's source reports no publication date to measure "
+            "staleness against",
+        )
+
+    def test_redundant_stale_scope_is_named_over_a_threshold_beside_it(self, mock_log: Mock):
+        """Test that a marker carrying a bare `ignore[stale]` and a threshold is reported under the bare scope."""
+        marker = Marker(
+            ignore_stale=True,
+            stale=Threshold(value=90, directive="ignore[stale<90]"),
+            raw="ignore[stale] ignore[stale<90]",
+        )
+        Logger("stale").redundant_stale_source("python", marker, _create_location("Dockerfile", 2))
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_REDUNDANT_STALE_SOURCE,
+            f"Redundant update-time marker ignore[stale] for {dependency('python')} in {_at('Dockerfile:2')}: "
+            "this dependency's source reports no publication date to measure staleness against",
+        )
+
+    def test_redundant_yank_scope(self, mock_log: Mock):
+        """Test that an inert yank scope names its own directive, not an `ignore` beside it holding plenty back."""
+        marker = Marker(ignore_yanked=True, raw="ignore[update] ignore[yanked]")
+        Logger("yanked").redundant_yank_scope("python", marker, _create_location("Dockerfile", 2))
         self.assert_message(
             mock_log,
             Logger._MESSAGE_REDUNDANT_YANK_SCOPE,
-            f"Redundant update-time marker ignore[yanked] for {dependency('python')} in {_at('Dockerfile:2')}: "
-            "this dependency's source has no yank concept, so the marker holds nothing back",
+            f"Redundant update-time marker ignore[yanked] for {dependency('python')} in "
+            f"{_at('Dockerfile:2')}: this dependency's source has no yank concept",
         )
 
     def test_path_logged_at_debug(self, mock_log: Mock):

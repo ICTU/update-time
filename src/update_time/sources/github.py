@@ -10,7 +10,8 @@ from urllib.parse import urlparse
 
 from packaging.version import Version
 
-from update_time.domain.cooldown import cooldown_honouring, within_cooldown
+from update_time.domain.cooldown import within_cooldown
+from update_time.domain.publication import publication_date_reporting
 from update_time.domain.version import (
     DependencyName,
     DependencyVersion,
@@ -318,7 +319,7 @@ def _tagged_versions(owner: str, repository: str) -> list[TaggedVersion] | None:
     return tagged_versions
 
 
-@cooldown_honouring
+@publication_date_reporting
 @cache
 def get_latest_version(
     action: DependencyName, current_version: VersionString, version_bound: VersionBound, cooldown_days: int

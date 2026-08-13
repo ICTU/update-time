@@ -360,7 +360,7 @@ The risk level is the one the advisory's reviewers gave it: `low`, `moderate`, `
 A reference marked `# update-time: ignore[vulnerable]` is still looked up at OSV, and what OSV answers is silenced rather than warned about. It is looked up because the answer is the only thing that can tell you the marker has gone stale: a suppression outlives the vulnerability it was written for, and without the lookup there is nothing to compare it against. When the version turns out to have no vulnerability at all, Update-time reports the marker as holding nothing back:
 
 ```console
-WARNING Redundant update-time marker ignore[vulnerable] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability, so the marker holds nothing back
+WARNING Redundant update-time marker ignore[vulnerable] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability
 ```
 
 Run with `--log-level DEBUG` to see what the marker silenced. To silence one advisory rather than every one, name it in the marker (see [Silencing specific vulnerabilities](#silencing-specific-vulnerabilities)). A reference marked with a bare `# update-time: ignore` is not looked up at OSV at all, since that marker holds every check back and queries no source whatsoever. A reference frozen with `# update-time: ignore[update]` is checked and warned about as usual, so a pin you deliberately hold back keeps telling you that its version is vulnerable (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
@@ -407,16 +407,18 @@ So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen 
 A yank can only be observed where the dependency's source reports one, so of the references that accept a marker, `ignore[yanked]` has something to hold back on a `requirements.txt` pin and on a jsDelivr URL (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so Update-time logs it as redundant at `WARNING`:
 
 ```console
-WARNING Redundant update-time marker ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept, so the marker holds nothing back
+WARNING Redundant update-time marker ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept
 ```
 
 The `vulnerable` scope tells the same story: of the references that accept a marker, only a `requirements.txt` pin and a jsDelivr URL are looked up at OSV (see [Vulnerable dependencies](#-vulnerable-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry, every form of the scope is reported as redundant — `ignore[vulnerable]` on its own, one naming an advisory, and one setting a risk level alike:
 
 ```console
-WARNING Redundant update-time marker ignore[vulnerable] for python in Dockerfile:2: this dependency's source reports no vulnerabilities, so the marker holds nothing back
+WARNING Redundant update-time marker ignore[vulnerable] for python in Dockerfile:2: this dependency's source reports no vulnerabilities
 ```
 
-A bare `# update-time: ignore` is reported as redundant for neither scope, wherever it sits. It queries no source at all, and a marker is only judged against what a source answered.
+The `stale` scope tells the same story, in both its forms — the bare scope and a threshold — for a reference whose source reports no publication date to measure staleness against. [Setting a staleness threshold](#setting-a-staleness-threshold) names the three kinds of reference that get the warning.
+
+A bare `# update-time: ignore` is reported as redundant for none of these three scopes, wherever it sits. It queries no source at all, and a marker is only judged against what a source answered.
 
 A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — is logged at `WARNING` as an invalid item:
 
@@ -449,6 +451,14 @@ WARNING Incorrect 'stale>=90' in the update-time marker for python in Dockerfile
 
 A day count must be a whole number of days, so `ignore[stale<-5]` and `ignore[stale>=1.5]` are reported as invalid and leave the reference unchanged. An unreadable count is judged before the direction, so `ignore[stale>=1.5]` is reported as an unreadable count rather than as an inverted comparison. Where a reference carries both a threshold and a bare `ignore[stale]`, the `ignore[stale]` wins and the warning is suppressed whatever the threshold says. Use a single threshold per reference; the result of pairing one with another, say an `ignore[stale<90]` with an `allow[stale>=30]`, is undefined.
 
+Staleness is measured against the publication date of a dependency's newest release. Where the reference's own source reports no such date, Update-time reports the marker as holding nothing back, and the reference is updated as usual:
+
+```console
+WARNING Redundant update-time marker ignore[stale<90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source reports no publication date to measure staleness against
+```
+
+Three kinds of reference get that warning. An image on a registry other than Docker Hub does, since only Docker Hub reports a push date, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves. And so does a `.python-version` entry whose version comes from the project's Dockerfile, since the staleness reported is the base image's, not the entry's. A bare `ignore[stale]` is reported there too, since it silences a warning those references never get.
+
 #### Setting a cooldown period
 
 The [cooldown](#-cooldown) holds back releases that are too fresh to trust. To put one reference on a different window from the rest, give a `cooldown` scope a number of days: `# update-time: ignore[cooldown<30]` drops update candidates published less than 30 days ago, and is a per-reference `--cooldown 30`. Use it for a dependency you have been burned by, or one you trust enough to adopt sooner than the rest:
@@ -475,10 +485,10 @@ A bare `ignore[cooldown]` can be understood in two ways: adopt at once, or never
 The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)). Where the reference's own source reports no publication date to measure a cooldown against, Update-time reports the marker as holding nothing back, and the reference is updated as usual:
 
 ```console
-WARNING Redundant update-time marker ignore[cooldown<30] for python in .python-version:2: this dependency's source reports no publication date to measure a cooldown against, so the marker holds nothing back
+WARNING Redundant update-time marker ignore[cooldown<30] for python in .python-version:2: this dependency's source reports no publication date to measure a cooldown against
 ```
 
-Three kinds of reference get that warning. A `.python-version` entry whose version comes from the project's Dockerfile does, since its cooldown was already applied when the base image was updated. An image on a registry other than Docker Hub does too, since only Docker Hub reports a push date to measure a cooldown against, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves.
+The same three kinds of reference get that warning as for staleness (see [Setting a staleness threshold](#setting-a-staleness-threshold)), and for the same reasons but one. A `.python-version` entry whose version comes from the project's Dockerfile gets it because its cooldown was already applied when the base image was updated. An image on a registry other than Docker Hub does too, since only Docker Hub reports a push date to measure a cooldown against, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves.
 
 #### Silencing specific vulnerabilities
 
@@ -495,7 +505,7 @@ To silence a second advisory, add a second item: `# update-time: ignore[vulnerab
 When none of the version's vulnerabilities answers to the identifier — the vulnerability was fixed by an update, or the identifier was mistyped — Update-time reports the marker as holding nothing back:
 
 ```console
-WARNING Redundant update-time marker ignore[vulnerable=CVE-2022-28346] for django in docs/requirements.txt:12: version 4.2.0 has no such vulnerability, so the marker holds nothing back
+WARNING Redundant update-time marker ignore[vulnerable=CVE-2022-28346] for django in docs/requirements.txt:12: version 4.2.0 has no such vulnerability
 ```
 
 A marker naming several advisories is judged as one, so it is reported only once none of them names a vulnerability the version has.
@@ -517,7 +527,7 @@ The level applies to the reference carrying it, and every other reference in the
 When none of the version's vulnerabilities falls below the level, Update-time reports the marker as holding nothing back, since a level that silences nothing is one the reference no longer needs:
 
 ```console
-WARNING Redundant update-time marker ignore[vulnerable<high] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability below high, so the marker holds nothing back
+WARNING Redundant update-time marker ignore[vulnerable<high] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability below high
 ```
 
 `allow` and `ignore` are complements here as elsewhere, so `allow[vulnerable>=high]` sets the same level as `ignore[vulnerable<high]`. Inverting the operator would warn about the mild vulnerabilities and stay quiet about the severe ones, so neither `allow[vulnerable<high]` nor `ignore[vulnerable>=high]` sets a level. Update-time logs an inverted comparison at `WARNING` and holds nothing back, so the reference is warned about at the global level:
@@ -825,7 +835,7 @@ A version taken from Docker Hub honours the cooldown through the Node or Python 
 
 #### Stale dependencies
 
-Both are indirect cases. When the version is derived from the project's Dockerfile, only the staleness of the base image is reported; a `.python-version` entry that follows Docker Hub is checked against the Python image tag's push date.
+Both are indirect cases. When the version is derived from the project's Dockerfile, only the staleness of the base image is reported, so the entry itself is never checked and a `stale` marker on it is reported as redundant; an entry that follows Docker Hub is checked against the Python image tag's push date.
 
 #### Yanked dependencies
 
@@ -894,7 +904,7 @@ A newer tag is adopted only once it is past the cooldown, provided the image is 
 
 #### Stale dependencies
 
-Image tags are only checked on Docker Hub, for the same reason the cooldown is. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
+Image tags are only checked on Docker Hub, for the same reason the cooldown is, so a `stale` marker on an image hosted elsewhere is reported as redundant. So is one on a CircleCI machine-executor image, which no registry serves. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
 
 #### Yanked dependencies
 

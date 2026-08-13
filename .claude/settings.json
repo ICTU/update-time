@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path' | grep -qE '[.]py$' && { out=$(just format 2>&1) || jq -nc --arg out \"$out\" '{hookSpecificOutput:{hookEventName:\"PostToolUse\",additionalContext:(\"just format failed after this edit, so the file was not formatted:\\n\" + $out)}}'; } || true"
+            "command": "jq -r '.tool_input.file_path' | grep -qE '[.]py$' && { out=$(just format-after-edit 2>&1) || jq -nc --arg out \"$out\" '{hookSpecificOutput:{hookEventName:\"PostToolUse\",additionalContext:(\"The file was formatted; just format-after-edit then reported:\\n\" + $out)}}'; } || true"
           }
         ]
       }

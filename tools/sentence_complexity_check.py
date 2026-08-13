@@ -25,6 +25,10 @@ _INLINE_CODE = re.compile(r"`[^`]*`")
 # A printf-style interpolation, such as a log message's `%(location)s`: a value rather than prose.
 _INTERPOLATION = re.compile(r"%\(\w+\)[a-z]")
 
+# A string literal's opening: the letters prefixing it, if any, and its quote. Anchored at the start of a node's
+# source, so it tells a literal from anything else the parse tree holds.
+_STRING_PREFIX = re.compile(r"(?P<prefix>[A-Za-z]*)['\"]")
+
 # Abbreviations the splitter would otherwise take for the end of a sentence, spelled without their trailing period.
 _ABBREVIATIONS = frozenset({"e.g", "i.e", "etc"})
 
@@ -81,6 +85,50 @@ def _is_standalone(comment: tokenize.TokenInfo) -> bool:
     return comment.line[: comment.start[1]].strip() == ""
 
 
+def _string_fragments(source_code: str) -> Iterator[_Fragment]:
+    """Yield a fragment per string literal that holds prose, taken from the parse tree.
+
+    The tree folds implicitly concatenated literals into one node. An f-string yields its literal parts, without
+    the interpolations between them, and those parts are not yielded again on their own.
+    """
+    tree = ast.parse(source_code)
+    interpolated = {id(part) for node in ast.walk(tree) if isinstance(node, ast.JoinedStr) for part in node.values}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr) and _is_prose_string(node, source_code):
+            yield _Fragment(node.lineno, _literal_text(node))
+        elif isinstance(node, ast.Constant) and (text := _own_prose(node, source_code, interpolated)) is not None:
+            yield _Fragment(node.lineno, text)
+
+
+def _literal_text(node: ast.JoinedStr) -> str:
+    """Return an f-string's literal parts joined: the text it holds without the interpolations between them."""
+    parts = (part.value for part in node.values if isinstance(part, ast.Constant) and isinstance(part.value, str))
+    return "".join(parts)
+
+
+def _own_prose(node: ast.Constant, source_code: str, interpolated: set[int]) -> str | None:
+    """Return the prose the constant holds as a literal in its own right, or None when it holds none.
+
+    A part of an f-string is left to the f-string holding it, which measures the parts together: on its own a part
+    opening with an apostrophe reads as a literal, and its text would be measured a second time.
+    """
+    if not isinstance(node.value, str) or id(node) in interpolated or not _is_prose_string(node, source_code):
+        return None
+    return inspect.cleandoc(node.value)
+
+
+def _is_prose_string(node: ast.expr, source_code: str) -> bool:
+    """Return whether the node is a string literal holding prose rather than a regexp.
+
+    A raw string holds a pattern rather than a sentence, whether or not it interpolates: with the interpolations
+    dropped, what is left is punctuation, which this check would score as an impossibly dense sentence. The literal
+    is recognised by the letters before its opening quote, so `rf"..."` is as raw as `r"..."` and `R"..."` as raw
+    as either. An implicitly concatenated literal opens once, so one that starts raw is raw throughout.
+    """
+    prefix = _STRING_PREFIX.match(ast.get_source_segment(source_code, node) or "")
+    return prefix is not None and "r" not in prefix.group("prefix").lower()
+
+
 def _is_regexp(text: str) -> bool:
     """Return whether the text reads as a regular expression rather than as prose."""
     return text.count("\\") > _REGEXP_BACKSLASHES
@@ -127,17 +175,7 @@ def extract_prose_from_python(python_file: Path) -> Iterator[Prose]:
         else:
             fragments.append(_Fragment(line_number, comment))
         previous_line = line_number if standalone else None
-    # Strings come from the parse tree, which folds implicitly concatenated literals into one node.
-    for node in ast.walk(ast.parse(source_code)):
-        if isinstance(node, ast.JoinedStr):  # An f-string: keep the literal parts, drop the interpolations.
-            literals = [
-                part.value for part in node.values if isinstance(part, ast.Constant) and isinstance(part.value, str)
-            ]
-            fragments.append(_Fragment(node.lineno, "".join(literals)))
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            source = ast.get_source_segment(source_code, node) or ""
-            if source.startswith(('"', "'")):  # A quoted string is prose; a raw string (a regexp, say) is not.
-                fragments.append(_Fragment(node.lineno, inspect.cleandoc(node.value)))
+    fragments.extend(_string_fragments(source_code))
     for fragment in sorted(fragments):
         if (text := _INTERPOLATION.sub("", fragment.text).strip()) and not (
             _is_regexp(fragment.text) or _is_code(fragment.text)

@@ -69,6 +69,28 @@ class MainTest(unittest.TestCase):
         """Test that a command that fails means the mutation was caught, which is what a guarding test does."""
         self.assertEqual(self.probe(mock_path(_ORIGINAL), returncode=1), 0)
 
+    def test_the_tests_that_caught_the_mutation_are_named(self):
+        """Test that each failing test is named, so a case that caught nothing is visible without reading a traceback.
+
+        A `subTest` case is named as unittest reports it, with its parameters, since a table's cases are where a
+        case guarding nothing hides.
+        """
+        reported_lines = [
+            "FAIL: test_scope (tests.io.test_log.LoggerTests.test_scope) (raw='ignore[update] ignore[yanked]')",
+            "a traceback the probe passes over",
+            "FAIL: test_scope (tests.io.test_log.LoggerTests.test_scope) (raw='ignore[yanked]')",
+            "ERROR: test_other (tests.io.test_log.LoggerTests.test_other)",
+            "Ran 3 tests in 0.1s",
+        ]
+        output = "\n".join(reported_lines) + "\n"
+        self.probe(mock_path(_ORIGINAL), outputs=(output, output))
+        reported = self.reported.getvalue()
+        self.assertIn("caught by test_scope (tests.io.test_log.LoggerTests.test_scope) (raw='ignore[update] ", reported)
+        self.assertIn(
+            "caught by test_scope (tests.io.test_log.LoggerTests.test_scope) (raw='ignore[yanked]')", reported
+        )
+        self.assertIn("caught by test_other (tests.io.test_log.LoggerTests.test_other)", reported)
+
     def test_a_command_that_errored_without_reporting_a_test_count(self):
         """Test that a run reporting errors but no test count is hedged about, there being nothing to compare.
 

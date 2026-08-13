@@ -14,6 +14,15 @@ if TYPE_CHECKING:
     from update_time.domain.line import Line
 
 
+# The bracket items naming the checks a marker steers, spelled once here: the item regexps below match them,
+# `_KEYWORD_ITEMS` recognises them, and the warnings name them back, so the three cannot come to disagree. The
+# spelling itself is fixed, being the language users write in their own repositories.
+_STALE = "stale"
+_COOLDOWN = "cooldown"
+_YANKED = "yanked"
+_VULNERABLE = "vulnerable"
+
+
 @dataclass(frozen=True)
 class Threshold[T]:
     """What a comparison bracket item — a `stale`, a `cooldown`, or a `vulnerable` — sets for the reference carrying it.
@@ -106,6 +115,21 @@ class Marker:
         return self.ignore_update and self.ignore_stale and self.ignore_yanked and self.ignore_vulnerable
 
     @property
+    def sets_cooldown(self) -> bool:
+        """Return whether the marker sets a cooldown for the reference."""
+        return self.cooldown.value is not None
+
+    @property
+    def decides_staleness(self) -> bool:
+        """Return whether the marker decides the staleness check for the reference, in whichever of its forms.
+
+        The one place the `stale` scope's forms are enumerated: silencing the warning altogether, and setting the
+        threshold to warn from, which asks for more warnings as often as fewer. A comparison running the wrong way
+        sets no threshold, so it decides nothing and is reported as incorrect instead.
+        """
+        return self.ignore_stale or self.stale.value is not None
+
+    @property
     def suppresses_vulnerabilities(self) -> bool:
         """Return whether the marker holds the vulnerability warning back, in whichever of its forms.
 
@@ -114,6 +138,64 @@ class Marker:
         level, so it suppresses nothing and is reported as incorrect instead.
         """
         return self.ignore_vulnerable or bool(self.ignored_advisories) or self.vulnerable.value is not None
+
+    @property
+    def cooldown_directive(self) -> str:
+        """Return the directive that sets the cooldown, as the language spells it.
+
+        Either verb can set one, so the item the user wrote is named rather than a spelling of our own.
+        """
+        return self.cooldown.directive
+
+    @property
+    def yank_directive(self) -> str:
+        """Return the directive that holds the yank warning back, as the language spells it.
+
+        Only `ignore[yanked]` sets the scope, so it is spelled out rather than read back from the text the user
+        wrote. Spelling it out leaves out an `ignore` beside it that does hold something back, and names the scope
+        alone when it was written in a bracket it shares with other items.
+        """
+        return _directive(Verb.IGNORE, _YANKED)
+
+    @property
+    def stale_directive(self) -> str:
+        """Return the directive that decides the staleness check, as the language spells it.
+
+        A bare scope has one spelling only, so `ignore[stale]` is spelled out; a threshold is named as the item the
+        user wrote, since either verb can set one. Where a reference carries both, the bare scope is named, since
+        it silences the warning whatever the threshold says.
+        """
+        return _directive(Verb.IGNORE, _STALE) if self.ignore_stale else self.stale.directive
+
+    @property
+    def vulnerable_scope_directive(self) -> str:
+        """Return the bare `vulnerable` scope, as the language spells it, or nothing when the marker sets none.
+
+        Only `ignore[vulnerable]` sets the scope, so it is spelled out rather than read back from the user's text.
+        """
+        return _directive(Verb.IGNORE, _VULNERABLE) if self.ignore_vulnerable else ""
+
+    @property
+    def advisory_directives(self) -> str:
+        """Return the directive silencing the advisories the marker names, as the language spells it.
+
+        A marker naming several advisories is judged as one, so they share a bracket, which is how the language
+        spells a second advisory. They are sorted, since a `frozenset` keeps no order, and a marker split over two
+        placements reaches them in the order they merged rather than the order they were written.
+        """
+        items = ", ".join(f"{_VULNERABLE}={advisory}" for advisory in sorted(self.ignored_advisories))
+        return _directive(Verb.IGNORE, items) if items else ""
+
+    @property
+    def vulnerable_directives(self) -> str:
+        """Return every directive the marker's `vulnerable` scope carries, as the language spells them.
+
+        The scope has three forms and a reference can carry more than one at a time, so this names the lot. Where
+        one form alone is reported, that form's own directive is named instead, since the others may hold plenty
+        back.
+        """
+        forms = (self.vulnerable_scope_directive, self.advisory_directives, self.vulnerable.directive)
+        return " ".join(form for form in forms if form)
 
     def raw_directives(self, verb: Verb) -> str:
         """Return just the directives of one verb, as the user spelled them."""
@@ -154,9 +236,9 @@ _BARE_IGNORE = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True,
 # The keyword bracket items each verb recognises, and the marker each expresses.
 _KEYWORD_ITEMS = {
     (Verb.IGNORE, "update"): Marker(ignore_update=True),
-    (Verb.IGNORE, "stale"): Marker(ignore_stale=True),
-    (Verb.IGNORE, "yanked"): Marker(ignore_yanked=True),
-    (Verb.IGNORE, "vulnerable"): Marker(ignore_vulnerable=True),
+    (Verb.IGNORE, _STALE): Marker(ignore_stale=True),
+    (Verb.IGNORE, _YANKED): Marker(ignore_yanked=True),
+    (Verb.IGNORE, _VULNERABLE): Marker(ignore_vulnerable=True),
     (Verb.ALLOW, "update"): Marker(),  # bare `allow[update]`: the default no-op
     (Verb.ALLOW, "hash-drift"): Marker(allow_drift=True),
 }
@@ -180,18 +262,18 @@ _DIRECTIVE = re.compile(r"(?P<verb>ignore\b|allow(?=\[))(?:\[(?P<bracket>[^\]]*)
 
 # A day-count bracket item: a keyword, a comparison operator, and a number of days (`stale<90`, `cooldown<30`). The
 # day count is captured loosely, so a malformed one is still recognised as such an item and reported as malformed.
-_DAY_COUNT_ITEM = re.compile(r"(?P<keyword>stale|cooldown)(?P<operator><|>=)(?P<days>.*)")
+_DAY_COUNT_ITEM = re.compile(rf"(?P<keyword>{_STALE}|{_COOLDOWN})(?P<operator><|>=)(?P<days>.*)")
 
 _DAY_COUNT = re.compile(r"\d+")
 
 # An advisory bracket item: the `vulnerable` scope narrowed to the advisory the identifier after the `=` names
 # (`vulnerable=GHSA-2gwj-7jmv-h26r`). The identifier is opaque to Update-time, so whatever follows the `=` is taken
 # as the user spelled it, and an item with nothing after the `=` names no advisory.
-_ADVISORY_ITEM = re.compile(r"vulnerable=(?P<advisory>.+)")
+_ADVISORY_ITEM = re.compile(rf"{_VULNERABLE}=(?P<advisory>.+)")
 
 # A risk level bracket item: the `vulnerable` scope, a comparison operator, and a risk level (`vulnerable<high`). The
 # level is captured loosely, so a misspelled one is still recognised as such an item and reported as unreadable.
-_RISK_LEVEL_ITEM = re.compile(r"vulnerable(?P<operator><|>=)(?P<level>.*)")
+_RISK_LEVEL_ITEM = re.compile(rf"{_VULNERABLE}(?P<operator><|>=)(?P<level>.*)")
 
 # The operator each verb names a threshold with. A threshold is sensible only when it names the values from the
 # threshold upwards, so `ignore[stale<90]` and `allow[stale>=90]` set the same threshold, as do
@@ -305,6 +387,11 @@ def _parse_advisory_item(verb: Verb, item: str) -> Marker | None:
     return Marker(ignored_advisories=frozenset({match.group("advisory")}))
 
 
+def _directive(verb: Verb, item: str) -> str:
+    """Return a directive as the language spells it: a verb and the bracketed item that sets a scope."""
+    return f"{verb}[{item}]"
+
+
 def _threshold[T](verb: Verb, match: re.Match[str], value: T) -> Threshold[T]:
     """Return the threshold the matched comparison item sets, or the item itself when it compares the wrong way.
 
@@ -313,7 +400,7 @@ def _threshold[T](verb: Verb, match: re.Match[str], value: T) -> Threshold[T]:
     """
     if match.group("operator") != _THRESHOLD_OPERATOR[verb]:
         return Threshold(inverted_item=match.group())
-    return Threshold(value=value, directive=f"{verb}[{match.group()}]")
+    return Threshold(value=value, directive=_directive(verb, match.group()))
 
 
 def _parse_risk_level_item(verb: Verb, item: str) -> Marker | None:
@@ -348,4 +435,4 @@ def _parse_day_count_item(verb: Verb, item: str) -> Marker | None:
     if _DAY_COUNT.fullmatch(days := match.group("days")) is None:
         return Marker(invalid_item=item)
     day_count = _threshold(verb, match, int(days))
-    return Marker(stale=day_count) if match.group("keyword") == "stale" else Marker(cooldown=day_count)
+    return Marker(stale=day_count) if match.group("keyword") == _STALE else Marker(cooldown=day_count)

@@ -31,6 +31,10 @@ _TESTS_RUN = re.compile(r"(?:^Ran |PASS \()(?P<tests>\d+) tests?\b", re.MULTILIN
 # The colour codes the recipe wraps its own words in, which would otherwise stand between `PASS` and the count.
 _COLOURS = re.compile(r"\x1b\[[0-9;]*m")
 
+# A test the run reported as failing, as unittest names it: the method, where it lives, and a `subTest` case's
+# parameters where it has them. Those parameters are what tells one case of a table from another.
+_CAUGHT_BY = re.compile(r"^(?:FAIL|ERROR): (?P<test>.+)$", re.MULTILINE)
+
 # The exit code for a probe that never ran: the snippet was not found exactly once, or the input could not be read.
 _NOT_RUN = 2
 
@@ -92,6 +96,8 @@ def main() -> int:
         sys.stdout.write(f"{spelled} failed with every test passing, so no test caught the mutation\n")
         return _UNGUARDED
     sys.stdout.write(f"The mutation was caught: {spelled} failed\n" if caught else f"The mutation survived {spelled}\n")
+    for test in _caught_by(output):
+        sys.stdout.write(f"  caught by {test}\n")
     if caught and (errors := _ERRORS.search(output)):
         return _report_errors(errors.group("errors"), output, command)
     return 0 if caught else 1
@@ -115,6 +121,15 @@ def _report_errors(errors: str, output: str, command: list[str]) -> int:
         )
         return _UNCERTAIN
     return 0
+
+
+def _caught_by(output: str) -> list[str]:
+    """Return each test the run reported as failing, once, in the order reported.
+
+    Naming them is what shows a guard that catches nothing: a table's case that never appears here, or a mutation
+    of one line that a second test catches as well, is a test earning less than it looks to.
+    """
+    return list(dict.fromkeys(_CAUGHT_BY.findall(_COLOURS.sub("", output))))
 
 
 def _tests_run(output: str) -> int | None:

@@ -296,7 +296,9 @@ The `vulnerable` scope tells the same story: of the references that accept a mar
 @@REDUNDANT_VULNERABLE_SOURCE_WARNING@@
 ```
 
-A bare `# update-time: ignore` is reported as redundant for neither scope, wherever it sits. It queries no source at all, and a marker is only judged against what a source answered.
+The `stale` scope tells the same story, in both its forms — the bare scope and a threshold — for a reference whose source reports no publication date to measure staleness against. [Setting a staleness threshold](#setting-a-staleness-threshold) names the three kinds of reference that get the warning.
+
+A bare `# update-time: ignore` is reported as redundant for none of these three scopes, wherever it sits. It queries no source at all, and a marker is only judged against what a source answered.
 
 A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — is logged at `WARNING` as an invalid item:
 
@@ -329,6 +331,14 @@ The threshold applies to the reference carrying it, and every other reference in
 
 A day count must be a whole number of days, so `ignore[stale<-5]` and `ignore[stale>=1.5]` are reported as invalid and leave the reference unchanged. An unreadable count is judged before the direction, so `ignore[stale>=1.5]` is reported as an unreadable count rather than as an inverted comparison. Where a reference carries both a threshold and a bare `ignore[stale]`, the `ignore[stale]` wins and the warning is suppressed whatever the threshold says. Use a single threshold per reference; the result of pairing one with another, say an `ignore[stale<90]` with an `allow[stale>=30]`, is undefined.
 
+Staleness is measured against the publication date of a dependency's newest release. Where the reference's own source reports no such date, Update-time reports the marker as holding nothing back, and the reference is updated as usual:
+
+```console
+@@REDUNDANT_STALE_SOURCE_WARNING@@
+```
+
+Three kinds of reference get that warning. An image on a registry other than Docker Hub does, since only Docker Hub reports a push date, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves. And so does a `.python-version` entry whose version comes from the project's Dockerfile, since the staleness reported is the base image's, not the entry's. A bare `ignore[stale]` is reported there too, since it silences a warning those references never get.
+
 #### Setting a cooldown period
 
 The [cooldown](#-cooldown) holds back releases that are too fresh to trust. To put one reference on a different window from the rest, give a `cooldown` scope a number of days: `# update-time: ignore[cooldown<30]` drops update candidates published less than 30 days ago, and is a per-reference `--cooldown 30`. Use it for a dependency you have been burned by, or one you trust enough to adopt sooner than the rest:
@@ -358,7 +368,7 @@ The override reaches the dependencies whose cooldown Update-time enforces itself
 @@REDUNDANT_COOLDOWN_ITEM_WARNING@@
 ```
 
-Three kinds of reference get that warning. A `.python-version` entry whose version comes from the project's Dockerfile does, since its cooldown was already applied when the base image was updated. An image on a registry other than Docker Hub does too, since only Docker Hub reports a push date to measure a cooldown against, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves.
+The same three kinds of reference get that warning as for staleness (see [Setting a staleness threshold](#setting-a-staleness-threshold)), and for the same reasons but one. A `.python-version` entry whose version comes from the project's Dockerfile gets it because its cooldown was already applied when the base image was updated. An image on a registry other than Docker Hub does too, since only Docker Hub reports a push date to measure a cooldown against, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves.
 
 #### Silencing specific vulnerabilities
 
@@ -705,7 +715,7 @@ A version taken from Docker Hub honours the cooldown through the Node or Python 
 
 #### Stale dependencies
 
-Both are indirect cases. When the version is derived from the project's Dockerfile, only the staleness of the base image is reported; a `.python-version` entry that follows Docker Hub is checked against the Python image tag's push date.
+Both are indirect cases. When the version is derived from the project's Dockerfile, only the staleness of the base image is reported, so the entry itself is never checked and a `stale` marker on it is reported as redundant; an entry that follows Docker Hub is checked against the Python image tag's push date.
 
 #### Yanked dependencies
 
@@ -774,7 +784,7 @@ A newer tag is adopted only once it is past the cooldown, provided the image is 
 
 #### Stale dependencies
 
-Image tags are only checked on Docker Hub, for the same reason the cooldown is. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
+Image tags are only checked on Docker Hub, for the same reason the cooldown is, so a `stale` marker on an image hosted elsewhere is reported as redundant. So is one on a CircleCI machine-executor image, which no registry serves. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
 
 #### Yanked dependencies
 

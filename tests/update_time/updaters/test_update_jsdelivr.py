@@ -116,7 +116,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_cooldown_marker_is_not_reported_as_redundant(self, mock_get: Mock, mock_glob: Mock):
-        """Test that a `cooldown` marker on a URL holds something back, since npm dates its releases."""
+        """Test that a `cooldown` marker on a URL holds something back, since npm dates its versions."""
         self.offer_versions(mock_get, "2.0.11", served_hash=HASH1)
         marked_url = f"{_URL}  # update-time: ignore[cooldown<30]"
         mock_conf = self.update(_conf(_entry(marked_url, _INTEGRITY)), mock_glob)
