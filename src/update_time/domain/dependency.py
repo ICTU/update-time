@@ -1,6 +1,5 @@
-"""Dependency version domain object."""
+"""A dependency's name and versions, and what a source resolves for one."""
 
-import re
 from dataclasses import dataclass
 from datetime import UTC
 from typing import TYPE_CHECKING
@@ -18,28 +17,13 @@ if TYPE_CHECKING:
 type DependencyName = str
 type VersionString = str
 
-# A `sha256:` digest as it appears in image references (`python:3.14@sha256:…`) and log messages: the `sha256:`
-# prefix plus the digest's 64 hexadecimal characters. Shared by the image-reference pattern in `sources/oci.py` and
-# the log highlighter in `io/log.py`, so the two always agree on what a digest looks like.
-SHA256_HEX_CHARS = 64
-SHA256_DIGEST = rf"sha256:[0-9a-f]{{{SHA256_HEX_CHARS}}}"
-
-# The characters PyPI treats as one and the same separator within a distribution name (see `normalized_name`).
-_NAME_SEPARATORS = re.compile(r"[-_.]+")
-
-
-def normalized_name(name: DependencyName) -> DependencyName:
-    """Return the name as PyPI spells it, so a pin is matched however the manifest spells it.
-
-    PyPI names a distribution in lower case with each run of `-`, `_`, and `.` collapsed to a single `-`, as
-    https://peps.python.org/pep-0503/#normalized-names prescribes, and uv reports a package by that name. So a
-    `typing_extensions` pin and the `typing-extensions` uv reports for it are the same dependency.
-    """
-    return _NAME_SEPARATORS.sub("-", name).lower()
-
 
 def is_valid(version: VersionString) -> bool:
-    """Return whether the version is valid."""
+    """Return whether `packaging` parses the version as PEP 440.
+
+    Anything that is not a version on its own reads as invalid: a branch such as `main`, a bare commit SHA, or an
+    image tag such as `python3.12-bookworm-slim`.
+    """
     try:
         Version(version)
     except InvalidVersion:
@@ -75,20 +59,6 @@ class DependencyVersion:
         if self.published is None:
             return self.version
         return f"{self.version}, published: {self.published.astimezone(UTC):%Y-%m-%d %H:%M}"
-
-
-@dataclass(frozen=True)
-class Reference:
-    """A pinned reference as a file records it: a dependency and the version it is currently pinned to.
-
-    `current_sha` is the commit SHA the reference is pinned to when it carries one in a `<sha> # <version>` form (a
-    GitHub Action `uses:` or pre-commit hook `rev:`); it is empty for a reference that is still an unpinned version
-    tag or that records no SHA of its own.
-    """
-
-    dependency: DependencyName
-    current_version: VersionString
-    current_sha: str = ""
 
 
 def first_eligible[Candidate: SupportsRichComparison](

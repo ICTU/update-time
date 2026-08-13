@@ -18,7 +18,7 @@ from update_time.io.log import get_logger
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from update_time.domain.version import Reference
+    from update_time.domain.reference import Reference
 
 _LOG = get_logger("osv")
 

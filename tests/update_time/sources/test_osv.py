@@ -2,12 +2,14 @@
 
 import unittest
 from http import HTTPStatus
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
-from update_time.domain.version import Reference
+from update_time.domain.reference import Reference
 from update_time.domain.vulnerability import RISK_LEVELS, Vulnerability
 from update_time.io.log import Logger
+from update_time.primitives.location import Location
 from update_time.sources.osv import _RISK_LEVEL_BANDS, Ecosystem, get_vulnerabilities
 
 from tests.helpers import mock_response
@@ -20,7 +22,7 @@ _ADVISORY = "PYSEC-2021-109"
 _SUMMARY = "SQL injection in QuerySet.order_by"
 # The summary of the second vulnerability, and of a vulnerability's second advisory, for the tests that serve either.
 _OTHER_SUMMARY = "Denial of service in Django"
-_REFERENCE = Reference("django", "3.2.0")
+_REFERENCE = Reference("django", "3.2.0", Location(Path("requirements.txt"), 1))
 # Further advisory ids, for the tests that serve more than one advisory. OSV holds an advisory per database, and the
 # databases name one vulnerability by a `GHSA`, a `CVE`, a `PYSEC`, and a `BIT` identifier.
 _GHSA = "GHSA-1111-1111-1111"
@@ -279,7 +281,12 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         """
         status = HTTPStatus.SERVICE_UNAVAILABLE
         mock_post.return_value = mock_response(ok=False, status_code=status, reason=status.phrase, url="https://osv")
-        self.assertEqual(get_vulnerabilities([_REFERENCE, Reference("flask", "1.0")], Ecosystem.PYPI), [None, None])
+        self.assertEqual(
+            get_vulnerabilities(
+                [_REFERENCE, Reference("flask", "1.0", Location(Path("requirements.txt"), 2))], Ecosystem.PYPI
+            ),
+            [None, None],
+        )
         self.assert_could_not_fetch_logged(url="https://osv", status=status, reason=status.phrase)
 
 

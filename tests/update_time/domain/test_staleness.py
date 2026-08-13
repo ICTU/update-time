@@ -5,11 +5,11 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock
 
+from update_time.domain.dependency import DependencyVersion
 from update_time.domain.staleness import STALE_AFTER, is_stale, warn_about_stale_dependencies
-from update_time.domain.version import DependencyVersion
 from update_time.primitives.location import Location
 
-from tests.update_time.helpers import staleness_disabled
+from tests.update_time.helpers import resolved_reference, staleness_disabled
 
 
 class IsStaleTest(unittest.TestCase):
@@ -65,21 +65,16 @@ class WarnAboutStaleDependenciesTest(unittest.TestCase):
         self.warn = Mock()
 
     def test_warns_for_each_resolved_release(self):
-        """Test that the warn callback is passed the name, release, and the location the resolver reported."""
-        newest_releases = Mock(return_value=[("humanize", self.release, self.location)])
+        """Test that the warn callback is passed the resolved reference the resolver reported, and the threshold."""
+        resolved = resolved_reference("humanize", self.location, self.release)
+        newest_releases = Mock(return_value=[resolved])
         warn_about_stale_dependencies([self.file], newest_releases, self.warn)
         newest_releases.assert_called_once_with(self.file)
-        self.warn.assert_called_once_with("humanize", self.release, self.location, STALE_AFTER.default)
-
-    def test_skips_unresolved_releases(self):
-        """Test that a dependency whose newest release can't be resolved (None) is skipped, not warned about."""
-        releases = [("humanize", None, self.location), ("rich", self.release, self.location)]
-        warn_about_stale_dependencies([self.file], Mock(return_value=releases), self.warn)
-        self.warn.assert_called_once_with("rich", self.release, self.location, STALE_AFTER.default)
+        self.warn.assert_called_once_with(resolved, STALE_AFTER.default)
 
     def test_disabled(self):
         """Test that a threshold of 0 skips the pass entirely, so the resolver never runs and makes no request."""
-        newest_releases = Mock(return_value=[("humanize", self.release, self.location)])
+        newest_releases = Mock(return_value=[resolved_reference("humanize", self.location, self.release)])
         with staleness_disabled:
             warn_about_stale_dependencies([self.file], newest_releases, self.warn)
         newest_releases.assert_not_called()

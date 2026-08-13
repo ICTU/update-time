@@ -6,15 +6,16 @@ jsDelivr doesn't expose it.
 """
 
 from dataclasses import replace
+from functools import partial
 from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
+from update_time.domain.dependency import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
 from update_time.domain.publication import publication_date_reporting
-from update_time.domain.version import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
 from update_time.domain.vulnerability import vulnerability_reporting
-from update_time.domain.yank import yank_reporting
+from update_time.domain.yank import with_yank_state, yank_reporting
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.sources.npmjs import deprecation, get_publication_datetime, newest_publication_date
@@ -62,10 +63,7 @@ def version_getter(filename: str) -> NewVersionGetter:
             lambda version: _eligible_version(dependency, version, filename, current_version_string, cooldown_days),
             current_version_string,
         )
-        # When the run leaves the reference on its current version, attach that version's deprecation as a yank so a
-        # pin left on a deprecated release can be warned about; whether to warn is decided by `warn_if_yanked`.
-        if latest.version == current_version_string:
-            latest = replace(latest, yank=deprecation(dependency, current_version_string))
+        latest = with_yank_state(latest, current_version_string, partial(deprecation, dependency))
         # Attach the newest npm publication date for the staleness check.
         return replace(latest, newest_published=newest_publication_date(dependency))
 

@@ -11,8 +11,9 @@ from update_time.references.github import PinUpdater
 from update_time.references.rewrite import updated_lines
 
 if TYPE_CHECKING:
+    from update_time.domain.dependency import DependencyVersion
     from update_time.domain.line import Line
-    from update_time.domain.version import DependencyVersion, Reference
+    from update_time.domain.reference import Reference
 
 _LOG = get_logger("github action")
 # Match a `uses:` reference that is either already pinned to a commit SHA with a version comment

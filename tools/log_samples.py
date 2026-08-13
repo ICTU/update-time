@@ -11,21 +11,19 @@ two of them differ, and their full length would wrap the line several times over
 """
 
 import logging
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
+from update_time.domain.dependency import DependencyVersion, Yank
 from update_time.domain.drift import DriftedPin
 from update_time.domain.marker import Marker, Threshold
 from update_time.domain.staleness import STALE_AFTER
-from update_time.domain.version import DependencyVersion, Reference, Yank
-from update_time.domain.vulnerability import Vulnerability
 from update_time.io.log import DEPENDENCY_DELIMITER, LOCATION_DELIMITER, Logger
 from update_time.primitives.location import Location
 
 _ELIDED = "…"
 _ELIDED_DIGEST = f"sha256:{_ELIDED}"
 _ELIDED_INTEGRITY_HASH = f"sha256-{_ELIDED}"
-_STALE_DAYS = 512
 
 
 class _Capture(logging.Handler):
@@ -68,10 +66,10 @@ def sample_log_lines() -> dict[str, str]:
 def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log each block's sample records and pair the lines they render as with the block's placeholder."""
     log.digest_drift(
-        DriftedPin(Reference("python", "3.14", _ELIDED_DIGEST), _ELIDED_DIGEST, Location(Path("Dockerfile"), 1))
+        DriftedPin("python", "3.14", Location(Path("Dockerfile"), 1), _ELIDED_DIGEST, new_sha=_ELIDED_DIGEST)
     )
     workflow = Location(Path(".github/workflows/ci.yml"), 17)
-    log.tag_drift(DriftedPin(Reference("actions/checkout", "4.1.1", _ELIDED), _ELIDED, workflow))
+    log.tag_drift(DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, new_sha=_ELIDED))
     location = Location(Path("docs/conf.py"), 4)
     log.hash_mismatch("clipboard", "2.0.11", _ELIDED_INTEGRITY_HASH, _ELIDED_INTEGRITY_HASH, location)
     drift = capture.take()
@@ -79,65 +77,62 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     requirements = Location(Path("docs/requirements.txt"), 12)
     dockerfile = Location(Path("Dockerfile"), 2)
 
-    published = datetime.now(UTC) - timedelta(days=_STALE_DAYS, hours=1)
+    published = stale_publication_date()
     stale = DependencyVersion("4.15.0", newest_published=published)
-    log.warn_if_stale("humanize", stale, requirements, STALE_AFTER.get())
+    log.warn_if_stale(resolved("humanize", requirements, stale), STALE_AFTER.get())
     staleness = capture.take()
 
     yanked = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="accidentally broke Python 3.10 support"))
-    log.warn_if_yanked("humanize", yanked, requirements)
+    log.warn_if_yanked(resolved("humanize", requirements, yanked))
     yank = capture.take()
 
-    vulnerability = Vulnerability(
-        "GHSA-2gwj-7jmv-h26r", "SQL Injection in Django", "critical", "https://osv.dev/GHSA-2gwj-7jmv-h26r"
-    )
-    log.vulnerable_dependency("django", "3.2.0", vulnerability, requirements)
+    log.vulnerable_dependency(reference("django", requirements, "3.2.0"), VULNERABILITY)
     vulnerable = capture.take()
 
     # A redundancy warning names the directive it is about, spelled from what the marker parsed to, so these
     # markers carry the scope or item they report and no `raw` text for it to be read from.
-    log.redundant_vulnerable_scope("django", "4.2.0", Marker(ignore_vulnerable=True), requirements)
+    log.redundant_vulnerable_scope(reference("django", requirements, "4.2.0"), Marker(ignore_vulnerable=True))
     redundant_vulnerable_scope = capture.take()
 
     suppression = Marker(ignored_advisories=frozenset({"CVE-2022-28346"}))
-    log.redundant_vulnerable_advisory("django", "4.2.0", suppression, requirements)
+    log.redundant_vulnerable_advisory(reference("django", requirements, "4.2.0"), suppression)
     redundant_vulnerable_advisory = capture.take()
 
     level = Marker(vulnerable=Threshold(value="high", directive="ignore[vulnerable<high]"))
-    log.redundant_vulnerable_level("django", "4.2.0", level, requirements, "high")
+    log.redundant_vulnerable_level(reference("django", requirements, "4.2.0"), level, "high")
     redundant_vulnerable_level = capture.take()
 
-    log.redundant_vulnerable_source("python", Marker(ignore_vulnerable=True), dockerfile)
+    log.redundant_vulnerable_source(reference("python", dockerfile), Marker(ignore_vulnerable=True))
     redundant_vulnerable_source = capture.take()
 
-    log.redundant_yank_scope("python", Marker(ignore_yanked=True), dockerfile)
+    log.redundant_yank_scope(reference("python", dockerfile), Marker(ignore_yanked=True))
     redundant_yank_scope = capture.take()
 
     cooldown = Marker(cooldown=Threshold(value=30, directive="ignore[cooldown<30]"))
-    log.redundant_cooldown_item("python", cooldown, Location(Path(".python-version"), 2))
+    log.redundant_cooldown_item(reference("python", Location(Path(".python-version"), 2)), cooldown)
     redundant_cooldown_item = capture.take()
 
     stale_marker = Marker(stale=Threshold(value=90, directive="ignore[stale<90]"))
-    log.redundant_stale_source("ghcr.io/astral-sh/uv", stale_marker, dockerfile)
+    log.redundant_stale_source(reference("ghcr.io/astral-sh/uv", dockerfile), stale_marker)
     redundant_stale_source = capture.take()
 
     log.invalid_bracket_item("python", "stlae", dockerfile)
     unrecognised = capture.take()
 
-    log.inverted_stale_item("python", "stale>=90", dockerfile)
+    log.inverted_stale_item(reference("python", dockerfile), "stale>=90")
     inverted = capture.take()
 
-    log.inverted_cooldown_item("python", "cooldown>=30", dockerfile)
+    log.inverted_cooldown_item(reference("python", dockerfile), "cooldown>=30")
     inverted_cooldown = capture.take()
 
-    log.inverted_vulnerable_item("django", "vulnerable>=high", requirements)
+    log.inverted_vulnerable_item(reference("django", requirements), "vulnerable>=high")
     inverted_vulnerable = capture.take()
 
     marker = Marker(ignore_stale=True, raw="ignore[stale]")
     log.recognised_marker("python", marker, dockerfile)
     recognised = capture.take()
 
-    log.ignored_staleness("python", stale, marker, dockerfile, STALE_AFTER.get())
+    log.ignored_staleness(resolved("python", dockerfile, stale), marker, STALE_AFTER.get())
     return {
         "@@DRIFT_WARNINGS@@": drift,
         "@@STALE_WARNING@@": staleness,

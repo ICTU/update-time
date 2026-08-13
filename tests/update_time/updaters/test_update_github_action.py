@@ -6,8 +6,8 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.dependency import DependencyVersion
 from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
-from update_time.domain.version import DependencyVersion, Reference
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_github_action import update_github_actions
@@ -34,7 +34,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
     @staticmethod
     def drifted(workflow_yml: Mock) -> DriftedPin:
         """Return the drifted pin the moved `action/action` version tag these tests use produces."""
-        return DriftedPin(Reference("action/action", "1.0", OLD_SHA), NEW_SHA, Location(workflow_yml, 1))
+        return DriftedPin("action/action", "1.0", Location(workflow_yml, 1), OLD_SHA, new_sha=NEW_SHA)
 
     def test_multiple_files(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that actions are updated in all YAML files under the GitHub directory, not just workflows."""

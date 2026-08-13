@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import Mock
 
-from update_time.domain.version import Reference
+from update_time.domain.reference import Reference
 from update_time.file_formats import pyproject_toml
 from update_time.primitives.location import Location
 
@@ -102,17 +102,10 @@ class RewritePinnedVersionsTest(unittest.TestCase):
         pyproject_file = self.rewrite('dependencies = ["pkg==1.0"]\n', {"pkg": "1.1"})
         self.assertEqual(pyproject_file.write_text.call_args.args[0], 'dependencies = ["pkg==1.1"]\n')
 
-    def test_matches_name_case_insensitively(self):
-        """Test that the name is matched case-insensitively while its original casing is preserved."""
+    def test_leaves_a_name_the_mapping_spells_differently(self):
+        """Test that a pin whose name the mapping spells another way is left alone."""
         pyproject_file = self.rewrite('dependencies = ["Pkg==1.0"]\n', {"pkg": "1.1"})
-        self.assertEqual(pyproject_file.write_text.call_args.args[0], 'dependencies = ["Pkg==1.1"]\n')
-
-    def test_matches_the_normalized_name(self):
-        """Test that a pin is matched however it spells the name's separators, keeping the file's own spelling."""
-        for spelling in ("typing-extensions", "typing_extensions", "typing.extensions", "Typing_Extensions"):
-            with self.subTest(spelling=spelling):
-                pyproject_file = self.rewrite(f'dependencies = ["{spelling}==1.0"]\n', {"typing-extensions": "1.1"})
-                self.assertEqual(pyproject_file.write_text.call_args.args[0], f'dependencies = ["{spelling}==1.1"]\n')
+        pyproject_file.write_text.assert_not_called()
 
     def test_leaves_unknown_names_and_writes_nothing(self):
         """Test that a pin with no known newer version is left alone and the file is not rewritten."""
@@ -135,9 +128,9 @@ class PinnedVersionsTest(unittest.TestCase):
         self.assertEqual(
             pyproject_toml.pinned_versions(path),
             [
-                (Reference("pkg", "1.0"), Location(path, 2)),
-                (Reference("sphinx", "7.4"), Location(path, 4)),
-                (Reference("ruff", "0.6.0"), Location(path, 6)),
+                Reference("pkg", "1.0", Location(path, 2)),
+                Reference("sphinx", "7.4", Location(path, 4)),
+                Reference("ruff", "0.6.0", Location(path, 6)),
             ],
         )
 
@@ -147,7 +140,10 @@ class PinnedVersionsTest(unittest.TestCase):
         path = mock_path(contents)
         self.assertEqual(
             pyproject_toml.pinned_versions(path),
-            [(Reference("pkg", "1.0"), Location(path, 2)), (Reference("pkg", "2.0"), Location(path, 4))],
+            [
+                Reference("pkg", "1.0", Location(path, 2)),
+                Reference("pkg", "2.0", Location(path, 4)),
+            ],
         )
 
     def test_no_pins(self):

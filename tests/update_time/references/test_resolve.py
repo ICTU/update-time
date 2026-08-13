@@ -6,19 +6,20 @@ from unittest.mock import Mock, call
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.dependency import DependencyVersion
 from update_time.domain.marker import Marker, Threshold
 from update_time.domain.publication import publication_date_reporting
 from update_time.domain.staleness import STALE_AFTER
-from update_time.domain.version import DependencyVersion, Reference
 from update_time.domain.yank import yank_reporting
 from update_time.references.resolve import latest_version
 
 from tests.helpers import patch_environ
 from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import bound, new_version_getter
+from tests.update_time.helpers import bound, new_version_getter, reference, resolved_reference
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
+    from update_time.domain.reference import Reference, ResolvedReference
 
 # The threshold `ignore[stale<90]` parses to, carrying the directive the parser sets alongside every value it reads.
 _STALE_THRESHOLD = Threshold(value=90, directive="ignore[stale<90]")
@@ -33,6 +34,14 @@ class LatestVersionTest(unittest.TestCase):
         self.log = Mock()
         self.path = Mock()
 
+    def reference(self, dependency: str = "python") -> Reference:
+        """Return the reference the decision is run for, as the logger is handed it."""
+        return reference(dependency, self.path, "3.14")
+
+    def resolved(self, release: str = "3.15") -> ResolvedReference:
+        """Return the resolved reference the decision hands the logger, for the version it resolved."""
+        return resolved_reference("python", self.path, DependencyVersion(version=release), "3.14")
+
     def latest_version(
         self,
         marker: Marker | None = None,
@@ -41,9 +50,8 @@ class LatestVersionTest(unittest.TestCase):
     ) -> DependencyVersion | None:
         """Run the decision for the dependency's reference at version 3.14, resolving 3.15 unless overridden."""
         get_new_version = new_version_getter("3.15") if get_new_version is None else get_new_version
-        return latest_version(
-            Reference(dependency, "3.14"), get_new_version, Marker() if marker is None else marker, self.path, self.log
-        )
+        marker = Marker() if marker is None else marker
+        return latest_version(self.reference(dependency), get_new_version, marker, self.log)
 
     def test_returns_the_resolved_version(self):
         """Test that the version the getter resolves is returned."""
@@ -90,53 +98,49 @@ class LatestVersionTest(unittest.TestCase):
         """Test that the reference's bound is checked for redundancy against its current version."""
         marker = Marker(version_bound=bound(Verb.IGNORE, "patch-update"))
         self.latest_version(marker)
-        self.log.warn_if_redundant_bound.assert_called_once_with("python", marker, "3.14", self.path)
+        self.log.warn_if_redundant_bound.assert_called_once_with(self.reference(), marker)
 
     def test_warns_about_staleness(self):
         """Test that the resolved version is checked for staleness, against the global threshold by default."""
         self.latest_version()
-        self.log.warn_if_stale.assert_called_once_with(
-            "python", DependencyVersion(version="3.15"), self.path, STALE_AFTER.default
-        )
+        self.log.warn_if_stale.assert_called_once_with(self.resolved(), STALE_AFTER.default)
 
     @patch_environ({STALE_AFTER.name: "30"})
     def test_the_configured_threshold_is_used_for_the_staleness_warning(self):
         """Test that the threshold the run was configured with is used, rather than the built-in default."""
         self.latest_version()
-        self.log.warn_if_stale.assert_called_once_with("python", DependencyVersion(version="3.15"), self.path, 30)
+        self.log.warn_if_stale.assert_called_once_with(self.resolved(), 30)
 
     def test_the_markers_threshold_is_used_for_the_staleness_warning(self):
         """Test that a reference carrying its own staleness threshold is judged by that one, not the global one."""
         self.latest_version(Marker(stale=Threshold(value=90)))
-        self.log.warn_if_stale.assert_called_once_with("python", DependencyVersion(version="3.15"), self.path, 90)
+        self.log.warn_if_stale.assert_called_once_with(self.resolved(), 90)
 
     def test_warns_about_an_inverted_stale_item(self):
         """Test that a `stale` item comparing the wrong way is reported, and the global threshold is used."""
         marker = Marker(stale=Threshold(inverted_item="stale>=90"), raw="ignore[stale>=90]")
         self.latest_version(marker)
-        self.log.inverted_stale_item.assert_called_once_with("python", "stale>=90", self.path)
-        self.log.warn_if_stale.assert_called_once_with(
-            "python", DependencyVersion(version="3.15"), self.path, STALE_AFTER.default
-        )
+        self.log.inverted_stale_item.assert_called_once_with(self.reference(), "stale>=90")
+        self.log.warn_if_stale.assert_called_once_with(self.resolved(), STALE_AFTER.default)
 
     def test_warns_about_an_inverted_cooldown_item(self):
         """Test that a `cooldown` item comparing the wrong way is reported, and the global cooldown is used."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.15"))
         marker = Marker(cooldown=Threshold(inverted_item="cooldown>=30"), raw="ignore[cooldown>=30]")
         self.latest_version(marker, get_new_version)
-        self.log.inverted_cooldown_item.assert_called_once_with("python", "cooldown>=30", self.path)
+        self.log.inverted_cooldown_item.assert_called_once_with(self.reference(), "cooldown>=30")
         get_new_version.assert_called_once_with("python", "3.14", NO_BOUND, COOLDOWN.default)
 
     def test_warns_about_an_inverted_vulnerability_item(self):
         """Test that a `vulnerable` item comparing the wrong way is reported."""
         marker = Marker(vulnerable=Threshold(inverted_item="vulnerable>=high"), raw="ignore[vulnerable>=high]")
         self.latest_version(marker)
-        self.log.inverted_vulnerable_item.assert_called_once_with("python", "vulnerable>=high", self.path)
+        self.log.inverted_vulnerable_item.assert_called_once_with(self.reference(), "vulnerable>=high")
 
     def test_warns_about_yank(self):
         """Test that the resolved version is checked for a yank."""
         self.latest_version()
-        self.log.warn_if_yanked.assert_called_once_with("python", DependencyVersion(version="3.15"), self.path)
+        self.log.warn_if_yanked.assert_called_once_with(self.resolved())
 
     def test_ignore_stale_skips_the_staleness_warning(self):
         """Test that `ignore[stale]` holds back the staleness check while the update is still returned."""
@@ -148,17 +152,13 @@ class LatestVersionTest(unittest.TestCase):
         """Test that `ignore[stale]` hands the resolved version to the logger, which reports what it held back."""
         marker = Marker(ignore_stale=True, raw="ignore[stale]")
         self.latest_version(marker)
-        self.log.ignored_staleness.assert_called_once_with(
-            "python", DependencyVersion(version="3.15"), marker, self.path, STALE_AFTER.default
-        )
+        self.log.ignored_staleness.assert_called_once_with(self.resolved(), marker, STALE_AFTER.default)
 
     def test_the_markers_threshold_is_used_for_the_held_back_staleness_warning(self):
         """Test that the hold-back is judged by the same threshold as the warning it stands in for."""
         marker = Marker(ignore_stale=True, stale=Threshold(value=90), raw="ignore[stale] ignore[stale<90]")
         self.latest_version(marker)
-        self.log.ignored_staleness.assert_called_once_with(
-            "python", DependencyVersion(version="3.15"), marker, self.path, 90
-        )
+        self.log.ignored_staleness.assert_called_once_with(self.resolved(), marker, 90)
 
     def test_ignore_yanked_skips_the_yank_warning(self):
         """Test that `ignore[yanked]` holds back the yank check while the update is still returned."""
@@ -170,13 +170,13 @@ class LatestVersionTest(unittest.TestCase):
         """Test that `ignore[yanked]` hands the resolved version to the logger, which reports what it held back."""
         marker = Marker(ignore_yanked=True, raw="ignore[yanked]")
         self.latest_version(marker)
-        self.log.ignored_yank.assert_called_once_with("python", DependencyVersion(version="3.15"), marker, self.path)
+        self.log.ignored_yank.assert_called_once_with(self.resolved(), marker)
 
     def test_warns_about_a_redundant_yank_scope(self):
         """Test that `ignore[yanked]` is reported as redundant when the source never reports a yank."""
         marker = Marker(ignore_yanked=True, raw="ignore[yanked]")
         self.latest_version(marker)
-        self.log.redundant_yank_scope.assert_called_once_with("python", marker, self.path)
+        self.log.redundant_yank_scope.assert_called_once_with(self.reference(), marker)
 
     def test_no_redundant_yank_scope_when_the_source_reports_yanks(self):
         """Test that `ignore[yanked]` is not reported as redundant when the source can report a yank."""
@@ -188,7 +188,7 @@ class LatestVersionTest(unittest.TestCase):
         """Test that a `cooldown` item is reported as redundant when the source dates none of its versions."""
         marker = Marker(cooldown=Threshold(value=30), raw="ignore[cooldown<30]")
         latest = self.latest_version(marker)
-        self.log.redundant_cooldown_item.assert_called_once_with("python", marker, self.path)
+        self.log.redundant_cooldown_item.assert_called_once_with(self.reference(), marker)
         self.assertEqual(latest, DependencyVersion(version="3.15"))
 
     def test_no_redundant_cooldown_item_when_the_source_dates_its_versions(self):
@@ -217,7 +217,8 @@ class LatestVersionTest(unittest.TestCase):
                 with self.subTest(marker=marker.raw, dependency=dependency):
                     self.log.reset_mock()  # Judge each reference on the calls of its own run.
                     self.latest_version(marker, get_new_version, dependency)
-                    self.assertEqual(warn.call_args_list, [call(dependency, marker, self.path)] if reported else [])
+                    expected = [call(self.reference(dependency), marker)] if reported else []
+                    self.assertEqual(warn.call_args_list, expected)
 
     def test_no_redundant_cooldown_item_when_the_marker_sets_no_cooldown(self):
         """Test that a marker is not reported when it sets no cooldown, carrying no item or an inverted one."""
@@ -236,7 +237,7 @@ class LatestVersionTest(unittest.TestCase):
         """Test that a `stale` item is reported as redundant when the source dates none of its versions."""
         marker = Marker(stale=_STALE_THRESHOLD, raw="ignore[stale<90]")
         latest = self.latest_version(marker)
-        self.log.redundant_stale_source.assert_called_once_with("python", marker, self.path)
+        self.log.redundant_stale_source.assert_called_once_with(self.reference(), marker)
         self.assertEqual(latest, DependencyVersion(version="3.15"))
 
     def test_no_redundant_stale_item_when_the_source_dates_its_versions(self):
@@ -249,7 +250,7 @@ class LatestVersionTest(unittest.TestCase):
         """Test that a bare `ignore[stale]` is reported as redundant when the source dates none of its versions."""
         marker = Marker(ignore_stale=True, raw="ignore[stale]")
         self.latest_version(marker)
-        self.log.redundant_stale_source.assert_called_once_with("python", marker, self.path)
+        self.log.redundant_stale_source.assert_called_once_with(self.reference(), marker)
 
     def test_no_redundant_stale_item_when_the_marker_sets_no_threshold(self):
         """Test that a marker is not reported when it sets no threshold, carrying no item or an inverted one."""

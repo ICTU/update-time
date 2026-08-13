@@ -34,7 +34,7 @@ from tests.update_time.helpers import (
 )
 
 if TYPE_CHECKING:
-    from update_time.domain.version import DependencyVersion, VersionString
+    from update_time.domain.dependency import DependencyVersion, VersionString
 
 _OLD_DATE = datetime.now(UTC) - timedelta(days=10)  # A publication date outside the cooldown window
 _OLD_ISO = _OLD_DATE.isoformat()

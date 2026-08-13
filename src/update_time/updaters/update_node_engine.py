@@ -5,7 +5,7 @@ Note: this script does not update package-lock.json.
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.version import DependencyVersion
+from update_time.domain.dependency import DependencyVersion
 from update_time.file_formats import package_json as package_json_format
 from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, first_line_match, glob
 from update_time.io.log import get_logger

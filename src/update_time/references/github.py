@@ -14,8 +14,9 @@ from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
+from update_time.domain.dependency import is_valid
 from update_time.domain.drift import DriftedPin, hash_drifted, report_drift
-from update_time.domain.version import Reference, is_valid
+from update_time.domain.reference import Reference
 from update_time.primitives.text import replace_match
 from update_time.references.resolve import latest_version
 from update_time.references.rewrite import matched_dependency
@@ -25,51 +26,51 @@ if TYPE_CHECKING:
     import re
     from collections.abc import Callable
 
+    from update_time.domain.dependency import DependencyVersion
     from update_time.domain.marker import Marker
-    from update_time.domain.version import DependencyVersion
     from update_time.io.log import Logger
     from update_time.primitives.location import Location
 
 
-def _sha_pinned_reference(match: re.Match[str], dependency: str) -> Reference:
+def _sha_pinned_reference(match: re.Match[str], location: Location, dependency: str) -> Reference:
     """Return the SHA-pinned GitHub reference the match captured.
 
     A pinned reference carries its version in the trailing comment's `version` group, an unpinned one in its `tag`
     group, so which group holds the version follows from whether `sha` matched.
     """
     current_sha = match.group("sha") or ""
-    return Reference(dependency, match.group("version") if current_sha else match.group("tag"), current_sha)
+    version = match.group("version") if current_sha else match.group("tag")
+    return Reference(dependency, version, location, current_sha)
 
 
-def _latest_pin(reference: Reference, marker: Marker, location: Location, log: Logger) -> DependencyVersion | None:
+def _latest_pin(reference: Reference, marker: Marker, log: Logger) -> DependencyVersion | None:
     """Return the latest version to (re)pin the GitHub reference to, or None to leave it unchanged.
 
     Which version to update to is `latest_version`'s decision, resolving through `sources.github`; layered on top
     here is what is specific to a SHA-pinned reference. Returns None — leave the reference as it is — when the
     marker holds the update back, when no commit SHA is available to pin to, or when the reference is already up
     to date. It returns None for an invalid current version too, such as a branch name or a bare SHA without a
-    version comment. A reference that stays on its version is handed to `_drifted_pin`, since its tag may have
-    moved. Otherwise it logs
-    the change (a pin for a previously unpinned reference, a new version for an already-pinned one) and returns the
-    resolved version for the caller to format into its own syntax.
+    version comment. A reference that stays on its version is handed to `_drifted_pin`, since its tag may have moved.
+    Otherwise it logs the change (a pin for a previously unpinned reference, a new version for an already-pinned one)
+    and returns the resolved version for the caller to format into its own syntax.
     """
-    dependency, current_version, current_sha = reference.dependency, reference.current_version, reference.current_sha
+    current_version, current_sha = reference.current_version, reference.current_sha
     if not is_valid(current_version):
         return None
-    latest = latest_version(reference, get_latest_version, marker, location, log)
+    latest = latest_version(reference, get_latest_version, marker, log)
     if latest is None or not latest.sha:
         return None
     if not current_sha:
-        log.pinned(dependency, latest, location)
+        log.pinned(reference, latest)
     elif Version(latest.version) != Version(current_version):
-        log.new_version(dependency, latest, location)
+        log.new_version(reference, latest)
     else:
-        return _drifted_pin(reference, latest, marker, location, log)
+        return _drifted_pin(reference, latest, marker, log)
     return latest
 
 
 def _drifted_pin(
-    reference: Reference, latest: DependencyVersion, marker: Marker, location: Location, log: Logger
+    reference: Reference, latest: DependencyVersion, marker: Marker, log: Logger
 ) -> DependencyVersion | None:
     """Return the version to re-pin the reference to when its tag has moved, or None to leave its pin as it is.
 
@@ -80,7 +81,7 @@ def _drifted_pin(
     if not hash_drifted(latest.sha, reference.current_sha):
         return None  # Already pinned and up to date
     # The version is reported as the source spells it, which the reference's own spelling need only equal, not match.
-    drifted = DriftedPin(replace(reference, current_version=latest.version), latest.sha, location)
+    drifted = DriftedPin(**vars(replace(reference, current_version=latest.version)), new_sha=latest.sha)
     adopted = report_drift(marker, partial(log.tag_drift, drifted), partial(log.adopted_tag_drift, drifted))
     return latest if adopted else None
 
@@ -103,8 +104,8 @@ class PinUpdater:
         back, no commit SHA to pin to, and a reference already pinned and up to date. The dependency comes from the
         regexp's `dependency` group; a `rev:` takes it from the `repo:` above, so it names it in `dependency` instead.
         """
-        reference = _sha_pinned_reference(match, matched_dependency(match, dependency))
-        latest = _latest_pin(reference, marker, location, self.logger)
+        reference = _sha_pinned_reference(match, location, matched_dependency(match, dependency))
+        latest = _latest_pin(reference, marker, self.logger)
         if latest is None:
             return match.string
         return replace_match(match, self.spell(reference, latest))

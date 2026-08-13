@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from functools import cache
 
-from update_time.domain.version import DependencyVersion, Yank
+from update_time.domain.dependency import DependencyVersion, Yank
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.primitives.timestamp import newest_timestamp

@@ -16,16 +16,11 @@ from typing import TYPE_CHECKING, cast
 from packaging.version import InvalidVersion, Version
 
 from update_time.domain.cooldown import within_cooldown
+from update_time.domain.dependency import DependencyName, DependencyVersion, VersionString, first_eligible
 from update_time.domain.publication import publication_date_reporting
-from update_time.domain.version import (
-    SHA256_DIGEST,
-    DependencyName,
-    DependencyVersion,
-    VersionString,
-    first_eligible,
-)
 from update_time.io.fetch import fetch, next_page_url
 from update_time.io.log import get_logger
+from update_time.primitives.digest import SHA256_DIGEST
 from update_time.sources import docker_hub
 
 if TYPE_CHECKING:

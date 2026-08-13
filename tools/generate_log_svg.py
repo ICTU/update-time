@@ -8,15 +8,16 @@ import io
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from rich.console import Console
 
+from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
+from update_time.domain.dependency import DependencyVersion
 from update_time.domain.staleness import STALE_AFTER
-from update_time.domain.version import SHA256_HEX_CHARS, DependencyVersion
-from update_time.domain.vulnerability import Vulnerability
 from update_time.io.log import LOG_THEME, Logger, configure_logging
+from update_time.primitives.digest import SHA256_HEX_CHARS
 from update_time.primitives.location import Location
 
 
@@ -70,17 +71,15 @@ def generate() -> LogOutput:
     # A representative digest, padded to the exact length of a real one so `LogHighlighter` recognises and dims it.
     digest = "sha256:" + ("9f2c1e7b" + "d4" * SHA256_HEX_CHARS)[:SHA256_HEX_CHARS]
     changelog = "Changed in 4.15.0\n- Fantastic new features\n- A few bugs squashed"
-    log.new_version("humanize", DependencyVersion("4.15.0", changelog), Location(Path("docs/requirements.txt"), 12))
-    log.pinned("python", DependencyVersion("3.14.6", sha=digest), Location(Path("Dockerfile"), 1))
-    log.new_version("actions/checkout", DependencyVersion("4.3.0"), Location(Path(".github/workflows/ci.yml"), 17))
-    # The publication date is derived from the wall clock so the age it renders — 512 days — stays put as time passes.
-    long_ago = datetime.now(UTC) - timedelta(days=512, hours=1)
-    stale = DependencyVersion("1.3.0", newest_published=long_ago)
-    log.warn_if_stale("left-pad", stale, Location(Path("package.json"), 24), STALE_AFTER.get())
-    vulnerability = Vulnerability(
-        "GHSA-2gwj-7jmv-h26r", "SQL Injection in Django", "critical", "https://osv.dev/GHSA-2gwj-7jmv-h26r"
+    requirements = Location(Path("docs/requirements.txt"), 12)
+    log.new_version(reference("humanize", requirements), DependencyVersion("4.15.0", changelog))
+    log.pinned(reference("python", Location(Path("Dockerfile"), 1)), DependencyVersion("3.14.6", sha=digest))
+    log.new_version(
+        reference("actions/checkout", Location(Path(".github/workflows/ci.yml"), 17)), DependencyVersion("4.3.0")
     )
-    log.vulnerable_dependency("django", "3.2.0", vulnerability, Location(Path("docs/requirements.txt"), 12))
+    stale = DependencyVersion("1.3.0", newest_published=stale_publication_date())
+    log.warn_if_stale(resolved("left-pad", Location(Path("package.json"), 24), stale), STALE_AFTER.get())
+    log.vulnerable_dependency(reference("django", requirements, "3.2.0"), VULNERABILITY)
 
     plain_text = console.export_text(clear=False)  # capture before the export clears the recording
     svg = console.export_svg(title="update-time", unique_id="update-time-log")

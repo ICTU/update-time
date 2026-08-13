@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.version import DependencyVersion, Yank
+from update_time.domain.dependency import DependencyVersion, Yank
 from update_time.io.log import Logger
 from update_time.sources.jsdelivr import version_getter
 

@@ -3,7 +3,7 @@
 import re
 import string
 from dataclasses import replace
-from functools import cache
+from functools import cache, partial
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from packaging.utils import parse_sdist_filename, parse_wheel_filename
@@ -11,8 +11,7 @@ from packaging.version import Version
 
 from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.publication import publication_date_reporting
-from update_time.domain.version import (
+from update_time.domain.dependency import (
     DependencyName,
     DependencyVersion,
     VersionString,
@@ -20,8 +19,9 @@ from update_time.domain.version import (
     first_eligible,
     is_valid,
 )
+from update_time.domain.publication import publication_date_reporting
 from update_time.domain.vulnerability import vulnerability_reporting
-from update_time.domain.yank import yank_reporting
+from update_time.domain.yank import with_yank_state, yank_reporting
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.primitives.timestamp import newest_timestamp
@@ -44,8 +44,20 @@ _CHANGELOG_URL_LABELS = {"changelog", "changes", "whatsnew", "history"}
 # with its aliases, then its `homepage` label. All spelled as `_normalized_label` returns them.
 _REPOSITORY_URL_LABELS_BY_RANK = ({"source", "repository", "sourcecode", "github"}, {"homepage"})
 _LABEL_NORMALIZATION = str.maketrans("", "", string.punctuation + string.whitespace)
+# The characters PyPI treats as one and the same separator within a distribution name (see `normalized_name`).
+_NAME_SEPARATORS = re.compile(r"[-_.]+")
 # GitHub serves its sponsorship pages under this path, which it reserves, so no owner can go by this name.
 _GITHUB_SPONSORS_PATH = "sponsors"
+
+
+def normalized_name(name: DependencyName) -> DependencyName:
+    """Return the name as PyPI spells it, so a pin is matched however the manifest spells it.
+
+    PyPI names a distribution in lower case with each run of `-`, `_`, and `.` collapsed to a single `-`, as
+    https://peps.python.org/pep-0503/#normalized-names prescribes, and uv reports a package by that name. So a
+    `typing_extensions` pin and the `typing-extensions` uv reports for it are the same dependency.
+    """
+    return _NAME_SEPARATORS.sub("-", name).lower()
 
 
 def _normalized_label(label: str) -> str:
@@ -168,15 +180,11 @@ def get_latest_version(
     latest = first_eligible(
         candidates, lambda version: _eligible_release(package, version, cooldown_days), current_version
     )
+    latest = with_yank_state(latest, current_version, partial(yank_state, package))
     # Always attach the newest release date so an already-up-to-date pin can still be flagged as stale. It rides on
     # the Index API response fetched above, so it costs no extra request; whether it counts as stale (and whether the
     # check is enabled at all) is decided by `is_stale` where the warning would be logged.
-    latest = replace(latest, newest_published=newest_publication_date(package))
-    # When the run leaves the reference on its current version, attach that version's yank state so a pin left on a
-    # yanked release can be warned about; whether to warn is decided by `warn_if_yanked` where it would be logged.
-    if latest.version == current_version:
-        latest = replace(latest, yank=yank_state(package, current_version))
-    return latest
+    return replace(latest, newest_published=newest_publication_date(package))
 
 
 def yank_state(package: str, version: str) -> Yank:

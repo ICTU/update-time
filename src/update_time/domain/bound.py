@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, cast
 from packaging.specifiers import SpecifierSet
 from packaging.version import InvalidVersion, Version
 
-from update_time.domain.version import DependencyName, DependencyVersion, VersionString, is_valid
+from update_time.domain.dependency import DependencyName, DependencyVersion, VersionString, is_valid
 
 if TYPE_CHECKING:
     from collections.abc import Callable

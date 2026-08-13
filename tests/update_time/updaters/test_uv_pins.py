@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import ClassVar
 from unittest.mock import Mock, patch
 
-from update_time.domain.version import Yank
+from update_time.domain.dependency import Yank
 from update_time.io.log import get_logger
 from update_time.primitives.location import Location
 from update_time.updaters.uv_pins import warn_about_pins

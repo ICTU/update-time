@@ -11,19 +11,20 @@ from typing import TYPE_CHECKING
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.publication import reports_publication_dates
+from update_time.domain.reference import ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import reports_vulnerabilities
 from update_time.domain.yank import reports_yanks
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
+    from update_time.domain.dependency import DependencyVersion
     from update_time.domain.marker import Marker
-    from update_time.domain.version import DependencyVersion, Reference
+    from update_time.domain.reference import Reference
     from update_time.io.log import Logger
-    from update_time.primitives.location import Location
 
 
-def _warn_about_inverted_items(marker: Marker, dependency: str, location: Location, log: Logger) -> None:
+def _warn_about_inverted_items(marker: Marker, reference: Reference, log: Logger) -> None:
     """Warn about each comparison item whose operator runs the wrong way, so it sets nothing for the reference.
 
     Every comparison item the marker language has is read here, so an item added to `Marker` is reported by naming
@@ -36,11 +37,11 @@ def _warn_about_inverted_items(marker: Marker, dependency: str, location: Locati
     )
     for threshold, warn in inverted_items:
         if threshold.inverted_item is not None:
-            warn(dependency, threshold.inverted_item, location)
+            warn(reference, threshold.inverted_item)
 
 
 def _warn_about_directives_the_source_cannot_answer(
-    marker: Marker, get_new_version: NewVersionGetter, dependency: str, location: Location, log: Logger
+    marker: Marker, get_new_version: NewVersionGetter, reference: Reference, log: Logger
 ) -> None:
     """Warn about each directive whose question the reference's source cannot answer, so it decides nothing.
 
@@ -55,15 +56,14 @@ def _warn_about_directives_the_source_cannot_answer(
         (marker.decides_staleness, reports_publication_dates, log.redundant_stale_source),
     )
     for is_set, reports, warn in directives:
-        if is_set and not reports(get_new_version, dependency):
-            warn(dependency, marker, location)
+        if is_set and not reports(get_new_version, reference.dependency):
+            warn(reference, marker)
 
 
 def latest_version(
     reference: Reference,
     get_new_version: NewVersionGetter,
     marker: Marker,
-    location: Location,
     log: Logger,
 ) -> DependencyVersion | None:
     """Return the latest version to update the reference to, or None when the marker holds the update back.
@@ -73,19 +73,20 @@ def latest_version(
     since it may carry a hash worth pinning.
     """
     dependency, current_version = reference.dependency, reference.current_version
-    log.warn_if_redundant_bound(dependency, marker, current_version, location)
-    _warn_about_directives_the_source_cannot_answer(marker, get_new_version, dependency, location, log)
-    _warn_about_inverted_items(marker, dependency, location, log)
+    log.warn_if_redundant_bound(reference, marker)
+    _warn_about_directives_the_source_cannot_answer(marker, get_new_version, reference, log)
+    _warn_about_inverted_items(marker, reference, log)
     version_bound = BLOCK_ALL_UPDATES if marker.ignore_update else marker.version_bound
     cooldown = marker.cooldown.value_or(COOLDOWN.get())
     latest = get_new_version(dependency, current_version, version_bound, cooldown)
+    resolved = ResolvedReference(**vars(reference), release=latest)
     threshold = marker.stale.value_or(STALE_AFTER.get())
     if marker.ignore_stale:
-        log.ignored_staleness(dependency, latest, marker, location, threshold)
+        log.ignored_staleness(resolved, marker, threshold)
     else:
-        log.warn_if_stale(dependency, latest, location, threshold)
+        log.warn_if_stale(resolved, threshold)
     if marker.ignore_yanked:
-        log.ignored_yank(dependency, latest, marker, location)
+        log.ignored_yank(resolved, marker)
     else:
-        log.warn_if_yanked(dependency, latest, location)
+        log.warn_if_yanked(resolved)
     return None if marker.ignore_update else latest

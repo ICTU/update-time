@@ -4,14 +4,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from update_time.domain.bound import Verb
+from update_time.domain.reference import Reference
 from update_time.primitives.environment import EnvVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from update_time.domain.marker import Marker
-    from update_time.domain.version import Reference
-    from update_time.primitives.location import Location
 
 # Private channel that passes --allow-hash-drift from the CLI to the updater subprocesses: whether a drifted pin —
 # a re-pushed image digest, or the commit a moved version tag now points at — should be adopted repo-wide.
@@ -28,13 +27,11 @@ def hash_drifted(resolved: str, pinned: str) -> bool:
     return bool(resolved) and resolved != pinned
 
 
-@dataclass(frozen=True)
-class DriftedPin:
-    """A hash pin that no longer matches what it points at: the reference, its location, and what it now resolves to."""
+@dataclass(frozen=True, kw_only=True)
+class DriftedPin(Reference):
+    """A hash pin that no longer matches what it points at, and the hash it now resolves to."""
 
-    reference: Reference
     new_sha: str
-    location: Location
 
 
 def report_drift(marker: Marker, warn: Callable[[], None], adopt: Callable[[str], None]) -> bool:
