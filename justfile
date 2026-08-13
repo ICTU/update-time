@@ -126,6 +126,9 @@ mutate-help:
     @echo "guards it), 2 when the probe never ran (the snippet is not in FILE exactly once), 3 when the run was"
     @echo "caught but reported errors, which a stub that broke the file does as much as a guard that raised, and 4"
     @echo "when COMMAND failed with every test passing, so a gate such as coverage failed rather than a guard."
+    @echo "\nA caught run ends by naming each test that caught it, a subTest case with its parameters. Read that"
+    @echo "list rather than the outcome alone: a case of a table missing from it guards nothing its neighbours"
+    @echo "don't, and two tests in it for a one-line change are one guard more than that line needs."
 
 # Run Python with the package importable, to probe how it behaves. See `just help py`.
 [env("PYTHONPATH", "src")]
@@ -261,6 +264,13 @@ rename-help:
 format: install-py-dependencies
     {{ ruff }} format {{ code }}
     {{ ruff }} check --fix {{ code }}
+
+# Format Python code and report what the linter finds, fixing none of it: what to run after a single edit, since
+# fixing deletes an import whose first use the next edit is about to add.
+[private]
+format-after-edit: install-py-dependencies
+    {{ ruff }} format {{ code }}
+    {{ ruff }} check {{ code }}
 
 # Fix quality issues that can be fixed automatically
 fix: install-py-dependencies

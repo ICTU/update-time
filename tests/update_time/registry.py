@@ -180,6 +180,15 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
             "ghcr.io/owner/python", Location(mock_file, 2), "ignore[cooldown<30]"
         )
 
+    def test_stale_marker_outside_docker_hub_is_reported_as_redundant(self) -> None:
+        """Test that a `stale` marker on an image off Docker Hub is reported, since no tag there carries a date."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        marker = self.marker_line("ignore[stale<90]")
+        mock_file = mock_path(marker + self.reference(f"ghcr.io/owner/python:3.14@{DIGEST1}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_called_once_with(marker + self.reference(f"ghcr.io/owner/python:3.15@{DIGEST2}"))
+        self.assert_redundant_stale_source_logged("ghcr.io/owner/python", Location(mock_file, 2), "ignore[stale<90]")
+
     def test_stale_image_warned(self) -> None:
         """Test that an image whose newest tag was pushed long ago is warned about as stale, without being rewritten."""
         old = (datetime.now(UTC) - timedelta(days=512)).isoformat()

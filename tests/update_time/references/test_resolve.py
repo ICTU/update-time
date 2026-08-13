@@ -5,8 +5,9 @@ from typing import TYPE_CHECKING
 from unittest.mock import Mock, call
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
-from update_time.domain.cooldown import COOLDOWN, cooldown_honouring
+from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.marker import Marker, Threshold
+from update_time.domain.publication import publication_date_reporting
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.version import DependencyVersion, Reference
 from update_time.domain.yank import yank_reporting
@@ -18,6 +19,9 @@ from tests.update_time.helpers import bound, new_version_getter
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
+
+# The threshold `ignore[stale<90]` parses to, carrying the directive the parser sets alongside every value it reads.
+_STALE_THRESHOLD = Threshold(value=90, directive="ignore[stale<90]")
 
 
 class LatestVersionTest(unittest.TestCase):
@@ -187,27 +191,33 @@ class LatestVersionTest(unittest.TestCase):
         self.log.redundant_cooldown_item.assert_called_once_with("python", marker, self.path)
         self.assertEqual(latest, DependencyVersion(version="3.15"))
 
-    def test_no_redundant_cooldown_item_when_the_source_honours_the_cooldown(self):
+    def test_no_redundant_cooldown_item_when_the_source_dates_its_versions(self):
         """Test that a `cooldown` item is not reported when the source dates its versions."""
-        get_new_version = cooldown_honouring(new_version_getter("3.15"))
+        get_new_version = publication_date_reporting(new_version_getter("3.15"))
         self.latest_version(Marker(cooldown=Threshold(value=30)), get_new_version)
         self.log.redundant_cooldown_item.assert_not_called()
 
-    def test_the_cooldown_capability_is_judged_per_reference(self):
-        """Test that one getter dating some of its dependencies only is judged by the reference the marker sits on."""
+    def test_the_capability_is_judged_per_reference(self):
+        """Test that a getter dating some of its dependencies only is judged by the reference the marker sits on.
 
-        def dates_the_versions_of(dependency: str) -> bool:
-            """Return whether the source dates the dependency's versions, which it does for `node` alone."""
+        One case per warning the publication date decides: the `cooldown` item's and the `stale` directive's.
+        """
+
+        def dates_the_releases_of(dependency: str) -> bool:
+            """Return whether the source dates the dependency's releases, which it does for `node` alone."""
             return dependency == "node"
 
-        get_new_version = cooldown_honouring(new_version_getter("3.15"), when=dates_the_versions_of)
-        marker = Marker(cooldown=Threshold(value=30), raw="ignore[cooldown<30]")
-        for dependency, reported in (("node", False), ("python", True)):
-            with self.subTest(dependency=dependency):
-                self.log.reset_mock()  # Judge each reference on the calls of its own run.
-                self.latest_version(marker, get_new_version, dependency)
-                calls = self.log.redundant_cooldown_item.call_args_list
-                self.assertEqual(calls, [call(dependency, marker, self.path)] if reported else [])
+        get_new_version = publication_date_reporting(new_version_getter("3.15"), when=dates_the_releases_of)
+        warnings = (
+            (Marker(cooldown=Threshold(value=30), raw="ignore[cooldown<30]"), self.log.redundant_cooldown_item),
+            (Marker(stale=_STALE_THRESHOLD, raw="ignore[stale<90]"), self.log.redundant_stale_source),
+        )
+        for marker, warn in warnings:
+            for dependency, reported in (("node", False), ("python", True)):
+                with self.subTest(marker=marker.raw, dependency=dependency):
+                    self.log.reset_mock()  # Judge each reference on the calls of its own run.
+                    self.latest_version(marker, get_new_version, dependency)
+                    self.assertEqual(warn.call_args_list, [call(dependency, marker, self.path)] if reported else [])
 
     def test_no_redundant_cooldown_item_when_the_marker_sets_no_cooldown(self):
         """Test that a marker is not reported when it sets no cooldown, carrying no item or an inverted one."""
@@ -221,6 +231,36 @@ class LatestVersionTest(unittest.TestCase):
             with self.subTest(case=case):
                 self.latest_version(marker)
                 self.log.redundant_cooldown_item.assert_not_called()
+
+    def test_warns_about_a_redundant_stale_item(self):
+        """Test that a `stale` item is reported as redundant when the source dates none of its versions."""
+        marker = Marker(stale=_STALE_THRESHOLD, raw="ignore[stale<90]")
+        latest = self.latest_version(marker)
+        self.log.redundant_stale_source.assert_called_once_with("python", marker, self.path)
+        self.assertEqual(latest, DependencyVersion(version="3.15"))
+
+    def test_no_redundant_stale_item_when_the_source_dates_its_versions(self):
+        """Test that a `stale` item is not reported when the source dates its versions."""
+        get_new_version = publication_date_reporting(new_version_getter("3.15"))
+        self.latest_version(Marker(stale=Threshold(value=90)), get_new_version)
+        self.log.redundant_stale_source.assert_not_called()
+
+    def test_warns_about_a_redundant_stale_scope(self):
+        """Test that a bare `ignore[stale]` is reported as redundant when the source dates none of its versions."""
+        marker = Marker(ignore_stale=True, raw="ignore[stale]")
+        self.latest_version(marker)
+        self.log.redundant_stale_source.assert_called_once_with("python", marker, self.path)
+
+    def test_no_redundant_stale_item_when_the_marker_sets_no_threshold(self):
+        """Test that a marker is not reported when it sets no threshold, carrying no item or an inverted one."""
+        markers = {
+            "no stale item": Marker(),
+            "inverted stale item": Marker(stale=Threshold(inverted_item="stale>=90"), raw="ignore[stale>=90]"),
+        }
+        for case, marker in markers.items():
+            with self.subTest(case=case):
+                self.latest_version(marker)
+                self.log.redundant_stale_source.assert_not_called()
 
     def test_ignore_update_returns_none(self):
         """Test that `ignore[update]` holds back the update, after the staleness check has still run."""

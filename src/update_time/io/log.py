@@ -146,11 +146,8 @@ class LogMessage:
 
 
 def _redundant_marker(reason: str) -> str:
-    """Return the warning a marker that holds nothing back is reported as, for the reason the caller gives."""
-    return (
-        f"Redundant update-time marker %(directive)s for %(dependency)s in %(location)s: {reason}, "
-        "so the marker holds nothing back"
-    )
+    """Return the warning a marker that decides nothing is reported as, ending at the reason the caller gives."""
+    return f"Redundant update-time marker %(directive)s for %(dependency)s in %(location)s: {reason}"
 
 
 class Logger:
@@ -487,15 +484,15 @@ class Logger:
 
     @staticmethod
     def _redundant_suppression_fields(
-        dependency: str, version: VersionString, marker: Marker, location: Location
+        dependency: str, version: VersionString, directive: str, location: Location
     ) -> dict[str, object]:
         """Return the fields a vulnerability suppression that holds nothing back is reported with.
 
-        Only the `ignore` directive is named, echoed as the user spelled it, since it is the one that holds nothing
-        back.
+        The directive is the caller's, since each of these messages judges one form of the `vulnerable` scope and
+        the forms beside it may hold plenty back.
         """
         return {
-            "directive": marker.raw_directives(Verb.IGNORE),
+            "directive": directive,
             "dependency": dependency,
             "version": version,
             "location": location,
@@ -511,7 +508,7 @@ class Logger:
         """Warn that the marker's vulnerability scope found no vulnerability to hold back for the pinned version."""
         self._log(
             self._MESSAGE_REDUNDANT_VULNERABLE_SCOPE,
-            **self._redundant_suppression_fields(dependency, version, marker, location),
+            **self._redundant_suppression_fields(dependency, version, marker.vulnerable_scope_directive, location),
         )
 
     _MESSAGE_REDUNDANT_VULNERABLE_ADVISORY = LogMessage(
@@ -524,7 +521,7 @@ class Logger:
         """Warn that the marker names an advisory none of the pinned version's vulnerabilities answers to."""
         self._log(
             self._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY,
-            **self._redundant_suppression_fields(dependency, version, marker, location),
+            **self._redundant_suppression_fields(dependency, version, marker.advisory_directives, location),
         )
 
     _MESSAGE_REDUNDANT_VULNERABLE_LEVEL = LogMessage(
@@ -537,7 +534,7 @@ class Logger:
         """Warn that the marker's risk level left no vulnerability of the pinned version below it to hold back."""
         self._log(
             self._MESSAGE_REDUNDANT_VULNERABLE_LEVEL,
-            **self._redundant_suppression_fields(dependency, version, marker, location),
+            **self._redundant_suppression_fields(dependency, version, marker.vulnerable.directive, location),
             level=level,
         )
 
@@ -546,14 +543,10 @@ class Logger:
     )
 
     def redundant_vulnerable_source(self, dependency: str, marker: Marker, location: Location) -> None:
-        """Warn that the marker's vulnerability scope can never hold anything back for this dependency.
-
-        Only the `ignore` directive is named, echoed as the user spelled it, since it is the one that holds nothing
-        back.
-        """
+        """Warn that the marker's vulnerability scope can never hold anything back for this dependency."""
         self._log(
             self._MESSAGE_REDUNDANT_VULNERABLE_SOURCE,
-            directive=marker.raw_directives(Verb.IGNORE),
+            directive=marker.vulnerable_directives,
             dependency=dependency,
             location=location,
         )
@@ -563,14 +556,23 @@ class Logger:
     )
 
     def redundant_cooldown_item(self, dependency: str, marker: Marker, location: Location) -> None:
-        """Warn that the marker's cooldown can never hold anything back for this dependency.
-
-        The `cooldown` directive alone is named, as the user spelled it, since either verb sets a cooldown and the
-        directives beside it may hold plenty back.
-        """
+        """Warn that the marker's cooldown can never hold anything back for this dependency."""
         self._log(
             self._MESSAGE_REDUNDANT_COOLDOWN_ITEM,
-            directive=marker.cooldown.directive,
+            directive=marker.cooldown_directive,
+            dependency=dependency,
+            location=location,
+        )
+
+    _MESSAGE_REDUNDANT_STALE_SOURCE = LogMessage(
+        WARNING, _redundant_marker("this dependency's source reports no publication date to measure staleness against")
+    )
+
+    def redundant_stale_source(self, dependency: str, marker: Marker, location: Location) -> None:
+        """Warn that the marker's `stale` directive decides nothing here, in whichever form it was written."""
+        self._log(
+            self._MESSAGE_REDUNDANT_STALE_SOURCE,
+            directive=marker.stale_directive,
             dependency=dependency,
             location=location,
         )
@@ -580,14 +582,10 @@ class Logger:
     )
 
     def redundant_yank_scope(self, dependency: str, marker: Marker, location: Location) -> None:
-        """Warn that the marker's yank scope can never hold anything back for this dependency.
-
-        Only the `ignore` directive is named, echoed as the user spelled it, since it is the one that holds nothing
-        back.
-        """
+        """Warn that the marker's yank scope can never hold anything back for this dependency."""
         self._log(
             self._MESSAGE_REDUNDANT_YANK_SCOPE,
-            directive=marker.raw_directives(Verb.IGNORE),
+            directive=marker.yank_directive,
             dependency=dependency,
             location=location,
         )

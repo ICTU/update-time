@@ -385,6 +385,14 @@ class LoggingTestCase(CacheClearingTestCase):
             Logger._MESSAGE_REDUNDANT_COOLDOWN_ITEM, directive=directive, dependency=dependency, location=location
         )
 
+    def assert_redundant_stale_source_logged(
+        self, dependency: str, location: Location, directive: object = ANY
+    ) -> None:
+        """Assert that a `stale` directive the dependency's source cannot answer was warned about once for the file."""
+        self.assert_logged(
+            Logger._MESSAGE_REDUNDANT_STALE_SOURCE, directive=directive, dependency=dependency, location=location
+        )
+
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged."""
         self.assert_last_logged(Logger._MESSAGE_CHECKING_PATH, location=Location(path))

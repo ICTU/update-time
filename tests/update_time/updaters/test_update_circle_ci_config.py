@@ -70,6 +70,14 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         config_yml.write_text.assert_not_called()
         self.assert_redundant_cooldown_item_logged("ubuntu-2204", Location(config_yml, 5), "ignore[cooldown<30]")
 
+    def test_stale_marker_on_a_machine_image_is_reported_as_redundant(self):
+        """Test that a `stale` marker on a machine-executor image is reported, since no registry dates it."""
+        marker = "      # update-time: ignore[stale<90]\n"
+        config_yml = mock_path(f"jobs:\n  build:\n    machine:\n{marker}      image: ubuntu-2204:2024.01.1\n")
+        self.run_updater(config_yml)
+        config_yml.write_text.assert_not_called()
+        self.assert_redundant_stale_source_logged("ubuntu-2204", Location(config_yml, 5), "ignore[stale<90]")
+
     def test_docker_image_with_auth_before_image(self):
         """Test that a Docker image is updated even when its list item lists `auth:` before `image:`."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST2))

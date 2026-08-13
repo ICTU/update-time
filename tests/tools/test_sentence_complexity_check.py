@@ -55,10 +55,32 @@ class ExtractProseFromPythonTest(unittest.TestCase):
         source_code = "# A sentence that starts here\n# and ends on the next line.\nversion = 1\n"
         self.assertEqual(self.prose(source_code), ["A sentence that starts here and ends on the next line."])
 
+    def test_an_f_string_is_measured_once(self):
+        """Test that an f-string's literal parts are measured with it, rather than again as literals of their own.
+
+        The parts carry no quotes of their own, except that a part opening with an apostrophe reads like one.
+        """
+        source_code = 'msg = f"{name}\'s widgets"\n'
+        self.assertEqual(self.prose(source_code), ["'s widgets."])
+
     def test_raw_string_is_not_prose(self):
-        """Test that a raw string is left out, since it holds a regexp rather than a sentence."""
-        source_code = 'pattern = r"the raw string"\ncomment = "the quoted string"\n'
-        self.assertEqual(self.prose(source_code), ["the quoted string."])
+        """Test that a raw string is left out whether or not it interpolates, since it holds a regexp.
+
+        The prefix is read case-insensitively, since `R"..."` is as raw as `r"..."` and `F"..."` as much prose as
+        `f"..."`.
+        """
+        source_code = (
+            'pattern = r"the raw string"\n'
+            'comment = "the quoted string"\n'
+            'interpolated = rf"the raw f-string {name}"\n'
+            'message = f"the quoted f-string {name}"\n'
+            'shouted = R"the upper-case raw string"\n'
+            'announced = F"the upper-case f-string {name}"\n'
+        )
+        self.assertEqual(
+            self.prose(source_code),
+            ["the quoted string.", "the quoted f-string.", "the upper-case f-string."],
+        )
 
     def test_f_string_keeps_its_literal_parts(self):
         """Test that an f-string's literal parts are kept and its interpolations dropped.

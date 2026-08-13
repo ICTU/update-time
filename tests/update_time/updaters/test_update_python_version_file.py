@@ -146,6 +146,16 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         self.assert_new_version_logged("python", "3.14", Location(version_file, 2))
 
     @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
+    def test_stale_marker_is_reported_as_redundant(self, mock_glob: Mock):
+        """Test that a `stale` marker on an entry following the Dockerfile is reported, and the entry updated."""
+        version_file = self.create_version_file("# update-time: ignore[stale<90]\n3.12.6\n")
+        mock_glob.return_value = [version_file]
+        update_python_version_files()
+        version_file.write_text.assert_called_once_with("# update-time: ignore[stale<90]\n3.14\n")
+        self.assert_redundant_stale_source_logged("python", Location(version_file, 2), "ignore[stale<90]")
+        self.assert_new_version_logged("python", "3.14", Location(version_file, 2))
+
+    @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
     def test_the_reported_cooldown_directive_is_the_one_that_won(self, mock_glob: Mock):
         """Test that where both placements set a cooldown, the warning names the inline one, which wins."""
         above, inline = "# update-time: ignore[cooldown<90]", "# update-time: allow[cooldown>=30]"

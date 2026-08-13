@@ -264,7 +264,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA))
     def test_cooldown_marker_is_not_reported_as_redundant(self, mock_glob: Mock):
-        """Test that a `cooldown` marker on an action holds something back, since GitHub dates its releases."""
+        """Test that a `cooldown` marker on an action holds something back, since GitHub dates its versions."""
         marker = "  # update-time: ignore[cooldown<30]"
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0{marker}\n")
         mock_glob.side_effect = [[workflow_yml], []]

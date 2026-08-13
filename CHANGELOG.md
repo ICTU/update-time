@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Warn about a `stale` marker on a reference whose source reports no publication date to measure staleness against, instead of accepting it in silence. Closes [#221](https://github.com/ICTU/update-time/issues/221).
+
+### Fixed
+
+- Name the directive a redundant-marker warning is about, instead of every `ignore` directive on the reference's line, so a directive beside it that holds plenty back is no longer reported as holding nothing back. Part of [#221](https://github.com/ICTU/update-time/issues/221).
+- Name a `vulnerable` scope set with `allow`, such as `allow[vulnerable>=high]`, in the warning reporting it as redundant. Such a warning previously named no directive at all. Part of [#221](https://github.com/ICTU/update-time/issues/221).
 
 ## 0.0.27 - 2026-08-13
 

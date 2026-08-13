@@ -87,6 +87,15 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile.write_text.assert_called_with(marker + self.reference(f"python:3.15@{DIGEST2}"))
         self.assert_redundant_yank_scope_logged("python", Location(mock_dockerfile, 2), "ignore[yanked]")
 
+    def test_redundant_yank_scope_in_a_combined_bracket_names_the_scope_alone(self):
+        """Test that a yank scope sharing a bracket is named on its own, without the other item in that bracket."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        marker = self.marker_line("ignore[update,yanked]")
+        mock_dockerfile = mock_path(marker + self.reference("python:3.14"))
+        self.run_updater(mock_dockerfile)
+        mock_dockerfile.write_text.assert_not_called()  # `ignore[update]` shares the bracket and freezes the image
+        self.assert_redundant_yank_scope_logged("python", Location(mock_dockerfile, 2), "ignore[yanked]")
+
     def test_redundant_cooldown_names_the_cooldown_directive_alone(self):
         """Test that the warning names the `cooldown` directive, leaving out one on the same line that does apply."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
@@ -99,7 +108,13 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     def test_vulnerable_scope_is_reported_as_redundant(self):
         """Test that each `vulnerable` marker is reported when an image has no vulnerability to hold back."""
-        for directive in ("ignore[vulnerable]", "ignore[vulnerable=GHSA-2gwj-7jmv-h26r]", "ignore[vulnerable<high]"):
+        directives = (
+            "ignore[vulnerable]",
+            "ignore[vulnerable=GHSA-2gwj-7jmv-h26r]",
+            "ignore[vulnerable<high]",
+            "allow[vulnerable>=high]",  # `allow` sets a level too, so the warning must name it rather than nothing
+        )
+        for directive in directives:
             with self.subTest(directive=directive):
                 self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
                 mock_dockerfile = mock_path(f"# update-time: {directive}\nFROM python:3.14\n")
@@ -107,6 +122,17 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
                 mock_dockerfile.write_text.assert_called_with(
                     f"# update-time: {directive}\nFROM python:3.15@{DIGEST2}\n"
                 )
+                self.assert_redundant_vulnerable_source_logged("python", Location(mock_dockerfile, 2), directive)
+                self.mock_log.reset_mock()  # Judge each case on the records of its own run.
+
+    def test_redundant_vulnerable_scope_beside_another_ignore_names_the_scope_alone(self):
+        """Test that a `vulnerable` scope is named on its own, without an `ignore` beside it that freezes the image."""
+        for directive in ("ignore[vulnerable]", "ignore[vulnerable=GHSA-2gwj-7jmv-h26r]", "allow[vulnerable>=high]"):
+            with self.subTest(directive=directive):
+                self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+                mock_dockerfile = mock_path(f"# update-time: ignore[update] {directive}\nFROM python:3.14\n")
+                self.run_updater(mock_dockerfile)
+                mock_dockerfile.write_text.assert_not_called()  # `ignore[update]` holds the update back
                 self.assert_redundant_vulnerable_source_logged("python", Location(mock_dockerfile, 2), directive)
                 self.mock_log.reset_mock()  # Judge each case on the records of its own run.
 
