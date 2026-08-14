@@ -24,8 +24,8 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
     def run_updater(self, mock_file: Mock) -> None:
         """Run the Dockerfile updater with the mock file as the only discovered Dockerfile.
 
-        The updater globs several Dockerfile patterns; return the file for the exact `Dockerfile` one only, so it is
-        processed exactly once.
+        The updater globs several Dockerfile patterns; returning the file for the exact `Dockerfile` one only
+        processes it exactly once.
         """
 
         def rglob(pattern: str, *, case_sensitive: bool | None = None) -> list[Mock]:  # noqa: ARG001

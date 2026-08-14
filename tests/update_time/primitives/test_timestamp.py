@@ -22,11 +22,7 @@ class DaysSinceTest(unittest.TestCase):
         self.assertEqual(days_since(datetime.now(timezone(timedelta(hours=5))) - timedelta(days=1)), 1)
 
     def test_oldest_representable_timestamp(self):
-        """Test that the earliest date there is yields a count rather than an error.
-
-        The count is an `int`, so it compares against a day count of any size. It is the `timedelta` such a count
-        would otherwise have to become that caps, at 999999999 days.
-        """
+        """Test that the earliest date there is yields a count rather than an error."""
         self.assertGreater(days_since(datetime.min.replace(tzinfo=UTC)), 700_000)
 
 

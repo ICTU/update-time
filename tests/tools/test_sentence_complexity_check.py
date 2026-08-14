@@ -47,28 +47,17 @@ class ExtractProseFromPythonTest(unittest.TestCase):
         return [prose.text for prose in extract_prose_from_python(mock_path(source_code))]
 
     def test_standalone_comments_join(self):
-        """Test that consecutive standalone comments become one fragment, so a sentence across them is measured whole.
-
-        The fragment is what the thresholds are applied to, so a sentence split over two comment lines would
-        otherwise be measured as two short ones.
-        """
+        """Test that consecutive standalone comments join, so a sentence across them is measured whole."""
         source_code = "# A sentence that starts here\n# and ends on the next line.\nversion = 1\n"
         self.assertEqual(self.prose(source_code), ["A sentence that starts here and ends on the next line."])
 
     def test_an_f_string_is_measured_once(self):
-        """Test that an f-string's literal parts are measured with it, rather than again as literals of their own.
-
-        The parts carry no quotes of their own, except that a part opening with an apostrophe reads like one.
-        """
+        """Test that an f-string's literal parts are measured with it, rather than again as literals of their own."""
         source_code = 'msg = f"{name}\'s widgets"\n'
         self.assertEqual(self.prose(source_code), ["'s widgets."])
 
     def test_raw_string_is_not_prose(self):
-        """Test that a raw string is left out whether or not it interpolates, since it holds a regexp.
-
-        The prefix is read case-insensitively, since `R"..."` is as raw as `r"..."` and `F"..."` as much prose as
-        `f"..."`.
-        """
+        """Test that a raw string is left out whether it interpolates or not, and whatever the case of its prefix."""
         source_code = (
             'pattern = r"the raw string"\n'
             'comment = "the quoted string"\n'
@@ -85,8 +74,7 @@ class ExtractProseFromPythonTest(unittest.TestCase):
     def test_f_string_keeps_its_literal_parts(self):
         """Test that an f-string's literal parts are kept and its interpolations dropped.
 
-        The parts are joined where the interpolation stood, leaving the space on either side of it; the extra space
-        makes no difference to a word count, which splits on whitespace.
+        The parts are joined where the interpolation stood, leaving the space on either side of it.
         """
         source_code = 'message = f"Pinned {dependency} to the latest version."\n'
         self.assertEqual(self.prose(source_code), ["Pinned  to the latest version."])

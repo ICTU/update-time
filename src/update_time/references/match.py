@@ -30,17 +30,18 @@ def matched_reference(match: re.Match[str], location: Location, dependency: str 
     return Reference(matched_dependency(match, dependency), match.group("version"), location)
 
 
-def checkable_matches(
+def reference_matches(
     lines: list[Line], regexp: str | re.Pattern[str], logger: Logger | None = None
 ) -> Iterator[tuple[Line, re.Match[str], Marker]]:
-    """Yield each line the regexp matches that the run still has a check to make for, with its match and its marker.
+    """Yield each line the regexp matches, with its match and its marker.
 
-    The walk shared by the passes that report on lines without rewriting them, so neither rule is left to a pass to
-    remember. A line the regexp doesn't match carries no reference, since a marker there is for the line below it.
-    A reference whose marker holds every check back is left out, since a bare `ignore` queries no source at all.
-    The pass that is the only one walking these lines passes a `logger`, which reports every marker read here as
-    recognised, the ones held back included. A pass reading lines a rewrite walked first passes none, since
-    `apply_marker` reported their markers as it rewrote them.
+    Shared by the passes that report on lines without rewriting them. A line the regexp doesn't match is skipped,
+    since it carries no reference and a marker on it belongs to the line below. What a marker holds back is each
+    pass's own decision: the vulnerability pass skips a bare `ignore` because OSV is a source, while the
+    loose-requirement pass reports a directive that decides nothing whatever the marker holds back, needing no
+    source to do so. The pass that is the only one walking these lines passes a `logger`, which reports every
+    marker read here as recognised. A pass reading lines a rewrite walked first passes none, since `apply_marker`
+    reported their markers as it rewrote them.
     """
     for line in lines:
         match = re.search(regexp, line.text)
@@ -49,5 +50,4 @@ def checkable_matches(
         marker = parse_marker(line)
         if logger is not None:
             logger.recognised_marker(matched_dependency(match), marker, line.location)
-        if not marker.holds_everything_back:
-            yield line, match, marker
+        yield line, match, marker

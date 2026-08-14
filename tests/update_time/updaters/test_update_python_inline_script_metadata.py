@@ -155,11 +155,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
 @patch("requests.get")
 @patch("subprocess.run")
 class CheckedInlineScriptPinsTest(LoggingTestCase):
-    """Unit test for handing the discovered scripts to the checks uv-delegated updaters share.
-
-    What those checks then report is `test_uv_pins.py`'s to pin; what this updater owns is running them over the
-    scripts it found, once uv has settled their pins.
-    """
+    """Unit test for handing the discovered scripts to the checks uv-delegated updaters share."""
 
     @patch("update_time.updaters.update_python_inline_script_metadata.warn_about_pins")
     def test_the_discovered_scripts_are_checked(self, warn: Mock, run: Mock, get: Mock, glob: Mock):

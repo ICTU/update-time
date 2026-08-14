@@ -1,5 +1,9 @@
 """Unit tests for the marker domain object."""
 
+import ast
+import dataclasses
+import inspect
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -21,6 +25,31 @@ def line(text: str, previous_text: str = "") -> Line:
     return Line(text, previous_text, Location(Path("conf.py"), 1))
 
 
+def _fields_set(marker: Marker) -> set[str]:
+    """Return the names of the fields the marker sets to something other than their default."""
+    default = Marker()
+    names = (field.name for field in dataclasses.fields(Marker))
+    return {name for name in names if getattr(marker, name) != getattr(default, name)}
+
+
+def _cannot_combine(value: ast.expr) -> bool:
+    """Return whether the expression takes its field from one marker rather than combining both markers' values."""
+    if isinstance(value, ast.IfExp):
+        return True
+    return isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute) and value.func.attr == "merge"
+
+
+def _fields_that_cannot_combine() -> set[str]:
+    """Return the `Marker` fields `merge` takes from one marker rather than combining both markers' values."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(Marker.merge)))
+    merged = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Marker"
+    )
+    return {keyword.arg for keyword in merged.keywords if keyword.arg and _cannot_combine(keyword.value)}
+
+
 class MergeTest(unittest.TestCase):
     """Unit tests for folding two markers into one."""
 
@@ -38,10 +67,14 @@ class HoldsEverythingBackTest(unittest.TestCase):
     """Unit tests for whether a marker leaves any check to run, and so any source to query."""
 
     def test_only_a_marker_naming_every_scope_holds_everything_back(self):
-        """Test that a bare `ignore`, and every scope named together, hold everything back where one scope does not."""
+        """Test that a bare `ignore` and every scope named together hold everything back, one scope short does not."""
         cases = {
             "ignore": True,
             "ignore[update, stale, yanked, vulnerable]": True,
+            "ignore[stale, yanked, vulnerable]": False,
+            "ignore[update, yanked, vulnerable]": False,
+            "ignore[update, stale, vulnerable]": False,
+            "ignore[update, stale, yanked]": False,
             "ignore[update]": False,
             "ignore[stale]": False,
             "ignore[yanked]": False,
@@ -51,6 +84,44 @@ class HoldsEverythingBackTest(unittest.TestCase):
             with self.subTest(directive=directive):
                 marker = parse_marker(line(f"dependency  # update-time: {directive}"))
                 self.assertEqual(marker.holds_everything_back, expected)
+
+
+class HoldsBackSourceChecksTest(unittest.TestCase):
+    """Unit tests for whether a marker holds back the update, the staleness warning, and the yank warning alike."""
+
+    def test_only_update_stale_and_yanked_together_hold_back_the_source_checks(self):
+        """Test that all three must be held back, the `vulnerable` scope not counting either way."""
+        cases = {
+            "ignore": True,
+            "ignore[update, stale, yanked]": True,
+            "ignore[update, stale, yanked, vulnerable]": True,
+            "ignore[stale, yanked]": False,
+            "ignore[update, yanked]": False,
+            "ignore[update, stale]": False,
+            "ignore[vulnerable]": False,
+        }
+        for directive, expected in cases.items():
+            with self.subTest(directive=directive):
+                marker = parse_marker(line(f"dependency  # update-time: {directive}"))
+                self.assertEqual(marker.holds_back_source_checks, expected)
+
+
+class AsWrittenTest(unittest.TestCase):
+    """Unit tests for the marker with the scopes it never spelled out cleared."""
+
+    def test_only_the_scopes_the_marker_spelled_out_survive(self):
+        """Test that a scope a bare `ignore` implies is cleared, while one written beside it is kept."""
+        every_scope = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True, ignore_vulnerable=True)
+        cases = {
+            "ignore": Marker(),
+            "ignore[yanked]": Marker(ignore_yanked=True),
+            "ignore ignore[yanked]": Marker(ignore_yanked=True),
+            "ignore[update, stale, yanked, vulnerable]": every_scope,
+        }
+        for directive, expected in cases.items():
+            with self.subTest(directive=directive):
+                marker = parse_marker(line(f"dependency  # update-time: {directive}"))
+                self.assertEqual(marker.as_written, expected)
 
 
 class RawTextTest(unittest.TestCase):
@@ -232,25 +303,35 @@ class ParseMarkerDayCountTest(unittest.TestCase):
 class ParseMarkerPrecedenceTest(unittest.TestCase):
     """Unit tests that a directive on the reference's own line wins over one on the line above."""
 
-    def test_an_inline_directive_beats_one_on_the_line_above(self):
-        """Test that of two markers setting the same value, the inline one wins, for every value one can carry.
+    # The inline directive, the one on the line above, and the marker the two of them merge to.
+    CASES = (
+        ("allow[update<3.13]", "allow[update<4]", Marker(version_bound=bound(Verb.ALLOW, "update<3.13"))),
+        ("ignore[stale<30]", "ignore[stale<90]", Marker(stale=Threshold(value=30))),
+        ("ignore[cooldown<30]", "ignore[cooldown<90]", Marker(cooldown=Threshold(value=30))),
+        ("ignore[vulnerable<high]", "ignore[vulnerable<critical]", Marker(vulnerable=Threshold(value="high"))),
+        ("ignore[stale>=30]", "ignore[stale>=90]", Marker(stale=Threshold(inverted_item="stale>=30"))),
+        ("ignore[cooldown>=30]", "ignore[cooldown>=90]", Marker(cooldown=Threshold(inverted_item="cooldown>=30"))),
+        (
+            "ignore[vulnerable>=high]",
+            "ignore[vulnerable>=critical]",
+            Marker(vulnerable=Threshold(inverted_item="vulnerable>=high")),
+        ),
+        ("ignore[stlae]", "ignore[updaet]", Marker(invalid_item="stlae")),
+    )
 
-        These are the values that cannot combine: the three a reference sets deliberately, and the three reporting
-        a comparison or an item Update-time could not honour. The hold-backs combine as unions instead, so there is
-        nothing for one line to win over the other about.
-        """
-        cases = (
-            ("allow[update<3.13]", "allow[update<4]", Marker(version_bound=bound(Verb.ALLOW, "update<3.13"))),
-            ("ignore[stale<30]", "ignore[stale<90]", Marker(stale=Threshold(value=30))),
-            ("ignore[cooldown<30]", "ignore[cooldown<90]", Marker(cooldown=Threshold(value=30))),
-            ("ignore[stale>=30]", "ignore[stale>=90]", Marker(stale=Threshold(inverted_item="stale>=30"))),
-            ("ignore[cooldown>=30]", "ignore[cooldown>=90]", Marker(cooldown=Threshold(inverted_item="cooldown>=30"))),
-            ("ignore[stlae]", "ignore[updaet]", Marker(invalid_item="stlae")),
-        )
-        for inline, above, expected in cases:
+    def test_an_inline_directive_beats_one_on_the_line_above(self):
+        """Test that of two markers setting the same value, the inline one wins."""
+        for inline, above, expected in self.CASES:
             with self.subTest(inline=inline):
                 marker = parse_marker(line(f"image: python:3.12  # update-time: {inline}", f"# update-time: {above}"))
                 self.assertEqual(marker, expected)
+
+    def test_every_field_that_cannot_combine_has_a_case(self):
+        """Test that the cases pin every field `Marker.merge` takes from one marker."""
+        cannot_combine = _fields_that_cannot_combine()
+        self.assertNotEqual(cannot_combine, set())  # An empty read would pass the check below without checking.
+        pinned = {name for _inline, _above, expected in self.CASES for name in _fields_set(expected)}
+        self.assertEqual(pinned, cannot_combine)
 
 
 class ParseMarkerRawTest(unittest.TestCase):

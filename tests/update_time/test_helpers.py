@@ -53,11 +53,7 @@ class CachedFunctionsTest(unittest.TestCase):
         self.assertIn(release_metadata, _all_cached_functions(update_time))
 
     def test_only_the_cached_function_the_module_defines_is_returned(self):
-        """Test that the discovery returns the module's own cached function, not its plain or its imported one.
-
-        A cached function another module defines is cleared where that module is scanned, so returning it here
-        would clear it twice and claim it for the wrong module.
-        """
+        """Test that the discovery returns the module's own cached function, not its plain or its imported one."""
         module = types.ModuleType("fake")
         # Builtins stand in for functions the fixture would otherwise have to give a body, and `cache` wraps one
         # into what the discovery looks for. What each returned function wraps is asserted, so a leak is named.

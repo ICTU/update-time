@@ -13,7 +13,7 @@ from update_time.file_formats import requirements_txt as requirements_txt_format
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
-from update_time.references.match import checkable_matches
+from update_time.references.match import reference_matches
 from update_time.references.resolve import warn_about_inverted_items
 from update_time.references.vulnerability import warn_about_vulnerable_references
 from update_time.sources.osv import Ecosystem
@@ -55,7 +55,8 @@ def _warn_about_items_that_decide_nothing(marker: Marker, reference: Reference) 
 
     An item Update-time cannot read is left to say nothing, and a comparison item running the wrong way round sets
     nothing either. A `yanked` or `vulnerable` scope holds nothing back, since both checks need the version such a
-    requirement does not pin.
+    requirement does not pin. The caller hands the marker as written, so a scope a bare `ignore` only implies is
+    reported for none of this.
     """
     if marker.invalid_item is not None:
         _LOG.invalid_bracket_item(reference.dependency, marker.invalid_item, reference.location)
@@ -74,15 +75,18 @@ def _warn_about_stale_loose_requirements(lines: list[Line]) -> None:
     """Warn about each requirement declared without an exact pin whose package's newest release is old.
 
     A loose requirement pins no version to resolve an update for, so the release its staleness is measured against
-    is read from PyPI here. Staleness is the only check such a requirement gets, so one whose threshold in force is
-    0 is not looked up at all.
+    is read from PyPI here. Staleness is the only check such a requirement gets, so PyPI is left unasked for one
+    whose threshold in force is 0, and for one whose marker holds every check back. What the marker gets wrong is
+    reported either way, since that needs no release.
     """
     run_wide_threshold = STALE_AFTER.get()
-    for line, match, marker in checkable_matches(lines, _LOOSE_REQUIREMENT_RE, _LOG):
+    for line, match, marker in reference_matches(lines, _LOOSE_REQUIREMENT_RE, _LOG):
         if (dependency := match["dependency"]).endswith(_ARCHIVE_SUFFIXES):
             continue
         reference = Reference(dependency, "", line.location)
-        _warn_about_items_that_decide_nothing(marker, reference)
+        _warn_about_items_that_decide_nothing(marker.as_written, reference)
+        if marker.holds_everything_back:
+            continue  # A bare `ignore` holds the staleness check back, so PyPI is not asked for a release date.
         if (threshold := marker.stale.value_or(run_wide_threshold)) == NO_STALENESS_CHECK:
             continue
         if (release := newest_release(reference.dependency)) is not None:

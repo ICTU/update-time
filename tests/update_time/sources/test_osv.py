@@ -35,11 +35,7 @@ _MALFORMED_VECTOR = "CVSS:3.1/AV:X/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
 def _expected_vulnerability(
     advisory: str, level: str, summary: str = _SUMMARY, aliases: list[str] | None = None
 ) -> Vulnerability:
-    """Return the vulnerability an advisory reports, at the level, and known by the aliases.
-
-    Defaults the summary these tests share, and orders its arguments as they vary, since every advisory here reports
-    the same vulnerability at a different level.
-    """
+    """Return the vulnerability an advisory reports, at the level, and known by the aliases."""
     return vulnerability(advisory, summary, level, aliases)
 
 
@@ -73,7 +69,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
     def test_the_newest_cvss_vector_sets_the_risk_level(self, mock_post: Mock):
         """Test that the v4 vector sets the level of an advisory carrying both, where the two band differently.
 
-        The vectors are the ones PYSEC-2026-457 carries, which band as high on v3 and critical on v4.
+        The vectors band as high on v3 and critical on v4.
         """
         vectors = {
             "CVSS_V3": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
@@ -88,20 +84,11 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         self.assert_logged(Logger._MESSAGE_MALFORMED_CVSS_VECTOR, advisory=_ADVISORY, error=ANY)
 
     def test_advisory_without_a_severity(self, mock_post: Mock):
-        """Test that an advisory reporting no risk level is read as a vulnerability of no level, rather than failing.
-
-        Over a third of the advisories OSV returns carry no `database_specific` section to read a level from.
-        """
+        """Test that an advisory reporting no risk level is read as a vulnerability of no level, rather than failing."""
         self.assert_level(mock_post, osv_advisory(_ADVISORY, _SUMMARY), "")
 
     def test_a_vulnerability_reported_twice_is_reported_once_at_its_rated_advisory(self, mock_post: Mock):
-        """Test that a vulnerability several databases report is warned about once, at the advisory that rates it.
-
-        Only some of the databases rate a vulnerability, so the order OSV happens to answer in must not decide
-        whether the warning names a risk level, not even when the rated advisory is the one tying the others
-        together. An advisory whose CVSS vector cannot be scored leaves it unrated, so the rated advisory wins there
-        too.
-        """
+        """Test that a vulnerability several databases report is warned about once, at the advisory that rates it."""
         ghsa = osv_advisory(_GHSA, _SUMMARY, level="HIGH", aliases=[_CVE])
         pysec = osv_advisory(_ADVISORY, _SUMMARY, aliases=[_CVE])
         bit = osv_advisory(_BIT, _SUMMARY)
@@ -166,11 +153,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
                 self.assert_vulnerabilities(mock_post, [stated_high, scored], expected)
 
     def test_an_advisory_naming_another_by_its_id_is_merged_with_it(self, mock_post: Mock):
-        """Test that an advisory naming another advisory's own id among its aliases is read as the same vulnerability.
-
-        A database names the other databases' advisories by their own ids, so two advisories can report one
-        vulnerability while sharing no alias with each other.
-        """
+        """Test that an advisory naming another's own id among its aliases is read as the same vulnerability."""
         ghsa = osv_advisory(_GHSA, _SUMMARY, level="HIGH", aliases=[_CVE])
         pysec = osv_advisory(_ADVISORY, _SUMMARY, aliases=[_GHSA])
         expected = [_expected_vulnerability(_GHSA, "high", aliases=[_CVE, _ADVISORY])]
@@ -179,11 +162,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
                 self.assert_vulnerabilities(mock_post, advisories, expected)
 
     def test_advisories_tied_together_only_through_a_third_are_reported_once(self, mock_post: Mock):
-        """Test that advisories naming nothing in common are read as one vulnerability when a third advisory names both.
-
-        OSV puts its advisories in no particular order, so the cases run the tying advisory before the two it ties,
-        between them, and after both, and tie vulnerabilities that already hold several advisories each.
-        """
+        """Test that advisories sharing no identifier are read as one vulnerability when a third names both."""
         other_cve, third_cve = "CVE-2021-2222", "CVE-2021-3333"
         ghsa = osv_advisory(_GHSA, _SUMMARY, level="HIGH", aliases=[_CVE])
         pysec = osv_advisory(_ADVISORY, _SUMMARY, aliases=[_CVE, _BIT])
@@ -216,13 +195,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
                 self.assert_vulnerabilities(mock_post, advisories, expected)
 
     def test_vulnerabilities_naming_nothing_in_common_are_each_reported(self, mock_post: Mock):
-        """Test that two vulnerabilities affecting one version are each warned about, however alike their advisories.
-
-        The cases are two vulnerabilities with different aliases, two naming no identifier at all, and a merged
-        vulnerability beside one on its own, which also pins that a merge keeps the place of the earliest advisory
-        it merged. No advisory of that merged vulnerability rates it, so it is reported at the advisory OSV answered
-        with first, at no level.
-        """
+        """Test that two vulnerabilities affecting one version are each warned about, however alike their advisories."""
         other_cve = "CVE-2021-2222"
         cases = {
             "one vulnerability merged, one on its own": (
@@ -257,11 +230,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
                 self.assert_vulnerabilities(mock_post, advisories, expected)
 
     def test_unreachable_advisories(self, mock_post: Mock):
-        """Test that a pin the batch reports as affected is left unanswered when its advisories can't be read.
-
-        The batch says the pin is affected but not by what, so a run that cannot read the advisories knows less
-        about the pin than one that asked and was told nothing, and must not be taken for it.
-        """
+        """Test that a pin the batch reports as affected is left unanswered when its advisories can't be read."""
         status = HTTPStatus.SERVICE_UNAVAILABLE
         unreachable = mock_response(ok=False, status_code=status, reason=status.phrase, url="https://osv")
         affected = mock_response({"results": [{"vulns": [{"id": _ADVISORY}]}]})
@@ -274,11 +243,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         self.assert_could_not_fetch_logged(url="https://osv", status=status, reason=status.phrase)
 
     def test_unreachable_osv(self, mock_post: Mock):
-        """Test that an unreachable OSV leaves every pin without an answer, and is warned about.
-
-        Each pin is left unanswered rather than unaffected, and an answer per pin is returned all the same, so the
-        answers cannot end up misaligned with the pins asked about.
-        """
+        """Test that an unreachable OSV returns an answer per pin, each of them none, and is warned about."""
         status = HTTPStatus.SERVICE_UNAVAILABLE
         mock_post.return_value = mock_response(ok=False, status_code=status, reason=status.phrase, url="https://osv")
         self.assertEqual(
@@ -296,9 +261,8 @@ class RiskLevelBandTest(unittest.TestCase):
     def test_the_bands_name_every_risk_level(self):
         """Test that the bands name each risk level once, most severe first, and no level the domain doesn't order.
 
-        The bands say which level a CVSS base score falls in, and the domain orders the levels a threshold compares
-        against. A level added to one and not the other would leave scores banding to a level nothing compares
-        against, or a threshold no score can reach.
+        A level added to one and not the other would leave scores banding to a level nothing compares against, or a
+        threshold no score can reach.
         """
         banded = [level for _lowest_score, level in _RISK_LEVEL_BANDS if level]
         self.assertEqual(banded, list(reversed(RISK_LEVELS)))

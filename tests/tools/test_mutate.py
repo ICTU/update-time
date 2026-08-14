@@ -70,11 +70,7 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.probe(mock_path(_ORIGINAL), returncode=1), 0)
 
     def test_the_tests_that_caught_the_mutation_are_named(self):
-        """Test that each failing test is named, so a case that caught nothing is visible without reading a traceback.
-
-        A `subTest` case is named as unittest reports it, with its parameters, since a table's cases are where a
-        case guarding nothing hides.
-        """
+        """Test that each failing test is named, a `subTest` case with its parameters."""
         reported_lines = [
             "FAIL: test_scope (tests.io.test_log.LoggerTests.test_scope) (raw='ignore[update] ignore[yanked]')",
             "a traceback the probe passes over",
@@ -92,11 +88,7 @@ class MainTest(unittest.TestCase):
         self.assertIn("caught by test_other (tests.io.test_log.LoggerTests.test_other)", reported)
 
     def test_a_command_that_errored_without_reporting_a_test_count(self):
-        """Test that a run reporting errors but no test count is hedged about, there being nothing to compare.
-
-        A command that reports no `Ran N tests` line — `just check`, say — leaves the errors to speak for
-        themselves, so the probe says the stub may have broken the file rather than that it did.
-        """
+        """Test that a run reporting errors but no test count is hedged about, there being nothing to compare."""
         self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=("FAILED (errors=16)\n", "")), 3)
         self.assertIn("The run reported 16 errors", self.reported.getvalue())
 
@@ -118,11 +110,7 @@ class MainTest(unittest.TestCase):
         self.assertNotIn("errors", self.reported.getvalue())
 
     def test_a_run_that_only_the_coverage_gate_failed(self):
-        """Test that a run whose tests all passed is reported as unguarded, whatever the coverage gate did.
-
-        A mutation that leaves a line unreachable drops coverage below the gate, so the command fails although no
-        test caught anything.
-        """
+        """Test that a run whose tests all passed is reported as unguarded, whatever the coverage gate did."""
         outputs = ("Ran 997 tests\n\nOK\nCoverage failure: total of 99 is less than fail-under=100\n",)
         self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=outputs), 4)
         self.assertIn("no test caught the mutation", self.reported.getvalue())

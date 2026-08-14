@@ -50,8 +50,7 @@ def _module_level_assignments(tree: ast.Module) -> Iterator[tuple[list[ast.expr]
 def _project(files: dict[str, str]) -> Generator[str]:
     """Yield the path of a directory holding the given files, so a rule or a check has a project to scan.
 
-    Both are exercised against a project written for the purpose, since the tree they normally scan holds no
-    violation to find. Each key is a path relative to the directory, and the folders it names are created.
+    Each key is a path relative to the directory, and the folders it names are created.
     """
     with tempfile.TemporaryDirectory() as directory:
         for name, source in files.items():
@@ -126,9 +125,8 @@ class LoggingTestCase(CacheClearingTestCase):
     """Base test case for any test of code that logs.
 
     It mocks the logger's log method, exposed as the mock_log attribute, and offers the assert_*_logged helpers below.
-    This spares tests from patching (and threading through method arguments) the log method, and from silencing
-    expected diagnostics by hand. The mock lives for the whole test, so a `subTest` table whose cases each assert on
-    the records of their own run resets it between them with `self.mock_log.reset_mock()`.
+    The mock lives for the whole test, so a `subTest` table whose cases each assert on the records of their own run
+    resets it between them with `self.mock_log.reset_mock()`.
     """
 
     def setUp(self) -> None:
@@ -140,22 +138,13 @@ class LoggingTestCase(CacheClearingTestCase):
         self._error_expected = False  # Set by assert_error_logged; tearDown fails on an error the test didn't expect.
 
     def tearDown(self) -> None:
-        """Fail the test if an error was logged that it did not explicitly expect via assert_error_logged.
-
-        An error log almost always means something genuinely broke, and only a handful of tests expect one, so
-        'no error unless expected' is enforced by default here rather than left to each test to assert (warnings,
-        which are common and often expected, stay opt-in via assert_no_warnings_logged).
-        """
+        """Fail the test if an error was logged that it did not explicitly expect via assert_error_logged."""
         super().tearDown()
         if not self._error_expected:
             self.assertEqual(self.records(ERROR), [])
 
     def records(self, level: int) -> list[_Call]:
-        """Return the records logged at the level, as the arguments they were logged with, without the level itself.
-
-        Every record goes through the one patched log method, so a test that cares about one level filters the calls
-        by it. Dropping the level from each call lets the assertions below read as the message and its arguments.
-        """
+        """Return the records logged at the level, as the arguments they were logged with, without the level itself."""
         return [call(*args[1:], **kwargs) for args, kwargs in self.mock_log.call_args_list if args[0] == level]
 
     @staticmethod
@@ -163,8 +152,7 @@ class LoggingTestCase(CacheClearingTestCase):
         """Return the call the logger makes for the message, with its fields passed by name.
 
         The fields are rendered the way the logger renders them, so an assertion here names the plain domain values
-        — a `Location` rather than its delimiter-wrapped text — and which fields carry a delimiter is asserted where
-        that rendering itself is tested, in the logger's unit tests.
+        — a `Location` rather than its delimiter-wrapped text.
         """
         return call(message, Logger._rendered(fields))
 
@@ -290,10 +278,7 @@ class LoggingTestCase(CacheClearingTestCase):
     def assert_yanked_dependency_logged(
         self, dependency: str, version: str, location: Location, reason: object = ANY
     ) -> None:
-        """Assert that a pin left on a yanked version was warned about once for the file.
-
-        The warning carries the version's `Yank`, which most callers don't care about, so it defaults to matching any.
-        """
+        """Assert that a pin left on a yanked version was warned about once for the file."""
         self.assert_logged(
             Logger._MESSAGE_YANKED, dependency=dependency, location=location, version=version, reason=reason
         )
@@ -476,10 +461,7 @@ class LoggingTestCase(CacheClearingTestCase):
 
 
 def reference(dependency: str, location: Location, version: str = "") -> Reference:
-    """Return the reference a log method is handed, for the dependency pinned at the location.
-
-    The version defaults to empty because most messages render only the dependency and its location.
-    """
+    """Return the reference a log method is handed, for the dependency pinned at the location."""
     return Reference(dependency, version, location)
 
 
@@ -496,11 +478,7 @@ def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGette
 
 
 def bound(verb: Verb, item: str) -> VersionBound:
-    """Return the version bound the marker item expresses, for tests that need a bound as input.
-
-    Wraps `parse_bound` to guarantee a bound — a test only passes an invalid item by mistake — so the result can
-    flow into positions typed `VersionBound` without an Optional check in every test.
-    """
+    """Return the version bound the marker item expresses, for tests that need a bound as input."""
     version_bound = parse_bound(verb, item)
     if version_bound is None:
         message = f"Not a version bound item: {item!r}"

@@ -58,8 +58,8 @@ class LogMessageTests(TestCase):
     def test_no_message_contains_a_full_stop(self):
         """Test that no log message contains a full stop, keeping the style consistent (commas and semicolons).
 
-        Every message attribute of `Logger` is a message template, and every string attribute a fragment substituted
-        into one, so introspect them all rather than listing them by hand and risk missing a future message.
+        Every message attribute of `Logger` is a message template, and every string attribute a fragment
+        substituted into one.
         """
         messages = [
             str(value)
@@ -74,11 +74,7 @@ class LogMessageTests(TestCase):
                 self.assertNotIn(".", message)
 
     def test_every_message_names_its_holes(self):
-        """Test that every message interpolates by name, so its log method hands the logger named fields.
-
-        A `%(location)s` hole is filled from the field of that name, which is what lets the logger render a location
-        and a dependency itself; a bare `%s` would be filled by position, leaving the rendering to the log method.
-        """
+        """Test that every message interpolates by name, so its log method hands the logger named fields."""
         for name, message in vars(Logger).items():
             if isinstance(message, LogMessage):
                 with self.subTest(message=name):
@@ -111,10 +107,7 @@ class RenderTests(TestCase):
 
     @patch("logging.Logger.log")
     def test_a_location_field_is_wrapped_and_a_plain_field_is_not(self, mock_log: Mock):
-        """Test that a location passed as a named field is wrapped, while a plain field is passed through as it is.
-
-        Wrapping it here is what spares every log method from rendering its own location.
-        """
+        """Test that a location passed as a named field is wrapped, while a plain field is passed through as it is."""
         message = LogMessage(logging.INFO, "Skipping %(location)s: %(reason)s")
         Logger("fields")._log(message, location=_create_location("Dockerfile", 1), reason="it is compiled")
         mock_log.assert_called_once_with(
@@ -123,11 +116,7 @@ class RenderTests(TestCase):
 
     @patch("logging.Logger.log")
     def test_the_dependency_field_is_wrapped_in_its_delimiter(self, mock_log: Mock):
-        """Test that the field named `dependency` is wrapped, so no log method has to render one itself.
-
-        The field is recognised by its name because a dependency name has no fixed shape a value could be recognised
-        by, unlike a location.
-        """
+        """Test that the field named `dependency` is wrapped, so no log method has to render one itself."""
         message = LogMessage(logging.ERROR, "No valid version found for %(dependency)s")
         Logger("fields")._log(message, dependency="actions/checkout")
         mock_log.assert_called_once_with(message.level, message, {"dependency": dependency("actions/checkout")})
@@ -143,10 +132,7 @@ class LoggerTests(TestCase):
         self.assert_last_message(mock_log, message, rendered)
 
     def assert_last_message(self, mock_log: Mock, message: LogMessage, rendered: str) -> None:
-        """Assert the most recent record reads as the given text, carrying exactly the fields the message names.
-
-        Records emitted before the most recent one are ignored.
-        """
+        """Assert the most recent record reads as the given text, carrying exactly the fields the message names."""
         mock_log.assert_called_with(message.level, message, ANY)
         _level, template, fields = mock_log.call_args.args
         self.assertEqual(sorted(fields), sorted(re.findall(r"%\((\w+)\)", str(template))))
@@ -240,9 +226,7 @@ class LoggerTests(TestCase):
         """Test that staleness is reported as a warning, or as the hold-back of a marker that silences it.
 
         The release is 100 days old, which is stale against the 90 passed in and not against the global default, so
-        either line is logged only when the given threshold is the one applied. What the warning reads as is
-        `test_warn_if_stale`'s subject; which of the two lines a marker gets is this one's. The hold-back names the
-        `ignore` directive as written, rather than the `allow` beside it.
+        either line is logged only when the given threshold is the one applied.
         """
         published = datetime.now(UTC) - timedelta(days=100, hours=1)
         version = DependencyVersion("4.15.0", newest_published=published)
@@ -601,10 +585,7 @@ class LoggerTests(TestCase):
         )
 
     def test_excluded_path_logged_at_debug(self, mock_log: Mock):
-        """Test that a directory held back by --exclude-path is logged at debug level, with its path undelimited.
-
-        A scan root is not a reference's location, so it carries no delimiter for the highlighter to style it by.
-        """
+        """Test that a directory held back by --exclude-path is logged at debug level, with its path undelimited."""
         Logger("exclude").excluded_path(Path("vendor"))
         self.assert_message(mock_log, Logger._MESSAGE_EXCLUDING_PATH, "Excluding vendor from the scan (--exclude-path)")
 
@@ -618,11 +599,7 @@ class LoggerTests(TestCase):
         )
 
     def test_non_numeric_node_base_image(self, mock_log: Mock):
-        """Test that a non-numeric Node base image tag is warned about, reporting its Dockerfile as a location.
-
-        The Dockerfile is a file the scan found, like the ones every other message points at, so it is reported
-        relative to the working directory and delimited for the highlighter rather than as a bare path.
-        """
+        """Test that a non-numeric Node base image tag is warned about, reporting its Dockerfile as a location."""
         dockerfile = Path.cwd() / "docker" / "Dockerfile"
         Logger("node").non_numeric_node_base_image(dockerfile, "lts")
         self.assert_message(
@@ -680,7 +657,7 @@ class LoggerTests(TestCase):
 
 
 class LogHighlighterTests(TestCase):
-    """Tests that a whole sha256 digest is highlighted as one token, not fragmented by Rich's built-in rules."""
+    """Unit tests for how the log output is highlighted."""
 
     def test_digest_highlighted_as_one_token(self):
         """Test that the full digest gets a single `repr.digest` span and no leftover fragment sub-spans inside it."""
@@ -746,9 +723,7 @@ class LogHighlighterTests(TestCase):
 class LoggerMessageTest(TestCase):
     """Test that Logger's message templates and its log methods pair one-to-one.
 
-    Each `MESSAGE_` template on `Logger` belongs to the log method that emits it, but the class layout can only
-    express that by convention (each template sits directly above its method), so the pairing is checked here by
-    inspecting which templates each method references.
+    Each `MESSAGE_` template sits directly above the log method that emits it, which nothing but convention enforces.
     """
 
     @staticmethod

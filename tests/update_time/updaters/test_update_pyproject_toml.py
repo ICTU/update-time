@@ -73,7 +73,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         return Mock(stdout=f"| {package}{update}\n")
 
     def assert_no_cli_cooldown(self, run: Mock) -> None:
-        """Assert uv tree/lock carry no `--exclude-newer` flag (the cooldown lives in config now), nor `--frozen`."""
+        """Assert uv tree/lock carry no `--exclude-newer` flag (the cooldown lives in config), nor `--frozen`."""
         commands = [call.args[0] for call in run.call_args_list]
         uv_tree = next(command for command in commands if command[:2] == ("uv", "tree"))
         uv_lock = next(command for command in commands if command[:2] == ("uv", "lock"))
@@ -275,11 +275,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 @patch("requests.get")
 @patch("subprocess.run")
 class CheckedPinsTest(LoggingTestCase):
-    """Unit test for handing the discovered manifests to the checks uv-delegated updaters share.
-
-    What those checks then report is `test_uv_pins.py`'s to pin; what this updater owns is running them over the
-    files it found, once uv has settled their pins.
-    """
+    """Unit test for handing the discovered manifests to the checks uv-delegated updaters share."""
 
     @patch("update_time.updaters.update_pyproject_toml.warn_about_pins")
     def test_the_discovered_manifests_are_checked(self, warn: Mock, run: Mock, get: Mock, glob: Mock):

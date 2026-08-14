@@ -14,11 +14,7 @@ class FixedTimeTest(unittest.TestCase):
     """Unit tests for the timestamp the screenshot is pinned to."""
 
     def test_timestamp_is_pinned(self):
-        """Test that the record's time is overwritten with the one the screenshot shows.
-
-        The fixed time is naive, so it renders as 09:14:03 whatever timezone the machine is in. A timestamp fixed
-        in UTC would render differently for each developer, and rewrite the screenshot on every regeneration.
-        """
+        """Test that the record's time is overwritten with the one the screenshot shows."""
         pinned = log_record("A message")
         _FixedTime().filter(pinned)
         self.assertEqual(datetime.fromtimestamp(pinned.created).strftime("%H:%M:%S"), "09:14:03")  # noqa: DTZ006
@@ -39,17 +35,11 @@ class PortableSvgTest(unittest.TestCase):
     )
 
     def test_sized_from_its_viewbox(self):
-        """Test that the viewBox's size is copied onto the `<svg>` element, which Rich emits without one.
-
-        A size-less SVG shows as a broken image in Safari and renders tiny elsewhere, and no check reports it.
-        """
+        """Test that the viewBox's size is copied onto the `<svg>` element, which Rich emits without one."""
         self.assertIn(r'<svg class="rich-terminal" width="994" height="670"', _portable(self.RICH_SVG))
 
     def test_cdn_font_source_dropped(self):
-        """Test that a font's external source is dropped and its local one kept.
-
-        The raw host's `sandbox` CSP blocks the CDN url, so the text has to fall back to a system monospace font.
-        """
+        """Test that a font's external source is dropped and its local one kept."""
         portable = _portable(self.RICH_SVG)
         self.assertIn(r"src: local('FiraCode-Regular');", portable)
         self.assertNotIn("cdn.example", portable)
@@ -59,11 +49,7 @@ class GenerateTest(unittest.TestCase):
     """Unit tests for the sample log output the README embeds."""
 
     def generated(self) -> LogOutput:
-        """Return the generated output, leaving the root logger's handlers as they were.
-
-        The generator configures logging itself, which it can only do while the root logger has no handlers, and
-        which would otherwise leave its own handler attached for whatever runs next.
-        """
+        """Return the generated output, which the generator can only produce while the root logger has no handlers."""
         with patch.object(logging.getLogger(), "handlers", []):
             return generate()
 

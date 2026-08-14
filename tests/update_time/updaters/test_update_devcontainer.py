@@ -88,11 +88,7 @@ class ScannedDevcontainersTest(unittest.TestCase):
     @patch("update_time.updaters.update_devcontainer.update_file", return_value=0)
     @patch("update_time.updaters.update_devcontainer.glob")
     def test_image_and_features_are_updated(self, mock_glob: Mock, mock_update_file: Mock):
-        """Test that each devcontainer.json is scanned for both its image and its feature references in one pass.
-
-        The two patterns are checked by what they match rather than by identity, so the test says which references
-        each one picks up instead of repeating the expressions the updater builds them from.
-        """
+        """Test that each devcontainer.json is scanned for both its image and its feature references in one pass."""
         mock_file = mock_path("{}")
         mock_glob.return_value = [mock_file]
         update_devcontainers()

@@ -37,8 +37,7 @@ _DISCOVERED_BASES = ("TestCase", "LintRule")
 def _discovered_classes(trees: dict[pathlib.Path, ast.Module]) -> set[str]:
     """Return the names of the classes a framework discovers: the bases it scans for, and all deriving from them.
 
-    Bases are resolved by name over the whole scan, and repeatedly, since a test class commonly derives from
-    another test class rather than from `unittest.TestCase` itself.
+    A test class commonly derives from another test class rather than from `unittest.TestCase` itself.
     """
     classes = [node for tree in trees.values() for node in tree.body if isinstance(node, ast.ClassDef)]
     discovered = set(_DISCOVERED_BASES)
@@ -63,10 +62,7 @@ _ENTRY_POINT_GUARD = "__name__ == '__main__'"
 
 
 def _entry_points(tree: ast.Module) -> Iterator[str]:
-    """Yield the names the module calls from behind its entry-point guard.
-
-    Running the file is what calls them, so they are reached although no module names them.
-    """
+    """Yield the names the module calls from behind its entry-point guard."""
     for node in tree.body:
         if isinstance(node, ast.If) and ast.unparse(node.test) == _ENTRY_POINT_GUARD:
             for called in ast.walk(node):
@@ -135,9 +131,8 @@ def _module_local_names(
 class VisibilityTest(unittest.TestCase):
     """Test that a public module-level name has callers outside the module defining it.
 
-    A name without a leading underscore claims such callers, and the claim goes stale silently, since nothing fails
-    when the last one goes away. Constants, functions, and classes are all checked, bar the names reached without a
-    call: a class a framework discovers, and the entry point a module runs when run as a script.
+    Constants, functions, and classes are all checked, bar the names reached without a call: a class a framework
+    discovers, and the entry point a module runs when run as a script.
     """
 
     @staticmethod
@@ -158,18 +153,12 @@ class VisibilityTest(unittest.TestCase):
     def test_constants_have_a_caller_outside_the_tests(self):
         """Test that no constant is public only so that a test can reach it.
 
-        A constant the tests alone import is public for their benefit, which widens what the module offers without
-        anything outside the tests asking for it. Leaving the tests out of the scan is what surfaces those, since
-        the constant then has no caller left. The `tools` scripts count as callers, so what they import stays public.
+        The `tools` scripts count as callers, so what they import stays public.
         """
         self.assertEqual(_module_local_constants([f for f in _python_files() if f.parts[0] != "tests"]), [])
 
     def test_a_constant_imported_from_another_root_is_not_reported(self):
-        """Test that an import is matched to the module assigning it although the two sit under different roots.
-
-        The importer names `pkg.mod`, while the module assigning the constant sits at `one/pkg/mod.py`, as `src`
-        prefixes the package in this project. Matching the tail of the path is what ties the two together.
-        """
+        """Test that an import is matched to the module assigning it although the two sit under different roots."""
         files = {
             "one/pkg/mod.py": "SHARED = 1\nLOCAL = 2\n\nLOCAL\n",
             "two/importer.py": "from pkg.mod import SHARED\n\nSHARED\n",
@@ -182,19 +171,11 @@ class VisibilityTest(unittest.TestCase):
         self.assertEqual(self.reported(_module_local_constants, files), ["UNREACHED"])
 
     def test_a_constant_named_in_a_string_is_not_reported(self):
-        """Test that a constant another module names in a string is not reported, since it is reached that way.
-
-        A module's constant can be read through `getattr` rather than imported. Reporting it would call for a rename
-        that breaks the reader, because the name it looks up is spelled in a string the rename leaves behind.
-        """
+        """Test that a constant another module names in a string is not reported, since it is reached that way."""
         self.assert_only_the_unreached_constant_is_reported('import pkg.mod\n\ngetattr(pkg.mod, "REACHED")\n')
 
     def test_a_constant_read_as_an_attribute_is_not_reported(self):
-        """Test that a constant another module reads through the module object is not reported.
-
-        Importing the module rather than the constant reaches it just as well, so the constant has a caller even
-        though no `from ... import` names it.
-        """
+        """Test that a constant another module reads through the module object is not reported."""
         self.assert_only_the_unreached_constant_is_reported("import pkg.mod\n\npkg.mod.REACHED\n")
 
     def test_names_that_are_not_public_constants_are_not_reported(self):
@@ -216,7 +197,6 @@ class VisibilityTest(unittest.TestCase):
     def test_a_test_case_is_not_reported(self):
         """Test that a class the test runner discovers is not reported, however far it sits from `TestCase`.
 
-        The runner finds a test class by scanning the module rather than importing it, so it has no caller to find.
         A subscripted base names no class the scan can resolve, so a class carrying one is no test case.
         """
         direct = "import unittest\n\n\nclass Discovered(unittest.TestCase): ...\n"
@@ -230,18 +210,14 @@ class VisibilityTest(unittest.TestCase):
                 self.assertEqual(self.reported(_module_local_definitions, {"mod.py": source}), ["Klass"])
 
     def test_a_lint_rule_is_not_reported(self):
-        """Test that a class the linter discovers is not reported.
-
-        Fixit finds a rule by scanning the module its configuration names, so the rule has no caller to find.
-        """
+        """Test that a class the linter discovers is not reported."""
         source = "from fixit import LintRule\n\n\nclass Rule(LintRule): ...\nclass Klass: ...\n"
         self.assertEqual(self.reported(_module_local_definitions, {"mod.py": source}), ["Klass"])
 
     def test_an_entry_point_is_not_reported(self):
         """Test that the function a module runs when run as a script is not reported, unlike one merely named so.
 
-        A script is reached by running its file, so the function it starts at has no caller to find. The name alone
-        says nothing, since a module that never runs as a script exposes no entry point.
+        The name alone says nothing, since a module that never runs as a script exposes no entry point.
         """
         defined = "def main(): ...\ndef local(): ...\n"
         for case, source in {

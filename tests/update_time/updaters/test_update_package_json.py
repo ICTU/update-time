@@ -65,10 +65,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         return mock_path(contents, parent=Path("/"))
 
     def npm_runs(self, *results: object) -> list:
-        """Prepend the two `npm config get` cooldown probes (both unset) to the given npm command results.
-
-        Both probes return `null`, so Update-time finds no project cooldown and adds its own to outdated/update.
-        """
+        """Prepend the two `npm config get` cooldown probes (both unset) to the given npm command results."""
         return [Mock(stdout=_NPM_UNSET), Mock(stdout=_NPM_UNSET), *results]
 
     def assert_npm_called(self, mock_run: Mock, *, cooldown: bool = True) -> None:
@@ -154,10 +151,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
     def test_new_version_of_a_dependency_the_manifest_declares_without_a_registry_spec(
         self, mock_run: Mock, mock_glob: Mock
     ):
-        """Test that a new version for a dependency that resolves to no registry release is logged at the file.
-
-        Such a dependency is left out of the manifest's locations, so there is no line to report it at.
-        """
+        """Test that a new version for a dependency that resolves to no registry release is logged at the file."""
         contents = '{\n  "dependencies": {\n    "package": "git+https://github.com/org/package.git"\n  }\n}\n'
         mock_package_json = self.create_package_json(contents)
         mock_glob.return_value = [mock_package_json]
@@ -288,10 +282,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         return mock_path(contents, parent=Path("/"))
 
     def pnpm_runs(self, *results: object) -> list:
-        """Prepend the `pnpm config get minimumReleaseAge` cooldown probe (unset) to the given command results.
-
-        The probe returns `undefined`, so Update-time finds no project cooldown and adds its own (in minutes).
-        """
+        """Prepend the `pnpm config get minimumReleaseAge` cooldown probe (unset) to the given command results."""
         return [Mock(stdout=_PNPM_UNSET), *results]
 
     def assert_pnpm_called(self, mock_run: Mock, *, cooldown: bool = True) -> None:
@@ -409,11 +400,7 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
 @patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("subprocess.run")
 class StaleDependencyTest(LoggingTestCase):
-    """Unit tests for the package.json staleness check, which makes its own npm registry pass over the deps.
-
-    npm is stubbed to report no update (so the update itself makes no registry request), leaving the staleness pass
-    as the only caller of `requests.get`; its response carries the package's `latest` dist-tag and publish times.
-    """
+    """Unit tests for the package.json staleness check, which makes its own npm registry pass over the deps."""
 
     @staticmethod
     def stub_no_update(mock_run: Mock) -> None:

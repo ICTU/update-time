@@ -36,11 +36,7 @@ class NpmjsPublicationDatetimeTest(LoggingTestCase):
 
     @patch_get({"time": {}})
     def test_get_publication_datetime_for_unlisted_version(self):
-        """Test that a version the registry doesn't list raises KeyError.
-
-        Callers that may ask for a version outside the registry's `time` map (e.g. the jsdelivr updater) rely on
-        this and catch it, so the contract is pinned here at the source that owns it.
-        """
+        """Test that a version the registry doesn't list raises KeyError."""
         with self.assertRaises(KeyError):
             get_publication_datetime("package", "9.9")
 

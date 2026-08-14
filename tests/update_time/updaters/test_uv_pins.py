@@ -37,8 +37,7 @@ class PinnedFileTestCase(LoggingTestCase):
     """Base for the tests of the checks both uv-delegated updaters share.
 
     The pins are read from the file rather than from uv, so no check needs a package manager to run: each reads
-    whichever `==` pins the file holds by the time it is called. A pyproject.toml stands in for both file kinds,
-    which declare their dependencies as the same quoted specs.
+    whichever `==` pins the file holds by the time it is called.
     """
 
     def pinned_file(self, *specs: str) -> Mock:
@@ -79,10 +78,7 @@ class YankedPinTest(PinnedFileTestCase):
 
     @classmethod
     def yanked_simple_api(cls, version: str, *newer: str) -> Mock:
-        """Mock the PyPI Index API response listing the version, whose distribution file the maintainer yanked.
-
-        Any newer versions are listed alongside it, unyanked, as releases the pin could move to.
-        """
+        """Mock the PyPI Index API response listing the version, whose distribution file the maintainer yanked."""
         return pypi_index(version, *newer, files=[yanked_file(f"package-{version}.tar.gz", reason=cls.reason)])
 
     def test_yanked_pin_warned(self, get: Mock):
@@ -109,10 +105,7 @@ class YankedPinTest(PinnedFileTestCase):
         self.assertEqual(get.call_count, 1)
 
     def test_unparsable_version_leaves_the_other_pins_checked(self, get: Mock):
-        """Test that a pin whose version does not parse leaves the pins after it in the file checked.
-
-        The version comes from the file, so it is whatever the file's author wrote there, parsable or not.
-        """
+        """Test that a pin whose version does not parse leaves the pins after it in the file checked."""
         get.return_value = self.yanked_simple_api("1.0")
         file = self.pinned_file("broken==nightly", "package==1.0")
         warn_about_pins([file], _LOG)

@@ -232,10 +232,7 @@ class GetLatestVersionTest(LoggingTestCase):
         tags=[github_tag_json("v1.1", sha=COMMIT_SHA)],
     )
     def test_tag_with_release(self):
-        """Test that a tag with a release keeps the release's metadata, its SHA from the tags list (no commits fetch).
-
-        The commits endpoint is unreachable in this test, so needing it for the SHA or the date would fail the test.
-        """
+        """Test that a tag with a release keeps the release's metadata, and its SHA from the tags list."""
         latest = get_latest_version("owner/tag with release", "1.0", NO_BOUND, COOLDOWN.default)
         self.assert_version(latest, "1.1", "changelog", COMMIT_SHA)
         self.assertEqual(latest.published, _OLD_DATE)
@@ -356,10 +353,7 @@ class NewestPublicationDateTest(LoggingTestCase):
 
     @patch_github(releases=[github_release_json("2.0", published_at=_OLD_ISO)], tags=[github_tag_json("v1.0")])
     def test_tag_behind_releases_needs_no_commit(self):
-        """Test that a repo whose releases cover its newest version needs no commits fetch for the newest date.
-
-        The commits endpoint is unreachable in this test, so fetching the tag's commit date would fail the test.
-        """
+        """Test that a repo whose releases cover its newest version needs no commits fetch for the newest date."""
         self.assertEqual(newest_publication_date("owner", "released"), _OLD_DATE)
         self.assert_no_warnings_logged()
 
@@ -380,11 +374,7 @@ class GetReleaseTest(LoggingTestCase):
         [github_release_json("25.0.4"), github_release_json("v25.0.4"), github_release_json("puppeteer-core-v25.0.4")]
     )
     def test_monorepo_tag_takes_precedence(self):
-        """Test that the package-prefixed tag wins over the v-prefixed and bare tags for the same version.
-
-        The competing tags are listed before the package-prefixed one, so matching by list order rather than by
-        specificity would pick the wrong release.
-        """
+        """Test that the package-prefixed tag wins over the v-prefixed and bare tags for the same version."""
         release = get_release("puppeteer", "monorepo", "puppeteer-core", "25.0.4")
         self.assertEqual(cast("TaggedVersion", release).tag_name, "puppeteer-core-v25.0.4")
 
@@ -407,14 +397,14 @@ class GetReleaseTest(LoggingTestCase):
 
     @patch("requests.get")
     def test_repo_without_releases(self, mock_get: Mock):
-        """Test that None is returned when the repository can't be reached."""
+        """Test that a non-OK response yields no release, and is reported as a failed fetch."""
         mock_get.return_value = mock_response([], ok=False)
         self.assertIsNone(get_release("owner", "repo without releases for get_release", "any", "1.0"))
         self.assert_could_not_fetch_logged(mock_get().url, mock_get().status_code)
 
     @patch("requests.get")
     def test_timeout(self, mock_get: Mock):
-        """Test that None is returned when the repository can't be reached."""
+        """Test that a timed-out request yields no release, and is reported as a timeout."""
         mock_get.side_effect = requests.exceptions.Timeout
         self.assertIsNone(get_release("owner", "repo without releases for get_release", "any", "1.0"))
         url = "https://api.github.com/repos/owner/repo without releases for get_release/releases?per_page=100"

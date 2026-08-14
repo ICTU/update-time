@@ -1,7 +1,7 @@
 """Parse the `# update-time:` marker language."""
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from packaging.specifiers import InvalidSpecifier
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 # The bracket items naming the checks a marker steers, spelled once here: the item regexps below match them,
 # `_KEYWORD_ITEMS` recognises them, and the warnings name them back, so the three cannot come to disagree. The
 # spelling itself is fixed, being the language users write in their own repositories.
+_UPDATE = "update"
 _STALE = "stale"
 _COOLDOWN = "cooldown"
 _YANKED = "yanked"
@@ -83,6 +84,9 @@ class Marker:
     them, and is carried as the item to report.
     `invalid_item` is the raw text of a bracket item that could not be parsed — an invalid version specifier,
     or an unrecognised item in a comma list — so the caller can warn and leave the reference unchanged; None otherwise.
+    `written_scopes` are the scopes the marker names, telling a scope the reader wrote from one a bare `ignore`
+    holds back without naming (see `as_written`); left out of comparisons, so two markers holding the same thing
+    back compare equal however each was spelled.
     `raw` is the marker's whole directive text exactly as it appears in the file, so the reference's marker can be
     echoed to the user verbatim: rendering the marker gives all of it, `raw_directives` gives one verb's directives.
     """
@@ -98,6 +102,7 @@ class Marker:
     cooldown: Threshold[int] = Threshold()
     vulnerable: Threshold[str] = Threshold()
     invalid_item: str | None = None
+    written_scopes: frozenset[str] = field(compare=False, default=frozenset())
     raw: str = field(compare=False, default="")
 
     def __str__(self) -> str:
@@ -108,11 +113,32 @@ class Marker:
     def holds_everything_back(self) -> bool:
         """Return whether the marker leaves no check to run, so no source need be queried for the reference at all.
 
-        The one place the scopes are enumerated, so a scope added to the fields above is weighed here rather than
-        leaving each caller to remember its own list. A marker holding back only some of them still needs its
-        sources, since the checks it leaves alone have to run.
+        A marker holding back only some of the scopes still needs its sources, since the checks it leaves alone have
+        to run.
         """
-        return self.ignore_update and self.ignore_stale and self.ignore_yanked and self.ignore_vulnerable
+        return self.holds_back_source_checks and self.ignore_vulnerable
+
+    @property
+    def as_written(self) -> Marker:
+        """Return this marker holding back only the scopes it names.
+
+        Only a bare `ignore` holds a scope back without naming it, since every other directive names the scope it
+        sets, so `ignore ignore[yanked]` returns a marker holding back `yanked` alone.
+        """
+        if not self.holds_everything_back:
+            return self
+        return replace(
+            self,
+            ignore_update=_UPDATE in self.written_scopes,
+            ignore_stale=_STALE in self.written_scopes,
+            ignore_yanked=_YANKED in self.written_scopes,
+            ignore_vulnerable=_VULNERABLE in self.written_scopes,
+        )
+
+    @property
+    def holds_back_source_checks(self) -> bool:
+        """Return whether the marker holds back the update, the staleness warning, and the yank warning alike."""
+        return self.ignore_update and self.ignore_stale and self.ignore_yanked
 
     @property
     def sets_cooldown(self) -> bool:
@@ -238,6 +264,7 @@ class Marker:
             cooldown=self.cooldown.merge(other.cooldown),
             vulnerable=self.vulnerable.merge(other.vulnerable),
             invalid_item=other.invalid_item if self.invalid_item is None else self.invalid_item,
+            written_scopes=self.written_scopes | other.written_scopes,
             raw=" ".join(part for part in (self.raw, other.raw) if part),
         )
 
@@ -247,11 +274,11 @@ _BARE_IGNORE = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True,
 
 # The keyword bracket items each verb recognises, and the marker each expresses.
 _KEYWORD_ITEMS = {
-    (Verb.IGNORE, "update"): Marker(ignore_update=True),
-    (Verb.IGNORE, _STALE): Marker(ignore_stale=True),
-    (Verb.IGNORE, _YANKED): Marker(ignore_yanked=True),
-    (Verb.IGNORE, _VULNERABLE): Marker(ignore_vulnerable=True),
-    (Verb.ALLOW, "update"): Marker(),  # bare `allow[update]`: the default no-op
+    (Verb.IGNORE, _UPDATE): Marker(ignore_update=True, written_scopes=frozenset({_UPDATE})),
+    (Verb.IGNORE, _STALE): Marker(ignore_stale=True, written_scopes=frozenset({_STALE})),
+    (Verb.IGNORE, _YANKED): Marker(ignore_yanked=True, written_scopes=frozenset({_YANKED})),
+    (Verb.IGNORE, _VULNERABLE): Marker(ignore_vulnerable=True, written_scopes=frozenset({_VULNERABLE})),
+    (Verb.ALLOW, _UPDATE): Marker(),  # bare `allow[update]`: the default no-op
     (Verb.ALLOW, "hash-drift"): Marker(allow_drift=True),
 }
 
@@ -382,7 +409,7 @@ def _parse_bracket_item(verb: Verb, item: str) -> Marker | None:
         version_bound = parse_bound(verb, item)
     except InvalidSpecifier:
         # A bound's `update` names the item rather than the version it bounds, so the item reports its specifier.
-        return Marker(invalid_item=item.removeprefix("update"))
+        return Marker(invalid_item=item.removeprefix(_UPDATE))
     return Marker(version_bound=version_bound) if version_bound is not None else None
 
 

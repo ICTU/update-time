@@ -22,11 +22,7 @@ class WithinCooldownTest(unittest.TestCase):
         self.assertFalse(within_cooldown(timestamp, 5))
 
     def test_cooldown_longer_than_a_date_interval_can_hold(self):
-        """Test that a cooldown of more days than a `timedelta` holds is honoured rather than aborting the run.
-
-        A marker names its own cooldown, so the number comes from a file rather than from an operator, and a
-        `timedelta` caps at 999999999 days. Whole days are compared, so no interval is built from the count.
-        """
+        """Test that a cooldown of more days than a `timedelta` holds is honoured rather than aborting the run."""
         self.assertTrue(within_cooldown(datetime.now(UTC) - timedelta(days=1), 10**12))
 
     def test_just_within_cooldown(self):
@@ -54,10 +50,6 @@ class CooldownCutoffTest(unittest.TestCase):
         self.assertEqual((datetime.now(UTC) - cutoff).days, 30)
 
     def test_cutoff_reaching_past_the_earliest_date(self):
-        """Test that a cooldown reaching further back than a date can express yields the earliest instant.
-
-        A cooldown that long excludes every release anyway, which is what the earliest instant tells uv, so it is
-        clamped rather than aborting the run.
-        """
+        """Test that a cooldown reaching further back than a date can express yields the earliest instant."""
         with patch_environ({COOLDOWN.name: str(10**12)}):
             self.assertEqual(cooldown_cutoff(), datetime.min.replace(tzinfo=UTC).isoformat())

@@ -87,9 +87,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
 
         The three responses are the fixed order the source asks for them in: the jsDelivr version list, the npm
         registry document carrying each version's publication date and deprecation, and the flat file listing
-        carrying `served_hash` as the integrity hash of the referenced file. A run that stays on its current version
-        reaches the last one too, to compare the hash the config declares against the one jsDelivr serves, so such a
-        test passes the hash its config declares to leave the two agreeing.
+        carrying `served_hash` as the integrity hash of the referenced file.
         """
         mock_get.side_effect = [
             jsdelivr_versions(*versions),
@@ -124,10 +122,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_line_between_the_url_and_its_hash_is_left_untouched(self, mock_get: Mock, mock_glob: Mock):
-        """Test that the hash still follows the URL across an intervening line, which is itself left alone.
-
-        The line in between holds a version-lookalike, which is neither taken for the pin nor rewritten with it.
-        """
+        """Test that the hash still follows the URL across an intervening line, which is itself left alone."""
         self.offer_versions(mock_get, "2.0.12", "2.0.11")
         mock_conf = self.update(_conf(_entry(_URL, "# do not remove 2.0.11 note", _INTEGRITY)), mock_glob)
         new_content = self.written(mock_conf)
@@ -147,10 +142,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_hash_mismatch_warned_not_rewritten(self, mock_get: Mock, mock_glob: Mock):
-        """Test that a declared hash disagreeing with the one jsDelivr serves is warned about, not quietly rewritten.
-
-        The config declares HASH1 for the version it sits on, while jsDelivr serves HASH2 for that same version.
-        """
+        """Test that a declared hash disagreeing with the one jsDelivr serves is warned about, not quietly rewritten."""
         self.offer_versions(mock_get, "2.0.11")
         mock_conf = self.update(_CONF, mock_glob)
         mock_conf.write_text.assert_not_called()

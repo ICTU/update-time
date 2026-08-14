@@ -21,12 +21,7 @@ _FLAT_FILES = {"default": _FILENAME, "files": [{"name": _FILENAME, "hash": HASH2
 def _get_latest_version(
     dependency: str, current_version: str, filename: str, cooldown_days: int = COOLDOWN.default
 ) -> DependencyVersion:
-    """Return the version the source resolves for the file the URL references, unbounded.
-
-    The source hands out a getter per referenced file (`version_getter`); the tests below vary the file, the current
-    version, and the cooldown rather than the bound, so they go through this one call instead of repeating the two
-    steps.
-    """
+    """Return the version the source resolves for the file the URL references, unbounded."""
     return version_getter(filename)(dependency, current_version, NO_BOUND, cooldown_days)
 
 
@@ -39,10 +34,9 @@ _FRESH = (datetime.now(UTC) - timedelta(days=1)).isoformat()  # still within the
 class GetLatestVersionTest(LoggingTestCase):
     """Unit tests for the get latest jsdelivr version function.
 
-    The source makes its requests in a fixed order, so each test's `mock_get.side_effect` mirrors it. First the
-    jsDelivr package API for the version list, then one npm registry call per candidate, newest first, to read its
-    publication date and stop at the first eligible one, then the jsDelivr flat-files API for the chosen version's
-    integrity hash. A test supplies only as many responses as reaching its expected version requires.
+    The source makes its requests in a fixed order, which each test's `mock_get.side_effect` mirrors: the jsDelivr
+    package API for the version list, then one npm registry call whose `time` map dates every candidate, then the
+    jsDelivr flat-files API for the chosen version's hash. A test supplies only the responses its version needs.
     """
 
     def test_unchanged_when_current_is_newest(self, mock_get: Mock):
@@ -178,11 +172,7 @@ class GetLatestVersionTest(LoggingTestCase):
         )
 
     def test_newest_published_attached_when_globally_disabled(self, mock_get: Mock):
-        """Test that the date is attached even with the global check disabled, so a marker can set its own threshold.
-
-        The two mocked responses are all the source may make: reading the `time` map costs no extra request, because
-        the npm registry document was already fetched for the stay-put pin's deprecation.
-        """
+        """Test that the date is attached even with the global check disabled, so a marker can set its own threshold."""
         old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
         mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": old})]
         with staleness_disabled:
