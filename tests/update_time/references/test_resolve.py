@@ -100,28 +100,29 @@ class LatestVersionTest(unittest.TestCase):
         self.latest_version(marker)
         self.log.warn_if_redundant_bound.assert_called_once_with(self.reference(), marker)
 
-    def test_warns_about_staleness(self):
-        """Test that the resolved version is checked for staleness, against the global threshold by default."""
+    def test_reports_staleness(self):
+        """Test that the resolved version is reported on for staleness, against the global threshold by default."""
         self.latest_version()
-        self.log.warn_if_stale.assert_called_once_with(self.resolved(), STALE_AFTER.default)
+        self.log.report_staleness.assert_called_once_with(self.resolved(), Marker(), STALE_AFTER.default)
 
     @patch_environ({STALE_AFTER.name: "30"})
     def test_the_configured_threshold_is_used_for_the_staleness_warning(self):
         """Test that the threshold the run was configured with is used, rather than the built-in default."""
         self.latest_version()
-        self.log.warn_if_stale.assert_called_once_with(self.resolved(), 30)
+        self.log.report_staleness.assert_called_once_with(self.resolved(), Marker(), 30)
 
     def test_the_markers_threshold_is_used_for_the_staleness_warning(self):
         """Test that a reference carrying its own staleness threshold is judged by that one, not the global one."""
-        self.latest_version(Marker(stale=Threshold(value=90)))
-        self.log.warn_if_stale.assert_called_once_with(self.resolved(), 90)
+        marker = Marker(stale=Threshold(value=90))
+        self.latest_version(marker)
+        self.log.report_staleness.assert_called_once_with(self.resolved(), marker, 90)
 
     def test_warns_about_an_inverted_stale_item(self):
         """Test that a `stale` item comparing the wrong way is reported, and the global threshold is used."""
         marker = Marker(stale=Threshold(inverted_item="stale>=90"), raw="ignore[stale>=90]")
         self.latest_version(marker)
         self.log.inverted_stale_item.assert_called_once_with(self.reference(), "stale>=90")
-        self.log.warn_if_stale.assert_called_once_with(self.resolved(), STALE_AFTER.default)
+        self.log.report_staleness.assert_called_once_with(self.resolved(), marker, STALE_AFTER.default)
 
     def test_warns_about_an_inverted_cooldown_item(self):
         """Test that a `cooldown` item comparing the wrong way is reported, and the global cooldown is used."""
@@ -142,23 +143,12 @@ class LatestVersionTest(unittest.TestCase):
         self.latest_version()
         self.log.warn_if_yanked.assert_called_once_with(self.resolved())
 
-    def test_ignore_stale_skips_the_staleness_warning(self):
-        """Test that `ignore[stale]` holds back the staleness check while the update is still returned."""
-        latest = self.latest_version(Marker(ignore_stale=True))
-        self.assertEqual(latest, DependencyVersion(version="3.15"))
-        self.log.warn_if_stale.assert_not_called()
-
-    def test_ignore_stale_logs_the_held_back_staleness_warning(self):
-        """Test that `ignore[stale]` hands the resolved version to the logger, which reports what it held back."""
+    def test_ignore_stale_still_returns_the_update(self):
+        """Test that `ignore[stale]` leaves the update in place, and reaches the logger to report its hold-back."""
         marker = Marker(ignore_stale=True, raw="ignore[stale]")
-        self.latest_version(marker)
-        self.log.ignored_staleness.assert_called_once_with(self.resolved(), marker, STALE_AFTER.default)
-
-    def test_the_markers_threshold_is_used_for_the_held_back_staleness_warning(self):
-        """Test that the hold-back is judged by the same threshold as the warning it stands in for."""
-        marker = Marker(ignore_stale=True, stale=Threshold(value=90), raw="ignore[stale] ignore[stale<90]")
-        self.latest_version(marker)
-        self.log.ignored_staleness.assert_called_once_with(self.resolved(), marker, 90)
+        latest = self.latest_version(marker)
+        self.assertEqual(latest, DependencyVersion(version="3.15"))
+        self.log.report_staleness.assert_called_once_with(self.resolved(), marker, STALE_AFTER.default)
 
     def test_ignore_yanked_skips_the_yank_warning(self):
         """Test that `ignore[yanked]` holds back the yank check while the update is still returned."""
@@ -266,4 +256,4 @@ class LatestVersionTest(unittest.TestCase):
     def test_ignore_update_returns_none(self):
         """Test that `ignore[update]` holds back the update, after the staleness check has still run."""
         self.assertIsNone(self.latest_version(Marker(ignore_update=True)))
-        self.log.warn_if_stale.assert_called_once()
+        self.log.report_staleness.assert_called_once()

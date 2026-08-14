@@ -63,6 +63,56 @@ def sample_log_lines() -> dict[str, str]:
         logger.log.removeHandler(capture)
 
 
+def _redundant_marker_blocks(
+    log: Logger, capture: _Capture, requirements: Location, dockerfile: Location
+) -> dict[str, str]:
+    """Log a sample per warning about a marker that holds nothing back, paired with the block's placeholder.
+
+    A redundancy warning names the directive it is about, spelled from what the marker parsed to, so these markers
+    carry the scope or item they report and no `raw` text for it to be read from.
+    """
+    log.redundant_vulnerable_scope(reference("django", requirements, "4.2.0"), Marker(ignore_vulnerable=True))
+    redundant_vulnerable_scope = capture.take()
+
+    suppression = Marker(ignored_advisories=frozenset({"CVE-2022-28346"}))
+    log.redundant_vulnerable_advisory(reference("django", requirements, "4.2.0"), suppression)
+    redundant_vulnerable_advisory = capture.take()
+
+    level = Marker(vulnerable=Threshold(value="high", directive="ignore[vulnerable<high]"))
+    log.redundant_vulnerable_level(reference("django", requirements, "4.2.0"), level, "high")
+    redundant_vulnerable_level = capture.take()
+
+    log.redundant_vulnerable_source(reference("python", dockerfile), Marker(ignore_vulnerable=True))
+    redundant_vulnerable_source = capture.take()
+
+    log.redundant_yank_scope(reference("python", dockerfile), Marker(ignore_yanked=True))
+    redundant_yank_scope = capture.take()
+
+    log.redundant_yank_without_a_version(reference("humanize", requirements), Marker(ignore_yanked=True))
+    redundant_yank_without_a_version = capture.take()
+
+    log.redundant_vulnerable_without_a_version(reference("humanize", requirements), Marker(ignore_vulnerable=True))
+    redundant_vulnerable_without_a_version = capture.take()
+
+    cooldown = Marker(cooldown=Threshold(value=30, directive="ignore[cooldown<30]"))
+    log.redundant_cooldown_item(reference("python", Location(Path(".python-version"), 2)), cooldown)
+    redundant_cooldown_item = capture.take()
+
+    stale_marker = Marker(stale=Threshold(value=90, directive="ignore[stale<90]"))
+    log.redundant_stale_source(reference("ghcr.io/astral-sh/uv", dockerfile), stale_marker)
+    return {
+        "@@REDUNDANT_VULNERABLE_SCOPE_WARNING@@": redundant_vulnerable_scope,
+        "@@REDUNDANT_VULNERABLE_ADVISORY_WARNING@@": redundant_vulnerable_advisory,
+        "@@REDUNDANT_VULNERABLE_LEVEL_WARNING@@": redundant_vulnerable_level,
+        "@@REDUNDANT_VULNERABLE_SOURCE_WARNING@@": redundant_vulnerable_source,
+        "@@REDUNDANT_YANK_SCOPE_WARNING@@": redundant_yank_scope,
+        "@@REDUNDANT_YANK_WITHOUT_A_VERSION_WARNING@@": redundant_yank_without_a_version,
+        "@@REDUNDANT_VULNERABLE_WITHOUT_A_VERSION_WARNING@@": redundant_vulnerable_without_a_version,
+        "@@REDUNDANT_COOLDOWN_ITEM_WARNING@@": redundant_cooldown_item,
+        "@@REDUNDANT_STALE_SOURCE_WARNING@@": capture.take(),
+    }
+
+
 def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log each block's sample records and pair the lines they render as with the block's placeholder."""
     log.digest_drift(
@@ -89,32 +139,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.vulnerable_dependency(reference("django", requirements, "3.2.0"), VULNERABILITY)
     vulnerable = capture.take()
 
-    # A redundancy warning names the directive it is about, spelled from what the marker parsed to, so these
-    # markers carry the scope or item they report and no `raw` text for it to be read from.
-    log.redundant_vulnerable_scope(reference("django", requirements, "4.2.0"), Marker(ignore_vulnerable=True))
-    redundant_vulnerable_scope = capture.take()
-
-    suppression = Marker(ignored_advisories=frozenset({"CVE-2022-28346"}))
-    log.redundant_vulnerable_advisory(reference("django", requirements, "4.2.0"), suppression)
-    redundant_vulnerable_advisory = capture.take()
-
-    level = Marker(vulnerable=Threshold(value="high", directive="ignore[vulnerable<high]"))
-    log.redundant_vulnerable_level(reference("django", requirements, "4.2.0"), level, "high")
-    redundant_vulnerable_level = capture.take()
-
-    log.redundant_vulnerable_source(reference("python", dockerfile), Marker(ignore_vulnerable=True))
-    redundant_vulnerable_source = capture.take()
-
-    log.redundant_yank_scope(reference("python", dockerfile), Marker(ignore_yanked=True))
-    redundant_yank_scope = capture.take()
-
-    cooldown = Marker(cooldown=Threshold(value=30, directive="ignore[cooldown<30]"))
-    log.redundant_cooldown_item(reference("python", Location(Path(".python-version"), 2)), cooldown)
-    redundant_cooldown_item = capture.take()
-
-    stale_marker = Marker(stale=Threshold(value=90, directive="ignore[stale<90]"))
-    log.redundant_stale_source(reference("ghcr.io/astral-sh/uv", dockerfile), stale_marker)
-    redundant_stale_source = capture.take()
+    redundant = _redundant_marker_blocks(log, capture, requirements, dockerfile)
 
     log.invalid_bracket_item("python", "stlae", dockerfile)
     unrecognised = capture.take()
@@ -132,19 +157,13 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.recognised_marker("python", marker, dockerfile)
     recognised = capture.take()
 
-    log.ignored_staleness(resolved("python", dockerfile, stale), marker, STALE_AFTER.get())
+    log.report_staleness(resolved("python", dockerfile, stale), marker, STALE_AFTER.get())
     return {
         "@@DRIFT_WARNINGS@@": drift,
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@VULNERABILITY_WARNING@@": vulnerable,
-        "@@REDUNDANT_VULNERABLE_SCOPE_WARNING@@": redundant_vulnerable_scope,
-        "@@REDUNDANT_VULNERABLE_ADVISORY_WARNING@@": redundant_vulnerable_advisory,
-        "@@REDUNDANT_VULNERABLE_LEVEL_WARNING@@": redundant_vulnerable_level,
-        "@@REDUNDANT_VULNERABLE_SOURCE_WARNING@@": redundant_vulnerable_source,
-        "@@REDUNDANT_YANK_SCOPE_WARNING@@": redundant_yank_scope,
-        "@@REDUNDANT_COOLDOWN_ITEM_WARNING@@": redundant_cooldown_item,
-        "@@REDUNDANT_STALE_SOURCE_WARNING@@": redundant_stale_source,
+        **redundant,
         "@@UNRECOGNISED_ITEM_WARNING@@": unrecognised,
         "@@INVERTED_STALE_WARNING@@": inverted,
         "@@INVERTED_COOLDOWN_WARNING@@": inverted_cooldown,

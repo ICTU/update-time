@@ -120,9 +120,18 @@ def release_metadata(package: str, version: str) -> Release | None:
     return response.json() if response is not None else None
 
 
-@cache
 def _project_metadata(package: str) -> dict:
     """Get the package's metadata from PyPI's Index API, or an empty dict if it can't be fetched.
+
+    The name is normalized first, so every spelling of one package shares a single request; the index redirects
+    the other spellings to that one anyway.
+    """
+    return _index_metadata(normalized_name(package))
+
+
+@cache
+def _index_metadata(package: str) -> dict:
+    """Fetch the Index API response for the normalized package name, or an empty dict if it can't be fetched.
 
     Uses the Index (Simple) API rather than the project JSON API's `releases` key, which is deprecated. See
     https://docs.pypi.org/api/json/ and https://docs.pypi.org/api/index-api/. The response carries both the
@@ -150,6 +159,27 @@ def newest_publication_date(package: str) -> datetime | None:
     return newest_timestamp(file.get("upload-time") for file in files)
 
 
+def _versions(package: str) -> list[Version]:
+    """Return the package's releases the index lists under a version `packaging` can read."""
+    return [Version(release) for release in _project_versions(package) if is_valid(release)]
+
+
+def _stable_versions(package: str) -> list[Version]:
+    """Return the package's releases that are candidates to pin: the valid versions that are neither pre nor dev."""
+    return [version for version in _versions(package) if not version.is_prerelease and not version.is_devrelease]
+
+
+def newest_release(package: DependencyName) -> DependencyVersion | None:
+    """Return the package's newest release, dated by `newest_publication_date`, or None when the index lists none.
+
+    Read over every version the index lists, prereleases included, since the date it is paired with is read the
+    same way: `newest_publication_date` takes the latest upload of any file.
+    """
+    if not (versions := _versions(package)):
+        return None
+    return DependencyVersion(version=str(max(versions)), newest_published=newest_publication_date(package))
+
+
 def _release_datetime(urls: list[_Distribution]) -> datetime | None:
     """Return the latest upload datetime of a release's distribution files, or None if there are none."""
     return newest_timestamp(url["upload_time_iso_8601"] for url in urls)
@@ -168,14 +198,10 @@ def get_latest_version(
     if not is_valid(current_version):
         return DependencyVersion(version=current_version)
     current = Version(current_version)
-    versions = [Version(release) for release in _project_versions(package) if is_valid(release)]
     candidates = [
         version
-        for version in versions
-        if version > current
-        and not version.is_prerelease
-        and not version.is_devrelease
-        and version_bound.keeps(version, current_version)
+        for version in _stable_versions(package)
+        if version > current and version_bound.keeps(version, current_version)
     ]
     latest = first_eligible(
         candidates, lambda version: _eligible_release(package, version, cooldown_days), current_version

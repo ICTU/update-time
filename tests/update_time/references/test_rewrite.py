@@ -198,7 +198,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that `ignore[update]` leaves the version unchanged but still runs the staleness check."""
         lines = ["image: python:3.14  # update-time: ignore[update]"]
         self.assertEqual(self.rewrite(lines, _REGEXP, new_version_getter("3.15")), lines)  # version left as-is
-        self.logger.warn_if_stale.assert_called_once()  # staleness still checked
+        self.logger.report_staleness.assert_called_once()  # staleness still checked
         self.logger.ignored.assert_called_once_with("python", Marker(ignore_update=True), Location(self.path, 1))
 
     def test_ignore_update_and_stale_still_checks_for_a_yank(self):
@@ -410,12 +410,16 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.digest_drift.assert_called_once()  # the mistyped drift opt-in is not, so the drift only warns
 
     def assert_invalid_bracket_item(self, directive: str, bracket_item: str) -> None:
-        """Assert that the bracket item is logged as invalid, leaving the reference neither held back nor understood."""
+        """Assert that the bracket item is logged as invalid, leaving the reference unchanged but still checked.
+
+        An item Update-time cannot read may have been meant to bound the update, so the line is left as it is; it
+        may equally have been meant to silence a warning, which is why the source is still asked about it.
+        """
         self.logger.reset_mock()
-        get_new_version = Mock()
+        get_new_version = Mock(return_value=DependencyVersion(version="3.12.1"))
         lines = [f"image: python:3.12.1  # update-time: {directive}"]
         self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)  # left unchanged, not updated
-        get_new_version.assert_not_called()
+        get_new_version.assert_called_once()
         self.logger.invalid_bracket_item.assert_called_once_with("python", bracket_item, Location(self.path, 1))
         self.logger.ignored.assert_not_called()  # reported as invalid, not frozen as a bare `ignore`
         self.logger.recognised_marker.assert_not_called()
@@ -476,10 +480,9 @@ class UpdateReferencesTest(unittest.TestCase):
 
     def test_unrecognised_item_in_comma_list_is_logged(self):
         """Test that an unrecognised item in a comma list warns and leaves the reference unchanged."""
-        get_new_version = Mock()
+        get_new_version = new_version_getter("3.12")
         lines = ["image: python:3.12  # update-time: allow[drift, update<3.13]"]
         self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
-        get_new_version.assert_not_called()
         self.logger.invalid_bracket_item.assert_called_once_with("python", "drift", Location(self.path, 1))
 
     def test_repeated_marker_prefixes_still_combine(self):
@@ -508,27 +511,24 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version.assert_called_once_with("python", "3.14", NO_BOUND, COOLDOWN.default)
 
     def test_invalid_specifier_is_logged_and_leaves_reference_unchanged(self):
-        """Test that an unparsable specifier is logged and the reference left unchanged, without querying the source."""
-        get_new_version = Mock()
+        """Test that an unparsable specifier is logged and the reference left unchanged."""
+        get_new_version = new_version_getter("3.12")
         lines = ["image: python:3.12  # update-time: allow[update@@@]"]
         self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
-        get_new_version.assert_not_called()
         self.logger.invalid_bracket_item.assert_called_once_with("python", "@@@", Location(self.path, 1))
 
     def test_invalid_specifier_above_line_is_logged_and_leaves_reference_unchanged(self):
         """Test that an unparsable specifier in a comment above the reference is reported for the reference below."""
-        get_new_version = Mock()
+        get_new_version = new_version_getter("3.12")
         lines = ["# update-time: allow[update@@@]", "image: python:3.12"]
         self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
-        get_new_version.assert_not_called()
         self.logger.invalid_bracket_item.assert_called_once_with("python", "@@@", Location(self.path, 2))
 
     def test_invalid_ignore_specifier_warns_rather_than_freezing(self):
         """Test that a malformed `ignore` bound warns and leaves the reference unchanged, not silently freezes."""
-        get_new_version = Mock()
+        get_new_version = new_version_getter("3.12")
         lines = ["image: python:3.12  # update-time: ignore[update@@@]"]
         self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
-        get_new_version.assert_not_called()
         self.logger.invalid_bracket_item.assert_called_once_with("python", "@@@", Location(self.path, 1))
         self.logger.ignored.assert_not_called()  # reported as invalid, not frozen as a bare `ignore`
 

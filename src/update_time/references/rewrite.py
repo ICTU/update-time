@@ -8,15 +8,15 @@ decision; this module owns the text surgery around it, reporting what it changed
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING
 
 from update_time.domain.drift import DriftedPin, hash_drifted, report_drift
 from update_time.domain.line import located_lines
 from update_time.domain.marker import parse_marker
-from update_time.domain.reference import Reference
 from update_time.primitives.text import rewrite_string
+from update_time.references.match import matched_dependency, matched_reference
 from update_time.references.resolve import latest_version
 
 if TYPE_CHECKING:
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyVersion
     from update_time.domain.line import Line
     from update_time.domain.marker import Marker
+    from update_time.domain.reference import Reference
     from update_time.io.log import Logger
     from update_time.primitives.location import Location
 
@@ -105,16 +106,6 @@ class _Rewriter:
         return updated_lines(lines, regexp, self.update_line, self.logger, self.dependency)
 
 
-def matched_dependency(match: re.Match[str], dependency: str = "") -> str:
-    """Return the dependency the match captured in its `dependency` group, or `dependency` when it captures none."""
-    return dependency or match.group("dependency")
-
-
-def matched_reference(match: re.Match[str], location: Location, dependency: str = "") -> Reference:
-    """Return the reference the match captured in its `dependency` and `version` named groups, at its line."""
-    return Reference(matched_dependency(match, dependency), match.group("version"), location)
-
-
 def apply_marker(
     line: Line,
     match: re.Match[str],
@@ -125,8 +116,9 @@ def apply_marker(
     """Read a matched reference's `# update-time:` marker and update it, or leave the line unchanged when held back.
 
     The marker gate shared by every line-based reference, so no updater has to remember the placement rule (see
-    `parse_marker`). An item that could not be parsed is reported (here, where the logger and location are available,
-    unlike in the pure `parse_marker`) and leaves the reference unchanged.
+    `parse_marker`). An item that could not be parsed is reported here, where the logger and location are available,
+    unlike in the pure `parse_marker`. It holds the update back, since it may have been meant to bound one, and
+    leaves the checks running, since it is not read as silencing what it may equally have been meant to silence.
     Otherwise the marker is reported as recognised at the debug level, as is the held-back update when the marker
     holds the update back, so users can tell a marker that was understood from one that suppressed something. A
     marker holding back the update, the staleness warning, and the yank warning alike returns the line without
@@ -141,7 +133,7 @@ def apply_marker(
     dependency = matched_dependency(match, dependency)
     if marker.invalid_item is not None:
         logger.invalid_bracket_item(dependency, marker.invalid_item, location)
-        return line.text
+        return update_line(match, location, replace(marker, ignore_update=True))
     logger.recognised_marker(dependency, marker, location)
     if marker.ignore_update:
         logger.ignored(dependency, marker, location)
