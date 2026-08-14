@@ -20,8 +20,9 @@ from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.primitives.text import rewrite_string
 from update_time.references.file import rewrite_file
+from update_time.references.match import matched_reference
 from update_time.references.resolve import latest_version
-from update_time.references.rewrite import apply_marker, matched_reference
+from update_time.references.rewrite import apply_marker
 from update_time.references.vulnerability import warn_about_vulnerable_references
 from update_time.sources.jsdelivr import integrity_hash, version_getter
 from update_time.sources.osv import Ecosystem

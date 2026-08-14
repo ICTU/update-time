@@ -410,10 +410,22 @@ A yank can only be observed where the dependency's source reports one, so of the
 WARNING Redundant update-time marker ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept
 ```
 
+A `requirements.txt` requirement that pins no exact version gets a warning of its own. PyPI does report yanks, but a yank is about the version a reference is left on, and such a requirement pins none.
+
+```console
+WARNING Redundant update-time marker ignore[yanked] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a yank
+```
+
 The `vulnerable` scope tells the same story: of the references that accept a marker, only a `requirements.txt` pin and a jsDelivr URL are looked up at OSV (see [Vulnerable dependencies](#-vulnerable-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry, every form of the scope is reported as redundant — `ignore[vulnerable]` on its own, one naming an advisory, and one setting a risk level alike:
 
 ```console
 WARNING Redundant update-time marker ignore[vulnerable] for python in Dockerfile:2: this dependency's source reports no vulnerabilities
+```
+
+A requirement that pins no exact version is reported here too, for the same reason: an advisory is matched against a version, and such a requirement pins none.
+
+```console
+WARNING Redundant update-time marker ignore[vulnerable] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a vulnerability
 ```
 
 The `stale` scope tells the same story, in both its forms — the bare scope and a threshold — for a reference whose source reports no publication date to measure staleness against. [Setting a staleness threshold](#setting-a-staleness-threshold) names the three kinds of reference that get the warning.
@@ -426,7 +438,7 @@ A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — i
 WARNING Invalid 'stlae' in the update-time marker for python in Dockerfile:2; leaving the reference unchanged
 ```
 
-The reference is left as it is, because an item Update-time cannot read may have been meant to bound or silence anything, so acting on the rest of the marker would be guessing. Once the marker is corrected, the reference is updated as usual.
+The reference is left as it is, because an item Update-time cannot read may have been meant to bound the update, so applying one would be guessing. The checks still run, since that item is never read as silencing a warning: an unreadable marker holds back what Update-time would write, never what it would tell you. Every item beside it that Update-time does read applies as written, so `ignore[stale, stlae]` still silences the staleness warning. Once the marker is corrected, the reference is updated as usual.
 
 #### Setting a staleness threshold
 
@@ -489,6 +501,8 @@ WARNING Redundant update-time marker ignore[cooldown<30] for python in .python-v
 ```
 
 The same three kinds of reference get that warning as for staleness (see [Setting a staleness threshold](#setting-a-staleness-threshold)), and for the same reasons but one. A `.python-version` entry whose version comes from the project's Dockerfile gets it because its cooldown was already applied when the base image was updated. An image on a registry other than Docker Hub does too, since only Docker Hub reports a push date to measure a cooldown against, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves.
+
+A `requirements.txt` requirement that pins no exact version is reported for a reason of its own, in its own words: PyPI dates its releases, but Update-time resolves no update for such a requirement, so a cooldown holds no release back.
 
 #### Silencing specific vulnerabilities
 
@@ -602,6 +616,8 @@ Update-time logs a redundant bound at `WARNING`. That may happen in two ways:
 - Either the bound **never has an effect**, so removing it would change nothing: the current version and every version above it satisfy the bound, for example `allow[update>=3.12]` on a `3.12` pin, or `allow[major-update]` on any pin (it allows every update, so it says nothing).
 - Or the bound **blocks every update**, so it is just a frozen `ignore[update]` in disguise (use that instead if the freeze is intended): no version above the current one satisfies the bound, for example `ignore[update>=3.12]` on a `3.12` pin, or `ignore[patch-update]` on any pin.
 
+A `requirements.txt` requirement that pins no exact version is reported whatever the bound says, `ignore[update]` included, since Update-time resolves no update for it to bound.
+
 ### Writing a marker
 
 Where a marker goes depends on the file it sits in, and a run at `--log-level DEBUG` reports which markers Update-time read.
@@ -677,7 +693,7 @@ In a PEP 723 inline script metadata block, only the pins in the `dependencies` a
 
 #### What versions are updated?
 
-Only versions specified with an exact match are updated, i.e. dependency versions pinned with `==`. Looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. In a `pyproject.toml` or an inline script metadata block, a new version for such a dependency is still reported; in a `requirements.txt` it is not reported at all.
+Only versions specified with an exact match are updated, i.e. dependency versions pinned with `==`. Looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. In a `pyproject.toml` or an inline script metadata block, a new version for such a dependency is still reported; in a `requirements.txt` it is not reported at all, although the package behind it is still checked for staleness, as described under Stale dependencies below.
 
 #### Pinning
 
@@ -693,7 +709,7 @@ For inline script metadata, Update-time also applies the cooldown through uv's `
 
 #### Stale dependencies
 
-Every Python pin is checked against the newest release of its package on PyPI, whichever of the three file kinds declares it, and stale ones are reported.
+Every Python pin is checked against the newest release of its package on PyPI, whichever of the three file kinds declares it, and stale ones are reported. In a `requirements.txt`, a requirement that pins no exact version is checked as well, whether it names a looser specifier such as `humanize>=4` or `django~=5.0`, or no version at all: staleness is measured against the package's newest release, which the name alone is enough to look up. A requirement declared that way in a `pyproject.toml` or an inline script metadata block is not checked, since Update-time reads only the exact pins back from the files uv rewrites.
 
 #### Yanked dependencies
 
@@ -705,7 +721,7 @@ Each exact pin a Python file declares is checked against OSV's PyPI advisories, 
 
 #### Markers
 
-A `requirements.txt` pin takes an inline marker on its own line, as in `humanize==4.15.0  # update-time: ignore`; see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference) for the directives and where they go. Dependencies in `pyproject.toml` and inline script metadata take no marker, because uv updates them rather than Update-time rewriting their lines. Opt one of those out by pinning it with a maximum or non-`==` specifier instead, for example `package<=3.12`.
+A `requirements.txt` pin takes an inline marker on its own line, as in `humanize==4.15.0  # update-time: ignore`; see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference) for the directives and where they go. A requirement that pins no exact version takes one too. Staleness is the only check such a requirement gets, so only a `stale` directive holds anything back there: `humanize>=4  # update-time: ignore[stale<1095]` warns once that package's newest release is more than three years old. A `yanked` or `vulnerable` scope on such a requirement is reported as redundant, since both checks need the version it does not pin. So are a `cooldown` and a bound, which steer an update Update-time never resolves for it. Dependencies in `pyproject.toml` and inline script metadata take no marker, because uv updates them rather than Update-time rewriting their lines. Opt one of those out by pinning it with a maximum or non-`==` specifier instead, for example `package<=3.12`.
 
 ### npm and pnpm dependencies
 

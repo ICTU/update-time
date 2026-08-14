@@ -375,14 +375,24 @@ class Logger:
         DEBUG, "Ignoring the staleness warning for %(dependency)s in %(location)s (update-time: %(directive)s)"
     )
 
-    def ignored_staleness(self, resolved: ResolvedReference, marker: Marker, threshold: int) -> None:
+    def _ignored_staleness(self, resolved: ResolvedReference, marker: Marker, threshold: int) -> None:
         """Log that the marker held back a staleness warning that would otherwise have been logged.
 
-        Guards on the same condition as `warn_if_stale`, so callers can hand off every reference unconditionally and
-        a marker that suppresses nothing stays silent.
+        Guards on the same condition as `warn_if_stale`, so a marker that suppresses nothing stays silent.
         """
         if is_stale(resolved.release.newest_published, threshold):
             self._log_ignored(self._MESSAGE_IGNORED_STALENESS, resolved.dependency, marker, resolved.location)
+
+    def report_staleness(self, resolved: ResolvedReference, marker: Marker, threshold: int) -> None:
+        """Report the reference's staleness, as a warning or as the hold-back of the marker that silences it.
+
+        Every reference that can carry a marker is reported through here, so a caller reporting one cannot forget
+        that its marker may hold the warning back.
+        """
+        if marker.ignore_stale:
+            self._ignored_staleness(resolved, marker, threshold)
+        else:
+            self.warn_if_stale(resolved, threshold)
 
     _MESSAGE_YANKED = LogMessage(
         WARNING, "Yanked dependency %(dependency)s in %(location)s: version %(version)s was yanked (%(reason)s)"
@@ -554,6 +564,41 @@ class Logger:
         self._log(
             self._MESSAGE_REDUNDANT_YANK_SCOPE,
             **self._reference_fields(reference, directive=marker.yank_directive),
+        )
+
+    _MESSAGE_REDUNDANT_WITHOUT_AN_UPDATE = LogMessage(
+        WARNING, _redundant_marker("this requirement pins no version to update")
+    )
+
+    def redundant_without_an_update(self, reference: Reference, directive: str) -> None:
+        """Warn that a directive steering the update holds nothing back, no update being resolved for the reference.
+
+        A bound decides which versions an update may move to, a cooldown which of them are too fresh to trust, so
+        both decide nothing where no version is resolved. The directive is named by the caller, each reading its
+        own from the marker.
+        """
+        self._log(self._MESSAGE_REDUNDANT_WITHOUT_AN_UPDATE, **self._reference_fields(reference, directive=directive))
+
+    _MESSAGE_REDUNDANT_YANK_WITHOUT_A_VERSION = LogMessage(
+        WARNING, _redundant_marker("this requirement pins no version to check for a yank")
+    )
+
+    def redundant_yank_without_a_version(self, reference: Reference, marker: Marker) -> None:
+        """Warn that the marker's yank scope holds nothing back for a reference that pins no version."""
+        self._log(
+            self._MESSAGE_REDUNDANT_YANK_WITHOUT_A_VERSION,
+            **self._reference_fields(reference, directive=marker.yank_directive),
+        )
+
+    _MESSAGE_REDUNDANT_VULNERABLE_WITHOUT_A_VERSION = LogMessage(
+        WARNING, _redundant_marker("this requirement pins no version to check for a vulnerability")
+    )
+
+    def redundant_vulnerable_without_a_version(self, reference: Reference, marker: Marker) -> None:
+        """Warn that the marker's vulnerability scope holds nothing back for a reference that pins no version."""
+        self._log(
+            self._MESSAGE_REDUNDANT_VULNERABLE_WITHOUT_A_VERSION,
+            **self._reference_fields(reference, directive=marker.vulnerable_directives),
         )
 
     _MESSAGE_NO_VERSION = LogMessage(ERROR, "No valid version found for %(dependency)s")

@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, Mock, patch
 
-from update_time.domain.bound import NO_BOUND, Verb
+from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.drift import DriftedPin
@@ -332,10 +332,15 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_invalid_specifier_leaves_rev_unchanged(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that a marker with an unparsable version specifier warns and leaves the rev unchanged."""
+        """Test that a marker with an unparsable version specifier warns and leaves the rev unchanged.
+
+        The source is still asked about the hook, since an item that cannot be read is not read as silencing the
+        checks either; what it holds back is the update, so the rev keeps the version it names.
+        """
+        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
         config_file = mock_path(config("rev: v4.5.0  # update-time: allow[update@@@]\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
-        mock_get_latest_version.assert_not_called()
+        mock_get_latest_version.assert_called_once_with(self.HOOK, "v4.5.0", BLOCK_ALL_UPDATES, COOLDOWN.default)
         self.assert_logged(Logger._MESSAGE_INVALID_BRACKET_ITEM, bracket_item="@@@", dependency=self.HOOK, location=ANY)

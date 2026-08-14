@@ -9,9 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Warn about a `stale` marker on a reference whose source reports no publication date to measure staleness against, instead of accepting it in silence. Closes [#221](https://github.com/ICTU/update-time/issues/221).
+- Warn about a stale dependency declared in a `requirements.txt` without an exact pin, and report the marker directives that decide nothing for such a requirement. Closes [#240](https://github.com/ICTU/update-time/issues/240).
 
 ### Fixed
 
+- Update and check an indented requirement in a `requirements.txt`, which pip reads as a requirement like any other but Update-time passed over. Part of [#240](https://github.com/ICTU/update-time/issues/240).
+- Keep checking a reference whose `# update-time:` marker holds an item Update-time cannot read: the marker now holds back the update rather than every check, so a stale, yanked, or vulnerable version is still reported, and the items beside the unreadable one still apply. Part of [#240](https://github.com/ICTU/update-time/issues/240).
 - Name the directive a redundant-marker warning is about, instead of every `ignore` directive on the reference's line, so a directive beside it that holds plenty back is no longer reported as holding nothing back. Part of [#221](https://github.com/ICTU/update-time/issues/221).
 - Name a `vulnerable` scope set with `allow`, such as `allow[vulnerable>=high]`, in the warning reporting it as redundant. Such a warning previously named no directive at all. Part of [#221](https://github.com/ICTU/update-time/issues/221).
 

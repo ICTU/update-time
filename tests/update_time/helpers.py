@@ -271,16 +271,21 @@ class LoggingTestCase(CacheClearingTestCase):
             served_hash=served_hash,
         )
 
-    def assert_stale_dependency_logged(self, dependency: str, version: str, *locations: Location) -> None:
-        """Assert that a stale dependency was warned about at each of the locations, and nowhere else.
+    def assert_stale_dependency_logged(
+        self, dependency: str, version: str, *locations: Location, among_others: bool = False
+    ) -> None:
+        """Assert that a stale dependency was warned about at each of the locations, and by default nowhere else.
 
-        The exact age and threshold vary with the wall clock, so they are matched with ANY.
+        The exact age and threshold vary with the wall clock, so they are matched with ANY. A run that warns about
+        something else as well — a marker item that decides nothing — asserts `among_others`, which leaves the other
+        warnings out of the comparison while still holding every staleness warning to the locations given.
         """
         fields: dict[str, object] = {"dependency": dependency, "version": version, "days": ANY, "threshold": ANY}
         expected = [
             self._expected_call(Logger._MESSAGE_STALE, fields | {"location": location}) for location in locations
         ]
-        self.assertEqual(self.records(Logger._MESSAGE_STALE.level), expected)
+        stale_warnings = self.records_of(Logger._MESSAGE_STALE)
+        self.assertEqual(stale_warnings if among_others else self.records(Logger._MESSAGE_STALE.level), expected)
 
     def assert_yanked_dependency_logged(
         self, dependency: str, version: str, location: Location, reason: object = ANY

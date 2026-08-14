@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from update_time.io.log import Logger
 
 
-def _warn_about_inverted_items(marker: Marker, reference: Reference, log: Logger) -> None:
+def warn_about_inverted_items(marker: Marker, reference: Reference, log: Logger) -> None:
     """Warn about each comparison item whose operator runs the wrong way, so it sets nothing for the reference.
 
     Every comparison item the marker language has is read here, so an item added to `Marker` is reported by naming
@@ -75,16 +75,12 @@ def latest_version(
     dependency, current_version = reference.dependency, reference.current_version
     log.warn_if_redundant_bound(reference, marker)
     _warn_about_directives_the_source_cannot_answer(marker, get_new_version, reference, log)
-    _warn_about_inverted_items(marker, reference, log)
+    warn_about_inverted_items(marker, reference, log)
     version_bound = BLOCK_ALL_UPDATES if marker.ignore_update else marker.version_bound
     cooldown = marker.cooldown.value_or(COOLDOWN.get())
     latest = get_new_version(dependency, current_version, version_bound, cooldown)
     resolved = ResolvedReference(**vars(reference), release=latest)
-    threshold = marker.stale.value_or(STALE_AFTER.get())
-    if marker.ignore_stale:
-        log.ignored_staleness(resolved, marker, threshold)
-    else:
-        log.warn_if_stale(resolved, threshold)
+    log.report_staleness(resolved, marker, marker.stale.value_or(STALE_AFTER.get()))
     if marker.ignore_yanked:
         log.ignored_yank(resolved, marker)
     else:

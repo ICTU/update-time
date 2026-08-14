@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from packaging.specifiers import InvalidSpecifier
 
-from update_time.domain.bound import NO_BOUND, Verb, parse_bound
+from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb, parse_bound
 from update_time.domain.vulnerability import RISK_LEVELS
 
 if TYPE_CHECKING:
@@ -146,6 +146,18 @@ class Marker:
         Either verb can set one, so the item the user wrote is named rather than a spelling of our own.
         """
         return self.cooldown.directive
+
+    @property
+    def bound_directive(self) -> str:
+        """Return the directive bounding the update, as the language spells it, or nothing when the marker sets none.
+
+        A bare `ignore[update]` has one spelling only, so it is spelled out; a bound is named as the item the user
+        wrote, since either verb can set one. Where a reference carries both, the bare scope is named, since it
+        holds every update back whatever the bound would admit.
+        """
+        if self.ignore_update:
+            return str(BLOCK_ALL_UPDATES)
+        return "" if self.version_bound == NO_BOUND else str(self.version_bound)
 
     @property
     def yank_directive(self) -> str:

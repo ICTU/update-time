@@ -236,6 +236,28 @@ class LoggerTests(TestCase):
             "newest release 4.15.0 was published 512 days ago (> 90)",
         )
 
+    def test_report_staleness(self, mock_log: Mock):
+        """Test that staleness is reported as a warning, or as the hold-back of a marker that silences it.
+
+        The release is 100 days old, which is stale against the 90 passed in and not against the global default, so
+        either line is logged only when the given threshold is the one applied. What the warning reads as is
+        `test_warn_if_stale`'s subject; which of the two lines a marker gets is this one's. The hold-back names the
+        `ignore` directive as written, rather than the `allow` beside it.
+        """
+        published = datetime.now(UTC) - timedelta(days=100, hours=1)
+        version = DependencyVersion("4.15.0", newest_published=published)
+        resolved = resolved_reference("humanize", _create_location("requirements.txt", 9), version)
+        Logger("stale").report_staleness(resolved, Marker(), 90)
+        mock_log.assert_called_once_with(Logger._MESSAGE_STALE.level, Logger._MESSAGE_STALE, ANY)
+        mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
+        Logger("stale").report_staleness(resolved, Marker(ignore_stale=True, raw="ignore[stale] allow[hash-drift]"), 90)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_IGNORED_STALENESS,
+            f"Ignoring the staleness warning for {dependency('humanize')} in {_at('requirements.txt:9')} "
+            "(update-time: ignore[stale])",
+        )
+
     def test_warn_if_stale_does_nothing_when_not_stale(self, mock_log: Mock):
         """Test that nothing is logged when the newest release date is recent or unknown."""
         recent = DependencyVersion("4.15.0", newest_published=datetime.now(UTC) - timedelta(days=1))
@@ -417,33 +439,15 @@ class LoggerTests(TestCase):
             "(update-time: ignore[update] ignore[stale])",
         )
 
-    def test_ignored_staleness(self, mock_log: Mock):
-        """Test that a held-back staleness warning is logged at debug level, with the `ignore` directive as written.
-
-        The release is 100 days old, which is stale against the 90 passed in and not against the global default, so
-        the line is logged only when the given threshold is the one applied.
-        """
-        published = datetime.now(UTC) - timedelta(days=100, hours=1)
-        version = DependencyVersion("4.15.0", newest_published=published)
-        marker = Marker(ignore_stale=True, raw="ignore[stale] allow[hash-drift]")
-        location = _create_location("requirements.txt", 9)
-        Logger("stale").ignored_staleness(resolved_reference("humanize", location, version), marker, 90)
-        self.assert_message(
-            mock_log,
-            Logger._MESSAGE_IGNORED_STALENESS,
-            f"Ignoring the staleness warning for {dependency('humanize')} in {_at('requirements.txt:9')} "
-            "(update-time: ignore[stale])",
-        )
-
-    def test_ignored_staleness_does_nothing_when_not_stale(self, mock_log: Mock):
-        """Test that nothing is logged when the marker holds back a staleness warning that would not be given."""
+    def test_report_staleness_does_nothing_when_not_stale(self, mock_log: Mock):
+        """Test that a marker holding back a staleness warning that would not be given reports nothing either."""
         recent = DependencyVersion("4.15.0", newest_published=datetime.now(UTC) - timedelta(days=1))
         undated = DependencyVersion("4.15.0")
         logger = Logger("stale")
         marker = Marker(ignore_stale=True, raw="ignore[stale]")
         location = _create_location("requirements.txt", 9)
-        logger.ignored_staleness(resolved_reference("humanize", location, recent), marker, 90)
-        logger.ignored_staleness(resolved_reference("humanize", location, undated), marker, 90)
+        logger.report_staleness(resolved_reference("humanize", location, recent), marker, 90)
+        logger.report_staleness(resolved_reference("humanize", location, undated), marker, 90)
         mock_log.assert_not_called()
 
     def test_ignored_yank(self, mock_log: Mock):
