@@ -54,11 +54,7 @@ class RunTests(LoggingTestCase):
         self.assertTrue(run(Command("uv", "lock")).ok)
 
     def test_non_zero_exit_with_output_is_ok_without_warning(self, mock_run: Mock):
-        """Test that a non-zero exit is ok as long as output was produced, and isn't logged even with stderr chatter.
-
-        `pnpm outdated` exits non-zero when packages are outdated and can print a deprecation `[WARN]` to stderr; the
-        result is still usable, so it must not be logged as a problem.
-        """
+        """Test that a non-zero exit is ok as long as output was produced, and isn't logged even with stderr chatter."""
         error = subprocess.CalledProcessError(returncode=1, cmd="", output='{"pkg": {}}', stderr="[WARN] deprecated\n")
         mock_run.side_effect = error
         result = run(Command("pnpm", "outdated"))

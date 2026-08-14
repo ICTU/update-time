@@ -31,19 +31,10 @@ def _sample_locations() -> list[ast.Call]:
 
 
 class SampleLocationTest(unittest.TestCase):
-    """Test that the samples locate a reference the way a run locates it.
-
-    A sample's location is written by hand rather than produced by a run, so nothing else notices when one drifts
-    from what Update-time prints: `just readme` keeps quoting the sample whatever it says, and the check that the
-    README is up to date compares it against itself.
-    """
+    """Unit tests for the locations the sample generators build."""
 
     def test_every_sample_location_names_a_line(self):
-        """Test that each location the samples build carries a line number.
-
-        Every reference the samples show is one Update-time reports at a line, so a location without one is a
-        sample that has gone stale. A sample deliberately reported at the file alone would have to be excepted here.
-        """
+        """Test that each location the samples build carries a line number."""
         locations = _sample_locations()
         self.assertNotEqual(locations, [])  # An empty scan would pass the check below without checking anything.
         self.assertEqual([ast.unparse(location) for location in locations if not _names_a_line(location)], [])

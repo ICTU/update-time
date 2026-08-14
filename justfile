@@ -113,6 +113,10 @@ test *tests: install-py-dependencies
 mutate file *command:
     {{ python_m }} tools.mutate "$@"
 
+# Report the tests that cover the same code, read from the coverage data the last full `just test` run wrote.
+coverage-overlap:
+    {{ python_m }} tools.coverage_overlap
+
 [private]
 mutate-help:
     @echo "\nBreak FILE by replacing a snippet in it, run COMMAND (default: just test), and restore FILE whatever"
@@ -240,17 +244,7 @@ verify: test format check
 
 # Rename a module-level name and every reference to it, in the files named. See `just help rename`.
 rename old new +files:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    before=$(cksum "${@:3}")
-    {{ python_m }} libcst.tool codemod rename.RenameCommand \
-        --old_name="$1" --new_name="$2" --no-format --hide-progress "${@:3}"
-    # LibCST counts the files it read rather than the ones it rewrote, and exits 0 whether it found the name or
-    # not, so a misspelled name is only caught by the files coming back unchanged.
-    if [ "$before" = "$(cksum "${@:3}")" ]; then
-        echo "Error: nothing was renamed; check the spelling of $1" >&2
-        exit 1
-    fi
+    {{ python_m }} tools.rename "$@"
 
 [private]
 rename-help:
@@ -258,7 +252,13 @@ rename-help:
     @echo "docstring, a help string, or an f-string is left alone, as is a parameter or a local of that name:"
     @echo "\n    just rename release_metadata _release_metadata src/update_time/sources/pypi.py"
     @echo "\nA name defined in one module and used in another is renamed only where the files named cover both, so"
-    @echo "name every file that refers to it. Read the diff afterwards, as with any rewrite."
+    @echo "name every file that refers to it, and spell OLD as the fully qualified name, since a bare name reaches"
+    @echo "the definition alone across modules. A module-private name takes the bare form, the qualified one"
+    @echo "resolving to nothing. The recipe fails when the old name survives in a file it was given, so a rename"
+    @echo "that reached only some of them is caught rather than left on disk. A rename that landed then reports the"
+    @echo "prose that still mentions the old name in backticks, wherever in the repository it sits, since a rename"
+    @echo "rewrites none of it: the same word is a parameter or a local elsewhere, and means something else there."
+    @echo "Read the diff afterwards, as with any rewrite."
 
 # Format and lint-fix Python code, the part of `just fix` a quicker loop needs after an edit.
 format: install-py-dependencies

@@ -52,11 +52,7 @@ class LinesWithoutCodeBlocksTest(unittest.TestCase):
     """Unit tests for reading a document's lines with its fenced code blocks left out."""
 
     def test_code_block_lines_come_back_empty_and_keep_their_number(self):
-        """Test that every line keeps its own number, and that the lines of a code block come back empty.
-
-        The number is what a report points at, so it has to survive the removal, and the empty lines keep two
-        blocks that a code block sits between from reading as one.
-        """
+        """Test that every line keeps its own number, and that the lines of a code block come back empty."""
         markdown = "Intro\n\n```console\n$ update-time\n```\n\nOutro\n"
         expected = [(1, "Intro"), (2, ""), (3, ""), (4, ""), (5, ""), (6, ""), (7, "Outro")]
         self.assertEqual(list(lines_without_code_blocks(markdown)), expected)

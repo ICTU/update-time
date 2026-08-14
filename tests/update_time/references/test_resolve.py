@@ -58,11 +58,7 @@ class LatestVersionTest(unittest.TestCase):
         self.assertEqual(self.latest_version(), DependencyVersion(version="3.15"))
 
     def test_returns_the_resolved_version_even_when_unchanged(self):
-        """Test that a resolved version equal to the current one is still returned, not turned into None.
-
-        An unchanged version may still carry a newer digest worth pinning, so the decision resolves it rather than
-        collapsing it to None.
-        """
+        """Test that a resolved version equal to the current one is still returned, not turned into None."""
         latest = self.latest_version(get_new_version=new_version_getter("3.14", DIGEST))
         self.assertEqual(latest, DependencyVersion(version="3.14", sha=DIGEST))
 
@@ -73,10 +69,7 @@ class LatestVersionTest(unittest.TestCase):
         get_new_version.assert_called_once_with("python", "3.14", bound(Verb.ALLOW, "update<3.15"), COOLDOWN.default)
 
     def test_ignore_update_passes_a_block_all_bound_to_the_getter(self):
-        """Test that a held-back update asks the source to keep the current version rather than resolve an update.
-
-        The source then reports on the version the reference stays on, so a frozen pin that was yanked is detected.
-        """
+        """Test that a held-back update asks the source to keep the current version rather than resolve an update."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.14"))
         self.latest_version(Marker(ignore_update=True), get_new_version)
         get_new_version.assert_called_once_with("python", "3.14", BLOCK_ALL_UPDATES, COOLDOWN.default)

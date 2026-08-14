@@ -40,12 +40,7 @@ class RewriteFileTest(unittest.TestCase):
 
 
 class UpdateFileTest(unittest.TestCase):
-    """Unit tests for `update_file`'s single-pass read/rewrite/write of one file.
-
-    The write-vs-no-write decision and the reference rewriting itself are covered by `UpdateFilesTest` (which wraps
-    `update_file`) and the reference-rewriting engine's own tests (test_rewrite). What's unique here is that several
-    regexps are applied to the same content in a single read and a single write.
-    """
+    """Unit tests for `update_file`'s single-pass read/rewrite/write of one file."""
 
     def test_multiple_regexps_applied_in_one_pass(self):
         """Test that several regexps are applied to the same content, reading and writing the file once."""

@@ -121,10 +121,10 @@ def apply_marker(
     leaves the checks running, since it is not read as silencing what it may equally have been meant to silence.
     Otherwise the marker is reported as recognised at the debug level, as is the held-back update when the marker
     holds the update back, so users can tell a marker that was understood from one that suppressed something. A
-    marker holding back the update, the staleness warning, and the yank warning alike returns the line without
-    calling `update_line`, so the source is never even queried. Any other marker is handed to `update_line`
-    along with the match and the line's location, so the checks it doesn't hold back still run, with its bound and
-    its `allow` directives. The dependency comes from the regexp's `dependency` group; a regexp that captures none —
+    marker is then handed to `update_line` along with the match and the line's location, whatever it holds back, so
+    the checks it leaves live still run, with its bound and its `allow` directives. It is handed over even when it
+    holds every check back, since what a marker gets wrong is reported for a reference no source is queried for too
+    (see `latest_version`). The dependency comes from the regexp's `dependency` group; a regexp that captures none —
     a pre-commit `rev:` takes it from the `repo:` above, a `.python-version` entry is a bare version — names it in
     `dependency` instead.
     """
@@ -137,8 +137,6 @@ def apply_marker(
     logger.recognised_marker(dependency, marker, location)
     if marker.ignore_update:
         logger.ignored(dependency, marker, location)
-    if marker.ignore_update and marker.ignore_stale and marker.ignore_yanked:
-        return line.text
     return update_line(match, location, marker)
 
 

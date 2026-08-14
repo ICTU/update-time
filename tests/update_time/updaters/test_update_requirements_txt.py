@@ -55,11 +55,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     """Unit tests for the update requirements.txt function."""
 
     def requirements_file(self, contents: str, *, sibling_in: bool = False) -> Mock:
-        """Return a mock requirements file, optionally with a sibling `.in` source file present.
-
-        `is_compiled` treats a file as compiled when `(path.parent / f"{path.stem}.in").exists()`, so model the
-        parent's `/` as returning that sibling `.in` file, whose `exists()` reflects `sibling_in`.
-        """
+        """Return a mock requirements file, optionally with a sibling `.in` source file present."""
         requirements_txt = mock_path(contents)
         requirements_txt.stem = "requirements"  # so the sibling checked for is `requirements.in`
         sibling_in_file = Mock(exists=Mock(return_value=sibling_in))
@@ -81,11 +77,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         return responses
 
     def queried_packages(self, mock_get: Mock) -> list[str]:
-        """Return the packages whose PyPI index was fetched, in the order they were fetched.
-
-        A request for anything else is left out, so a run that also reads a version's own metadata to bump a pin
-        still reports the packages it looked up rather than that request's URL.
-        """
+        """Return the packages whose PyPI index was fetched, in the order they were fetched."""
         urls = [call.args[0] for call in mock_get.call_args_list if call.args[0].startswith(_PYPI_INDEX_URL)]
         return [url.removeprefix(_PYPI_INDEX_URL).removesuffix("/") for url in urls]
 
@@ -94,12 +86,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         return [pypi_index(*versions, files=[{"upload-time": upload_time}])]
 
     def days_ago(self, days: int) -> str:
-        """Return the upload time of a distribution file published the given number of days ago.
-
-        The extra hour puts the file just past the day count, so a release `days_ago(100)` old is stale against a
-        threshold of 100 rather than a day short of it.
-        """
-        return (datetime.now(UTC) - timedelta(days=days, hours=1)).isoformat()
+        """Return the upload time of a distribution file published the given number of days ago."""
+        return (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
     def test_no_change(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin already on the latest version is left unchanged."""
@@ -147,8 +135,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_two_spellings_of_one_package_cost_one_request(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a package a file spells two ways is fetched once, under the name PyPI spells it.
 
-        Both lines are checked and reported under the name their own line carries, but the index behind them is
-        the same document, so asking for it twice would be a request spent on nothing.
+        Both lines are checked and reported under the name their own line carries.
         """
         contents = "typing_extensions==4.0.0\nTyping-Extensions>=4\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
@@ -174,10 +161,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_staleness_disabled_looks_up_no_loose_requirement(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a loose requirement is not looked up at all when the staleness check is switched off.
-
-        Staleness is the only check it gets, so with the check off there is nothing left to ask PyPI about.
-        """
+        """Test that a loose requirement is not looked up at all when the staleness check is switched off."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "humanize>=4\n")
         with staleness_disabled:
             update_requirements_txts()
@@ -203,7 +187,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_a_loose_requirement_is_looked_up_under_its_normalized_name(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a requirement spelled with capitals or underscores is looked up as PyPI spells the name.
 
-        The warning names the requirement as the file spells it, since that is the line the reader has to edit.
+        The warning names the requirement as the file spells it.
         """
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "Typing_Extensions>=4\n")
         mock_get.side_effect = self.stale_pypi("4.15.0")
@@ -212,11 +196,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_stale_dependency_logged("Typing_Extensions", "4.15.0", Location(requirements_txt, 1))
 
     def test_stale_requirement_without_a_specifier_warned(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a requirement declaring no version at all is warned about when its newest release is old.
-
-        Each case declares `humanize` without a specifier, followed by what a requirements line may carry besides
-        one: nothing, extras, an environment marker, and a comment.
-        """
+        """Test that a requirement declaring no version at all is warned about when its newest release is old."""
         for case, requirement in {
             "no specifier": "humanize",
             "extras": "humanize[fast]",
@@ -232,11 +212,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
     def test_a_scope_needing_a_version_is_redundant_on_a_loose_requirement(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a scope whose check needs a version reports that the requirement pins none.
-
-        The `vulnerable` scope has three forms — the bare scope, a named advisory, and a risk level — and each is
-        reported, none of them being able to silence a check the requirement never runs.
-        """
+        """Test that a scope whose check needs a version reports that the requirement pins none."""
         vulnerable = Logger._MESSAGE_REDUNDANT_VULNERABLE_WITHOUT_A_VERSION
         for directive, message in {
             "ignore[yanked]": Logger._MESSAGE_REDUNDANT_YANK_WITHOUT_A_VERSION,
@@ -255,11 +231,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 )
 
     def test_a_marker_on_a_loose_requirement_is_logged_as_recognised(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a marker on a requirement without an exact pin is reported as recognised, whatever it holds back.
-
-        A bare `ignore` leaves nothing else to log for the requirement, so the recognised line is the only sign the
-        marker was read at all.
-        """
+        """Test that a marker on a loose requirement is reported as recognised, whatever it holds back."""
         bare_ignore = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True, ignore_vulnerable=True)
         for directive, marker in {
             "ignore[stale]": Marker(ignore_stale=True),
@@ -279,14 +251,16 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 )
 
     def test_a_cooldown_on_a_loose_requirement_is_redundant(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a cooldown on a requirement that pins no version is reported, whichever verb set it.
-
-        A cooldown holds back the releases an update may adopt, and no update is resolved for such a requirement.
-        """
-        for directive in ("ignore[cooldown<30]", "allow[cooldown>=30]"):
-            with self.subTest(directive=directive):
+        """Test that a cooldown on a requirement that pins no version is reported, whichever verb set it."""
+        cases = {
+            "ignore[cooldown<30]": "ignore[cooldown<30]",
+            "allow[cooldown>=30]": "allow[cooldown>=30]",
+            "ignore ignore[cooldown<30]": "ignore[cooldown<30]",
+        }
+        for marker_text, directive in cases.items():
+            with self.subTest(marker=marker_text):
                 self.mock_log.reset_mock()  # Judge each case on the records of its own run.
-                contents = f"humanize>=4  # update-time: {directive}\n"
+                contents = f"humanize>=4  # update-time: {marker_text}\n"
                 requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
                 mock_get.side_effect = self.pypi("4.15.0")  # Undated, so the staleness warning is not given.
                 update_requirements_txts()
@@ -300,9 +274,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_a_bound_on_a_loose_requirement_is_redundant(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a directive bounding the update is reported for a requirement that pins no version.
 
-        The three forms bound an update in different ways — every update, a range of versions, a level — and no
-        update is resolved for such a requirement, so each holds nothing back. A reference carrying both an
-        `ignore[update]` and a bound is reported under the `ignore[update]`, which holds back the more.
+        A reference carrying both an `ignore[update]` and a bound is reported under the `ignore[update]`, which
+        holds back the more.
         """
         forms = {
             "ignore[update]": "ignore[update]",
@@ -327,8 +300,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_a_loose_requirement_the_index_lists_no_version_for_is_not_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a requirement whose package the index lists no version for is not warned about.
 
-        That is what PyPI answers for a name it does not know, a misspelled one included, and there is then no
-        release to report the staleness of.
+        That is what PyPI answers for a name it does not know, a misspelled one included.
         """
         self.discovered_requirements_txt(mock_rglob, "humanize>=4\n")
         mock_get.side_effect = [pypi_index()]
@@ -337,10 +309,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_indented_requirements_are_recognised(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a requirement indented with whitespace is read as one, pip stripping the line before parsing.
-
-        The pin is bumped with its indentation kept, and the requirement below it, indented with a tab, is checked.
-        """
+        """Test that a requirement indented with a space or a tab is read as one, its indentation kept."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "  flask==1.0\n\thumanize>=4\n")
         mock_get.side_effect = [*self.pypi("1.0", "1.1", bump=True), *self.stale_pypi("4.15.0")]
         update_requirements_txts()
@@ -348,11 +317,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 2))
 
     def test_a_loose_requirement_on_a_prerelease_is_warned_about(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a requirement whose package published prereleases only is warned about, naming the newest.
-
-        The date the warning reports is the last time the project published anything, prereleases included, so the
-        release it names is read the same way.
-        """
+        """Test that a requirement whose package published prereleases only is warned about, naming the newest."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "humanize>=4\n")
         mock_get.side_effect = self.stale_pypi("5.0.0rc1")
         update_requirements_txts()
@@ -380,8 +345,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
-    def test_ignore_marker_on_a_loose_requirement_queries_no_release(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a loose requirement held back by a bare `ignore` marker is not looked up at PyPI."""
+    def test_a_bare_ignore_on_a_loose_requirement_queries_and_reports_nothing(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a loose requirement held back by a bare `ignore` is neither looked up at PyPI nor warned about."""
         contents = "humanize>=4  # update-time: ignore\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         update_requirements_txts()
@@ -393,8 +358,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_an_inverted_comparison_on_a_loose_requirement_is_reported(self, mock_rglob: Mock, mock_get: Mock):
         """Test that each comparison item that runs the wrong way round is reported, and decides nothing.
 
-        The newest release is 100 days old, so it is stale against the 90 the `stale` item names and not against
-        the global 365. The reported item being the run's only warning shows that item set no threshold.
+        The `stale` row's newest release is 100 days old, stale against the 90 that item names and not against the
+        global 365. The reported item being the run's only warning shows that item set no threshold.
         """
         for item, message in {
             "stale>=90": Logger._MESSAGE_INVERTED_STALE_ITEM,
@@ -449,10 +414,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_yanked_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
     def test_ignore_update_marker_still_warns_about_a_yank(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a pin frozen on a yanked version by `ignore[update]` is still warned about.
-
-        A newer version is available, but the marker keeps the reference on the yanked one, so the warning applies.
-        """
+        """Test that a pin frozen on a yanked version by `ignore[update]` is still warned about."""
         requirements_txt = self.discovered_requirements_txt(
             mock_rglob, "humanize==4.15.0  # update-time: ignore[update]\n"
         )
@@ -579,6 +541,16 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_ignored_logged("django", Location(requirements_txt, 1), "ignore")
         self.assert_no_redundant_suppression_logged()
         self.assert_no_warnings_logged()
+
+    def test_a_pin_held_back_from_the_source_is_still_looked_up_at_osv(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a pin whose marker holds back every check PyPI answers is still looked up at OSV."""
+        scopes = "ignore[update] ignore[stale] ignore[yanked]"
+        requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {scopes}\n")
+        with osv(DJANGO_ADVISORY) as mock_post:
+            update_requirements_txts()
+        mock_get.assert_not_called()
+        mock_post.assert_called()  # OSV answers the vulnerability check, which the marker leaves live.
+        self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(requirements_txt, 1))
 
     def test_ignore_vulnerable_marker_reports_nothing_when_it_silences_nothing(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a marker whose only advisory is below the level in force is reported neither way."""
@@ -814,8 +786,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that non-exact specifiers are left untouched, and that only the lines naming a package are queried.
 
         The lines below the three requirements each hold something a requirements file may carry that resolves to
-        no PyPI release. Those are the options and includes, a direct reference in both the bare-URL and the
-        `name @ url` form, a local archive named on its own and by path, a blank line, and a comment.
+        no PyPI release.
         """
         lines = (
             "flask>=1.0",
@@ -894,15 +865,14 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
 
 class RequirementsGlobPatternsTest(unittest.TestCase):
-    """Unit tests for which paths the requirements glob patterns match.
-
-    `glob` uses `rglob`, which matches each path against the pattern with `PurePath.full_match`, so matching the
-    patterns directly mirrors discovery without touching the file system.
-    """
+    """Unit tests for which paths the requirements glob patterns match."""
 
     def matches(self, path: str) -> bool:
-        """Return whether any requirements glob pattern matches the path, case-sensitively (as `glob` matches)."""
-        return any(PurePath(path).full_match(pattern, case_sensitive=True) for pattern in _GLOB_PATTERNS)
+        """Return whether any requirements glob pattern matches the path, the way `glob` matches it.
+
+        `glob` searches with `rglob`, so a pattern matches at any depth under the root, which the `**/` reproduces.
+        """
+        return any(PurePath(path).full_match(f"**/{pattern}", case_sensitive=True) for pattern in _GLOB_PATTERNS)
 
     @patch("update_time.updaters.update_requirements_txt.glob")
     def test_the_updater_looks_for_these_patterns(self, mock_glob: Mock):
@@ -920,6 +890,12 @@ class RequirementsGlobPatternsTest(unittest.TestCase):
     def test_nested_requirements_directory(self):
         """Test that a requirements file in a nested `requirements/` directory matches."""
         self.assertTrue(self.matches("requirements/base.txt"))
+
+    def test_a_requirements_file_below_the_scan_root(self):
+        """Test that a requirements file matches wherever under the root it sits."""
+        for path in ("sub/requirements.txt", "sub/requirements-dev.txt", "sub/requirements/base.txt"):
+            with self.subTest(path=path):
+                self.assertTrue(self.matches(path))
 
     def test_unrelated_txt_files_ignored(self):
         """Test that unrelated `.txt` files, a `requirements.in` source, and names without a hyphen do not match."""

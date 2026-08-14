@@ -37,7 +37,7 @@ Develop test-first, in small steps, so I can steer.
 
 While doing TDD, keep a numbered list of candidate tests (T1, T2, ...) and their implementation status (todo/pass/fail). No test is dropped from the list before every test on it passes, unless I explicitly tell you to drop one.
 
-For a new feature, bug fix, task, or increment, prepare the cycle by adding at most five candidate tests to the list and let me choose which to start with. A cleanup driven by the findings of a tool (SonarCloud, a linter) or of a review is a task like any other: group the findings, say which of them change behaviour, and let me choose which ones a test has to drive before you start fixing.
+For a new feature, bug fix, task, or increment, prepare the cycle by adding at most five candidate tests to the list and let me choose which to start with. A cleanup driven by the findings of a tool (SonarCloud, a linter) or of a review is a task like any other: group the findings, say which of them change behaviour, and let me choose which ones a test has to drive before you start fixing. The list of findings is the increment, however many cycles it takes, so the increment review comes once the list is done rather than after each finding.
 
 Each cycle consists of the following three steps:
 

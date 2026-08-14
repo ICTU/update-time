@@ -39,9 +39,7 @@ class GetChangesTest(LoggingTestCase):
 
         The changelog heuristics make several requests off one release (the PyPI metadata, then a changelog URL or
         GitHub releases); the shared response returns the next JSON payload on each `.json()` and the same text and
-        status for all of them. Since a failing status fails the PyPI metadata request too, which leaves the
-        heuristics with nothing to examine, a test that needs one request to fail and another to succeed uses
-        `create_mock_response_per_url`.
+        status for all of them.
         """
         ok = status_code < HTTPStatus.BAD_REQUEST
         response = mock_response(text=text, status_code=status_code, ok=ok, headers={"Content-Type": "text/text"})
@@ -49,10 +47,7 @@ class GetChangesTest(LoggingTestCase):
         mock_get.return_value = response
 
     def create_mock_response_per_url(self, mock_get: Mock, metadata: dict, unreachable_url: str) -> None:
-        """Point the mock requests.get at the release metadata, answering the unreachable URL with an HTTP error.
-
-        The requests are told apart, so the PyPI metadata is still fetched when the other URL fails.
-        """
+        """Point the mock requests.get at the release metadata, answering the unreachable URL with an HTTP error."""
         unreachable = mock_response(status_code=HTTPStatus.NOT_FOUND, ok=False)
         reachable = mock_response(metadata, status_code=HTTPStatus.OK, ok=True)
         mock_get.side_effect = lambda url, **_kwargs: unreachable if url == unreachable_url else reachable
@@ -167,7 +162,7 @@ class GetChangesTest(LoggingTestCase):
         self.assertEqual(get_changes("package-6", "1.1"), changelog)
 
     def test_github_url_in_description_that_has_no_changelog(self, mock_get: Mock):
-        """Test that the GitHub URL in the description is used to get the changelog."""
+        """Test that a GitHub release without a body yields no changelog."""
         github_url = "https://github.com/org/baz"
         self.create_mock_response(
             mock_get,

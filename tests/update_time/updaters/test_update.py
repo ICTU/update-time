@@ -75,20 +75,13 @@ class UpdateDependenciesTest(unittest.TestCase):
 @patch("os.chdir", Mock())
 @patch("subprocess.run")
 class UpdateMainTest(unittest.TestCase):
-    """Unit tests for the main function.
-
-    `main()` refuses to run outside a git repository, so the tests that let it proceed patch the check to report
-    inside-a-repository (`run_main` does this for the tests that go through it); the gating tests at the end override
-    it to exercise the refusal and the --force override.
-    """
+    """Unit tests for the main function."""
 
     def run_main(self, mock_run: Mock, *argv: str, inside_git: bool = True) -> tuple[int, dict[str, str]]:
         """Run `main()` with the given CLI arguments and return the environment it exported for the subprocesses.
 
-        A successful subprocess run is mocked, and the environment is cleared and restored around the call. The
-        returned snapshot is taken while main's exports (cooldown, log level, excluded paths) are still in place,
-        so a caller can assert on them even though `patch.dict` restores the real environment afterwards. Tests
-        supply the `os.chdir`, `Path.exists`, and `get_logger` patches they need via decorators or a `with` block.
+        The returned snapshot is taken while main's exports (cooldown, log level, excluded paths) are still in place,
+        so a caller can assert on them even though `patch.dict` restores the real environment afterwards.
         """
         mock_run.return_value = Mock(returncode=0)
         with (
@@ -135,21 +128,14 @@ class UpdateMainTest(unittest.TestCase):
         self.assertEqual(environment[ALLOW_HASH_DRIFT.name], "1")
 
     def test_main_passes_ignored_vulnerabilities_to_subprocesses(self, mock_run: Mock):
-        """Test that main exports the advisories to ignore so the updater subprocesses inherit them.
-
-        They travel sorted, since the advisories are a set and so have no order of their own.
-        """
+        """Test that main exports the advisories to ignore so the updater subprocesses inherit them."""
         advisories = "GHSA-2gwj-7jmv-h26r,CVE-2022-28346"
         exit_code, environment = self.run_main(mock_run, "--ignore-vulnerability", advisories)
         self.assertEqual(exit_code, 0)
         self.assertEqual(environment[IGNORE_VULNERABILITIES.name], "CVE-2022-28346,GHSA-2gwj-7jmv-h26r")
 
     def test_main_passes_no_ignored_vulnerabilities_by_default(self, mock_run: Mock):
-        """Test that main exports an empty variable when --ignore-vulnerability is not given.
-
-        Exported whether or not the option was passed, so a value left in the environment cannot reach the
-        subprocesses as if the run had asked for it.
-        """
+        """Test that main exports an empty variable when --ignore-vulnerability is not given."""
         exit_code, environment = self.run_main(mock_run)
         self.assertEqual(exit_code, 0)
         self.assertEqual(environment[IGNORE_VULNERABILITIES.name], "")

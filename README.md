@@ -404,42 +404,6 @@ By default the marker holds a reference back from version updates, the [stalenes
 
 So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet or its version was withdrawn, `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version, and `# update-time: ignore[yanked]` does the same for a yank you have decided to live with. `# update-time: ignore[vulnerable]` silences the vulnerability warning for one you have assessed, while the reference keeps updating. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
 
-A yank can only be observed where the dependency's source reports one, so of the references that accept a marker, `ignore[yanked]` has something to hold back on a `requirements.txt` pin and on a jsDelivr URL (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so Update-time logs it as redundant at `WARNING`:
-
-```console
-WARNING Redundant update-time marker ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept
-```
-
-A `requirements.txt` requirement that pins no exact version gets a warning of its own. PyPI does report yanks, but a yank is about the version a reference is left on, and such a requirement pins none.
-
-```console
-WARNING Redundant update-time marker ignore[yanked] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a yank
-```
-
-The `vulnerable` scope tells the same story: of the references that accept a marker, only a `requirements.txt` pin and a jsDelivr URL are looked up at OSV (see [Vulnerable dependencies](#-vulnerable-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry, every form of the scope is reported as redundant — `ignore[vulnerable]` on its own, one naming an advisory, and one setting a risk level alike:
-
-```console
-WARNING Redundant update-time marker ignore[vulnerable] for python in Dockerfile:2: this dependency's source reports no vulnerabilities
-```
-
-A requirement that pins no exact version is reported here too, for the same reason: an advisory is matched against a version, and such a requirement pins none.
-
-```console
-WARNING Redundant update-time marker ignore[vulnerable] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a vulnerability
-```
-
-The `stale` scope tells the same story, in both its forms — the bare scope and a threshold — for a reference whose source reports no publication date to measure staleness against. [Setting a staleness threshold](#setting-a-staleness-threshold) names the three kinds of reference that get the warning.
-
-A bare `# update-time: ignore` is reported as redundant for none of these three scopes, wherever it sits. It queries no source at all, and a marker is only judged against what a source answered.
-
-A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — is logged at `WARNING` as an invalid item:
-
-```console
-WARNING Invalid 'stlae' in the update-time marker for python in Dockerfile:2; leaving the reference unchanged
-```
-
-The reference is left as it is, because an item Update-time cannot read may have been meant to bound the update, so applying one would be guessing. The checks still run, since that item is never read as silencing a warning: an unreadable marker holds back what Update-time would write, never what it would tell you. Every item beside it that Update-time does read applies as written, so `ignore[stale, stlae]` still silences the staleness warning. Once the marker is corrected, the reference is updated as usual.
-
 #### Setting a staleness threshold
 
 `ignore[stale]` silences the staleness warning altogether. To keep the warning but on a different schedule, give the scope a number of days: `# update-time: ignore[stale<90]` warns once that reference's newest release is more than 90 days old, and is a per-reference `--stale-after 90`. Use it for a critical dependency you want to hear about early, or for a low-churn library that shouldn't be flagged for years:
@@ -551,6 +515,46 @@ WARNING Incorrect 'vulnerable>=high' in the update-time marker for django in doc
 ```
 
 A level must be one of `low`, `moderate`, `high`, and `critical`, spelled in lower case, so `ignore[vulnerable<hgih]` is reported as invalid and leaves the reference unchanged. `none` is a value for `--warn-vulnerability-level` rather than a level, so it is reported as invalid too: to switch the warning off for one reference, write `ignore[vulnerable]`. An unreadable level is judged before the direction, so `ignore[vulnerable>=hgih]` is reported as an unreadable level rather than as an inverted comparison. Use a single level per reference; the result of pairing one with another is undefined.
+
+#### Redundant markers
+
+A yank can only be observed where the dependency's source reports one — of the references that accept a marker, `requirements.txt` pins and jsDelivr URLs (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so Update-time logs it as redundant at `WARNING`:
+
+```console
+WARNING Redundant update-time marker ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept
+```
+
+A `requirements.txt` requirement that pins no exact version is reported too: PyPI does report yanks, but a yank is about the version a reference is left on, and such a requirement pins none.
+
+```console
+WARNING Redundant update-time marker ignore[yanked] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a yank
+```
+
+A vulnerability can only be reported where OSV holds advisories for the dependency — of the references that accept a marker, `requirements.txt` pins and jsDelivr URLs (see [Vulnerable dependencies](#-vulnerable-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so it is reported as redundant in all its forms:
+
+```console
+WARNING Redundant update-time marker ignore[vulnerable] for python in Dockerfile:2: this dependency's source reports no vulnerabilities
+```
+
+A requirement that pins no exact version is reported here too: an advisory is matched against a version, and such a requirement pins none.
+
+```console
+WARNING Redundant update-time marker ignore[vulnerable] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a vulnerability
+```
+
+In all its forms, the `stale` scope is reported as redundant for a reference whose source reports no publication date to measure staleness against. [Setting a staleness threshold](#setting-a-staleness-threshold) names the three kinds of reference that get that warning.
+
+A bare `# update-time: ignore` is never reported as redundant: it names no scope, so a warning would have no directive to name. A scope or item written beside it is reported though, so `# update-time: ignore ignore[yanked]` on a Docker image reports the `ignore[yanked]` as redundant.
+
+#### Invalid markers
+
+A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — is logged at `WARNING` as an invalid item:
+
+```console
+WARNING Invalid 'stlae' in the update-time marker for python in Dockerfile:2; leaving the reference unchanged
+```
+
+The reference is left as it is, because an item Update-time cannot read may have been meant to bound the update, so applying one would be guessing. The checks still run, since that item is never read as silencing a warning: an unreadable marker holds back what Update-time would write, never what it would tell you. Every item beside it that Update-time does read applies as written, so `ignore[stale, stlae]` still silences the staleness warning.
 
 ### Adopting hash drift
 
@@ -669,7 +673,7 @@ A recognised line means the marker was read and understood. Whatever the marker 
 DEBUG Ignoring the staleness warning for python in Dockerfile:2 (update-time: ignore[stale])
 ```
 
-A hold-back line means the marker actually suppressed something: an `ignore[yanked]` on a version that was never yanked produces none. A missing hold-back line therefore tells you the marker did nothing this run. Since the marker is case-sensitive, a typo (or wrong case) in the `# update-time:` prefix or in a verb produces no `Recognised` line at all, and the reference is updated as usual. A typo inside the brackets produces no `Recognised` line either, but is logged at `WARNING` as an invalid item (see [Holding a reference back](#holding-a-reference-back)).
+A hold-back line means the marker actually suppressed something: an `ignore[yanked]` on a version that was never yanked produces none. A missing hold-back line therefore tells you the marker did nothing this run. Since the marker is case-sensitive, a typo (or wrong case) in the `# update-time:` prefix or in a verb produces no `Recognised` line at all, and the reference is updated as usual. A typo inside the brackets produces no `Recognised` line either, but is logged at `WARNING` as an invalid item (see [Invalid markers](#invalid-markers)).
 
 ## 📖 Details per dependency type
 

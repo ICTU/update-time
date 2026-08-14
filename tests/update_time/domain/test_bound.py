@@ -52,15 +52,15 @@ class VersionBoundTest(unittest.TestCase):
         self.assertFalse(version_bound.keeps(Version("3.13"), "3.12"))
         self.assertTrue(version_bound.keeps(Version("3.12.9"), "3.12"))
 
-    def test_str_of_allow_bound(self):
-        """Test that an allow bound renders as the marker directive that expresses it."""
-        self.assertEqual(str(VersionBound(Verb.ALLOW, SpecifierSet("<3.13"), item="update<3.13")), "allow[update<3.13]")
-
-    def test_str_of_ignore_bound(self):
-        """Test that an ignore bound renders as the marker directive that expresses it."""
-        self.assertEqual(
-            str(VersionBound(Verb.IGNORE, SpecifierSet(">=3.13"), item="update>=3.13")), "ignore[update>=3.13]"
+    def test_str_renders_the_verb_and_the_item(self):
+        """Test that a bound renders as the marker directive that expresses it, whichever verb it carries."""
+        cases = (
+            (VersionBound(Verb.ALLOW, SpecifierSet("<3.13"), item="update<3.13"), "allow[update<3.13]"),
+            (VersionBound(Verb.IGNORE, SpecifierSet(">=3.13"), item="update>=3.13"), "ignore[update>=3.13]"),
         )
+        for version_bound, expected in cases:
+            with self.subTest(verb=version_bound.verb):
+                self.assertEqual(str(version_bound), expected)
 
     def test_str_of_no_bound(self):
         """Test that the keep-all NO_BOUND renders as the no-op allow[update] directive."""
@@ -180,34 +180,30 @@ class ParseLevelBoundTest(unittest.TestCase):
         self.assertIsNone(parse_bound(Verb.ALLOW, "major"))
 
     def test_bare_update(self):
-        """Test that a bare `update` item parses as the keep-all bound.
-
-        The marker parser never gets here — it interprets a bare `update` scope before trying the bounds — but as
-        an item it is a specifier bound with an empty specifier, which is exactly what NO_BOUND is.
-        """
-        self.assertEqual(NO_BOUND, parse_bound(Verb.ALLOW, "update"))
+        """Test that a bare `update` item parses as the keep-all bound."""
+        self.assertEqual(parse_bound(Verb.ALLOW, "update"), NO_BOUND)
 
 
 class LevelBoundTest(unittest.TestCase):
     """Unit tests for the level-based version bounds."""
 
-    def test_str_of_allow_bound(self):
-        """Test that an allow level bound renders as the marker directive that expresses it."""
-        self.assertEqual(
-            str(VersionBound(Verb.ALLOW, level=UpdateLevel.MINOR, item="minor-update")), "allow[minor-update]"
-        )
+    def test_ignore_keeps_the_line_at_the_named_level(self):
+        """Test that `ignore[<level>-update]` keeps the current line at that level and drops the rest.
 
-    def test_str_of_ignore_bound(self):
-        """Test that an ignore level bound renders as the marker directive that expresses it."""
-        self.assertEqual(
-            str(VersionBound(Verb.IGNORE, level=UpdateLevel.MINOR, item="minor-update")), "ignore[minor-update]"
+        The two minor-level cases anchor at different versions, pinning that the bound ratchets along as the
+        reference advances.
+        """
+        cases = (
+            (UpdateLevel.MAJOR, "3.12.1", "3.99.0", "4.0.0"),
+            (UpdateLevel.MINOR, "3.12.1", "3.12.9", "3.13.0"),
+            (UpdateLevel.MINOR, "3.13.0", "3.13.1", "3.14.0"),
+            (UpdateLevel.PATCH, "3.12.1", "3.12.1", "3.12.2"),
         )
-
-    def test_ignore_major_keeps_the_major_line(self):
-        """Test that `ignore[major-update]` keeps updates within the current major line and drops the rest."""
-        version_bound = VersionBound(Verb.IGNORE, level=UpdateLevel.MAJOR)
-        self.assertTrue(version_bound.keeps(Version("3.99.0"), "3.12.1"))
-        self.assertFalse(version_bound.keeps(Version("4.0.0"), "3.12.1"))
+        for level, current_version, kept, dropped in cases:
+            with self.subTest(level=level, current_version=current_version):
+                version_bound = VersionBound(Verb.IGNORE, level=level)
+                self.assertTrue(version_bound.keeps(Version(kept), current_version))
+                self.assertFalse(version_bound.keeps(Version(dropped), current_version))
 
     def test_allow_minor_is_the_complement_of_ignore_major(self):
         """Test that `allow[minor-update]` keeps exactly what `ignore[major-update]` keeps."""
@@ -220,21 +216,9 @@ class LevelBoundTest(unittest.TestCase):
                     ignore_major.keeps(Version(candidate), "3.12.1"),
                 )
 
-    def test_ignore_minor_keeps_the_minor_line(self):
-        """Test that `ignore[minor-update]` keeps updates within the current minor line and drops the rest."""
-        version_bound = VersionBound(Verb.IGNORE, level=UpdateLevel.MINOR)
-        self.assertTrue(version_bound.keeps(Version("3.12.9"), "3.12.1"))
-        self.assertFalse(version_bound.keeps(Version("3.13.0"), "3.12.1"))
-
     def test_allow_major_keeps_every_update(self):
         """Test that `allow[major-update]` keeps every update (`redundancy` flags it as having no effect)."""
         self.assertTrue(VersionBound(Verb.ALLOW, level=UpdateLevel.MAJOR).keeps(Version("99.0"), "3.12.1"))
-
-    def test_ignore_patch_keeps_only_the_current_release(self):
-        """Test that `ignore[patch-update]` pins the current release exactly, dropping every update."""
-        version_bound = VersionBound(Verb.IGNORE, level=UpdateLevel.PATCH)
-        self.assertTrue(version_bound.keeps(Version("3.12.1"), "3.12.1"))
-        self.assertFalse(version_bound.keeps(Version("3.12.2"), "3.12.1"))
 
     def test_missing_components_count_as_zero(self):
         """Test that a component the current version is missing counts as zero, as version comparison pads it."""
@@ -259,12 +243,6 @@ class LevelBoundTest(unittest.TestCase):
     def test_unparsable_current_version_keeps_every_update(self):
         """Test that a current version without a parsable version can't anchor the bound, leaving updates unbounded."""
         self.assertTrue(VersionBound(Verb.IGNORE, level=UpdateLevel.MINOR).keeps(Version("99.0"), "not-a-version"))
-
-    def test_reanchors_as_the_reference_advances(self):
-        """Test that the bound ratchets along: after a migration it blocks the next level from the new version."""
-        version_bound = VersionBound(Verb.IGNORE, level=UpdateLevel.MINOR)
-        self.assertFalse(version_bound.keeps(Version("3.13.0"), "3.12.1"))
-        self.assertTrue(version_bound.keeps(Version("3.13.1"), "3.13.0"))
 
     def test_redundancy_of_level_bounds(self):
         """Test that a level bound is classified by its anchored equivalent (see the logger for the reporting)."""

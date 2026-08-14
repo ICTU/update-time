@@ -258,8 +258,8 @@ class UpdateGitHubActionsTest(LoggingTestCase):
 class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     """Unit tests for the actions updater resolving versions through the source rather than through a test double.
 
-    The suite above patches the source's getter, which carries none of the registrations the real one does, so the
-    cases that turn on those live here.
+    The suite above patches the source's getter, which is not registered as publication-date-reporting the way the
+    real one is.
     """
 
     @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA))

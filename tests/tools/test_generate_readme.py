@@ -21,11 +21,7 @@ class PlaceholderTest(unittest.TestCase):
     """Unit tests that the template and the samples filling it name the same placeholders."""
 
     def test_placeholders_and_samples_agree(self):
-        """Test that every placeholder in the template has a sample, and every sample is named by the template.
-
-        A placeholder with no sample survives into the README as its own literal text, and a sample the template
-        never names is generated for nobody. Neither is reported anywhere else.
-        """
+        """Test that every placeholder in the template has a sample, and every sample is named by the template."""
         in_template = set(_PLACEHOLDER.findall(_TEMPLATE.read_text()))
         filled = set(sample_log_lines()) | _FILLED_BY_RENDER
         self.assertEqual(in_template, filled)
@@ -36,11 +32,7 @@ class HelpOutputTest(unittest.TestCase):
     """Unit tests for the command-line help the README quotes."""
 
     def test_help_is_wrapped_and_plain(self):
-        """Test that the CLI's own help comes back fitting 80 columns, with none of the escape sequences colour adds.
-
-        The README embeds the help verbatim, so a wider terminal would rewrite it and a colouring one would leave
-        escape sequences in the file.
-        """
+        """Test that the CLI's own help comes back fitting 80 columns, with none of the escape sequences colour adds."""
         help_output = _help_output()
         self.assertIn("usage: update-time", help_output)
         self.assertLessEqual(max(len(line) for line in help_output.splitlines()), 80)
@@ -107,11 +99,7 @@ class MainTest(unittest.TestCase):
     CONTENT = "the generated content"
 
     def generated_file(self, on_disk: str | None) -> Mock:
-        """Return a mock generated file holding the given content, or none at all when it does not exist yet.
-
-        Reading a file that does not exist raises, as it does of a real path, so a caller that reads one without
-        asking whether it exists fails rather than quietly seeing no content.
-        """
+        """Return a mock generated file that holds the given content, or that raises when read if there is none."""
         exists = on_disk is not None
         read_text = Mock(return_value=on_disk) if exists else Mock(side_effect=FileNotFoundError)
         path = Mock(is_file=Mock(return_value=exists), read_text=read_text)

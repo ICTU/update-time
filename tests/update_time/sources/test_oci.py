@@ -28,10 +28,7 @@ class IsDockerHubImageTest(unittest.TestCase):
                 self.assertTrue(is_docker_hub_image(image))
 
     def test_other_registry_images(self):
-        """Test that images with a registry host as their first path component are not Docker Hub images.
-
-        A host is recognised by a dot, a colon, the name `localhost`, or an uppercase character.
-        """
+        """Test that images with a registry host as their first path component are not Docker Hub images."""
         for image in ("registry.gitlab.com/group/image", "gcr.io/proj/image", "localhost:5000/i", "Host/image"):
             with self.subTest(image=image):
                 self.assertFalse(is_docker_hub_image(image))
@@ -41,10 +38,7 @@ class TagTest(unittest.TestCase):
     """Unit tests for tags."""
 
     def test_sort_tag(self):
-        """Test that a tag sorts below one with a higher version, or a more precise version of the same release.
-
-        A tag's main version decides, and its suffix's version when the main versions are equal.
-        """
+        """Test that a tag sorts below one with a higher version, or a more precise version of the same release."""
         lower_and_higher = (
             ("1", "2"),
             ("1.3", "1.4"),
@@ -154,24 +148,14 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertEqual(get_latest_tag("alias-bounded", "22.15.0", version_bound, COOLDOWN.default).version, "22.15.0")
 
     def test_equal_version_alias_tag_does_not_lend_its_digest(self):
-        """Test that the current spelling keeps its own digest, not a co-listed alias tag's differing digest.
-
-        The alias `22.15` carries DIGEST2 and the exact `22.15.0` carries DIGEST1, and the alias is listed first.
-        Were the tie broken by listing order, the alias would resolve first and lend its digest to the `22.15.0`
-        name. The tag ordering prefers the more precise spelling instead, so its own digest is pinned.
-        """
+        """Test that the current spelling keeps its own digest, not a co-listed alias tag's differing digest."""
         self.requests.side_effect = mock_docker_registry(docker_tag("22.15", DIGEST2), docker_tag("22.15.0", DIGEST1))
         latest = get_latest_tag("alias", "22.15.0", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "22.15.0")
         self.assertEqual(latest.sha, DIGEST1)
 
     def test_update_to_a_version_listed_under_two_spellings_keeps_the_precise_one(self):
-        """Test that updating to a version the registry lists twice adopts the precise spelling, not the alias.
-
-        The registry lists both `22.16` and `22.16.0` for the new version, with the shorter alias first; the tag
-        ordering prefers the more precise spelling, so a `22.15.0` pin advances to `22.16.0` without losing a
-        component.
-        """
+        """Test that updating to a version the registry lists twice adopts the precise spelling, not the alias."""
         self.requests.side_effect = mock_docker_registry(docker_tag("22.16", DIGEST1), docker_tag("22.16.0", DIGEST2))
         latest = get_latest_tag("two-spellings", "22.15.0", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "22.16.0")
@@ -311,11 +295,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertEqual(datetime.fromisoformat(recent), latest.newest_published)  # ...but still defines staleness.
 
     def test_newest_published_ignores_version_bound(self):
-        """Test that newest_published is the newest compatible tag's push date even when a bound excludes that tag.
-
-        A version bound narrows the update only, not the staleness check, so a reference held on an old line by a
-        bound is still measured against the image's newest push overall.
-        """
+        """Test that newest_published is the newest compatible tag's push date even when a bound excludes that tag."""
         old = (datetime.now(UTC) - timedelta(days=400)).isoformat()
         newest = (datetime.now(UTC) - timedelta(days=10)).isoformat()
         self.requests.side_effect = mock_docker_registry(

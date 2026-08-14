@@ -131,11 +131,7 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.new_version.assert_not_called()
 
     def test_new_version_sorting_lower_than_current(self):
-        """Test the regression where a newer version sorts lexicographically lower than the current one.
-
-        get_new_version returns the highest version (compared as a packaging.Version), so e.g. "3.10" must be
-        applied over "3.9" even though the string "3.10" < "3.9".
-        """
+        """Test the regression where a newer version sorts lexicographically lower than the current one."""
         new_lines = self.rewrite(["line1", "image: python:3.9"], _REGEXP, new_version_getter("3.10"))
         self.assertEqual(new_lines, ["line1", "image: python:3.10"])
         self.logger.new_version.assert_called_with(
@@ -143,11 +139,7 @@ class UpdateReferencesTest(unittest.TestCase):
         )
 
     def test_version_from_source_applied_even_when_lower(self):
-        """Test that any differing version the getter returns is applied, trusting the source.
-
-        The engine no longer guards against downgrades itself; the source functions decide the target version (the
-        real ones return the maximum). This lets update_node_engine sync the Node engine down to a downgraded image.
-        """
+        """Test that any differing version the getter returns is applied, trusting the source."""
         new_lines = self.rewrite(["line1", "image: python:3.14"], _REGEXP, new_version_getter("3.13"))
         self.assertEqual(new_lines, ["line1", "image: python:3.13"])
         self.logger.new_version.assert_called_with(self.reference(line=2), DependencyVersion(version="3.13"))
@@ -163,7 +155,7 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_preceding_ignore_marker_pins_next_line(self):
         """Test that a standalone `# update-time: ignore` comment pins the reference on the line below it.
 
-        The marker comment itself carries no reference, so only the pinned reference below it is logged as ignored.
+        The marker comment itself carries no reference, so only the reference below it is logged as ignored.
         """
         get_new_version = Mock()
         lines = ["# update-time: ignore", "image: python:3.14"]
@@ -177,6 +169,56 @@ class UpdateReferencesTest(unittest.TestCase):
         new_lines = self.rewrite(lines, _REGEXP, new_version_getter("3.15"))
         self.assertEqual(new_lines, ["image: a:3.14  # update-time: ignore", "image: b:3.15"])
         self.logger.ignored.assert_called_once_with("a", BARE_IGNORE, Location(self.path, 1))
+
+    def test_inverted_item_reported_beside_a_marker_holding_every_check_back(self):
+        """Test that an inverted comparison beside a bare `ignore` is reported, with no source queried for it."""
+        get_new_version = Mock()
+        lines = ["image: python:3.14  # update-time: ignore ignore[stale>=90]"]
+        self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
+        self.logger.inverted_stale_item.assert_called_once_with(self.reference(), "stale>=90")
+        get_new_version.assert_not_called()
+
+    def test_a_dead_comparison_item_is_reported_however_the_reference_is_held_back(self):
+        """Test that an item a source cannot answer is reported, a bare `ignore` beside it included."""
+        held_back = "ignore[update] ignore[stale] ignore[yanked]"
+        cases = {
+            "a cooldown beside the scopes the source answers": (
+                f"{held_back} ignore[cooldown<30]",
+                self.logger.redundant_cooldown_item,
+            ),
+            "a cooldown beside a bare ignore": ("ignore ignore[cooldown<30]", self.logger.redundant_cooldown_item),
+            "a threshold beside a bare ignore": ("ignore ignore[stale<90]", self.logger.redundant_stale_source),
+            "a level beside a bare ignore": ("ignore ignore[vulnerable<high]", self.logger.redundant_vulnerable_source),
+        }
+        for case, (directive, reported) in cases.items():
+            with self.subTest(case=case):
+                self.logger.reset_mock()
+                lines = [f"image: python:3.14  # update-time: {directive}"]
+                self.assertEqual(self.rewrite(lines, _REGEXP, new_version_getter("3.15")), lines)
+                reported.assert_called_once_with(self.reference(), ANY)
+
+    def test_only_a_scope_the_marker_spells_out_is_reported_redundant(self):
+        """Test that a scope the marker spells out is reported redundant, where one a bare `ignore` implies is not."""
+        every_scope = "ignore[update] ignore[stale] ignore[yanked] ignore[vulnerable]"
+        cases = {
+            "spelled out": (every_scope, True, True),
+            "implied by a bare ignore": ("ignore", False, False),
+            "one spelled out beside a bare ignore": ("ignore ignore[yanked]", True, False),
+        }
+        for case, (directive, yanked, stale) in cases.items():
+            with self.subTest(case=case):
+                self.logger.reset_mock()
+                lines = [f"image: python:3.14  # update-time: {directive}"]
+                self.assertEqual(self.rewrite(lines, _REGEXP, new_version_getter("3.15")), lines)
+                self.assertEqual(self.logger.redundant_yank_scope.called, yanked)
+                self.assertEqual(self.logger.redundant_stale_source.called, stale)
+
+    def test_a_redundant_item_is_reported_under_the_directive_that_set_it(self):
+        """Test that the warning names the item the reader wrote, not the scope a bare `ignore` beside it implies."""
+        lines = ["image: python:3.14  # update-time: ignore ignore[stale<90]"]
+        self.assertEqual(self.rewrite(lines, _REGEXP, new_version_getter("3.15")), lines)
+        reported = self.logger.redundant_stale_source.call_args.args[1]
+        self.assertEqual(reported.stale_directive, "ignore[stale<90]")
 
     def test_inline_slash_slash_marker_pins_line(self):
         """Test that a `//`-style ignore marker (as JSONC/devcontainer.json uses) also pins a line inline."""
@@ -204,8 +246,8 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_ignore_update_and_stale_still_checks_for_a_yank(self):
         """Test that a scope the marker leaves live keeps the reference queried, so its check still runs.
 
-        `ignore[update]` and `ignore[stale]` silence two of the three scopes; the yank check is not held back, so
-        the source is still queried for it rather than the reference being skipped outright.
+        `ignore[update]` and `ignore[stale]` silence two of the three scopes the gate reads; the yank check is not
+        held back, so the source is still queried for it rather than the reference being skipped outright.
         """
         lines = ["image: python:3.14  # update-time: ignore[update] ignore[stale]"]
         self.assertEqual(self.rewrite(lines, _REGEXP, new_version_getter("3.15")), lines)  # version left as-is
@@ -228,6 +270,15 @@ class UpdateReferencesTest(unittest.TestCase):
         reference = Reference("python", "3.14", Location(self.path, 1))
         self.logger.inverted_stale_item.assert_called_once_with(reference, "stale>=90")
         self.logger.ignored.assert_not_called()  # the update is not held back, so nothing is logged as ignored
+
+    def test_inverted_item_reported_although_the_reference_is_held_back(self):
+        """Test that an inverted comparison is reported beside the three scopes that skip the source."""
+        get_new_version = Mock()
+        scopes = "ignore[update] ignore[stale] ignore[yanked]"
+        lines = [f"image: python:3.14  # update-time: {scopes} ignore[stale>=90]"]
+        self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
+        self.logger.inverted_stale_item.assert_called_once_with(self.reference(), "stale>=90")
+        get_new_version.assert_not_called()  # The warning costs no request, the item being unreadable on its own.
 
     def test_allow_hash_drift_marker_adopts_new_digest(self):
         """Test that an inline `allow[hash-drift]` marker re-pins a re-pushed tag's digest instead of warning."""
@@ -296,11 +347,7 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version.assert_called_once_with("python", "3.12", NO_BOUND, 30)
 
     def test_inverted_cooldown_marker_reports_and_still_updates(self):
-        """Test that an inverted `cooldown` marker is reported and the reference updated under the global cooldown.
-
-        Unlike an item Update-time cannot read, which leaves the reference alone, an inverted comparison is one it
-        understood and could not honour, so it warns and lets the update through.
-        """
+        """Test that an inverted `cooldown` marker is reported and the reference updated under the global cooldown."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.12.9"))
         lines = ["image: python:3.12  # update-time: ignore[cooldown>=30]"]
         new_lines = self.rewrite(lines, _REGEXP, get_new_version)
@@ -410,11 +457,7 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.digest_drift.assert_called_once()  # the mistyped drift opt-in is not, so the drift only warns
 
     def assert_invalid_bracket_item(self, directive: str, bracket_item: str) -> None:
-        """Assert that the bracket item is logged as invalid, leaving the reference unchanged but still checked.
-
-        An item Update-time cannot read may have been meant to bound the update, so the line is left as it is; it
-        may equally have been meant to silence a warning, which is why the source is still asked about it.
-        """
+        """Assert that the bracket item is logged as invalid, leaving the reference unchanged but still checked."""
         self.logger.reset_mock()
         get_new_version = Mock(return_value=DependencyVersion(version="3.12.1"))
         lines = [f"image: python:3.12.1  # update-time: {directive}"]
@@ -478,6 +521,13 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version.assert_not_called()  # Every aspect is held back, so the source is not even queried.
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
+    def test_a_marker_naming_update_stale_and_yanked_skips_the_source(self):
+        """Test that the three scopes the gate reads skip the source without a `vulnerable` scope beside them."""
+        get_new_version = Mock()
+        lines = ["image: python:3.12  # update-time: ignore[update] ignore[stale] ignore[yanked]"]
+        self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
+        get_new_version.assert_not_called()
+
     def test_unrecognised_item_in_comma_list_is_logged(self):
         """Test that an unrecognised item in a comma list warns and leaves the reference unchanged."""
         get_new_version = new_version_getter("3.12")
@@ -501,6 +551,19 @@ class UpdateReferencesTest(unittest.TestCase):
         self.rewrite(lines, _REGEXP, new_version_getter("3.12"))
         reference = Reference("python", "3.12", Location(self.path, 1))
         self.logger.warn_if_redundant_bound.assert_called_once_with(reference, marker)
+
+    def test_redundant_bound_is_warned_although_the_reference_is_held_back(self):
+        """Test that a bound is judged for redundancy beside the three scopes that skip the source."""
+        get_new_version = Mock()
+        scopes = "ignore[update] ignore[stale] ignore[yanked]"
+        lines = [f"image: python:3.12  # update-time: {scopes} allow[update>=3.12]"]
+        self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
+        marker = Marker(
+            ignore_update=True, ignore_stale=True, ignore_yanked=True, version_bound=bound(Verb.ALLOW, "update>=3.12")
+        )
+        reference = Reference("python", "3.12", Location(self.path, 1))
+        self.logger.warn_if_redundant_bound.assert_called_once_with(reference, marker)
+        get_new_version.assert_not_called()
 
     def test_allow_update_without_specifier_is_a_noop(self):
         """Test that a bare `allow[update]` (no specifier) applies the update with no bound (the keep-all NO_BOUND)."""
@@ -534,12 +597,7 @@ class UpdateReferencesTest(unittest.TestCase):
 
 
 class MarkerForwardingTest(unittest.TestCase):
-    """Unit test that the rewrite engine hands a matched reference's parsed marker to the logger.
-
-    How `parse_marker` captures the text and how `raw_directives` filters it are covered in `test_marker`; this checks
-    only the wiring — that the engine forwards the marker carrying that text to `recognised_marker`, the DEBUG line
-    the README points at for confirming a marker was recognised.
-    """
+    """Unit test that the rewrite engine hands a matched reference's parsed marker to the logger."""
 
     def test_engine_forwards_the_verbatim_marker(self):
         """Test that the marker reaching `recognised_marker` carries its directives exactly as written."""
