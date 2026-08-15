@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.28 - 2026-08-15
+
 ### Added
 
 - Warn about a `stale` marker on a reference whose source reports no publication date to measure staleness against, instead of accepting it in silence. Closes [#221](https://github.com/ICTU/update-time/issues/221).
