@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.vulnerability import NO_RISK_LEVEL, RISK_LEVELS, VULNERABILITY_LEVEL
 from update_time.io.cli import parse_args
 from update_time.io.log import LOG_LEVEL
 
@@ -123,6 +124,23 @@ class CommandLineInterfaceTest(unittest.TestCase):
     def test_invalid_log_level(self):
         """Test that an invalid --log-level is rejected."""
         self.assert_rejected(["--log-level", "verbose"], "invalid choice")
+
+    def test_default_vulnerability_level(self):
+        """Test that the risk level to warn from defaults to the default vulnerability level."""
+        self.assertEqual(VULNERABILITY_LEVEL.default, self.parsed().vulnerability_level)
+
+    def test_vulnerability_level(self):
+        """Test that the --vulnerability-level option sets the risk level to warn from, lower-casing the value."""
+        self.assertEqual(self.parsed("--vulnerability-level", "HIGH").vulnerability_level, "high")
+
+    def test_invalid_vulnerability_level(self):
+        """Test that an invalid --vulnerability-level is rejected."""
+        self.assert_rejected(["--vulnerability-level", "hgih"], "invalid choice")
+
+    def test_help_enumerates_the_vulnerability_levels(self):
+        """Test that the help names every value --vulnerability-level accepts."""
+        levels = ",".join([*RISK_LEVELS, NO_RISK_LEVEL])
+        self.assertIn(f"--vulnerability-level {{{levels}}}", self.stdout_of("--help"))
 
     def test_default_exclude_path(self):
         """Test that no paths are excluded by default."""

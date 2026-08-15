@@ -9,7 +9,7 @@ from pathlib import Path
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.drift import ALLOW_HASH_DRIFT
 from update_time.domain.staleness import STALE_AFTER
-from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, WARN_VULNERABILITY_LEVEL
+from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
 from update_time.io.cli import parse_args
 from update_time.io.filesystem import EXCLUDE_PATHS, inside_git_repository
 from update_time.io.log import LOG_LEVEL, get_logger
@@ -86,7 +86,7 @@ def main() -> int:
     # the environment.
     COOLDOWN.set(args.cooldown)
     STALE_AFTER.set(args.stale_after)
-    WARN_VULNERABILITY_LEVEL.set(args.warn_vulnerability_level)
+    VULNERABILITY_LEVEL.set(args.vulnerability_level)
     IGNORE_VULNERABILITIES.set(args.ignore_vulnerability)
     LOG_LEVEL.set(args.log_level)
     ALLOW_HASH_DRIFT.set(args.allow_hash_drift)

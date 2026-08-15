@@ -80,7 +80,7 @@ update-time
 ```console
 $ update-time -h
 usage: update-time [-h] [-V] [--cooldown DAYS] [--stale-after DAYS]
-                   [--warn-vulnerability-level LEVEL]
+                   [--vulnerability-level {low,moderate,high,critical,none}]
                    [--ignore-vulnerability IDS] [--exclude-path PATHS]
                    [--allow-hash-drift] [--force]
                    [--log-level {DEBUG,INFO,WARNING,ERROR}]
@@ -113,16 +113,15 @@ options:
                         this many days; 0 disables the check, except for
                         references that set a threshold of their own with an #
                         update-time: ignore[stale<DAYS] marker (default: 365)
-  --warn-vulnerability-level LEVEL
+  --vulnerability-level {low,moderate,high,critical,none}
                         warn about a known vulnerability in the version a
                         dependency is pinned to when the advisory's risk level
-                        is at least this severe, one of low, moderate, high,
-                        critical; a vulnerability whose risk level cannot be
-                        read is always warned about. Pass none to switch the
-                        check off, which queries the advisory database not at
-                        all, except for references that set a level of their
-                        own with an # update-time: ignore[vulnerable<LEVEL]
-                        marker (default: low)
+                        is at least this severe; a vulnerability whose risk
+                        level cannot be read is always warned about. Pass none
+                        to switch the check off, which queries the advisory
+                        database not at all, except for references that set a
+                        level of their own with an # update-time:
+                        ignore[vulnerable<LEVEL] marker (default: low)
   --ignore-vulnerability IDS
                         comma-separated list of advisories to never warn
                         about, wherever in the scan they turn up, for example
@@ -369,9 +368,9 @@ The version checked is the one the run leaves the reference on: the new version 
 
 To silence one advisory across the whole scan, rather than on the one reference that carries a marker, pass `--ignore-vulnerability`, which takes a comma-separated list: `--ignore-vulnerability GHSA-2gwj-7jmv-h26r,CVE-2021-31542`. It names an advisory the way a marker does, so any identifier the vulnerability is known by will do, and what it silenced is logged at `DEBUG`. Where a reference's own marker silences the same advisory, the marker is the one reported.
 
-Every risk level is warned about by default. To hear only about the more severe ones, raise the threshold with `--warn-vulnerability-level`, for example `--warn-vulnerability-level high`. A vulnerability whose risk level Update-time cannot read is warned about whatever the threshold is, since leaving the vulnerabilities nobody has rated out of the warnings would hide exactly the ones nobody has looked at.
+Every risk level is warned about by default. To hear only about the more severe ones, raise the threshold with `--vulnerability-level`, for example `--vulnerability-level high`. A vulnerability whose risk level Update-time cannot read is warned about whatever the threshold is, since leaving the vulnerabilities nobody has rated out of the warnings would hide exactly the ones nobody has looked at.
 
-Looking a pin up sends its package name and version to OSV. Pass `--warn-vulnerability-level none` to switch the check off, which stops those requests altogether. A reference that sets a level of its own is still looked up though, since no command-line option overrides a marker (see [Setting a risk level](#setting-a-risk-level)).
+Looking a pin up sends its package name and version to OSV. Pass `--vulnerability-level none` to switch the check off, which stops those requests altogether. A reference that sets a level of its own is still looked up though, since no command-line option overrides a marker (see [Setting a risk level](#setting-a-risk-level)).
 
 Which dependencies are checked follows from what OSV can match a pinned version against:
 
@@ -494,13 +493,13 @@ The reference keeps updating, and every other advisory affecting the version it 
 
 #### Setting a risk level
 
-`ignore[vulnerable]` silences every vulnerability warning a reference gets. To keep the warnings but only from a given severity up, give the scope a risk level: `# update-time: ignore[vulnerable<high]` warns about that reference's `high` and `critical` vulnerabilities and stays quiet about its `low` and `moderate` ones, and is a per-reference `--warn-vulnerability-level high`. Use it for a dependency whose milder advisories you have assessed and decided not to act on:
+`ignore[vulnerable]` silences every vulnerability warning a reference gets. To keep the warnings but only from a given severity up, give the scope a risk level: `# update-time: ignore[vulnerable<high]` warns about that reference's `high` and `critical` vulnerabilities and stays quiet about its `low` and `moderate` ones, and is a per-reference `--vulnerability-level high`. Use it for a dependency whose milder advisories you have assessed and decided not to act on:
 
 ```text
 django==3.2.0  # update-time: ignore[vulnerable<high] (assessed the moderate ones, acting on high and worse)
 ```
 
-The level applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--warn-vulnerability-level` whatever that is set to, `--warn-vulnerability-level none` included: no command-line option overrides a marker, so switching the check off globally still leaves a reference with its own level looked up at OSV and warned about. As with the global level, a vulnerability whose risk level Update-time cannot read is warned about whatever the level in force, since leaving the vulnerabilities nobody has rated out of the warnings would hide exactly the ones nobody has looked at.
+The level applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--vulnerability-level` whatever that is set to, `--vulnerability-level none` included: no command-line option overrides a marker, so switching the check off globally still leaves a reference with its own level looked up at OSV and warned about. As with the global level, a vulnerability whose risk level Update-time cannot read is warned about whatever the level in force, since leaving the vulnerabilities nobody has rated out of the warnings would hide exactly the ones nobody has looked at.
 
 When none of the version's vulnerabilities falls below the level, Update-time reports the marker as holding nothing back, since a level that silences nothing is one the reference no longer needs:
 
@@ -514,7 +513,7 @@ WARNING Redundant update-time marker ignore[vulnerable<high] for django in docs/
 WARNING Incorrect 'vulnerable>=high' in the update-time marker for django in docs/requirements.txt:12: this comparison warns about the mild vulnerabilities and stays quiet about the severe ones, so it sets no risk level
 ```
 
-A level must be one of `low`, `moderate`, `high`, and `critical`, spelled in lower case, so `ignore[vulnerable<hgih]` is reported as invalid and leaves the reference unchanged. `none` is a value for `--warn-vulnerability-level` rather than a level, so it is reported as invalid too: to switch the warning off for one reference, write `ignore[vulnerable]`. An unreadable level is judged before the direction, so `ignore[vulnerable>=hgih]` is reported as an unreadable level rather than as an inverted comparison. Use a single level per reference; the result of pairing one with another is undefined.
+A level must be one of `low`, `moderate`, `high`, and `critical`, spelled in lower case, so `ignore[vulnerable<hgih]` is reported as invalid and leaves the reference unchanged. `none` is a value for `--vulnerability-level` rather than a level, so it is reported as invalid too: to switch the warning off for one reference, write `ignore[vulnerable]`. An unreadable level is judged before the direction, so `ignore[vulnerable>=hgih]` is reported as an unreadable level rather than as an inverted comparison. Use a single level per reference; the result of pairing one with another is undefined.
 
 #### Redundant markers
 

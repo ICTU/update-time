@@ -11,7 +11,7 @@ from update_time.domain.vulnerability import (
     IGNORE_VULNERABILITIES,
     NO_RISK_LEVEL,
     RISK_LEVELS,
-    WARN_VULNERABILITY_LEVEL,
+    VULNERABILITY_LEVEL,
 )
 from update_time.io.filesystem import ALWAYS_IGNORED_DIRECTORIES, inside_git_repository
 from update_time.io.log import LOG_LEVEL, LOG_LEVELS
@@ -103,16 +103,15 @@ def parse_args() -> argparse.Namespace:
         "(default: %(default)s)",
     )
     parser.add_argument(
-        "--warn-vulnerability-level",
+        "--vulnerability-level",
         type=str.lower,
         choices=[*RISK_LEVELS, NO_RISK_LEVEL],
-        default=WARN_VULNERABILITY_LEVEL.default,
-        metavar="LEVEL",
+        default=VULNERABILITY_LEVEL.default,
         help="warn about a known vulnerability in the version a dependency is pinned to when the advisory's risk "
-        f"level is at least this severe, one of {', '.join(RISK_LEVELS)}; a vulnerability whose risk level cannot be "
-        f"read is always warned about. Pass {NO_RISK_LEVEL} to switch the check off, which queries the advisory "
-        "database not at all, except for references that set a level of their own with an # update-time: "
-        "ignore[vulnerable<LEVEL] marker (default: %(default)s)",
+        "level is at least this severe; a vulnerability whose risk level cannot be read is always warned about. "
+        f"Pass {NO_RISK_LEVEL} to switch the check off, which queries the advisory database not at all, except for "
+        "references that set a level of their own with an # update-time: ignore[vulnerable<LEVEL] marker "
+        "(default: %(default)s)",
     )
     parser.add_argument(
         "--ignore-vulnerability",

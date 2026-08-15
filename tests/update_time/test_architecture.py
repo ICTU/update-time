@@ -226,7 +226,7 @@ class ConfigurationReadingTest(unittest.TestCase):
     def test_the_marker_parser_reads_no_configuration_global(self):
         """Test that the marker parser reads no setting, so a marker means the same whatever a run is configured with.
 
-        `marker.py` imports `RISK_LEVELS` from the module that also defines `WARN_VULNERABILITY_LEVEL`, which puts a
+        `marker.py` imports `RISK_LEVELS` from the module that also defines `VULNERABILITY_LEVEL`, which puts a
         setting one import away.
         """
         settings = _env_var_globals(sorted(pathlib.Path("src").rglob("*.py")))

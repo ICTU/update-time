@@ -18,7 +18,7 @@ from update_time.domain.bound import NewVersionGetter, Verb, VersionBound, parse
 from update_time.domain.dependency import DependencyVersion, VersionString
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
-from update_time.domain.vulnerability import NO_RISK_LEVEL, WARN_VULNERABILITY_LEVEL, Vulnerability
+from update_time.domain.vulnerability import NO_RISK_LEVEL, VULNERABILITY_LEVEL, Vulnerability
 from update_time.io.log import Logger, LogMessage, reset_changelog_suppression
 from update_time.primitives.location import Location
 
@@ -636,7 +636,7 @@ no_vulnerabilities = osv()
 
 # Reusable decorator that switches the vulnerability check off, for update tests that focus on the update flow and
 # would otherwise trigger the vulnerability pass's own OSV request.
-vulnerability_check_disabled = patch_environ({WARN_VULNERABILITY_LEVEL.name: NO_RISK_LEVEL})
+vulnerability_check_disabled = patch_environ({VULNERABILITY_LEVEL.name: NO_RISK_LEVEL})
 
 
 def npm_registry(published: dict[str, str], deprecated: dict[str, str] | None = None) -> Mock:

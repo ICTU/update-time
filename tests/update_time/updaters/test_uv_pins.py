@@ -148,7 +148,7 @@ class VulnerablePinTest(PinnedFileTestCase):
 
     @vulnerability_check_disabled
     def test_disabled_makes_no_osv_request(self):
-        """Test that `--warn-vulnerability-level none` skips the check, so OSV is not asked at all."""
+        """Test that `--vulnerability-level none` skips the check, so OSV is not asked at all."""
         with osv(DJANGO_ADVISORY) as mock_post:
             warn_about_pins([self.pinned_file("django==3.2.0")], _LOG)
         mock_post.assert_not_called()
