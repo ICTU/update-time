@@ -7,7 +7,7 @@ from pathlib import PurePath
 from unittest.mock import ANY, MagicMock, Mock, patch
 
 from update_time.domain.marker import Marker
-from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, WARN_VULNERABILITY_LEVEL
+from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_requirements_txt import update_requirements_txts
@@ -458,7 +458,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that of the advisories affecting a pin, only those at or above the level in force are warned about."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "django==3.2.0\n")
         mock_get.side_effect = self.pypi("3.2.0")
-        with osv(DJANGO_ADVISORY, _OTHER_ADVISORY), patch_environ({WARN_VULNERABILITY_LEVEL.name: "high"}):
+        with osv(DJANGO_ADVISORY, _OTHER_ADVISORY), patch_environ({VULNERABILITY_LEVEL.name: "high"}):
             update_requirements_txts()
         self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(requirements_txt, 1))
 
@@ -556,7 +556,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that a marker whose only advisory is below the level in force is reported neither way."""
         self.discovered_requirements_txt(mock_rglob, "django==3.2.0  # update-time: ignore[vulnerable]\n")
         mock_get.side_effect = self.pypi("3.2.0")
-        with osv(_OTHER_ADVISORY), patch_environ({WARN_VULNERABILITY_LEVEL.name: "high"}):
+        with osv(_OTHER_ADVISORY), patch_environ({VULNERABILITY_LEVEL.name: "high"}):
             update_requirements_txts()
         self.assert_no_warnings_logged()
         self.assert_no_ignored_vulnerability_logged()

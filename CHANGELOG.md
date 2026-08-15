@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Warn about a `stale` marker on a reference whose source reports no publication date to measure staleness against, instead of accepting it in silence. Closes [#221](https://github.com/ICTU/update-time/issues/221).
 - Warn about a stale dependency declared in a `requirements.txt` without an exact pin, and report the marker directives that decide nothing for such a requirement. Closes [#240](https://github.com/ICTU/update-time/issues/240).
 
+### Changed
+
+- Rename `--warn-vulnerability-level` to `--vulnerability-level`, and enumerate the levels it accepts in the help, as `--log-level` does. Closes [#244](https://github.com/ICTU/update-time/issues/244).
+
 ### Fixed
 
 - Update and check an indented requirement in a `requirements.txt`, which pip reads as a requirement like any other but Update-time passed over. Part of [#240](https://github.com/ICTU/update-time/issues/240).
