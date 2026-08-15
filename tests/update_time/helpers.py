@@ -502,6 +502,20 @@ def pyproject(*specs: str) -> str:
     return f"[project]\ndependencies = [{dependencies}]\n"
 
 
+def script(*specs: str, requires_python: str = ">=3.11") -> str:
+    """Return a minimal .py file with a PEP 723 `# /// script` block declaring the given dependencies."""
+    dependencies = "".join(f'#     "{spec}",\n' for spec in specs)
+    return (
+        "# /// script\n"
+        f'# requires-python = "{requires_python}"\n'
+        "# dependencies = [\n"
+        f"{dependencies}"
+        "# ]\n"
+        "# ///\n"
+        'print("hi")\n'
+    )
+
+
 def github_release_json(tag_name: str, **extra: object) -> dict[str, object]:
     """Return a GitHub release API result for the tag, eligible (not a draft or prerelease) unless overridden."""
     return {"draft": False, "prerelease": False, "tag_name": tag_name, "body": None, "published_at": None, **extra}

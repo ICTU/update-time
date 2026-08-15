@@ -5,30 +5,18 @@ specs in a commented TOML table, the same `"name==version"` form a pyproject.tom
 natively and the same rewrite applies.
 """
 
-import re
-from typing import TYPE_CHECKING
-
+from update_time.file_formats import inline_script_metadata
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
 from update_time.package_managers import uv
 from update_time.updaters.uv_pins import warn_about_pins
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 _LOG = get_logger("python inline script metadata")
-# PEP 723 inline metadata opens with a line that is exactly `# /// script` (a `# /// <type>` block of type `script`).
-_SCRIPT_BLOCK = re.compile(r"^# /// script\s*$", re.MULTILINE)
-
-
-def _has_script_block(script: Path) -> bool:
-    """Return whether the .py file contains a PEP 723 `# /// script` inline-metadata block."""
-    return _SCRIPT_BLOCK.search(script.read_text()) is not None
 
 
 def update_python_inline_script_metadatas() -> None:
     """Find all .py files with inline script metadata and update the exact pins in their `# /// script` blocks."""
-    scripts = [script for script in glob("*.py") if _has_script_block(script)]
+    scripts = [script for script in glob("*.py") if inline_script_metadata.has_block(script.read_text())]
     for script in scripts:
         uv.update_python_inline_script_metadata(script, _LOG)
     warn_about_pins(scripts, _LOG)

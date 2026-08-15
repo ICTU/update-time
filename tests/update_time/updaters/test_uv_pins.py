@@ -1,4 +1,4 @@
-"""Unit tests for the checks the updaters that delegate to uv run over the pins it settled on."""
+"""Unit tests for the checks the updaters that delegate to uv run over the dependencies their files declare."""
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -33,22 +33,22 @@ _LOG = get_logger("uv pins")
 _no_yanks = patch("requests.get", Mock(return_value=pypi_index()))
 
 
-class PinnedFileTestCase(LoggingTestCase):
+class DependencyFileTestCase(LoggingTestCase):
     """Base for the tests of the checks both uv-delegated updaters share.
 
-    The pins are read from the file rather than from uv, so no check needs a package manager to run: each reads
-    whichever `==` pins the file holds by the time it is called.
+    The dependencies are read from the file rather than from uv, so no check needs a package manager to run: each
+    reads whatever the file declares by the time it is called.
     """
 
-    def pinned_file(self, *specs: str) -> Mock:
-        """Return a mock file whose dependencies pin the specs, in the form both file kinds declare them."""
+    def dependency_file(self, *specs: str) -> Mock:
+        """Return a mock file declaring the specs as its dependencies, in the form both file kinds declare them."""
         return mock_path(pyproject(*specs), parent=Path("/"))
 
 
 @no_vulnerabilities
 @patch("requests.get")
-class StalePinTest(PinnedFileTestCase):
-    """Unit tests for the staleness check, whose PyPI pass resolves each pin's newest release."""
+class StaleDependencyTest(DependencyFileTestCase):
+    """Unit tests for the staleness check, whose PyPI pass reads the newest release of every dependency declared."""
 
     @staticmethod
     def simple_api(version: str, upload_time: str) -> Mock:
@@ -58,20 +58,33 @@ class StalePinTest(PinnedFileTestCase):
     def test_stale_pin_warned(self, get: Mock):
         """Test that a pin whose newest release is old is warned about, located at the line the pin sits on."""
         get.return_value = self.simple_api("1.0", (datetime.now(UTC) - timedelta(days=512)).isoformat())
-        file = self.pinned_file("package==1.0")
+        file = self.dependency_file("package==1.0")
         warn_about_pins([file], _LOG)
         self.assert_stale_dependency_logged("package", "1.0", Location(file, 2))
+
+    def test_stale_dependency_without_an_exact_pin_warned(self, get: Mock):
+        """Test that a dependency declared without an exact pin is warned about, at the line declaring it."""
+        get.return_value = self.simple_api("1.0", (datetime.now(UTC) - timedelta(days=512)).isoformat())
+        file = self.dependency_file("package>=1.0")
+        warn_about_pins([file], _LOG)
+        self.assert_stale_dependency_logged("package", "1.0", Location(file, 2))
+
+    def test_dependency_without_an_exact_pin_the_index_lists_no_release_for(self, get: Mock):
+        """Test that a dependency whose package the index lists no release for is not warned about."""
+        get.return_value = pypi_index()
+        warn_about_pins([self.dependency_file("package>=1.0")], _LOG)
+        self.assert_no_warnings_logged()
 
     def test_recent_pin_not_warned(self, get: Mock):
         """Test that a pin whose newest release is recent is not warned about as stale."""
         get.return_value = self.simple_api("1.0", datetime.now(UTC).isoformat())
-        warn_about_pins([self.pinned_file("package==1.0")], _LOG)
+        warn_about_pins([self.dependency_file("package==1.0")], _LOG)
         self.assert_no_warnings_logged()
 
 
 @no_vulnerabilities
 @patch("requests.get")
-class YankedPinTest(PinnedFileTestCase):
+class YankedPinTest(DependencyFileTestCase):
     """Unit tests for the yank check, whose PyPI pass reads the yank state of the version each pin is left on."""
 
     reason: ClassVar = "broke Python 3.10"
@@ -84,7 +97,7 @@ class YankedPinTest(PinnedFileTestCase):
     def test_yanked_pin_warned(self, get: Mock):
         """Test that a pin left on a yanked release is warned about, located at the line the pin sits on."""
         get.return_value = self.yanked_simple_api("1.0")
-        file = self.pinned_file("package==1.0")
+        file = self.dependency_file("package==1.0")
         warn_about_pins([file], _LOG)
         yank = Yank(yanked=True, reason=self.reason)
         self.assert_yanked_dependency_logged("package", "1.0", Location(file, 2), yank)
@@ -92,14 +105,14 @@ class YankedPinTest(PinnedFileTestCase):
     def test_yanked_pin_warned_although_a_newer_release_exists(self, get: Mock):
         """Test that a pin left on a yanked release is warned about although PyPI has a newer release to move to."""
         get.side_effect = [self.yanked_simple_api("1.0", "2.0"), pypi_release(PYPI_OLD_UPLOAD)]
-        file = self.pinned_file("package==1.0")
+        file = self.dependency_file("package==1.0")
         warn_about_pins([file], _LOG)
         self.assert_yanked_dependency_logged("package", "1.0", Location(file, 2))
 
     def test_makes_no_pypi_request_of_its_own(self, get: Mock):
         """Test that the yank check reads the index the staleness check fetched, so a pin costs one request."""
         get.return_value = self.yanked_simple_api("1.0")
-        file = self.pinned_file("package==1.0")
+        file = self.dependency_file("package==1.0")
         warn_about_pins([file], _LOG)
         self.assert_yanked_dependency_logged("package", "1.0", Location(file, 2))
         self.assertEqual(get.call_count, 1)
@@ -107,7 +120,7 @@ class YankedPinTest(PinnedFileTestCase):
     def test_unparsable_version_leaves_the_other_pins_checked(self, get: Mock):
         """Test that a pin whose version does not parse leaves the pins after it in the file checked."""
         get.return_value = self.yanked_simple_api("1.0")
-        file = self.pinned_file("broken==nightly", "package==1.0")
+        file = self.dependency_file("broken==nightly", "package==1.0")
         warn_about_pins([file], _LOG)
         self.assert_yanked_dependency_logged("package", "1.0", Location(file, 2))
 
@@ -115,19 +128,19 @@ class YankedPinTest(PinnedFileTestCase):
     def test_yanked_pin_warned_with_the_staleness_check_off(self, get: Mock):
         """Test that `--stale-after 0` leaves the yank check running, so the pin is still warned about."""
         get.return_value = self.yanked_simple_api("1.0")
-        file = self.pinned_file("package==1.0")
+        file = self.dependency_file("package==1.0")
         warn_about_pins([file], _LOG)
         self.assert_yanked_dependency_logged("package", "1.0", Location(file, 2))
 
 
 @_no_yanks
 @staleness_disabled
-class VulnerablePinTest(PinnedFileTestCase):
+class VulnerablePinTest(DependencyFileTestCase):
     """Unit tests for the vulnerability check, whose OSV pass looks each pin up."""
 
     def test_vulnerable_pin_warned(self):
         """Test that a pin OSV reports an advisory for is warned about, located at the line the pin sits on."""
-        file = self.pinned_file("django==3.2.0")
+        file = self.dependency_file("django==3.2.0")
         with osv(DJANGO_ADVISORY):
             warn_about_pins([file], _LOG)
         self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(file, 2))
@@ -150,6 +163,6 @@ class VulnerablePinTest(PinnedFileTestCase):
     def test_disabled_makes_no_osv_request(self):
         """Test that `--vulnerability-level none` skips the check, so OSV is not asked at all."""
         with osv(DJANGO_ADVISORY) as mock_post:
-            warn_about_pins([self.pinned_file("django==3.2.0")], _LOG)
+            warn_about_pins([self.dependency_file("django==3.2.0")], _LOG)
         mock_post.assert_not_called()
         self.assert_no_warnings_logged()

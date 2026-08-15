@@ -8,6 +8,7 @@ from update_time.file_formats import pyproject_toml
 from update_time.primitives.location import Location
 
 from tests.helpers import mock_path
+from tests.update_time.helpers import script
 
 
 class ReadTest(unittest.TestCase):
@@ -149,3 +150,41 @@ class PinnedVersionsTest(unittest.TestCase):
     def test_no_pins(self):
         """Test that a file with no exact pins yields nothing."""
         self.assertEqual(pyproject_toml.pinned_versions(mock_path('dependencies = ["pkg>=1.0"]\n')), [])
+
+
+class LooseDependenciesTest(unittest.TestCase):
+    """Unit tests for reading the dependencies a file declares without an exact pin."""
+
+    def test_reads_declarations_across_arrays(self):
+        """Test that a declaration without an exact pin is read from every array, each with the line it sits on."""
+        contents = (
+            "[project]\n"
+            'dependencies = ["pkg==1.0", "other>=2.0", "bare"]\n'  # the `==` pin is left to `pinned_versions`
+            '[project.optional-dependencies]\ndocs = ["sphinx~=7.4"]\n'
+            '[dependency-groups]\ndev = ["ruff<0.7", {include-group = "docs"}]\n'
+        )
+        path = mock_path(contents)
+        self.assertEqual(
+            pyproject_toml.loose_dependencies(path),
+            [
+                Reference("other", "", Location(path, 2)),
+                Reference("bare", "", Location(path, 2)),
+                Reference("sphinx", "", Location(path, 4)),
+                Reference("ruff", "", Location(path, 6)),
+            ],
+        )
+
+    def test_reads_an_inline_script_metadata_block(self):
+        """Test that a declaration in a `# /// script` block is read, although the block is commented out."""
+        path = mock_path(script("pkg==1.0", "other>=2.0"))
+        self.assertEqual(pyproject_toml.loose_dependencies(path), [Reference("other", "", Location(path, 5))])
+
+    def test_a_declaration_in_a_literal_string(self):
+        """Test that a declaration quoted the other way TOML allows is located at its line too."""
+        path = mock_path("dependencies = ['pkg>=1.0']\n")
+        self.assertEqual(pyproject_toml.loose_dependencies(path), [Reference("pkg", "", Location(path, 1))])
+
+    def test_a_declaration_that_cannot_be_found(self):
+        """Test that a declaration the search cannot find is located at the file, rather than at a guessed line."""
+        path = mock_path('dependencies = ["pkg\\u003e=1.0"]\n')  # a TOML escape: the spec parses as `pkg>=1.0`
+        self.assertEqual(pyproject_toml.loose_dependencies(path), [Reference("pkg", "", Location(path))])
