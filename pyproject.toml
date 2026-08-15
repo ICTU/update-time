@@ -47,7 +47,7 @@ dev = [
     "nltk==3.10.3",
     "pip-audit==2.10.1",
     "pyproject-fmt==2.27.0",
-    "ruff==0.16.1",
+    "ruff==0.16.2",
     "troml==0.4.1",
     "ty==0.0.69",
     "types-pyyaml==6.0.12.20260724",
