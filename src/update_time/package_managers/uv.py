@@ -153,21 +153,22 @@ def _parse_line_with_update(line: str) -> tuple[DependencyName, VersionString]:
     return fields[0], fields[-1].lstrip("v").rstrip(")")
 
 
-def _pins(path: Path) -> dict[DependencyName, list[Reference]]:
-    """Return each pin of the file with its line, keyed by the name uv reports the dependency under.
+def _declarations(path: Path) -> dict[DependencyName, list[Reference]]:
+    """Return each dependency the file declares with its line, keyed by the name uv reports the dependency under.
 
-    A name carries an entry per pin, so a dependency the file pins in more than one array keeps every line, and every
-    spelling those pins give it. Matching uv's name against the file's is done here, since uv names a package as PyPI
-    spells it while the file may spell it any of the ways that normalize to the same name.
+    A name carries an entry per declaration, so a dependency the file declares in more than one array keeps every
+    line, and every spelling those declarations give it. Matching uv's name against the file's is done here, since
+    uv names a package as PyPI spells it while the file may spell it any of the ways that normalize to the same
+    name.
     """
-    pins: dict[DependencyName, list[Reference]] = {}
-    for pin in pyproject_toml_format.pinned_versions(path):
-        pins.setdefault(normalized_name(pin.dependency), []).append(pin)
-    return pins
+    declarations: dict[DependencyName, list[Reference]] = {}
+    for reference in pyproject_toml_format.declared_dependencies(path):
+        declarations.setdefault(normalized_name(reference.dependency), []).append(reference)
+    return declarations
 
 
 def _log_new_version(log: Logger, package: DependencyName, version: VersionString, locations: list[Location]) -> None:
-    """Log that a new version is available for the package, at each of the locations pinning it.
+    """Log that a new version is available for the package, at each of the locations declaring it.
 
     The package is named as uv reports it, so one package is named one way however each line spells it. The changelog
     and publication date are fetched once, whichever locations the version is reported at.
@@ -194,15 +195,16 @@ def _update_dependencies(uv_tree: Command, path: Path, log: Logger) -> bool:
     if not outdated.ok:
         return False
     lines_with_updates = [line for line in outdated.stdout.splitlines() if " (latest: " in line]
-    pins = _pins(path)
+    declarations = _declarations(path)
     latest_versions: dict[DependencyName, VersionString] = {}
     for line in lines_with_updates:
         package, version = _parse_line_with_update(line)
-        pinned = pins.get(normalized_name(package), [])
-        latest_versions.update({pin.dependency: version for pin in pinned})
-        # Only the exact pins are read back, so a dependency declared as `humanize>=4` say has no pin among them and
-        # its new version is reported at the file rather than at one of its lines.
-        _log_new_version(log, package, version, [pin.location for pin in pinned] or [Location(path)])
+        declared = declarations.get(normalized_name(package), [])
+        # Only an exact pin names a version in the file to rewrite; a looser declaration is left as it stands.
+        latest_versions.update({reference.dependency: version for reference in declared if reference.current_version})
+        # A package the file declares nowhere has no line among them, so its new version is reported at the file
+        # rather than at a line guessed from elsewhere.
+        _log_new_version(log, package, version, [reference.location for reference in declared] or [Location(path)])
     pyproject_toml_format.rewrite_pinned_versions(path, latest_versions)
     return True
 
@@ -254,16 +256,24 @@ def newest_pypi_releases(path: Path) -> Iterable[ResolvedReference]:
     """Yield each dependency the file declares, carrying the newest PyPI release of the package it names.
 
     Resolves each name against PyPI rather than reporting the version the file records. A pyproject.toml and an
-    inline script metadata block declare their dependencies the same way, so one reader serves both.
+    inline script metadata block declare their dependencies the same way, so one reader serves both. A package the
+    index lists no release for is left out.
     """
-    for pin in pyproject_toml_format.pinned_versions(path):
-        release = get_latest_version(pin.dependency, pin.current_version, NO_BOUND, COOLDOWN.get())
-        yield ResolvedReference(**vars(pin), release=release)
-    for declaration in pyproject_toml_format.loose_dependencies(path):
-        # A declaration that pins no version has none to resolve an update for, so its newest release is looked up
-        # by name alone, which is all measuring staleness needs; a package the index lists none for is left out.
-        if (newest := newest_release(declaration.dependency)) is not None:
-            yield ResolvedReference(**vars(declaration), release=newest)
+    for declaration in pyproject_toml_format.declared_dependencies(path):
+        if (release := _staleness_release(declaration)) is not None:
+            yield ResolvedReference(**vars(declaration), release=release)
+
+
+def _staleness_release(declaration: Reference) -> DependencyVersion | None:
+    """Return the release to measure the declaration's staleness against, or None when the index lists none.
+
+    An exact pin is resolved as an update would resolve it, which reports the newest release along the way. A
+    declaration that pins no version has no update to resolve, so its newest release is looked up by name alone,
+    which is all measuring staleness needs.
+    """
+    if declaration.current_version:
+        return get_latest_version(declaration.dependency, declaration.current_version, NO_BOUND, COOLDOWN.get())
+    return newest_release(declaration.dependency)
 
 
 def pinned_pypi_releases(path: Path) -> Iterable[ResolvedReference]:

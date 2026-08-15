@@ -125,14 +125,25 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
                 )
 
     def test_update_of_a_dependency_without_an_exact_pin(self, run: Mock, get: Mock, glob: Mock):
-        """Test that a dependency uv reports outdated that the file doesn't `==`-pin is logged at the file alone."""
+        """Test that a dependency uv reports outdated that the file doesn't `==`-pin is logged at its own line."""
         run.return_value = self.mock_update_on_stdout("package", "v1.1")
         get.return_value = mock_response(self.pypi_metadata_without_changelog())
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package>=1.0"))
         glob.return_value = [mock_pyproject_toml]
         update_pyproject_tomls()
         mock_pyproject_toml.write_text.assert_not_called()
-        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 12:08", Location(mock_pyproject_toml))
+        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 12:08", Location(mock_pyproject_toml, 2))
+        self.assert_no_warnings_logged()
+
+    def test_update_of_a_dependency_the_file_declares_nowhere(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a package uv reports outdated that the file declares nowhere is logged at the file."""
+        run.return_value = self.mock_update_on_stdout("other", "v1.1")
+        get.return_value = mock_response(self.pypi_metadata_without_changelog())
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package>=1.0"))
+        glob.return_value = [mock_pyproject_toml]
+        update_pyproject_tomls()
+        mock_pyproject_toml.write_text.assert_not_called()
+        self.assert_new_version_logged("other", "1.1, published: 2026-05-30 12:08", Location(mock_pyproject_toml))
         self.assert_no_warnings_logged()
 
     def test_update_with_changelog(self, run: Mock, get: Mock, glob: Mock):
