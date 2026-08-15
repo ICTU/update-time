@@ -69,6 +69,14 @@ class StaleDependencyTest(DependencyFileTestCase):
         warn_about_pins([file], _LOG)
         self.assert_stale_dependency_logged("package", "1.0", Location(file, 2))
 
+    def test_a_script_whose_block_does_not_parse_leaves_the_other_files_checked(self, get: Mock):
+        """Test that a script whose metadata block is not valid TOML leaves the files after it checked."""
+        get.return_value = self.simple_api("1.0", (datetime.now(UTC) - timedelta(days=512)).isoformat())
+        malformed = mock_path("# /// script\n# dependencies = [\n# ///\n", parent=Path("/"))  # array never closed
+        file = self.dependency_file("package>=1.0")
+        warn_about_pins([malformed, file], _LOG)
+        self.assert_stale_dependency_logged("package", "1.0", Location(file, 2))
+
     def test_dependency_without_an_exact_pin_the_index_lists_no_release_for(self, get: Mock):
         """Test that a dependency whose package the index lists no release for is not warned about."""
         get.return_value = pypi_index()

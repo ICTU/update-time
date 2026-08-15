@@ -152,39 +152,74 @@ class PinnedVersionsTest(unittest.TestCase):
         self.assertEqual(pyproject_toml.pinned_versions(mock_path('dependencies = ["pkg>=1.0"]\n')), [])
 
 
-class LooseDependenciesTest(unittest.TestCase):
-    """Unit tests for reading the dependencies a file declares without an exact pin."""
+class DeclaredDependenciesTest(unittest.TestCase):
+    """Unit tests for reading every dependency a file declares: the exact pins, and the declarations without one."""
 
     def test_reads_declarations_across_arrays(self):
         """Test that a declaration without an exact pin is read from every array, each with the line it sits on."""
         contents = (
             "[project]\n"
-            'dependencies = ["pkg==1.0", "other>=2.0", "bare"]\n'  # the `==` pin is left to `pinned_versions`
+            'dependencies = ["pkg==1.0", "other>=2.0", "bare"]\n'  # the pins lead, whichever array declares them
             '[project.optional-dependencies]\ndocs = ["sphinx~=7.4"]\n'
             '[dependency-groups]\ndev = ["ruff<0.7", {include-group = "docs"}]\n'
+            '[tool.uv]\ndev-dependencies = ["mypy>=1.0"]\n'  # uv's legacy array, which uv still resolves
+            '[build-system]\nrequires = ["uv-build>=0.12"]\n'
         )
         path = mock_path(contents)
         self.assertEqual(
-            pyproject_toml.loose_dependencies(path),
+            pyproject_toml.declared_dependencies(path),
             [
+                Reference("pkg", "1.0", Location(path, 2)),
                 Reference("other", "", Location(path, 2)),
                 Reference("bare", "", Location(path, 2)),
                 Reference("sphinx", "", Location(path, 4)),
                 Reference("ruff", "", Location(path, 6)),
+                Reference("mypy", "", Location(path, 8)),
+                Reference("uv-build", "", Location(path, 10)),
             ],
         )
 
     def test_reads_an_inline_script_metadata_block(self):
         """Test that a declaration in a `# /// script` block is read, although the block is commented out."""
         path = mock_path(script("pkg==1.0", "other>=2.0"))
-        self.assertEqual(pyproject_toml.loose_dependencies(path), [Reference("other", "", Location(path, 5))])
+        self.assertEqual(
+            pyproject_toml.declared_dependencies(path),
+            [Reference("pkg", "1.0", Location(path, 4)), Reference("other", "", Location(path, 5))],
+        )
 
     def test_a_declaration_in_a_literal_string(self):
         """Test that a declaration quoted the other way TOML allows is located at its line too."""
         path = mock_path("dependencies = ['pkg>=1.0']\n")
-        self.assertEqual(pyproject_toml.loose_dependencies(path), [Reference("pkg", "", Location(path, 1))])
+        self.assertEqual(pyproject_toml.declared_dependencies(path), [Reference("pkg", "", Location(path, 1))])
+
+    def test_a_quoted_name_outside_a_dependency_array_is_not_read(self):
+        """Test that a package name quoted elsewhere in the file is not read as a dependency."""
+        contents = (
+            "[project]\n"
+            'dependencies = ["other>=2.0"]\n'
+            'keywords = ["pytest"]\n'
+            '[tool.ruff.lint.isort]\nknown-first-party = ["rich"]\n'
+        )
+        path = mock_path(contents)
+        self.assertEqual(pyproject_toml.declared_dependencies(path), [Reference("other", "", Location(path, 2))])
+
+    def test_a_dependency_with_a_uv_source_is_skipped(self):
+        """Test that a dependency uv resolves from a source of its own is left out, since PyPI does not serve it."""
+        contents = '[project]\ndependencies = ["local", "other>=2.0"]\n[tool.uv.sources]\nlocal = {path = "../local"}\n'
+        path = mock_path(contents)
+        self.assertEqual(pyproject_toml.declared_dependencies(path), [Reference("other", "", Location(path, 2))])
+
+    def test_a_direct_reference_is_skipped(self):
+        """Test that a dependency given as a URL is left out, since it resolves to no release on PyPI."""
+        path = mock_path('dependencies = ["pkg @ git+https://github.com/org/repo.git", "other>=2.0"]\n')
+        self.assertEqual(pyproject_toml.declared_dependencies(path), [Reference("other", "", Location(path, 1))])
+
+    def test_a_declaration_that_does_not_parse(self):
+        """Test that a spec that does not parse as a requirement leaves the file's other declarations read."""
+        path = mock_path('dependencies = ["pkg=1.0", "other>=2.0"]\n')  # `=` is no PEP 440 operator
+        self.assertEqual(pyproject_toml.declared_dependencies(path), [Reference("other", "", Location(path, 1))])
 
     def test_a_declaration_that_cannot_be_found(self):
         """Test that a declaration the search cannot find is located at the file, rather than at a guessed line."""
         path = mock_path('dependencies = ["pkg\\u003e=1.0"]\n')  # a TOML escape: the spec parses as `pkg>=1.0`
-        self.assertEqual(pyproject_toml.loose_dependencies(path), [Reference("pkg", "", Location(path))])
+        self.assertEqual(pyproject_toml.declared_dependencies(path), [Reference("pkg", "", Location(path))])

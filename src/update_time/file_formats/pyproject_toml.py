@@ -14,7 +14,7 @@ import tomllib
 from typing import TYPE_CHECKING
 
 import tomlkit
-from packaging.requirements import Requirement
+from packaging.requirements import InvalidRequirement, Requirement
 
 from update_time.domain.reference import Reference
 from update_time.file_formats import inline_script_metadata
@@ -31,16 +31,21 @@ if TYPE_CHECKING:
 _PINNED_SPEC = re.compile(r'"(?P<name>[A-Za-z0-9_.\-]+)==(?P<version>[A-Za-z0-9_.\-]+)"')
 
 
+def _parse(text: str) -> dict | None:
+    """Return the TOML parsed into a dict, or None when the text isn't valid TOML."""
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return None
+
+
 def read(path: Path) -> dict | None:
     """Return the parsed pyproject.toml, or None when the file can't be read or isn't valid TOML."""
     try:
         text = path.read_text()
     except OSError:
         return None
-    try:
-        return tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
-        return None
+    return _parse(text)
 
 
 def tool_key(path: Path, table: str, key: str) -> tuple[str, str] | None:
@@ -92,20 +97,47 @@ def rewrite_pinned_versions(path: Path, versions: dict[DependencyName, VersionSt
         path.write_text(rewritten)
 
 
-def _declared_specs(contents: str) -> list[str]:
-    """Return the requirement spec of every dependency the file's dependency arrays declare.
+def _config(contents: str) -> dict:
+    """Return the TOML the file declares its dependencies in, parsed, or an empty config when it declares none.
 
-    A pyproject.toml declares them in the project's own array, in an array per extra, and in an array per dependency
-    group; an inline script metadata block declares them in one array of its own. A group's `include-group` entry
-    names another group rather than a dependency, so only the strings are returned.
+    A script declares them in its inline script metadata block, which comments its TOML out; every other file is
+    TOML throughout. Contents that are not valid TOML — a script whose block is malformed, say — declare nothing
+    that can be read.
     """
     toml_text = inline_script_metadata.toml_block(contents)
-    config = tomllib.loads(contents if toml_text is None else toml_text)
+    return _parse(contents if toml_text is None else toml_text) or {}
+
+
+def _uv_table(config: dict) -> dict:
+    """Return the config's `[tool.uv]` table, or an empty table when it has none."""
+    return config.get("tool", {}).get("uv", {})
+
+
+def _uv_source_names(config: dict) -> set[DependencyName]:
+    """Return the names of the dependencies uv resolves from a source of its own.
+
+    A `[tool.uv.sources]` entry points a dependency at a path, a workspace member, a git repository, or an index of
+    its own, so PyPI holds no release of it to report on.
+    """
+    return set(_uv_table(config).get("sources", {}))
+
+
+def _declared_specs(config: dict) -> list[str]:
+    """Return the requirement spec of every dependency the config's dependency arrays declare.
+
+    A pyproject.toml declares them in the project's own array, in an array per extra, in an array per dependency
+    group, in uv's legacy `[tool.uv] dev-dependencies`, and in the `[build-system]` requirements. uv still resolves
+    that legacy array, so it is read like the rest. An inline script metadata block declares them in one array of
+    its own. A group's `include-group` entry names another group rather than a dependency, so only the strings are
+    returned.
+    """
     project = config.get("project", {})
     arrays = [
         project.get("dependencies", []),
         *project.get("optional-dependencies", {}).values(),
         *config.get("dependency-groups", {}).values(),
+        _uv_table(config).get("dev-dependencies", []),
+        config.get("build-system", {}).get("requires", []),
         config.get("dependencies", []),
     ]
     return [spec for array in arrays for spec in array if isinstance(spec, str)]
@@ -123,18 +155,45 @@ def _spec_location(path: Path, contents: str, spec: str) -> Location:
     return Location(path)
 
 
-def loose_dependencies(path: Path) -> list[Reference]:
+def _registry_requirement(spec: str, sourced: set[DependencyName]) -> Requirement | None:
+    """Return the requirement the spec declares, or None when it names no PyPI release to look up.
+
+    A spec with a typo in it — `pkg=1.0`, say — reads back as None, which keeps one bad declaration from aborting
+    the run. A spec that points at a URL reads back as None too, as does one whose name uv resolves from a source
+    of its own, since PyPI serves a release for neither.
+    """
+    try:
+        requirement = Requirement(spec)
+    except InvalidRequirement:
+        return None
+    return None if requirement.url or requirement.name in sourced else requirement
+
+
+def _loose_dependencies(path: Path) -> list[Reference]:
     """Return every dependency the file declares without an exact pin, with where it sits.
 
     A dependency declared as `humanize>=4`, or with no specifier at all, pins no version, so the reference names
-    none either. The exact `==` pins are `pinned_versions`' to return.
+    none either. A spec that names no PyPI release to look up is left out: one that points at a URL, one uv
+    resolves from a source of its own, and one that does not parse at all. The exact `==` pins are
+    `pinned_versions`' to return.
     """
     contents = path.read_text()
+    config = _config(contents)
+    sourced = _uv_source_names(config)
     return [
-        Reference(Requirement(spec).name, "", _spec_location(path, contents, spec))
-        for spec in _declared_specs(contents)
-        if "==" not in spec
+        Reference(requirement.name, "", _spec_location(path, contents, spec))
+        for spec in _declared_specs(config)
+        if "==" not in spec and (requirement := _registry_requirement(spec, sourced)) is not None
     ]
+
+
+def declared_dependencies(path: Path) -> list[Reference]:
+    """Return every dependency the file declares, the exact pins first and the rest after them.
+
+    A pin carries the version it names, a looser declaration carries none, so the two are told apart by whether the
+    reference names a version.
+    """
+    return pinned_versions(path) + _loose_dependencies(path)
 
 
 def pinned_versions(path: Path) -> list[Reference]:
