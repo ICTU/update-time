@@ -22,6 +22,7 @@ from update_time.sources.pypi import (
     get_changes,
     get_latest_version,
     get_publication_datetime,
+    newest_release,
     normalized_name,
     yank_state,
 )
@@ -250,19 +251,19 @@ def update_python_inline_script_metadata(script: Path, log: Logger) -> bool:
 
 
 def newest_pypi_releases(path: Path) -> Iterable[ResolvedReference]:
-    """Yield each exact `==` pin in the file, carrying the newest PyPI release of the package it names.
+    """Yield each dependency the file declares, carrying the newest PyPI release of the package it names.
 
-    Resolves each pin's name against PyPI rather than reporting the version the file records. A pyproject.toml and
-    an inline script metadata block declare their dependencies as the same quoted `"name==version"` specs, so one
-    reader serves both.
+    Resolves each name against PyPI rather than reporting the version the file records. A pyproject.toml and an
+    inline script metadata block declare their dependencies the same way, so one reader serves both.
     """
-    return (
-        ResolvedReference(
-            **vars(pin),
-            release=get_latest_version(pin.dependency, pin.current_version, NO_BOUND, COOLDOWN.get()),
-        )
-        for pin in pyproject_toml_format.pinned_versions(path)
-    )
+    for pin in pyproject_toml_format.pinned_versions(path):
+        release = get_latest_version(pin.dependency, pin.current_version, NO_BOUND, COOLDOWN.get())
+        yield ResolvedReference(**vars(pin), release=release)
+    for declaration in pyproject_toml_format.loose_dependencies(path):
+        # A declaration that pins no version has none to resolve an update for, so its newest release is looked up
+        # by name alone, which is all measuring staleness needs; a package the index lists none for is left out.
+        if (newest := newest_release(declaration.dependency)) is not None:
+            yield ResolvedReference(**vars(declaration), release=newest)
 
 
 def pinned_pypi_releases(path: Path) -> Iterable[ResolvedReference]:

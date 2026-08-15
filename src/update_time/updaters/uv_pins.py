@@ -1,4 +1,4 @@
-"""The checks the updaters that delegate to uv run over the pins it settled on."""
+"""The checks the updaters that delegate to uv run over the dependencies their files declare."""
 
 from typing import TYPE_CHECKING
 
@@ -17,14 +17,14 @@ if TYPE_CHECKING:
 
 
 def warn_about_pins(files: Sequence[Path], log: Logger) -> None:
-    """Warn about the pins uv settled on, for the stale ones, the yanked ones, and the vulnerable ones.
+    """Warn about the dependencies the files declare: the stale ones, the yanked ones, and the vulnerable ones.
 
-    Run after the update, so each check reads the `==` pins uv rewrote rather than the ones the file held before.
-    Stating the set here is what keeps a file kind uv updates from being given one check and not the others. The
-    files are a sequence rather than an iterable, since each check walks them again. The staleness check reads each
-    pin's newest release, while the yank check reads the release the pin itself names, since that is the one the run
-    leaves the pin on. Both read the package's PyPI index, which is cached for the run, so the second to run costs
-    no request of its own.
+    Run after the update, so each check reads the `==` pins as the run rewrote them rather than as the file held
+    them before. Stating the set here is what keeps a file kind uv updates from being given one check and not the
+    others. The files are a sequence rather than an iterable, since each check walks them again. The staleness
+    check reads the newest release of every dependency the file declares, while the yank check reads the release
+    each pin itself names, since that is the version the run leaves the pin on. Both read the package's PyPI index,
+    which is cached for the run, so the second to run costs no request of its own.
     """
     warn_about_stale_dependencies(files, uv.newest_pypi_releases, log.warn_if_stale)
     warn_about_yanked_dependencies(files, uv.pinned_pypi_releases, log.warn_if_yanked)
