@@ -10,11 +10,10 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.publication import reports_publication_dates
+from update_time.domain.directive import DIRECTIVES
+from update_time.domain.marker import Scope
 from update_time.domain.reference import ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
-from update_time.domain.vulnerability import reports_vulnerabilities
-from update_time.domain.yank import reports_yanks
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
@@ -39,27 +38,18 @@ def warn_about_inverted_items(marker: Marker, reference: Reference, log: Logger)
             warn(reference, threshold.inverted_item)
 
 
-def _warn_about_directives_the_source_cannot_answer(
+def _warn_about_directives_the_source_cannot_apply(
     marker: Marker, get_new_version: NewVersionGetter, reference: Reference, log: Logger
 ) -> None:
-    """Warn about each directive whose question the reference's source cannot answer, so it decides nothing.
+    """Warn about each directive the reference's source cannot apply, so it holds nothing back.
 
-    An `ignore[yanked]` needs a source that reports yanks, which an image registry never does. A `cooldown` or a
-    `stale` directive needs a source that dates its releases, which among the image registries only Docker Hub does.
-    A `vulnerable` directive needs a source whose versions OSV holds advisories for. `directives` pairs each with the
-    capability it needs and the warning it gets. Each warning names the directive to delete, so a bare `ignore` is
-    never reported as redundant: it holds every scope back without spelling one out (see `Marker.as_written`).
+    Each warning names the directive to delete, so a bare `ignore` is never reported as redundant: it holds every
+    scope back without spelling one out (see `Marker.as_written`).
     """
     as_written = marker.as_written
-    directives = (
-        (as_written.ignore_yanked, reports_yanks, log.redundant_yank_scope),
-        (as_written.suppresses_vulnerabilities, reports_vulnerabilities, log.redundant_vulnerable_source),
-        (as_written.sets_cooldown, reports_publication_dates, log.redundant_cooldown_item),
-        (as_written.decides_staleness, reports_publication_dates, log.redundant_stale_source),
-    )
-    for is_set, reports, warn in directives:
-        if is_set and not reports(get_new_version, reference.dependency):
-            warn(reference, as_written)
+    for directive in DIRECTIVES:
+        if directive.is_part_of(as_written) and not directive.is_applied_by(get_new_version, reference.dependency):
+            log.redundant_directive(reference, directive.spelling(as_written), directive.reason)
 
 
 def latest_version(
@@ -71,7 +61,7 @@ def latest_version(
     """Return the latest version to update the reference to, or None when the marker holds the update back.
 
     What the marker itself gets wrong is reported first, since none of it is judged against an answer: an inverted
-    comparison and a redundant bound are read off the marker, and a directive the source cannot answer off the
+    comparison and a redundant bound are read off the marker, and a directive the source cannot apply off the
     source's capabilities. A reference no source is queried for is told about all three. The source is queried
     next, unless the marker holds back the update, the staleness warning, and the yank warning alike, which leaves
     nothing to query it for. If the source resolves a version equal to the current one, it is still returned, since
@@ -80,16 +70,13 @@ def latest_version(
     dependency, current_version = reference.dependency, reference.current_version
     log.warn_if_redundant_bound(reference, marker)
     warn_about_inverted_items(marker, reference, log)
-    _warn_about_directives_the_source_cannot_answer(marker, get_new_version, reference, log)
+    _warn_about_directives_the_source_cannot_apply(marker, get_new_version, reference, log)
     if marker.holds_back_source_checks:
         return None
-    version_bound = BLOCK_ALL_UPDATES if marker.ignore_update else marker.version_bound
+    version_bound = BLOCK_ALL_UPDATES if marker.ignores(Scope.UPDATE) else marker.version_bound
     cooldown = marker.cooldown.value_or(COOLDOWN.get())
     latest = get_new_version(dependency, current_version, version_bound, cooldown)
     resolved = ResolvedReference(**vars(reference), release=latest)
     log.report_staleness(resolved, marker, marker.stale.value_or(STALE_AFTER.get()))
-    if marker.ignore_yanked:
-        log.ignored_yank(resolved, marker)
-    else:
-        log.warn_if_yanked(resolved)
-    return None if marker.ignore_update else latest
+    log.report_yank(resolved, marker)
+    return None if marker.ignores(Scope.UPDATE) else latest

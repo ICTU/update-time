@@ -16,6 +16,7 @@ from unittest.mock import ANY, Mock, call, patch
 import update_time
 from update_time.domain.bound import NewVersionGetter, Verb, VersionBound, parse_bound
 from update_time.domain.dependency import DependencyVersion, VersionString
+from update_time.domain.directive import Reason
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import NO_RISK_LEVEL, VULNERABILITY_LEVEL, Vulnerability
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
     from update_time.domain.drift import DriftedPin
 
 
-def _module_level_assignments(tree: ast.Module) -> Iterator[tuple[list[ast.expr], ast.expr | None]]:
+def module_level_assignments(tree: ast.Module) -> Iterator[tuple[list[ast.expr], ast.expr | None]]:
     """Yield the targets and assigned value of each module-level assignment, annotated or not.
 
     An annotation without a value (`NAME: int`) assigns nothing, so its value is None.
@@ -47,11 +48,8 @@ def _module_level_assignments(tree: ast.Module) -> Iterator[tuple[list[ast.expr]
 
 
 @contextlib.contextmanager
-def _project(files: dict[str, str]) -> Generator[str]:
-    """Yield the path of a directory holding the given files, so a rule or a check has a project to scan.
-
-    Each key is a path relative to the directory, and the folders it names are created.
-    """
+def project(files: dict[str, str]) -> Generator[str]:
+    """Yield the path of a directory holding the given files, so a rule or a check has a project to scan."""
     with tempfile.TemporaryDirectory() as directory:
         for name, source in files.items():
             path = pathlib.Path(directory) / name
@@ -94,11 +92,7 @@ def _all_cached_functions(package: ModuleType) -> list[_Cached]:
 
 
 def _cached_functions(module: ModuleType) -> list[_Cached]:
-    """Return the cached functions the module defines, recognised by the `cache_clear` their decorator adds.
-
-    A cached function the module imported is left to the module defining it, so that scanning every module clears
-    each cache once.
-    """
+    """Return the cached functions the module defines, recognised by the `cache_clear` their decorator adds."""
     return [
         value
         for value in vars(module).values()
@@ -109,8 +103,7 @@ def _cached_functions(module: ModuleType) -> list[_Cached]:
 class CacheClearingTestCase(unittest.TestCase):
     """Base test case that resets global state before each test to prevent cross-test leakage.
 
-    This clears the functools caches and the loggers' changelog-suppression state. The caches are discovered by
-    scanning the package, so adding a `@cache` to a source module needs nothing added here.
+    The caches are discovered by scanning the package, so adding a `@cache` to a source module needs nothing added here.
     """
 
     def setUp(self) -> None:
@@ -199,17 +192,26 @@ class LoggingTestCase(CacheClearingTestCase):
         fields = self._new_version_fields(dependency, version, location, changes)
         self.assert_logged_among_others(Logger._MESSAGE_NEW_VERSION, **fields)
 
-    def records_of(self, message: LogMessage) -> list[_Call]:
-        """Return the records logged for the message, ignoring the other records at its level."""
-        return [record for record in self.records(message.level) if record.args[:1] == (message,)]
+    def records_of(self, message: LogMessage, **fields: object) -> list[_Call]:
+        """Return the records logged for the message, ignoring the other records at its level.
+
+        The fields narrow it further, so a message one field parameterises — a redundancy warning's reason — is
+        matched by the value it carries rather than by the message alone.
+        """
+        rendered = Logger._rendered(fields)
+        return [
+            record
+            for record in self.records(message.level)
+            if record.args[:1] == (message,) and rendered.items() <= record.args[1].items()
+        ]
 
     def new_version_records(self) -> list[_Call]:
         """Return the records reporting an available new version, ignoring the other records at their level."""
         return self.records_of(Logger._MESSAGE_NEW_VERSION)
 
-    def assert_none_logged(self, message: LogMessage, what: str) -> None:
+    def assert_none_logged(self, message: LogMessage, what: str, **fields: object) -> None:
         """Assert the message was not logged at all, whatever else was logged at its level."""
-        self.assertEqual(self.records_of(message), [], f"Expected no {what} to be logged")
+        self.assertEqual(self.records_of(message, **fields), [], f"Expected no {what} to be logged")
 
     def assert_no_new_version_logged(self) -> None:
         """Assert that no new version was logged (other records at the same level are allowed)."""
@@ -338,49 +340,29 @@ class LoggingTestCase(CacheClearingTestCase):
             level=level,
         )
 
-    def assert_redundant_vulnerable_source_logged(
-        self, dependency: str, location: Location, directive: object = ANY
+    def assert_redundant_directive_logged(
+        self, reason: Reason, dependency: str, location: Location, directive: object = ANY
     ) -> None:
-        """Assert that a vulnerability scope the dependency's source can never honour was warned about for the file."""
+        """Assert that a directive holding nothing back was warned about once for the file, saying why."""
         self.assert_logged(
-            Logger._MESSAGE_REDUNDANT_VULNERABLE_SOURCE,
+            Logger._MESSAGE_REDUNDANT_DIRECTIVE,
             directive=directive,
             dependency=dependency,
             location=location,
+            reason=reason,
         )
 
     def assert_no_redundant_suppression_logged(self) -> None:
         """Assert that no vulnerability suppression was reported as holding nothing back, whatever else was logged."""
-        for message in (
-            Logger._MESSAGE_REDUNDANT_VULNERABLE_SCOPE,
-            Logger._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY,
-            Logger._MESSAGE_REDUNDANT_VULNERABLE_LEVEL,
-            Logger._MESSAGE_REDUNDANT_VULNERABLE_SOURCE,
-        ):
-            with self.subTest(message=message):
-                self.assert_none_logged(message, "redundant vulnerability suppression")
-
-    def assert_redundant_yank_scope_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
-        """Assert that a yank scope the dependency's source can never honour was warned about once for the file."""
-        self.assert_logged(
-            Logger._MESSAGE_REDUNDANT_YANK_SCOPE, directive=directive, dependency=dependency, location=location
+        suppressions: tuple[tuple[LogMessage, dict[str, object]], ...] = (
+            (Logger._MESSAGE_REDUNDANT_VULNERABLE_SCOPE, {}),
+            (Logger._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY, {}),
+            (Logger._MESSAGE_REDUNDANT_VULNERABLE_LEVEL, {}),
+            (Logger._MESSAGE_REDUNDANT_DIRECTIVE, {"reason": Reason.NO_VULNERABILITY_REPORTS}),
         )
-
-    def assert_redundant_cooldown_item_logged(
-        self, dependency: str, location: Location, directive: object = ANY
-    ) -> None:
-        """Assert that a cooldown the dependency's source cannot measure was warned about once for the file."""
-        self.assert_logged(
-            Logger._MESSAGE_REDUNDANT_COOLDOWN_ITEM, directive=directive, dependency=dependency, location=location
-        )
-
-    def assert_redundant_stale_source_logged(
-        self, dependency: str, location: Location, directive: object = ANY
-    ) -> None:
-        """Assert that a `stale` directive the dependency's source cannot answer was warned about once for the file."""
-        self.assert_logged(
-            Logger._MESSAGE_REDUNDANT_STALE_SOURCE, directive=directive, dependency=dependency, location=location
-        )
+        for message, fields in suppressions:
+            with self.subTest(message=message, **fields):
+                self.assert_none_logged(message, "redundant vulnerability suppression", **fields)
 
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged."""

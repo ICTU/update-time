@@ -11,7 +11,7 @@ from archunitpython import assert_passes, project_files
 from archunitpython.files.assertion import CustomFileViolation
 
 from tests.update_time import fixtures
-from tests.update_time.helpers import _module_level_assignments, _project
+from tests.update_time.helpers import module_level_assignments, project
 
 if TYPE_CHECKING:
     from archunitpython.files.assertion import CustomFileCondition, FileInfo
@@ -65,24 +65,44 @@ def _env_var_globals(files: list[pathlib.Path]) -> set[str]:
     """Return the names assigned an `EnvVar`: the settings the command line configures a run with."""
     names: set[str] = set()
     for path in files:
-        for targets, value in _module_level_assignments(ast.parse(path.read_text())):
+        for targets, value in module_level_assignments(ast.parse(path.read_text())):
             if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "EnvVar":
                 names.update(target.id for target in targets if isinstance(target, ast.Name))
     return names
 
 
+def _imported_modules(tree: ast.Module) -> set[str]:
+    """Return the names the file's imports bind to a module, so an attribute read off one can be told apart."""
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            modules.update(alias.asname or alias.name for alias in node.names)
+    return modules
+
+
 def _reads_one_of(names: set[str]) -> CustomFileCondition:
-    """Return a rule condition holding for a file that reads one of the names, by import or as an attribute.
+    """Return a rule condition holding for a file that reads one of the names, by import or off its module.
 
     A condition rather than a rule of its own because archunitpython records a dependency on the module a name
-    comes from, not on the name, and a source may use `cooldown.within_cooldown` while reading no setting.
+    comes from, not on the name, and a source may use `cooldown.within_cooldown` while reading no setting. An
+    attribute counts only when read off an imported module, so a class of the file's own carrying a member of that
+    name — `Scope.COOLDOWN` beside the `COOLDOWN` setting — is no violation.
     """
 
     def reads_one_of(file_info: FileInfo) -> bool:
+        tree = ast.parse(file_info.content)
+        modules = _imported_modules(tree)
         return any(
             (isinstance(node, ast.ImportFrom) and any(alias.name in names for alias in node.names))
-            or (isinstance(node, ast.Attribute) and node.attr in names)
-            for node in ast.walk(ast.parse(file_info.content))
+            or (
+                isinstance(node, ast.Attribute)
+                and node.attr in names
+                and isinstance(node.value, ast.Name)
+                and node.value.id in modules
+            )
+            for node in ast.walk(tree)
         )
 
     return reads_one_of
@@ -238,14 +258,16 @@ class ConfigurationReadingTest(unittest.TestCase):
         """Test that a module is reported whether it imports the setting or reads it off its module.
 
         Without this the rule above would pass just as well when the condition found nothing whatever a source does.
+        A class member of the setting's name is not a read, so the file carrying one is left unreported.
         """
         files = {
             "settings.py": "SETTING = EnvVar('X')\n",
             "importer.py": "from settings import SETTING\n",
             "attribute.py": "import settings\n\nsettings.SETTING.get()\n",
             "reader.py": "from settings import read_setting\n",
+            "namesake.py": "class Scope:\n    SETTING = 'setting'\n\nScope.SETTING\n",
         }
-        with _project(files) as directory:
+        with project(files) as directory:
             settings = _env_var_globals(sorted(pathlib.Path(directory).rglob("*.py")))
             rule = project_files(directory).should_not().adhere_to(_reads_one_of(settings), _READS_A_SETTING)
             violations = [violation for violation in rule.check() if isinstance(violation, CustomFileViolation)]
@@ -267,7 +289,7 @@ class SubmoduleImportTest(unittest.TestCase):
 
     def assert_reports_submodule_import(self, module: str) -> None:
         """Assert that the module's pattern reports a file that imports a submodule of the module."""
-        with _project({"importer.py": f"from {module}.sub import thing\n"}) as directory:
+        with project({"importer.py": f"from {module}.sub import thing\n"}) as directory:
             rule = project_files(directory).should_not().depend_on_external_modules()
             self.assertEqual(len(rule.matching(_module_pattern(module)).check()), 1)
 
@@ -297,7 +319,7 @@ class PackageImportTest(unittest.TestCase):
             "package_form.py": "from pkg import target\n\ntarget\n",
             "module_form.py": "from pkg.target import thing\n\nthing\n",
         }
-        with _project(files) as directory:
+        with project(files) as directory:
             rule = project_files(directory).should_not().depend_on_files().in_path(_package_init("pkg"))
             self.assertEqual(len(rule.check()), 1)
 
@@ -319,7 +341,7 @@ class PackageImportBlindSpotTest(unittest.TestCase):
         for importer in ("from pkg import target\n\ntarget\n", "from pkg import target as alias\n\nalias\n"):
             with self.subTest(importer=importer.splitlines()[0]):
                 files = {"pkg/__init__.py": "", "pkg/target.py": "thing = 1\n", "importer.py": importer}
-                with _project(files) as directory:
+                with project(files) as directory:
                     by_module = project_files(directory).should_not().depend_on_files().with_name("target.py")
                     by_package = project_files(directory).should_not().depend_on_files().in_path(_package_init("pkg"))
                     self.assertEqual(by_module.check(), [])

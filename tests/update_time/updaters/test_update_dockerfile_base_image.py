@@ -2,6 +2,7 @@
 
 from unittest.mock import Mock, patch
 
+from update_time.domain.directive import Reason
 from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS
 from update_time.primitives.location import Location
 from update_time.updaters.update_dockerfile_base_image import update_dockerfiles
@@ -85,7 +86,9 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile = mock_path(marker + self.reference("python:3.14"))
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_called_with(marker + self.reference(f"python:3.15@{DIGEST2}"))
-        self.assert_redundant_yank_scope_logged("python", Location(mock_dockerfile, 2), "ignore[yanked]")
+        self.assert_redundant_directive_logged(
+            Reason.NO_YANK_CONCEPT, "python", Location(mock_dockerfile, 2), "ignore[yanked]"
+        )
 
     def test_redundant_yank_scope_in_a_combined_bracket_names_the_scope_alone(self):
         """Test that a yank scope sharing a bracket is named on its own, without the other item in that bracket."""
@@ -94,7 +97,9 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile = mock_path(marker + self.reference("python:3.14"))
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_not_called()  # `ignore[update]` shares the bracket and freezes the image
-        self.assert_redundant_yank_scope_logged("python", Location(mock_dockerfile, 2), "ignore[yanked]")
+        self.assert_redundant_directive_logged(
+            Reason.NO_YANK_CONCEPT, "python", Location(mock_dockerfile, 2), "ignore[yanked]"
+        )
 
     def test_redundant_cooldown_names_the_cooldown_directive_alone(self):
         """Test that the warning names the `cooldown` directive, leaving out one on the same line that does apply."""
@@ -102,8 +107,8 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         marker = self.marker_line("ignore[cooldown<30] allow[hash-drift]")
         mock_dockerfile = mock_path(marker + self.reference(f"ghcr.io/owner/python:3.14@{DIGEST1}"))
         self.run_updater(mock_dockerfile)
-        self.assert_redundant_cooldown_item_logged(
-            "ghcr.io/owner/python", Location(mock_dockerfile, 2), "ignore[cooldown<30]"
+        self.assert_redundant_directive_logged(
+            Reason.NO_COOLDOWN_DATES, "ghcr.io/owner/python", Location(mock_dockerfile, 2), "ignore[cooldown<30]"
         )
 
     def test_vulnerable_scope_is_reported_as_redundant(self):
@@ -122,7 +127,9 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
                 mock_dockerfile.write_text.assert_called_with(
                     f"# update-time: {directive}\nFROM python:3.15@{DIGEST2}\n"
                 )
-                self.assert_redundant_vulnerable_source_logged("python", Location(mock_dockerfile, 2), directive)
+                self.assert_redundant_directive_logged(
+                    Reason.NO_VULNERABILITY_REPORTS, "python", Location(mock_dockerfile, 2), directive
+                )
                 self.mock_log.reset_mock()  # Judge each case on the records of its own run.
 
     def test_redundant_vulnerable_scope_beside_another_ignore_names_the_scope_alone(self):
@@ -133,7 +140,9 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
                 mock_dockerfile = mock_path(f"# update-time: ignore[update] {directive}\nFROM python:3.14\n")
                 self.run_updater(mock_dockerfile)
                 mock_dockerfile.write_text.assert_not_called()  # `ignore[update]` holds the update back
-                self.assert_redundant_vulnerable_source_logged("python", Location(mock_dockerfile, 2), directive)
+                self.assert_redundant_directive_logged(
+                    Reason.NO_VULNERABILITY_REPORTS, "python", Location(mock_dockerfile, 2), directive
+                )
                 self.mock_log.reset_mock()  # Judge each case on the records of its own run.
 
     def test_label_prefixed_base_image_bumped_and_pinned(self):

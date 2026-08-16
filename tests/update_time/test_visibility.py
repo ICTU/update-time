@@ -5,7 +5,7 @@ import pathlib
 import unittest
 from typing import TYPE_CHECKING
 
-from tests.update_time.helpers import _module_level_assignments, _project
+from tests.update_time.helpers import module_level_assignments, project
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -51,7 +51,7 @@ def _discovered_classes(trees: dict[pathlib.Path, ast.Module]) -> set[str]:
 def _public_constants(trees: dict[pathlib.Path, ast.Module]) -> Iterator[tuple[pathlib.Path, str]]:
     """Yield the public module-level constants each module assigns."""
     for path, tree in trees.items():
-        for targets, _value in _module_level_assignments(tree):
+        for targets, _value in module_level_assignments(tree):
             for target in targets:
                 if isinstance(target, ast.Name) and not target.id.startswith("_") and target.id.isupper():
                     yield path, target.id
@@ -128,6 +128,39 @@ def _module_local_names(
     )
 
 
+def _may_import_a_private(importer: pathlib.Path, module_file: str, files: list[pathlib.Path]) -> bool:
+    """Return whether the importer may import a private name from the module, leaving it private.
+
+    Three may: a module outside this project, whose privates are not ours to rename; a test of the very module
+    defining it, which reads the code it covers from the inside; and any test importing from `src` or `tools`, for
+    the same reason. Between two modules of the same kind the name is public in fact, whatever its spelling.
+    """
+    defining = [path for path in files if path.as_posix().endswith(module_file)]
+    if not defining:
+        return True
+    if importer.name == f"test_{pathlib.PurePath(module_file).name}":
+        return True
+    return "tests" in importer.parts and any({"src", "tools"} & set(path.parts) for path in defining)
+
+
+def _privates_imported_elsewhere(files: list[pathlib.Path]) -> list[str]:
+    """Return the private module-level names another module imports, which makes them public in fact.
+
+    The converse of the rules above: a name spelled with a leading underscore claims no caller outside its module,
+    so an import elsewhere means the spelling and the fact have parted company.
+    """
+    reported: list[str] = []
+    for path in files:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.ImportFrom) or not node.module or node.level:
+                continue
+            module_file = node.module.replace(".", "/") + ".py"
+            if _may_import_a_private(path, module_file, files):
+                continue
+            reported += [f"{path}:{alias.name}" for alias in node.names if alias.name.startswith("_")]
+    return sorted(reported)
+
+
 class VisibilityTest(unittest.TestCase):
     """Test that a public module-level name has callers outside the module defining it.
 
@@ -138,9 +171,26 @@ class VisibilityTest(unittest.TestCase):
     @staticmethod
     def reported(check: Callable[[list[pathlib.Path]], list[str]], files: dict[str, str]) -> list[str]:
         """Return the names the check reports for a project of the given files, without their paths."""
-        with _project(files) as directory:
+        with project(files) as directory:
             reported = check(sorted(pathlib.Path(directory).rglob("*.py")))
         return [entry.rsplit(":", maxsplit=1)[-1] for entry in reported]
+
+    def test_private_names_have_no_importer_outside_their_module(self):
+        """Test that a name kept private is imported nowhere else, so its spelling matches its callers."""
+        self.assertEqual(_privates_imported_elsewhere(_python_files()), [])
+
+    def test_a_private_name_imported_by_another_module_is_reported(self):
+        """Test that a private name another module imports is reported, unless a test reaches into the code it tests."""
+        files = {
+            "src/pkg/mod.py": "_PRIVATE = 1\n",
+            "tests/test_other.py": "from pkg.mod import _PRIVATE\n",  # a test reaching into the code it covers
+            "tests/mutation.py": "_HARNESS = 2\n",
+            "tests/test_mutation.py": "from tests.mutation import _HARNESS\n",  # a test of that very module
+            "tests/outsider.py": "from unittest.mock import _Call\n",  # a private of another project
+            "tests/helpers.py": "_HELPER = 3\n",
+            "tests/test_architecture.py": "from tests.helpers import _HELPER\n",  # neither of those
+        }
+        self.assertEqual(self.reported(_privates_imported_elsewhere, files), ["_HELPER"])
 
     def test_constants_without_outside_callers_are_private(self):
         """Test that every public module-level constant is imported from its module or read as an attribute."""

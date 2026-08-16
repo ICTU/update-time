@@ -270,6 +270,44 @@ Which dependencies are checked follows from what OSV can match a pinned version 
 
 Comments of the form `# update-time: <directive>` let you steer what happens to an individual reference — to hold it back, but also to bound how far it may move, or to opt it into behaviour that is off by default. To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
 
+### The anatomy of a marker
+
+The rest of this chapter names the parts of a marker, so here is one taken apart:
+
+```text
+humanize==4.15.0  # update-time: ignore[yanked, stale<90] allow[update<5] (until 5.0)
+                  └────────────────────── marker ───────────────────────┘ └ reason ─┘
+                                 └───── directives ─────┘ └─ directive ─┘
+                                 └verb┘└─── bracket ────┘ └verb┘└bracket┘
+```
+
+A marker is the `# update-time:` comment up to its last directive, and holds one or more directives, each a verb and the bracket that may follow it. Directives that use the same verb can be combined: `ignore[yanked, stale<90]` is equivalent to `ignore[yanked] ignore[stale<90]`. Free text after the last directive is a reason, which Update-time ignores.
+
+Zooming in on brackets:
+
+```text
+ignore[yanked, stale<90]
+       └─┬──┘  └─┬─┘└┬┘
+         │       │   └─ threshold: what the item sets for this reference, here 90 days
+         │       └─ scope: what the item steers, here the staleness warning
+         └─ item: a scope named alone holds it back outright, here to not warn about yanked versions
+```
+
+A bracket holds one or more items, separated by commas: the `ignore` bracket above holds the two items `yanked` and `stale<90`, and the `allow` bracket holds the single item `update<5`. An item names the scope it steers — the update, the cooldown, the hash drift, or one of the three warnings — and may set what that scope runs at.
+
+| Term | What it is | Example |
+| :--- | :--------- | :------ |
+| Marker | the `# update-time:` comment steering one reference, up to its last directive | `# update-time: ignore[stale] allow[update<3.13]` |
+| Directive | a verb and the bracket it may carry; a marker holds as many directives as you write | `ignore[stale<90]` |
+| Verb | `ignore` drops what its items name and `allow` keeps it, so `ignore[stale<90]` and `allow[stale>=90]` say the same thing | `ignore`, `allow` |
+| Bracket | what a directive's `[…]` holds: its items, separated by commas | `[yanked, stale<90]` |
+| Item | one entry in a bracket: a scope, a scope with a threshold, a [bound](#bounding-an-update), or an [advisory](#silencing-specific-vulnerabilities) | `stale<90` |
+| Scope | what an item steers: `update`, `cooldown`, `stale`, `yanked`, `vulnerable`, or `hash-drift` | `ignore[yanked]` steers the yank warning |
+| Bare `ignore` | the verb with no bracket at all, which holds back every scope it can without naming one | `# update-time: ignore` |
+| Reason | free text after the last directive, which Update-time keeps none of | `(pinned until the 3.13 migration)` |
+
+Which verb a scope takes follows from what it steers. An `ignore` item naming a scope alone holds that scope back, so `ignore[stale]` silences the staleness warning altogether while `ignore[stale<90]` sets what it warns at. `hash-drift` goes the other way, being off by default: it is opted into with `allow[hash-drift]` and never held back. And the cooldown takes neither form alone, since it sets a number of days rather than being switched on or off. A bare `ignore` names no scope while holding every scope it can back, which is why no warning ever calls a bare `ignore` redundant: there would be no directive to tell you to delete.
+
 ### Holding a reference back
 
 By default the marker holds a reference back from version updates, the [staleness](#-stale-dependencies) check, the [yank](#-yanked-dependencies) check, and the [vulnerability](#-vulnerable-dependencies) check. Add a bracketed scope to narrow it to just one:

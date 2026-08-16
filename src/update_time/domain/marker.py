@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import dataclass, field, replace
+from enum import Flag, auto
 from typing import TYPE_CHECKING
 
 from packaging.specifiers import InvalidSpecifier
@@ -14,14 +15,40 @@ if TYPE_CHECKING:
     from update_time.domain.line import Line
 
 
-# The bracket items naming the checks a marker steers, spelled once here: the item regexps below match them,
-# `_KEYWORD_ITEMS` recognises them, and the warnings name them back, so the three cannot come to disagree. The
-# spelling itself is fixed, being the language users write in their own repositories.
-_UPDATE = "update"
-_STALE = "stale"
-_COOLDOWN = "cooldown"
-_YANKED = "yanked"
-_VULNERABLE = "vulnerable"
+class Scope(Flag):
+    """What an item steers, rendering as the bracket item naming it.
+
+    A flag rather than a plain enum, so the scopes a marker steers combine into one value: `Scope.STALE` is one
+    scope and `Scope.STALE | Scope.YANKED` two. The items are spelled once here: the item regexps below match them,
+    `_KEYWORD_ITEMS` recognises the ones a bare item names, and the warnings name them back, so the three cannot
+    come to disagree. The spelling itself is fixed, being the language users write in their own repositories.
+    """
+
+    UPDATE = auto()
+    COOLDOWN = auto()
+    STALE = auto()
+    YANKED = auto()
+    VULNERABLE = auto()
+    HASH_DRIFT = auto()
+
+    def __str__(self) -> str:
+        """Return the scope as the bracket item naming it, so parsing and rendering agree.
+
+        The language hyphenates an item of two words, so `HASH_DRIFT` is spelled `hash-drift`.
+        """
+        return (self.name or "").lower().replace("_", "-")
+
+
+# No scope at all: what a line without a marker names, and what the union in `Marker.merge` starts from.
+_NO_SCOPE = Scope(0)
+
+# The scopes an `ignore` directive can hold back, which are those a bare item names. Two scopes are left out: the
+# cooldown, which takes a day count and is carried as a `Threshold`, so a bare `ignore[cooldown]` is invalid; and
+# the hash drift, which is off by default, so it is opted into with `allow` rather than held back.
+_IGNORABLE_SCOPES = Scope.UPDATE | Scope.STALE | Scope.YANKED | Scope.VULNERABLE
+
+# The scopes whose checks need the source queried, so a marker holding all three back leaves nothing to ask it for.
+_SOURCE_CHECK_SCOPES = Scope.UPDATE | Scope.STALE | Scope.YANKED
 
 
 @dataclass(frozen=True)
@@ -69,10 +96,9 @@ class Threshold[T]:
 class Marker:
     """The `# update-time:` directives affecting a line (see `parse_marker`).
 
-    `ignore_update`, `ignore_stale`, `ignore_yanked`, and `ignore_vulnerable` are whether an `ignore` directive holds
-    back the reference's update, its staleness warning, its yank warning, and its vulnerability warning. A bare
-    `ignore` holds back all four, while `ignore[update]`, `ignore[stale]`, `ignore[yanked]`, and `ignore[vulnerable]`
-    each hold back just one.
+    `ignored_scopes` are the scopes an `ignore` directive holds back: the reference's update, its staleness warning,
+    its yank warning, and its vulnerability warning. A bare `ignore` holds back all four, while `ignore[update]`,
+    `ignore[stale]`, `ignore[yanked]`, and `ignore[vulnerable]` each hold back just one.
     `ignored_advisories` are the advisories an `ignore[vulnerable=ID]` directive holds the warning back for, each as
     the identifier the user spelled it by; empty when the reference names none.
     `allow_drift` is whether an `allow[hash-drift]` directive opts the reference into adopting a drifted hash pin.
@@ -91,10 +117,7 @@ class Marker:
     echoed to the user verbatim: rendering the marker gives all of it, `raw_directives` gives one verb's directives.
     """
 
-    ignore_update: bool = False
-    ignore_stale: bool = False
-    ignore_yanked: bool = False
-    ignore_vulnerable: bool = False
+    ignored_scopes: Scope = _NO_SCOPE
     ignored_advisories: frozenset[str] = frozenset()
     allow_drift: bool = False
     version_bound: VersionBound = NO_BOUND
@@ -102,7 +125,7 @@ class Marker:
     cooldown: Threshold[int] = Threshold()
     vulnerable: Threshold[str] = Threshold()
     invalid_item: str | None = None
-    written_scopes: frozenset[str] = field(compare=False, default=frozenset())
+    written_scopes: Scope = field(compare=False, default=_NO_SCOPE)
     raw: str = field(compare=False, default="")
 
     def __str__(self) -> str:
@@ -116,7 +139,7 @@ class Marker:
         A marker holding back only some of the scopes still needs its sources, since the checks it leaves alone have
         to run.
         """
-        return self.holds_back_source_checks and self.ignore_vulnerable
+        return _IGNORABLE_SCOPES in self.ignored_scopes
 
     @property
     def as_written(self) -> Marker:
@@ -127,18 +150,12 @@ class Marker:
         """
         if not self.holds_everything_back:
             return self
-        return replace(
-            self,
-            ignore_update=_UPDATE in self.written_scopes,
-            ignore_stale=_STALE in self.written_scopes,
-            ignore_yanked=_YANKED in self.written_scopes,
-            ignore_vulnerable=_VULNERABLE in self.written_scopes,
-        )
+        return replace(self, ignored_scopes=self.ignored_scopes & self.written_scopes)
 
     @property
     def holds_back_source_checks(self) -> bool:
         """Return whether the marker holds back the update, the staleness warning, and the yank warning alike."""
-        return self.ignore_update and self.ignore_stale and self.ignore_yanked
+        return _SOURCE_CHECK_SCOPES in self.ignored_scopes
 
     @property
     def sets_cooldown(self) -> bool:
@@ -153,7 +170,22 @@ class Marker:
         threshold to warn from, which asks for more warnings as often as fewer. A comparison running the wrong way
         sets no threshold, so it decides nothing and is reported as incorrect instead.
         """
-        return self.ignore_stale or self.stale.value is not None
+        return self.ignores(Scope.STALE) or self.stale.value is not None
+
+    @property
+    def frozen(self) -> Marker:
+        """Return this marker with the update held back as well, keeping everything else it says."""
+        return replace(self, ignored_scopes=self.ignored_scopes | Scope.UPDATE)
+
+    def ignores(self, scope: Scope) -> bool:
+        """Return whether an `ignore` directive holds the scope back outright.
+
+        The bare form of a scope, which neither a threshold nor a bound can express: `ignore[stale]` silences the
+        staleness warning at every age where `ignore[stale<90]` sets what it warns at, and `ignore[update]` admits
+        no version where a bound narrows which ones it may take. A check whose forms fold into one decision reads
+        this alongside them (see `decides_staleness`).
+        """
+        return scope in self.ignored_scopes
 
     @property
     def suppresses_vulnerabilities(self) -> bool:
@@ -163,7 +195,7 @@ class Marker:
         one about a named advisory, and setting the level to warn from. A comparison running the wrong way sets no
         level, so it suppresses nothing and is reported as incorrect instead.
         """
-        return self.ignore_vulnerable or bool(self.ignored_advisories) or self.vulnerable.value is not None
+        return self.ignores(Scope.VULNERABLE) or bool(self.ignored_advisories) or self.vulnerable.value is not None
 
     @property
     def cooldown_directive(self) -> str:
@@ -181,19 +213,18 @@ class Marker:
         wrote, since either verb can set one. Where a reference carries both, the bare scope is named, since it
         holds every update back whatever the bound would admit.
         """
-        if self.ignore_update:
+        if self.ignores(Scope.UPDATE):
             return str(BLOCK_ALL_UPDATES)
         return "" if self.version_bound == NO_BOUND else str(self.version_bound)
 
-    @property
-    def yank_directive(self) -> str:
-        """Return the directive that holds the yank warning back, as the language spells it.
+    def scope_directive(self, scope: Scope) -> str:
+        """Return the directive holding the scope back, as the language spells it, or nothing when it holds it not.
 
-        Only `ignore[yanked]` sets the scope, so it is spelled out rather than read back from the text the user
-        wrote. Spelling it out leaves out an `ignore` beside it that does hold something back, and names the scope
-        alone when it was written in a bracket it shares with other items.
+        Only an `ignore` names a scope on its own, so the directive is spelled out rather than read back from the
+        text the user wrote. Spelling it out leaves out an `ignore` beside it that does hold something back, and
+        names the scope alone when it was written in a bracket it shares with other items.
         """
-        return _directive(Verb.IGNORE, _YANKED)
+        return _directive(Verb.IGNORE, str(scope)) if self.ignores(scope) else ""
 
     @property
     def stale_directive(self) -> str:
@@ -203,15 +234,7 @@ class Marker:
         user wrote, since either verb can set one. Where a reference carries both, the bare scope is named, since
         it silences the warning whatever the threshold says.
         """
-        return _directive(Verb.IGNORE, _STALE) if self.ignore_stale else self.stale.directive
-
-    @property
-    def vulnerable_scope_directive(self) -> str:
-        """Return the bare `vulnerable` scope, as the language spells it, or nothing when the marker sets none.
-
-        Only `ignore[vulnerable]` sets the scope, so it is spelled out rather than read back from the user's text.
-        """
-        return _directive(Verb.IGNORE, _VULNERABLE) if self.ignore_vulnerable else ""
+        return self.scope_directive(Scope.STALE) or self.stale.directive
 
     @property
     def advisory_directives(self) -> str:
@@ -221,7 +244,7 @@ class Marker:
         spells a second advisory. They are sorted, since a `frozenset` keeps no order, and a marker split over two
         placements reaches them in the order they merged rather than the order they were written.
         """
-        items = ", ".join(f"{_VULNERABLE}={advisory}" for advisory in sorted(self.ignored_advisories))
+        items = ", ".join(f"{Scope.VULNERABLE}={advisory}" for advisory in sorted(self.ignored_advisories))
         return _directive(Verb.IGNORE, items) if items else ""
 
     @property
@@ -232,7 +255,7 @@ class Marker:
         one form alone is reported, that form's own directive is named instead, since the others may hold plenty
         back.
         """
-        forms = (self.vulnerable_scope_directive, self.advisory_directives, self.vulnerable.directive)
+        forms = (self.scope_directive(Scope.VULNERABLE), self.advisory_directives, self.vulnerable.directive)
         return " ".join(form for form in forms if form)
 
     def raw_directives(self, verb: Verb) -> str:
@@ -243,7 +266,7 @@ class Marker:
     def merge(self, other: Marker) -> Marker:
         """Return this marker combined with another one.
 
-        The boolean hold-backs and opt-ins combine as unions, so `ignore[update]` and `ignore[stale]` together hold
+        The scopes held back and the opt-ins combine as unions, so `ignore[update]` and `ignore[stale]` together hold
         back as much as a bare `ignore`, and so do the advisories named, so two `vulnerable=ID` items hold back the
         warnings about both advisories. A value that cannot combine — a version bound, an invalid item, and the
         thresholds `Threshold.merge` folds — is taken from the other marker only where this one leaves it unset, so
@@ -253,10 +276,7 @@ class Marker:
         inline and comment-above texts into the line's.
         """
         return Marker(
-            ignore_update=self.ignore_update or other.ignore_update,
-            ignore_stale=self.ignore_stale or other.ignore_stale,
-            ignore_yanked=self.ignore_yanked or other.ignore_yanked,
-            ignore_vulnerable=self.ignore_vulnerable or other.ignore_vulnerable,
+            ignored_scopes=self.ignored_scopes | other.ignored_scopes,
             ignored_advisories=self.ignored_advisories | other.ignored_advisories,
             allow_drift=self.allow_drift or other.allow_drift,
             version_bound=other.version_bound if self.version_bound == NO_BOUND else self.version_bound,
@@ -270,16 +290,15 @@ class Marker:
 
 
 # The marker a bare `ignore` expresses: hold everything back.
-_BARE_IGNORE = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True, ignore_vulnerable=True)
+_BARE_IGNORE = Marker(ignored_scopes=_IGNORABLE_SCOPES)
 
-# The keyword bracket items each verb recognises, and the marker each expresses.
+# The keyword bracket items each verb recognises, and the marker each expresses. An `ignore` takes a bare item per
+# scope, which holds that scope back and records that the reader named it, so the scopes decide what is recognised.
 _KEYWORD_ITEMS = {
-    (Verb.IGNORE, _UPDATE): Marker(ignore_update=True, written_scopes=frozenset({_UPDATE})),
-    (Verb.IGNORE, _STALE): Marker(ignore_stale=True, written_scopes=frozenset({_STALE})),
-    (Verb.IGNORE, _YANKED): Marker(ignore_yanked=True, written_scopes=frozenset({_YANKED})),
-    (Verb.IGNORE, _VULNERABLE): Marker(ignore_vulnerable=True, written_scopes=frozenset({_VULNERABLE})),
-    (Verb.ALLOW, _UPDATE): Marker(),  # bare `allow[update]`: the default no-op
-    (Verb.ALLOW, "hash-drift"): Marker(allow_drift=True),
+    (Verb.IGNORE, str(scope)): Marker(ignored_scopes=scope, written_scopes=scope) for scope in _IGNORABLE_SCOPES
+} | {
+    (Verb.ALLOW, str(Scope.UPDATE)): Marker(),  # bare `allow[update]`: the default no-op
+    (Verb.ALLOW, str(Scope.HASH_DRIFT)): Marker(allow_drift=True),
 }
 
 # The comment leads that can carry a marker: `#` in most formats we update, `//` in devcontainer.json (which is
@@ -301,18 +320,18 @@ _DIRECTIVE = re.compile(r"(?P<verb>ignore\b|allow(?=\[))(?:\[(?P<bracket>[^\]]*)
 
 # A day-count bracket item: a keyword, a comparison operator, and a number of days (`stale<90`, `cooldown<30`). The
 # day count is captured loosely, so a malformed one is still recognised as such an item and reported as malformed.
-_DAY_COUNT_ITEM = re.compile(rf"(?P<keyword>{_STALE}|{_COOLDOWN})(?P<operator><|>=)(?P<days>.*)")
+_DAY_COUNT_ITEM = re.compile(rf"(?P<keyword>{Scope.STALE}|{Scope.COOLDOWN})(?P<operator><|>=)(?P<days>.*)")
 
 _DAY_COUNT = re.compile(r"\d+")
 
 # An advisory bracket item: the `vulnerable` scope narrowed to the advisory the identifier after the `=` names
 # (`vulnerable=GHSA-2gwj-7jmv-h26r`). The identifier is opaque to Update-time, so whatever follows the `=` is taken
 # as the user spelled it, and an item with nothing after the `=` names no advisory.
-_ADVISORY_ITEM = re.compile(rf"{_VULNERABLE}=(?P<advisory>.+)")
+_ADVISORY_ITEM = re.compile(rf"{Scope.VULNERABLE}=(?P<advisory>.+)")
 
 # A risk level bracket item: the `vulnerable` scope, a comparison operator, and a risk level (`vulnerable<high`). The
 # level is captured loosely, so a misspelled one is still recognised as such an item and reported as unreadable.
-_RISK_LEVEL_ITEM = re.compile(rf"{_VULNERABLE}(?P<operator><|>=)(?P<level>.*)")
+_RISK_LEVEL_ITEM = re.compile(rf"{Scope.VULNERABLE}(?P<operator><|>=)(?P<level>.*)")
 
 # The operator each verb names a threshold with. A threshold is sensible only when it names the values from the
 # threshold upwards, so `ignore[stale<90]` and `allow[stale>=90]` set the same threshold, as do
@@ -409,7 +428,7 @@ def _parse_bracket_item(verb: Verb, item: str) -> Marker | None:
         version_bound = parse_bound(verb, item)
     except InvalidSpecifier:
         # A bound's `update` names the item rather than the version it bounds, so the item reports its specifier.
-        return Marker(invalid_item=item.removeprefix(_UPDATE))
+        return Marker(invalid_item=item.removeprefix(str(Scope.UPDATE)))
     return Marker(version_bound=version_bound) if version_bound is not None else None
 
 
@@ -474,4 +493,4 @@ def _parse_day_count_item(verb: Verb, item: str) -> Marker | None:
     if _DAY_COUNT.fullmatch(days := match.group("days")) is None:
         return Marker(invalid_item=item)
     day_count = _threshold(verb, match, int(days))
-    return Marker(stale=day_count) if match.group("keyword") == _STALE else Marker(cooldown=day_count)
+    return Marker(stale=day_count) if match.group("keyword") == str(Scope.STALE) else Marker(cooldown=day_count)

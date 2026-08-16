@@ -12,10 +12,11 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.text import Text
 
-from update_time.domain.bound import Verb
+from update_time.domain.bound import Redundancy, Verb
 from update_time.domain.dependency import DependencyVersion, Yank
+from update_time.domain.directive import Reason
 from update_time.domain.drift import DriftedPin
-from update_time.domain.marker import Marker, Threshold
+from update_time.domain.marker import Marker, Scope
 from update_time.io.log import (
     DEPENDENCY_DELIMITER,
     LOCATION_DELIMITER,
@@ -66,9 +67,13 @@ class LogMessageTests(TestCase):
             for name, value in vars(Logger).items()
             if isinstance(value, LogMessage | str) and not name.startswith("__")
         ]
+        # The domain owns the fragments naming one of its own facts, so they are read from there rather than off the
+        # logger: a `Reason` a warning reports, and the `Redundancy` a bound is reported with.
+        messages += [str(member) for enum in (Reason, Redundancy) for member in enum]
         # Guard against the introspection silently covering the fragments alone, as it did when the messages stopped
         # being plain strings:
         self.assertIn(str(Logger._MESSAGE_NEW_VERSION), messages)
+        self.assertIn(str(Reason.NO_YANK_CONCEPT), messages)
         for message in messages:
             with self.subTest(message=message):
                 self.assertNotIn(".", message)
@@ -234,7 +239,9 @@ class LoggerTests(TestCase):
         Logger("stale").report_staleness(resolved, Marker(), 90)
         mock_log.assert_called_once_with(Logger._MESSAGE_STALE.level, Logger._MESSAGE_STALE, ANY)
         mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
-        Logger("stale").report_staleness(resolved, Marker(ignore_stale=True, raw="ignore[stale] allow[hash-drift]"), 90)
+        Logger("stale").report_staleness(
+            resolved, Marker(ignored_scopes=Scope.STALE, raw="ignore[stale] allow[hash-drift]"), 90
+        )
         self.assert_message(
             mock_log,
             Logger._MESSAGE_IGNORED_STALENESS,
@@ -396,7 +403,12 @@ class LoggerTests(TestCase):
         """Test that a reference's marker is logged at debug level verbatim, exactly as the user wrote it."""
         # The raw text combines scopes and bracket items, so echoing it verbatim shows the log takes the user's marker.
         raw = "ignore[update] ignore[stale] allow[update<3.13, hash-drift]"
-        marker = Marker(ignore_stale=True, allow_drift=True, version_bound=bound(Verb.ALLOW, "update<3.13"), raw=raw)
+        marker = Marker(
+            ignored_scopes=Scope.STALE,
+            allow_drift=True,
+            version_bound=bound(Verb.ALLOW, "update<3.13"),
+            raw=raw,
+        )
         location = _create_location("Dockerfile", 6)
         Logger("marker").recognised_marker("python", marker, location)
         self.assert_message(
@@ -413,7 +425,7 @@ class LoggerTests(TestCase):
     def test_ignored(self, mock_log: Mock):
         """Test that a held-back reference logs its `ignore` directive verbatim, exactly as the user spelled it."""
         # `ignored` names the `ignore` directives from the verbatim `raw` text, each scope as the user spelled it.
-        marker = Marker(ignore_update=True, raw="ignore[update] ignore[stale] allow[hash-drift]")
+        marker = Marker(ignored_scopes=Scope.UPDATE, raw="ignore[update] ignore[stale] allow[hash-drift]")
         location = _create_location("Dockerfile", 6)
         Logger("marker").ignored("python", marker, location)
         self.assert_message(
@@ -428,18 +440,22 @@ class LoggerTests(TestCase):
         recent = DependencyVersion("4.15.0", newest_published=datetime.now(UTC) - timedelta(days=1))
         undated = DependencyVersion("4.15.0")
         logger = Logger("stale")
-        marker = Marker(ignore_stale=True, raw="ignore[stale]")
+        marker = Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")
         location = _create_location("requirements.txt", 9)
         logger.report_staleness(resolved_reference("humanize", location, recent), marker, 90)
         logger.report_staleness(resolved_reference("humanize", location, undated), marker, 90)
         mock_log.assert_not_called()
 
-    def test_ignored_yank(self, mock_log: Mock):
-        """Test that a held-back yank warning is logged at debug level, with the `ignore` directive as written."""
+    def test_report_yank(self, mock_log: Mock):
+        """Test that a yank is reported as a warning, or as the hold-back of a marker that silences it."""
         version = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="broke Python 3.10 support"))
-        marker = Marker(ignore_yanked=True, raw="ignore[yanked] allow[hash-drift]")
-        location = _create_location("requirements.txt", 9)
-        Logger("yanked").ignored_yank(resolved_reference("humanize", location, version), marker)
+        resolved = resolved_reference("humanize", _create_location("requirements.txt", 9), version)
+        Logger("yanked").report_yank(resolved, Marker())
+        mock_log.assert_called_once_with(Logger._MESSAGE_YANKED.level, Logger._MESSAGE_YANKED, ANY)
+        mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
+        Logger("yanked").report_yank(
+            resolved, Marker(ignored_scopes=Scope.YANKED, raw="ignore[yanked] allow[hash-drift]")
+        )
         self.assert_message(
             mock_log,
             Logger._MESSAGE_IGNORED_YANK,
@@ -447,102 +463,31 @@ class LoggerTests(TestCase):
             "(update-time: ignore[yanked])",
         )
 
-    def test_ignored_yank_does_nothing_when_not_yanked(self, mock_log: Mock):
-        """Test that nothing is logged when the marker holds back a yank warning that would not be given."""
-        version = DependencyVersion("4.15.0")
-        marker = Marker(ignore_yanked=True, raw="ignore[yanked]")
-        Logger("yanked").ignored_yank(
-            resolved_reference("humanize", _create_location("requirements.txt", 9), version), marker
-        )
+    def test_report_yank_does_nothing_when_not_yanked(self, mock_log: Mock):
+        """Test that nothing is logged for a version that was not yanked, marker or no marker."""
+        resolved = resolved_reference("humanize", _create_location("requirements.txt", 9), DependencyVersion("4.15.0"))
+        Logger("yanked").report_yank(resolved, Marker())
+        Logger("yanked").report_yank(resolved, Marker(ignored_scopes=Scope.YANKED, raw="ignore[yanked]"))
         mock_log.assert_not_called()
 
-    def test_redundant_cooldown_item(self, mock_log: Mock):
-        """Test that a cooldown its source cannot apply names its own directive, not the one spelled beside it."""
-        location = _create_location(".python-version", 1)
-        for directive in ("ignore[cooldown<30]", "allow[cooldown>=30]"):
+    def test_redundant_directive(self, mock_log: Mock):
+        """Test that a directive holding nothing back is reported with the directive and the reason, as given."""
+        cases = {
+            "ignore[cooldown<30]": Reason.NO_COOLDOWN_DATES,
+            "ignore[yanked]": Reason.NO_YANK_CONCEPT,
+            "allow[stale>=90]": Reason.NO_STALENESS_DATES,
+        }
+        for directive, reason in cases.items():
             with self.subTest(directive=directive):
-                mock_log.reset_mock()
-                cooldown = Threshold(value=30, directive=directive)
-                marker = Marker(cooldown=cooldown, raw=f"{directive} allow[hash-drift]")
-                Logger("cooldown").redundant_cooldown_item(reference("python", location), marker)
+                mock_log.reset_mock()  # Judge each case on the records of its own run.
+                location = _create_location("Dockerfile", 2)
+                Logger("redundant").redundant_directive(reference("python", location), directive, reason)
                 self.assert_message(
                     mock_log,
-                    Logger._MESSAGE_REDUNDANT_COOLDOWN_ITEM,
-                    f"Redundant update-time marker {directive} for {dependency('python')} in "
-                    f"{_at('.python-version:1')}: this dependency's source reports no publication date to measure "
-                    "a cooldown against",
+                    Logger._MESSAGE_REDUNDANT_DIRECTIVE,
+                    f"Redundant update-time directive {directive} for {dependency('python')} in "
+                    f"{_at('Dockerfile:2')}: {reason}",
                 )
-
-    def test_redundant_stale_threshold(self, mock_log: Mock):
-        """Test that a threshold its source cannot measure names its own directive, not the one spelled beside it."""
-        location = _create_location("Dockerfile", 2)
-        for directive in ("ignore[stale<90]", "allow[stale>=90]"):
-            with self.subTest(directive=directive):
-                mock_log.reset_mock()
-                marker = Marker(stale=Threshold(value=90, directive=directive), raw=f"{directive} allow[hash-drift]")
-                Logger("stale").redundant_stale_source(reference("python", location), marker)
-                self.assert_message(
-                    mock_log,
-                    Logger._MESSAGE_REDUNDANT_STALE_SOURCE,
-                    f"Redundant update-time marker {directive} for {dependency('python')} in "
-                    f"{_at('Dockerfile:2')}: this dependency's source reports no publication date to measure "
-                    "staleness against",
-                )
-
-    def test_redundant_vulnerable_source_names_every_form_the_marker_carries(self, mock_log: Mock):
-        """Test that the warning names each `vulnerable` form the marker carries, the advisories sharing a bracket."""
-        marker = Marker(
-            ignore_vulnerable=True,
-            ignored_advisories=frozenset({"CVE-2", "CVE-1"}),
-            vulnerable=Threshold(value="high", directive="ignore[vulnerable<high]"),
-            raw="ignore[vulnerable, vulnerable=CVE-2, vulnerable=CVE-1, vulnerable<high]",
-        )
-        Logger("vulnerable").redundant_vulnerable_source(reference("python", _create_location("Dockerfile", 2)), marker)
-        self.assert_message(
-            mock_log,
-            Logger._MESSAGE_REDUNDANT_VULNERABLE_SOURCE,
-            "Redundant update-time marker ignore[vulnerable] ignore[vulnerable=CVE-1, vulnerable=CVE-2] "
-            f"ignore[vulnerable<high] for {dependency('python')} in {_at('Dockerfile:2')}: this dependency's "
-            "source reports no vulnerabilities",
-        )
-
-    def test_redundant_stale_scope(self, mock_log: Mock):
-        """Test that an inert bare `stale` scope names its own directive, not an `ignore` beside it holding plenty."""
-        marker = Marker(ignore_stale=True, raw="ignore[update] ignore[stale]")
-        Logger("stale").redundant_stale_source(reference("python", _create_location("Dockerfile", 2)), marker)
-        self.assert_message(
-            mock_log,
-            Logger._MESSAGE_REDUNDANT_STALE_SOURCE,
-            f"Redundant update-time marker ignore[stale] for {dependency('python')} in "
-            f"{_at('Dockerfile:2')}: this dependency's source reports no publication date to measure "
-            "staleness against",
-        )
-
-    def test_redundant_stale_scope_is_named_over_a_threshold_beside_it(self, mock_log: Mock):
-        """Test that a marker carrying a bare `ignore[stale]` and a threshold is reported under the bare scope."""
-        marker = Marker(
-            ignore_stale=True,
-            stale=Threshold(value=90, directive="ignore[stale<90]"),
-            raw="ignore[stale] ignore[stale<90]",
-        )
-        Logger("stale").redundant_stale_source(reference("python", _create_location("Dockerfile", 2)), marker)
-        self.assert_message(
-            mock_log,
-            Logger._MESSAGE_REDUNDANT_STALE_SOURCE,
-            f"Redundant update-time marker ignore[stale] for {dependency('python')} in {_at('Dockerfile:2')}: "
-            "this dependency's source reports no publication date to measure staleness against",
-        )
-
-    def test_redundant_yank_scope(self, mock_log: Mock):
-        """Test that an inert yank scope names its own directive, not an `ignore` beside it holding plenty back."""
-        marker = Marker(ignore_yanked=True, raw="ignore[update] ignore[yanked]")
-        Logger("yanked").redundant_yank_scope(reference("python", _create_location("Dockerfile", 2)), marker)
-        self.assert_message(
-            mock_log,
-            Logger._MESSAGE_REDUNDANT_YANK_SCOPE,
-            f"Redundant update-time marker ignore[yanked] for {dependency('python')} in "
-            f"{_at('Dockerfile:2')}: this dependency's source has no yank concept",
-        )
 
     def test_path_logged_at_debug(self, mock_log: Mock):
         """Test that the per-file 'checking for updates' progress is logged at debug level."""
