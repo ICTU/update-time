@@ -1,8 +1,8 @@
 """Check that a test really guards a behaviour: replace a snippet in a file, run a command, and restore the file.
 
 A test's name is not evidence of what it guards, and neither is a green run. Breaking the code the test names is:
-a command that then fails a test has caught the mutation, one that still passes has not, so nothing guards that
-code. A command that fails with every test passing has caught nothing either, since a gate it applies beyond the
+a command that then fails a test has killed the mutation, one that still passes has not, so nothing guards that
+code. A command that fails with every test passing has killed nothing either, since a gate it applies beyond the
 tests is what failed. The file is restored whether the command passes, fails, or raises, so a probe never leaves
 the tree changed.
 
@@ -33,18 +33,18 @@ _COLOURS = re.compile(r"\x1b\[[0-9;]*m")
 
 # A test the run reported as failing, as unittest names it: the method, where it lives, and a `subTest` case's
 # parameters where it has them. Those parameters are what tells one case of a table from another.
-_CAUGHT_BY = re.compile(r"^(?:FAIL|ERROR): (?P<test>.+)$", re.MULTILINE)
+_KILLED_BY = re.compile(r"^(?:FAIL|ERROR): (?P<test>.+)$", re.MULTILINE)
 
 # The exit code for a probe that never ran: the snippet was not found exactly once, or the input could not be read.
 _NOT_RUN = 2
 
-# The exit code for a run that was caught and reported errors: the stub may have broken the file rather than the
-# behaviour, so the catch is the run's to explain. A guard firing through an exception is an error too, which is why
-# this is neither a plain catch nor a probe that told nothing.
+# The exit code for a run that was killed and reported errors: the stub may have broken the file rather than the
+# behaviour, so the kill is the run's to explain. A guard firing through an exception is an error too, which is why
+# this is neither a plain kill nor a probe that told nothing.
 _UNCERTAIN = 3
 
 # The exit code for a run that failed with every test passing: a gate the command applies beyond the tests, such as
-# coverage, is what failed. No test caught the mutation, so this says as little about the guard as a survival does.
+# coverage, is what failed. No test killed the mutation, so this says as little about the guard as a survival does.
 _UNGUARDED = 4
 
 # What unittest reports when every test it ran passed, whatever a gate the command applies afterwards then says.
@@ -67,7 +67,7 @@ def snippets(text: str) -> tuple[str, str]:
 
 
 def main() -> int:
-    """Mutate the file named on the command line, run the command, and report whether the mutation was caught."""
+    """Mutate the file named on the command line, run the command, and report whether the mutation was killed."""
     if not sys.argv[1:]:
         sys.stderr.write(f"usage: mutate.py FILE [COMMAND ...], with the snippets on stdin around a {_SEPARATOR!r}\n")
         return _NOT_RUN
@@ -89,22 +89,22 @@ def main() -> int:
         path.write_text(original)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
-    caught = result.returncode != 0
+    killed = result.returncode != 0
     spelled = " ".join(command)
     output = result.stdout + result.stderr
-    if caught and _ALL_TESTS_PASSED.search(output):
-        sys.stdout.write(f"{spelled} failed with every test passing, so no test caught the mutation\n")
+    if killed and _ALL_TESTS_PASSED.search(output):
+        sys.stdout.write(f"{spelled} failed with every test passing, so no test killed the mutation\n")
         return _UNGUARDED
-    sys.stdout.write(f"The mutation was caught: {spelled} failed\n" if caught else f"The mutation survived {spelled}\n")
-    for test in _caught_by(output):
-        sys.stdout.write(f"  caught by {test}\n")
-    if caught and (errors := _ERRORS.search(output)):
+    sys.stdout.write(f"The mutation was killed: {spelled} failed\n" if killed else f"The mutation survived {spelled}\n")
+    for test in _killed_by(output):
+        sys.stdout.write(f"  killed by {test}\n")
+    if killed and (errors := _ERRORS.search(output)):
         return _report_errors(errors.group("errors"), output, command)
-    return 0 if caught else 1
+    return 0 if killed else 1
 
 
 def _report_errors(errors: str, output: str, command: list[str]) -> int:
-    """Report what a caught run's errors mean, and return the corresponding exit code."""
+    """Report what a killed run's errors mean, and return the corresponding exit code."""
     baseline = subprocess.run(command, check=False, capture_output=True, text=True)  # noqa: S603 # nosec
     mutated_tests = _tests_run(output)
     baseline_tests = _tests_run(baseline.stdout + baseline.stderr)
@@ -123,13 +123,13 @@ def _report_errors(errors: str, output: str, command: list[str]) -> int:
     return 0
 
 
-def _caught_by(output: str) -> list[str]:
+def _killed_by(output: str) -> list[str]:
     """Return each test the run reported as failing, once, in the order reported.
 
-    Naming them is what shows a guard that catches nothing: a table's case that never appears here, or a mutation
-    of one line that a second test catches as well, is a test earning less than it looks to.
+    Naming them is what shows a guard that kills nothing: a table's case that never appears here, or a mutation
+    of one line that a second test kills as well, is a test earning less than it looks to.
     """
-    return list(dict.fromkeys(_CAUGHT_BY.findall(_COLOURS.sub("", output))))
+    return list(dict.fromkeys(_KILLED_BY.findall(_COLOURS.sub("", output))))
 
 
 def _tests_run(output: str) -> int | None:

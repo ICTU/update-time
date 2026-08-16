@@ -1,10 +1,13 @@
 """Unit tests for the guard that refuses the network."""
 
+import importlib
 import socket
 import unittest
 from unittest.mock import Mock
 
 from update_time.io.fetch import fetch
+
+import tests
 
 
 class NetworkGuardTest(unittest.TestCase):
@@ -21,6 +24,12 @@ class NetworkGuardTest(unittest.TestCase):
         with self.assertRaises(RuntimeError) as raised:
             socket.getaddrinfo("update-time.invalid", 443)
         self.assertEqual(str(raised.exception), "test tried to reach the network at update-time.invalid")
+
+    def test_importing_the_package_again_refuses_no_further(self):
+        """Test that re-executing the package leaves the refusal it started, rather than starting a second one."""
+        refusal = socket.socket.connect
+        importlib.reload(tests)
+        self.assertIs(socket.socket.connect, refusal)
 
     def test_an_unmocked_request_fails_the_test(self):
         """Test that a request raises the refusal instead of fetch logging it as a network error and returning None."""

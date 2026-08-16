@@ -65,11 +65,11 @@ class MainTest(unittest.TestCase):
         self.probe(mock_path(_ORIGINAL), argv=["mutate.py", "file.py", "just", "check"])
         self.run_command.assert_called_once_with(["just", "check"], check=False, capture_output=True, text=True)
 
-    def test_a_failing_command_caught_the_mutation(self):
-        """Test that a command that fails means the mutation was caught, which is what a guarding test does."""
+    def test_a_failing_command_killed_the_mutation(self):
+        """Test that a command that fails means the mutation was killed, which is what a guarding test does."""
         self.assertEqual(self.probe(mock_path(_ORIGINAL), returncode=1), 0)
 
-    def test_the_tests_that_caught_the_mutation_are_named(self):
+    def test_the_tests_that_killed_the_mutation_are_named(self):
         """Test that each failing test is named, a `subTest` case with its parameters."""
         reported_lines = [
             "FAIL: test_scope (tests.io.test_log.LoggerTests.test_scope) (raw='ignore[update] ignore[yanked]')",
@@ -81,11 +81,11 @@ class MainTest(unittest.TestCase):
         output = "\n".join(reported_lines) + "\n"
         self.probe(mock_path(_ORIGINAL), outputs=(output, output))
         reported = self.reported.getvalue()
-        self.assertIn("caught by test_scope (tests.io.test_log.LoggerTests.test_scope) (raw='ignore[update] ", reported)
+        self.assertIn("killed by test_scope (tests.io.test_log.LoggerTests.test_scope) (raw='ignore[update] ", reported)
         self.assertIn(
-            "caught by test_scope (tests.io.test_log.LoggerTests.test_scope) (raw='ignore[yanked]')", reported
+            "killed by test_scope (tests.io.test_log.LoggerTests.test_scope) (raw='ignore[yanked]')", reported
         )
-        self.assertIn("caught by test_other (tests.io.test_log.LoggerTests.test_other)", reported)
+        self.assertIn("killed by test_other (tests.io.test_log.LoggerTests.test_other)", reported)
 
     def test_a_command_that_errored_without_reporting_a_test_count(self):
         """Test that a run reporting errors but no test count is hedged about, there being nothing to compare."""
@@ -99,13 +99,13 @@ class MainTest(unittest.TestCase):
         self.assertIn("675 of 935 tests never ran", self.reported.getvalue())
 
     def test_a_stub_that_left_every_test_running(self):
-        """Test that a run reporting errors is a catch when it reached every test the restored file runs."""
+        """Test that a run reporting errors is a kill when it reached every test the restored file runs."""
         outputs = ("Ran 935 tests\nFAILED (errors=1)\n", "Ran 935 tests\n")
         self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=outputs), 0)
         self.assertNotIn("never ran", self.reported.getvalue())
 
     def test_a_command_that_only_failed(self):
-        """Test that a run reporting failures alone is left to speak for itself, and is caught."""
+        """Test that a run reporting failures alone is left to speak for itself, and is killed."""
         self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=("FAILED (failures=1)\n",)), 0)
         self.assertNotIn("errors", self.reported.getvalue())
 
@@ -113,14 +113,14 @@ class MainTest(unittest.TestCase):
         """Test that a run whose tests all passed is reported as unguarded, whatever the coverage gate did."""
         outputs = ("Ran 997 tests\n\nOK\nCoverage failure: total of 99 is less than fail-under=100\n",)
         self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=outputs), 4)
-        self.assertIn("no test caught the mutation", self.reported.getvalue())
-        self.assertNotIn("The mutation was caught", self.reported.getvalue())
+        self.assertIn("no test killed the mutation", self.reported.getvalue())
+        self.assertNotIn("The mutation was killed", self.reported.getvalue())
 
     def test_a_run_that_failed_a_test_and_the_coverage_gate(self):
-        """Test that a run reporting a failing test is a catch, whatever the coverage gate reported alongside it."""
+        """Test that a run reporting a failing test is a kill, whatever the coverage gate reported alongside it."""
         outputs = ("Ran 997 tests\nFAILED (failures=1)\nCoverage failure: total of 99 is less than fail-under=100\n",)
         self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=outputs), 0)
-        self.assertIn("The mutation was caught", self.reported.getvalue())
+        self.assertIn("The mutation was killed", self.reported.getvalue())
 
     def test_the_commands_output_is_written_through(self):
         """Test that what the command wrote reaches the reader, which capturing it would otherwise swallow."""
