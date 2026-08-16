@@ -128,7 +128,9 @@ mutate-help:
     @echo "when COMMAND failed with every test passing, so a gate such as coverage failed rather than a guard."
     @echo "\nA killed run ends by naming each test that killed it, a subTest case with its parameters. Read that"
     @echo "list rather than the outcome alone: a case of a table missing from it guards nothing its neighbours"
-    @echo "don't, and two tests in it for a one-line change are one guard more than that line needs."
+    @echo "don't, and two tests in it for a one-line change say one of them guards nothing the other doesn't."
+    @echo "That list judges the suite rather than the mutation: one that other tests kill as well is still"
+    @echo "evidence for the test you register it on with @kills, which re-runs that test alone."
 
 # Run Python with the package importable, to probe how it behaves. See `just help py`.
 [env("PYTHONPATH", "src")]

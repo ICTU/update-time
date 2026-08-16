@@ -43,6 +43,7 @@ dev = [
     "codespell==2.4.3",
     "coverage==7.15.4",
     "fixit==2.2.1",
+    "libcst==1.9.0",
     "mypy==2.3.0",
     "nltk==3.10.3",
     "pip-audit==2.10.1",

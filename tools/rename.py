@@ -1,10 +1,14 @@
 """Rename a name and every reference to it in the files named, and fail when a file is left holding the old one.
 
-LibCST renames the references it resolves and reports success either way, so two rewrites it did not make look
-like one that landed: a misspelled name reaches nothing, and a bare name reaches the definition alone when the
-references live in another module. Both are read back off the files rather than out of the report — the first as
-files that came back unchanged, the second as the old name surviving as an identifier, which leaves the
-docstrings that mention it alone, unlike a grep.
+LibCST renames the references it resolves and hands back the source either way, so two rewrites it did not make
+look like one that landed: a misspelled name reaches nothing, and a bare name reaches the definition alone when
+the references live in another module. Both are read off the source it hands back — the first as a source that
+came back unchanged, the second as the old name surviving as an identifier, which leaves the docstrings that
+mention it alone, unlike a grep.
+
+The sources are written once every one of them has come back clean, so a rename that fails leaves the files as
+it found them rather than a tree holding half a rename. A source LibCST cannot parse fails the run the same way,
+before anything has been written.
 
 Those docstrings are then reported, since a rename leaves the prose about a name as it found it, and the prose
 mostly lives in files the rename was never given. They are reported rather than rewritten because the same word
@@ -14,12 +18,14 @@ Usage: `uv run python tools/rename.py OLD NEW FILE ...`, with OLD qualified for 
 """
 
 import ast
-import hashlib
 import re
-import subprocess  # nosec
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import libcst
+from libcst.codemod import CodemodContext
+from libcst.codemod.commands.rename import RenameCommand
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -34,10 +40,6 @@ _MENTION = re.compile(r"`([\w.]+)`")
 _PROSE_ROOTS = ("src", "tests", "tools", "docs", ".claude")
 _PROSE_FILES = ("*.py", "*.md", "*.in")
 
-# The codemod that does the renaming, and the flags that keep it from reformatting or drawing a progress bar.
-_CODEMOD = ("-m", "libcst.tool", "codemod", "rename.RenameCommand")
-_FLAGS = ("--no-format", "--hide-progress")
-
 
 def surviving_occurrences(name: str, source: str) -> list[int]:
     """Return the lines of the source where the name is an identifier, each line once however often it occurs."""
@@ -48,18 +50,22 @@ def surviving_occurrences(name: str, source: str) -> list[int]:
 def _occurrence_line(node: ast.AST, name: str) -> int | None:
     """Return the line where the node uses the name as an identifier, or None where it does not use it.
 
-    A reference and an attribute carry the name directly, an import carries it as the name imported or the name it
-    is bound to, and a definition carries it as the name defined. Anywhere else it is text, which a rename leaves.
+    A reference, an attribute, and a definition carry the name directly, while an import carries it as the name
+    imported or as the name it is bound to. Anywhere else it is text, which a rename leaves.
     """
-    if isinstance(node, ast.Name):
-        return node.lineno if node.id == name else None
-    if isinstance(node, ast.Attribute):
-        return node.lineno if node.attr == name else None
-    if isinstance(node, ast.alias):
-        return node.lineno if name in (node.name.rsplit(".", 1)[-1], node.asname) else None
-    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-        return node.lineno if node.name == name else None
-    return None
+    match node:
+        case (
+            ast.Name(id=carried)
+            | ast.Attribute(attr=carried)
+            | ast.FunctionDef(name=carried)
+            | ast.AsyncFunctionDef(name=carried)
+            | ast.ClassDef(name=carried)
+        ):
+            return node.lineno if carried == name else None
+        case ast.alias(name=imported, asname=bound):
+            return node.lineno if name in (imported.rsplit(".", 1)[-1], bound) else None
+        case _:
+            return None
 
 
 def stale_mentions(name: str, files: Iterable[Path]) -> list[str]:
@@ -87,34 +93,63 @@ def _prose_files() -> list[Path]:
 
 
 def _sources(paths: list[str]) -> dict[str, str]:
-    """Return what each path holds, read once so the same text is checksummed and searched."""
+    """Return what each path holds, read once so the same text is renamed and searched."""
     return {path: Path(path).read_text() for path in paths}
 
 
-def _checksums(sources: dict[str, str]) -> list[str]:
-    """Return a checksum per source, so a file the codemod rewrote can be told from one it left as it was."""
-    return [hashlib.sha256(source.encode()).hexdigest() for source in sources.values()]
+def _renamed(old: str, new: str, source: str) -> str:
+    """Return the source with the old name renamed to the new one, resolved against the source's own scopes."""
+    return RenameCommand(CodemodContext(), old, new).transform_module(libcst.parse_module(source)).code
+
+
+def _report(message: str) -> None:
+    """Write the message to standard error, where what stops a rename is reported."""
+    sys.stderr.write(f"Error: {message}\n")
+
+
+def _renamed_sources(old: str, new: str, sources: dict[str, str]) -> dict[str, str] | None:
+    """Return each source renamed, or None where one of them could not be, which is reported.
+
+    A rename is turned down for a source LibCST cannot parse, and for an old name holding a colon.
+    """
+    renamed = {}
+    for path, source in sources.items():
+        try:
+            renamed[path] = _renamed(old, new, source)
+        except (libcst.ParserSyntaxError, ValueError) as reason:
+            _report(f"{path} could not be renamed: {reason}")
+            return None
+    return renamed
+
+
+def _survivors_message(name: str, left: list[str], changed: dict[str, str]) -> str:
+    """Return what a rename a file is left holding the name after reports: where it survives, and what it left.
+
+    Naming the files a rename that lands writes tells the reader what the run they are about to repeat touches.
+    """
+    return (
+        f"{name} survives at {', '.join(left)}; name every file that uses it, and use the fully qualified name "
+        f"for a name defined in another module\nNo file was written; a rename that lands writes {', '.join(changed)}"
+    )
 
 
 def main() -> int:
     """Rename the name over the files named on the command line, and report a rename that did not land."""
     old, new, *paths = sys.argv[1:]
-    before = _checksums(_sources(paths))
-    command = [sys.executable, *_CODEMOD, f"--old_name={old}", f"--new_name={new}", *_FLAGS, *paths]
-    if (codemod := subprocess.run(command, check=False).returncode) != 0:  # noqa: S603 # nosec
-        return codemod
     sources = _sources(paths)
-    if _checksums(sources) == before:
-        sys.stderr.write(f"Error: nothing was renamed; check the spelling of {old}\n")
+    if (renamed := _renamed_sources(old, new, sources)) is None:
+        return _FAILED
+    changed = {path: source for path, source in renamed.items() if source != sources[path]}
+    if not changed:
+        _report(f"nothing was renamed; check the spelling of {old}")
         return _FAILED
     name = old.rsplit(".", 1)[-1]
-    left = [f"{path}:{line}" for path, source in sources.items() for line in surviving_occurrences(name, source)]
+    left = [f"{path}:{line}" for path, source in renamed.items() for line in surviving_occurrences(name, source)]
     if left:
-        sys.stderr.write(
-            f"Error: {name} survives at {', '.join(left)}; name every file that uses it, and use the fully "
-            "qualified name for a name defined in another module\n"
-        )
+        _report(_survivors_message(name, left, changed))
         return _FAILED
+    for path, source in changed.items():
+        Path(path).write_text(source)
     if stale := stale_mentions(name, _prose_files()):
         sys.stdout.write(f"Note: prose still mentions {name} at {', '.join(stale)}\n")
     return 0
