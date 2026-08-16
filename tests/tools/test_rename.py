@@ -8,6 +8,14 @@ from unittest.mock import Mock, call, patch
 
 from tools.rename import _PROSE_FILES, _PROSE_ROOTS, _prose_files, main, stale_mentions, surviving_occurrences
 
+from tests.helpers import mock_path
+from tests.mutation import kills
+
+# A source the rename reaches, since it imports the name from the module the old name qualifies it with, and one
+# it leaves alone, since a definition is resolved against the module it sits in rather than against that one.
+_IMPORTS_AND_CALLS = "from m import old\n\nold()\n"
+_DEFINES = "def old():\n    pass\n"
+
 
 class SurvivingOccurrencesTest(unittest.TestCase):
     """Unit tests for reading a name back out of a module's source."""
@@ -83,23 +91,18 @@ class ProseFilesTest(unittest.TestCase):
 class MainTest(unittest.TestCase):
     """Unit tests for renaming over the files named and reporting a rename that did not land."""
 
-    def rename(self, *files: tuple[str, str], old: str = "old", codemod: int = 0, prose: str = "") -> int:
-        """Rename over files given as the source before and after the codemod, and return the exit code.
+    def rename(self, *sources: str, old: str = "m.old", new: str = "m.new", prose: str = "") -> int:
+        """Rename over files holding the given sources, and return the exit code.
 
         `prose` is what the one file searched for mentions of the name holds, empty for a repository mentioning it
         nowhere.
         """
         self.reported, self.noted = io.StringIO(), io.StringIO()
-        paths = {
-            f"file{index}.py": Mock(read_text=Mock(side_effect=[before, after]))
-            for index, (before, after) in enumerate(files)
-        }
-        self.run_codemod = Mock(return_value=Mock(returncode=codemod))
+        self.paths = {f"file{index}.py": mock_path(source) for index, source in enumerate(sources)}
         mentioning = Mock(read_text=Mock(return_value=prose), __str__=lambda _: "prose.py")
         with (
-            patch.object(sys, "argv", ["rename.py", old, "new", *paths]),
-            patch("tools.rename.Path", Mock(side_effect=lambda path: paths[path])),
-            patch("tools.rename.subprocess.run", self.run_codemod),
+            patch.object(sys, "argv", ["rename.py", old, new, *self.paths]),
+            patch("tools.rename.Path", Mock(side_effect=lambda path: self.paths[path])),
             patch("tools.rename._prose_files", Mock(return_value=[mentioning])),
             redirect_stdout(self.noted),
             redirect_stderr(self.reported),
@@ -108,50 +111,77 @@ class MainTest(unittest.TestCase):
 
     def test_a_rename_that_reached_every_file(self):
         """Test that files the codemod rewrote, none of them left holding the name, pass without a report."""
-        self.assertEqual(self.rename(("old()\n", "new()\n"), ("from module import old\n", "from m import new\n")), 0)
+        self.assertEqual(self.rename(_IMPORTS_AND_CALLS, "from m import old as alias\n\nalias()\n"), 0)
         self.assertEqual(self.reported.getvalue(), "")
 
-    def test_the_codemod_is_given_the_names_and_the_files(self):
-        """Test that the codemod is run over the files named, with the old and new name it is to rewrite."""
-        self.rename(("old()\n", "new()\n"))
-        command = self.run_codemod.call_args.args[0]
-        self.assertIn("--old_name=old", command)
-        self.assertIn("--new_name=new", command)
-        self.assertEqual(command[-1], "file0.py")
+    def test_the_files_the_rename_changed_are_written(self):
+        """Test that a file the rename changed is written, and one it left as it was is not."""
+        self.assertEqual(self.rename(_IMPORTS_AND_CALLS, "print(1)\n"), 0)
+        self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call("from m import new\n\nnew()\n")])
+        self.assertEqual(self.paths["file1.py"].write_text.call_args_list, [])
 
-    def test_a_codemod_that_failed(self):
-        """Test that a codemod exiting non-zero is reported by exiting with the same code, checking nothing."""
-        self.assertEqual(self.rename(("old()\n", "new()\n"), codemod=2), 2)
-        self.assertEqual(self.reported.getvalue(), "")
+    @kills(
+        "tools/rename.py",
+        "        return _FAILED\n    for path, source in changed.items():",
+        "        for path, source in changed.items():\n            Path(path).write_text(source)\n"
+        "        return _FAILED\n    for path, source in changed.items():",
+    )
+    def test_a_rename_that_left_the_name_behind_writes_nothing(self):
+        """Test that a file left holding the name leaves every file unwritten, the ones the rename changed too."""
+        self.assertEqual(self.rename(_IMPORTS_AND_CALLS, _DEFINES), 1)
+        self.assertEqual([path.write_text.call_args_list for path in self.paths.values()], [[], []])
+
+    @kills(
+        "tools/rename.py",
+        '            _report(f"{path} could not be renamed: {reason}")',
+        '            _report(f"{path} could not be renamed: {reason}")\n'
+        "            for written, renamed_source in renamed.items():\n"
+        "                Path(written).write_text(renamed_source)",
+    )
+    def test_a_file_the_codemod_cannot_parse(self):
+        """Test that a source the codemod cannot parse is reported by name, and writes none of the files."""
+        self.assertEqual(self.rename(_IMPORTS_AND_CALLS, "this is not python(\n"), 1)
+        self.assertIn("file1.py", self.reported.getvalue())
+        self.assertEqual([path.write_text.call_args_list for path in self.paths.values()], [[], []])
+
+    def test_an_argument_libcst_rejects(self):
+        """Test that an argument LibCST rejects is reported by name, rather than raised at the reader."""
+        self.assertEqual(self.rename(_IMPORTS_AND_CALLS, old="m:old"), 1)
+        self.assertIn("file0.py could not be renamed", self.reported.getvalue())
 
     def test_a_rename_that_changed_nothing(self):
         """Test that files the codemod left as they were are reported as a name it never found."""
-        self.assertEqual(self.rename(("old()\n", "old()\n")), 1)
+        self.assertEqual(self.rename("print(1)\n"), 1)
         self.assertIn("nothing was renamed", self.reported.getvalue())
 
-    def test_a_rename_that_reached_the_definition_alone(self):
-        """Test that a file still holding the name fails the rename, which names that file and line."""
-        both = (("def old():\n    pass\n", "def new():\n    pass\n"), ("from m import old\n", "from m import old\n"))
-        self.assertEqual(self.rename(*both), 1)
-        self.assertIn("file1.py:1", self.reported.getvalue())
+    @kills("tools/rename.py", "', '.join(left)", "' '.join(left)")
+    def test_a_bare_name_that_reached_the_definition_alone(self):
+        """Test that a bare name renames the definition alone, so the references importing it survive."""
+        self.assertEqual(self.rename(_DEFINES, _IMPORTS_AND_CALLS, old="old", new="new"), 1)
+        self.assertIn("old survives at file1.py:1, file1.py:3", self.reported.getvalue())
+
+    def test_the_files_a_failed_rename_would_have_written(self):
+        """Test that a rename left holding the name names the files a run that lands writes, and none besides."""
+        self.rename(_IMPORTS_AND_CALLS, _DEFINES)
+        self.assertIn("No file was written; a rename that lands writes file0.py\n", self.reported.getvalue())
 
     def test_every_file_that_still_holds_the_name(self):
         """Test that the report names each surviving occurrence, rather than stopping at the first file."""
-        self.rename(("old()\n", "new()\n"), ("old()\n", "old()\n"), ("old()\n", "old()\n"))
+        self.rename(_IMPORTS_AND_CALLS, _DEFINES, _DEFINES)
         self.assertIn("file1.py:1", self.reported.getvalue())
         self.assertIn("file2.py:1", self.reported.getvalue())
 
     def test_a_qualified_name(self):
         """Test that a name given as `module.name` is looked for as the identifier alone."""
-        both = (("old()\n", "new()\n"), ("old()\n", "old()\n"))
-        self.assertEqual(self.rename(*both, old="update_time.module.old"), 1)
+        sources = ("from update_time.module import old\n\nold()\n", _DEFINES)
+        self.assertEqual(self.rename(*sources, old="update_time.module.old", new="update_time.module.new"), 1)
 
     def test_prose_that_still_mentions_the_name(self):
         """Test that a rename that landed reports the prose mentioning the old name, without failing over it."""
-        self.assertEqual(self.rename(("old()\n", "new()\n"), prose="Hands it to `old`.\n"), 0)
+        self.assertEqual(self.rename(_IMPORTS_AND_CALLS, prose="Hands it to `old`.\n"), 0)
         self.assertIn("prose.py:1", self.noted.getvalue())
 
     def test_prose_that_mentions_the_name_nowhere(self):
         """Test that a rename no prose mentions the old name after reports nothing."""
-        self.assertEqual(self.rename(("old()\n", "new()\n")), 0)
+        self.assertEqual(self.rename(_IMPORTS_AND_CALLS), 0)
         self.assertEqual(self.noted.getvalue(), "")
