@@ -7,6 +7,7 @@ not at all: its package is checked for staleness instead.
 
 from typing import TYPE_CHECKING
 
+from update_time.domain.directive import DIRECTIVES, Reason
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
 from update_time.file_formats import requirements_txt as requirements_txt_format
@@ -62,13 +63,10 @@ def _warn_about_items_that_decide_nothing(marker: Marker, reference: Reference) 
         _LOG.invalid_bracket_item(reference.dependency, marker.invalid_item, reference.location)
     warn_about_inverted_items(marker, reference, _LOG)
     if bound_directive := marker.bound_directive:
-        _LOG.redundant_without_an_update(reference, bound_directive)
-    if marker.sets_cooldown:
-        _LOG.redundant_without_an_update(reference, marker.cooldown_directive)
-    if marker.ignore_yanked:
-        _LOG.redundant_yank_without_a_version(reference, marker)
-    if marker.suppresses_vulnerabilities:
-        _LOG.redundant_vulnerable_without_a_version(reference, marker)
+        _LOG.redundant_directive(reference, bound_directive, Reason.NO_VERSION_TO_UPDATE)
+    for directive in DIRECTIVES:
+        if directive.without_a_version is not None and directive.is_part_of(marker):
+            _LOG.redundant_directive(reference, directive.spelling(marker), directive.without_a_version)
 
 
 def _warn_about_stale_loose_requirements(lines: list[Line]) -> None:

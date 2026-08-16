@@ -8,13 +8,13 @@ decision; this module owns the text surgery around it, reporting what it changed
 """
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
 
 from update_time.domain.drift import DriftedPin, hash_drifted, report_drift
 from update_time.domain.line import located_lines
-from update_time.domain.marker import parse_marker
+from update_time.domain.marker import Scope, parse_marker
 from update_time.primitives.text import rewrite_string
 from update_time.references.match import matched_dependency, matched_reference
 from update_time.references.resolve import latest_version
@@ -133,9 +133,9 @@ def apply_marker(
     dependency = matched_dependency(match, dependency)
     if marker.invalid_item is not None:
         logger.invalid_bracket_item(dependency, marker.invalid_item, location)
-        return update_line(match, location, replace(marker, ignore_update=True))
+        return update_line(match, location, marker.frozen)
     logger.recognised_marker(dependency, marker, location)
-    if marker.ignore_update:
+    if marker.ignores(Scope.UPDATE):
         logger.ignored(dependency, marker, location)
     return update_line(match, location, marker)
 

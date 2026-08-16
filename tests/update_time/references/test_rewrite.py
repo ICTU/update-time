@@ -7,14 +7,16 @@ from unittest.mock import ANY, Mock
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion
+from update_time.domain.directive import Reason
 from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
 from update_time.domain.line import located_lines
-from update_time.domain.marker import Marker
+from update_time.domain.marker import Marker, Scope
 from update_time.domain.reference import Reference
 from update_time.primitives.location import Location
 from update_time.references.rewrite import update_references_in_lines
 
 from tests.helpers import patch_environ
+from tests.mutation import kills
 from tests.update_time.fixtures import BARE_IGNORE, DIGEST
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
@@ -179,23 +181,36 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version.assert_not_called()
 
     def test_a_dead_comparison_item_is_reported_however_the_reference_is_held_back(self):
-        """Test that an item a source cannot answer is reported, a bare `ignore` beside it included."""
+        """Test that an item a source cannot apply is reported, a bare `ignore` beside it included."""
         held_back = "ignore[update] ignore[stale] ignore[yanked]"
         cases = {
             "a cooldown beside the scopes the source answers": (
                 f"{held_back} ignore[cooldown<30]",
-                self.logger.redundant_cooldown_item,
+                "ignore[cooldown<30]",
+                Reason.NO_COOLDOWN_DATES,
             ),
-            "a cooldown beside a bare ignore": ("ignore ignore[cooldown<30]", self.logger.redundant_cooldown_item),
-            "a threshold beside a bare ignore": ("ignore ignore[stale<90]", self.logger.redundant_stale_source),
-            "a level beside a bare ignore": ("ignore ignore[vulnerable<high]", self.logger.redundant_vulnerable_source),
+            "a cooldown beside a bare ignore": (
+                "ignore ignore[cooldown<30]",
+                "ignore[cooldown<30]",
+                Reason.NO_COOLDOWN_DATES,
+            ),
+            "a threshold beside a bare ignore": (
+                "ignore ignore[stale<90]",
+                "ignore[stale<90]",
+                Reason.NO_STALENESS_DATES,
+            ),
+            "a level beside a bare ignore": (
+                "ignore ignore[vulnerable<high]",
+                "ignore[vulnerable<high]",
+                Reason.NO_VULNERABILITY_REPORTS,
+            ),
         }
-        for case, (directive, reported) in cases.items():
+        for case, (marker_text, directive, reason) in cases.items():
             with self.subTest(case=case):
                 self.logger.reset_mock()
-                lines = [f"image: python:3.14  # update-time: {directive}"]
+                lines = [f"image: python:3.14  # update-time: {marker_text}"]
                 self.assertEqual(self.rewrite(lines, _REGEXP, new_version_getter("3.15")), lines)
-                reported.assert_called_once_with(self.reference(), ANY)
+                self.logger.redundant_directive.assert_any_call(self.reference(), directive, reason)
 
     def test_only_a_scope_the_marker_spells_out_is_reported_redundant(self):
         """Test that a scope the marker spells out is reported redundant, where one a bare `ignore` implies is not."""
@@ -210,15 +225,17 @@ class UpdateReferencesTest(unittest.TestCase):
                 self.logger.reset_mock()
                 lines = [f"image: python:3.14  # update-time: {directive}"]
                 self.assertEqual(self.rewrite(lines, _REGEXP, new_version_getter("3.15")), lines)
-                self.assertEqual(self.logger.redundant_yank_scope.called, yanked)
-                self.assertEqual(self.logger.redundant_stale_source.called, stale)
+                reasons = [call.args[2] for call in self.logger.redundant_directive.call_args_list]
+                self.assertEqual(Reason.NO_YANK_CONCEPT in reasons, yanked)
+                self.assertEqual(Reason.NO_STALENESS_DATES in reasons, stale)
 
     def test_a_redundant_item_is_reported_under_the_directive_that_set_it(self):
         """Test that the warning names the item the reader wrote, not the scope a bare `ignore` beside it implies."""
         lines = ["image: python:3.14  # update-time: ignore ignore[stale<90]"]
         self.assertEqual(self.rewrite(lines, _REGEXP, new_version_getter("3.15")), lines)
-        reported = self.logger.redundant_stale_source.call_args.args[1]
-        self.assertEqual(reported.stale_directive, "ignore[stale<90]")
+        self.logger.redundant_directive.assert_called_once_with(
+            self.reference(), "ignore[stale<90]", Reason.NO_STALENESS_DATES
+        )
 
     def test_inline_slash_slash_marker_pins_line(self):
         """Test that a `//`-style ignore marker (as JSONC/devcontainer.json uses) also pins a line inline."""
@@ -241,7 +258,9 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = ["image: python:3.14  # update-time: ignore[update]"]
         self.assertEqual(self.rewrite(lines, _REGEXP, new_version_getter("3.15")), lines)  # version left as-is
         self.logger.report_staleness.assert_called_once()  # staleness still checked
-        self.logger.ignored.assert_called_once_with("python", Marker(ignore_update=True), Location(self.path, 1))
+        self.logger.ignored.assert_called_once_with(
+            "python", Marker(ignored_scopes=Scope.UPDATE), Location(self.path, 1)
+        )
 
     def test_ignore_update_and_stale_still_checks_for_a_yank(self):
         """Test that a scope the marker leaves live keeps the reference queried, so its check still runs.
@@ -251,15 +270,22 @@ class UpdateReferencesTest(unittest.TestCase):
         """
         lines = ["image: python:3.14  # update-time: ignore[update] ignore[stale]"]
         self.assertEqual(self.rewrite(lines, _REGEXP, new_version_getter("3.15")), lines)  # version left as-is
-        self.logger.warn_if_yanked.assert_called_once()  # the yank check still runs
-        self.logger.warn_if_stale.assert_not_called()  # staleness is held back
+        marker = Marker(ignored_scopes=Scope.UPDATE | Scope.STALE)
+        # The source is queried for the yank, and both reports are handed the marker that holds the staleness back.
+        self.logger.report_yank.assert_called_once_with(ANY, marker)
+        self.logger.report_staleness.assert_called_once_with(ANY, marker, ANY)
 
-    def test_ignore_stale_marker_skips_staleness_but_still_updates(self):
-        """Test that `ignore[stale]` applies the update but skips the staleness check."""
+    @kills(
+        "src/update_time/references/resolve.py",
+        "log.report_staleness(resolved, marker, marker.stale.value_or(STALE_AFTER.get()))",
+        "log.report_staleness(resolved, marker.frozen, marker.stale.value_or(STALE_AFTER.get()))",
+    )
+    def test_ignore_stale_marker_still_updates_and_reports_with_the_marker(self):
+        """Test that `ignore[stale]` applies the update and reaches the logger, which decides the warning itself."""
         lines = ["image: python:3.14  # update-time: ignore[stale]"]
         new_lines = self.rewrite(lines, _REGEXP, new_version_getter("3.15"))
         self.assertEqual(new_lines, ["image: python:3.15  # update-time: ignore[stale]"])  # version bumped
-        self.logger.warn_if_stale.assert_not_called()  # staleness skipped
+        self.logger.report_staleness.assert_called_once_with(ANY, Marker(ignored_scopes=Scope.STALE), ANY)
         self.logger.ignored.assert_not_called()  # the update is not held back, so nothing is logged as ignored
 
     def test_inverted_stale_item_holds_nothing_back(self):
@@ -280,6 +306,11 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.inverted_stale_item.assert_called_once_with(self.reference(), "stale>=90")
         get_new_version.assert_not_called()  # The warning costs no request, the item being unreadable on its own.
 
+    @kills(
+        "src/update_time/domain/marker.py",
+        'return (self.name or "").lower().replace("_", "-")',
+        'return (self.name or "").lower()',
+    )
     def test_allow_hash_drift_marker_adopts_new_digest(self):
         """Test that an inline `allow[hash-drift]` marker re-pins a re-pushed tag's digest instead of warning."""
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[hash-drift]"]
@@ -438,7 +469,9 @@ class UpdateReferencesTest(unittest.TestCase):
         new_lines = self.rewrite(lines, _REGEXP, get_new_version)
         self.assertEqual(new_lines, [lines[0].replace("python:3.12 ", "python:3.12.9 ")])
         get_new_version.assert_called_once_with("python", "3.12", bound(Verb.ALLOW, "update<3.13"), COOLDOWN.default)
-        self.logger.warn_if_stale.assert_not_called()  # the `ignore[stale]` directive is honoured alongside the bound
+        # The `stale` item is parsed alongside the bound, so the marker reaching the logger carries both:
+        stale_and_bound = Marker(ignored_scopes=Scope.STALE, version_bound=bound(Verb.ALLOW, "update<3.13"))
+        self.logger.report_staleness.assert_called_once_with(ANY, stale_and_bound, ANY)
 
     def test_directive_list_followed_by_reason(self):
         """Test that free text after the last directive (a reason) is allowed and ends the directive list."""
@@ -453,7 +486,8 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version = Mock(return_value=DependencyVersion(version="3.14", sha=NEW_DIGEST))
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: ignore[stale] alloww[hash-drift]"]
         self.assertEqual(self.rewrite(lines, _SHA_REGEXP, get_new_version), lines)
-        self.logger.warn_if_stale.assert_not_called()  # the `ignore[stale]` before the typo is honoured
+        # The `ignore[stale]` before the typo is parsed, so it reaches the logger:
+        self.logger.report_staleness.assert_called_once_with(ANY, Marker(ignored_scopes=Scope.STALE), ANY)
         self.logger.digest_drift.assert_called_once()  # the mistyped drift opt-in is not, so the drift only warns
 
     def assert_invalid_bracket_item(self, directive: str, bracket_item: str) -> None:
@@ -492,7 +526,8 @@ class UpdateReferencesTest(unittest.TestCase):
         new_lines = self.rewrite(lines, _REGEXP, get_new_version)
         self.assertEqual(new_lines, [lines[0].replace("python:3.12 ", "python:3.12.9 ")])
         get_new_version.assert_called_once_with("python", "3.12", bound(Verb.IGNORE, "update>=3.13"), COOLDOWN.default)
-        self.logger.warn_if_stale.assert_not_called()
+        stale_and_bound = Marker(ignored_scopes=Scope.STALE, version_bound=bound(Verb.IGNORE, "update>=3.13"))
+        self.logger.report_staleness.assert_called_once_with(ANY, stale_and_bound, ANY)
 
     def test_comma_separated_allow_items_combine_in_one_bracket(self):
         """Test that an `allow` bracket combines a bound with the hash-drift opt-in."""
@@ -510,7 +545,8 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version.assert_called_once_with(
             "python", "3.12", bound(Verb.IGNORE, "update>=3.13,<3.15"), COOLDOWN.default
         )
-        self.logger.warn_if_stale.assert_not_called()
+        compound = Marker(ignored_scopes=Scope.STALE, version_bound=bound(Verb.IGNORE, "update>=3.13,<3.15"))
+        self.logger.report_staleness.assert_called_once_with(ANY, compound, ANY)
 
     def test_combined_ignore_scopes_hold_back_everything(self):
         """Test that every `ignore` scope combined holds back as much as a bare `ignore`."""
@@ -542,7 +578,8 @@ class UpdateReferencesTest(unittest.TestCase):
         new_lines = self.rewrite(lines, _REGEXP, get_new_version)
         self.assertEqual(new_lines, [lines[0].replace("python:3.12 ", "python:3.12.9 ")])
         get_new_version.assert_called_once_with("python", "3.12", bound(Verb.IGNORE, "update>=3.13"), COOLDOWN.default)
-        self.logger.warn_if_stale.assert_not_called()
+        stale_and_bound = Marker(ignored_scopes=Scope.STALE, version_bound=bound(Verb.IGNORE, "update>=3.13"))
+        self.logger.report_staleness.assert_called_once_with(ANY, stale_and_bound, ANY)
 
     def test_redundant_bound_is_warned(self):
         """Test that a bound that never has an effect for the current version is warned about."""
@@ -559,7 +596,8 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = [f"image: python:3.12  # update-time: {scopes} allow[update>=3.12]"]
         self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
         marker = Marker(
-            ignore_update=True, ignore_stale=True, ignore_yanked=True, version_bound=bound(Verb.ALLOW, "update>=3.12")
+            ignored_scopes=Scope.UPDATE | Scope.STALE | Scope.YANKED,
+            version_bound=bound(Verb.ALLOW, "update>=3.12"),
         )
         reference = Reference("python", "3.12", Location(self.path, 1))
         self.logger.warn_if_redundant_bound.assert_called_once_with(reference, marker)

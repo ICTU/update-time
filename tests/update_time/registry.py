@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
+from update_time.domain.directive import Reason
 from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
 from update_time.primitives.location import Location
 
@@ -175,8 +176,8 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file = mock_path(marker + self.reference(f"ghcr.io/owner/python:3.14@{DIGEST1}"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(marker + self.reference(f"ghcr.io/owner/python:3.15@{DIGEST2}"))
-        self.assert_redundant_cooldown_item_logged(
-            "ghcr.io/owner/python", Location(mock_file, 2), "ignore[cooldown<30]"
+        self.assert_redundant_directive_logged(
+            Reason.NO_COOLDOWN_DATES, "ghcr.io/owner/python", Location(mock_file, 2), "ignore[cooldown<30]"
         )
 
     def test_stale_marker_outside_docker_hub_is_reported_as_redundant(self) -> None:
@@ -186,7 +187,9 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file = mock_path(marker + self.reference(f"ghcr.io/owner/python:3.14@{DIGEST1}"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(marker + self.reference(f"ghcr.io/owner/python:3.15@{DIGEST2}"))
-        self.assert_redundant_stale_source_logged("ghcr.io/owner/python", Location(mock_file, 2), "ignore[stale<90]")
+        self.assert_redundant_directive_logged(
+            Reason.NO_STALENESS_DATES, "ghcr.io/owner/python", Location(mock_file, 2), "ignore[stale<90]"
+        )
 
     def test_stale_image_warned(self) -> None:
         """Test that an image whose newest tag was pushed long ago is warned about as stale, without being rewritten."""

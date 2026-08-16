@@ -6,13 +6,16 @@ from datetime import UTC, datetime, timedelta
 from pathlib import PurePath
 from unittest.mock import ANY, MagicMock, Mock, patch
 
-from update_time.domain.marker import Marker
+from update_time.domain.directive import Reason
+from update_time.domain.marker import Marker, Scope
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_requirements_txt import update_requirements_txts
 
 from tests.helpers import mock_path, patch_environ
+from tests.mutation import kills
+from tests.update_time.fixtures import BARE_IGNORE
 from tests.update_time.helpers import (
     DJANGO_ADVISORY,
     DJANGO_VULNERABILITY,
@@ -211,11 +214,16 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 requirements_txt.write_text.assert_not_called()
                 self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
+    @kills(
+        "src/update_time/domain/directive.py",
+        "        Reason.NO_YANK_CONCEPT,\n        Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,",
+        "        Reason.NO_YANK_CONCEPT,",
+    )
     def test_a_scope_needing_a_version_is_redundant_on_a_loose_requirement(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a scope whose check needs a version reports that the requirement pins none."""
-        vulnerable = Logger._MESSAGE_REDUNDANT_VULNERABLE_WITHOUT_A_VERSION
-        for directive, message in {
-            "ignore[yanked]": Logger._MESSAGE_REDUNDANT_YANK_WITHOUT_A_VERSION,
+        vulnerable = Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY
+        for directive, reason in {
+            "ignore[yanked]": Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,
             "ignore[vulnerable]": vulnerable,
             f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]": vulnerable,
             "ignore[vulnerable<high]": vulnerable,
@@ -227,15 +235,18 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 mock_get.side_effect = self.pypi("4.15.0")  # Undated, so the staleness warning is not given.
                 update_requirements_txts()
                 self.assert_logged(
-                    message, directive=directive, dependency="humanize", location=Location(requirements_txt, 1)
+                    Logger._MESSAGE_REDUNDANT_DIRECTIVE,
+                    reason=reason,
+                    directive=directive,
+                    dependency="humanize",
+                    location=Location(requirements_txt, 1),
                 )
 
     def test_a_marker_on_a_loose_requirement_is_logged_as_recognised(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a marker on a loose requirement is reported as recognised, whatever it holds back."""
-        bare_ignore = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True, ignore_vulnerable=True)
         for directive, marker in {
-            "ignore[stale]": Marker(ignore_stale=True),
-            "ignore": bare_ignore,
+            "ignore[stale]": Marker(ignored_scopes=Scope.STALE),
+            "ignore": BARE_IGNORE,
         }.items():
             with self.subTest(directive=directive):
                 self.mock_log.reset_mock()  # Judge each case on the records of its own run.
@@ -265,7 +276,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 mock_get.side_effect = self.pypi("4.15.0")  # Undated, so the staleness warning is not given.
                 update_requirements_txts()
                 self.assert_logged(
-                    Logger._MESSAGE_REDUNDANT_WITHOUT_AN_UPDATE,
+                    Logger._MESSAGE_REDUNDANT_DIRECTIVE,
+                    reason=Reason.NO_VERSION_TO_UPDATE,
                     directive=directive,
                     dependency="humanize",
                     location=Location(requirements_txt, 1),
@@ -291,7 +303,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 mock_get.side_effect = self.pypi("4.15.0")  # Undated, so the staleness warning is not given.
                 update_requirements_txts()
                 self.assert_logged(
-                    Logger._MESSAGE_REDUNDANT_WITHOUT_AN_UPDATE,
+                    Logger._MESSAGE_REDUNDANT_DIRECTIVE,
+                    reason=Reason.NO_VERSION_TO_UPDATE,
                     directive=directive,
                     dependency="humanize",
                     location=Location(requirements_txt, 1),

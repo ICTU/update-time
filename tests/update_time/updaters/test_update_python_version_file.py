@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion
+from update_time.domain.directive import Reason
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_python_version_file import update_python_version_files
@@ -142,7 +143,9 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_called_once_with("# update-time: ignore[cooldown<30]\n3.14\n")
-        self.assert_redundant_cooldown_item_logged("python", Location(version_file, 2), "ignore[cooldown<30]")
+        self.assert_redundant_directive_logged(
+            Reason.NO_COOLDOWN_DATES, "python", Location(version_file, 2), "ignore[cooldown<30]"
+        )
         self.assert_new_version_logged("python", "3.14", Location(version_file, 2))
 
     @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
@@ -152,7 +155,9 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         mock_glob.return_value = [version_file]
         update_python_version_files()
         version_file.write_text.assert_called_once_with("# update-time: ignore[stale<90]\n3.14\n")
-        self.assert_redundant_stale_source_logged("python", Location(version_file, 2), "ignore[stale<90]")
+        self.assert_redundant_directive_logged(
+            Reason.NO_STALENESS_DATES, "python", Location(version_file, 2), "ignore[stale<90]"
+        )
         self.assert_new_version_logged("python", "3.14", Location(version_file, 2))
 
     @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
@@ -162,7 +167,9 @@ class UpdatePythonVersionFilesTest(LoggingTestCase):
         version_file = self.create_version_file(f"{above}\n3.12.6  {inline}\n")
         mock_glob.return_value = [version_file]
         update_python_version_files()
-        self.assert_redundant_cooldown_item_logged("python", Location(version_file, 2), "allow[cooldown>=30]")
+        self.assert_redundant_directive_logged(
+            Reason.NO_COOLDOWN_DATES, "python", Location(version_file, 2), "allow[cooldown>=30]"
+        )
 
     @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
     def test_inline_marker_ignore(self, mock_glob: Mock):

@@ -9,9 +9,11 @@ from pathlib import Path
 
 from update_time.domain.bound import Verb
 from update_time.domain.line import Line
-from update_time.domain.marker import Marker, Threshold, parse_marker
+from update_time.domain.marker import _IGNORABLE_SCOPES, Marker, Scope, Threshold, parse_marker
 from update_time.primitives.location import Location
 
+from tests.mutation import kills
+from tests.update_time.fixtures import BARE_IGNORE
 from tests.update_time.helpers import bound
 
 # Advisory identifiers, for the tests of the `vulnerable=ID` bracket item. An advisory is known by identifiers of
@@ -60,7 +62,7 @@ class MergeTest(unittest.TestCase):
 
     def test_raw_is_excluded_from_equality(self):
         """Test that two markers meaning the same thing compare equal however their directives were spelled."""
-        self.assertEqual(Marker(ignore_update=True, raw="ignore[update]"), Marker(ignore_update=True))
+        self.assertEqual(Marker(ignored_scopes=Scope.UPDATE, raw="ignore[update]"), Marker(ignored_scopes=Scope.UPDATE))
 
 
 class HoldsEverythingBackTest(unittest.TestCase):
@@ -109,19 +111,73 @@ class HoldsBackSourceChecksTest(unittest.TestCase):
 class AsWrittenTest(unittest.TestCase):
     """Unit tests for the marker with the scopes it never spelled out cleared."""
 
+    @kills(
+        "src/update_time/domain/marker.py",
+        "Marker(ignored_scopes=scope, written_scopes=scope)",
+        "Marker(ignored_scopes=scope)",
+    )
     def test_only_the_scopes_the_marker_spelled_out_survive(self):
         """Test that a scope a bare `ignore` implies is cleared, while one written beside it is kept."""
-        every_scope = Marker(ignore_update=True, ignore_stale=True, ignore_yanked=True, ignore_vulnerable=True)
         cases = {
             "ignore": Marker(),
-            "ignore[yanked]": Marker(ignore_yanked=True),
-            "ignore ignore[yanked]": Marker(ignore_yanked=True),
-            "ignore[update, stale, yanked, vulnerable]": every_scope,
+            "ignore[yanked]": Marker(ignored_scopes=Scope.YANKED),
+            "ignore ignore[yanked]": Marker(ignored_scopes=Scope.YANKED),
+            "ignore[update, stale, yanked, vulnerable]": BARE_IGNORE,
         }
         for directive, expected in cases.items():
             with self.subTest(directive=directive):
                 marker = parse_marker(line(f"dependency  # update-time: {directive}"))
                 self.assertEqual(marker.as_written, expected)
+
+
+class DirectiveTest(unittest.TestCase):
+    """Unit tests for the directive a marker names when one of its scopes is reported."""
+
+    def marker(self, directives: str) -> Marker:
+        """Return the marker the directives express, as a reference's own line carries them."""
+        return parse_marker(line(f"image: python:3.14  # update-time: {directives}"))
+
+    @kills(
+        "src/update_time/domain/marker.py",
+        'return _directive(Verb.IGNORE, str(scope)) if self.ignores(scope) else ""',
+        "return _directive(Verb.IGNORE, str(scope))",
+    )
+    def test_a_scope_the_marker_leaves_live_is_named_by_nothing(self):
+        """Test that a scope the marker does not hold back names no directive, so no warning quotes one."""
+        self.assertEqual(self.marker("ignore[stale]").scope_directive(Scope.YANKED), "")
+
+    def test_a_scope_is_named_alone(self):
+        """Test that a scope names its own directive, leaving out an `ignore` beside it that holds plenty back."""
+        self.assertEqual(self.marker("ignore[update] ignore[yanked]").scope_directive(Scope.YANKED), "ignore[yanked]")
+
+    def test_a_threshold_is_named_as_the_reader_wrote_it(self):
+        """Test that a `stale` threshold is named as the item the reader wrote, whichever verb set it."""
+        for directive in ("ignore[stale<90]", "allow[stale>=90]"):
+            with self.subTest(directive=directive):
+                self.assertEqual(self.marker(f"{directive} allow[hash-drift]").stale_directive, directive)
+
+    def test_the_bare_stale_scope_is_named_over_a_threshold_beside_it(self):
+        """Test that a marker carrying both is reported under the bare scope, which silences the warning outright."""
+        self.assertEqual(self.marker("ignore[stale] ignore[stale<90]").stale_directive, "ignore[stale]")
+
+    @kills(
+        "src/update_time/domain/marker.py",
+        "        return self.cooldown.directive",
+        "        return self.raw",
+    )
+    def test_a_cooldown_item_is_named_as_the_reader_wrote_it(self):
+        """Test that a cooldown is named as the item the reader wrote, leaving out a directive beside it."""
+        for directive in ("ignore[cooldown<30]", "allow[cooldown>=30]"):
+            with self.subTest(directive=directive):
+                self.assertEqual(self.marker(f"{directive} allow[hash-drift]").cooldown_directive, directive)
+
+    def test_every_vulnerable_form_the_marker_carries_is_named(self):
+        """Test that each `vulnerable` form is named, the advisories sharing a bracket and sorted within it."""
+        marker = self.marker("ignore[vulnerable, vulnerable=CVE-2, vulnerable=CVE-1, vulnerable<high]")
+        self.assertEqual(
+            marker.vulnerable_directives,
+            "ignore[vulnerable] ignore[vulnerable=CVE-1, vulnerable=CVE-2] ignore[vulnerable<high]",
+        )
 
 
 class RawTextTest(unittest.TestCase):
@@ -151,10 +207,19 @@ class RawTextTest(unittest.TestCase):
 class ParseMarkerScopeTest(unittest.TestCase):
     """Unit tests for what an `ignore` directive's bracket expresses."""
 
-    def test_ignore_yanked(self):
-        """Test that `ignore[yanked]` holds back only the yank warning, leaving the update and staleness live."""
-        marker = parse_marker(line("humanize==4.15.0  # update-time: ignore[yanked]"))
-        self.assertEqual(marker, Marker(ignore_yanked=True))
+    def test_a_bare_item_holds_its_own_scope_back_alone(self):
+        """Test that each scope named alone holds that scope back and no other."""
+        for scope in _IGNORABLE_SCOPES:
+            with self.subTest(scope=scope):
+                marker = parse_marker(line(f"humanize==4.15.0  # update-time: ignore[{scope}]"))
+                self.assertEqual(marker, Marker(ignored_scopes=scope))
+
+    def test_a_scope_taking_no_bare_item_is_reported_as_invalid(self):
+        """Test that a scope with no bare form is reported as an invalid item."""
+        for scope in set(Scope) - set(_IGNORABLE_SCOPES):
+            with self.subTest(scope=scope):
+                marker = parse_marker(line(f"humanize==4.15.0  # update-time: ignore[{scope}]"))
+                self.assertEqual(marker, Marker(invalid_item=str(scope)))
 
     def test_unrecognised_scope_is_reported_as_invalid(self):
         """Test that a typo'd scope is reported as an invalid item rather than standing in for a bare `ignore`."""
@@ -278,6 +343,11 @@ class ParseMarkerCooldownTest(unittest.TestCase):
                 marker = parse_marker(line(f"humanize==4.15.0  # update-time: {verb}[{item}]"))
                 self.assertEqual(marker, Marker(cooldown=Threshold(inverted_item=item)))
 
+    @kills(
+        "src/update_time/domain/marker.py",
+        "for scope in _IGNORABLE_SCOPES",
+        "for scope in Scope",
+    )
     def test_a_bare_cooldown_item_is_rejected(self):
         """Test that `cooldown` without a day count sets no cooldown, whichever verb it follows."""
         for verb in Verb:

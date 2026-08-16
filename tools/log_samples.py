@@ -15,8 +15,9 @@ from pathlib import Path
 
 from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
 from update_time.domain.dependency import DependencyVersion, Yank
+from update_time.domain.directive import Reason
 from update_time.domain.drift import DriftedPin
-from update_time.domain.marker import Marker, Threshold
+from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.log import DEPENDENCY_DELIMITER, LOCATION_DELIMITER, Logger
 from update_time.primitives.location import Location
@@ -63,15 +64,15 @@ def sample_log_lines() -> dict[str, str]:
         logger.log.removeHandler(capture)
 
 
-def _redundant_marker_blocks(
+def _redundant_directives(
     log: Logger, capture: _Capture, requirements: Location, dockerfile: Location
 ) -> dict[str, str]:
-    """Log a sample per warning about a marker that holds nothing back, paired with the block's placeholder.
+    """Log a sample per warning about a marker directive that holds nothing back, paired with the block's placeholder.
 
-    A redundancy warning names the directive it is about, spelled from what the marker parsed to, so these markers
-    carry the scope or item they report and no `raw` text for it to be read from.
+    A redundancy warning is handed the directive it names, so most samples pass one as text; the three about a
+    vulnerability suppression read theirs off a marker, which is what their warnings take.
     """
-    log.redundant_vulnerable_scope(reference("django", requirements, "4.2.0"), Marker(ignore_vulnerable=True))
+    log.redundant_vulnerable_scope(reference("django", requirements, "4.2.0"), Marker(ignored_scopes=Scope.VULNERABLE))
     redundant_vulnerable_scope = capture.take()
 
     suppression = Marker(ignored_advisories=frozenset({"CVE-2022-28346"}))
@@ -82,24 +83,29 @@ def _redundant_marker_blocks(
     log.redundant_vulnerable_level(reference("django", requirements, "4.2.0"), level, "high")
     redundant_vulnerable_level = capture.take()
 
-    log.redundant_vulnerable_source(reference("python", dockerfile), Marker(ignore_vulnerable=True))
+    log.redundant_directive(reference("python", dockerfile), "ignore[vulnerable]", Reason.NO_VULNERABILITY_REPORTS)
     redundant_vulnerable_source = capture.take()
 
-    log.redundant_yank_scope(reference("python", dockerfile), Marker(ignore_yanked=True))
+    log.redundant_directive(reference("python", dockerfile), "ignore[yanked]", Reason.NO_YANK_CONCEPT)
     redundant_yank_scope = capture.take()
 
-    log.redundant_yank_without_a_version(reference("humanize", requirements), Marker(ignore_yanked=True))
+    log.redundant_directive(
+        reference("humanize", requirements), "ignore[yanked]", Reason.NO_VERSION_TO_CHECK_FOR_A_YANK
+    )
     redundant_yank_without_a_version = capture.take()
 
-    log.redundant_vulnerable_without_a_version(reference("humanize", requirements), Marker(ignore_vulnerable=True))
+    log.redundant_directive(
+        reference("humanize", requirements), "ignore[vulnerable]", Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY
+    )
     redundant_vulnerable_without_a_version = capture.take()
 
-    cooldown = Marker(cooldown=Threshold(value=30, directive="ignore[cooldown<30]"))
-    log.redundant_cooldown_item(reference("python", Location(Path(".python-version"), 2)), cooldown)
+    cooldown_reference = reference("python", Location(Path(".python-version"), 2))
+    log.redundant_directive(cooldown_reference, "ignore[cooldown<30]", Reason.NO_COOLDOWN_DATES)
     redundant_cooldown_item = capture.take()
 
-    stale_marker = Marker(stale=Threshold(value=90, directive="ignore[stale<90]"))
-    log.redundant_stale_source(reference("ghcr.io/astral-sh/uv", dockerfile), stale_marker)
+    log.redundant_directive(
+        reference("ghcr.io/astral-sh/uv", dockerfile), "ignore[stale<90]", Reason.NO_STALENESS_DATES
+    )
     return {
         "@@REDUNDANT_VULNERABLE_SCOPE_WARNING@@": redundant_vulnerable_scope,
         "@@REDUNDANT_VULNERABLE_ADVISORY_WARNING@@": redundant_vulnerable_advisory,
@@ -139,7 +145,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.vulnerable_dependency(reference("django", requirements, "3.2.0"), VULNERABILITY)
     vulnerable = capture.take()
 
-    redundant = _redundant_marker_blocks(log, capture, requirements, dockerfile)
+    redundant = _redundant_directives(log, capture, requirements, dockerfile)
 
     log.invalid_bracket_item("python", "stlae", dockerfile)
     unrecognised = capture.take()
@@ -153,7 +159,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.inverted_vulnerable_item(reference("django", requirements), "vulnerable>=high")
     inverted_vulnerable = capture.take()
 
-    marker = Marker(ignore_stale=True, raw="ignore[stale]")
+    marker = Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")
     log.recognised_marker("python", marker, dockerfile)
     recognised = capture.take()
 

@@ -44,6 +44,7 @@ Update-time rewrites the files in place and logs what it did:
   - [🚫 Yanked dependencies](#-yanked-dependencies)
   - [🛡️ Vulnerable dependencies](#-vulnerable-dependencies)
 - [🎛️ Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)
+  - [The anatomy of a marker](#the-anatomy-of-a-marker)
   - [Holding a reference back](#holding-a-reference-back)
   - [Adopting hash drift](#adopting-hash-drift)
   - [Bounding an update](#bounding-an-update)
@@ -359,7 +360,7 @@ The risk level is the one the advisory's reviewers gave it: `low`, `moderate`, `
 A reference marked `# update-time: ignore[vulnerable]` is still looked up at OSV, and what OSV answers is silenced rather than warned about. It is looked up because the answer is the only thing that can tell you the marker has gone stale: a suppression outlives the vulnerability it was written for, and without the lookup there is nothing to compare it against. When the version turns out to have no vulnerability at all, Update-time reports the marker as holding nothing back:
 
 ```console
-WARNING Redundant update-time marker ignore[vulnerable] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability
+WARNING Redundant update-time directive ignore[vulnerable] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability
 ```
 
 Run with `--log-level DEBUG` to see what the marker silenced. To silence one advisory rather than every one, name it in the marker (see [Silencing specific vulnerabilities](#silencing-specific-vulnerabilities)). A reference marked with a bare `# update-time: ignore` is not looked up at OSV at all, since that marker holds every check back and queries no source whatsoever. A reference frozen with `# update-time: ignore[update]` is checked and warned about as usual, so a pin you deliberately hold back keeps telling you that its version is vulnerable (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
@@ -388,6 +389,44 @@ Which dependencies are checked follows from what OSV can match a pinned version 
 ## 🎛️ Controlling updates and warnings per reference
 
 Comments of the form `# update-time: <directive>` let you steer what happens to an individual reference — to hold it back, but also to bound how far it may move, or to opt it into behaviour that is off by default. To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
+
+### The anatomy of a marker
+
+The rest of this chapter names the parts of a marker, so here is one taken apart:
+
+```text
+humanize==4.15.0  # update-time: ignore[yanked, stale<90] allow[update<5] (until 5.0)
+                  └────────────────────── marker ───────────────────────┘ └ reason ─┘
+                                 └───── directives ─────┘ └─ directive ─┘
+                                 └verb┘└─── bracket ────┘ └verb┘└bracket┘
+```
+
+A marker is the `# update-time:` comment up to its last directive, and holds one or more directives, each a verb and the bracket that may follow it. Directives that use the same verb can be combined: `ignore[yanked, stale<90]` is equivalent to `ignore[yanked] ignore[stale<90]`. Free text after the last directive is a reason, which Update-time ignores.
+
+Zooming in on brackets:
+
+```text
+ignore[yanked, stale<90]
+       └─┬──┘  └─┬─┘└┬┘
+         │       │   └─ threshold: what the item sets for this reference, here 90 days
+         │       └─ scope: what the item steers, here the staleness warning
+         └─ item: a scope named alone holds it back outright, here to not warn about yanked versions
+```
+
+A bracket holds one or more items, separated by commas: the `ignore` bracket above holds the two items `yanked` and `stale<90`, and the `allow` bracket holds the single item `update<5`. An item names the scope it steers — the update, the cooldown, the hash drift, or one of the three warnings — and may set what that scope runs at.
+
+| Term | What it is | Example |
+| :--- | :--------- | :------ |
+| Marker | the `# update-time:` comment steering one reference, up to its last directive | `# update-time: ignore[stale] allow[update<3.13]` |
+| Directive | a verb and the bracket it may carry; a marker holds as many directives as you write | `ignore[stale<90]` |
+| Verb | `ignore` drops what its items name and `allow` keeps it, so `ignore[stale<90]` and `allow[stale>=90]` say the same thing | `ignore`, `allow` |
+| Bracket | what a directive's `[…]` holds: its items, separated by commas | `[yanked, stale<90]` |
+| Item | one entry in a bracket: a scope, a scope with a threshold, a [bound](#bounding-an-update), or an [advisory](#silencing-specific-vulnerabilities) | `stale<90` |
+| Scope | what an item steers: `update`, `cooldown`, `stale`, `yanked`, `vulnerable`, or `hash-drift` | `ignore[yanked]` steers the yank warning |
+| Bare `ignore` | the verb with no bracket at all, which holds back every scope it can without naming one | `# update-time: ignore` |
+| Reason | free text after the last directive, which Update-time keeps none of | `(pinned until the 3.13 migration)` |
+
+Which verb a scope takes follows from what it steers. An `ignore` item naming a scope alone holds that scope back, so `ignore[stale]` silences the staleness warning altogether while `ignore[stale<90]` sets what it warns at. `hash-drift` goes the other way, being off by default: it is opted into with `allow[hash-drift]` and never held back. And the cooldown takes neither form alone, since it sets a number of days rather than being switched on or off. A bare `ignore` names no scope while holding every scope it can back, which is why no warning ever calls a bare `ignore` redundant: there would be no directive to tell you to delete.
 
 ### Holding a reference back
 
@@ -429,7 +468,7 @@ A day count must be a whole number of days, so `ignore[stale<-5]` and `ignore[st
 Staleness is measured against the publication date of a dependency's newest release. Where the reference's own source reports no such date, Update-time reports the marker as holding nothing back, and the reference is updated as usual:
 
 ```console
-WARNING Redundant update-time marker ignore[stale<90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source reports no publication date to measure staleness against
+WARNING Redundant update-time directive ignore[stale<90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source reports no publication date to measure staleness against
 ```
 
 Three kinds of reference get that warning. An image on a registry other than Docker Hub does, since only Docker Hub reports a push date, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves. And so does a `.python-version` entry whose version comes from the project's Dockerfile, since the staleness reported is the base image's, not the entry's. A bare `ignore[stale]` is reported there too, since it silences a warning those references never get.
@@ -460,7 +499,7 @@ A bare `ignore[cooldown]` can be understood in two ways: adopt at once, or never
 The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)). Where the reference's own source reports no publication date to measure a cooldown against, Update-time reports the marker as holding nothing back, and the reference is updated as usual:
 
 ```console
-WARNING Redundant update-time marker ignore[cooldown<30] for python in .python-version:2: this dependency's source reports no publication date to measure a cooldown against
+WARNING Redundant update-time directive ignore[cooldown<30] for python in .python-version:2: this dependency's source reports no publication date to measure a cooldown against
 ```
 
 The same three kinds of reference get that warning as for staleness (see [Setting a staleness threshold](#setting-a-staleness-threshold)), and for the same reasons but one. A `.python-version` entry whose version comes from the project's Dockerfile gets it because its cooldown was already applied when the base image was updated. An image on a registry other than Docker Hub does too, since only Docker Hub reports a push date to measure a cooldown against, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves.
@@ -482,7 +521,7 @@ To silence a second advisory, add a second item: `# update-time: ignore[vulnerab
 When none of the version's vulnerabilities answers to the identifier — the vulnerability was fixed by an update, or the identifier was mistyped — Update-time reports the marker as holding nothing back:
 
 ```console
-WARNING Redundant update-time marker ignore[vulnerable=CVE-2022-28346] for django in docs/requirements.txt:12: version 4.2.0 has no such vulnerability
+WARNING Redundant update-time directive ignore[vulnerable=CVE-2022-28346] for django in docs/requirements.txt:12: version 4.2.0 has no such vulnerability
 ```
 
 A marker naming several advisories is judged as one, so it is reported only once none of them names a vulnerability the version has.
@@ -504,7 +543,7 @@ The level applies to the reference carrying it, and every other reference in the
 When none of the version's vulnerabilities falls below the level, Update-time reports the marker as holding nothing back, since a level that silences nothing is one the reference no longer needs:
 
 ```console
-WARNING Redundant update-time marker ignore[vulnerable<high] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability below high
+WARNING Redundant update-time directive ignore[vulnerable<high] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability below high
 ```
 
 `allow` and `ignore` are complements here as elsewhere, so `allow[vulnerable>=high]` sets the same level as `ignore[vulnerable<high]`. Inverting the operator would warn about the mild vulnerabilities and stay quiet about the severe ones, so neither `allow[vulnerable<high]` nor `ignore[vulnerable>=high]` sets a level. Update-time logs an inverted comparison at `WARNING` and holds nothing back, so the reference is warned about at the global level:
@@ -520,25 +559,25 @@ A level must be one of `low`, `moderate`, `high`, and `critical`, spelled in low
 A yank can only be observed where the dependency's source reports one — of the references that accept a marker, `requirements.txt` pins and jsDelivr URLs (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so Update-time logs it as redundant at `WARNING`:
 
 ```console
-WARNING Redundant update-time marker ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept
+WARNING Redundant update-time directive ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept
 ```
 
 A `requirements.txt` requirement that pins no exact version is reported too: PyPI does report yanks, but a yank is about the version a reference is left on, and such a requirement pins none.
 
 ```console
-WARNING Redundant update-time marker ignore[yanked] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a yank
+WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a yank
 ```
 
 A vulnerability can only be reported where OSV holds advisories for the dependency — of the references that accept a marker, `requirements.txt` pins and jsDelivr URLs (see [Vulnerable dependencies](#-vulnerable-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so it is reported as redundant in all its forms:
 
 ```console
-WARNING Redundant update-time marker ignore[vulnerable] for python in Dockerfile:2: this dependency's source reports no vulnerabilities
+WARNING Redundant update-time directive ignore[vulnerable] for python in Dockerfile:2: this dependency's source reports no vulnerabilities
 ```
 
 A requirement that pins no exact version is reported here too: an advisory is matched against a version, and such a requirement pins none.
 
 ```console
-WARNING Redundant update-time marker ignore[vulnerable] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a vulnerability
+WARNING Redundant update-time directive ignore[vulnerable] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a vulnerability
 ```
 
 In all its forms, the `stale` scope is reported as redundant for a reference whose source reports no publication date to measure staleness against. [Setting a staleness threshold](#setting-a-staleness-threshold) names the three kinds of reference that get that warning.
