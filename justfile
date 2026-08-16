@@ -113,10 +113,6 @@ test *tests: install-py-dependencies
 mutate file *command:
     {{ python_m }} tools.mutate "$@"
 
-# Report the tests that cover the same code, read from the coverage data the last full `just test` run wrote.
-coverage-overlap:
-    {{ python_m }} tools.coverage_overlap
-
 [private]
 mutate-help:
     @echo "\nBreak FILE by replacing a snippet in it, run COMMAND (default: just test), and restore FILE whatever"
@@ -126,11 +122,11 @@ mutate-help:
     @echo "    @@"
     @echo "    a broken version of it"
     @echo "    EOF"
-    @echo "\nExits 0 when the mutation was caught (a test failed, so it is guarded), 1 when it survived (nothing"
+    @echo "\nExits 0 when the mutation was killed (a test failed, so it is guarded), 1 when it survived (nothing"
     @echo "guards it), 2 when the probe never ran (the snippet is not in FILE exactly once), 3 when the run was"
-    @echo "caught but reported errors, which a stub that broke the file does as much as a guard that raised, and 4"
+    @echo "killed but reported errors, which a stub that broke the file does as much as a guard that raised, and 4"
     @echo "when COMMAND failed with every test passing, so a gate such as coverage failed rather than a guard."
-    @echo "\nA caught run ends by naming each test that caught it, a subTest case with its parameters. Read that"
+    @echo "\nA killed run ends by naming each test that killed it, a subTest case with its parameters. Read that"
     @echo "list rather than the outcome alone: a case of a table missing from it guards nothing its neighbours"
     @echo "don't, and two tests in it for a one-line change are one guard more than that line needs."
 

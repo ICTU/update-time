@@ -6,11 +6,9 @@ than a connection error because `update_time.io.fetch` turns a `requests` except
 connection error would leave an unmocked request answered with `None` rather than failing the test.
 """
 
-from typing import TYPE_CHECKING, NoReturn
+import socket
+from typing import NoReturn
 from unittest.mock import patch
-
-if TYPE_CHECKING:
-    import socket
 
 
 def _refuse(address: object) -> NoReturn:
@@ -30,5 +28,11 @@ def _refuse_resolution(host: object, *_args: object, **_kwargs: object) -> NoRet
 
 # A request to a host name is refused at the lookup, before it reaches the resolver; one to a literal address needs
 # no lookup and is refused at the socket. Neither patch is ever stopped: no test may lift the refusal.
-patch("socket.socket.connect", _refuse_connection).start()
-patch("socket.getaddrinfo", _refuse_resolution).start()
+#
+# This module runs again whenever the package is dropped from `sys.modules` and imported afresh, and would then
+# start a second pair of patches that nothing stops. The refusal already installed is what says whether to install
+# one: the socket's own `connect` is a C method descriptor named for the socket, so only a refusal answers to this
+# name.
+if socket.socket.connect.__name__ != _refuse_connection.__name__:
+    patch("socket.socket.connect", _refuse_connection).start()
+    patch("socket.getaddrinfo", _refuse_resolution).start()
