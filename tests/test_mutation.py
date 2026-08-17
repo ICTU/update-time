@@ -14,6 +14,7 @@ _EVEN = "number % 2 == 0"
 _ODD = "number % 2 != 0"
 _REGISTERING_TEST = "tests.test_mutation.IsEvenTest.test_an_odd_number"
 _SUBJECT_TEST = "tests.test_mutation.IsEvenTest.test_an_even_number"
+_REGRESSION = "an odd number is reported as even"
 
 
 class IsEvenTest(unittest.TestCase):
@@ -27,12 +28,12 @@ class IsEvenTest(unittest.TestCase):
         """
         self.assertTrue(is_even(2))
 
-    @kills(_SUBJECT, _EVEN, _ODD)
+    @kills(_SUBJECT, _EVEN, _ODD, _REGRESSION)
     def test_an_odd_number(self):
         """Test that an odd number is not even."""
         self.assertFalse(is_even(3))
 
-    @kills(_SUBJECT, _EVEN, _ODD)
+    @kills(_SUBJECT, _EVEN, _ODD, _REGRESSION)
     @patch("tests.mutation_subject.is_even")
     def test_an_odd_number_patched_beneath_the_decorator(self, patched_subject: Mock):
         """Test that an odd number is not even, with a patch handing this test a mock from beneath the decorator.
@@ -44,7 +45,7 @@ class IsEvenTest(unittest.TestCase):
         self.assertFalse(is_even(3))
 
     @patch("tests.mutation_subject.is_even")
-    @kills(_SUBJECT, _EVEN, _ODD)
+    @kills(_SUBJECT, _EVEN, _ODD, _REGRESSION)
     def test_an_odd_number_patched_above_the_decorator(self, patched_subject: Mock):
         """Test that an odd number is not even, with a patch above the decorator handing this test a mock.
 
@@ -91,6 +92,7 @@ class CheckTest(unittest.TestCase):
         "tests/mutation.py",
         "except _SourceError as error:",
         "except Exception as error:",
+        "an error in the checker itself is caught and misreported as a broken mutation",
     )
     def test_a_defect_in_the_checker_itself(self):
         """Test that an error from the checker is raised, rather than reported as the mutation being broken."""
@@ -116,6 +118,7 @@ class CheckTest(unittest.TestCase):
         "tests/mutation.py",
         "return Result(Outcome.STALE, _reason(error))",
         "return Result(Outcome.STALE)",
+        "a mutation naming an unreadable file is reported as stale without saying why",
     )
     def test_a_mutation_whose_file_cannot_be_read(self):
         """Test that a mutation naming a file that cannot be read is reported as stale, and says so."""
@@ -129,6 +132,7 @@ class CheckTest(unittest.TestCase):
         "tests/mutation.py",
         'return Result(Outcome.STALE, "the snippet and its replacement are the same, so nothing changes")',
         "return Result(Outcome.SURVIVED)",
+        "a mutation that changes nothing is reported as survived, blaming the test rather than the registration",
     )
     def test_a_mutation_that_would_change_nothing(self):
         """Test that a replacement equal to the snippet is reported as stale, rather than as the test's failing."""
@@ -160,22 +164,41 @@ class KillsTest(unittest.TestCase):
             IsEvenTest("test_an_odd_number").run(result)
         return result
 
+    @kills(
+        "tests/mutation.py",
+        '        mutation = Mutation(path, old, new, f"{function.__module__}.{function.__qualname__}", regression)',
+        '        mutation = Mutation(path, old, new, f"{function.__module__}.{function.__qualname__}")',
+        "the regression never reaches the mutation, so a failure cannot name it",
+    )
     def test_a_decorated_test_checks_its_mutation(self):
         """Test that running a decorated test checks its mutation, and passes when the mutation is killed."""
         result = self.run_decorated_test(Result(Outcome.KILLED))
         self.assertEqual((result.failures, result.errors), ([], []))
-        self.checked.assert_called_once_with(Mutation(_SUBJECT, _EVEN, _ODD, _REGISTERING_TEST))
+        self.checked.assert_called_once_with(Mutation(_SUBJECT, _EVEN, _ODD, _REGISTERING_TEST, _REGRESSION))
 
+    @kills(
+        "tests/mutation.py",
+        '        return f"{mutation.regression} — the test did not kill this mutation of {mutation.path}"',
+        '        return f"the test did not kill this mutation of {mutation.path}"',
+        "the survivor message drops the regression, so it no longer says what went wrong",
+    )
     def test_a_surviving_mutation_fails_the_test(self):
-        """Test that a mutation the test passes against fails that test, naming the mutation and what it showed."""
+        """Test that a survivor fails the test, leading with the regression rather than the snippets."""
         result = self.run_decorated_test(Result(Outcome.SURVIVED))
         self.assertEqual(len(result.failures), 1)
-        self.assertIn("survived", result.failures[0][1])
-        self.assertIn(_ODD, result.failures[0][1])
-        self.assertNotIn("survived:", result.failures[0][1])  # An outcome carrying no reason ends the message.
+        message = result.failures[0][1]
+        self.assertIn(f"{_REGRESSION} — the test did not kill this mutation of {_SUBJECT}", message)
+        self.assertNotIn(_ODD, message)
+        self.assertNotIn(_EVEN, message)
 
+    @kills(
+        "tests/mutation.py",
+        '    return f"{mutation.regression} — this mutation of {mutation.path} is {result.outcome}: {result.reason}"',
+        '    return f"this mutation of {mutation.path} is {result.outcome}: {result.reason}"',
+        "the stale-or-broken message drops the regression, so it no longer says what went wrong",
+    )
     def test_a_mutation_the_test_could_not_judge_fails_it_with_the_reason(self):
-        """Test that a stale or broken mutation fails the test saying what stopped the check."""
+        """Test that a stale or broken mutation fails the test, leading with the regression and then the reason."""
         for case, outcome, reason in (
             ("stale", Outcome.STALE, "FileNotFoundError: no such file"),
             ("broken", Outcome.BROKEN, "SyntaxError: invalid syntax"),
@@ -183,7 +206,8 @@ class KillsTest(unittest.TestCase):
             with self.subTest(case=case):
                 result = self.run_decorated_test(Result(outcome, reason))
                 self.assertEqual(len(result.failures), 1)
-                self.assertIn(reason, result.failures[0][1])
+                message = result.failures[0][1]
+                self.assertIn(f"{_REGRESSION} — this mutation of {_SUBJECT} is {outcome}: {reason}", message)
 
     def test_a_test_failing_of_its_own_accord_is_not_checked(self):
         """Test that a test already failing fails on that, rather than its mutation being reported as killed."""
@@ -204,5 +228,5 @@ class KillsTest(unittest.TestCase):
     def test_the_decorated_test_reports_as_the_test_it_decorates(self):
         """Test that the wrapper carries the name and the docstring unittest prints for the test it decorates."""
         method = IsEvenTest.test_an_odd_number
-        wrapped = kills(_SUBJECT, _EVEN, _ODD)(method)
+        wrapped = kills(_SUBJECT, _EVEN, _ODD, _REGRESSION)(method)
         self.assertEqual((wrapped.__qualname__, wrapped.__doc__), (method.__qualname__, method.__doc__))

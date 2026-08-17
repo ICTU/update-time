@@ -279,6 +279,7 @@ class UpdateReferencesTest(unittest.TestCase):
         "src/update_time/references/resolve.py",
         "log.report_staleness(resolved, marker, marker.stale.value_or(STALE_AFTER.get()))",
         "log.report_staleness(resolved, marker.frozen, marker.stale.value_or(STALE_AFTER.get()))",
+        "the staleness logger is handed the update-frozen marker rather than the marker as written",
     )
     def test_ignore_stale_marker_still_updates_and_reports_with_the_marker(self):
         """Test that `ignore[stale]` applies the update and reaches the logger, which decides the warning itself."""
@@ -310,6 +311,7 @@ class UpdateReferencesTest(unittest.TestCase):
         "src/update_time/domain/marker.py",
         'return (self.name or "").lower().replace("_", "-")',
         'return (self.name or "").lower()',
+        "hash-drift no longer matches its scope, because the underscore in the scope name is not turned into a hyphen",
     )
     def test_allow_hash_drift_marker_adopts_new_digest(self):
         """Test that an inline `allow[hash-drift]` marker re-pins a re-pushed tag's digest instead of warning."""

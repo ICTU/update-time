@@ -2,8 +2,9 @@
 
 A green test proves nothing on its own: it may assert what the code cannot get wrong, or mock away the collaborator
 it claims to check. Breaking the behaviour is the evidence. A decorated test runs its own body, then puts its
-mutation in place and runs itself against it, and fails unless that breaks it. The mutation is applied in memory,
-so no file on disk is touched and an interrupted run cannot leave a source file broken.
+mutation in place and runs itself against the mutated code, failing unless that breaks it. Each mutation names the
+regression it stands in for, so a test that does not kill the mutation reports the regression. The mutation is
+applied in memory, so no file on disk is touched and an interrupted run cannot leave a source file broken.
 """
 
 import functools
@@ -30,7 +31,7 @@ _Method = TypeVar("_Method", bound="Callable[..., object]")
 class Outcome(StrEnum):
     """What checking a mutation showed.
 
-    CAUGHT and SURVIVED judge the test: it failed against the mutation, or it did not. STALE and BROKEN judge the
+    KILLED and SURVIVED judge the test: it failed against the mutation, or it did not. STALE and BROKEN judge the
     mutation instead, and call for rewriting the mutation rather than the test. Stale means it was never applied:
     the file could not be read, the snippet was not there exactly once, or the replacement was the snippet itself.
     Broken means the mutated source did not import, or the test errored instead of failing.
@@ -46,7 +47,7 @@ class Outcome(StrEnum):
 class Result:
     """What checking a mutation showed, and what went wrong where the outcome does not say.
 
-    Stale and broken each have several causes, so a result of either carries the one that applied. Caught and
+    Stale and broken each have several causes, so a result of either carries the one that applied. Killed and
     survived speak for themselves.
     """
 
@@ -56,12 +57,13 @@ class Result:
 
 @dataclass(frozen=True)
 class Mutation:
-    """A change to a source file, and the test that is meant to kill it."""
+    """A change to a source file, the test that is meant to kill it, and the regression the change stands in for."""
 
     path: str
     old: str
     new: str
     test: str
+    regression: str = ""
 
 
 def _module_name(path: str) -> str:
@@ -152,13 +154,14 @@ def check(mutation: Mutation) -> Result:
 
 
 def _failure(mutation: Mutation, result: Result) -> str:
-    """Return the message a mutation the test did not kill fails that test with.
+    """Return the message a mutation the test did not kill fails that test with, leading with the regression.
 
-    A stale or broken mutation carries why the check could not judge it, which is what says whether the mutation
-    needs rewriting or the code moved.
+    A survivor is one the test ran against and passed. A stale or broken mutation is one the check could not judge,
+    and its message carries why, which says whether the mutation needs rewriting or the code moved.
     """
-    message = f"{mutation} was {result.outcome}"
-    return f"{message}: {result.reason}" if result.reason else message
+    if result.outcome == Outcome.SURVIVED:
+        return f"{mutation.regression} — the test did not kill this mutation of {mutation.path}"
+    return f"{mutation.regression} — this mutation of {mutation.path} is {result.outcome}: {result.reason}"
 
 
 def _fail_unless_killed(test: unittest.TestCase, mutation: Mutation) -> None:
@@ -175,17 +178,19 @@ def _fail_unless_killed(test: unittest.TestCase, mutation: Mutation) -> None:
     test.assertEqual(result.outcome, Outcome.KILLED, _failure(mutation, result))
 
 
-def kills(path: str, old: str, new: str) -> Callable[[_Method], _Method]:
+def kills(path: str, old: str, new: str, regression: str) -> Callable[[_Method], _Method]:
     """Return a decorator making the decorated test kill the mutation it is meant to kill.
 
     The test runs its own body first and then checks the mutation, so a test already failing for a reason of its
-    own never reports the mutation as killed.
+    own never reports the mutation as killed. The regression names what the change breaks — read off the mutated
+    code, since a mutation the test kills only through a stub's exact-argument match breaks no behaviour and so has
+    none to name. It leads the failure message when the test does not kill the mutation.
     """
 
     def decorate(method: _Method) -> _Method:
         # In the body of its class a test method is still a plain function, which is what carries its qualified name.
         function = cast(types.FunctionType, method)
-        mutation = Mutation(path, old, new, f"{function.__module__}.{function.__qualname__}")
+        mutation = Mutation(path, old, new, f"{function.__module__}.{function.__qualname__}", regression)
 
         @functools.wraps(function)
         def wrapper(self: unittest.TestCase, *args: object, **kwargs: object) -> object:
