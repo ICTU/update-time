@@ -115,6 +115,7 @@ class AsWrittenTest(unittest.TestCase):
         "src/update_time/domain/marker.py",
         "Marker(ignored_scopes=scope, written_scopes=scope)",
         "Marker(ignored_scopes=scope)",
+        "a scope the reader spelled out is discarded, instead of being kept",
     )
     def test_only_the_scopes_the_marker_spelled_out_survive(self):
         """Test that a scope a bare `ignore` implies is cleared, while one written beside it is kept."""
@@ -141,9 +142,10 @@ class DirectiveTest(unittest.TestCase):
         "src/update_time/domain/marker.py",
         'return _directive(Verb.IGNORE, str(scope)) if self.ignores(scope) else ""',
         "return _directive(Verb.IGNORE, str(scope))",
+        "a directive is returned for a scope though that scope has no directive in the marker",
     )
     def test_a_scope_the_marker_leaves_live_is_named_by_nothing(self):
-        """Test that a scope the marker does not hold back names no directive, so no warning quotes one."""
+        """Test that a scope the marker does not hold back names no directive."""
         self.assertEqual(self.marker("ignore[stale]").scope_directive(Scope.YANKED), "")
 
     def test_a_scope_is_named_alone(self):
@@ -164,6 +166,8 @@ class DirectiveTest(unittest.TestCase):
         "src/update_time/domain/marker.py",
         "        return self.cooldown.directive",
         "        return self.raw",
+        "the cooldown is reported as the whole marker text rather than the cooldown item alone, so a "
+        "neighbouring directive is included",
     )
     def test_a_cooldown_item_is_named_as_the_reader_wrote_it(self):
         """Test that a cooldown is named as the item the reader wrote, leaving out a directive beside it."""
@@ -347,6 +351,8 @@ class ParseMarkerCooldownTest(unittest.TestCase):
         "src/update_time/domain/marker.py",
         "for scope in _IGNORABLE_SCOPES",
         "for scope in Scope",
+        "a bare cooldown is accepted as a scope rather than rejected, because the check ranges over every "
+        "scope instead of only the ignorable ones",
     )
     def test_a_bare_cooldown_item_is_rejected(self):
         """Test that `cooldown` without a day count sets no cooldown, whichever verb it follows."""

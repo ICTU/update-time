@@ -218,6 +218,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         "src/update_time/domain/directive.py",
         "        Reason.NO_YANK_CONCEPT,\n        Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,",
         "        Reason.NO_YANK_CONCEPT,",
+        "ignore[yanked] on a loose requirement is not reported redundant, though the requirement pins no version "
+        "to check for a yank",
     )
     def test_a_scope_needing_a_version_is_redundant_on_a_loose_requirement(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a scope whose check needs a version reports that the requirement pins none."""

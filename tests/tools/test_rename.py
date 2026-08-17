@@ -125,6 +125,7 @@ class MainTest(unittest.TestCase):
         "        return _FAILED\n    for path, source in changed.items():",
         "        for path, source in changed.items():\n            Path(path).write_text(source)\n"
         "        return _FAILED\n    for path, source in changed.items():",
+        "a rename that left the old name behind still writes the files it changed to disk",
     )
     def test_a_rename_that_left_the_name_behind_writes_nothing(self):
         """Test that a file left holding the name leaves every file unwritten, the ones the rename changed too."""
@@ -137,6 +138,7 @@ class MainTest(unittest.TestCase):
         '            _report(f"{path} could not be renamed: {reason}")\n'
         "            for written, renamed_source in renamed.items():\n"
         "                Path(written).write_text(renamed_source)",
+        "a file the codemod cannot parse still writes the renames already made to the other files",
     )
     def test_a_file_the_codemod_cannot_parse(self):
         """Test that a source the codemod cannot parse is reported by name, and writes none of the files."""
@@ -154,7 +156,12 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.rename("print(1)\n"), 1)
         self.assertIn("nothing was renamed", self.reported.getvalue())
 
-    @kills("tools/rename.py", "', '.join(left)", "' '.join(left)")
+    @kills(
+        "tools/rename.py",
+        "', '.join(left)",
+        "' '.join(left)",
+        "the surviving occurrences are run together without the comma between them",
+    )
     def test_a_bare_name_that_reached_the_definition_alone(self):
         """Test that a bare name renames the definition alone, so the references importing it survive."""
         self.assertEqual(self.rename(_DEFINES, _IMPORTS_AND_CALLS, old="old", new="new"), 1)
