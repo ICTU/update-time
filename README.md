@@ -390,6 +390,9 @@ Which dependencies are checked follows from what OSV can match a pinned version 
 
 Comments of the form `# update-time: <directive>` let you steer what happens to an individual reference — to hold it back, but also to bound how far it may move, or to opt it into behaviour that is off by default. To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
 
+> [!WARNING]
+> As long as Update-time is alpha (version `0.0.X`), marker syntax and semantics are subject to change without deprecation notice or migration support.
+
 ### The anatomy of a marker
 
 The rest of this chapter names the parts of a marker, so here is one taken apart:
