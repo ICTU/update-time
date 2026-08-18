@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import PurePath
 from unittest.mock import ANY, MagicMock, Mock, patch
 
+from update_time.domain import directive as directive_module
 from update_time.domain.directive import Reason
 from update_time.domain.marker import Marker, Scope
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
@@ -14,7 +15,7 @@ from update_time.primitives.location import Location
 from update_time.updaters.update_requirements_txt import update_requirements_txts
 
 from tests.helpers import mock_path, patch_environ
-from tests.mutation import kills
+from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE
 from tests.update_time.helpers import (
     DJANGO_ADVISORY,
@@ -31,6 +32,11 @@ from tests.update_time.helpers import (
     unreachable_osv,
     vulnerability_check_disabled,
     yanked_file,
+)
+from tests.update_time.sources.test_pypi import (
+    A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED,
+    NULL_PROJECT_URLS_ATTRIBUTE_ERROR,
+    NULL_PROJECT_URLS_READ_AS_A_DICT,
 )
 
 _PUBLISHED = "1.1, published: 2020-01-01 00:00"  # How PYPI_OLD_UPLOAD is rendered in the log.
@@ -101,6 +107,19 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_path_logged(requirements_txt)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
+
+    @kills(NULL_PROJECT_URLS_READ_AS_A_DICT, by_raising=NULL_PROJECT_URLS_ATTRIBUTE_ERROR)
+    @kills(A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED)
+    def test_a_pin_whose_metadata_reports_no_project_urls(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a pin whose metadata reports the project URLs as null is updated, and so is the pin beside it."""
+        requirements_txt = self.discovered_requirements_txt(mock_rglob, "flask==1.0\nhumanize==4.14.0\n")
+        mock_get.side_effect = [
+            pypi_index("1.0", "1.1"),
+            pypi_release(project_urls=None),
+            *self.pypi("4.14.0", "4.15.0", bump=True),
+        ]
+        update_requirements_txts()
+        requirements_txt.write_text.assert_called_once_with("flask==1.1\nhumanize==4.15.0\n")
 
     def test_cooldown_marker_is_not_reported_as_redundant(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a `cooldown` marker on a pin holds something back, since PyPI dates its versions."""
@@ -215,11 +234,13 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
     @kills(
-        "src/update_time/domain/directive.py",
-        "        Reason.NO_YANK_CONCEPT,\n        Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,",
-        "        Reason.NO_YANK_CONCEPT,",
-        "ignore[yanked] on a loose requirement is not reported redundant, though the requirement pins no version "
-        "to check for a yank",
+        Mutation(
+            directive_module,
+            "        Reason.NO_YANK_CONCEPT,\n        Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,",
+            "        Reason.NO_YANK_CONCEPT,",
+            "ignore[yanked] on a loose requirement is not reported redundant, though the requirement pins no version "
+            "to check for a yank",
+        )
     )
     def test_a_scope_needing_a_version_is_redundant_on_a_loose_requirement(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a scope whose check needs a version reports that the requirement pins none."""

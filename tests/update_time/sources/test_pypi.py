@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
+from update_time.sources import pypi
 from update_time.sources.pypi import (
     _changelog_from_url,
     get_changes,
@@ -16,6 +17,7 @@ from update_time.sources.pypi import (
 )
 
 from tests.helpers import mock_response, patch_get
+from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
     PYPI_OLD_UPLOAD,
     CacheClearingTestCase,
@@ -26,6 +28,23 @@ from tests.update_time.helpers import (
     pypi_release,
     yanked_file,
 )
+
+# The mutations of how a null the PyPI metadata reports for the project URLs is read. The tests of the updater that
+# rewrites the pins kill them too, so they are named here rather than spelled out in each registration.
+NULL_PROJECT_URLS_READ_AS_A_DICT = Mutation(
+    pypi,
+    'urls = info.get("project_urls") or {}',
+    'urls = info.get("project_urls", {})',
+    "the project URLs PyPI reports as null are read as a dictionary, which ends the run with a traceback",
+)
+A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED = Mutation(
+    pypi,
+    "    if metadata is None:\n        return None",
+    '    if metadata is None or metadata["info"].get("project_urls", {}) is None:\n        return None',
+    "a release whose project URLs PyPI reports as null is skipped rather than adopted",
+)
+# The error the first of those mutations makes a test raise, wherever the test enters the code it breaks.
+NULL_PROJECT_URLS_ATTRIBUTE_ERROR = "AttributeError: 'NoneType' object has no attribute 'items'"
 
 
 @patch("requests.get")
@@ -144,11 +163,15 @@ class GetChangesTest(LoggingTestCase):
         self.assertEqual(get_changes("package-9", "1.1"), changelog)
         self.assert_releases_requested(mock_get)
 
+    @kills(NULL_PROJECT_URLS_READ_AS_A_DICT, by_raising=NULL_PROJECT_URLS_ATTRIBUTE_ERROR)
     def test_changelog_in_description(self, mock_get: Mock):
-        """Test that the changelog from the description is returned."""
+        """Test that the description's changelog is returned when PyPI omits the project URLs or reports them null."""
         changelog = "1.1\n- Fixed ...\n- Added ..."
-        self.create_mock_response(mock_get, {"info": {"description": f"Package description\n{changelog}\n"}})
-        self.assertEqual(get_changes("package-5", "1.1"), changelog)
+        for case, project_urls in (("missing", {}), ("null", {"project_urls": None})):
+            with self.subTest(project_urls=case):
+                info = {"description": f"Package description\n{changelog}\n"} | project_urls
+                self.create_mock_response(mock_get, {"info": info})
+                self.assertEqual(get_changes(f"package-5-{case}", "1.1"), changelog)
 
     def test_github_url_in_description_that_has_a_changelog(self, mock_get: Mock):
         """Test that the GitHub URL in the description is used to get the changelog."""
@@ -269,6 +292,12 @@ class GetLatestVersionTest(LoggingTestCase):
         latest = get_latest_version("new_version", "1.0", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "1.1")
         self.assertEqual(datetime(2020, 1, 1, tzinfo=UTC), latest.published)
+
+    @kills(A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED)
+    def test_new_version_of_a_release_without_project_urls(self, mock_get: Mock):
+        """Test that a release whose metadata reports the project URLs as null is adopted like any other."""
+        mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(project_urls=None)]
+        self.assertEqual(get_latest_version("null_urls", "1.0", NO_BOUND, COOLDOWN.default).version, "1.1")
 
     def test_highest_version(self, mock_get: Mock):
         """Test that the highest of multiple newer versions is returned."""

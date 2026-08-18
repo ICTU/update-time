@@ -657,13 +657,24 @@ def yanked_file(filename: str, *, reason: str | bool = True) -> dict[str, str | 
     return {"filename": filename, "yanked": reason}
 
 
-def pypi_release(upload_time: str = PYPI_OLD_UPLOAD, *, yanked: bool = False, description: str = "") -> Mock:
+_NO_PROJECT_URLS: dict[str, str] = {}  # The default for a release fixture no test asks project URLs of.
+
+
+def pypi_release(
+    upload_time: str = PYPI_OLD_UPLOAD,
+    *,
+    yanked: bool = False,
+    description: str = "",
+    project_urls: dict[str, str] | None = _NO_PROJECT_URLS,
+) -> Mock:
     """Return a mock PyPI per-version metadata response with the given upload time, yank state, and description.
 
-    An empty `upload_time` models a release with no distribution files (an empty `urls` list).
+    An empty `upload_time` models a release with no distribution files (an empty `urls` list). Passing None for the
+    project URLs models the null PyPI answers for a package that declares none.
     """
     urls = [{"upload_time_iso_8601": upload_time}] if upload_time else []
-    return mock_response({"info": {"description": description, "yanked": yanked}, "urls": urls})
+    info = {"description": description, "yanked": yanked, "project_urls": project_urls}
+    return mock_response({"info": info, "urls": urls})
 
 
 def docker_tag(name: str, digest: str = "", **extra: object) -> dict[str, object]:
