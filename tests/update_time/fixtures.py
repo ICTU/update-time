@@ -15,3 +15,6 @@ COMMIT_SHA2 = "b" * 40
 
 # The marker a bare `# update-time: ignore` expresses: every check the marker can hold back is held back.
 BARE_IGNORE = Marker(ignored_scopes=Scope.UPDATE | Scope.STALE | Scope.YANKED | Scope.VULNERABLE)
+
+# A changelog naming version 1.1, so parsing it for 1.1 yields the whole fixture.
+CHANGELOG = "## 1.1\n- Fixed ..."
