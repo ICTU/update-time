@@ -172,6 +172,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             mock_response(self.pypi_metadata()),
             Mock(text=CHANGELOG, headers={"Content-Type": "text/html"}),
             mock_response([github_release_json("v1.1")]),
+            mock_response([]),
         ]
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_with_html_changelog==1.0"))
         glob.return_value = [mock_pyproject_toml]

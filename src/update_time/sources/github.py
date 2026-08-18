@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from packaging.version import Version
 
+from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.dependency import (
     DependencyName,
@@ -35,6 +36,9 @@ _GITHUB_API = "https://api.github.com/repos"
 # GitHub's maximum page size, for the releases and tags endpoints. Only the first page of each is fetched, so at
 # most this many of the most recent releases and tags are considered.
 _PER_PAGE = 100
+# The names a repository gives the changelog file in its root, and the extensions it carries, compared in lower case.
+_CHANGELOG_FILE_NAMES = frozenset({"changes", "changelog", "history", "news", "releases"})
+_CHANGELOG_FILE_EXTENSIONS = frozenset({"", ".md", ".rst", ".txt"})
 
 
 class _ReleaseJSON(TypedDict):
@@ -58,6 +62,14 @@ class _TagJSON(TypedDict):
 
     name: str
     commit: _TaggedCommit
+
+
+class _ContentJSON(TypedDict):
+    """An entry in a GitHub repository's contents listing."""
+
+    name: str
+    # Null for an entry that is no file to fetch, such as a directory: pip's root keeps its `news` fragments in one.
+    download_url: str | None
 
 
 class _Committer(TypedDict):
@@ -265,6 +277,24 @@ def _list_tags(owner: str, repository: str) -> tuple[_TagJSON, ...] | None:
 
 
 @cache
+def _list_root(owner: str, repository: str) -> tuple[_ContentJSON, ...] | None:
+    """Fetch the entries in the root of a repository, or None when they couldn't be fetched.
+
+    Mirrors `_list_releases`: an empty tuple means the repository was reached but its root holds nothing; None
+    means the fetch itself failed (already logged by `fetch`).
+    """
+    contents_url = f"{_GITHUB_API}/{owner}/{repository}/contents/"
+    response = fetch(contents_url, _LOG, headers=_github_headers())
+    return tuple(response.json()) if response is not None else None
+
+
+def _is_changelog_file(name: str) -> bool:
+    """Return whether the name is one a repository gives its changelog file."""
+    stem, dot, extension = name.lower().partition(".")
+    return stem in _CHANGELOG_FILE_NAMES and dot + extension in _CHANGELOG_FILE_EXTENSIONS
+
+
+@cache
 def _get_commit(owner: str, repository: str, ref: str) -> tuple[_CommitJSON | None, str]:
     """Fetch the commit for the ref (a tag name or commit SHA): the commit and an empty string, or None and why not.
 
@@ -444,6 +474,18 @@ def changes_from_release(owner: str, repository: str, package: str, version: str
         return ""
     release = get_release(owner, repository, package, version)
     return release.body if release else ""
+
+
+def changes_from_changelog_file(owner: str, repository: str, version: str) -> str:
+    """Return the version's changes from a changelog file in the repository's root, or nothing when there is none."""
+    if not (owner and repository):
+        return ""
+    for entry in _list_root(owner, repository) or ():
+        if _is_changelog_file(entry["name"]) and (url := entry["download_url"]):
+            response = fetch(url, _LOG)
+            if response is not None and (changes := get_version_changes_from_changelog(response.text, version)):
+                return changes
+    return ""
 
 
 def _github_headers() -> dict[str, str]:

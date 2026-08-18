@@ -25,7 +25,12 @@ from update_time.domain.yank import with_yank_state, yank_reporting
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.primitives.timestamp import newest_timestamp
-from update_time.sources.github import changes_from_release, github_owner_and_repository, github_to_raw
+from update_time.sources.github import (
+    changes_from_changelog_file,
+    changes_from_release,
+    github_owner_and_repository,
+    github_to_raw,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -261,6 +266,7 @@ def get_changes(package: str, version: str) -> str:
       source repository before the rest.
     - Check for a changelog in the package description.
     - Check for a GitHub URL in the package description and use that to find GitHub releases.
+    - Check the root of each project URL that points at GitHub for a changelog file.
     """
     metadata = release_metadata(package, version)
     if metadata is None:
@@ -270,13 +276,16 @@ def get_changes(package: str, version: str) -> str:
     for label, url in urls.items():
         if _normalized_label(label) in _CHANGELOG_URL_LABELS and (changelog := _changelog_from_url(url, version)):
             return changelog
-    for url in _repository_urls(urls):
+    repository_urls = _repository_urls(urls)
+    for url in repository_urls:
         if changelog := _changelog_from_github_releases(url, package, version):
             return changelog
-    description = info["description"]
-    if changelog := get_version_changes_from_changelog(description, version):
+    if changelog := _changelog_from_description(info["description"], package, version):
         return changelog
-    return _changelog_from_github_url_in_description(description, package, version)
+    for url in repository_urls:
+        if changelog := _changelog_from_repository_root(url, version):
+            return changelog
+    return ""
 
 
 def get_publication_datetime(package: str, version: str) -> datetime | None:
@@ -295,21 +304,38 @@ def _changelog_from_url(url: str, version: str) -> str:
     return get_version_changes_from_changelog(changelog_response.text, version)
 
 
+def _changelog_from_description(description: str, package: str, version: str) -> str:
+    """Get the changelog from the description posted to PyPI, or from the releases a GitHub URL in it points at."""
+    return get_version_changes_from_changelog(description, version) or _changelog_from_github_url_in_description(
+        description, package, version
+    )
+
+
 def _changelog_from_github_url_in_description(description: str, package: str, version: str) -> str:
-    """Get the changelog from the description posted to PyPI."""
+    """Get the changelog from the GitHub URL in the description posted to PyPI."""
     github_url = r"https://github\.com/([\w.-]+)/([\w.-]+)"
     if not (match := re.search(github_url, description)):
         return ""
     return _changelog_from_github_releases(match.group(), package, version)
 
 
-def _changelog_from_github_releases(url: str, package: str, version: str) -> str:
-    """Get the changelog from the GitHub releases.
+def _github_repository(url: str) -> tuple[str, str]:
+    """Return the owner and repository the URL points at, or empty strings when it points at no repository.
 
     A `github.com/sponsors/…` URL parses as the repository `sponsors/<owner>`, which does not exist, so it is
-    skipped rather than asked for releases.
+    reported as no repository rather than queried.
     """
     owner, repository = github_owner_and_repository(url)
-    if owner == _GITHUB_SPONSORS_PATH:
-        return ""
+    return ("", "") if owner == _GITHUB_SPONSORS_PATH else (owner, repository)
+
+
+def _changelog_from_github_releases(url: str, package: str, version: str) -> str:
+    """Get the changelog from the GitHub releases."""
+    owner, repository = _github_repository(url)
     return changes_from_release(owner, repository, package, version)
+
+
+def _changelog_from_repository_root(url: str, version: str) -> str:
+    """Get the changelog from a changelog file in the root of the repository."""
+    owner, repository = _github_repository(url)
+    return changes_from_changelog_file(owner, repository, version)

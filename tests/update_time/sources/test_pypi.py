@@ -2,12 +2,13 @@
 
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
+from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
-from update_time.sources import pypi
+from update_time.sources import github, pypi
 from update_time.sources.pypi import (
     _changelog_from_url,
     get_changes,
@@ -28,6 +29,9 @@ from tests.update_time.helpers import (
     pypi_release,
     yanked_file,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 # The mutations of how a null the PyPI metadata reports for the project URLs is read. The tests of the updater that
 # rewrites the pins kill them too, so they are named here rather than spelled out in each registration.
@@ -77,10 +81,77 @@ class GetChangesTest(LoggingTestCase):
         reachable = mock_response(metadata, status_code=HTTPStatus.OK, ok=True)
         mock_get.side_effect = lambda url, **_kwargs: unreachable if url == unreachable_url else reachable
 
+    @staticmethod
+    def metadata_url(package: str, version: str = "1.1") -> str:
+        """Return the URL PyPI serves the release metadata of the package and version at."""
+        return f"https://pypi.org/pypi/{package}/{version}/json"
+
+    @staticmethod
+    def releases_url(repository: str = "org/repo") -> str:
+        """Return the URL GitHub serves the repository's releases at."""
+        return f"https://api.github.com/repos/{repository}/releases?per_page=100"
+
+    @staticmethod
+    def contents_url(repository: str = "org/repo") -> str:
+        """Return the URL GitHub serves the repository's root listing at."""
+        return f"https://api.github.com/repos/{repository}/contents/"
+
+    @staticmethod
+    def file_url(name: str) -> str:
+        """Return the URL the repository serves the file of that name at."""
+        return f"https://raw/{name}"
+
+    @classmethod
+    def root_entry(cls, name: str, text: str | None) -> dict[str, object]:
+        """Return the root listing entry for the file, one with no file to fetch when its text is None."""
+        return {
+            "name": name,
+            "type": "dir" if text is None else "file",
+            "download_url": None if text is None else cls.file_url(name),
+        }
+
+    @staticmethod
+    def requested_urls(mock_get: Mock) -> list[str]:
+        """Return the URLs the mock requests.get was asked for, in the order they were asked for."""
+        return [call.args[0] for call in mock_get.call_args_list]
+
     def assert_releases_requested(self, mock_get: Mock, *repositories: str) -> None:
         """Assert that GitHub was asked for the releases of exactly these repositories, in this order."""
-        requested = [call.args[0] for call in mock_get.call_args_list if "/releases" in call.args[0]]
-        expected = [f"https://api.github.com/repos/{repository}/releases?per_page=100" for repository in repositories]
+        requested = [url for url in self.requested_urls(mock_get) if "/releases" in url]
+        expected = [self.releases_url(repository) for repository in repositories]
+        self.assertEqual(requested, expected)
+
+    def create_discovery_responses(
+        self,
+        mock_get: Mock,
+        *packages: str,
+        files: Mapping[str, str | None] | None = None,
+        repository: str = "org/repo",
+        description: str = "Package description",
+        extra: Mapping[str | None, Mock] | None = None,
+    ) -> None:
+        """Point the mock requests.get at the responses for packages whose metadata names one GitHub repository.
+
+        The repository's root lists an entry per name in `files`, each answering its text, and the entry of a name
+        mapped to None is one with no file to fetch, as a directory is. The repository publishes no releases.
+        `extra` adds a response, or replaces one, under the URL it is keyed by. A URL neither holds raises a
+        KeyError, so a request the test did not expect fails loudly rather than being answered.
+        """
+        info = {"description": description, "project_urls": {"Source": f"https://github.com/{repository}"}}
+        listing = [self.root_entry(name, text) for name, text in (files or {}).items()]
+        responses: dict[str | None, Mock] = {
+            **{self.metadata_url(package): mock_response({"info": info}) for package in packages},
+            self.releases_url(repository): mock_response([]),
+            self.contents_url(repository): mock_response(listing),
+            **{self.file_url(name): mock_response(text=text) for name, text in (files or {}).items() if text},
+            **(extra or {}),
+        }
+        mock_get.side_effect = lambda url, **_kwargs: responses[url]
+
+    def assert_root_listed(self, mock_get: Mock, *repositories: str) -> None:
+        """Assert that GitHub was asked for the root listing of exactly these repositories, in this order."""
+        requested = [url for url in self.requested_urls(mock_get) if url.endswith("/contents/")]
+        expected = [self.contents_url(repository) for repository in repositories]
         self.assertEqual(requested, expected)
 
     def test_no_url_found(self, mock_get: Mock):
@@ -225,6 +296,162 @@ class GetChangesTest(LoggingTestCase):
         self.create_mock_response(mock_get, {"info": {"description": f"Package description\n{sponsors_url}\n"}}, [])
         self.assertEqual(get_changes("package-10", "1.1"), "")
         self.assert_releases_requested(mock_get)
+
+    _NO_DISCOVERY = Mutation(
+        pypi,
+        "_changelog_from_repository_root(url, version)",
+        '""',
+        "a package keeping its changelog in a file in its repository reports no changes at all",
+    )
+
+    @kills(_NO_DISCOVERY)
+    def test_changelog_file_in_the_repository_root(self, mock_get: Mock):
+        """Test that a changelog file in the repository root supplies the changes when no earlier heuristic does."""
+        changelog = "Changelog\n=========\n\n1.1\n===\n\n- Fixed foo\n\n1.0\n===\n\n- Fixed bar\n"
+        files = {"README.md": "Not a changelog", "CHANGES.rst": changelog}
+        self.create_discovery_responses(mock_get, "package-15", files=files)
+        self.assertEqual(get_changes("package-15", "1.1"), "1.1\n===\n\n- Fixed foo")
+
+    _UNGUARDED_URL = Mutation(
+        github,
+        '        if _is_changelog_file(entry["name"]) and (url := entry["download_url"]):\n'
+        "            response = fetch(url, _LOG)",
+        '        if _is_changelog_file(entry["name"]):\n            response = fetch(entry["download_url"], _LOG)',
+        "a directory named like a changelog, such as pip's `news`, costs a request for the file it has none of",
+    )
+
+    @kills(_UNGUARDED_URL)
+    def test_changelog_named_entry_that_is_no_file(self, mock_get: Mock):
+        """Test that an entry named like a changelog with no file to fetch is passed over without a request."""
+        changelog = "Changelog\n=========\n\n1.1\n===\n\n- Fixed foo\n"
+        # The null download URL of the `news` directory answers a text naming no version, rather than raising.
+        self.create_discovery_responses(
+            mock_get,
+            "package-16",
+            files={"news": None, "CHANGES.rst": changelog},
+            extra={None: mock_response(text="Nothing to report")},
+        )
+        self.assertEqual(get_changes("package-16", "1.1"), "1.1\n===\n\n- Fixed foo")
+        self.assertNotIn(None, self.requested_urls(mock_get))
+
+    def test_release_is_read_before_the_repository_root(self, mock_get: Mock):
+        """Test that a package whose release answers costs no root listing, and reports the release's changes."""
+        release = github_release_json("1.1", body="## 1.1\n- Fixed in the release")
+        self.create_discovery_responses(
+            mock_get,
+            "package-17",
+            files={"CHANGES.rst": "1.1\n===\n\n- Fixed in the file\n"},
+            extra={self.releases_url(): mock_response([release])},
+        )
+        self.assertEqual(get_changes("package-17", "1.1"), "## 1.1\n- Fixed in the release")
+        self.assert_root_listed(mock_get)
+
+    _ROOT_FIRST = Mutation(
+        pypi,
+        '    if changelog := _changelog_from_description(info["description"], package, version):',
+        "    for url in repository_urls:\n"
+        "        if changelog := _changelog_from_repository_root(url, version):\n"
+        "            return changelog\n"
+        '    if changelog := _changelog_from_description(info["description"], package, version):',
+        "a package whose description holds the changes reports the repository file's instead, at a request extra",
+    )
+
+    @kills(_ROOT_FIRST)
+    def test_description_is_read_before_the_repository_root(self, mock_get: Mock):
+        """Test that a package whose description holds the changes costs no root listing, and reports those."""
+        description = "Package description\n1.1\n- Fixed in the description\n"
+        self.create_discovery_responses(
+            mock_get,
+            "package-18",
+            files={"CHANGES.rst": "1.1\n===\n\n- Fixed in the file\n"},
+            description=description,
+        )
+        self.assertEqual(get_changes("package-18", "1.1"), "1.1\n- Fixed in the description")
+        self.assert_root_listed(mock_get)
+
+    _FEWER_NAMES = Mutation(
+        github,
+        '_CHANGELOG_FILE_NAMES = frozenset({"changes", "changelog", "history", "news", "releases"})',
+        '_CHANGELOG_FILE_NAMES = frozenset({"changes", "changelog"})',
+        "a repository naming its changelog file `history`, `news`, or `releases` reports no changes",
+    )
+
+    @kills(_FEWER_NAMES)
+    def test_which_root_entries_count_as_the_changelog(self, mock_get: Mock):
+        """Test which names a root entry is read as the changelog under, compared without regard for case."""
+        changelog = "1.1\n===\n\n- Fixed foo\n"
+        cases = (
+            ("CHANGES.rst", True),
+            ("CHANGELOG.md", True),
+            ("history.txt", True),
+            ("News", True),
+            ("RELEASES.RST", True),
+            ("README.md", False),
+            ("CHANGELOG.html", False),
+            ("changelog.d", False),
+        )
+        for index, (name, found) in enumerate(cases):
+            with self.subTest(name=name):
+                mock_get.reset_mock()
+                package, repository = f"package-19-{index}", f"org/repo-{index}"
+                self.create_discovery_responses(mock_get, package, files={name: changelog}, repository=repository)
+                self.assertEqual(get_changes(package, "1.1"), "1.1\n===\n\n- Fixed foo" if found else "")
+                self.assert_root_listed(mock_get, repository)
+
+    _UNGUARDED_LISTING = Mutation(
+        github,
+        "    response = fetch(contents_url, _LOG, headers=_github_headers())\n"
+        "    return tuple(response.json()) if response is not None else None",
+        "    response = fetch(contents_url, _LOG, headers=_github_headers())\n    return tuple(response.json())",
+        "a repository whose root listing cannot be fetched ends the run with a traceback",
+    )
+
+    @kills(
+        _UNGUARDED_LISTING,
+        by_raising="AttributeError: 'NoneType' object has no attribute 'json'",
+    )
+    def test_root_listing_unreachable(self, mock_get: Mock):
+        """Test that a root listing that can't be fetched yields no changes, and is reported as unreachable."""
+        unreachable = mock_response(status_code=HTTPStatus.NOT_FOUND, ok=False, url=self.contents_url())
+        self.create_discovery_responses(mock_get, "package-20", extra={self.contents_url(): unreachable})
+        self.assertEqual(get_changes("package-20", "1.1"), "")
+        self.assert_root_listed(mock_get, "org/repo")
+        self.assert_could_not_fetch_logged(url="https://api.github.com/repos/org/repo/contents/")
+
+    _UNCACHED = Mutation(
+        github,
+        "@cache\ndef _list_root(",
+        "def _list_root(",
+        "every package sharing a repository costs a root listing of its own",
+    )
+
+    @kills(_UNCACHED)
+    def test_root_listing_is_fetched_once_per_repository(self, mock_get: Mock):
+        """Test that two packages sharing a repository cost one root listing between them."""
+        self.create_discovery_responses(
+            mock_get, "package-21", "package-22", files={"CHANGES.rst": "1.1\n===\n\n- Fixed foo\n"}
+        )
+        for package in ("package-21", "package-22"):
+            with self.subTest(package=package):
+                self.assertEqual(get_changes(package, "1.1"), "1.1\n===\n\n- Fixed foo")
+        self.assert_root_listed(mock_get, "org/repo")
+
+    _FIRST_FILE_ONLY = Mutation(
+        github,
+        "(changes := get_version_changes_from_changelog(response.text, version)):",
+        "(changes := get_version_changes_from_changelog(response.text, version)) is not None:",
+        "a root whose first changelog file names no version reports no changes, though another file names it",
+    )
+
+    @kills(_FIRST_FILE_ONLY)
+    def test_changelog_file_naming_no_version_is_passed_over(self, mock_get: Mock):
+        """Test that a root holding a changelog file naming no version is searched on for one that names it."""
+        files = {
+            "CHANGELOG.md": "Changelog\n\n## 0.9\n\n- Fixed bar\n",
+            "CHANGES.rst": "1.1\n===\n\n- Fixed foo\n",
+        }
+        self.create_discovery_responses(mock_get, "package-23", files=files)
+        self.assertEqual(get_changes("package-23", "1.1"), "1.1\n===\n\n- Fixed foo")
 
     def test_release_metadata_unreachable(self, mock_get: Mock):
         """Test that the changes are empty, and no source is consulted, when PyPI doesn't serve the metadata."""
