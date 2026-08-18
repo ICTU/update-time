@@ -2,9 +2,11 @@
 
 from unittest.mock import Mock, patch
 
+from update_time.sources import docker_hub
 from update_time.sources.docker_hub import api_headers
 
 from tests.helpers import mock_response, patch_environ
+from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase
 
 
@@ -39,4 +41,19 @@ class ApiHeadersTest(LoggingTestCase):
     @patch("requests.post", Mock(return_value=mock_response(ok=False)))
     def test_no_headers_when_token_request_fails(self):
         """Test that a failed token request degrades to anonymous access rather than crashing."""
+        self.assertEqual(api_headers(), {})
+
+    @patch_environ({"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
+    @kills(
+        Mutation(
+            docker_hub,
+            'response.json().get("access_token")',
+            'response.json()["access_token"]',
+            "a Docker Hub token response carrying no token ends the run with a traceback",
+        ),
+        by_raising="KeyError: 'access_token'",
+    )
+    @patch("requests.post", Mock(return_value=mock_response({})))
+    def test_no_headers_when_token_response_carries_no_token(self):
+        """Test that a token response carrying no token degrades to anonymous access rather than crashing."""
         self.assertEqual(api_headers(), {})

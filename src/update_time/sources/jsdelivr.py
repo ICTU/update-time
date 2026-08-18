@@ -21,8 +21,6 @@ from update_time.io.log import get_logger
 from update_time.sources.npmjs import deprecation, get_publication_datetime, newest_publication_date
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from update_time.domain.bound import NewVersionGetter, VersionBound
 
 _LOG = get_logger("jsdelivr")
@@ -77,9 +75,10 @@ def _eligible_version(
 
     A version that is eligible but whose referenced file has no integrity hash ends the walk: it returns the current
     version unchanged rather than skipping to an older one, since bumping without a matching hash would break the
-    Subresource Integrity check.
+    Subresource Integrity check. A version the npm registry dates nowhere counts as too fresh, since a version it
+    has yet to date is one it has just received.
     """
-    published = _publication_datetime(dependency, version)
+    published = get_publication_datetime(dependency, str(version))
     if published is None or within_cooldown(published, cooldown_days):
         return None
     version_string = str(version)
@@ -109,18 +108,6 @@ def _candidate_versions(
         and not version.is_prerelease
         and version_bound.keeps(version, current_version_string)
     ]
-
-
-def _publication_datetime(dependency: str, version: Version) -> datetime | None:
-    """Return the version's npm publication date, or None when the npm registry doesn't list it yet.
-
-    A version can be on jsDelivr before the npm registry reports its release date; treat that as unknown (and so, in
-    the caller, as too fresh to adopt) rather than crashing.
-    """
-    try:
-        return get_publication_datetime(dependency, str(version))
-    except KeyError:
-        return None
 
 
 def integrity_hash(dependency: DependencyName, version: VersionString, filename: str) -> str:

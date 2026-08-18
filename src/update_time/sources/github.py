@@ -41,7 +41,7 @@ class _ReleaseJSON(TypedDict):
     """A release from the GitHub releases endpoint."""
 
     tag_name: str
-    body: str | None
+    body: NotRequired[str | None]  # Optional in GitHub's schema, and null for a release published without notes
     draft: bool
     prerelease: bool
     published_at: str | None  # None for a draft, which hasn't been published
@@ -76,7 +76,7 @@ class _CommitJSON(TypedDict):
     """A commit from the GitHub commits endpoint."""
 
     sha: str
-    commit: NotRequired[_GitCommit]
+    commit: _GitCommit
 
 
 @total_ordering
@@ -105,7 +105,7 @@ class TaggedVersion:
             owner=owner,
             repository=repository,
             tag_name=release["tag_name"],
-            body=release["body"] or "",
+            body=release.get("body") or "",
             draft=release["draft"],
             prerelease=release["prerelease"],
             published_at=parse_timestamp(release["published_at"]),
@@ -286,10 +286,15 @@ def _get_commit(owner: str, repository: str, ref: str) -> tuple[_CommitJSON | No
 
 
 def _commit_datetime(owner: str, repository: str, ref: str) -> datetime | None:
-    """Return the committer date of the commit the ref points to, or None when it can't be fetched."""
+    """Return the committer date of the commit the ref points to, or None when it can't be fetched.
+
+    GitHub reports the commit and its committer for every commit, so neither is guarded. The committer may be null,
+    though, and carries a date only when the commit has one.
+    """
     commit, _reason = _get_commit(owner, repository, ref)
-    git_commit = commit.get("commit") if commit else None
-    committer = git_commit["committer"] if git_commit else None
+    if commit is None:
+        return None
+    committer = commit["commit"]["committer"]
     return parse_timestamp(committer.get("date")) if committer else None
 
 

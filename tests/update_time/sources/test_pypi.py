@@ -52,7 +52,12 @@ class GetChangesTest(LoggingTestCase):
     """Unit tests for getting the changes."""
 
     def create_mock_response(
-        self, mock_get: Mock, *json: dict | list, text: str = "", status_code: int = HTTPStatus.OK
+        self,
+        mock_get: Mock,
+        *json: dict | list,
+        text: str = "",
+        status_code: int = HTTPStatus.OK,
+        content_type: str | None = "text/text",
     ) -> None:
         """Point the mock requests.get at one response whose successive `.json()` calls return the given payloads.
 
@@ -61,7 +66,8 @@ class GetChangesTest(LoggingTestCase):
         status for all of them.
         """
         ok = status_code < HTTPStatus.BAD_REQUEST
-        response = mock_response(text=text, status_code=status_code, ok=ok, headers={"Content-Type": "text/text"})
+        headers = {} if content_type is None else {"Content-Type": content_type}
+        response = mock_response(text=text, status_code=status_code, ok=ok, headers=headers)
         response.json.side_effect = list(json)
         mock_get.return_value = response
 
@@ -93,6 +99,25 @@ class GetChangesTest(LoggingTestCase):
                     text=changelog,
                 )
                 self.assertEqual(get_changes(f"package-2-{key}", "1.1"), "## 1.1\n- Fixed foo")
+
+    @kills(
+        Mutation(
+            pypi,
+            'changelog_response.headers.get("Content-Type", "")',
+            'changelog_response.headers["Content-Type"]',
+            "a changelog URL answered without a content type ends the run with a traceback",
+        ),
+        by_raising="KeyError: 'Content-Type'",
+    )
+    def test_changelog_url_without_content_type(self, mock_get: Mock):
+        """Test that the changes are returned when the changelog URL's server sends no Content-Type header."""
+        self.create_mock_response(
+            mock_get,
+            {"info": {"description": "Package-foo description", "project_urls": {"changelog": "https://changes"}}},
+            text="Changelog\n## 1.1\n- Fixed foo\n",
+            content_type=None,
+        )
+        self.assertEqual(get_changes("package-14", "1.1"), "## 1.1\n- Fixed foo")
 
     def test_changelog_url_gives_error(self, mock_get: Mock):
         """Test that a changelog URL that gives an HTTP error doesn't stop the later heuristics."""

@@ -11,6 +11,7 @@ import requests
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
+from update_time.sources import github
 from update_time.sources.github import (
     TaggedVersion,
     changes_from_release,
@@ -22,6 +23,7 @@ from update_time.sources.github import (
 )
 
 from tests.helpers import mock_response, patch_get
+from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA1, COMMIT_SHA2
 from tests.update_time.helpers import (
     CacheClearingTestCase,
@@ -278,6 +280,28 @@ class GetLatestVersionTest(LoggingTestCase):
             reason="the commit has no committer date",
         )
 
+    @kills(
+        Mutation(
+            github,
+            'return parse_timestamp(committer.get("date")) if committer else None',
+            'return parse_timestamp(committer.get("date"))',
+            "a commit whose committer GitHub reports as null ends the run with a traceback",
+        ),
+        by_raising="AttributeError: 'NoneType' object has no attribute 'get'",
+    )
+    @patch_github(
+        releases=[], tags=[github_tag_json("v1.1")], commit={"sha": COMMIT_SHA, "commit": {"committer": None}}
+    )
+    def test_skip_tag_whose_commit_has_no_committer(self):
+        """Test that a tag is skipped, and the skip logged with the reason, when GitHub reports a null committer."""
+        self.assert_version(get_latest_version("owner/no date", "1.0", NO_BOUND, COOLDOWN.default), "1.0", "", "")
+        self.assert_error_logged(
+            Logger._MESSAGE_NO_TAG_DATE,
+            dependency="owner/no date",
+            tag="v1.1",
+            reason="the commit has no committer date",
+        )
+
     @patch_github(
         releases=[],
         tags=[github_tag_json("v1.1")],
@@ -429,3 +453,17 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
     def test_no_matching_release(self):
         """Test that the changes are empty when no release matches the version."""
         self.assertEqual(changes_from_release("owner", "repo without matching release", "any", "1.1"), "")
+
+    @kills(
+        Mutation(
+            github,
+            'body=release.get("body") or "",',
+            'body=release["body"] or "",',
+            "a release GitHub answers without a body ends the run with a traceback",
+        ),
+        by_raising="KeyError: 'body'",
+    )
+    @patch_get([{"tag_name": "1.1", "draft": False, "prerelease": False, "published_at": None}])
+    def test_release_without_body(self):
+        """Test that the changes are empty when the release GitHub answers carries no body."""
+        self.assertEqual(changes_from_release("owner", "repo without a release body", "any", "1.1"), "")

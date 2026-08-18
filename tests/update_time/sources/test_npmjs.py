@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 
 from update_time.domain.dependency import Yank
+from update_time.sources import npmjs
 from update_time.sources.npmjs import (
     deprecation,
     get_changes,
@@ -14,6 +15,7 @@ from update_time.sources.npmjs import (
 )
 
 from tests.helpers import patch_get
+from tests.mutation import Mutation, kills
 from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase
 
 if TYPE_CHECKING:
@@ -34,11 +36,19 @@ class NpmjsPublicationDatetimeTest(LoggingTestCase):
         """Test that an unreachable registry yields no publication date instead of crashing."""
         self.assertIsNone(get_publication_datetime("package", "1.0"))
 
+    @kills(
+        Mutation(
+            npmjs,
+            'return parse_timestamp(_package_metadata(package).get("time", {}).get(version))',
+            'return parse_timestamp(_package_metadata(package).get("time", {})[version])',
+            "a version the registry dates nowhere in its time map ends the run with a traceback",
+        ),
+        by_raising="KeyError: '9.9'",
+    )
     @patch_get({"time": {}})
     def test_get_publication_datetime_for_unlisted_version(self):
-        """Test that a version the registry doesn't list raises KeyError."""
-        with self.assertRaises(KeyError):
-            get_publication_datetime("package", "9.9")
+        """Test that a version the registry doesn't list yields no publication date instead of raising."""
+        self.assertIsNone(get_publication_datetime("package", "9.9"))
 
     @patch_get(ok=False)
     def test_get_changes_when_unreachable(self):
