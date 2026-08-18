@@ -38,12 +38,16 @@ class _Severity(TypedDict):
 
 
 class _Record(TypedDict):
-    """One database's OSV record: what it is about, how bad its reviewers judged it to be, and what else names it."""
+    """One database's OSV record: what it is about, how bad its reviewers judged it to be, and what else names it.
+
+    OSV types the `aliases` and `severity` arrays as an array or null, so a database that states neither may state a
+    null rather than leave the field out.
+    """
 
     id: str
-    aliases: NotRequired[list[str]]
+    aliases: NotRequired[list[str] | None]
     summary: NotRequired[str]
-    severity: NotRequired[list[_Severity]]
+    severity: NotRequired[list[_Severity] | None]
     database_specific: NotRequired[dict[str, str]]
 
 
@@ -120,7 +124,7 @@ def _vulnerability(record: _Record) -> Vulnerability:
         record.get("summary", ""),
         _risk_level(record),
         f"{_OSV}/{record['id']}",
-        frozenset(record.get("aliases", [])),
+        frozenset(record.get("aliases") or []),
     )
 
 
@@ -163,7 +167,7 @@ def _risk_level(record: _Record) -> str:
 
 def _banded_risk_level(record: _Record) -> str:
     """Return the level the newest CVSS vector the record carries bands into, or none when it carries none."""
-    vectors = {severity["type"]: severity["score"] for severity in record.get("severity", [])}
+    vectors = {severity["type"]: severity["score"] for severity in record.get("severity") or []}
     for version, cvss in _CVSS_VERSIONS:
         if (vector := vectors.get(version)) is not None:
             return _band(cvss, vector, record["id"])

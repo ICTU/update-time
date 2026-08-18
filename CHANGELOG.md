@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 - Report no changes for a version the changelog does not name, instead of the changelog's opening lines. Closes [#270](https://github.com/ICTU/update-time/issues/270).
 - Update a Python dependency whose PyPI metadata reports no project URLs, instead of ending the run with a traceback and leaving every pin in the file it was rewriting unchanged. Closes [#271](https://github.com/ICTU/update-time/issues/271).
+- Keep updating the references in a file when a source answers in a shape it permits and Update-time did not accept, such as a null where a list was expected, instead of ending the run with a traceback and leaving the file unchanged. Closes [#274](https://github.com/ICTU/update-time/issues/274).
 
 ## 0.0.29 - 2026-08-17
 

@@ -37,12 +37,16 @@ def credentials() -> tuple[str, str] | None:
 
 @cache
 def api_headers() -> dict[str, str]:
-    """Return Docker Hub API request headers with a bearer token if DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN are set."""
+    """Return Docker Hub API request headers, with a bearer token when the token endpoint answers with one.
+
+    A run that sets no DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN leaves the requests anonymous. So does an answer
+    that carries no token, which Docker Hub's schema allows, since it makes the token an optional field.
+    """
     if creds := credentials():
         username, token = creds
         response = fetch(_AUTH_URL, _LOG, method="post", json={"identifier": username, "secret": token})
-        if response is not None:
-            return {"Authorization": f"Bearer {response.json()['access_token']}"}
+        if response is not None and (access_token := response.json().get("access_token")):
+            return {"Authorization": f"Bearer {access_token}"}
     return {}
 
 

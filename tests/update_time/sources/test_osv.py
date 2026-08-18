@@ -10,9 +10,11 @@ from update_time.domain.reference import Reference
 from update_time.domain.vulnerability import RISK_LEVELS, Vulnerability
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
+from update_time.sources import osv
 from update_time.sources.osv import _RISK_LEVEL_BANDS, Ecosystem, get_vulnerabilities
 
 from tests.helpers import mock_response
+from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase, osv_advisory, osv_api, vulnerability
 
 if TYPE_CHECKING:
@@ -86,6 +88,34 @@ class GetVulnerabilitiesTest(LoggingTestCase):
     def test_advisory_without_a_severity(self, mock_post: Mock):
         """Test that an advisory reporting no risk level is read as a vulnerability of no level, rather than failing."""
         self.assert_level(mock_post, osv_advisory(_ADVISORY, _SUMMARY), "")
+
+    @kills(
+        Mutation(
+            osv,
+            'frozenset(record.get("aliases") or []),',
+            'frozenset(record.get("aliases", [])),',
+            "an advisory whose aliases OSV reports as null ends the run with a traceback",
+        ),
+        by_raising="TypeError: 'NoneType' object is not iterable",
+    )
+    @kills(
+        Mutation(
+            osv,
+            'for severity in record.get("severity") or []}',
+            'for severity in record.get("severity", [])}',
+            "an advisory whose severity OSV reports as null ends the run with a traceback",
+        ),
+        by_raising="TypeError: 'NoneType' object is not iterable",
+    )
+    def test_advisory_with_a_null_array(self, mock_post: Mock):
+        """Test that an advisory whose severity or aliases OSV reports as null is read as a vulnerability still."""
+        for key in ("severity", "aliases"):
+            with self.subTest(key=key):
+                self.assert_vulnerabilities(
+                    mock_post,
+                    [osv_advisory(_ADVISORY, _SUMMARY) | {key: None}],
+                    [_expected_vulnerability(_ADVISORY, "")],
+                )
 
     def test_a_vulnerability_reported_twice_is_reported_once_at_its_rated_advisory(self, mock_post: Mock):
         """Test that a vulnerability several databases report is warned about once, at the advisory that rates it."""

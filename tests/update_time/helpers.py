@@ -509,8 +509,13 @@ def github_tag_json(name: str, sha: str = COMMIT_SHA) -> dict[str, object]:
 
 
 def github_commits_json(sha: str = COMMIT_SHA, date: str = "") -> dict[str, object]:
-    """Return a GitHub commits API result carrying a tag's commit SHA and, when given, its committer date."""
-    return {"sha": sha, **({"commit": {"committer": {"date": date}}} if date else {})}
+    """Return a GitHub commits API result carrying a tag's commit SHA and, when given, its committer date.
+
+    GitHub reports the commit and its committer whether or not the committer has a date, so a dateless commit
+    carries both, with the date left out.
+    """
+    committer = {"date": date} if date else {"name": "The committer"}
+    return {"sha": sha, "commit": {"committer": committer}}
 
 
 def _github_api(

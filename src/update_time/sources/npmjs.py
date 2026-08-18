@@ -1,14 +1,17 @@
 """npmjs."""
 
 import re
-from datetime import datetime
 from functools import cache
+from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import DependencyVersion, Yank
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
-from update_time.primitives.timestamp import newest_timestamp
+from update_time.primitives.timestamp import newest_timestamp, parse_timestamp
 from update_time.sources.github import changes_from_release, github_owner_and_repository
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 _LOG = get_logger("npmjs")
 
@@ -68,9 +71,12 @@ def _package_metadata(package: str) -> dict:
 
 @cache
 def get_publication_datetime(package: str, version: str) -> datetime | None:
-    """Return the datetime that the version of the package was published, or None if it can't be fetched."""
-    metadata = _package_metadata(package)
-    return datetime.fromisoformat(metadata["time"][version]) if metadata else None
+    """Return the datetime the version was published, or None when the registry doesn't date it.
+
+    The registry dates the versions it lists, so one it does not list — a version published moments ago, or one it
+    no longer serves — has no date to read.
+    """
+    return parse_timestamp(_package_metadata(package).get("time", {}).get(version))
 
 
 def newest_publication_date(package: str) -> datetime | None:

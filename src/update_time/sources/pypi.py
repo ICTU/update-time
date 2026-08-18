@@ -290,7 +290,7 @@ def _changelog_from_url(url: str, version: str) -> str:
     changelog_response = fetch(github_to_raw(url), _LOG)
     if changelog_response is None:
         return ""
-    if changelog_response.headers["Content-Type"].startswith("text/html"):
+    if changelog_response.headers.get("Content-Type", "").startswith("text/html"):
         return ""
     return get_version_changes_from_changelog(changelog_response.text, version)
 
