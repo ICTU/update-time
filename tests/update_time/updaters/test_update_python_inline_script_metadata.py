@@ -1,13 +1,14 @@
 """Unit tests for the inline-script-metadata updater (discovery and orchestration of the uv package manager)."""
 
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
 from update_time.primitives.location import Location
 from update_time.updaters.update_python_inline_script_metadata import update_python_inline_script_metadatas
 
 from tests.helpers import mock_path, mock_response, patch_pathlib_path
+from tests.update_time.fixtures import CHANGELOG
 from tests.update_time.helpers import (
     LoggingTestCase,
     script,
@@ -34,8 +35,6 @@ def _discovered_script(glob: Mock, spec: str) -> Mock:
 @patch("subprocess.run")
 class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
     """Unit tests for the update python-inline-script-metadatas function."""
-
-    changelog: ClassVar = "Changelog"
 
     @staticmethod
     def pypi_metadata() -> Release:
@@ -100,14 +99,14 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         run.return_value = self.mock_update_on_stdout("package_with_changelog", "v1.1")
         get.side_effect = [
             mock_response(self.pypi_metadata()),
-            Mock(headers={"Content-Type": "text"}, text=self.changelog),
+            Mock(headers={"Content-Type": "text"}, text=CHANGELOG),
         ]
         mock_script = self.create_script(script("package_with_changelog==1.0"))
         glob.return_value = [mock_script]
         update_python_inline_script_metadatas()
         mock_script.write_text.assert_called_with(script("package_with_changelog==1.1"))
         self.assert_new_version_logged(
-            "package_with_changelog", "1.1, published: 2026-05-30 12:07", Location(mock_script, 4), self.changelog
+            "package_with_changelog", "1.1, published: 2026-05-30 12:07", Location(mock_script, 4), CHANGELOG
         )
         self.assert_no_warnings_logged()
 

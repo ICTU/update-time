@@ -2,13 +2,14 @@
 
 import subprocess  # nosec
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
 from update_time.primitives.location import Location
 from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 
 from tests.helpers import mock_path, mock_response, patch_pathlib_path
+from tests.update_time.fixtures import CHANGELOG
 from tests.update_time.helpers import (
     LoggingTestCase,
     github_commits_json,
@@ -38,8 +39,6 @@ def _discovered_pyproject_toml(glob: Mock, spec: str) -> Mock:
 @patch("subprocess.run")
 class UpdatePyprojectTomlsTest(LoggingTestCase):
     """Unit tests for the update pyproject.tomls function."""
-
-    changelog: ClassVar = "Changelog"
 
     @staticmethod
     def pypi_metadata(
@@ -151,7 +150,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         run.return_value = self.mock_update_on_stdout("package_with_changelog", "v1.1")
         get.side_effect = [
             mock_response(self.pypi_metadata()),
-            Mock(headers={"Content-Type": "text"}, text=self.changelog),
+            Mock(headers={"Content-Type": "text"}, text=CHANGELOG),
         ]
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_with_changelog==1.0"))
         glob.return_value = [mock_pyproject_toml]
@@ -162,7 +161,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             "package_with_changelog",
             "1.1, published: 2026-05-30 12:07",
             Location(mock_pyproject_toml, 2),
-            self.changelog,
+            CHANGELOG,
         )
         self.assert_no_warnings_logged()
 
@@ -171,7 +170,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         run.return_value = self.mock_update_on_stdout("package_with_html_changelog", "v1.1")
         get.side_effect = [
             mock_response(self.pypi_metadata()),
-            Mock(text=self.changelog, headers={"Content-Type": "text/html"}),
+            Mock(text=CHANGELOG, headers={"Content-Type": "text/html"}),
             mock_response([github_release_json("v1.1")]),
         ]
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_with_html_changelog==1.0"))
@@ -189,7 +188,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         run.return_value = self.mock_update_on_stdout("package_with_github_releases", "v1.1")
         get.side_effect = [
             mock_response(self.pypi_metadata(changelog_url="")),
-            mock_response([github_release_json("v1.1", body=self.changelog)]),
+            mock_response([github_release_json("v1.1", body=CHANGELOG)]),
             mock_response(github_commits_json()),
         ]
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package_with_github_releases==1.0"))
@@ -201,7 +200,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             "package_with_github_releases",
             "1.1, published: 2026-05-30 12:07",
             Location(mock_pyproject_toml, 2),
-            self.changelog,
+            CHANGELOG,
         )
         self.assert_no_warnings_logged()
 

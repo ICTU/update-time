@@ -274,9 +274,9 @@ def get_changes(package: str, version: str) -> str:
         if changelog := _changelog_from_github_releases(url, package, version):
             return changelog
     description = info["description"]
-    return _changelog_from_description(description, version) or _changelog_from_github_url_in_description(
-        description, package, version
-    )
+    if changelog := get_version_changes_from_changelog(description, version):
+        return changelog
+    return _changelog_from_github_url_in_description(description, package, version)
 
 
 def get_publication_datetime(package: str, version: str) -> datetime | None:
@@ -293,11 +293,6 @@ def _changelog_from_url(url: str, version: str) -> str:
     if changelog_response.headers["Content-Type"].startswith("text/html"):
         return ""
     return get_version_changes_from_changelog(changelog_response.text, version)
-
-
-def _changelog_from_description(description: str, version: str) -> str:
-    """Get the changelog from the description."""
-    return get_version_changes_from_changelog(description, version) if version in description else ""
 
 
 def _changelog_from_github_url_in_description(description: str, package: str, version: str) -> str:
