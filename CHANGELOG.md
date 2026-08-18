@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Update a Python dependency whose PyPI metadata reports no project URLs, instead of ending the run with a traceback and leaving every pin in the file it was rewriting unchanged. Closes [#271](https://github.com/ICTU/update-time/issues/271).
 
 ## 0.0.29 - 2026-08-17
 

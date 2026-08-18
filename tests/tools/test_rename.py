@@ -6,10 +6,11 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import Mock, call, patch
 
+from tools import rename as rename_module
 from tools.rename import _PROSE_FILES, _PROSE_ROOTS, _prose_files, main, stale_mentions, surviving_occurrences
 
 from tests.helpers import mock_path
-from tests.mutation import kills
+from tests.mutation import Mutation, kills
 
 # A source the rename reaches, since it imports the name from the module the old name qualifies it with, and one
 # it leaves alone, since a definition is resolved against the module it sits in rather than against that one.
@@ -121,11 +122,13 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.paths["file1.py"].write_text.call_args_list, [])
 
     @kills(
-        "tools/rename.py",
-        "        return _FAILED\n    for path, source in changed.items():",
-        "        for path, source in changed.items():\n            Path(path).write_text(source)\n"
-        "        return _FAILED\n    for path, source in changed.items():",
-        "a rename that left the old name behind still writes the files it changed to disk",
+        Mutation(
+            rename_module,
+            "        return _FAILED\n    for path, source in changed.items():",
+            "        for path, source in changed.items():\n            Path(path).write_text(source)\n"
+            "        return _FAILED\n    for path, source in changed.items():",
+            "a rename that left the old name behind still writes the files it changed to disk",
+        )
     )
     def test_a_rename_that_left_the_name_behind_writes_nothing(self):
         """Test that a file left holding the name leaves every file unwritten, the ones the rename changed too."""
@@ -133,12 +136,14 @@ class MainTest(unittest.TestCase):
         self.assertEqual([path.write_text.call_args_list for path in self.paths.values()], [[], []])
 
     @kills(
-        "tools/rename.py",
-        '            _report(f"{path} could not be renamed: {reason}")',
-        '            _report(f"{path} could not be renamed: {reason}")\n'
-        "            for written, renamed_source in renamed.items():\n"
-        "                Path(written).write_text(renamed_source)",
-        "a file the codemod cannot parse still writes the renames already made to the other files",
+        Mutation(
+            rename_module,
+            '            _report(f"{path} could not be renamed: {reason}")',
+            '            _report(f"{path} could not be renamed: {reason}")\n'
+            "            for written, renamed_source in renamed.items():\n"
+            "                Path(written).write_text(renamed_source)",
+            "a file the codemod cannot parse still writes the renames already made to the other files",
+        )
     )
     def test_a_file_the_codemod_cannot_parse(self):
         """Test that a source the codemod cannot parse is reported by name, and writes none of the files."""
@@ -157,10 +162,12 @@ class MainTest(unittest.TestCase):
         self.assertIn("nothing was renamed", self.reported.getvalue())
 
     @kills(
-        "tools/rename.py",
-        "', '.join(left)",
-        "' '.join(left)",
-        "the surviving occurrences are run together without the comma between them",
+        Mutation(
+            rename_module,
+            "', '.join(left)",
+            "' '.join(left)",
+            "the surviving occurrences are run together without the comma between them",
+        )
     )
     def test_a_bare_name_that_reached_the_definition_alone(self):
         """Test that a bare name renames the definition alone, so the references importing it survive."""

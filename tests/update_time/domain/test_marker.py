@@ -7,12 +7,13 @@ import textwrap
 import unittest
 from pathlib import Path
 
+from update_time.domain import marker as marker_module
 from update_time.domain.bound import Verb
 from update_time.domain.line import Line
 from update_time.domain.marker import _IGNORABLE_SCOPES, Marker, Scope, Threshold, parse_marker
 from update_time.primitives.location import Location
 
-from tests.mutation import kills
+from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE
 from tests.update_time.helpers import bound
 
@@ -112,10 +113,12 @@ class AsWrittenTest(unittest.TestCase):
     """Unit tests for the marker with the scopes it never spelled out cleared."""
 
     @kills(
-        "src/update_time/domain/marker.py",
-        "Marker(ignored_scopes=scope, written_scopes=scope)",
-        "Marker(ignored_scopes=scope)",
-        "a scope the reader spelled out is discarded, instead of being kept",
+        Mutation(
+            marker_module,
+            "Marker(ignored_scopes=scope, written_scopes=scope)",
+            "Marker(ignored_scopes=scope)",
+            "a scope the reader spelled out is discarded, instead of being kept",
+        )
     )
     def test_only_the_scopes_the_marker_spelled_out_survive(self):
         """Test that a scope a bare `ignore` implies is cleared, while one written beside it is kept."""
@@ -139,10 +142,12 @@ class DirectiveTest(unittest.TestCase):
         return parse_marker(line(f"image: python:3.14  # update-time: {directives}"))
 
     @kills(
-        "src/update_time/domain/marker.py",
-        'return _directive(Verb.IGNORE, str(scope)) if self.ignores(scope) else ""',
-        "return _directive(Verb.IGNORE, str(scope))",
-        "a directive is returned for a scope though that scope has no directive in the marker",
+        Mutation(
+            marker_module,
+            'return _directive(Verb.IGNORE, str(scope)) if self.ignores(scope) else ""',
+            "return _directive(Verb.IGNORE, str(scope))",
+            "a directive is returned for a scope though that scope has no directive in the marker",
+        )
     )
     def test_a_scope_the_marker_leaves_live_is_named_by_nothing(self):
         """Test that a scope the marker does not hold back names no directive."""
@@ -163,11 +168,13 @@ class DirectiveTest(unittest.TestCase):
         self.assertEqual(self.marker("ignore[stale] ignore[stale<90]").stale_directive, "ignore[stale]")
 
     @kills(
-        "src/update_time/domain/marker.py",
-        "        return self.cooldown.directive",
-        "        return self.raw",
-        "the cooldown is reported as the whole marker text rather than the cooldown item alone, so a "
-        "neighbouring directive is included",
+        Mutation(
+            marker_module,
+            "        return self.cooldown.directive",
+            "        return self.raw",
+            "the cooldown is reported as the whole marker text rather than the cooldown item alone, so a "
+            "neighbouring directive is included",
+        )
     )
     def test_a_cooldown_item_is_named_as_the_reader_wrote_it(self):
         """Test that a cooldown is named as the item the reader wrote, leaving out a directive beside it."""
@@ -348,11 +355,13 @@ class ParseMarkerCooldownTest(unittest.TestCase):
                 self.assertEqual(marker, Marker(cooldown=Threshold(inverted_item=item)))
 
     @kills(
-        "src/update_time/domain/marker.py",
-        "for scope in _IGNORABLE_SCOPES",
-        "for scope in Scope",
-        "a bare cooldown is accepted as a scope rather than rejected, because the check ranges over every "
-        "scope instead of only the ignorable ones",
+        Mutation(
+            marker_module,
+            "for scope in _IGNORABLE_SCOPES",
+            "for scope in Scope",
+            "a bare cooldown is accepted as a scope rather than rejected, because the check ranges over every "
+            "scope instead of only the ignorable ones",
+        )
     )
     def test_a_bare_cooldown_item_is_rejected(self):
         """Test that `cooldown` without a day count sets no cooldown, whichever verb it follows."""

@@ -102,7 +102,8 @@ class _Info(TypedDict):
     """PyPI release info."""
 
     description: str
-    project_urls: dict[str, str]
+    # PyPI answers null for a package that declares no project URLs.
+    project_urls: dict[str, str] | None
     yanked: NotRequired[bool]
 
 
@@ -265,7 +266,7 @@ def get_changes(package: str, version: str) -> str:
     if metadata is None:
         return ""
     info = metadata["info"]
-    urls = info.get("project_urls", {})
+    urls = info.get("project_urls") or {}
     for label, url in urls.items():
         if _normalized_label(label) in _CHANGELOG_URL_LABELS and (changelog := _changelog_from_url(url, version)):
             return changelog

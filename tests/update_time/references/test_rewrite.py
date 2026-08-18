@@ -4,6 +4,7 @@ import unittest
 from typing import TYPE_CHECKING, cast
 from unittest.mock import ANY, Mock
 
+from update_time.domain import marker as marker_module
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion
@@ -13,10 +14,11 @@ from update_time.domain.line import located_lines
 from update_time.domain.marker import Marker, Scope
 from update_time.domain.reference import Reference
 from update_time.primitives.location import Location
+from update_time.references import resolve
 from update_time.references.rewrite import update_references_in_lines
 
 from tests.helpers import patch_environ
-from tests.mutation import kills
+from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE, DIGEST
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
@@ -276,10 +278,12 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.report_staleness.assert_called_once_with(ANY, marker, ANY)
 
     @kills(
-        "src/update_time/references/resolve.py",
-        "log.report_staleness(resolved, marker, marker.stale.value_or(STALE_AFTER.get()))",
-        "log.report_staleness(resolved, marker.frozen, marker.stale.value_or(STALE_AFTER.get()))",
-        "the staleness logger is handed the update-frozen marker rather than the marker as written",
+        Mutation(
+            resolve,
+            "log.report_staleness(resolved, marker, marker.stale.value_or(STALE_AFTER.get()))",
+            "log.report_staleness(resolved, marker.frozen, marker.stale.value_or(STALE_AFTER.get()))",
+            "the staleness logger is handed the update-frozen marker rather than the marker as written",
+        )
     )
     def test_ignore_stale_marker_still_updates_and_reports_with_the_marker(self):
         """Test that `ignore[stale]` applies the update and reaches the logger, which decides the warning itself."""
@@ -308,10 +312,12 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version.assert_not_called()  # The warning costs no request, the item being unreadable on its own.
 
     @kills(
-        "src/update_time/domain/marker.py",
-        'return (self.name or "").lower().replace("_", "-")',
-        'return (self.name or "").lower()',
-        "hash-drift no longer matches its scope, because the underscore in the scope name is not turned into a hyphen",
+        Mutation(
+            marker_module,
+            'return (self.name or "").lower().replace("_", "-")',
+            'return (self.name or "").lower()',
+            "hash-drift no longer matches its scope, the underscore in the scope name not becoming a hyphen",
+        )
     )
     def test_allow_hash_drift_marker_adopts_new_digest(self):
         """Test that an inline `allow[hash-drift]` marker re-pins a re-pushed tag's digest instead of warning."""
