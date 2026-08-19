@@ -126,6 +126,8 @@ mutate-help:
     @echo "guards it), 2 when the probe never ran (the snippet is not in FILE exactly once), 3 when the run was"
     @echo "killed but reported errors, which a stub that broke the file does as much as a guard that raised, and 4"
     @echo "when COMMAND failed with every test passing, so a gate such as coverage failed rather than a guard."
+    @echo "\nThe run has the @kills checks switched off, so a test whose own mutation names a line this probe"
+    @echo "rewrote is not reported: the kill list holds the tests that failed on the mutation you gave it."
     @echo "\nA killed run ends by naming each test that killed it, a subTest case with its parameters. Read that"
     @echo "list rather than the outcome alone: a case of a table missing from it guards nothing its neighbours"
     @echo "don't, and two tests in it for a one-line change say one of them guards nothing the other doesn't."
