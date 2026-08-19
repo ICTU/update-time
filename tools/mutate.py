@@ -10,10 +10,13 @@ Usage: `uv run python tools/mutate.py FILE [COMMAND ...]`, with the snippet to r
 standard input, separated by a line holding only the separator. COMMAND defaults to `just test`.
 """
 
+import os
 import re
 import subprocess  # nosec
 import sys
 from pathlib import Path
+
+from tests.mutation import CHECKING
 
 # The line separating the snippet to replace from its replacement on standard input.
 _SEPARATOR = "@@"
@@ -52,6 +55,11 @@ _ALL_TESTS_PASSED = re.compile(r"^OK\b", re.MULTILINE)
 
 _DEFAULT_COMMAND = ("just", "test")
 
+# The environment the command runs in, with the `@kills` checks switched off. A test whose own registered mutation
+# names a line this probe rewrote would report that mutation as stale or survived, which says nothing about the
+# probe, so the kill list holds the tests that failed on this mutation and no others.
+_ENVIRONMENT = os.environ | {CHECKING: "1"}
+
 
 def snippets(text: str) -> tuple[str, str]:
     """Return the snippet to replace and its replacement, split on the separator line.
@@ -84,7 +92,9 @@ def main() -> int:
     path.write_text(original.replace(old, new))
     try:
         # Captured rather than streamed, so the run can be read back for the errors below, and written through.
-        result = subprocess.run(command, check=False, capture_output=True, text=True)  # noqa: S603 # nosec
+        result = subprocess.run(  # noqa: S603 # nosec
+            command, check=False, capture_output=True, text=True, env=_ENVIRONMENT
+        )
     finally:
         path.write_text(original)
     sys.stdout.write(result.stdout)
@@ -105,7 +115,9 @@ def main() -> int:
 
 def _report_errors(errors: str, output: str, command: list[str]) -> int:
     """Report what a killed run's errors mean, and return the corresponding exit code."""
-    baseline = subprocess.run(command, check=False, capture_output=True, text=True)  # noqa: S603 # nosec
+    baseline = subprocess.run(  # noqa: S603 # nosec
+        command, check=False, capture_output=True, text=True, env=_ENVIRONMENT
+    )
     mutated_tests = _tests_run(output)
     baseline_tests = _tests_run(baseline.stdout + baseline.stderr)
     if mutated_tests is None or baseline_tests is None:

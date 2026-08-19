@@ -10,7 +10,7 @@ from update_time.primitives import timestamp
 
 from tests import mutation as checker
 from tests import mutation_subject
-from tests.mutation import _CHECKING, Mutation, Outcome, Result, kills
+from tests.mutation import CHECKING, Mutation, Outcome, Result, kills
 from tests.mutation_subject import is_even
 
 _EVEN = "number % 2 == 0"
@@ -228,6 +228,14 @@ class CheckTest(unittest.TestCase):
 class KillsTest(unittest.TestCase):
     """Unit tests for the decorator that makes a test check its mutation."""
 
+    def setUp(self) -> None:
+        """Run each test with the checks on, whatever the environment holds: `just mutate` switches them off."""
+        super().setUp()
+        patcher = patch.dict(os.environ)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop(CHECKING, None)
+
     def run_decorated_test(self, checked: Result) -> unittest.TestResult:
         """Run the decorated test with the check answering as given, and return what unittest recorded.
 
@@ -307,7 +315,7 @@ class KillsTest(unittest.TestCase):
     def test_a_test_re_run_against_its_mutation_checks_nothing(self):
         """Test that a test re-run against its own mutation runs its body and checks nothing further."""
         is_even_stub = Mock(return_value=False)
-        with patch.dict(os.environ, {_CHECKING: "1"}), patch("tests.test_mutation.is_even", is_even_stub):
+        with patch.dict(os.environ, {CHECKING: "1"}), patch("tests.test_mutation.is_even", is_even_stub):
             result = self.run_decorated_test(Result(Outcome.KILLED))
         self.assertEqual((result.failures, result.errors), ([], []))
         is_even_stub.assert_called_once_with(3)

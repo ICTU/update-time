@@ -22,8 +22,9 @@ if TYPE_CHECKING:
 
 # Set while a test is being re-run against its own mutation. The re-run must run the test's body and stop there:
 # checking the mutation again would check it against itself, without end. An environment variable rather than a
-# global, because checking a mutation drops this module from `sys.modules` and imports it afresh.
-_CHECKING = "_UPDATE_TIME_CHECKING_MUTATION"
+# global, because checking a mutation drops this module from `sys.modules` and imports it afresh. `just mutate`
+# sets it for the whole run it starts, so its kill list holds the tests that failed on the mutation it applied.
+CHECKING = "_UPDATE_TIME_CHECKING_MUTATION"
 
 _Method = TypeVar("_Method", bound="Callable[..., object]")
 
@@ -174,11 +175,11 @@ def _fail_unless_killed(test_case: unittest.TestCase, mutation: Mutation, by_rai
     to run the test's body and stop there. The re-run loads the test afresh by name, since the running test case
     belongs to a class the unmutated module was imported into.
     """
-    os.environ[_CHECKING] = "1"
+    os.environ[CHECKING] = "1"
     try:
         result = mutation.check(test_case.id(), by_raising)
     finally:
-        del os.environ[_CHECKING]
+        del os.environ[CHECKING]
     test_case.assertEqual(result.outcome, Outcome.KILLED, _failure(mutation, result))
 
 
@@ -196,7 +197,7 @@ def kills(mutation: Mutation, by_raising: str = "") -> Callable[[_Method], _Meth
     def decorate(method: _Method) -> _Method:
         @functools.wraps(method)
         def wrapper(self: unittest.TestCase, *args: object, **kwargs: object) -> object:
-            if os.environ.get(_CHECKING):
+            if os.environ.get(CHECKING):
                 return method(self, *args, **kwargs)
             returned = method(self, *args, **kwargs)
             _fail_unless_killed(self, mutation, by_raising)

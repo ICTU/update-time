@@ -6,9 +6,10 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import Mock, call, patch
 
-from tools.mutate import _NOT_RUN, _SEPARATOR, main, snippets
+from tools.mutate import _ENVIRONMENT, _NOT_RUN, _SEPARATOR, main, snippets
 
 from tests.helpers import mock_path
+from tests.mutation import CHECKING
 
 _ORIGINAL = "before\nold\nafter\n"
 _INPUT = f"old\n{_SEPARATOR}\nnew\n"
@@ -58,12 +59,21 @@ class MainTest(unittest.TestCase):
         path = mock_path(_ORIGINAL)
         self.probe(path)
         self.assertEqual(path.write_text.call_args_list, [call("before\nnew\nafter\n"), call(_ORIGINAL)])
-        self.run_command.assert_called_once_with(["just", "test"], check=False, capture_output=True, text=True)
+        self.run_command.assert_called_once_with(
+            ["just", "test"], check=False, capture_output=True, text=True, env=_ENVIRONMENT
+        )
+
+    def test_the_kills_checks_are_skipped(self):
+        """Test that the command runs with the mutation checks off, so its kill list names the tests that failed."""
+        self.probe(mock_path(_ORIGINAL))
+        self.assertEqual(self.run_command.call_args.kwargs.get("env", {}).get(CHECKING), "1")
 
     def test_a_command_of_its_own(self):
         """Test that a command given after the file is run instead of the default."""
         self.probe(mock_path(_ORIGINAL), argv=["mutate.py", "file.py", "just", "check"])
-        self.run_command.assert_called_once_with(["just", "check"], check=False, capture_output=True, text=True)
+        self.run_command.assert_called_once_with(
+            ["just", "check"], check=False, capture_output=True, text=True, env=_ENVIRONMENT
+        )
 
     def test_a_failing_command_killed_the_mutation(self):
         """Test that a command that fails means the mutation was killed, which is what a guarding test does."""
