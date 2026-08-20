@@ -53,6 +53,8 @@ _LABEL_NORMALIZATION = str.maketrans("", "", string.punctuation + string.whitesp
 _NAME_SEPARATORS = re.compile(r"[-_.]+")
 # GitHub serves its sponsorship pages under this path, which it reserves, so no owner can go by this name.
 _GITHUB_SPONSORS_PATH = "sponsors"
+# Matches a GitHub repository URL wherever it sits in prose, such as the description a project posts to PyPI.
+_GITHUB_URL_RE = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+")
 
 
 def normalized_name(name: DependencyName) -> DependencyName:
@@ -265,7 +267,8 @@ def get_changes(package: str, version: str) -> str:
     - Check the GitHub releases of each project URL that points at GitHub, reading the URLs labelled as the
       source repository before the rest.
     - Check for a changelog in the package description.
-    - Check for a GitHub URL in the package description and use that to find GitHub releases.
+    - Check for a GitHub URL in the package description whose repository carries the package's name, and
+      use that to find GitHub releases.
     - Check the root of each project URL that points at GitHub for a changelog file.
     """
     metadata = release_metadata(package, version)
@@ -305,18 +308,28 @@ def _changelog_from_url(url: str, version: str) -> str:
 
 
 def _changelog_from_description(description: str, package: str, version: str) -> str:
-    """Get the changelog from the description posted to PyPI, or from the releases a GitHub URL in it points at."""
+    """Get the changelog from the description posted to PyPI, or from the releases of the repository it links."""
     return get_version_changes_from_changelog(description, version) or _changelog_from_github_url_in_description(
         description, package, version
     )
 
 
 def _changelog_from_github_url_in_description(description: str, package: str, version: str) -> str:
-    """Get the changelog from the GitHub URL in the description posted to PyPI."""
-    github_url = r"https://github\.com/([\w.-]+)/([\w.-]+)"
-    if not (match := re.search(github_url, description)):
-        return ""
-    return _changelog_from_github_releases(match.group(), package, version)
+    """Get the changelog from a GitHub URL in the description whose repository carries the package's name.
+
+    A description links the repositories of other projects as well as the package's own, and another project's
+    repository can hold a release tagged with the version asked for, whose notes describe that project's release.
+    """
+    for match in _GITHUB_URL_RE.finditer(description):
+        if _names_the_package(match.group(), package):
+            return _changelog_from_github_releases(match.group(), package, version)
+    return ""
+
+
+def _names_the_package(url: str, package: str) -> bool:
+    """Return whether the URL points at a repository carrying the package's name."""
+    _owner, repository = _github_repository(url)
+    return normalized_name(repository) == normalized_name(package)
 
 
 def _github_repository(url: str) -> tuple[str, str]:
