@@ -7,6 +7,8 @@ import string
 _ADORNMENT_CHARACTERS = frozenset(string.punctuation)
 # The version a changelog names at the head of a section.
 _VERSION = re.compile(r"\d+(?:\.\d+)+")
+# What a version may not follow, so the tail of a longer version does not read as a version of its own.
+_VERSION_START = r"(?<![\d.])"
 # The number of lines a version's changes are cut at where no later version ends them.
 _MAX_LENGTH = 30
 # The runs of characters Markdown fences a code block with.
@@ -49,7 +51,7 @@ def _names_version(line: str, version: str) -> bool:
     `2.9.0.post0` spells `2.9.0` at its start and `11.0` spells `1.0` at its end, and neither of them names the
     shorter version. A version headed `v1.0` is still named, so a letter before it is allowed where a digit is not.
     """
-    return re.search(rf"(?<![\d.]){re.escape(version)}(?!\.?\w)", line) is not None
+    return re.search(rf"{_VERSION_START}{re.escape(version)}(?!\.?\w)", line) is not None
 
 
 def _underlines_the_line_above(lines: list[str], index: int) -> bool:
@@ -97,12 +99,12 @@ def _find_version_index(lines: list[str], version: str) -> int | None:
 
 
 def _ends_section(heading_level: str, section_level: str) -> bool:
-    """Return whether a heading at the one level ends a section headed at the other.
+    """Return whether a heading's level alone ends a section headed at the other level.
 
     A section whose version is named in prose sits under no heading, so any heading ends it. A Markdown heading
     closes the sections under it, so a shallower one ends the section as an equal one does. reStructuredText
     takes a level from the order its adornments appear in rather than from the character it underlines with, so
-    there only an equal level ends a section.
+    there an equal level is the only level that ends a section.
     """
     if not section_level:
         return bool(heading_level)
@@ -121,6 +123,14 @@ def _heads_another_version(line: str, prefix: str, version: str) -> bool:
     return other_version is not None and other_version.group() != version
 
 
+def _heads_a_longer_version(heading_level: str, line: str, version: str) -> bool:
+    """Return whether the line is a heading naming a longer version than the version.
+
+    A changelog can head a longer version inside a version's own section, `1.11.1` inside `1.11`'s.
+    """
+    return bool(heading_level) and re.search(rf"{_VERSION_START}{re.escape(version)}\.\d", line) is not None
+
+
 def _version_line_prefix(lines: list[str], index: int, version: str) -> str | None:
     """Return the text before the version on the line at the index, or None when that line is a heading."""
     line = lines[index]
@@ -128,32 +138,30 @@ def _version_line_prefix(lines: list[str], index: int, version: str) -> str | No
 
 
 def _next_version_index(lines: list[str], start: int, version: str) -> int | None:
-    """Return the index of the line heading the next version's section, or None when no line heads one.
-
-    A section headed by a heading ends at the next heading naming another version that closes it. One introduced
-    by a line that is no heading ends at any heading, or at the next line repeating the text before the version
-    with another version.
-    """
+    """Return the index of the line heading the next version's section, or None when no line heads one."""
     level = _heading_level(lines, start)
     prefix = _version_line_prefix(lines, start, version)
     fenced = _fenced_indexes(lines)
     for index, line in enumerate(lines[start + 1 :], start + 1):
         if index in fenced or _names_version(line, version):
             continue
-        if _ends_section(_heading_level(lines, index), level) or (
-            prefix is not None and _heads_another_version(line, prefix, version)
+        heading_level = _heading_level(lines, index)
+        if (
+            _ends_section(heading_level, level)
+            or _heads_a_longer_version(heading_level, line, version)
+            or (prefix is not None and _heads_another_version(line, prefix, version))
         ):
             return index
     return None
 
 
 def get_version_changes_from_changelog(text: str, version: str) -> str:
-    """Return the changes for the version from the changelog, or nothing when the changelog does not name it.
-
-    Where no later version ends the changes, they are cut short and a `...` line marks where.
-    """
+    """Return the changes for the version from the changelog, or nothing when the changelog does not name it."""
     all_lines = text.splitlines()
     start = _find_version_index(all_lines, version)
+    if start is None and version.endswith(".0") and version.count(".") > 1:
+        version = version.removesuffix(".0")
+        start = _find_version_index(all_lines, version)
     if start is None:
         return ""
     end = _next_version_index(all_lines, start, version)
