@@ -237,8 +237,13 @@ check-sentence-complexity:
 [parallel]
 check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-readme-is-up-to-date check-readme-structure check-sentence-complexity yamllint zizmor
 
+# Run the tests and the checks at the same time, neither of which reads what the other writes.
+[parallel]
+[private]
+test-and-check: test check
+
 # Run the tests, format the code, and run the checks: what a TDD step ends with.
-verify: test format check
+verify: format test-and-check
 
 # === Fix issues ===
 
