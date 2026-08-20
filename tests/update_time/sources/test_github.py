@@ -385,34 +385,94 @@ class NewestPublicationDateTest(LoggingTestCase):
 class GetReleaseTest(LoggingTestCase):
     """Unit tests for getting a release matching a specific package and version."""
 
+    def assert_release(self, release: TaggedVersion | None, tag_name: str, body: str = "") -> None:
+        """Assert that the release found is the one the tag names, carrying the changes it was published with."""
+        self.assertEqual(cast("TaggedVersion", release).tag_name, tag_name)
+        self.assertEqual(cast("TaggedVersion", release).body, body)
+
     @patch_get(
         [github_release_json("puppeteer-v25.1.0"), github_release_json("puppeteer-core-v25.0.4", body="Changelog")]
     )
     def test_monorepo_tag_match(self):
         """Test finding a release in a monorepo where tags are prefixed with the package name."""
         release = get_release("puppeteer", "monorepo", "puppeteer-core", "25.0.4")
-        self.assertEqual(cast("TaggedVersion", release).tag_name, "puppeteer-core-v25.0.4")
-        self.assertEqual(cast("TaggedVersion", release).body, "Changelog")
+        self.assert_release(release, "puppeteer-core-v25.0.4", "Changelog")
 
+    @kills(
+        Mutation(
+            github,
+            'f"{package}-{version}", f"{package}@{version}"',
+            'f"{package}@{version}"',
+            "a release whose monorepo tag carries no v prefix is reported as having no changelog",
+        ),
+        by_raising="AttributeError: 'NoneType' object has no attribute 'tag_name'",
+    )
+    @patch_get([github_release_json("selenium-4.46.0"), github_release_json("selenium-4.47.0", body="Changelog")])
+    def test_monorepo_tag_without_v_match(self):
+        """Test finding a release in a monorepo whose package-prefixed tags carry no `v`."""
+        release = get_release("SeleniumHQ", "selenium", "selenium", "4.47.0")
+        self.assert_release(release, "selenium-4.47.0", "Changelog")
+
+    @kills(
+        Mutation(
+            github,
+            ', f"{package}@{version}"',
+            "",
+            "a release whose monorepo tag joins the package and the version with an @ has no changelog reported",
+        ),
+        by_raising="AttributeError: 'NoneType' object has no attribute 'tag_name'",
+    )
+    @kills(
+        Mutation(
+            github,
+            "{package}@{version}",
+            "{package.removeprefix('@')}@{version}",
+            "a scoped npm package's release has no changelog reported",
+        ),
+        by_raising="AttributeError: 'NoneType' object has no attribute 'tag_name'",
+    )
     @patch_get(
-        [github_release_json("25.0.4"), github_release_json("v25.0.4"), github_release_json("puppeteer-core-v25.0.4")]
+        [
+            github_release_json("astro@7.1.4", body="Changelog"),
+            github_release_json("@aws-amplify/ui-react@6.15.5", body="Changelog"),
+        ]
+    )
+    def test_monorepo_tag_with_at_sign_match(self):
+        """Test finding a release in a monorepo whose tags join the package and the version with an `@`."""
+        for package, version in (("astro", "7.1.4"), ("@aws-amplify/ui-react", "6.15.5")):
+            with self.subTest(package=package):
+                release = get_release("owner", "monorepo with at signs", package, version)
+                self.assert_release(release, f"{package}@{version}", "Changelog")
+
+    @kills(
+        Mutation(
+            github,
+            'f"{package}-v{version}", f"{package}-{version}"',
+            'f"{package}-{version}", f"{package}-v{version}"',
+            "a repository spelling one version's tag both ways has the wrong release reported for it",
+        ),
+    )
+    @patch_get(
+        [
+            github_release_json("25.0.4"),
+            github_release_json("v25.0.4"),
+            github_release_json("puppeteer-core-25.0.4"),
+            github_release_json("puppeteer-core-v25.0.4"),
+        ]
     )
     def test_monorepo_tag_takes_precedence(self):
-        """Test that the package-prefixed tag wins over the v-prefixed and bare tags for the same version."""
-        release = get_release("puppeteer", "monorepo", "puppeteer-core", "25.0.4")
-        self.assertEqual(cast("TaggedVersion", release).tag_name, "puppeteer-core-v25.0.4")
+        """Test that the package-prefixed tag with a v wins over the other spellings of the same version."""
+        self.assert_release(get_release("puppeteer", "monorepo", "puppeteer-core", "25.0.4"), "puppeteer-core-v25.0.4")
 
     @patch_get([github_release_json("v1.2.3")])
     def test_v_prefix_tag_match(self):
         """Test finding a release whose tag is the version prefixed with 'v'."""
-        release = get_release("owner", "repo with v prefix", "any", "1.2.3")
-        self.assertEqual(cast("TaggedVersion", release).tag_name, "v1.2.3")
+        self.assert_release(get_release("owner", "repo with v prefix", "any", "1.2.3"), "v1.2.3")
 
     @patch_get([github_release_json("1.2.3")])
     def test_bare_version_tag_match(self):
         """Test finding a release whose tag is the bare version."""
-        release = get_release("owner", "repo with bare version", "any", "1.2.3")
-        self.assertEqual(cast("TaggedVersion", release).tag_name, "1.2.3")
+        self.assert_release(get_release("owner", "repo with bare version", "any", "1.2.3"), "1.2.3")
 
     @patch_get([github_release_json("v1.0")])
     def test_no_matching_tag(self):
