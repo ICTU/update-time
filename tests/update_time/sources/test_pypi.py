@@ -75,6 +75,16 @@ class GetChangesTest(LoggingTestCase):
         response.json.side_effect = list(json)
         mock_get.return_value = response
 
+    def create_description_responses(self, mock_get: Mock, description: str, body: str | None = None) -> None:
+        """Point the mock requests.get at the PyPI metadata carrying that description, and at one GitHub release.
+
+        The release stands for what a repository linked in the description answers for version 1.1, so its body
+        is the changelog such a link supplies, or the null GitHub reports for a release published without notes.
+        """
+        self.create_mock_response(
+            mock_get, {"info": {"description": description}}, [github_release_json("1.1", body=body)]
+        )
+
     def create_mock_response_per_url(self, mock_get: Mock, metadata: dict, unreachable_url: str) -> None:
         """Point the mock requests.get at the release metadata, answering the unreachable URL with an HTTP error."""
         unreachable = mock_response(status_code=HTTPStatus.NOT_FOUND, ok=False)
@@ -87,12 +97,12 @@ class GetChangesTest(LoggingTestCase):
         return f"https://pypi.org/pypi/{package}/{version}/json"
 
     @staticmethod
-    def releases_url(repository: str = "org/repo") -> str:
+    def releases_url(repository: str) -> str:
         """Return the URL GitHub serves the repository's releases at."""
         return f"https://api.github.com/repos/{repository}/releases?per_page=100"
 
     @staticmethod
-    def contents_url(repository: str = "org/repo") -> str:
+    def contents_url(repository: str) -> str:
         """Return the URL GitHub serves the repository's root listing at."""
         return f"https://api.github.com/repos/{repository}/contents/"
 
@@ -126,7 +136,7 @@ class GetChangesTest(LoggingTestCase):
         mock_get: Mock,
         *packages: str,
         files: Mapping[str, str | None] | None = None,
-        repository: str = "org/repo",
+        repository: str,
         description: str = "Package description",
         extra: Mapping[str | None, Mock] | None = None,
     ) -> None:
@@ -157,7 +167,7 @@ class GetChangesTest(LoggingTestCase):
     def test_no_url_found(self, mock_get: Mock):
         """Test that the changes are empty if no changelog URL is returned by PyPI."""
         self.create_mock_response(mock_get, {"info": {"description": "Package-foo description"}})
-        self.assertEqual(get_changes("package-1", "1.0"), "")
+        self.assertEqual(get_changes("pycparser", "1.0"), "")
 
     def test_changelog_url_found(self, mock_get: Mock):
         """Test that the changes are returned if PyPI returns a changelog URL, under any label read as one."""
@@ -188,7 +198,7 @@ class GetChangesTest(LoggingTestCase):
             text="Changelog\n## 1.1\n- Fixed foo\n",
             content_type=None,
         )
-        self.assertEqual(get_changes("package-14", "1.1"), "## 1.1\n- Fixed foo")
+        self.assertEqual(get_changes("humanize", "1.1"), "## 1.1\n- Fixed foo")
 
     def test_changelog_url_gives_error(self, mock_get: Mock):
         """Test that a changelog URL that gives an HTTP error doesn't stop the later heuristics."""
@@ -196,7 +206,7 @@ class GetChangesTest(LoggingTestCase):
         project_urls = {"changelog": "https://changes"}
         metadata = {"info": {"description": f"Package description\n{changelog}\n", "project_urls": project_urls}}
         self.create_mock_response_per_url(mock_get, metadata, unreachable_url="https://changes")
-        self.assertEqual(get_changes("package-3", "1.1"), changelog)
+        self.assertEqual(get_changes("certifi", "1.1"), changelog)
 
     def test_repository_url_found(self, mock_get: Mock):
         """Test that the changes are returned if PyPI returns a repository URL, under any label read as one."""
@@ -215,48 +225,51 @@ class GetChangesTest(LoggingTestCase):
     def test_github_project_url_under_another_label(self, mock_get: Mock):
         """Test that a GitHub project URL is read as the repository, whatever label it carries."""
         changelog = "Changelog\n## 1.1\n- Fixed foo\n"
-        project_urls = {"Documentation": "https://docs", "Bug Tracker": "https://github.com/org/repo"}
+        project_urls = {"Documentation": "https://idna.readthedocs.io", "Bug Tracker": "https://github.com/kjd/idna"}
         self.create_mock_response(
             mock_get,
             {"info": {"description": "Package-foo description", "project_urls": project_urls}},
             [github_release_json("1.1", body=changelog)],
         )
-        self.assertEqual(get_changes("package-8", "1.1"), changelog)
+        self.assertEqual(get_changes("idna", "1.1"), changelog)
 
     def test_labelled_repository_url_is_read_first(self, mock_get: Mock):
         """Test that a project URL labelled as the repository is read before a GitHub URL under another label."""
         changelog = "Changelog\n## 1.1\n- Fixed foo\n"
-        project_urls = {"Funding": "https://github.com/org/funding", "Source": "https://github.com/org/repo"}
+        project_urls = {"Funding": "https://github.com/aio-libs/.github", "Source": "https://github.com/aio-libs/yarl"}
         self.create_mock_response(
             mock_get,
             {"info": {"description": "Package-foo description", "project_urls": project_urls}},
             [github_release_json("1.1", body=changelog)],
         )
-        self.assertEqual(get_changes("package-11", "1.1"), changelog)
-        self.assert_releases_requested(mock_get, "org/repo")
+        self.assertEqual(get_changes("yarl", "1.1"), changelog)
+        self.assert_releases_requested(mock_get, "aio-libs/yarl")
 
     def test_source_url_is_read_before_the_homepage(self, mock_get: Mock):
         """Test that a project URL labelled as the source is read before one labelled as the homepage."""
         changelog = "Changelog\n## 1.1\n- Fixed foo\n"
-        project_urls = {"Homepage": "https://github.com/org/home", "Source": "https://github.com/org/repo"}
+        project_urls = {
+            "Homepage": "https://github.com/python/typing",
+            "Source": "https://github.com/python/typing_extensions",
+        }
         self.create_mock_response(
             mock_get,
             {"info": {"description": "Package-foo description", "project_urls": project_urls}},
             [github_release_json("1.1", body=changelog)],
         )
-        self.assertEqual(get_changes("package-12", "1.1"), changelog)
-        self.assert_releases_requested(mock_get, "org/repo")
+        self.assertEqual(get_changes("typing-extensions", "1.1"), changelog)
+        self.assert_releases_requested(mock_get, "python/typing_extensions")
 
     def test_sponsors_project_url_is_not_a_repository(self, mock_get: Mock):
         """Test that a GitHub sponsors URL is not asked for releases, and that the later heuristics still run."""
         changelog = "1.1\n- Fixed ...\n- Added ..."
-        project_urls = {"Funding": "https://github.com/sponsors/owner"}
+        project_urls = {"Funding": "https://github.com/sponsors/webknjaz"}
         self.create_mock_response(
             mock_get,
             {"info": {"description": f"Package description\n{changelog}\n", "project_urls": project_urls}},
             [],
         )
-        self.assertEqual(get_changes("package-9", "1.1"), changelog)
+        self.assertEqual(get_changes("frozenlist", "1.1"), changelog)
         self.assert_releases_requested(mock_get)
 
     @kills(NULL_PROJECT_URLS_READ_AS_A_DICT, by_raising=NULL_PROJECT_URLS_ATTRIBUTE_ERROR)
@@ -269,33 +282,77 @@ class GetChangesTest(LoggingTestCase):
                 self.create_mock_response(mock_get, {"info": info})
                 self.assertEqual(get_changes(f"package-5-{case}", "1.1"), changelog)
 
-    def test_github_url_in_description_that_has_a_changelog(self, mock_get: Mock):
-        """Test that the GitHub URL in the description is used to get the changelog."""
-        github_url = "https://github.com/org/bar"
-        changelog = "1.1\n- Fixed ...\n- Added ..."
-        self.create_mock_response(
-            mock_get,
-            {"info": {"description": f"Package description\n{github_url}\n"}},
-            [github_release_json("1.1", body=changelog)],
-        )
-        self.assertEqual(get_changes("package-6", "1.1"), changelog)
-
     def test_github_url_in_description_that_has_no_changelog(self, mock_get: Mock):
         """Test that a GitHub release without a body yields no changelog."""
-        github_url = "https://github.com/org/baz"
-        self.create_mock_response(
-            mock_get,
-            {"info": {"description": f"Package description\n{github_url}\n"}},
-            [github_release_json("1.1")],
-        )
-        self.assertEqual(get_changes("package-7", "1.1"), "")
+        github_url = "https://github.com/pytest-dev/pluggy"
+        self.create_description_responses(mock_get, f"Package description\n{github_url}\n")
+        self.assertEqual(get_changes("pluggy", "1.1"), "")
 
+    _FIRST_URL_ONLY = Mutation(
+        pypi,
+        "    for match in _GITHUB_URL_RE.finditer(description):",
+        "    for match in list(_GITHUB_URL_RE.finditer(description))[:1]:",
+        "a package whose description links another project above its own repository reports no changes",
+    )
+
+    @kills(_FIRST_URL_ONLY)
+    def test_another_projects_url_in_description_is_passed_over(self, mock_get: Mock):
+        """Test that a description linking another project before the package's own reports the package's changes."""
+        changelog = "1.1\n- Fixed ...\n- Added ..."
+        description = "Badge https://github.com/readme/featured\nSource https://github.com/python-attrs/attrs\n"
+        self.create_description_responses(mock_get, description, changelog)
+        self.assertEqual(get_changes("attrs", "1.1"), changelog)
+        self.assert_releases_requested(mock_get, "python-attrs/attrs")
+
+    _NAMES_COMPARED_AS_SPELLED = Mutation(
+        pypi,
+        "return normalized_name(repository) == normalized_name(package)",
+        "return repository == package",
+        "a package whose repository spells its name with another separator, or in another case, reports no changes",
+    )
+
+    _NAME_MATCHED_AS_A_SUBSTRING = Mutation(
+        pypi,
+        "return normalized_name(repository) == normalized_name(package)",
+        "return normalized_name(package) in normalized_name(repository)",
+        "a repository whose name merely contains the package's is read as the package's own",
+    )
+
+    @kills(_NAMES_COMPARED_AS_SPELLED)
+    @kills(_NAME_MATCHED_AS_A_SUBSTRING)
+    def test_which_repository_names_match_the_package_name(self, mock_get: Mock):
+        """Test which repository names count as the package's, compared as PyPI normalizes a distribution name."""
+        changelog = "1.1\n- Fixed ...\n- Added ..."
+        cases = (
+            ("Ousret/charset_normalizer", "charset-normalizer", True),
+            ("python-pillow/Pillow", "pillow", True),
+            ("zopefoundation/zope.interface", "zope-interface", True),
+            ("chrisjsewell/markdown-it-pyrs", "markdown-it-py", False),
+        )
+        for repository, package, matches in cases:
+            with self.subTest(repository=repository):
+                mock_get.reset_mock()
+                description = f"Package description\nhttps://github.com/{repository}\n"
+                self.create_description_responses(mock_get, description, changelog)
+                asked = [repository] if matches else []
+                self.assertEqual(get_changes(package, "1.1"), changelog if matches else "")
+                self.assert_releases_requested(mock_get, *asked)
+
+    _SPONSORS_URL_IS_A_REPOSITORY = Mutation(
+        pypi,
+        "    _owner, repository = _github_repository(url)",
+        "    _owner, repository = github_owner_and_repository(url)",
+        "a sponsors page carrying the package's name is read as its repository, so the package reports no changes",
+    )
+
+    @kills(_SPONSORS_URL_IS_A_REPOSITORY)
     def test_sponsors_url_in_description_is_not_a_repository(self, mock_get: Mock):
-        """Test that a GitHub sponsors URL in the description is not asked for releases."""
-        sponsors_url = "https://github.com/sponsors/owner"
-        self.create_mock_response(mock_get, {"info": {"description": f"Package description\n{sponsors_url}\n"}}, [])
-        self.assertEqual(get_changes("package-10", "1.1"), "")
-        self.assert_releases_requested(mock_get)
+        """Test that a sponsors URL naming the package is passed over for the repository linked below it."""
+        changelog = "1.1\n- Fixed ...\n- Added ..."
+        description = "Sponsor https://github.com/sponsors/tqdm\nSource https://github.com/tqdm/tqdm\n"
+        self.create_description_responses(mock_get, description, changelog)
+        self.assertEqual(get_changes("tqdm", "1.1"), changelog)
+        self.assert_releases_requested(mock_get, "tqdm/tqdm")
 
     _NO_DISCOVERY = Mutation(
         pypi,
@@ -309,8 +366,8 @@ class GetChangesTest(LoggingTestCase):
         """Test that a changelog file in the repository root supplies the changes when no earlier heuristic does."""
         changelog = "Changelog\n=========\n\n1.1\n===\n\n- Fixed foo\n\n1.0\n===\n\n- Fixed bar\n"
         files = {"README.md": "Not a changelog", "CHANGES.rst": changelog}
-        self.create_discovery_responses(mock_get, "package-15", files=files)
-        self.assertEqual(get_changes("package-15", "1.1"), "1.1\n===\n\n- Fixed foo")
+        self.create_discovery_responses(mock_get, "gevent", files=files, repository="gevent/gevent")
+        self.assertEqual(get_changes("gevent", "1.1"), "1.1\n===\n\n- Fixed foo")
 
     _UNGUARDED_URL = Mutation(
         github,
@@ -327,11 +384,12 @@ class GetChangesTest(LoggingTestCase):
         # The null download URL of the `news` directory answers a text naming no version, rather than raising.
         self.create_discovery_responses(
             mock_get,
-            "package-16",
-            files={"news": None, "CHANGES.rst": changelog},
+            "pip",
+            files={"news": None, "NEWS.rst": changelog},
+            repository="pypa/pip",
             extra={None: mock_response(text="Nothing to report")},
         )
-        self.assertEqual(get_changes("package-16", "1.1"), "1.1\n===\n\n- Fixed foo")
+        self.assertEqual(get_changes("pip", "1.1"), "1.1\n===\n\n- Fixed foo")
         self.assertNotIn(None, self.requested_urls(mock_get))
 
     def test_release_is_read_before_the_repository_root(self, mock_get: Mock):
@@ -339,11 +397,12 @@ class GetChangesTest(LoggingTestCase):
         release = github_release_json("1.1", body="## 1.1\n- Fixed in the release")
         self.create_discovery_responses(
             mock_get,
-            "package-17",
+            "urllib3",
             files={"CHANGES.rst": "1.1\n===\n\n- Fixed in the file\n"},
-            extra={self.releases_url(): mock_response([release])},
+            repository="urllib3/urllib3",
+            extra={self.releases_url("urllib3/urllib3"): mock_response([release])},
         )
-        self.assertEqual(get_changes("package-17", "1.1"), "## 1.1\n- Fixed in the release")
+        self.assertEqual(get_changes("urllib3", "1.1"), "## 1.1\n- Fixed in the release")
         self.assert_root_listed(mock_get)
 
     _ROOT_FIRST = Mutation(
@@ -362,12 +421,38 @@ class GetChangesTest(LoggingTestCase):
         description = "Package description\n1.1\n- Fixed in the description\n"
         self.create_discovery_responses(
             mock_get,
-            "package-18",
+            "six",
             files={"CHANGES.rst": "1.1\n===\n\n- Fixed in the file\n"},
+            repository="benjaminp/six",
             description=description,
         )
-        self.assertEqual(get_changes("package-18", "1.1"), "1.1\n- Fixed in the description")
+        self.assertEqual(get_changes("six", "1.1"), "1.1\n- Fixed in the description")
         self.assert_root_listed(mock_get)
+
+    _URL_ENDS_THE_SEARCH = Mutation(
+        pypi,
+        '    if changelog := _changelog_from_description(info["description"], package, version):',
+        '    changelog = _changelog_from_description(info["description"], package, version)\n'
+        '    if changelog or _GITHUB_URL_RE.search(info["description"]):',
+        "a package whose description links another project reports no changes, though its repository's root "
+        "holds a changelog file",
+    )
+
+    @kills(_URL_ENDS_THE_SEARCH)
+    def test_repository_root_is_read_when_the_description_names_another_project(self, mock_get: Mock):
+        """Test that a description linking only another project leaves the repository root to supply the changes."""
+        changelog = "# Changelog\n\n## 1.1\n\n- Fixed foo\n\n## 1.0\n\n- Fixed bar\n"
+        description = "Package description\nBuilt with https://github.com/sloria/environs\n"
+        self.create_discovery_responses(
+            mock_get,
+            "python-dotenv",
+            files={"CHANGELOG.md": changelog},
+            repository="theskumar/python-dotenv",
+            description=description,
+        )
+        self.assertEqual(get_changes("python-dotenv", "1.1"), "## 1.1\n\n- Fixed foo")
+        self.assert_releases_requested(mock_get, "theskumar/python-dotenv")
+        self.assert_root_listed(mock_get, "theskumar/python-dotenv")
 
     _FEWER_NAMES = Mutation(
         github,
@@ -412,11 +497,14 @@ class GetChangesTest(LoggingTestCase):
     )
     def test_root_listing_unreachable(self, mock_get: Mock):
         """Test that a root listing that can't be fetched yields no changes, and is reported as unreachable."""
-        unreachable = mock_response(status_code=HTTPStatus.NOT_FOUND, ok=False, url=self.contents_url())
-        self.create_discovery_responses(mock_get, "package-20", extra={self.contents_url(): unreachable})
-        self.assertEqual(get_changes("package-20", "1.1"), "")
-        self.assert_root_listed(mock_get, "org/repo")
-        self.assert_could_not_fetch_logged(url="https://api.github.com/repos/org/repo/contents/")
+        contents_url = self.contents_url("pypa/packaging")
+        unreachable = mock_response(status_code=HTTPStatus.NOT_FOUND, ok=False, url=contents_url)
+        self.create_discovery_responses(
+            mock_get, "packaging", repository="pypa/packaging", extra={contents_url: unreachable}
+        )
+        self.assertEqual(get_changes("packaging", "1.1"), "")
+        self.assert_root_listed(mock_get, "pypa/packaging")
+        self.assert_could_not_fetch_logged(url=contents_url)
 
     _UNCACHED = Mutation(
         github,
@@ -429,12 +517,16 @@ class GetChangesTest(LoggingTestCase):
     def test_root_listing_is_fetched_once_per_repository(self, mock_get: Mock):
         """Test that two packages sharing a repository cost one root listing between them."""
         self.create_discovery_responses(
-            mock_get, "package-21", "package-22", files={"CHANGES.rst": "1.1\n===\n\n- Fixed foo\n"}
+            mock_get,
+            "google-cloud-storage",
+            "google-cloud-bigquery",
+            files={"CHANGES.rst": "1.1\n===\n\n- Fixed foo\n"},
+            repository="googleapis/google-cloud-python",
         )
-        for package in ("package-21", "package-22"):
+        for package in ("google-cloud-storage", "google-cloud-bigquery"):
             with self.subTest(package=package):
                 self.assertEqual(get_changes(package, "1.1"), "1.1\n===\n\n- Fixed foo")
-        self.assert_root_listed(mock_get, "org/repo")
+        self.assert_root_listed(mock_get, "googleapis/google-cloud-python")
 
     _FIRST_FILE_ONLY = Mutation(
         github,
@@ -450,13 +542,13 @@ class GetChangesTest(LoggingTestCase):
             "CHANGELOG.md": "Changelog\n\n## 0.9\n\n- Fixed bar\n",
             "CHANGES.rst": "1.1\n===\n\n- Fixed foo\n",
         }
-        self.create_discovery_responses(mock_get, "package-23", files=files)
-        self.assertEqual(get_changes("package-23", "1.1"), "1.1\n===\n\n- Fixed foo")
+        self.create_discovery_responses(mock_get, "cryptography", files=files, repository="pyca/cryptography")
+        self.assertEqual(get_changes("cryptography", "1.1"), "1.1\n===\n\n- Fixed foo")
 
     def test_release_metadata_unreachable(self, mock_get: Mock):
         """Test that the changes are empty, and no source is consulted, when PyPI doesn't serve the metadata."""
         self.create_mock_response(mock_get, status_code=HTTPStatus.NOT_FOUND)
-        self.assertEqual(get_changes("package-13", "1.1"), "")
+        self.assertEqual(get_changes("setuptools", "1.1"), "")
         self.assert_releases_requested(mock_get)
 
     def test_changelog_url_unreachable(self, mock_get: Mock):
