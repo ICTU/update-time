@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Fixed
 
+- Report the changes for a dependency whose repository tags a release `<package>-<version>` or `<package>@<version>`, such as selenium and astro, instead of reporting no changelog available. Closes [#273](https://github.com/ICTU/update-time/issues/273).
 - Report one version's changes for more changelog shapes: versions headed without markup, a version's name spelled inside a longer version, an entry closed by a shallower heading, and a heading inside a fenced code block. Closes [#281](https://github.com/ICTU/update-time/issues/281).
 - Report the changes for a Python dependency whose changelog lives in a file in its repository, such as gevent's `CHANGES.rst`, instead of reporting no changelog available. Closes [#272](https://github.com/ICTU/update-time/issues/272).
 - Report one version's changes for a changelog whose versions are headed the reStructuredText way, or at another Markdown level than two, instead of running on into the previous version. Part of [#272](https://github.com/ICTU/update-time/issues/272).

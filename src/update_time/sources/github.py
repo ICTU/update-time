@@ -456,13 +456,15 @@ def newest_publication_date(owner: str, repository: str) -> datetime | None:
 def get_release(owner: str, repository: str, package: str, version: str) -> TaggedVersion | None:
     """Get the release matching the package and version from the GitHub releases API.
 
-    Tries tag names in order of specificity:
+    Tries tag names in order of preference:
     1. `<package>-v<version>` (monorepo, e.g. `puppeteer-core-v25.0.4`).
-    2. `v<version>` (e.g. `v25.0.4`).
-    3. `<version>` (e.g. `25.0.4`).
+    2. `<package>-<version>` (monorepo without the `v`, e.g. `selenium-4.47.0`).
+    3. `<package>@<version>` (monorepo joining the two with an `@`, e.g. `astro@7.1.4`).
+    4. `v<version>` (e.g. `v25.0.4`).
+    5. `<version>` (e.g. `25.0.4`).
     """
     releases_by_tag = {release["tag_name"]: release for release in (_list_releases(owner, repository) or ())}
-    for tag in (f"{package}-v{version}", f"v{version}", version):
+    for tag in (f"{package}-v{version}", f"{package}-{version}", f"{package}@{version}", f"v{version}", version):
         if tag in releases_by_tag:
             return TaggedVersion.from_release(owner, repository, releases_by_tag[tag])
     return None

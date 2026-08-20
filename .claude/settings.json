@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command' | grep -qE 'just +(check|test)[^|;]*\\|[^|;]*(grep +-[[:alpha:]]*c|wc\\b|grep[^|;]*\\b(PASS|FAIL)\\b)' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Run it once and read the output: the exit code already reports pass/fail, so counting the PASS lines or grepping for FAIL says nothing the exit status does not.\"}}' || true"
+            "command": "jq -r '.tool_input.command' | grep -qE 'just +(check|test|verify)[^|;]*\\|[^|;]*(grep +-[[:alpha:]]*c|wc\\b|grep[^|;]*\\b(PASS|FAIL)\\b)' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Run it once and read the output: the exit code already reports pass/fail, so counting the PASS lines or grepping for FAIL says nothing the exit status does not.\"}}' || true"
           },
           {
             "type": "command",
