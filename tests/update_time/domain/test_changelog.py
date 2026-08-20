@@ -10,10 +10,12 @@ from tests.mutation import Mutation, kills
 # The characters reStructuredText allows a heading to be underlined with, as the specification lists them at
 # https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html#sections.
 _SPEC_ADORNMENT_CHARACTERS = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+# More entry lines than the changelog module cuts a version's changes at.
+_MANY_ENTRIES = [f"- Fixed thing {number}." for number in range(40)]
 
 
-class GetChangeFromChangelogTest(unittest.TestCase):
-    """Unit tests for getting the change for a version from a changelog."""
+class VersionAnchorTest(unittest.TestCase):
+    """Unit tests for the line a version's changes start at."""
 
     def test_empty_changelog(self):
         """Test that an empty changelog results in an empty change."""
@@ -38,20 +40,131 @@ class GetChangeFromChangelogTest(unittest.TestCase):
         text = f"Changelog\n\n{v1_change}"
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
-    def test_skip_older_versions(self):
-        """Test that a older versions are not included."""
-        v1_change = "## Version 1.0\n\n- Fixed ...\n- Changed ..."
-        text = f"Changelog\n\n{v1_change}\n\n## Version 0.9\n\n- Fixed ...\n"
-        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
-
     _LEVEL_TWO = Mutation(
         changelog,
         '    if hashes and after_hashes.startswith(" "):',
         '    if hashes == "##" and after_hashes.startswith(" "):',
-        "a changelog heading its versions at another level than two runs on into the previous version",
+        "a changelog heading its versions at another level than two reports the changes from where a newer entry's "
+        "prose names the version",
     )
 
     @kills(_LEVEL_TWO)
+    def test_prose_mention_of_version_does_not_anchor_parsing(self):
+        """Test that a prose mention in a newer section doesn't anchor parsing there, at any heading level."""
+        for level in ("#", "##", "###"):
+            with self.subTest(level=level):
+                v2_change = f"{level} [2.0.0]\n\n- A feature, completing the work started in 1.0.0."
+                v1_change = f"{level} [1.0.0]\n\n- Fixed ...\n- Changed ..."
+                text = f"# Changelog\n\n{v2_change}\n\n{v1_change}\n\n{level} [0.9.0]\n\n- Fixed ...\n"
+                self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), v1_change)
+
+    _HASH_ANCHOR = Mutation(
+        changelog,
+        "            if _heading_level(lines, index):",
+        '            if line.startswith("#"):',
+        "a version named in a newer entry's prose anchors the changes reported for it",
+    )
+
+    _NO_UNDERLINE = Mutation(
+        changelog,
+        "    return _underline_character(lines, index)",
+        '    return ""',
+        "a reStructuredText changelog reports the changes from where a newer entry's prose names the version",
+    )
+
+    _FEW_ADORNMENTS = Mutation(
+        changelog,
+        "_ADORNMENT_CHARACTERS = frozenset(string.punctuation)",
+        '_ADORNMENT_CHARACTERS = frozenset("=-~")',
+        "a changelog underlining its headings with a character reStructuredText allows but does not recommend "
+        "reports the changes from where a newer entry's prose names the version",
+    )
+
+    _FENCE_OVER_UNDERLINE = Mutation(
+        changelog,
+        "    return index > 0 and _heading_level(lines, index - 1) == lines[index][:1]",
+        "    return False",
+        "a changelog underlining its headings with backticks or tildes reports no changes at all, its file read "
+        "as one fenced code block",
+    )
+
+    @kills(_FENCE_OVER_UNDERLINE)
+    @kills(_HASH_ANCHOR)
+    @kills(_NO_UNDERLINE)
+    @kills(_FEW_ADORNMENTS)
+    def test_underlined_heading_anchors_parsing_rather_than_a_prose_mention(self):
+        """Test that a prose mention doesn't anchor parsing when a heading names the version, whatever underlines it."""
+        for adornment in _SPEC_ADORNMENT_CHARACTERS:
+            with self.subTest(adornment=adornment):
+                underline = adornment * 5
+                v2_change = f"2.0.0\n{underline}\n\n- A feature, completing the work started in 1.0.0."
+                v1_change = f"1.0.0\n{underline}\n\n- Fixed ...\n- Changed ..."
+                text = f"Changelog\n\n{v2_change}\n\n{v1_change}\n\n0.9.0\n{underline}\n\n- Fixed ...\n"
+                self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), v1_change)
+
+    def test_repeated_prose_mention_without_heading_anchors_on_first(self):
+        """Test that without a heading, parsing anchors on the first of several prose mentions."""
+        text = "Upgrade to 1.0.0 is recommended.\nThe 1.0.0 release fixes things."
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), text)
+
+    _NO_LOOKAHEAD = Mutation(
+        changelog,
+        '    return re.search(rf"(?<![\\d.]){re.escape(version)}(?!\\.?\\w)", line) is not None',
+        '    return re.search(rf"(?<![\\d.]){re.escape(version)}", line) is not None',
+        "a changelog naming a longer version that starts with this one reports the longer version's changes",
+    )
+
+    _NO_LOOKBEHIND = Mutation(
+        changelog,
+        '    return re.search(rf"(?<![\\d.]){re.escape(version)}(?!\\.?\\w)", line) is not None',
+        '    return re.search(rf"{re.escape(version)}(?!\\.?\\w)", line) is not None',
+        "a changelog naming a longer version that ends with this one reports the longer version's changes",
+    )
+
+    @kills(_NO_LOOKAHEAD)
+    @kills(_NO_LOOKBEHIND)
+    def test_longer_version_does_not_anchor_parsing(self):
+        """Test that a version spelled inside a longer version doesn't anchor parsing at the longer one."""
+        for version, longer_version in (("1.0.0", "1.0.0.post0"), ("1.0", "11.0")):
+            with self.subTest(longer_version=longer_version):
+                v2_change = f"## {longer_version}\n\n- Fixed the packaging."
+                v1_change = f"## {version}\n\n- Fixed ...\n- Changed ..."
+                text = f"# Changelog\n\n{v2_change}\n\n{v1_change}\n\n## 0.9.0\n\n- Fixed ...\n"
+                self.assertEqual(get_version_changes_from_changelog(text, version), v1_change)
+
+    _FENCED_ANCHOR = Mutation(
+        changelog,
+        "        if index not in fenced and _names_version(line, version):",
+        "        if _names_version(line, version):",
+        "a version heading inside a fenced code block anchors the changes reported for that version",
+    )
+
+    @kills(_FENCED_ANCHOR)
+    def test_heading_inside_a_fenced_code_block_does_not_anchor_parsing(self):
+        """Test that a version heading inside a fenced code block, being code, does not anchor parsing there."""
+        example = "```markdown\n## 1.0\n\n- Fixed ...\n```"
+        v2_change = f"## 2.0\n\n- Entries are now written as:\n\n{example}"
+        v1_change = "## 1.0\n\n- The real 1.0 entry."
+        text = f"# Changelog\n\n{v2_change}\n\n{v1_change}\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
+
+    def test_version_in_footer_link_does_not_anchor_parsing(self):
+        """Test that a version mention in a footer comparison link doesn't anchor parsing there."""
+        v1_change = "## [1.0.0]\n\n- Fixed ...\n- Changed ..."
+        footer = "[1.0.0]: https://example.org/compare/v0.9.0...v1.0.0"
+        text = f"# Changelog\n\n{v1_change}\n\n## [0.9.0]\n\n- Fixed ...\n\n{footer}\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), v1_change)
+
+
+class SectionEndTest(unittest.TestCase):
+    """Unit tests for the line a version's changes end at."""
+
+    def test_skip_older_versions(self):
+        """Test that an older version's entry, which sits below the version's own, is left out."""
+        v1_change = "## Version 1.0\n\n- Fixed ...\n- Changed ..."
+        text = f"Changelog\n\n{v1_change}\n\n## Version 0.9\n\n- Fixed ...\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
+
     def test_next_version_heading_ends_the_section_at_any_level(self):
         """Test that a section ends at the next version's Markdown heading, at whatever level that heading is."""
         for level in ("#", "##", "###"):
@@ -62,8 +175,8 @@ class GetChangeFromChangelogTest(unittest.TestCase):
 
     _DEEPER_LEVEL = Mutation(
         changelog,
-        "        if _heading_level(all_lines, index) == level and version not in line:",
-        "        if _heading_level(all_lines, index).startswith(level) and version not in line:",
+        "    return heading_level == section_level or (",
+        "    return heading_level.startswith(section_level) or (",
         "a Markdown entry ends at its first subsection, reporting the version's heading alone",
     )
 
@@ -74,14 +187,46 @@ class GetChangeFromChangelogTest(unittest.TestCase):
         text = f"# Changelog\n\n{v1_change}\n\n## 0.9\n\n- Changed ...\n"
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
-    _NO_UNDERLINE = Mutation(
+    _ONLY_TILDE_FENCES = Mutation(
         changelog,
-        "    return _underline_character(lines, index)",
-        '    return ""',
-        "a reStructuredText changelog reports the previous version's entry along with this version's",
+        '_FENCES = ("```", "~~~")',
+        '_FENCES = ("~~~",)',
+        "a changelog fencing a code block with backticks reports the fence as the end of the version's changes",
     )
 
-    @kills(_NO_UNDERLINE)
+    _ONLY_BACKTICK_FENCES = Mutation(
+        changelog,
+        '_FENCES = ("```", "~~~")',
+        '_FENCES = ("```",)',
+        "a changelog fencing a code block with tildes reports the fence as the end of the version's changes",
+    )
+
+    @kills(_ONLY_TILDE_FENCES)
+    @kills(_ONLY_BACKTICK_FENCES)
+    def test_heading_inside_a_fenced_code_block_does_not_end_the_section(self):
+        """Test that a heading marker inside a fenced code block, which is code rather than a heading, ends none."""
+        for fence in ("```", "~~~"):
+            with self.subTest(fence=fence):
+                code_block = f"{fence}sh\n# install the parser\npip install parser\n{fence}"
+                v1_change = f"## 1.0\n\n- Fixed the parser. Install it with:\n\n{code_block}"
+                text = f"# Changelog\n\n{v1_change}\n\n## 0.9\n\n- Changed ...\n"
+                self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
+
+    _EQUAL_LEVEL_ONLY = Mutation(
+        changelog,
+        '    return heading_level == section_level or (heading_level.startswith("#") '
+        "and len(heading_level) < len(section_level))",
+        "    return heading_level == section_level",
+        "a changelog whose last version is followed by a shallower heading reports that heading as its changes",
+    )
+
+    @kills(_EQUAL_LEVEL_ONLY)
+    def test_shallower_heading_ends_the_section(self):
+        """Test that a section ends at a heading shallower than the version's, such as a footer's."""
+        v1_change = "## 1.0\n\n- Fixed ..."
+        text = f"# Changelog\n\n{v1_change}\n\n# Links\n\n[1.0]: https://example.org/releases/1.0\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
+
     def test_underlined_heading_of_next_version_ends_the_section(self):
         """Test that a section ends at the next version's underlined heading, as reStructuredText spells one."""
         v1_change = "1.0\n===\n\n- Fixed ...\n- Changed ..."
@@ -90,8 +235,8 @@ class GetChangeFromChangelogTest(unittest.TestCase):
 
     _ANY_LEVEL = Mutation(
         changelog,
-        "        if _heading_level(all_lines, index) == level and version not in line:",
-        "        if _heading_level(all_lines, index) and version not in line:",
+        "    return heading_level == section_level or (",
+        "    return bool(heading_level) or (",
         "a reStructuredText section ends at its first subsection, reporting the version's heading alone",
     )
 
@@ -130,69 +275,110 @@ class GetChangeFromChangelogTest(unittest.TestCase):
         text = f"Changelog\n\n{v1_change}\n\n0.9\n===\n\n- Fixed ...\n"
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
-    _FEW_ADORNMENTS = Mutation(
+    _HEADING_PREFIX = Mutation(
         changelog,
-        "_ADORNMENT_CHARACTERS = frozenset(string.punctuation)",
-        '_ADORNMENT_CHARACTERS = frozenset("=-~")',
-        "a section underlined with a character reStructuredText allows but does not recommend runs on into the "
-        "previous version",
+        "    return None if _heading_level(lines, index) else line[: line.index(version)]",
+        "    return line[: line.index(version)]",
+        "a heading-anchored entry ends where it names another version in prose",
     )
 
-    @kills(_FEW_ADORNMENTS)
-    def test_every_adornment_character_ends_the_section(self):
-        """Test that a heading underlined with any character reStructuredText allows ends the section."""
-        for adornment in _SPEC_ADORNMENT_CHARACTERS:
-            with self.subTest(adornment=adornment):
-                underline = adornment * 3
-                v1_change = f"1.0\n{underline}\n\n- Fixed ..."
-                text = f"Changelog\n\n{v1_change}\n\n0.9\n{underline}\n\n- Changed ...\n"
+    @kills(_HEADING_PREFIX)
+    def test_version_line_does_not_end_a_heading_anchored_section(self):
+        """Test that a line naming another version does not end a section a heading introduced."""
+        v1_change = "1.0\n===\n\n- Fixed ...\n0.9.1 was never released.\n- Changed ..."
+        text = f"Changelog\n\n{v1_change}\n\n0.9\n===\n\n- Fixed ...\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
+
+    _ANY_VERSION_LINE = Mutation(
+        changelog,
+        "    if not line.startswith(prefix):\n        return False\n"
+        "    other_version = _VERSION.match(line, len(prefix))",
+        "    other_version = _VERSION.search(line)",
+        "an entry naming a version in prose ends there, reporting the version's own line alone",
+    )
+
+    @kills(_ANY_VERSION_LINE)
+    def test_prose_naming_a_version_does_not_end_the_section(self):
+        """Test that an entry line naming a version in prose does not end a section without heading markup."""
+        v1_change = "Version 1.0 released 2026-04-22\n\n- Dropped support for Python 2.7.\n- Fixed ..."
+        text = f"Changes\n\n{v1_change}\n\nVersion 0.9 released 2026-03-08\n\n- Fixed ...\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
+
+    _NO_PREFIX = Mutation(
+        changelog,
+        "    return None if _heading_level(lines, index) else line[: line.index(version)]",
+        '    return None if _heading_level(lines, index) else ""',
+        "a changelog naming its versions with text around them runs on into the previous version",
+    )
+
+    @kills(_NO_PREFIX)
+    def test_next_version_line_ends_the_section_without_heading_markup(self):
+        """Test that without heading markup, a section ends where another version follows the same text."""
+        version_lines = (("1.0", "0.9"), ("Version 1.0 released 2026-04-22", "Version 0.9 released 2026-03-08"))
+        for v1_line, v0_line in version_lines:
+            with self.subTest(version_line=v1_line):
+                v1_change = f"{v1_line}\n\n- Fixed ...\n- Changed ..."
+                text = f"Changelog\n\n{v1_change}\n\n{v0_line}\n\n- Fixed ...\n"
                 self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
-    def test_max_length(self):
-        """Test that a change longer than max_length lines is truncated to that many lines, with a `...` indicator."""
-        v1_change = "## Version 1.0\n\n- Fixed ...\n- Changed ..."
-        text_after_v1 = "# Some other header\n\n- Some bullet point.\n"
-        text = f"Changelog\n\n{v1_change}\n\n{text_after_v1}"
-        # max_length counts lines: the first 3 lines are kept and a `...` line marks where the rest was cut.
-        expected_v1_change = "## Version 1.0\n\n- Fixed ...\n..."
-        self.assertEqual(get_version_changes_from_changelog(text, "1.0", max_length=3), expected_v1_change)
-
-    def test_max_length_is_not_applied_when_previous_version_is_found(self):
-        """Test that the max length is not applied if the previous version is found."""
-        v1_change = "## Version 1.0\n\n- Fixed ...\n- Changed ..."
-        text = f"Changelog\n\n{v1_change}\n\n## Version 0.9\n\n- Fixed ...\n"
-        self.assertEqual(get_version_changes_from_changelog(text, "1.0", max_length=3), v1_change)
-
-    def test_prose_mention_of_version_does_not_anchor_parsing(self):
-        """Test that a prose mention of the version in a newer section doesn't anchor parsing there."""
-        v2_change = "## [2.0.0]\n\n- A feature, completing the work started in 1.0.0."
-        v1_change = "## [1.0.0]\n\n- Fixed ...\n- Changed ..."
-        text = f"# Changelog\n\n{v2_change}\n\n{v1_change}\n\n## [0.9.0]\n\n- Fixed ...\n"
-        self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), v1_change)
-
-    _HASH_ANCHOR = Mutation(
+    _NO_HEADING_BOUND = Mutation(
         changelog,
-        "            if _heading_level(lines, index):",
-        '            if line.startswith("#"):',
-        "a version named in a newer entry's prose anchors the changes reported for it",
+        "    if not section_level:\n        return bool(heading_level)",
+        "    if not section_level:\n        return False",
+        "a version named in prose rather than in a heading reports the rest of the changelog as its changes",
     )
 
-    @kills(_HASH_ANCHOR)
-    def test_underlined_heading_anchors_parsing_rather_than_a_prose_mention(self):
-        """Test that a prose mention in a newer entry doesn't anchor parsing when an underlined heading names it."""
-        v2_change = "2.0.0\n=====\n\n- A feature, completing the work started in 1.0.0."
-        v1_change = "1.0.0\n=====\n\n- Fixed ...\n- Changed ..."
-        text = f"Changelog\n\n{v2_change}\n\n{v1_change}\n\n0.9.0\n=====\n\n- Fixed ...\n"
-        self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), v1_change)
+    @kills(_NO_HEADING_BOUND)
+    def test_prose_anchored_section_ends_at_the_next_heading(self):
+        """Test that a section a prose mention introduced ends at the next Markdown heading, however deep."""
+        v1_change = "Upgrading to 1.0 is recommended.\n\n- Fixed ...\n- Changed ..."
+        text = f"# Changelog\n\n{v1_change}\n\n### 0.9\n\n- Fixed ...\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
-    def test_repeated_prose_mention_without_heading_anchors_on_first(self):
-        """Test that without a heading, parsing anchors on the first of several prose mentions."""
-        text = "Upgrade to 1.0.0 is recommended.\nThe 1.0.0 release fixes things."
-        self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), text)
+    _SHORTER_MAXIMUM = Mutation(
+        changelog,
+        "_MAX_LENGTH = 30",
+        "_MAX_LENGTH = 20",
+        "a long changelog entry is cut at 20 lines rather than at the 30 the module sets",
+    )
 
-    def test_version_in_footer_link_does_not_anchor_parsing(self):
-        """Test that a version mention in a footer comparison link doesn't anchor parsing there."""
-        v1_change = "## [1.0.0]\n\n- Fixed ...\n- Changed ..."
-        footer = "[1.0.0]: https://example.org/compare/v0.9.0...v1.0.0"
-        text = f"# Changelog\n\n{v1_change}\n\n## [0.9.0]\n\n- Fixed ...\n\n{footer}\n"
+    @kills(_SHORTER_MAXIMUM)
+    def test_maximum_length(self):
+        """Test that a changelog naming one version only is cut at the maximum length, with a `...` indicator."""
+        section = ["1.0", "", *_MANY_ENTRIES]
+        text = "Changes\n\n" + "\n".join(section) + "\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0").splitlines(), [*section[:30], "..."])
+
+    def test_maximum_length_is_not_applied_when_previous_version_is_found(self):
+        """Test that the maximum length is not applied if the previous version is found."""
+        v1_change = "\n".join(["## Version 1.0", "", *_MANY_ENTRIES])
+        text = f"Changelog\n\n{v1_change}\n\n## Version 0.9\n\n- Fixed ...\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
+
+    _NO_SAME_VERSION_SKIP = Mutation(
+        changelog,
+        "        if index in fenced or _names_version(line, version):",
+        "        if index in fenced:",
+        "a changelog naming a version in two headings reports the first of them's entry alone",
+    )
+
+    @kills(_NO_SAME_VERSION_SKIP)
+    def test_second_heading_naming_the_version_does_not_end_the_section(self):
+        """Test that a later heading naming the version itself, rather than another version, does not end it."""
+        v1_change = "## 1.0\n\n- Fixed ...\n\n## 1.0 (yanked)\n\n- Yanked for a broken wheel."
+        text = f"# Changelog\n\n{v1_change}\n\n## 0.9\n\n- Changed ...\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
+
+    _BOUNDARY_CONTAINMENT = Mutation(
+        changelog,
+        "        if index in fenced or _names_version(line, version):",
+        "        if index in fenced or version in line:",
+        "a changelog heading a release candidate below its release reports the candidate's entry as the release's",
+    )
+
+    @kills(_BOUNDARY_CONTAINMENT)
+    def test_heading_of_longer_version_ends_the_section(self):
+        """Test that a section ends at a heading naming a longer version, such as a release candidate's."""
+        v1_change = "## 1.0.0\n\n- Fixed ...\n- Changed ..."
+        text = f"# Changelog\n\n{v1_change}\n\n## 1.0.0rc1\n\n- A release candidate.\n\n## 0.9.0\n\n- Fixed ...\n"
         self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), v1_change)
