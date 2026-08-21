@@ -31,3 +31,11 @@ class EnvVar[T]:
     def set(self, value: T) -> None:
         """Store the value in the environment, serialised to its string form."""
         os.environ[self.name] = self.serialize(value)
+
+
+def flag(name: str) -> EnvVar[bool]:
+    """Return a variable holding a flag, which the environment stores as `1` when on and `0` when off.
+
+    An option the CLI either passes or does not is carried this way, so each declares its name alone.
+    """
+    return EnvVar(name, default=False, parse=lambda value: value == "1", serialize=lambda on: "1" if on else "0")

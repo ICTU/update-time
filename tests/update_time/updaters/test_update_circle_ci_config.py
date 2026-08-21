@@ -3,12 +3,15 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from update_time.domain.dependency import FloatingPin
 from update_time.domain.directive import Reason
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
+from update_time.updaters import update_circle_ci_config as circle_ci
 from update_time.updaters.update_circle_ci_config import update_circle_ci_config
 
 from tests.helpers import mock_path
+from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
 from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
@@ -43,14 +46,42 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         self.assert_last_new_version_logged("cimg/go", "1.26.2", Location(next_yml, 1), Logger._SUPPRESSING_CHANGELOG)
         self.assert_no_warnings_logged()
 
-    def test_machine_executor_alias_ignored(self):
-        """Test that machine-executor 'image: default' aliases without a tag are not modified."""
+    def test_alias_that_no_registry_serves_is_left_alone(self):
+        """Test that an `image: default` alias, which no tag of a registry image serves, is left as it is."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.14.2", DIGEST))
         config_yml = mock_path("image: default\n")
         self.run_updater(config_yml)
         config_yml.write_text.assert_not_called()
-        self.assert_path_logged(config_yml)
+        location = Location(config_yml, 1)
+        # The reference names no tag, so the report names the `latest` that was looked up for it.
+        self.assert_unpinned_floating_tag_logged("default", "latest", location, FloatingPin.NOT_LISTED)
         self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+    def test_pin_tagless_image(self):
+        """Test that an `image:` naming no tag is pinned to the version and digest `latest` serves."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        config_yml = mock_path(self.reference("python"))
+        self.run_updater(config_yml)
+        config_yml.write_text.assert_called_once_with(self.reference(f"python:3.14.7@{DIGEST}"))
+        self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(config_yml, 1))
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            circle_ci,
+            '    machine_names = {image.split(":", maxsplit=1)[0] for image in machine}',
+            '    machine_names = {image for image in machine if ":" in image}',
+            "a machine-executor image is recognised by its name and tag, so one naming no tag is looked up",
+        )
+    )
+    def test_machine_image_without_a_tag_is_skipped(self):
+        """Test that a machine-executor image naming no tag is left unchanged and looked up nowhere."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        config_yml = mock_path("jobs:\n  build:\n    machine:\n      image: default\n")
+        self.run_updater(config_yml)
+        config_yml.write_text.assert_not_called()
+        self.requests.assert_not_called()
         self.assert_no_warnings_logged()
 
     def test_machine_image_skipped(self):

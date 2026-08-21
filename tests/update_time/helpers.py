@@ -15,7 +15,7 @@ from unittest.mock import ANY, Mock, call, patch
 
 import update_time
 from update_time.domain.bound import NewVersionGetter, Verb, VersionBound, parse_bound
-from update_time.domain.dependency import DependencyVersion, VersionString
+from update_time.domain.dependency import DependencyVersion, FloatingPin, VersionString
 from update_time.domain.directive import Reason
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
@@ -223,6 +223,35 @@ class LoggingTestCase(CacheClearingTestCase):
             Logger._MESSAGE_PINNED, dependency=dependency, location=location, version=version, sha=sha
         )
 
+    def assert_unpinned_floating_tag_logged(
+        self, dependency: str, version: str, location: Location, reason: FloatingPin
+    ) -> None:
+        """Assert that a floating tag pinned to no version was reported, with its reason, among the other records.
+
+        `version` is the tag the report names, which for a reference naming none is the `latest` looked up for it.
+        """
+        self.assert_logged_among_others(
+            Logger._MESSAGE_UNPINNED_FLOATING_TAG,
+            dependency=dependency,
+            tag=Logger._tag_of(version),
+            location=location,
+            reason=reason,
+        )
+
+    def assert_kept_floating_logged(
+        self, dependency: str, version: str, release: DependencyVersion, location: Location, cause: object = ANY
+    ) -> None:
+        """Assert that a floating tag left as it is was reported, naming the release it resolves to."""
+        self.assert_logged_among_others(
+            Logger._MESSAGE_KEEPING_FLOATING_TAG,
+            dependency=dependency,
+            tag=Logger._tag_of(version),
+            resolved=release.version,
+            sha=release.sha,
+            location=location,
+            cause=cause,
+        )
+
     def assert_cannot_pin_logged(self, dependency: str, location: Location) -> None:
         """Assert that a reference with nowhere to hold a hash was reported as one that cannot be pinned."""
         self.assert_logged(Logger._MESSAGE_CANNOT_PIN, dependency=dependency, location=location)
@@ -242,6 +271,12 @@ class LoggingTestCase(CacheClearingTestCase):
     def assert_adopted_digest_drift_logged(self, drifted: DriftedPin, cause: object = ANY) -> None:
         """Assert that adopting a re-pushed tag's new digest was logged once for the file."""
         self.assert_logged(Logger._MESSAGE_ADOPTED_DIGEST_DRIFT, **Logger._drift_fields(drifted), cause=cause)
+
+    def assert_adopted_digest_drift_logged_among_others(self, drifted: DriftedPin, cause: object = ANY) -> None:
+        """Assert that adopting a re-pushed tag's new digest was logged, among the other records at its level."""
+        self.assert_logged_among_others(
+            Logger._MESSAGE_ADOPTED_DIGEST_DRIFT, **Logger._drift_fields(drifted), cause=cause
+        )
 
     def assert_hash_mismatch_logged(
         self,

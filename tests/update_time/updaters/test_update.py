@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.drift import ALLOW_HASH_DRIFT
+from update_time.domain.floating import ALLOW_FLOATING_PIN
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES
 from update_time.io.filesystem import EXCLUDE_PATHS
 from update_time.io.log import LOG_LEVEL
@@ -126,6 +127,18 @@ class UpdateMainTest(unittest.TestCase):
         exit_code, environment = self.run_main(mock_run, "--allow-hash-drift")
         self.assertEqual(exit_code, 0)
         self.assertEqual(environment[ALLOW_HASH_DRIFT.name], "1")
+
+    def test_main_passes_allow_floating_pin_off_by_default(self, mock_run: Mock):
+        """Test that main exports the floating-pin opt-in as off when --allow-floating-pin is not given."""
+        exit_code, environment = self.run_main(mock_run)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[ALLOW_FLOATING_PIN.name], "0")
+
+    def test_main_passes_allow_floating_pin_when_set(self, mock_run: Mock):
+        """Test that main exports the floating-pin opt-in as on when --allow-floating-pin is given."""
+        exit_code, environment = self.run_main(mock_run, "--allow-floating-pin")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[ALLOW_FLOATING_PIN.name], "1")
 
     def test_main_passes_ignored_vulnerabilities_to_subprocesses(self, mock_run: Mock):
         """Test that main exports the advisories to ignore so the updater subprocesses inherit them."""

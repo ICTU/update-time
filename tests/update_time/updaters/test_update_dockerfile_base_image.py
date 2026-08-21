@@ -2,14 +2,19 @@
 
 from unittest.mock import Mock, patch
 
+from update_time.domain import floating
+from update_time.domain.dependency import DependencyVersion
 from update_time.domain.directive import Reason
 from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS
 from update_time.primitives.location import Location
+from update_time.sources import oci
+from update_time.updaters import update_dockerfile_base_image
 from update_time.updaters.update_dockerfile_base_image import update_dockerfiles
 
 from tests.helpers import mock_path
+from tests.mutation import Mutation, kills
 from tests.update_time import registry
-from tests.update_time.fixtures import DIGEST1, DIGEST2
+from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
 from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
 from tests.update_time.registry import mock_docker_registry
 
@@ -37,9 +42,190 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     def test_alternate_filenames_are_scanned(self):
         """Test that `*.Dockerfile` and `Dockerfile.*` files are scanned, not only an exact `Dockerfile`."""
-        with patch("update_time.updaters.update_dockerfile_base_image.update_files", return_value=0) as update_files:
+        with patch("update_time.updaters.update_dockerfile_base_image.glob", return_value=[]) as glob:
             update_dockerfiles()
-        self.assertEqual(DOCKERFILE_GLOB_PATTERNS, update_files.call_args.args)
+        self.assertEqual(glob.call_args.args, DOCKERFILE_GLOB_PATTERNS)
+        self.assertEqual(glob.call_args.kwargs, {"case_sensitive": False})  # A `dockerfile` is found as well
+
+    @kills(
+        Mutation(
+            oci,
+            r'    rf"{_IMAGE_NAME}(?::(?=[\d\w\.\-]))?(?P<version>[\d\w\.\-]*){_IMAGE_DIGEST}(?![\w\d\./:@-])"',
+            r'    rf"{_IMAGE_NAME}:(?P<version>[\d\w\.\-]+){_IMAGE_DIGEST}(?![\w\d\./:@-])"',
+            "a reference naming no tag is not read as a reference at all",
+        )
+    )
+    def test_pin_tagless_base_image(self):
+        """Test that a `FROM image` naming no tag is pinned to the version and digest `latest` serves."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_dockerfile = mock_path("FROM python\n")
+        self.run_updater(mock_dockerfile)
+        mock_dockerfile.write_text.assert_called_once_with(f"FROM python:3.14.7@{DIGEST}\n")
+        self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(mock_dockerfile, 1))
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            update_dockerfile_base_image,
+            "        return image != _SCRATCH and image.lower() not in stages",
+            "        return image != _SCRATCH.upper() and image.lower() not in stages",
+            "a `FROM scratch` is resolved as though a registry served the empty base",
+        )
+    )
+    def test_scratch_base_image_is_left_alone_and_not_queried(self):
+        """Test that `FROM scratch` names Docker's empty base rather than an image, so no registry is queried."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_dockerfile = mock_path("FROM scratch AS base\n")
+        self.run_updater(mock_dockerfile)
+        mock_dockerfile.write_text.assert_not_called()
+        self.requests.assert_not_called()
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            update_dockerfile_base_image,
+            "        return image != _SCRATCH and image.lower() not in stages",
+            "        return image != _SCRATCH and image.lower() not in frozenset()",
+            "a `FROM` naming a build stage is resolved as though a registry served an image of that name",
+        )
+    )
+    def test_build_stage_reference_is_left_alone_and_not_queried(self):
+        """Test that a `FROM` naming one of the file's own build stages is left alone, no registry serving it."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_dockerfile = mock_path("FROM python:3.14 AS deps\nFROM deps\n")
+        self.run_updater(mock_dockerfile)
+        mock_dockerfile.write_text.assert_called_once_with(f"FROM python:3.14.7@{DIGEST} AS deps\nFROM deps\n")
+        requested = "".join(call.args[0] for call in self.requests.call_args_list)
+        self.assertNotIn("deps", requested)
+        self.assert_new_version_logged("python", "3.14.7", Location(mock_dockerfile, 1))
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            update_dockerfile_base_image,
+            'rf"^\\s*(?i:FROM)\\s+(?:--platform=\\S+\\s+)?{OPTIONALLY_TAGGED_IMAGE_REFERENCE}"',
+            'rf"^\\s*(?i:FROM)\\s+(?:--platform=\\S+\\s+)?\\$?\\{{?{OPTIONALLY_TAGGED_IMAGE_REFERENCE}"',
+            "a variable's name is read as an image, so its own name is queried as a registry host",
+        )
+    )
+    def test_image_name_from_a_variable_is_left_alone_and_not_queried(self):
+        """Test that a `FROM` taking its image name from a variable names no image, so no registry is queried.
+
+        One case per spelling a Dockerfile takes, the braces being optional.
+        """
+        # A name of its own per case: the source caches what it resolved, so a repeated name would let the
+        # second case pass on the first one's cache rather than on its own run.
+        for reference in ("$BASE_IMAGE", "${OTHER_IMAGE}"):
+            with self.subTest(reference=reference):
+                self.requests.reset_mock()
+                self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST))
+                mock_dockerfile = mock_path(f"FROM {reference}\n")
+                self.run_updater(mock_dockerfile)
+                mock_dockerfile.write_text.assert_not_called()
+                self.requests.assert_not_called()
+
+    @kills(
+        Mutation(
+            floating,
+            "    return _FLOATING_PIN.cause(marker, allowed=marker.allow_floating_pin)",
+            "    return _FLOATING_PIN.cause(marker, allowed=False)",
+            "a marker allowing the floating pin pins the reference anyway",
+        )
+    )
+    def test_marker_keeps_a_tagless_base_image_as_it_is(self):
+        """Test that `allow[floating-pin]` on a `FROM` naming no tag leaves it, naming what it resolves to."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_dockerfile = mock_path("# update-time: allow[floating-pin]\nFROM python\n")
+        self.run_updater(mock_dockerfile)
+        mock_dockerfile.write_text.assert_not_called()
+        resolved = DependencyVersion(version="3.14.7", sha=DIGEST)
+        self.assert_kept_floating_logged("python", "", resolved, Location(mock_dockerfile, 2))
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            oci,
+            r'    rf"{_IMAGE_NAME}(?::(?=[\d\w\.\-]))?(?P<version>[\d\w\.\-]*){_IMAGE_DIGEST}(?![\w\d\./:@-])"',
+            r'    rf"{_IMAGE_NAME}:?(?P<version>[\d\w\.\-]*){_IMAGE_DIGEST}"',
+            "a tag written as a variable substitution is read as no tag at all, so the reference is rewritten",
+        )
+    )
+    def test_variable_substitution_in_the_tag_is_left_alone(self):
+        """Test that a `FROM image:${TAG}` names a tag Update-time cannot read, so no registry is queried."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_dockerfile = mock_path("FROM myrepo/app:${TAG}\n")
+        self.run_updater(mock_dockerfile)
+        mock_dockerfile.write_text.assert_not_called()
+        self.requests.assert_not_called()
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            update_dockerfile_base_image,
+            r'_STAGE_NAME_RE = re.compile(r"^FROM\s.*\sAS\s+(?P<stage>\S+)", re.IGNORECASE | re.MULTILINE)',
+            r'_STAGE_NAME_RE = re.compile(r"^FROM\s.*\sAS\s+(?P<stage>\S+)", re.MULTILINE)',
+            "a stage introduced with a lower-case `as` is not recognised as a stage",
+        )
+    )
+    def test_lower_case_stage_keyword_introduces_a_stage_too(self):
+        """Test that a stage introduced with a lower-case `as` is one too, so a `FROM` naming it is left alone."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_dockerfile = mock_path("FROM python:3.14 as deps\nFROM deps\n")
+        self.run_updater(mock_dockerfile)
+        mock_dockerfile.write_text.assert_called_once_with(f"FROM python:3.14.7@{DIGEST} as deps\nFROM deps\n")
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            update_dockerfile_base_image,
+            r'_IMAGE_RE = rf"^\s*(?i:FROM)\s+(?:--platform=\S+\s+)?{OPTIONALLY_TAGGED_IMAGE_REFERENCE}"',
+            r'_IMAGE_RE = rf"^\s*FROM\s+(?:--platform=\S+\s+)?{OPTIONALLY_TAGGED_IMAGE_REFERENCE}"',
+            "a lower-case `from` introduces no base image, so its line is left as it is",
+        )
+    )
+    def test_lower_case_from_introduces_a_base_image_too(self):
+        """Test that a lower-case `from` is updated too, Dockerfile keywords being case-insensitive."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        mock_dockerfile = mock_path("from python:3.14\n")
+        self.run_updater(mock_dockerfile)
+        mock_dockerfile.write_text.assert_called_once_with(f"from python:3.15@{DIGEST2}\n")
+        self.assert_new_version_logged("python", "3.15", Location(mock_dockerfile, 1))
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            update_dockerfile_base_image,
+            r'_IMAGE_RE = rf"^\s*(?i:FROM)\s+(?:--platform=\S+\s+)?{OPTIONALLY_TAGGED_IMAGE_REFERENCE}"',
+            r'_IMAGE_RE = rf"(?i:FROM)\s+(?:--platform=\S+\s+)?{OPTIONALLY_TAGGED_IMAGE_REFERENCE}"',
+            "a `FROM` anywhere on a line introduces a base image, so prose mentioning one is rewritten",
+        )
+    )
+    def test_from_inside_a_comment_is_left_alone(self):
+        """Test that a `FROM` that does not open its line introduces no base image, so prose is left as it is."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        mock_dockerfile = mock_path("# built FROM python:3.14\n")
+        self.run_updater(mock_dockerfile)
+        mock_dockerfile.write_text.assert_not_called()
+        self.requests.assert_not_called()
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            update_dockerfile_base_image,
+            '    return frozenset(match.group("stage").lower() for match in _STAGE_NAME_RE.finditer'
+            "(dockerfile.read_text()))",
+            '    return frozenset(match.group("stage") for match in _STAGE_NAME_RE.finditer(dockerfile.read_text()))',
+            "a stage whose name is written in another case than the `FROM` naming it is not matched",
+        )
+    )
+    def test_a_stage_is_matched_whatever_the_case_of_its_name(self):
+        """Test that a `FROM` naming a stage in another case names that stage, so it is left alone."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_dockerfile = mock_path("FROM python:3.14 AS Deps\nFROM deps\n")
+        self.run_updater(mock_dockerfile)
+        mock_dockerfile.write_text.assert_called_once_with(f"FROM python:3.14.7@{DIGEST} AS Deps\nFROM deps\n")
+        self.assert_no_warnings_logged()
 
     def test_stage_alias_is_preserved_when_pinning(self):
         """Test that a multi-stage `FROM image:tag AS name` alias is kept intact when the image is pinned."""

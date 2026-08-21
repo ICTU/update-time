@@ -16,6 +16,8 @@ _PLACEHOLDER = re.compile(r"@@\w+@@")
 # The placeholders `render` fills itself, rather than from the log samples.
 _FILLED_BY_RENDER = frozenset({"@@HELP_OUTPUT@@", "@@LOG_OUTPUT@@", "@@TABLE_OF_CONTENTS@@"})
 
+_TABLE_OF_CONTENTS_HEADER = "## ☰ Table of contents\n\n"
+
 
 class PlaceholderTest(unittest.TestCase):
     """Unit tests that the template and the samples filling it name the same placeholders."""
@@ -68,7 +70,7 @@ class RenderTest(unittest.TestCase):
         log.return_value = LogOutput(svg="<svg/>", text="")
         help_output.return_value = ""
         samples.return_value = {}
-        contents = "## 📑 Table of contents\n\n- [⚡ Usage](#-usage)\n- [📌 Pinning](#-pinning)"
+        contents = f"{_TABLE_OF_CONTENTS_HEADER}- [⚡ Usage](#-usage)\n- [📌 Pinning](#-pinning)"
         self.assertEqual(render()[_README], f"{contents}\n\n## ⚡ Usage\n\n## 📌 Pinning\n")
 
 
@@ -78,18 +80,18 @@ class TableOfContentsTest(unittest.TestCase):
     def test_only_chapters_are_listed_at_depth_two(self):
         """Test that a section or subsection heading gets no entry, so the table of contents lists chapters only."""
         contents = _table_of_contents("## ⚡ Usage\n\n### Workflow\n\n#### Detail\n", depth=2)
-        self.assertEqual(contents, "## 📑 Table of contents\n\n- [⚡ Usage](#-usage)")
+        self.assertEqual(contents, f"{_TABLE_OF_CONTENTS_HEADER}- [⚡ Usage](#-usage)")
 
     def test_deeper_headings_are_listed_indented(self):
         """Test that a deeper table of contents adds the sections under their chapter, and stops at the depth."""
         contents = _table_of_contents("## ⚡ Usage\n\n### Workflow\n\n#### Detail\n", depth=3)
-        expected = "## 📑 Table of contents\n\n- [⚡ Usage](#-usage)\n  - [Workflow](#workflow)"
+        expected = f"{_TABLE_OF_CONTENTS_HEADER}- [⚡ Usage](#-usage)\n  - [Workflow](#workflow)"
         self.assertEqual(contents, expected)
 
     def test_heading_in_a_code_block_is_not_listed(self):
         """Test that a `##` line in a fenced code block gets no entry, since it is sample content, not a chapter."""
         contents = _table_of_contents("## ⚡ Usage\n\n```console\n## not a chapter\n```\n")
-        self.assertEqual(contents, "## 📑 Table of contents\n\n- [⚡ Usage](#-usage)")
+        self.assertEqual(contents, f"{_TABLE_OF_CONTENTS_HEADER}- [⚡ Usage](#-usage)")
 
 
 @patch("tools.generate_readme.render")

@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 
 from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
-from update_time.domain.dependency import DependencyVersion, Yank
+from update_time.domain.dependency import DependencyVersion, FloatingPin, Yank
 from update_time.domain.directive import Reason
 from update_time.domain.drift import DriftedPin
 from update_time.domain.marker import Marker, Scope, Threshold
@@ -106,6 +106,12 @@ def _redundant_directives(
     log.redundant_directive(
         reference("ghcr.io/astral-sh/uv", dockerfile), "ignore[stale<90]", Reason.NO_STALENESS_DATES
     )
+    redundant_stale_source = capture.take()
+
+    log.redundant_directive(reference("python", dockerfile), "allow[floating-pin]", Reason.NOTHING_FLOATING)
+    redundant_floating_pin = capture.take()
+
+    log.redundant_directive(reference("python", dockerfile), "allow[floating-pin]", Reason.UPDATE_HELD_BACK)
     return {
         "@@REDUNDANT_VULNERABLE_SCOPE_WARNING@@": redundant_vulnerable_scope,
         "@@REDUNDANT_VULNERABLE_ADVISORY_WARNING@@": redundant_vulnerable_advisory,
@@ -115,7 +121,9 @@ def _redundant_directives(
         "@@REDUNDANT_YANK_WITHOUT_A_VERSION_WARNING@@": redundant_yank_without_a_version,
         "@@REDUNDANT_VULNERABLE_WITHOUT_A_VERSION_WARNING@@": redundant_vulnerable_without_a_version,
         "@@REDUNDANT_COOLDOWN_ITEM_WARNING@@": redundant_cooldown_item,
-        "@@REDUNDANT_STALE_SOURCE_WARNING@@": capture.take(),
+        "@@REDUNDANT_STALE_SOURCE_WARNING@@": redundant_stale_source,
+        "@@REDUNDANT_FLOATING_PIN_WARNING@@": redundant_floating_pin,
+        "@@REDUNDANT_FROZEN_FLOATING_PIN_WARNING@@": capture.take(),
     }
 
 
@@ -159,6 +167,29 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.inverted_vulnerable_item(reference("django", requirements), "vulnerable>=high")
     inverted_vulnerable = capture.take()
 
+    pinned_tag = DependencyVersion("3.14.7", sha=_ELIDED_DIGEST)
+    log.pinned(reference("python", Location(Path("Dockerfile"), 1)), pinned_tag)
+    pinned_floating_tag = capture.take()
+
+    compose = Location(Path("docker-compose.yml"), 7)
+    log.unpinned_floating_tag(
+        reference("acme/api", compose, "dev"), DependencyVersion("dev"), FloatingPin.NO_VERSION_TAG
+    )
+    log.unpinned_floating_tag(
+        reference("acme/api", compose, "nightly"), DependencyVersion("nightly"), FloatingPin.NOT_LISTED
+    )
+    ghcr = Location(Path("Dockerfile"), 1)
+    log.unpinned_floating_tag(
+        reference("ghcr.io/acme/api", ghcr, "latest"), DependencyVersion("latest"), FloatingPin.NO_VERSION_TAG_EXAMINED
+    )
+    log.unpinned_floating_tag(
+        reference("ghcr.io/acme/api", ghcr, "edge"), DependencyVersion("edge"), FloatingPin.NO_MANIFEST
+    )
+    unpinned_floating_tag = capture.take()
+
+    log.keeping_floating_tag(reference("python", dockerfile, "latest"), pinned_tag, "update-time: allow[floating-pin]")
+    kept_floating_tag = capture.take()
+
     marker = Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")
     log.recognised_marker("python", marker, dockerfile)
     recognised = capture.take()
@@ -166,6 +197,9 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.report_staleness(resolved("python", dockerfile, stale), marker, STALE_AFTER.get())
     return {
         "@@DRIFT_WARNINGS@@": drift,
+        "@@PINNED_FLOATING_TAG@@": pinned_floating_tag,
+        "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
+        "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@VULNERABILITY_WARNING@@": vulnerable,

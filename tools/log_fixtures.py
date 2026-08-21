@@ -24,7 +24,7 @@ VULNERABILITY = Vulnerability(
 
 
 def reference(dependency: str, location: Location, version: str = "") -> Reference:
-    """Return the reference a sample message names; only the vulnerability messages render its version."""
+    """Return the reference a sample message names; the vulnerability and floating-tag messages render its version."""
     return Reference(dependency, version, location)
 
 

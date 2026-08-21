@@ -7,9 +7,10 @@ from unittest.mock import ANY, Mock
 from update_time.domain import marker as marker_module
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion
+from update_time.domain.dependency import DependencyVersion, FloatingPin
 from update_time.domain.directive import Reason
 from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
+from update_time.domain.floating import ALLOW_FLOATING_PIN
 from update_time.domain.line import located_lines
 from update_time.domain.marker import Marker, Scope
 from update_time.domain.reference import Reference
@@ -342,6 +343,25 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.new_version.assert_called_once()  # a real version bump, not a drift adoption
         self.logger.adopted_drift.assert_not_called()
 
+    def test_drift_is_reported_for_a_tag_kept_floating(self):
+        """Test that a reference kept floating is warned about when its tag serves another digest than it records."""
+        resolved = DependencyVersion(version="3.15", sha=NEW_DIGEST, floating=FloatingPin.RESOLVED)
+        lines = [f"image: python:latest@{OLD_DIGEST}  # update-time: allow[floating-pin]"]
+        self.assertEqual(self.rewrite(lines, _SHA_REGEXP, Mock(return_value=resolved)), lines)
+        drifted = DriftedPin("python", "latest", Location(self.path, 1), OLD_DIGEST, new_sha=NEW_DIGEST)
+        self.logger.digest_drift.assert_called_once_with(drifted)
+
+    def test_drift_adopted_for_a_tag_kept_floating(self):
+        """Test that a reference kept floating adopts the digest its tag serves now, keeping the tag itself."""
+        resolved = DependencyVersion(version="3.15", sha=NEW_DIGEST, floating=FloatingPin.RESOLVED)
+        marker = "# update-time: allow[floating-pin, hash-drift]"
+        new_lines = self.rewrite(
+            [f"image: python:latest@{OLD_DIGEST}  {marker}"], _SHA_REGEXP, Mock(return_value=resolved)
+        )
+        self.assertEqual(new_lines, [f"image: python:latest@{NEW_DIGEST}  {marker}"])
+        self.logger.adopted_drift.assert_called_once()
+        self.logger.keeping_floating_tag.assert_not_called()
+
     def test_ignore_wins_over_allow_hash_drift_marker(self):
         """Test that a reference marked both `ignore` and `allow[hash-drift]` is left untouched: `ignore` wins."""
         get_new_version = Mock()
@@ -368,6 +388,15 @@ class UpdateReferencesTest(unittest.TestCase):
             self.assertEqual(self.rewrite(lines, _SHA_REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.adopted_drift.assert_not_called()
+
+    def test_ignore_floating_pin_wins_over_allow_floating_pin_flag(self):
+        """Test that an `ignore[floating-pin]` marker pins its reference in a run keeping every other pin floating."""
+        resolved = DependencyVersion(version="3.15", sha=DIGEST, floating=FloatingPin.RESOLVED)
+        lines = ["image: python:latest  # update-time: ignore[floating-pin]"]
+        with patch_environ({ALLOW_FLOATING_PIN.name: "1"}):
+            new_lines = self.rewrite(lines, _REGEXP, Mock(return_value=resolved))
+        self.assertEqual(new_lines, [f"image: python:3.15@{DIGEST}  # update-time: ignore[floating-pin]"])
+        self.logger.keeping_floating_tag.assert_not_called()
 
     def test_allow_update_bound_passes_bound_to_source(self):
         """Test that an inline `allow[update<…>]` marker passes the bound to the source and applies the result."""
@@ -618,6 +647,22 @@ class UpdateReferencesTest(unittest.TestCase):
         new_lines = self.rewrite(lines, _REGEXP, get_new_version)
         self.assertEqual(new_lines, ["image: python:3.15  # update-time: allow[update]"])
         get_new_version.assert_called_once_with("python", "3.14", NO_BOUND, COOLDOWN.default)
+
+    def test_ignore_floating_pin_is_a_noop(self):
+        """Test that `ignore[floating-pin]` pins the floating tag, which is what happens without a marker."""
+        resolved = DependencyVersion(version="3.15", sha=DIGEST, floating=FloatingPin.RESOLVED)
+        get_new_version = Mock(return_value=resolved)
+        lines = ["image: python:latest  # update-time: ignore[floating-pin]"]
+        new_lines = self.rewrite(lines, _REGEXP, get_new_version)
+        self.assertEqual(new_lines, [f"image: python:3.15@{DIGEST}  # update-time: ignore[floating-pin]"])
+        self.logger.invalid_bracket_item.assert_not_called()
+
+    def test_ignore_update_wins_over_allow_floating_pin(self):
+        """Test that a frozen reference is left alone, whatever the floating-pin directive beside it asks for."""
+        resolved = DependencyVersion(version="3.15", sha=DIGEST, floating=FloatingPin.RESOLVED)
+        get_new_version = Mock(return_value=resolved)
+        lines = ["image: python:latest  # update-time: ignore[update] allow[floating-pin]"]
+        self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)
 
     def test_invalid_specifier_is_logged_and_leaves_reference_unchanged(self):
         """Test that an unparsable specifier is logged and the reference left unchanged."""

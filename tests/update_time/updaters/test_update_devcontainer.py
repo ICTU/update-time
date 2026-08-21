@@ -4,9 +4,11 @@ import unittest
 from unittest.mock import ANY, Mock, patch
 
 from update_time.primitives.location import Location
+from update_time.updaters import update_devcontainer
 from update_time.updaters.update_devcontainer import update_devcontainers
 
 from tests.helpers import mock_path
+from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST3
 from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
@@ -52,13 +54,31 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
         self.assert_pinned_logged("ghcr.io/devcontainers/features/node", "2", DIGEST3, Location(devcontainer, 1))
         self.assert_no_warnings_logged()
 
-    def test_untagged_image_left_alone(self):
-        """Test that an image without a version tag is left unchanged (there is no version to resolve)."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("1.1", DIGEST))
-        devcontainer = mock_path('  "image": "mcr.microsoft.com/devcontainers/typescript-node"\n')
+    def test_pin_tagless_image(self):
+        """Test that an `"image"` naming no tag is pinned to the version and digest `latest` serves."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        devcontainer = mock_path(self.reference("python"))
+        self.run_updater(devcontainer)
+        devcontainer.write_text.assert_called_once_with(self.reference(f"python:3.14.7@{DIGEST}"))
+        self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(devcontainer, 1))
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            update_devcontainer,
+            r"""_FEATURE_RE = rf'"{IMAGE_REFERENCE}":\s*{{'""",
+            r"""_FEATURE_RE = r'"(?P<dependency>[\w./-]+)(?::(?=[\w.-]))?(?P<version>[\w.-]*)"""
+            r"""(?:@(?P<sha>sha256:[0-9a-f]{64}))?":\s*{'""",
+            "a JSON key naming no version is read as a feature reference without a tag",
+        )
+    )
+    def test_json_key_naming_no_version_is_not_read_as_a_feature(self):
+        """Test that a JSON key naming no version is left alone, a feature reference always naming one."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        devcontainer = mock_path('  "customizations": {\n')
         self.run_updater(devcontainer)
         devcontainer.write_text.assert_not_called()
-        self.assert_no_new_version_logged()
+        self.requests.assert_not_called()
         self.assert_no_warnings_logged()
 
     def test_non_image_references_left_alone(self):

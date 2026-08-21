@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/update-time?logo=pypi&logoColor=white)](https://pypi.org/project/update-time/) [![Python versions](https://img.shields.io/pypi/pyversions/update-time?logo=python&logoColor=white)](https://pypi.org/project/update-time/) [![License](https://img.shields.io/pypi/l/update-time)](https://github.com/ICTU/update-time/blob/main/LICENSE)
 
-Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for [dependencies](#-what-is-updated) and updates them to their latest versions. Where possible, it adds a [hash pin](#-pinning) to references. To protect against supply-chain attacks, it applies a [cooldown](#-cooldown) period. And it warns you about [stale dependencies](#-stale-dependencies), [yanked versions](#-yanked-dependencies), and [vulnerable dependencies](#-vulnerable-dependencies).
+Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for [dependencies](#-what-is-updated) and updates them to their latest versions. Where possible, it [pins](#-pinning) references — no more `latest` — and adds hashes. To protect against supply-chain attacks, it applies a [cooldown](#-cooldown) period. And it warns you about [stale dependencies](#-stale-dependencies), [yanked versions](#-yanked-dependencies), and [vulnerable dependencies](#-vulnerable-dependencies).
 
 Update-time rewrites the files in place and logs what it did:
 
@@ -29,7 +29,7 @@ Update-time rewrites the files in place and logs what it did:
 
 </details>
 
-## 📑 Table of contents
+## ☰ Table of contents
 
 - [⚡ Usage](#-usage)
   - [Getting started](#getting-started)
@@ -47,6 +47,7 @@ Update-time rewrites the files in place and logs what it did:
   - [The anatomy of a marker](#the-anatomy-of-a-marker)
   - [Holding a reference back](#holding-a-reference-back)
   - [Adopting hash drift](#adopting-hash-drift)
+  - [Keeping a tag floating](#keeping-a-tag-floating)
   - [Bounding an update](#bounding-an-update)
   - [Writing a marker](#writing-a-marker)
 - [📖 Details per dependency type](#-details-per-dependency-type)
@@ -83,7 +84,7 @@ $ update-time -h
 usage: update-time [-h] [-V] [--cooldown DAYS] [--stale-after DAYS]
                    [--vulnerability-level {low,moderate,high,critical,none}]
                    [--ignore-vulnerability IDS] [--exclude-path PATHS]
-                   [--allow-hash-drift] [--force]
+                   [--allow-hash-drift] [--allow-floating-pin] [--force]
                    [--log-level {DEBUG,INFO,WARNING,ERROR}]
                    [PATH]
 
@@ -149,6 +150,12 @@ options:
                         warning; equivalent to marking every reference with #
                         update-time: allow[hash-drift] (an # update-time:
                         ignore marker still wins)
+  --allow-floating-pin  keep every floating image tag in the scan as it is,
+                        instead of pinning it to the version and digest it
+                        currently serves; equivalent to marking every
+                        reference with # update-time: allow[floating-pin] (an
+                        # update-time: ignore[floating-pin] marker still pins
+                        that reference)
   --force               run even when not inside a git repository (changes are
                         made in place and cannot be reverted)
   --log-level {DEBUG,INFO,WARNING,ERROR}
@@ -221,11 +228,53 @@ Each type links to its own section under [Details per dependency type](#-details
 
 *Pinning* means specifying exactly what a reference should resolve to, rather than leaving that to whatever its source serves at the time. Two things can be pinned: the version a reference resolves to, and the artefact that the version resolves to.
 
-A **version pin** names an exact version instead of something that floats: `python:3.14` instead of `python:latest`, `humanize==4.15.0` instead of `humanize>=4`. Update-time scans and updates version pins, not floating pins.
+A **version pin** names an exact version instead of something that floats: `python:3.14` instead of `python:latest`, `humanize==4.15.0` instead of `humanize>=4`. Its opposite is a **floating pin**, which leaves the version to the source: a channel such as `python:latest`, a range such as `humanize>=4` or npm's `^17.0.0`, and a branch such as the `main` in `actions/checkout@main`. Update-time updates version pins, and replaces the floating pin of an image reference with the version it currently serves (see [Floating image tags](#floating-image-tags)). The floating pin of any other reference is left as it is.
 
 A **hash pin** adds a cryptographic hash of the artefact the version resolves to — an image digest, a commit SHA, or an integrity hash. The difference with a version pin is immutability: a version pin can be re-pointed under you, because a tag can be moved or re-pushed, while a hash pin can only match the one thing it was computed from. That is what protects against a supply-chain attack, and Update-time strives to add a hash pin where possible.
 
 Update-time works on both version pins and hash pins: it moves a version pin forward, taking the most precise spelling the source has for the version it lands on, and adds a hash pin to any reference that can hold one.
+
+#### Floating image tags
+
+A floating image tag pins no version: what a build pulls is whatever the registry serves under that tag on the day it runs. Update-time replaces it with the version and digest it serves at the time of the run, which is the image the build already pulls today:
+
+```console
+INFO Pinned python in Dockerfile:1 to 3.14.7@sha256:…
+```
+
+A reference that names no tag floats the same way: `FROM python` and `image: redis` ask for whatever their registry serves under `latest`. Update-time pins such a reference to the version and digest that tag resolves to, writing the tag after the image's name, so `FROM python` becomes `FROM python:3.14.7@sha256:4fad23465a06cc5149a541fbec6f87e234a64dc0550f6bfdd2d290d8f03240df`.
+
+Registries name one image under several tags, so a floating tag shares its digest with the version tags of the same push: `python:latest` serves the same image as `python:3.14.7`, `python:3.14`, and `python:3`. Those are the versions the reference can be pinned to, and Update-time picks between them by keeping the labels of the tag first and its precision second:
+
+1. A label the floating tag shares with a version tag is kept, so `node:trixie` lands on `26.7.0-trixie` rather than on `26.7.0`, and `python:slim` on `3.14.7-slim`. A label naming a channel is dropped — `latest`, `lts`, `stable`, and `edge` are labels of that kind — because a tag carrying one floats on: `node:lts-alpine` lands on `24-alpine` rather than on the `24-lts` that follows whichever 24 release is the LTS one. So is a label no version tag uses at all, since requiring it would leave nothing to pin to.
+2. The most precise version wins, so `3.14.7` is preferred over `3.14` and `3`.
+3. Then the most precise version of a variant the tag asked for, so `node:lts-alpine` lands on `24.19.0-alpine3.24` rather than on `24.19.0-alpine`.
+4. The shortest name comes last, so `node:latest` lands on `26.7.0` rather than on `26.7.0-trixie`, and `amazoncorretto:latest` on `8` rather than on `8-al2023`. This prevents adopting a label the reference never asked for.
+
+Because the pin names the image the reference already serves, the [cooldown](#-cooldown) holds nothing back: the image pinned is the one the project already runs. A [bound](#bounding-an-update) decides nothing either, so `allow[update<3.13]` on `python:latest` still pins the `3.14.7` that tag serves. From the next run on the reference is a version pin like any other, and is updated, bounded, and checked as one.
+
+> [!IMPORTANT]
+> A pin cannot follow a channel: `node:lts` pinned to `24.19.0` is a pin on the 24 line, and later runs move it to whatever version is newest, LTS or not.
+
+Use a marker to keep a reference floating (see [Keeping a tag floating](#keeping-a-tag-floating)).
+
+How the version tags sharing that image are found depends on the registry. Docker Hub lists the digest of every tag, so a single listing names them all. Another registry lists tag names only, so Update-time asks it for one tag's digest at a time, the newest version first, and stops at the first tag serving the same image. That resolves the common case in a handful of requests, and gives up once it has asked about the newest version tags without finding a match.
+
+Four kinds of floating tag are left as they are:
+
+- A tag whose image carries no version tag under the tag's own label, such as an image tagged only `dev` or `prod`.
+- A tag on another registry whose image none of the version tags Update-time asked about serves.
+- A tag whose registry serves no manifest for it, so what it serves cannot be read.
+- A tag listed further down a large repository's tag list than Update-time reads.
+
+Each is reported at `DEBUG`, in a line naming the reason the tag was left:
+
+```console
+DEBUG Floating tag acme/api:dev in docker-compose.yml:7 was left as it is: no tag naming a version serves the same image
+DEBUG Floating tag acme/api:nightly in docker-compose.yml:7 was left as it is: its tag is not among the tags listed for the image
+DEBUG Floating tag ghcr.io/acme/api:latest in Dockerfile:1 was left as it is: no tag naming a version among the newest examined serves the same image
+DEBUG Floating tag ghcr.io/acme/api:edge in Dockerfile:1 was left as it is: the registry serves no manifest for its tag, so what that tag serves is unknown
+```
 
 #### Version precision
 
@@ -262,7 +311,7 @@ WARNING Tag drift for actions/checkout@4.1.1 in .github/workflows/ci.yml:17: pin
 WARNING Integrity hash mismatch for clipboard@2.0.11 in docs/conf.py:4: declares sha256-… but jsDelivr serves sha256-…; the hash was left unchanged, and since npm does not republish a version it is probably the declared hash that is wrong
 ```
 
-*Digest drift* means an image tag was re-pushed (rebuilt) under the same name and version, so the registry now serves a different digest.
+*Digest drift* means an image tag was re-pushed (rebuilt) under the same name and version, so the registry now serves a different digest. A floating tag that already carries a digest is judged the same way. When the digest is the one its tag still serves, the reference is pinned to the version that serves it. When it differs, the tag was re-pointed after the reference was pinned, so the pin stands and the drift is warned about.
 
 *Tag drift* means the version tag of a GitHub Action or pre-commit hook was moved onto another commit than the one the reference pins — a git tag is mutable, so whoever controls the repository can move it. This is what pinning to a commit SHA exists to catch: the pin keeps the reference on the commit it was pinned to whatever the tag does, which is the point, and the warning tells you that tag and pin have parted company.
 
@@ -425,11 +474,11 @@ A bracket holds one or more items, separated by commas: the `ignore` bracket abo
 | Verb | `ignore` drops what its items name and `allow` keeps it, so `ignore[stale<90]` and `allow[stale>=90]` say the same thing | `ignore`, `allow` |
 | Bracket | what a directive's `[…]` holds: its items, separated by commas | `[yanked, stale<90]` |
 | Item | one entry in a bracket: a scope, a scope with a threshold, a [bound](#bounding-an-update), or an [advisory](#silencing-specific-vulnerabilities) | `stale<90` |
-| Scope | what an item steers: `update`, `cooldown`, `stale`, `yanked`, `vulnerable`, or `hash-drift` | `ignore[yanked]` steers the yank warning |
+| Scope | what an item steers: `update`, `cooldown`, `stale`, `yanked`, `vulnerable`, `hash-drift`, or `floating-pin` | `ignore[yanked]` steers the yank warning |
 | Bare `ignore` | the verb with no bracket at all, which holds back every scope it can without naming one | `# update-time: ignore` |
 | Reason | free text after the last directive, which Update-time keeps none of | `(pinned until the 3.13 migration)` |
 
-Which verb a scope takes follows from what it steers. An `ignore` item naming a scope alone holds that scope back, so `ignore[stale]` silences the staleness warning altogether while `ignore[stale<90]` sets what it warns at. `hash-drift` goes the other way, being off by default: it is opted into with `allow[hash-drift]` and never held back. And the cooldown takes neither form alone, since it sets a number of days rather than being switched on or off. A bare `ignore` names no scope while holding every scope it can back, which is why no warning ever calls a bare `ignore` redundant: there would be no directive to tell you to delete.
+Which verb a scope takes follows from what it steers. An `ignore` item naming a scope alone holds that scope back, so `ignore[stale]` silences the staleness warning altogether while `ignore[stale<90]` sets what it warns at. `hash-drift` goes the other way, being off by default: it is opted into with `allow[hash-drift]` and never held back. `floating-pin` goes the other way again: Update-time drops a floating pin by default, so `allow[floating-pin]` keeps one and `ignore[floating-pin]` asks for what happens anyway. And the cooldown takes neither form alone, since it sets a number of days rather than being switched on or off. A bare `ignore` names no scope while holding every scope it can back, which is why no warning ever calls a bare `ignore` redundant: there would be no directive to tell you to delete.
 
 ### Holding a reference back
 
@@ -585,6 +634,8 @@ WARNING Redundant update-time directive ignore[vulnerable] for humanize in docs/
 
 In all its forms, the `stale` scope is reported as redundant for a reference whose source reports no publication date to measure staleness against. [Setting a staleness threshold](#setting-a-staleness-threshold) names the three kinds of reference that get that warning.
 
+An `allow[floating-pin]` is reported as redundant for a reference whose pin does not float, and for one whose update a marker holds back, since neither has anything to keep floating. [Keeping a tag floating](#keeping-a-tag-floating) shows both warnings.
+
 A bare `# update-time: ignore` is never reported as redundant: it names no scope, so a warning would have no directive to name. A scope or item written beside it is reported though, so `# update-time: ignore ignore[yanked]` on a Docker image reports the `ignore[yanked]` as redundant.
 
 #### Invalid markers
@@ -600,6 +651,32 @@ The reference is left as it is, because an item Update-time cannot read may have
 ### Adopting hash drift
 
 One further marker does the opposite of holding a reference back. `# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting what it now points at, so a re-pushed image tag's new digest, or the commit a moved version tag points at, is pinned instead of only warned about (see [Hash drift](#hash-drift)). It follows the same placement rules as the other markers, and the global `--allow-hash-drift` flag applies it to every reference at once. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.
+
+### Keeping a tag floating
+
+`# update-time: allow[floating-pin]` keeps a reference's [floating image tag](#floating-image-tags) as it is, where Update-time would otherwise replace it with the version and digest it serves. Use it for a reference you want to follow a channel, such as an image you rebuild from `latest` on purpose. Run with `--log-level DEBUG` to see what the marker held back, which names the version the tag resolves to, so a marker you no longer need shows what dropping it would pin. Where the tag serves another digest than the reference records, the [hash drift](#hash-drift) is reported instead:
+
+```console
+DEBUG Keeping the floating tag python:latest in Dockerfile:2: it resolves to 3.14.7@sha256:… (update-time: allow[floating-pin])
+```
+
+A reference that names no tag is kept as it is in the same way, and reported by its name alone, since it has no tag to name after it.
+
+A reference kept floating is still checked for [hash drift](#hash-drift). Where it already records a digest and its tag now serves another, the drift is warned about, and a reference opted into drift adopts the new digest while its tag stays as it is. It follows the same placement rules as the other markers, and the global `--allow-floating-pin` flag keeps every reference in the scan floating at once. `ignore[floating-pin]` is the opposite and the default, so a reference carrying it is pinned exactly as one carrying no marker at all. It is pinned in a run passing `--allow-floating-pin` as well, since no command-line option overrides a marker. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched, tag and all.
+
+An `allow[floating-pin]` on a reference whose pin does not float keeps nothing floating, so Update-time reports it as redundant and updates the reference as usual:
+
+```console
+WARNING Redundant update-time directive allow[floating-pin] for python in Dockerfile:2: this reference's pin does not float
+```
+
+A reference held back by an `ignore` or an `ignore[update]` keeps nothing floating either, since a reference that is never pinned keeps its tag whatever the directive beside the hold-back asks for. That is reported whatever the tag says, so a floating tag gets it too:
+
+```console
+WARNING Redundant update-time directive allow[floating-pin] for python in Dockerfile:2: this reference's update is held back, so its tag is never pinned
+```
+
+A floating tag Update-time could not resolve is not reported, since that tag does float. The `DEBUG` line naming why it was left as it is covers that case (see [Floating image tags](#floating-image-tags)).
 
 ### Bounding an update
 
@@ -945,27 +1022,33 @@ Update-time looks for Dockerfiles, CircleCI configs, `.gitlab-ci.yml`, Docker Co
 | Helm charts | Container images (`image:` references) |
 | Devcontainer configs | The base image and each feature |
 
+A Dockerfile's `FROM` is read the way Docker reads it: in upper or lower case, and only where it opens its line, so a `FROM` written in prose is left alone. Two kinds of `FROM` name no image a registry serves and are left alone as well: `FROM scratch`, which starts a stage from nothing, and a `FROM` naming one of the file's own build stages, which an earlier `FROM ... AS name` introduced.
+
 #### What versions are updated?
 
 When updating an image tag, Update-time keeps the non-numeric parts of the tag and only advances its version numbers. A tag such as `python:3.14.6-alpine3.23` has three parts: the label prefix `python`, the main version `3.14.6`, and the suffix `alpine3.23`. The label prefix (`python`) and the suffix's label (`alpine`) are preserved, so a variant is never swapped out: `python` never becomes `pypy`, `slim` never becomes `fat`, and `alpine` never becomes `debian`. Both the main version and a version embedded in the suffix are upgraded, independently or together, for example `3.14.6-alpine3.23` → `3.15.0-alpine3.24`. Neither axis is ever downgraded to adopt a newer value on the other.
 
 A suffix without an embedded version (`bookworm-slim`, `windows`) is never updated.
 
+A tag naming a channel in labels alone, such as `latest` or `trixie`, floats, and is replaced by the version tag serving the same image, keeping the labels the tag itself carries (see [Floating image tags](#floating-image-tags)). A reference that names no tag asks for `latest`, the tag a registry serves by default, so it floats too and is pinned the same way. A dated snapshot such as `debian:bookworm-20260803` names no channel and no version: the registry leaves such a tag on the image it was pushed for, so its tag stands and only a digest is added.
+
 #### Pinning
 
 An image referenced by tag only gets the `@sha256:digest` of the (latest) tag appended, so the image is reproducible. This covers base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, Docker Compose and Helm manifest images, and devcontainer base images and features. The image's registry is taken from the reference, so images on Docker Hub and on other OCI registries (`ghcr.io`, `mcr.microsoft.com`, …) are both resolved.
 
-Two kinds of reference get no digest. An image without a concrete version tag is ignored: a reference through a `{{ ... }}` template or `${VAR}` variable substitution, and a tagless base image such as `FROM scratch` or a stage reference. A CircleCI machine-executor image (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) gets none either, since it is not a registry image.
+A floating tag is pinned to both at once: the version tag serving the image it currently resolves to, and that image's digest.
+
+Two kinds of reference get no digest. An image whose tag Update-time cannot read is ignored: a reference through a `{{ ... }}` template or `${VAR}` variable substitution. A CircleCI machine-executor image (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) gets none either, since it is not a registry image.
 
 Once an image is pinned, a tag re-pushed under the same name is reported as digest drift (see [Hash drift](#hash-drift)).
 
 #### Cooldown
 
-A newer tag is adopted only once it is past the cooldown, provided the image is hosted on Docker Hub. Other registries (`ghcr.io`, `mcr.microsoft.com`, …) expose no publication date, so images there are updated without a cooldown, and a `cooldown` marker on one of them is reported as redundant. So is a `cooldown` marker on a CircleCI machine-executor image, which no registry serves.
+Pinning a floating tag adopts no newer image, so the cooldown holds it back not at all. A newer tag is adopted only once it is past the cooldown, provided the image is hosted on Docker Hub. Other registries (`ghcr.io`, `mcr.microsoft.com`, …) expose no publication date, so images there are updated without a cooldown, and a `cooldown` marker on one of them is reported as redundant. So is a `cooldown` marker on a CircleCI machine-executor image, which no registry serves.
 
 #### Stale dependencies
 
-Image tags are only checked on Docker Hub, for the same reason the cooldown is, so a `stale` marker on an image hosted elsewhere is reported as redundant. So is one on a CircleCI machine-executor image, which no registry serves. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old.
+Image tags are only checked on Docker Hub, for the same reason the cooldown is, so a `stale` marker on an image hosted elsewhere is reported as redundant. So is one on a CircleCI machine-executor image, which no registry serves. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old. A dated snapshot is the exception to that: the registry never moves such a tag, so nothing re-pushes it, and its own push date is what the check measures. A snapshot pinned years ago is reported as stale.
 
 #### Yanked dependencies
 

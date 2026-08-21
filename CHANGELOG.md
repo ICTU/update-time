@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Warn about a stale dated snapshot tag, such as `debian:bookworm-20260803`, measured by the push date of the tag itself, instead of never checking such a tag for staleness. Part of [#245](https://github.com/ICTU/update-time/issues/245).
+- Pin a floating image tag on a registry other than Docker Hub, such as `ghcr.io/owner/app:latest`, to the version tag and digest it serves, instead of leaving it as it is. Part of [#245](https://github.com/ICTU/update-time/issues/245).
+- Warn about an `allow[floating-pin]` marker that keeps nothing floating, because the reference's pin names a version or a marker holds its update back, instead of accepting it in silence. Part of [#245](https://github.com/ICTU/update-time/issues/245).
+- Pin an image reference that names no tag, such as a Dockerfile's `FROM python` or a Docker Compose `image: redis`, to the version and digest its `latest` tag serves, instead of passing it over in silence. Part of [#245](https://github.com/ICTU/update-time/issues/245).
+- Pin an image tag that names neither a version nor a channel, such as the dated snapshot `debian:bookworm-20260803`, to the digest it serves, instead of leaving it unpinned. Part of [#245](https://github.com/ICTU/update-time/issues/245).
+- Update a base image whose `FROM` is written in lower case, and leave alone a `FROM` that does not open its line, such as one mentioned in a comment. Part of [#245](https://github.com/ICTU/update-time/issues/245).
+- Pin a floating image tag, such as `python:latest`, to the version tag and digest it currently serves, instead of passing it over in silence. Part of [#245](https://github.com/ICTU/update-time/issues/245).
+- Keep a reference's floating image tag as it is when the reference is marked `# update-time: allow[floating-pin]`. Part of [#245](https://github.com/ICTU/update-time/issues/245).
+- Keep every floating image tag in the scan as it is with the new `--allow-floating-pin` option. Part of [#245](https://github.com/ICTU/update-time/issues/245).
+
 ### Fixed
 
 - Report the changes from the repository named after the package, instead of those from the first GitHub repository its description links, such as the `aws/aws-cli` in botocore's description. Closes [#280](https://github.com/ICTU/update-time/issues/280).

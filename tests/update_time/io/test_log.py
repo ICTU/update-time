@@ -13,10 +13,11 @@ from rich.logging import RichHandler
 from rich.text import Text
 
 from update_time.domain.bound import Redundancy, Verb
-from update_time.domain.dependency import DependencyVersion, Yank
+from update_time.domain.dependency import DependencyVersion, FloatingPin, Yank
 from update_time.domain.directive import Reason
 from update_time.domain.drift import DriftedPin
 from update_time.domain.marker import Marker, Scope
+from update_time.io import log as log_module
 from update_time.io.log import (
     DEPENDENCY_DELIMITER,
     LOCATION_DELIMITER,
@@ -28,6 +29,7 @@ from update_time.io.log import (
 )
 from update_time.primitives.location import Location
 
+from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
 from tests.update_time.helpers import bound, reference, resolved_reference
 
@@ -185,6 +187,62 @@ class LoggerTests(TestCase):
             mock_log,
             Logger._MESSAGE_PINNED,
             f"Pinned {dependency('dependency')} in {_at('Dockerfile:1')} to 1.0@{DIGEST}",
+        )
+
+    @kills(
+        Mutation(
+            log_module,
+            '        "Floating tag %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s",',
+            '        "Floating tag %(dependency)s%(tag)s in %(location)s was left as it is",',
+            "the line reports that a tag was left as it is without naming the reason it was left",
+        )
+    )
+    def test_unpinned_floating_tag(self, mock_log: Mock):
+        """Test that a floating tag pinned to no version is reported with the reason it was left as it is."""
+        location = _create_location("docker-compose.yml", 7)
+        release = DependencyVersion("dev")
+        Logger("floating").unpinned_floating_tag(
+            reference("acme/api", location, "dev"), release, FloatingPin.NO_VERSION_TAG
+        )
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_UNPINNED_FLOATING_TAG,
+            f"Floating tag {dependency('acme/api')}:dev in {_at('docker-compose.yml:7')} was left as it is: "
+            "no tag naming a version serves the same image",
+        )
+
+    def test_keeping_a_floating_tag(self, mock_log: Mock):
+        """Test that a floating tag left as it is is reported with the tag it names and what it resolves to."""
+        location = _create_location("Dockerfile", 1)
+        release = DependencyVersion("3.14.7", sha=DIGEST)
+        cause = "update-time: allow[floating-pin]"
+        Logger("floating").keeping_floating_tag(reference("python", location, "latest"), release, cause)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_KEEPING_FLOATING_TAG,
+            f"Keeping the floating tag {dependency('python')}:latest in {_at('Dockerfile:1')}: it resolves to "
+            f"3.14.7@{DIGEST} ({cause})",
+        )
+
+    @kills(
+        Mutation(
+            log_module,
+            '        return f":{version}" if version else ""',
+            '        return f":{version}"',
+            "a reference naming no tag is reported with a colon that names nothing after it",
+        )
+    )
+    def test_keeping_a_reference_that_names_no_tag(self, mock_log: Mock):
+        """Test that a reference naming no tag is reported by its name alone, there being no tag to name after it."""
+        location = _create_location("Dockerfile", 1)
+        release = DependencyVersion("3.14.7", sha=DIGEST)
+        cause = "--allow-floating-pin"
+        Logger("floating").keeping_floating_tag(reference("python", location), release, cause)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_KEEPING_FLOATING_TAG,
+            f"Keeping the floating tag {dependency('python')} in {_at('Dockerfile:1')}: it resolves to "
+            f"3.14.7@{DIGEST} ({cause})",
         )
 
     def test_digest_drift(self, mock_log: Mock):

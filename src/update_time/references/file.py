@@ -67,8 +67,7 @@ def update_files(
     get_new_version: NewVersionGetter,
     logger: Logger,
     start: Path | None = None,
-    case_sensitive: bool | None = None,
 ) -> None:
     """Update the files using the regexp to find the current version and get_new_version to find new versions."""
-    for path in glob(*glob_patterns, start=start, case_sensitive=case_sensitive):
+    for path in glob(*glob_patterns, start=start):
         update_file(path, regexp, get_new_version=get_new_version, logger=logger)
