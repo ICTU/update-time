@@ -3,9 +3,9 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from update_time.domain.bound import Verb
+from update_time.domain.opt_in import RunWideOptIn
 from update_time.domain.reference import Reference
-from update_time.primitives.environment import EnvVar
+from update_time.primitives.environment import flag
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -14,12 +14,9 @@ if TYPE_CHECKING:
 
 # Private channel that passes --allow-hash-drift from the CLI to the updater subprocesses: whether a drifted pin —
 # a re-pushed image digest, or the commit a moved version tag now points at — should be adopted repo-wide.
-ALLOW_HASH_DRIFT = EnvVar(
-    "_UPDATE_TIME_ALLOW_HASH_DRIFT",
-    default=False,
-    parse=lambda value: value == "1",
-    serialize=lambda allow: "1" if allow else "0",
-)
+ALLOW_HASH_DRIFT = flag("_UPDATE_TIME_ALLOW_HASH_DRIFT")
+
+_HASH_DRIFT = RunWideOptIn(ALLOW_HASH_DRIFT, "--allow-hash-drift")
 
 
 def hash_drifted(resolved: str, pinned: str) -> bool:
@@ -38,20 +35,13 @@ def report_drift(marker: Marker, warn: Callable[[], None], adopt: Callable[[str]
     """Report a drifted hash pin and return whether the reference adopts what it now points at.
 
     The rule every kind of hash pin follows: the new value is adopted only when the reference opted in (see
-    `_drift_cause`), and is otherwise warned about and left as it is, so a changed target is never silently taken on.
+    `RunWideOptIn`), and is otherwise warned about and left as it is, so a changed target is never silently taken on.
     `warn` and `adopt` report the drift in the terms of the kind that drifted — a re-pushed image digest, or the
     commit a moved version tag now points at — and `adopt` is handed the opt-in that caused it, to name in its
     message. Callback-driven so `domain` stays free of I/O.
     """
-    if (cause := _drift_cause(marker)) is None:
+    if (cause := _HASH_DRIFT.cause(marker, allowed=marker.allow_drift)) is None:
         warn()
         return False
     adopt(cause)
     return True
-
-
-def _drift_cause(marker: Marker) -> str | None:
-    """Return what opts a reference into adopting a drifted pin (a marker or a CLI-flag), or None when nothing does."""
-    if marker.allow_drift:
-        return f"update-time: {marker.raw_directives(Verb.ALLOW)}"
-    return "--allow-hash-drift" if ALLOW_HASH_DRIFT.get() else None

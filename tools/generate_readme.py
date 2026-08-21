@@ -58,7 +58,7 @@ def _table_of_contents(template: str, depth: int = 3) -> str:
     itself.
     """
     entries = [f"{'  ' * (level - 2)}- [{title}]({anchor(title)})" for level, title in headings(template, 2, depth)]
-    return "\n".join(["## 📑 Table of contents", "", *entries])
+    return "\n".join(["## ☰ Table of contents", "", *entries])
 
 
 def render() -> dict[Path, str]:

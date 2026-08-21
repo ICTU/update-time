@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from requests import Response
     from rich.text import Text
 
-    from update_time.domain.dependency import DependencyVersion
+    from update_time.domain.dependency import DependencyVersion, FloatingPin, VersionString
     from update_time.domain.directive import Reason
     from update_time.domain.drift import DriftedPin
     from update_time.domain.marker import Marker
@@ -259,6 +259,44 @@ class Logger:
     def pinned(self, reference: Reference, version: DependencyVersion) -> None:
         """Log that a previously unpinned reference in a file was pinned to a digest, without changing its version."""
         self._log(self._MESSAGE_PINNED, **self._reference_fields(reference, version=version.version, sha=version.sha))
+
+    @staticmethod
+    def _tag_of(version: VersionString) -> str:
+        """Return the tag with the colon attaching it to the image's name, or nothing when the reference names none."""
+        return f":{version}" if version else ""
+
+    _MESSAGE_KEEPING_FLOATING_TAG = LogMessage(
+        DEBUG,
+        "Keeping the floating tag %(dependency)s%(tag)s in %(location)s: it resolves to %(resolved)s@%(sha)s "
+        "(%(cause)s)",
+    )
+
+    @classmethod
+    def _floating_fields(cls, reference: Reference, tag: VersionString) -> dict[str, object]:
+        """Return the fields a report about a floating tag names it by: the reference, and the tag attached to it."""
+        return cls._reference_fields(reference, tag=cls._tag_of(tag))
+
+    def keeping_floating_tag(self, reference: Reference, release: DependencyVersion, cause: str) -> None:
+        """Log that a floating tag was left as it is, naming the release it resolves to.
+
+        A reference naming no tag is named by its image alone, the release naming what it resolves to already.
+        """
+        fields = self._floating_fields(reference, reference.current_version)
+        self._log(self._MESSAGE_KEEPING_FLOATING_TAG, **fields, resolved=release.version, sha=release.sha, cause=cause)
+
+    _MESSAGE_UNPINNED_FLOATING_TAG = LogMessage(
+        DEBUG,
+        "Floating tag %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s",
+    )
+
+    def unpinned_floating_tag(self, reference: Reference, release: DependencyVersion, reason: FloatingPin) -> None:
+        """Log that a floating tag was pinned to no version, naming which of the reasons left it as it is.
+
+        The tag named is the one the source looked up, which for a reference naming none is the `latest` it means,
+        and which the source reports back as the release it resolved, nothing having been pinned in its place.
+        """
+        fields = self._floating_fields(reference, reference.current_version or release.version)
+        self._log(self._MESSAGE_UNPINNED_FLOATING_TAG, **fields, reason=reason)
 
     _MESSAGE_CANNOT_PIN = LogMessage(
         INFO,

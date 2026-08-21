@@ -4,9 +4,12 @@ import unittest
 from unittest.mock import Mock, patch
 
 from update_time.io.filesystem import YAML_GLOB_PATTERNS
+from update_time.primitives.location import Location
+from update_time.sources import oci
 from update_time.updaters.update_manifest_images import update_manifest_images
 
 from tests.helpers import mock_path
+from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST
 from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
@@ -33,6 +36,23 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
         with patch("pathlib.Path.rglob", side_effect=rglob):
             update_manifest_images()
+
+    @kills(
+        Mutation(
+            oci,
+            r'YAML_IMAGE_REFERENCE = rf"image: {OPTIONALLY_TAGGED_IMAGE_REFERENCE}"',
+            r'YAML_IMAGE_REFERENCE = rf"image: {IMAGE_REFERENCE}"',
+            "a manifest `image:` naming no tag is not read as a reference at all",
+        )
+    )
+    def test_pin_tagless_image(self):
+        """Test that an `image:` naming no tag is pinned to the version and digest `latest` serves."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_manifest = mock_path(self.reference("python"))
+        self.run_updater(mock_manifest)
+        mock_manifest.write_text.assert_called_once_with(self.reference(f"python:3.14.7@{DIGEST}"))
+        self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(mock_manifest, 1))
+        self.assert_no_warnings_logged()
 
     def test_variable_substitution_ignored(self):
         """Test that image tags using ${...} substitution are not modified."""

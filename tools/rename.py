@@ -1,10 +1,11 @@
 """Rename a name and every reference to it in the files named, and fail when a file is left holding the old one.
 
-LibCST renames the references it resolves and hands back the source either way, so two rewrites it did not make
-look like one that landed: a misspelled name reaches nothing, and a bare name reaches the definition alone when
-the references live in another module. Both are read off the source it hands back — the first as a source that
-came back unchanged, the second as the old name surviving as an identifier, which leaves the docstrings that
-mention it alone, unlike a grep.
+LibCST resolves a name against the module a file sits in, so the names are spelled per file: bare for the file
+holding the definition, qualified for the files importing it (see `_names_for`). It renames the references it
+resolves and hands back the source either way, so two rewrites it did not make look like one that landed: a
+misspelled name reaches nothing, and a file none of the spellings reach comes back as it was. Both are read off
+the source it hands back — the first as every source coming back unchanged, the second as the old name surviving
+as an identifier, which leaves the docstrings that mention it alone, unlike a grep.
 
 The sources are written once every one of them has come back clean, so a rename that fails leaves the files as
 it found them rather than a tree holding half a rename. A source LibCST cannot parse fails the run the same way,
@@ -102,6 +103,32 @@ def _renamed(old: str, new: str, source: str) -> str:
     return RenameCommand(CodemodContext(), old, new).transform_module(libcst.parse_module(source)).code
 
 
+def _names_for(path: str, old: str, new: str) -> tuple[str, str]:
+    """Return the pair of names to rename the file at the path with, both spelled the way it reaches them.
+
+    LibCST resolves a definition against the module it sits in rather than against the module a qualified name
+    names, so the file holding the definition is reached by the bare name alone, and every other file by the
+    qualified one. It reads the new name the same way it reads the old, taking the module to import from out of
+    it, so the two are spelled alike: a new name given bare beside a qualified old one leaves that module empty,
+    which LibCST fails to parse.
+    """
+    module, _, bare_old = old.rpartition(".")
+    bare_new = new.rpartition(".")[-1]
+    if _is_module(path, module):
+        return bare_old, bare_new
+    return old, f"{module}.{bare_new}" if module else bare_new
+
+
+def _is_module(path: str, module: str) -> bool:
+    """Return whether the file at the path is the module, so the definitions the module holds sit in it.
+
+    The path is read as the dotted module it spells, which the module ends it with wherever the package root sits:
+    `src/update_time/io/log.py` is the module `update_time.io.log`, and `tools/rename.py` is `tools.rename`.
+    """
+    dotted = path.removesuffix(".py").replace("/", ".")
+    return bool(module) and (dotted == module or dotted.endswith(f".{module}"))
+
+
 def _report(message: str) -> None:
     """Write the message to standard error, where what stops a rename is reported."""
     sys.stderr.write(f"Error: {message}\n")
@@ -115,7 +142,7 @@ def _renamed_sources(old: str, new: str, sources: dict[str, str]) -> dict[str, s
     renamed = {}
     for path, source in sources.items():
         try:
-            renamed[path] = _renamed(old, new, source)
+            renamed[path] = _renamed(*_names_for(path, old, new), source)
         except (libcst.ParserSyntaxError, ValueError) as reason:
             _report(f"{path} could not be renamed: {reason}")
             return None

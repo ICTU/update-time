@@ -115,6 +115,17 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.rename(_IMPORTS_AND_CALLS, "from m import old as alias\n\nalias()\n"), 0)
         self.assertEqual(self.reported.getvalue(), "")
 
+    def test_a_new_name_given_bare(self):
+        """Test that a new name given bare renames a qualified old one, as the usage spells a rename."""
+        self.assertEqual(self.rename(_IMPORTS_AND_CALLS, old="m.old", new="new"), 0)
+        self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call("from m import new\n\nnew()\n")])
+
+    def test_the_module_the_qualified_name_names(self):
+        """Test that the file the old name qualifies is renamed too, since the definition sits in it."""
+        # The helper writes the first source to `file0.py`, which is the module the name `file0.old` qualifies.
+        self.assertEqual(self.rename(_DEFINES, old="file0.old", new="new"), 0)
+        self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call("def new():\n    pass\n")])
+
     def test_the_files_the_rename_changed_are_written(self):
         """Test that a file the rename changed is written, and one it left as it was is not."""
         self.assertEqual(self.rename(_IMPORTS_AND_CALLS, "print(1)\n"), 0)

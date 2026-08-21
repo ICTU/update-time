@@ -1,8 +1,10 @@
-"""The directives a marker can carry that the source resolving a reference may be unable to apply.
+"""Why a directive a marker carries can hold nothing back, and the directives a source's capability decides.
 
-Each is declared once here, with the capability its application needs and the reason it holds nothing back without
-it, so a check added to the marker language is a row rather than a branch of its own. The caller does the reporting,
-which keeps this layer free of I/O.
+`Reason` holds every reason, in the words the warning reports it in, whichever check reads the marker. `DIRECTIVES`
+holds the directives a source's capability decides: each is a row naming the capability its application needs and
+the reason it holds nothing back without it, so such a check is a row rather than a branch of its own. A directive
+that only the source's answer can judge is decided where that answer arrives, which is `references.resolve`. The
+caller does the reporting either way, which keeps this layer free of I/O.
 """
 
 from dataclasses import dataclass
@@ -32,6 +34,8 @@ class Reason(StrEnum):
     NO_VERSION_TO_UPDATE = "this requirement pins no version to update"
     NO_VERSION_TO_CHECK_FOR_A_YANK = "this requirement pins no version to check for a yank"
     NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY = "this requirement pins no version to check for a vulnerability"
+    NOTHING_FLOATING = "this reference's pin does not float"
+    UPDATE_HELD_BACK = "this reference's update is held back, so its tag is never pinned"
 
 
 @dataclass(frozen=True)

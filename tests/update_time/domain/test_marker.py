@@ -227,7 +227,8 @@ class ParseMarkerScopeTest(unittest.TestCase):
 
     def test_a_scope_taking_no_bare_item_is_reported_as_invalid(self):
         """Test that a scope with no bare form is reported as an invalid item."""
-        for scope in set(Scope) - set(_IGNORABLE_SCOPES):
+        # The floating pin is left out: `ignore[floating-pin]` names what happens to a reference carrying no marker.
+        for scope in set(Scope) - set(_IGNORABLE_SCOPES) - {Scope.FLOATING_PIN}:
             with self.subTest(scope=scope):
                 marker = parse_marker(line(f"humanize==4.15.0  # update-time: ignore[{scope}]"))
                 self.assertEqual(marker, Marker(invalid_item=str(scope)))

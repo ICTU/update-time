@@ -12,7 +12,12 @@ _LOG = get_logger("manifest images")
 
 def update_manifest_images() -> None:
     """Update the image tags and digests in the Docker Compose files and the Helm folder."""
-    update_files("docker-compose*.yml", regexp=YAML_IMAGE_REFERENCE, get_new_version=get_latest_tag, logger=_LOG)
+    update_files(
+        "docker-compose*.yml",
+        regexp=YAML_IMAGE_REFERENCE,
+        get_new_version=get_latest_tag,
+        logger=_LOG,
+    )
     update_files(
         *YAML_GLOB_PATTERNS,
         regexp=YAML_IMAGE_REFERENCE,

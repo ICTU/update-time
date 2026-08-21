@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import UTC
+from enum import StrEnum, auto
 from typing import TYPE_CHECKING
 
 from packaging.version import InvalidVersion, Version
@@ -31,6 +32,16 @@ def is_valid(version: VersionString) -> bool:
     return True
 
 
+class FloatingPin(StrEnum):
+    """What a source made of a reference with a floating pin and why, if the pin was not resolved."""
+
+    RESOLVED = auto()
+    NOT_LISTED = "its tag is not among the tags listed for the image"
+    NO_MANIFEST = "the registry serves no manifest for its tag, so what that tag serves is unknown"
+    NO_VERSION_TAG = "no tag naming a version serves the same image"
+    NO_VERSION_TAG_EXAMINED = "no tag naming a version among the newest examined serves the same image"
+
+
 @dataclass(frozen=True)
 class Yank:
     """A version's withdrawal state: whether it was withdrawn — yanked on PyPI, deprecated on npm — and why."""
@@ -53,6 +64,7 @@ class DependencyVersion:
     published: datetime | None = None  # Publication date of this (candidate) version, when known
     newest_published: datetime | None = None  # Publication date of the dependency's newest release, for staleness
     yank: Yank = Yank()  # The version's withdrawal state (yanked on PyPI, deprecated on npm)
+    floating: FloatingPin | None = None  # What happened to the floating pin if the reference had one
 
     def __str__(self) -> str:
         """Render the version as its version string, followed by its publication date in UTC when that is known."""

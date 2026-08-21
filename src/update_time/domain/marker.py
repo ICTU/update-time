@@ -30,6 +30,7 @@ class Scope(Flag):
     YANKED = auto()
     VULNERABLE = auto()
     HASH_DRIFT = auto()
+    FLOATING_PIN = auto()
 
     def __str__(self) -> str:
         """Return the scope as the bracket item naming it, so parsing and rendering agree.
@@ -42,9 +43,7 @@ class Scope(Flag):
 # No scope at all: what a line without a marker names, and what the union in `Marker.merge` starts from.
 _NO_SCOPE = Scope(0)
 
-# The scopes an `ignore` directive can hold back, which are those a bare item names. Two scopes are left out: the
-# cooldown, which takes a day count and is carried as a `Threshold`, so a bare `ignore[cooldown]` is invalid; and
-# the hash drift, which is off by default, so it is opted into with `allow` rather than held back.
+# The four things an `ignore` marker can switch off: updates, and the staleness, yank, and vulnerability warnings.
 _IGNORABLE_SCOPES = Scope.UPDATE | Scope.STALE | Scope.YANKED | Scope.VULNERABLE
 
 # The scopes whose checks need the source queried, so a marker holding all three back leaves nothing to ask it for.
@@ -102,6 +101,8 @@ class Marker:
     `ignored_advisories` are the advisories an `ignore[vulnerable=ID]` directive holds the warning back for, each as
     the identifier the user spelled it by; empty when the reference names none.
     `allow_drift` is whether an `allow[hash-drift]` directive opts the reference into adopting a drifted hash pin.
+    `allow_floating_pin` is whether an `allow[floating-pin]` directive keeps the reference's pin floating, so that a
+    tag naming no version is left as it is rather than pinned to the version it serves.
     `version_bound` is the version bound from an `allow`/`ignore` directive (see `VersionBound`), defaulting to
     `NO_BOUND` (keep every candidate) when there is none.
     `stale`, `cooldown`, and `vulnerable` are what the reference's comparison items set (see `Threshold`).
@@ -120,6 +121,7 @@ class Marker:
     ignored_scopes: Scope = _NO_SCOPE
     ignored_advisories: frozenset[str] = frozenset()
     allow_drift: bool = False
+    allow_floating_pin: bool = False
     version_bound: VersionBound = NO_BOUND
     stale: Threshold[int] = Threshold()
     cooldown: Threshold[int] = Threshold()
@@ -227,6 +229,15 @@ class Marker:
         return _directive(Verb.IGNORE, str(scope)) if self.ignores(scope) else ""
 
     @property
+    def floating_pin_directive(self) -> str:
+        """Return the directive keeping the reference's pin floating, or nothing when the marker keeps none.
+
+        Only `allow` keeps a pin floating, so the directive is spelled out rather than read back from the text the
+        user wrote. Spelling it out leaves out an `allow` directive beside it that does hold something back.
+        """
+        return _directive(Verb.ALLOW, str(Scope.FLOATING_PIN)) if self.allow_floating_pin else ""
+
+    @property
     def stale_directive(self) -> str:
         """Return the directive that decides the staleness check, as the language spells it.
 
@@ -279,6 +290,7 @@ class Marker:
             ignored_scopes=self.ignored_scopes | other.ignored_scopes,
             ignored_advisories=self.ignored_advisories | other.ignored_advisories,
             allow_drift=self.allow_drift or other.allow_drift,
+            allow_floating_pin=self.allow_floating_pin or other.allow_floating_pin,
             version_bound=other.version_bound if self.version_bound == NO_BOUND else self.version_bound,
             stale=self.stale.merge(other.stale),
             cooldown=self.cooldown.merge(other.cooldown),
@@ -299,6 +311,9 @@ _KEYWORD_ITEMS = {
 } | {
     (Verb.ALLOW, str(Scope.UPDATE)): Marker(),  # bare `allow[update]`: the default no-op
     (Verb.ALLOW, str(Scope.HASH_DRIFT)): Marker(allow_drift=True),
+    (Verb.ALLOW, str(Scope.FLOATING_PIN)): Marker(allow_floating_pin=True),
+    # `ignore[floating-pin]`: the default spelled out, recorded as written so it wins over --allow-floating-pin.
+    (Verb.IGNORE, str(Scope.FLOATING_PIN)): Marker(written_scopes=Scope.FLOATING_PIN),
 }
 
 # The comment leads that can carry a marker: `#` in most formats we update, `//` in devcontainer.json (which is

@@ -8,15 +8,21 @@ and Docker Hub's per-tag metadata (`mock_docker_registry` and its `RegistryReque
 
 import unittest
 from datetime import UTC, datetime, timedelta
+from enum import Enum, auto
 from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
+from update_time.domain.dependency import DependencyVersion, FloatingPin
 from update_time.domain.directive import Reason
 from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
+from update_time.domain.floating import ALLOW_FLOATING_PIN
 from update_time.primitives.location import Location
+from update_time.references import resolve, rewrite
+from update_time.sources import oci
 
 from tests.helpers import mock_path, mock_response, patch_environ
+from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
 from tests.update_time.helpers import LoggingTestCase, docker_tag
 
@@ -40,6 +46,19 @@ class RegistryRequestsMixin(unittest.TestCase):
             patcher = patch(target, self.requests)
             self.addCleanup(patcher.stop)
             patcher.start()
+
+
+class Endpoint(Enum):
+    """An endpoint of the registry a test can make unavailable, so the code under test meets that failure."""
+
+    TAG_NAMES = auto()  # The OCI listing of tag names.
+    TAG_DIGESTS = auto()  # Docker Hub's listing of every tag with its digest.
+    PUSH_DATE = auto()  # Docker Hub's per-tag metadata, which carries the push date.
+
+
+def _not_found(url: str) -> Mock:
+    """Answer a request with a 404, as the registry does for an endpoint or a tag it does not serve."""
+    return mock_response({}, ok=False, status_code=404, url=url)
 
 
 def _probe_response(url: str, *, challenge: bool) -> Mock:
@@ -69,17 +88,41 @@ def _manifest_response(url: str, by_name: dict[str, dict[str, object]]) -> Mock:
     """Answer a manifest `HEAD`: the tag's digest in the `Docker-Content-Digest` header, or a 404 if unknown."""
     tag = by_name.get(url.rsplit("/manifests/", maxsplit=1)[-1])
     if tag is None:
-        return mock_response({}, ok=False, status_code=404, url=url)
+        return _not_found(url)
     digest = cast("str", tag.get("digest", ""))
     return mock_response({}, headers={"Docker-Content-Digest": digest} if digest else {})
+
+
+def _tag_digests_response(url: str, tags: tuple[dict[str, object], ...], *, ok: bool) -> Mock:
+    """Answer Docker Hub's tag listing: the requested page of tags with their digests, or a 404 when unavailable.
+
+    The page and its size are read from the URL, as Docker Hub reads them, and a page that leaves tags unlisted
+    carries the `next` URL of the page after it.
+    """
+    if not ok:
+        return _not_found(url)
+    query = parse_qs(urlparse(url).query)
+    page, page_size = int(query.get("page", ["1"])[0]), int(query["page_size"][0])
+    start = (page - 1) * page_size
+    listed = list(tags)[start : start + page_size]
+    more = (
+        f"{url.split('?', maxsplit=1)[0]}?page={page + 1}&page_size={page_size}"
+        if start + page_size < len(tags)
+        else None
+    )
+    return mock_response({"count": len(tags), "next": more, "results": listed})
+
+
+def _push_date_response(url: str, by_name: dict[str, dict[str, object]], *, ok: bool) -> Mock:
+    """Answer Docker Hub's per-tag request with that tag's push date, or a 404 when it is unavailable."""
+    return mock_response(by_name.get(url.rsplit("/tags/", maxsplit=1)[-1], {})) if ok else _not_found(url)
 
 
 def mock_docker_registry(
     *tags: dict[str, object],
     names: list[str] | None = None,
-    list_ok: bool = True,
+    unavailable: Endpoint | None = None,
     challenge: bool = True,
-    push_date_ok: bool = True,
     page_size: int | None = None,
 ) -> Callable[..., Mock]:
     """Return a requests.get/.head side effect that mimics an OCI registry plus Docker Hub's per-tag metadata.
@@ -88,14 +131,16 @@ def mock_docker_registry(
     endpoint, the token request returns a token, and `tags/list` returns the names of the given tags unless
     overridden. A manifest `HEAD` returns the tag's digest in the `Docker-Content-Digest` header, and Docker Hub's
     proprietary per-tag request returns that tag's push date. Each of the last two answers 404 for a tag it
-    doesn't know.
+    doesn't know. Docker Hub's proprietary tag listing returns the given tags with their digests, a page at a
+    time, reading the page and its size off the URL as Docker Hub does.
     The same callable is assigned to both `requests.get` and `requests.head`; it routes purely on the URL.
 
     Knobs for the less common flows:
-    - `list_ok=False` makes the tag listing 404 (an unresolvable reference, e.g. a CircleCI machine image).
+    - `unavailable` makes the named endpoint answer 404: the tag names for a reference that doesn't resolve (e.g. a
+      CircleCI machine image), the tag digests for a floating tag whose digest stays unknown, the push date for a
+      tag that resolves without a cooldown.
     - `challenge=False` makes the `/v2/` probe answer `200` without a `WWW-Authenticate` header, modelling an
       anonymous registry that isn't queried with a token (e.g. mcr.microsoft.com).
-    - `push_date_ok=False` makes Docker Hub's per-tag push-date request 404, so the tag resolves without a cooldown.
     - `page_size` splits the tag listing into pages of that many names, each linking to the next via the `Link`
       header (as the OCI spec and `next_page_url` expect), to model a paginated listing.
     """
@@ -108,13 +153,14 @@ def mock_docker_registry(
         if "/token" in url and "/v2/" not in url:  # Token endpoint discovered from the challenge.
             return mock_response({"token": "token"})  # nosec[B105]
         if "/tags/list" in url:
-            return _tags_list_response(url, tag_names, list_ok=list_ok, page_size=page_size)
+            names_ok = unavailable is not Endpoint.TAG_NAMES
+            return _tags_list_response(url, tag_names, list_ok=names_ok, page_size=page_size)
         if "/manifests/" in url:
             return _manifest_response(url, by_name)
+        if "/tags?" in url:  # Docker Hub's proprietary tag listing: every tag with its digest.
+            return _tag_digests_response(url, tags, ok=unavailable is not Endpoint.TAG_DIGESTS)
         # Docker Hub proprietary per-tag metadata (the push date); only reached for a tag that resolved a digest.
-        if not push_date_ok:
-            return mock_response({}, ok=False, status_code=404, url=url)
-        return mock_response(by_name.get(url.rsplit("/tags/", maxsplit=1)[-1], {}))
+        return _push_date_response(url, by_name, ok=unavailable is not Endpoint.PUSH_DATE)
 
     return get
 
@@ -191,6 +237,50 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
             Reason.NO_STALENESS_DATES, "ghcr.io/owner/python", Location(mock_file, 2), "ignore[stale<90]"
         )
 
+    @kills(
+        Mutation(
+            resolve,
+            "return Reason.NOTHING_FLOATING if latest is not None and latest.floating is None else None",
+            "return Reason.NOTHING_FLOATING if latest is not None and latest.floating is None and not latest.sha "
+            "else None",
+            "a floating-pin directive on a reference that carries a digest goes unreported",
+        )
+    )
+    def test_floating_pin_marker_on_a_version_tag_is_reported_as_redundant(self) -> None:
+        """Test that `allow[floating-pin]` on a tag naming a version is reported, since that tag does not float."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        marker = self.marker_line("allow[floating-pin]")
+        mock_file = mock_path(marker + self.reference(f"python:3.14@{DIGEST1}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_called_once_with(marker + self.reference(f"python:3.15@{DIGEST2}"))
+        self.assert_redundant_directive_logged(
+            Reason.NOTHING_FLOATING, "python", Location(mock_file, 2), "allow[floating-pin]"
+        )
+
+    @kills(
+        Mutation(
+            rewrite,
+            """    if marker.ignores(Scope.UPDATE):
+        logger.ignored(dependency, marker, location)
+    return update_line(match, location, marker)""",
+            """    if marker.ignores(Scope.UPDATE):
+        logger.ignored(dependency, marker, location)
+        return match.string
+    return update_line(match, location, marker)""",
+            "a frozen reference skips the decision, so nothing it holds nothing back with is reported",
+        )
+    )
+    def test_floating_pin_marker_on_a_frozen_reference_is_reported_as_redundant(self) -> None:
+        """Test that `allow[floating-pin]` on a frozen reference is reported, since the freeze keeps its tag too."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        marker = self.marker_line("ignore[update] allow[floating-pin]")
+        mock_file = mock_path(marker + self.reference(f"python:latest@{DIGEST1}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        self.assert_redundant_directive_logged(
+            Reason.UPDATE_HELD_BACK, "python", Location(mock_file, 2), "allow[floating-pin]"
+        )
+
     def test_stale_image_warned(self) -> None:
         """Test that an image whose newest tag was pushed long ago is warned about as stale, without being rewritten."""
         old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
@@ -199,6 +289,16 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
         self.assert_stale_dependency_logged("python", "3.14", Location(mock_file, 1))
+
+    def test_stale_snapshot_tag_warned(self) -> None:
+        """Test that a dated snapshot tag pushed long ago is warned about as stale, dated by its own push date."""
+        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        snapshot = "bookworm-20260803"
+        self.requests.side_effect = mock_docker_registry(docker_tag(snapshot, DIGEST, tag_last_pushed=old))
+        mock_file = mock_path(self.reference(f"debian:{snapshot}@{DIGEST}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        self.assert_stale_dependency_logged("debian", snapshot, Location(mock_file, 1))
 
     def test_bumped(self) -> None:
         """Test that the image tag and digest are bumped when a newer version is available."""
@@ -228,6 +328,33 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.assert_adopted_digest_drift_logged(self.drifted(mock_file))
         self.assert_no_warnings_logged()
 
+    @kills(
+        Mutation(
+            oci,
+            "            return DependencyVersion(version=candidate.name, sha=digest, floating=FloatingPin.RESOLVED)",
+            "            return DependencyVersion(version=candidate.name, floating=FloatingPin.RESOLVED)",
+            "the walk pins no digest, so a reference off Docker Hub is rewritten without one and drift goes unseen",
+        )
+    )
+    def test_pinned_floating_tag_on_another_registry_drift_warned(self) -> None:
+        """Test that a floating tag off Docker Hub serving another digest than it records is warned about."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST2), docker_tag("3.14.7", DIGEST2))
+        image = "ghcr.io/owner/python"
+        mock_file = mock_path(self.reference(f"{image}:latest@{DIGEST1}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        drifted = DriftedPin(image, "latest", Location(mock_file, 1), DIGEST1, new_sha=DIGEST2)
+        self.assert_digest_drift_logged(drifted)
+
+    def test_pin_reference_naming_a_digest_but_no_tag(self) -> None:
+        """Test that a reference naming a digest but no tag gains the version tag that digest serves."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_file = mock_path(self.reference(f"python@{DIGEST}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14.7@{DIGEST}"))
+        self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(mock_file, 1))
+        self.assert_no_warnings_logged()
+
     def test_pin_unpinned_image(self) -> None:
         """Test that an image referenced by tag only is pinned with the latest tag and digest."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
@@ -235,6 +362,87 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.15@{DIGEST2}"))
         self.assert_new_version_logged("python", "3.15", Location(mock_file, 1))
+        self.assert_no_warnings_logged()
+
+    def test_pin_floating_tag(self) -> None:
+        """Test that a floating tag is pinned to the concrete version and digest it currently serves."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_file = mock_path(self.reference("python:latest"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14.7@{DIGEST}"))
+        self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(mock_file, 1))
+        self.assert_no_warnings_logged()
+
+    def test_pin_a_tag_that_is_neither_a_version_nor_a_channel(self) -> None:
+        """Test that a dated snapshot, naming one image the registry never re-points, is pinned to its digest."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("bookworm-20260803", DIGEST))
+        mock_file = mock_path(self.reference("debian:bookworm-20260803"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_called_once_with(self.reference(f"debian:bookworm-20260803@{DIGEST}"))
+        self.assert_pinned_logged("debian", "bookworm-20260803", DIGEST, Location(mock_file, 1))
+        self.assert_no_warnings_logged()
+
+    def test_floating_tag_serving_no_concrete_version(self) -> None:
+        """Test that a floating tag serving no concrete version is left unchanged and reported."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("dev", DIGEST), docker_tag("prod", DIGEST))
+        mock_file = mock_path(self.reference("acme/api:dev"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        reason = FloatingPin.NO_VERSION_TAG
+        self.assert_unpinned_floating_tag_logged("acme/api", "dev", Location(mock_file, 1), reason)
+        self.assert_no_warnings_logged()
+
+    def test_pinned_floating_tag(self) -> None:
+        """Test that a floating tag pinned to the digest it still serves keeps it and gains the version."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_file = mock_path(self.reference(f"python:latest@{DIGEST}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14.7@{DIGEST}"))
+        self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(mock_file, 1))
+        self.assert_no_warnings_logged()
+
+    def test_pinned_floating_tag_that_drifted(self) -> None:
+        """Test that a floating tag serving another digest than it is pinned to is warned about, not re-pinned."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST2), docker_tag("3.14.7", DIGEST2))
+        mock_file = mock_path(self.reference(f"python:latest@{DIGEST1}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        drifted = DriftedPin("python", "latest", Location(mock_file, 1), DIGEST1, new_sha=DIGEST2)
+        self.assert_digest_drift_logged(drifted)
+        self.assert_no_new_version_logged()
+
+    def test_pinned_floating_tag_drift_adopted_with_flag(self) -> None:
+        """Test that --allow-hash-drift re-pins a re-pointed floating tag to the version and digest it now serves."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST2), docker_tag("3.14.7", DIGEST2))
+        mock_file = mock_path(self.reference(f"python:latest@{DIGEST1}"))
+        with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
+            self.run_updater(mock_file)
+        mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14.7@{DIGEST2}"))
+        drifted = DriftedPin("python", "latest", Location(mock_file, 1), DIGEST1, new_sha=DIGEST2)
+        self.assert_adopted_digest_drift_logged_among_others(drifted)
+        self.assert_pinned_logged("python", "3.14.7", DIGEST2, Location(mock_file, 1))
+        self.assert_no_warnings_logged()
+
+    def test_marker_keeps_the_tag_floating(self) -> None:
+        """Test that a marker allowing the floating pin leaves the tag as it is, naming what it resolves to."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        marker = self.marker_line("allow[floating-pin]")
+        mock_file = mock_path(marker + self.reference("python:latest"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        resolved = DependencyVersion(version="3.14.7", sha=DIGEST)
+        self.assert_kept_floating_logged("python", "latest", resolved, Location(mock_file, 2))
+        self.assert_no_warnings_logged()
+
+    def test_flag_keeps_every_tag_floating(self) -> None:
+        """Test that --allow-floating-pin leaves a floating tag as it is, naming the flag as what kept it."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_file = mock_path(self.reference("python:latest"))
+        with patch_environ({ALLOW_FLOATING_PIN.name: "1"}):
+            self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        resolved = DependencyVersion(version="3.14.7", sha=DIGEST)
+        self.assert_kept_floating_logged("python", "latest", resolved, Location(mock_file, 1), "--allow-floating-pin")
         self.assert_no_warnings_logged()
 
     def test_pin_unpinned_image_already_at_latest(self) -> None:

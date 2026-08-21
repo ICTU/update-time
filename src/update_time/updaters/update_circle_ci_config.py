@@ -4,20 +4,17 @@ CircleCI machine-executor images (the `image:` under a `machine:` key, e.g. `ubu
 Docker Hub and have no registry to query, so they are detected by parsing the YAML and left unchanged.
 """
 
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import DependencyName, DependencyVersion, VersionString
-from update_time.domain.publication import publication_date_reporting, reports_publication_dates
 from update_time.file_formats import yaml as yaml_format
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
-from update_time.sources.oci import YAML_IMAGE_REFERENCE, get_latest_tag
+from update_time.sources.oci import YAML_IMAGE_REFERENCE, tag_getter
 
 if TYPE_CHECKING:
-    from update_time.domain.bound import VersionBound
+    from update_time.domain.dependency import DependencyName
 
 _LOG = get_logger("circleci")
 
@@ -42,24 +39,15 @@ def _update_circle_ci_yaml(config_file: Path) -> None:
     machine = _machine_images(yaml_format.read(config_file))
     machine_names = {image.split(":", maxsplit=1)[0] for image in machine}
 
-    def dates_the_versions_of(image: DependencyName) -> bool:
-        """Return whether the image's versions carry a publication date.
+    def registry_serves(image: DependencyName) -> bool:
+        """Return whether a registry serves the image, which it does for every image but a machine-executor one.
 
-        A machine image carries none, since no registry serves it at all, and is recognised by name here rather
-        than by name and version, since a capability is asked about the dependency alone. Any other image is
-        judged by `get_latest_tag`, which resolves it.
+        A machine image is recognised by name rather than by name and version, a capability being asked about the
+        dependency alone.
         """
-        return image not in machine_names and reports_publication_dates(get_latest_tag, image)
+        return image not in machine_names
 
-    @partial(publication_date_reporting, when=dates_the_versions_of)
-    def get_new_version(
-        dependency: DependencyName, version: VersionString, version_bound: VersionBound, cooldown_days: int
-    ) -> DependencyVersion:
-        if f"{dependency}:{version}" in machine:
-            return DependencyVersion(version=version)  # Leave machine images unchanged; they aren't on a registry
-        return get_latest_tag(dependency, version, version_bound, cooldown_days)
-
-    update_file(config_file, YAML_IMAGE_REFERENCE, get_new_version=get_new_version, logger=_LOG)
+    update_file(config_file, YAML_IMAGE_REFERENCE, get_new_version=tag_getter(registry_serves), logger=_LOG)
 
 
 def update_circle_ci_config(circle_ci_dir: Path) -> None:

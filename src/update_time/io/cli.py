@@ -144,6 +144,13 @@ def parse_args() -> argparse.Namespace:
         "# update-time: allow[hash-drift] (an # update-time: ignore marker still wins)",
     )
     parser.add_argument(
+        "--allow-floating-pin",
+        action="store_true",
+        help="keep every floating image tag in the scan as it is, instead of pinning it to the version and digest "
+        "it currently serves; equivalent to marking every reference with # update-time: allow[floating-pin] (an "
+        "# update-time: ignore[floating-pin] marker still pins that reference)",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="run even when not inside a git repository (changes are made in place and cannot be reverted)",

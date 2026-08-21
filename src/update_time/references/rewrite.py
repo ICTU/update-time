@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
 
+from update_time.domain.dependency import FloatingPin
 from update_time.domain.drift import DriftedPin, hash_drifted, report_drift
+from update_time.domain.floating import floating_pin_cause
 from update_time.domain.line import located_lines
 from update_time.domain.marker import Scope, parse_marker
 from update_time.primitives.text import rewrite_string
@@ -46,59 +48,108 @@ class _Rewriter:
     def update_line(self, match: re.Match[str], location: Location, marker: Marker) -> str:
         """Update the matched reference's line with the new version (and digest) if any, or return it unchanged.
 
-        `updated_lines` has already matched the reference, so its line is `match.string` and its `location` points at
-        that line. Which version to update to — honouring the reference's `# update-time:` marker — is
-        `latest_version`'s decision, or None to leave the line unchanged. A reference that is already up to date is
-        checked for digest drift, and one with an update, or without its available digest, is rewritten.
+        Which version to update to — honouring the reference's `# update-time:` marker — is `latest_version`'s
+        decision, or None to leave the line unchanged. A pin that floats is replaced by the version and digest its
+        tag serves, and a reference already at its newest version is checked for digest drift.
         """
         reference = matched_reference(match, location, self.dependency)
         latest = latest_version(reference, self.get_new_version, marker, self.logger)
         if latest is None:
             return match.string
+        if latest.floating is not None and latest.floating is not FloatingPin.RESOLVED:
+            self.logger.unpinned_floating_tag(reference, latest, latest.floating)
+            return match.string
+        if latest.floating is FloatingPin.RESOLVED:
+            return self._pin_floating_reference(match, marker, latest, reference)
         has_sha_group = "sha" in match.groupdict()
         pin_unpinned = has_sha_group and match.group("sha") is None and bool(latest.sha)
         if latest.version == reference.current_version and not pin_unpinned:
-            return self._handle_drift(match, marker, latest, location)
+            return self._handle_drift(match, marker, latest, reference)
         return self._apply_update(match, latest, reference, pin_unpinned=pin_unpinned)
 
-    def _handle_drift(self, match: re.Match[str], marker: Marker, latest: DependencyVersion, location: Location) -> str:
-        """Return the line for an up-to-date reference, adopting or warning about a re-pushed digest.
+    def _pin_floating_reference(
+        self, match: re.Match[str], marker: Marker, latest: DependencyVersion, reference: Reference
+    ) -> str:
+        """Return the line for a reference whose pin floats, pinned to the version and digest its tag serves.
 
-        A pinned reference whose digest changed at the registry (a re-pushed tag) has drifted; whether that is
-        adopted or only warned about is `report_drift`'s decision, and the line is rewritten only when it is adopted.
+        A reference a marker keeps floating is left as it is. One that already records a digest is judged against
+        what its tag serves now, so drift is warned about or adopted first; a reference kept floating then adopts
+        the digest alone.
         """
-        current_sha = match.groupdict().get("sha")
-        if current_sha is None or not hash_drifted(latest.sha, current_sha):
+        drifted = self._drifted(match, latest)
+        if (cause := floating_pin_cause(marker)) is not None:
+            if drifted:
+                return self._drifted_pin(match, marker, latest, reference)
+            self.logger.keeping_floating_tag(reference, latest, cause)
             return match.string
+        if drifted and not self._adopts_drift(match, marker, latest, reference):
+            return match.string
+        return self._apply_update(match, latest, reference, pin_unpinned=match.groupdict().get("sha") is None)
+
+    @staticmethod
+    def _drifted(match: re.Match[str], latest: DependencyVersion) -> bool:
+        """Return whether the reference records a hash that its source no longer serves."""
+        current_sha = match.groupdict().get("sha")
+        return current_sha is not None and hash_drifted(latest.sha, current_sha)
+
+    def _handle_drift(
+        self, match: re.Match[str], marker: Marker, latest: DependencyVersion, reference: Reference
+    ) -> str:
+        """Return the line for a reference that keeps its tag, adopting or warning about a re-pushed digest.
+
+        A pinned reference whose digest changed at the registry (a re-pushed tag) has drifted, and one whose
+        digest still matches is left as it is.
+        """
+        if not self._drifted(match, latest):
+            return match.string
+        return self._drifted_pin(match, marker, latest, reference)
+
+    def _drifted_pin(
+        self, match: re.Match[str], marker: Marker, latest: DependencyVersion, reference: Reference
+    ) -> str:
+        """Return the line for a reference whose digest has drifted, adopting what its tag serves now or not.
+
+        Whether the drift is adopted or only warned about is `report_drift`'s decision. The digest alone is
+        replaced, so the reference keeps the tag it names, which is what a reference kept floating needs.
+        """
+        if self._adopts_drift(match, marker, latest, reference):
+            return rewrite_string(match, {"sha": latest.sha})
+        return match.string
+
+    def _adopts_drift(
+        self, match: re.Match[str], marker: Marker, latest: DependencyVersion, reference: Reference
+    ) -> bool:
+        """Report the reference's digest as drifted and return whether the digest the registry serves is adopted.
+
+        Whether drift is adopted or only warned about is `report_drift`'s decision, which the reference's marker
+        and the run-wide flag steer.
+        """
         dependency, version = matched_dependency(match, self.dependency), match.group("version")
-        drifted = DriftedPin(dependency, version, location, current_sha, new_sha=latest.sha)
-        adopted = report_drift(
+        drifted = DriftedPin(dependency, version, reference.location, match.group("sha"), new_sha=latest.sha)
+        return report_drift(
             marker, partial(self.logger.digest_drift, drifted), partial(self.logger.adopted_drift, drifted)
         )
-        return rewrite_string(match, {"sha": latest.sha}) if adopted else match.string
 
     def _apply_update(
         self, match: re.Match[str], latest: DependencyVersion, reference: Reference, *, pin_unpinned: bool
     ) -> str:
         """Return the line rewritten to the latest version and digest, logging the change.
 
-        With `pin_unpinned` the regexp has an optional `sha` group that did not match, so the reference is unpinned
-        and the available digest is appended to pin it, even when the version itself is already up to date.
-        Otherwise the version is replaced in place, and so is the digest of an already-pinned reference.
+        The change is reported as a pin unless the reference moved to another release, so a resolved floating pin
+        is reported as a pin although its version changes: it writes down the release the reference already
+        served. A reference that named no version gains the `:` attaching a tag to the image's name.
         """
-        version_changed = latest.version != match.group("version")
+        if latest.version != match.group("version") and latest.floating is None:
+            self.logger.new_version(reference, latest)
+        else:
+            self.logger.pinned(reference, latest)
+        version = f"{'' if match.group('version') else ':'}{latest.version}"
         if pin_unpinned:
             # Append the digest to a previously unpinned reference, bumping the version too if one is available.
-            if version_changed:
-                self.logger.new_version(reference, latest)
-            else:
-                self.logger.pinned(reference, latest)
-            replacements = {"version": f"{latest.version}@{latest.sha}"}
-        else:
-            self.logger.new_version(reference, latest)
-            replacements = {"version": latest.version}
-            if match.groupdict().get("sha") is not None:
-                replacements["sha"] = latest.sha
+            return rewrite_string(match, {"version": f"{version}@{latest.sha}"})
+        replacements = {"version": version}
+        if match.groupdict().get("sha") is not None:
+            replacements["sha"] = latest.sha
         return rewrite_string(match, replacements)
 
     def updated_lines(self, lines: list[Line], regexp: str | re.Pattern[str]) -> list[str]:
