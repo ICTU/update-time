@@ -50,8 +50,8 @@ class ApiHeadersTest(LoggingTestCase):
             'response.json().get("access_token")',
             'response.json()["access_token"]',
             "a Docker Hub token response carrying no token ends the run with a traceback",
+            raises="KeyError: 'access_token'",
         ),
-        by_raising="KeyError: 'access_token'",
     )
     @patch("requests.post", Mock(return_value=mock_response({})))
     def test_no_headers_when_token_response_carries_no_token(self):

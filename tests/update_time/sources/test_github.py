@@ -286,8 +286,8 @@ class GetLatestVersionTest(LoggingTestCase):
             'return parse_timestamp(committer.get("date")) if committer else None',
             'return parse_timestamp(committer.get("date"))',
             "a commit whose committer GitHub reports as null ends the run with a traceback",
+            raises="AttributeError: 'NoneType' object has no attribute 'get'",
         ),
-        by_raising="AttributeError: 'NoneType' object has no attribute 'get'",
     )
     @patch_github(
         releases=[], tags=[github_tag_json("v1.1")], commit={"sha": COMMIT_SHA, "commit": {"committer": None}}
@@ -404,8 +404,8 @@ class GetReleaseTest(LoggingTestCase):
             'f"{package}-{version}", f"{package}@{version}"',
             'f"{package}@{version}"',
             "a release whose monorepo tag carries no v prefix is reported as having no changelog",
+            raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
         ),
-        by_raising="AttributeError: 'NoneType' object has no attribute 'tag_name'",
     )
     @patch_get([github_release_json("selenium-4.46.0"), github_release_json("selenium-4.47.0", body="Changelog")])
     def test_monorepo_tag_without_v_match(self):
@@ -419,17 +419,15 @@ class GetReleaseTest(LoggingTestCase):
             ', f"{package}@{version}"',
             "",
             "a release whose monorepo tag joins the package and the version with an @ has no changelog reported",
+            raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
         ),
-        by_raising="AttributeError: 'NoneType' object has no attribute 'tag_name'",
-    )
-    @kills(
         Mutation(
             github,
             "{package}@{version}",
             "{package.removeprefix('@')}@{version}",
             "a scoped npm package's release has no changelog reported",
+            raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
         ),
-        by_raising="AttributeError: 'NoneType' object has no attribute 'tag_name'",
     )
     @patch_get(
         [
@@ -520,8 +518,8 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
             'body=release.get("body") or "",',
             'body=release["body"] or "",',
             "a release GitHub answers without a body ends the run with a traceback",
+            raises="KeyError: 'body'",
         ),
-        by_raising="KeyError: 'body'",
     )
     @patch_get([{"tag_name": "1.1", "draft": False, "prerelease": False, "published_at": None}])
     def test_release_without_body(self):

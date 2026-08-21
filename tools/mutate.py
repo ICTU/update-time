@@ -16,7 +16,7 @@ import subprocess  # nosec
 import sys
 from pathlib import Path
 
-from tests.mutation import CHECKING
+from tests.mutation import CHECKS_OFF
 
 # The line separating the snippet to replace from its replacement on standard input.
 _SEPARATOR = "@@"
@@ -58,7 +58,7 @@ _DEFAULT_COMMAND = ("just", "test")
 # The environment the command runs in, with the `@kills` checks switched off. A test whose own registered mutation
 # names a line this probe rewrote would report that mutation as stale or survived, which says nothing about the
 # probe, so the kill list holds the tests that failed on this mutation and no others.
-_ENVIRONMENT = os.environ | {CHECKING: "1"}
+_ENVIRONMENT = os.environ | {CHECKS_OFF: "1"}
 
 
 def snippets(text: str) -> tuple[str, str]:

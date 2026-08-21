@@ -95,17 +95,15 @@ class GetVulnerabilitiesTest(LoggingTestCase):
             'frozenset(record.get("aliases") or []),',
             'frozenset(record.get("aliases", [])),',
             "an advisory whose aliases OSV reports as null ends the run with a traceback",
+            raises="TypeError: 'NoneType' object is not iterable",
         ),
-        by_raising="TypeError: 'NoneType' object is not iterable",
-    )
-    @kills(
         Mutation(
             osv,
             'for severity in record.get("severity") or []}',
             'for severity in record.get("severity", [])}',
             "an advisory whose severity OSV reports as null ends the run with a traceback",
+            raises="TypeError: 'NoneType' object is not iterable",
         ),
-        by_raising="TypeError: 'NoneType' object is not iterable",
     )
     def test_advisory_with_a_null_array(self, mock_post: Mock):
         """Test that an advisory whose severity or aliases OSV reports as null is read as a vulnerability still."""

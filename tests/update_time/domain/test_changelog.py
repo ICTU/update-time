@@ -88,10 +88,7 @@ class VersionAnchorTest(unittest.TestCase):
         "as one fenced code block",
     )
 
-    @kills(_FENCE_OVER_UNDERLINE)
-    @kills(_HASH_ANCHOR)
-    @kills(_NO_UNDERLINE)
-    @kills(_FEW_ADORNMENTS)
+    @kills(_FENCE_OVER_UNDERLINE, _HASH_ANCHOR, _NO_UNDERLINE, _FEW_ADORNMENTS)
     def test_underlined_heading_anchors_parsing_rather_than_a_prose_mention(self):
         """Test that a prose mention doesn't anchor parsing when a heading names the version, whatever underlines it."""
         for adornment in _SPEC_ADORNMENT_CHARACTERS:
@@ -121,8 +118,7 @@ class VersionAnchorTest(unittest.TestCase):
         "a changelog naming a longer version that ends with this one reports the longer version's changes",
     )
 
-    @kills(_NO_LOOKAHEAD)
-    @kills(_NO_LOOKBEHIND)
+    @kills(_NO_LOOKAHEAD, _NO_LOOKBEHIND)
     def test_longer_version_does_not_anchor_parsing(self):
         """Test that a version spelled inside a longer version doesn't anchor parsing at the longer one."""
         for version, longer_version in (("1.0.0", "1.0.0.post0"), ("1.0", "11.0")):
@@ -136,7 +132,7 @@ class VersionAnchorTest(unittest.TestCase):
         changelog,
         '    if start is None and version.endswith(".0") and version.count(".") > 1:\n'
         '        version = version.removesuffix(".0")\n'
-        "        start = _find_version_index(all_lines, version)\n",
+        "        start = _find_version_index(all_lines, version)",
         "",
         "a changelog heading a release one component shorter than the version reports no changes for it",
     )
@@ -144,13 +140,12 @@ class VersionAnchorTest(unittest.TestCase):
     _SHORTEN_ANY_VERSION = Mutation(
         changelog,
         '    if start is None and version.endswith(".0") and version.count(".") > 1:\n'
-        '        version = version.removesuffix(".0")\n',
-        '    if start is None and version.count(".") > 1:\n        version = version.rsplit(".", 1)[0]\n',
+        '        version = version.removesuffix(".0")',
+        '    if start is None and version.count(".") > 1:\n        version = version.rsplit(".", 1)[0]',
         "a version that is no `.0` release reports the changes of the release one component shorter",
     )
 
-    @kills(_NO_SHORTER_HEADING)
-    @kills(_SHORTEN_ANY_VERSION)
+    @kills(_NO_SHORTER_HEADING, _SHORTEN_ANY_VERSION)
     def test_only_a_dot_zero_version_is_found_under_a_shorter_heading(self):
         """Test that only a version ending in `.0` is looked up under a heading naming one component fewer."""
         v1_change = "## 1.11\n\n- Fixed ...\n- Changed ..."
@@ -160,12 +155,13 @@ class VersionAnchorTest(unittest.TestCase):
 
     _SHORTER_VERSION_NOT_REBOUND = Mutation(
         changelog,
-        '        version = version.removesuffix(".0")\n        start = _find_version_index(all_lines, version)\n',
-        '        start = _find_version_index(all_lines, version.removesuffix(".0"))\n',
+        '        version = version.removesuffix(".0")\n        start = _find_version_index(all_lines, version)',
+        '        start = _find_version_index(all_lines, version.removesuffix(".0"))',
         "a changelog without heading markup naming a shorter version raises instead of reporting its changes",
+        raises="ValueError: substring not found",
     )
 
-    @kills(_SHORTER_VERSION_NOT_REBOUND, by_raising="ValueError: substring not found")
+    @kills(_SHORTER_VERSION_NOT_REBOUND)
     def test_dot_zero_version_is_found_under_a_shorter_version_named_in_prose(self):
         """Test that a changelog without headings reports a `.0` version under the shorter version its prose names."""
         v1_change = "Version 1.11 released 2026-04-22\n\n- Fixed ...\n- Changed ..."
@@ -257,7 +253,7 @@ class SectionEndTest(unittest.TestCase):
 
     _NO_LONGER_VERSION_END = Mutation(
         changelog,
-        "            or _heads_a_longer_version(heading_level, line, version)\n",
+        "            or _heads_a_longer_version(heading_level, line, version)",
         "",
         "a changelog heading a longer version inside a version's section reports that longer version's entry as well",
     )
@@ -283,8 +279,7 @@ class SectionEndTest(unittest.TestCase):
         "a changelog fencing a code block with tildes reports the fence as the end of the version's changes",
     )
 
-    @kills(_ONLY_TILDE_FENCES)
-    @kills(_ONLY_BACKTICK_FENCES)
+    @kills(_ONLY_TILDE_FENCES, _ONLY_BACKTICK_FENCES)
     def test_heading_inside_a_fenced_code_block_does_not_end_the_section(self):
         """Test that a heading marker inside a fenced code block, which is code rather than a heading, ends none."""
         for fence in ("```", "~~~"):
@@ -371,8 +366,7 @@ class SectionEndTest(unittest.TestCase):
         "an entry ends where its prose names a longer version, reporting the lines above that alone",
     )
 
-    @kills(_HEADING_PREFIX)
-    @kills(_PROSE_NAMING_A_LONGER_VERSION)
+    @kills(_HEADING_PREFIX, _PROSE_NAMING_A_LONGER_VERSION)
     def test_version_line_does_not_end_a_heading_anchored_section(self):
         """Test that a line naming a longer version in prose does not end a section a heading introduced."""
         v1_change = "1.0\n===\n\n- Fixed ...\n1.0.1 was never released.\n- Changed ..."
@@ -413,8 +407,8 @@ class SectionEndTest(unittest.TestCase):
 
     _NO_HEADING_BOUND = Mutation(
         changelog,
-        "    if not section_level:\n        return bool(heading_level)",
-        "    if not section_level:\n        return False",
+        "        return bool(heading_level)",
+        "        return False",
         "a version named in prose rather than in a heading reports the rest of the changelog as its changes",
     )
 

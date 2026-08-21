@@ -42,8 +42,8 @@ class NpmjsPublicationDatetimeTest(LoggingTestCase):
             'return parse_timestamp(_package_metadata(package).get("time", {}).get(version))',
             'return parse_timestamp(_package_metadata(package).get("time", {})[version])',
             "a version the registry dates nowhere in its time map ends the run with a traceback",
+            raises="KeyError: '9.9'",
         ),
-        by_raising="KeyError: '9.9'",
     )
     @patch_get({"time": {}})
     def test_get_publication_datetime_for_unlisted_version(self):
