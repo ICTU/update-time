@@ -40,6 +40,7 @@ NULL_PROJECT_URLS_READ_AS_A_DICT = Mutation(
     'urls = info.get("project_urls") or {}',
     'urls = info.get("project_urls", {})',
     "the project URLs PyPI reports as null are read as a dictionary, which ends the run with a traceback",
+    raises="AttributeError: 'NoneType' object has no attribute 'items'",
 )
 A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED = Mutation(
     pypi,
@@ -47,8 +48,6 @@ A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED = Mutation(
     '    if metadata is None or metadata["info"].get("project_urls", {}) is None:\n        return None',
     "a release whose project URLs PyPI reports as null is skipped rather than adopted",
 )
-# The error the first of those mutations makes a test raise, wherever the test enters the code it breaks.
-NULL_PROJECT_URLS_ATTRIBUTE_ERROR = "AttributeError: 'NoneType' object has no attribute 'items'"
 
 
 @patch("requests.get")
@@ -187,8 +186,8 @@ class GetChangesTest(LoggingTestCase):
             'changelog_response.headers.get("Content-Type", "")',
             'changelog_response.headers["Content-Type"]',
             "a changelog URL answered without a content type ends the run with a traceback",
+            raises="KeyError: 'Content-Type'",
         ),
-        by_raising="KeyError: 'Content-Type'",
     )
     def test_changelog_url_without_content_type(self, mock_get: Mock):
         """Test that the changes are returned when the changelog URL's server sends no Content-Type header."""
@@ -272,7 +271,7 @@ class GetChangesTest(LoggingTestCase):
         self.assertEqual(get_changes("frozenlist", "1.1"), changelog)
         self.assert_releases_requested(mock_get)
 
-    @kills(NULL_PROJECT_URLS_READ_AS_A_DICT, by_raising=NULL_PROJECT_URLS_ATTRIBUTE_ERROR)
+    @kills(NULL_PROJECT_URLS_READ_AS_A_DICT)
     def test_changelog_in_description(self, mock_get: Mock):
         """Test that the description's changelog is returned when PyPI omits the project URLs or reports them null."""
         changelog = "1.1\n- Fixed ...\n- Added ..."
@@ -318,8 +317,7 @@ class GetChangesTest(LoggingTestCase):
         "a repository whose name merely contains the package's is read as the package's own",
     )
 
-    @kills(_NAMES_COMPARED_AS_SPELLED)
-    @kills(_NAME_MATCHED_AS_A_SUBSTRING)
+    @kills(_NAMES_COMPARED_AS_SPELLED, _NAME_MATCHED_AS_A_SUBSTRING)
     def test_which_repository_names_match_the_package_name(self, mock_get: Mock):
         """Test which repository names count as the package's, compared as PyPI normalizes a distribution name."""
         changelog = "1.1\n- Fixed ...\n- Added ..."
@@ -489,12 +487,10 @@ class GetChangesTest(LoggingTestCase):
         "    return tuple(response.json()) if response is not None else None",
         "    response = fetch(contents_url, _LOG, headers=_github_headers())\n    return tuple(response.json())",
         "a repository whose root listing cannot be fetched ends the run with a traceback",
+        raises="AttributeError: 'NoneType' object has no attribute 'json'",
     )
 
-    @kills(
-        _UNGUARDED_LISTING,
-        by_raising="AttributeError: 'NoneType' object has no attribute 'json'",
-    )
+    @kills(_UNGUARDED_LISTING)
     def test_root_listing_unreachable(self, mock_get: Mock):
         """Test that a root listing that can't be fetched yields no changes, and is reported as unreachable."""
         contents_url = self.contents_url("pypa/packaging")

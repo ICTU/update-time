@@ -35,7 +35,6 @@ from tests.update_time.helpers import (
 )
 from tests.update_time.sources.test_pypi import (
     A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED,
-    NULL_PROJECT_URLS_ATTRIBUTE_ERROR,
     NULL_PROJECT_URLS_READ_AS_A_DICT,
 )
 
@@ -108,8 +107,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    @kills(NULL_PROJECT_URLS_READ_AS_A_DICT, by_raising=NULL_PROJECT_URLS_ATTRIBUTE_ERROR)
-    @kills(A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED)
+    @kills(NULL_PROJECT_URLS_READ_AS_A_DICT, A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED)
     def test_a_pin_whose_metadata_reports_no_project_urls(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin whose metadata reports the project URLs as null is updated, and so is the pin beside it."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "flask==1.0\nhumanize==4.14.0\n")
@@ -236,8 +234,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     @kills(
         Mutation(
             directive_module,
-            "        Reason.NO_YANK_CONCEPT,\n        Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,",
-            "        Reason.NO_YANK_CONCEPT,",
+            "        Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,",
+            "",
             "ignore[yanked] on a loose requirement is not reported redundant, though the requirement pins no version "
             "to check for a yank",
         )

@@ -9,7 +9,7 @@ from unittest.mock import Mock, call, patch
 from tools.mutate import _ENVIRONMENT, _NOT_RUN, _SEPARATOR, main, snippets
 
 from tests.helpers import mock_path
-from tests.mutation import CHECKING
+from tests.mutation import CHECKS_OFF
 
 _ORIGINAL = "before\nold\nafter\n"
 _INPUT = f"old\n{_SEPARATOR}\nnew\n"
@@ -66,7 +66,7 @@ class MainTest(unittest.TestCase):
     def test_the_kills_checks_are_skipped(self):
         """Test that the command runs with the mutation checks off, so its kill list names the tests that failed."""
         self.probe(mock_path(_ORIGINAL))
-        self.assertEqual(self.run_command.call_args.kwargs.get("env", {}).get(CHECKING), "1")
+        self.assertEqual(self.run_command.call_args.kwargs.get("env", {}).get(CHECKS_OFF), "1")
 
     def test_a_command_of_its_own(self):
         """Test that a command given after the file is run instead of the default."""
