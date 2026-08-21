@@ -133,7 +133,6 @@ src.exclude = [
 [tool.coverage]
 run.branch = true
 run.data_file = "build/.coverage"
-run.dynamic_context = "test_function"
 run.omit = [
     "*/.venv/*",
     "*/venv/*",
@@ -151,7 +150,6 @@ report.exclude_lines = [
 report.fail_under = 100
 report.skip_covered = true
 html.directory = "build/unittest-coverage"
-html.show_contexts = true
 xml.output = "build/unittest-coverage.xml"
 
 [tool.fixit]
