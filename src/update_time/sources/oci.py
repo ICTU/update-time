@@ -9,6 +9,7 @@ mcr.microsoft.com, quay.io, ...) by listing tag names, discovering the registry'
 
 import re
 from dataclasses import dataclass, replace
+from datetime import date
 from functools import cache, cached_property, partial, total_ordering
 from http import HTTPStatus
 from typing import TYPE_CHECKING, cast
@@ -242,6 +243,23 @@ class Tag:
             return True  # Neither side has a suffix, so there is no deeper version axis to compare.
         return self._suffix_tag.is_newer_or_equal(tag._suffix_tag)
 
+    @property
+    def _is_dated_snapshot(self) -> bool:
+        """Return whether the tag's version is a date, such as `20260805`, rather than a release.
+
+        A repository can publish dated snapshots of a development branch beside its releases, in one tag namespace.
+        Such a snapshot is a version of one component that reads as a calendar date. This is asked only of a tag
+        whose version parsed.
+        """
+        release = cast("Version", self.version).release
+        if len(release) != 1:
+            return False
+        try:
+            date.fromisoformat(str(release[0]))
+        except ValueError:
+            return False
+        return True
+
     def is_candidate_for(self, current: Tag) -> bool:
         """Return whether this tag (known by name only) is a possible update of the current tag.
 
@@ -252,6 +270,8 @@ class Tag:
             return False  # Ignore tags if the version is not valid
         if self.version.is_prerelease:
             return False  # Ignore tags if the version is a prerelease
+        if self._is_dated_snapshot and not current._is_dated_snapshot:
+            return False  # Ignore a dated snapshot, which is no update for a tag naming a release
         if self.prefix != current.prefix:
             return False  # Ignore tags with a different prefix so e.g. python3.x isn't replaced by pypy3.x
         if self.suffix_label != current.suffix_label:

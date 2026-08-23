@@ -1030,7 +1030,7 @@ When updating an image tag, Update-time keeps the non-numeric parts of the tag a
 
 A suffix without an embedded version (`bookworm-slim`, `windows`) is never updated.
 
-A tag naming a channel in labels alone, such as `latest` or `trixie`, floats, and is replaced by the version tag serving the same image, keeping the labels the tag itself carries (see [Floating image tags](#floating-image-tags)). A reference that names no tag asks for `latest`, the tag a registry serves by default, so it floats too and is pinned the same way. A dated snapshot such as `debian:bookworm-20260803` names no channel and no version: the registry leaves such a tag on the image it was pushed for, so its tag stands and only a digest is added.
+A tag naming a channel in labels alone, such as `latest` or `trixie`, floats, and is replaced by the version tag serving the same image, keeping the labels the tag itself carries (see [Floating image tags](#floating-image-tags)). A reference that names no tag asks for `latest`, the tag a registry serves by default, so it floats too and is pinned the same way. A dated snapshot such as `debian:bookworm-20260803` names no channel and no version: the registry leaves such a tag on the image it was pushed for, so its tag stands and only a digest is added. A repository can also name a snapshot by the date alone, as Alpine names one `20260805` beside its `3.24.1` release. Such a tag does name a version, and one that sorts above the releases beside it, so adopting it would carry a reference off its release line. Update-time passes it over instead: a reference on a release keeps following releases, and a reference on a snapshot keeps following snapshots.
 
 #### Pinning
 
@@ -1048,7 +1048,7 @@ Pinning a floating tag adopts no newer image, so the cooldown holds it back not 
 
 #### Stale dependencies
 
-Image tags are only checked on Docker Hub, for the same reason the cooldown is, so a `stale` marker on an image hosted elsewhere is reported as redundant. So is one on a CircleCI machine-executor image, which no registry serves. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old. A dated snapshot is the exception to that: the registry never moves such a tag, so nothing re-pushes it, and its own push date is what the check measures. A snapshot pinned years ago is reported as stale.
+Image tags are only checked on Docker Hub, for the same reason the cooldown is, so a `stale` marker on an image hosted elsewhere is reported as redundant. So is one on a CircleCI machine-executor image, which no registry serves. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old. A dated snapshot is the exception to that: the registry never moves such a tag, so nothing re-pushes it, and its own push date is what the check measures. A snapshot pinned years ago is reported as stale. A snapshot named by the date alone is passed over here too, so a reference on a release is dated by the newest release and not by the snapshot, however much newer that snapshot is. Alpine's `20260805` is newer than its `3.24.1`, and a reference on `3.24.1` is dated by Alpine's newest release all the same.
 
 #### Yanked dependencies
 

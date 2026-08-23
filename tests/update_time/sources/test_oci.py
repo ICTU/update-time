@@ -202,6 +202,35 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(docker_tag("1.4a1", DIGEST))
         self.assertEqual(get_latest_tag("prerelease", "1.3", NO_BOUND, COOLDOWN.default).version, "1.3")
 
+    @kills(
+        Mutation(
+            oci,
+            "        if self._is_dated_snapshot and not current._is_dated_snapshot:",
+            "        if self._is_dated_snapshot and current._is_dated_snapshot:",
+            "a dated snapshot of a development branch is adopted as an update for a tag naming a release",
+        )
+    )
+    def test_dated_snapshot_tag_is_no_candidate_for_a_release(self):
+        """Test that a tag naming a date, such as `20260805`, loses to a release tag it sorts above."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("20260805", DIGEST1), docker_tag("3.25.0", DIGEST2))
+        latest = get_latest_tag("dated_snapshot", "3.24.1", NO_BOUND, COOLDOWN.default)
+        self.assertEqual(latest.version, "3.25.0")
+
+    @kills(
+        Mutation(
+            oci,
+            "        try:\n            date.fromisoformat(str(release[0]))\n        except ValueError:\n"
+            "            return False\n        return True",
+            "        return True",
+            "a version of eight digits naming no calendar date is passed over as if it were a snapshot",
+        )
+    )
+    def test_eight_digit_version_that_is_no_date_is_a_candidate(self):
+        """Test that an eight-digit version reading as no calendar date, such as `20261332`, still updates a release."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("20261332", DIGEST))
+        latest = get_latest_tag("no_calendar_date", "3.24.1", NO_BOUND, COOLDOWN.default)
+        self.assertEqual(latest.version, "20261332")
+
     def test_different_suffix(self):
         """Test that tags for different suffixes are ignored."""
         self.requests.side_effect = mock_docker_registry(docker_tag("1.4-windows", DIGEST))

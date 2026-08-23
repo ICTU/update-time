@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Fixed
 
+- Keep a reference on its release line where a repository publishes dated snapshot tags beside its releases, such as Alpine's `20260805` beside `3.24.1`, instead of moving the reference onto the snapshot. Closes [#293](https://github.com/ICTU/update-time/issues/293).
 - Report the changes from the repository named after the package, instead of those from the first GitHub repository its description links, such as the `aws/aws-cli` in botocore's description. Closes [#280](https://github.com/ICTU/update-time/issues/280).
 - Report the changes for a release its changelog heads one component shorter, such as mypy heading version `1.11.0` as `Mypy 1.11`, instead of reporting no changelog available. Closes [#278](https://github.com/ICTU/update-time/issues/278).
 - Report the changes for a dependency whose repository tags a release `<package>-<version>` or `<package>@<version>`, such as selenium and astro, instead of reporting no changelog available. Closes [#273](https://github.com/ICTU/update-time/issues/273).
