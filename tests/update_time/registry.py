@@ -281,24 +281,40 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
             Reason.UPDATE_HELD_BACK, "python", Location(mock_file, 2), "allow[floating-pin]"
         )
 
-    def test_stale_image_warned(self) -> None:
-        """Test that an image whose newest tag was pushed long ago is warned about as stale, without being rewritten."""
+    def test_stale_image_names_the_newest_tag(self) -> None:
+        """Test that a stale image is warned about by its newest tag."""
         old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
-        self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST, tag_last_pushed=old))
-        mock_file = mock_path(self.reference(f"python:3.14@{DIGEST}"))
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2, tag_last_pushed=old))
+        marker = self.marker_line("ignore[update]")
+        mock_file = mock_path(marker + self.reference(f"python:3.14@{DIGEST}"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
-        self.assert_stale_dependency_logged("python", "3.14", Location(mock_file, 1))
+        self.assert_stale_dependency_logged("python", "3.15", Location(mock_file, 2))
 
-    def test_stale_snapshot_tag_warned(self) -> None:
-        """Test that a dated snapshot tag pushed long ago is warned about as stale, dated by its own push date."""
+    @kills(
+        Mutation(
+            oci,
+            "    published = max(pushes.values())",
+            "    published = min(pushes.values())",
+            "an image is dated by its oldest push, so a reference pinned years ago is reported as stale",
+        )
+    )
+    def test_snapshot_on_a_living_image_is_not_stale(self) -> None:
+        """Test that a snapshot pinned long ago is not reported as stale while its image keeps publishing.
+
+        The snapshot is 512 days old and debian released 10 days ago, so the reference is dated by the release.
+        """
         old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
-        snapshot = "bookworm-20260803"
-        self.requests.side_effect = mock_docker_registry(docker_tag(snapshot, DIGEST, tag_last_pushed=old))
+        recent = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+        snapshot = "bookworm-20240110"
+        self.requests.side_effect = mock_docker_registry(
+            docker_tag("13.2", DIGEST2, tag_last_pushed=recent),
+            docker_tag(snapshot, DIGEST, tag_last_pushed=old),
+        )
         mock_file = mock_path(self.reference(f"debian:{snapshot}@{DIGEST}"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
-        self.assert_stale_dependency_logged("debian", snapshot, Location(mock_file, 1))
+        self.assert_no_warnings_logged()
 
     def test_bumped(self) -> None:
         """Test that the image tag and digest are bumped when a newer version is available."""
@@ -373,8 +389,8 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(mock_file, 1))
         self.assert_no_warnings_logged()
 
-    def test_pin_a_tag_that_is_neither_a_version_nor_a_channel(self) -> None:
-        """Test that a dated snapshot, naming one image the registry never re-points, is pinned to its digest."""
+    def test_pin_a_snapshot_with_no_newer_sibling(self) -> None:
+        """Test that a dated snapshot the registry lists no newer one of keeps its tag and is pinned to its digest."""
         self.requests.side_effect = mock_docker_registry(docker_tag("bookworm-20260803", DIGEST))
         mock_file = mock_path(self.reference("debian:bookworm-20260803"))
         self.run_updater(mock_file)

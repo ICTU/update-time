@@ -13,7 +13,7 @@ from rich.theme import Theme
 
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.marker import Scope
-from update_time.domain.staleness import is_stale
+from update_time.domain.staleness import stale_release
 from update_time.primitives.digest import SHA256_DIGEST
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
@@ -398,16 +398,16 @@ class Logger:
     def warn_if_stale(self, resolved: ResolvedReference, threshold: int) -> None:
         """Warn if the dependency's newest release is old enough that the project may have gone quiet.
 
-        Does nothing when the newest release date is unknown or within the threshold (or the check is disabled),
-        so callers can hand off every resolved version unconditionally. Both the decision and the reported day count
+        Does nothing when the newest release is unknown or within the threshold (or the check is disabled), so
+        callers can hand off every resolved version unconditionally. Both the decision and the reported day count
         are whole days, so the count in the message always exceeds the threshold beside it.
         """
-        if (published := resolved.release.newest_published) is None or not is_stale(published, threshold):
+        if (newest := stale_release(resolved.release, threshold)) is None:
             return
         self._log(
             self._MESSAGE_STALE,
             **self._reference_fields(
-                resolved, version=resolved.release.version, days=days_since(published), threshold=threshold
+                resolved, version=newest.version, days=days_since(newest.published), threshold=threshold
             ),
         )
 
@@ -416,11 +416,8 @@ class Logger:
     )
 
     def _ignored_staleness(self, resolved: ResolvedReference, marker: Marker, threshold: int) -> None:
-        """Log that the marker held back a staleness warning that would otherwise have been logged.
-
-        Guards on the same condition as `warn_if_stale`, so a marker that suppresses nothing stays silent.
-        """
-        if is_stale(resolved.release.newest_published, threshold):
+        """Log that the marker held back a staleness warning, so a marker that suppresses nothing stays silent."""
+        if stale_release(resolved.release, threshold) is not None:
             self._log_ignored(self._MESSAGE_IGNORED_STALENESS, resolved.dependency, marker, resolved.location)
 
     def report_staleness(self, resolved: ResolvedReference, marker: Marker, threshold: int) -> None:

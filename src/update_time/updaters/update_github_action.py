@@ -1,27 +1,28 @@
 """GitHub Action updater script finds YAML files in the GitHub directory and updates 'uses' keys to latest versions."""
 
 import re
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
 from update_time.io.log import get_logger
+from update_time.primitives.digest import COMMIT_SHA
 from update_time.references.file import rewrite_file
 from update_time.references.github import PinUpdater
 from update_time.references.rewrite import updated_lines
 
 if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyVersion
-    from update_time.domain.line import Line
     from update_time.domain.reference import Reference
 
 _LOG = get_logger("github action")
-# Match a `uses:` reference that is either already pinned to a commit SHA with a version comment
-# (`<sha> # vX.Y.Z`) or unpinned to a version tag (`@vX` / `@vX.Y.Z`). Branch references (e.g. `@main`) and
-# local actions (no `@`) don't carry a resolvable version, so they don't match and are left untouched.
+# Match a `uses:` reference: one already pinned to a commit SHA with a version comment (`<sha> # vX.Y.Z`), one
+# unpinned to a version tag (`@vX` / `@vX.Y.Z`), and one naming a branch (`@main`), whose repository is checked for
+# staleness although no update is resolved for it. A local action carries no `@`, so it doesn't match at all.
 _ACTION_RE = re.compile(
     r"uses: (?P<dependency>[\w\d\./-]+)@"
-    r"(?:(?P<sha>[a-f0-9]{40}) # v?(?P<version>[\d\w\.\-]+)|v(?P<tag>[\d\w\.\-]+))"
+    rf"(?:(?P<sha>{COMMIT_SHA}) # v?(?P<version>[\d\w\.\-]+)|v?(?P<tag>[\d\w\.\-]+))"
 )
 
 
@@ -36,15 +37,11 @@ def _spell_action(reference: Reference, latest: DependencyVersion) -> str:
 _ACTION = PinUpdater(_spell_action, _LOG)
 
 
-def _updated_lines(lines: list[Line]) -> list[str]:
-    """Return the file's lines with every `uses:` reference pinned or bumped, honouring markers."""
-    return updated_lines(lines, _ACTION_RE, _ACTION.update_line, _LOG)
-
-
 def update_github_actions(github_dir: Path) -> None:
     """Update the GitHub Actions in all YAML files under the GitHub directory, including composite actions."""
+    pin_the_references = partial(updated_lines, regexp=_ACTION_RE, update_line=_ACTION.update_line, logger=_LOG)
     for yaml_file in glob(*YAML_GLOB_PATTERNS, start=github_dir):
-        rewrite_file(yaml_file, _updated_lines, _LOG)
+        rewrite_file(yaml_file, pin_the_references, _LOG)
 
 
 def main() -> None:  # pragma: no cover

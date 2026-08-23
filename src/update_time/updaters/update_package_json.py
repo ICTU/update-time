@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING
 
+from update_time.domain.dependency import DependencyVersion
 from update_time.domain.reference import ResolvedReference
 from update_time.domain.staleness import warn_about_stale_dependencies
 from update_time.file_formats import package_json as package_json_format
@@ -55,10 +56,10 @@ def _newest_releases(package_json: Path) -> Iterable[ResolvedReference]:
     in the lock file. Staleness is measured against the package's newest release, so the range is not needed.
     """
     return (
-        ResolvedReference(name, "", location, release=release)
+        ResolvedReference(name, "", location, release=DependencyVersion.unpinned(newest))
         for name, locations in package_json_format.dependency_locations(package_json).items()
         for location in locations
-        if (release := npmjs.newest_release(name)) is not None
+        if (newest := npmjs.newest_release(name)) is not None
     )
 
 

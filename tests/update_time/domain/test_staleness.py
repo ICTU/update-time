@@ -15,10 +15,6 @@ from tests.update_time.helpers import resolved_reference, staleness_disabled
 class IsStaleTest(unittest.TestCase):
     """Unit tests for the is_stale helper."""
 
-    def test_no_timestamp(self):
-        """Test that a missing timestamp is never stale."""
-        self.assertFalse(is_stale(None, STALE_AFTER.default))
-
     def test_disabled(self):
         """Test that a threshold of 0 disables the check, so nothing is stale."""
         old = datetime.now(UTC) - timedelta(days=STALE_AFTER.default * 10)

@@ -1,25 +1,20 @@
 """npmjs unit tests."""
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 
-from update_time.domain.dependency import Yank
+from update_time.domain.dependency import Release, Yank
 from update_time.sources import npmjs
 from update_time.sources.npmjs import (
     deprecation,
     get_changes,
     get_publication_datetime,
-    newest_publication_date,
     newest_release,
 )
 
 from tests.helpers import patch_get
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase
-
-if TYPE_CHECKING:
-    from update_time.domain.dependency import DependencyVersion
 
 
 class NpmjsPublicationDatetimeTest(LoggingTestCase):
@@ -56,8 +51,16 @@ class NpmjsPublicationDatetimeTest(LoggingTestCase):
         self.assertEqual(get_changes("package", "1.0"), "")
 
 
-class NpmjsNewestPublicationDateTest(LoggingTestCase):
-    """Unit tests for the newest publication date across a package's versions."""
+class NpmjsNewestReleaseTest(LoggingTestCase):
+    """Unit tests for the newest release (version + publication date) fetcher."""
+
+    @patch_get({"time": {"2.0": "2020-01-01T00:00:00Z", "1.0.1": "2024-06-01T00:00:00Z"}})
+    def test_newest_release(self):
+        """Test that the version published most recently is returned, and not the highest one.
+
+        The backport 1.0.1 was published after 2.0, which the dist-tag still names.
+        """
+        self.assertEqual(Release("1.0.1", datetime(2024, 6, 1, tzinfo=UTC)), newest_release("package"))
 
     @patch_get(
         {
@@ -69,29 +72,13 @@ class NpmjsNewestPublicationDateTest(LoggingTestCase):
             }
         }
     )
-    def test_newest_ignores_bookkeeping_entries(self):
-        """Test that the newest version's date is returned, ignoring the `created`/`modified` entries."""
-        self.assertEqual(datetime(2024, 6, 1, tzinfo=UTC), newest_publication_date("package"))
+    def test_bookkeeping_entries_are_ignored(self):
+        """Test that the `created` and `modified` entries are passed over, whatever they are dated."""
+        self.assertEqual(Release("1.1", datetime(2024, 6, 1, tzinfo=UTC)), newest_release("package"))
 
     @patch_get(ok=False)
     def test_unreachable(self):
-        """Test that an unreachable registry yields no date instead of crashing."""
-        self.assertIsNone(newest_publication_date("package"))
-
-
-class NpmjsNewestReleaseTest(LoggingTestCase):
-    """Unit tests for the newest release (version + publication date) fetcher."""
-
-    @patch_get({"dist-tags": {"latest": "2.0"}, "time": {"1.0": "2020-01-01T00:00:00Z", "2.0": "2024-06-01T00:00:00Z"}})
-    def test_newest_release(self):
-        """Test that the `latest` dist-tag and its publication date are returned as a DependencyVersion."""
-        release = cast("DependencyVersion", newest_release("package"))
-        self.assertEqual(release.version, "2.0")
-        self.assertEqual(datetime(2024, 6, 1, tzinfo=UTC), release.newest_published)
-
-    @patch_get(ok=False)
-    def test_no_latest_tag(self):
-        """Test that a package with no `latest` dist-tag (e.g. unreachable) yields None."""
+        """Test that an unreachable registry yields no release instead of crashing."""
         self.assertIsNone(newest_release("package"))
 
 

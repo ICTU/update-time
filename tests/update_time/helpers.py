@@ -13,6 +13,8 @@ from logging import DEBUG, ERROR, WARNING
 from typing import TYPE_CHECKING, Protocol, cast
 from unittest.mock import ANY, Mock, call, patch
 
+from packaging.version import Version
+
 import update_time
 from update_time.domain.bound import NewVersionGetter, Verb, VersionBound, parse_bound
 from update_time.domain.dependency import DependencyVersion, FloatingPin, VersionString
@@ -685,10 +687,15 @@ PYPI_OLD_UPLOAD = "2020-01-01T00:00:00.000000Z"  # A distribution upload time we
 
 
 def pypi_index(*versions: str, files: Sequence[Mapping[str, str | bool]] | None = None) -> Mock:
-    """Return a mock PyPI Index (Simple) API response listing the versions and, when given, distribution files."""
+    """Return a mock PyPI Index (Simple) API response listing the versions and, when given, distribution files.
+
+    A file entry that names no distribution is named after the highest version listed, since the index names every
+    file it dates.
+    """
     body: dict[str, object] = {"versions": list(versions)}
     if files is not None:
-        body["files"] = files
+        newest = str(max(Version(version) for version in versions))
+        body["files"] = [{"filename": f"package-{newest}.tar.gz", **file} for file in files]
     return mock_response(body)
 
 

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from update_time.io.filesystem import glob
 from update_time.io.log import get_logger
+from update_time.primitives.digest import COMMIT_SHA
 from update_time.references.file import rewrite_file
 from update_time.references.github import PinUpdater
 from update_time.references.rewrite import apply_marker
@@ -34,7 +35,7 @@ _REPO_RE = re.compile(r"repo:\s*(?P<repo>\S+)")
 # a `#`, so a trailing `# update-time:` marker (or any comment) is left outside the match and preserved.
 _REV_RE = re.compile(
     r"rev:\s*"
-    r"(?:(?P<sha>[0-9a-f]{40})\s*#\s*frozen:\s*(?P<version>\S+)|(?P<quote>['\"]?)(?P<tag>[^\s'\"#]+)(?P=quote))"
+    rf"(?:(?P<sha>{COMMIT_SHA})\s*#\s*frozen:\s*(?P<version>\S+)|(?P<quote>['\"]?)(?P<tag>[^\s'\"#]+)(?P=quote))"
 )
 
 

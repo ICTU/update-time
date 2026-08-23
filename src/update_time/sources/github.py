@@ -15,6 +15,7 @@ from update_time.domain.cooldown import within_cooldown
 from update_time.domain.dependency import (
     DependencyName,
     DependencyVersion,
+    Release,
     VersionString,
     first_eligible,
     is_valid,
@@ -22,7 +23,7 @@ from update_time.domain.dependency import (
 from update_time.domain.publication import publication_date_reporting
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
-from update_time.primitives.timestamp import newest_timestamp, parse_timestamp
+from update_time.primitives.timestamp import parse_timestamp
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -144,6 +145,11 @@ class TaggedVersion:
     def has_valid_version(self) -> bool:
         """Return whether the tag is a valid version."""
         return is_valid(self.tag_name)
+
+    @property
+    def version_string(self) -> VersionString:
+        """Return the tag's version without its `v` prefix, leaving a tag that names no version as it is."""
+        return str(self.version) if self.has_valid_version else self.tag_name
 
     @property
     def is_candidate(self) -> bool:
@@ -374,8 +380,8 @@ def get_latest_version(
     if not is_valid(current_version):
         return DependencyVersion(version=current_version)
     owner, repository, *_path = action.split("/")
-    newest_published = newest_publication_date(owner, repository)
-    unchanged = DependencyVersion(current_version, newest_published=newest_published)
+    newest = newest_release(owner, repository)
+    unchanged = DependencyVersion(current_version, newest=newest)
     tagged_versions = _tagged_versions(owner, repository)
     if tagged_versions is None:
         return unchanged  # Couldn't reach GitHub; the fetches already logged a warning.
@@ -390,7 +396,7 @@ def get_latest_version(
         if version.version >= current and version_bound.keeps(version.version, current_version)
     ]
     latest = first_eligible(candidates, lambda version: _eligible_version(version, cooldown_days), current_version)
-    return replace(latest, newest_published=newest_published)
+    return replace(latest, newest=newest)
 
 
 def _eligible_version(tagged_version: TaggedVersion, cooldown_days: int) -> DependencyVersion | None:
@@ -414,7 +420,7 @@ def _newest_tag_beyond_releases(owner: str, repository: str) -> _TagJSON | None:
     """Return the highest-versioned tag when it runs ahead of every dated release, or None.
 
     This decides whether the repo's newest activity might be a tag rather than a release, so that
-    `newest_publication_date` knows to fetch that tag's commit date. Pre-release versions count on both sides,
+    `newest_release` knows to fetch that tag's commit date. Pre-release versions count on both sides,
     mirroring the newest-release date, which also includes pre-releases.
     """
     versioned_tags = [
@@ -435,22 +441,23 @@ def _newest_tag_beyond_releases(owner: str, repository: str) -> _TagJSON | None:
     return newest_tag
 
 
-def newest_publication_date(owner: str, repository: str) -> datetime | None:
-    """Return the repo's most recent publication date, or None if it has none.
+def newest_release(owner: str, repository: str) -> Release | None:
+    """Return the repo's most recently published version with its date, or None if it has none.
 
-    Taken over every release (including pre-releases and backports, since the newest date wins regardless of
-    version order) and ignoring cooldown eligibility, so a repo that has just published anything counts as active.
-    Drafts carry no publication date and are naturally excluded. When the repo's highest version is a tag that
-    runs ahead of every dated release, that tag's commit date is folded in, so a repo that tags without releasing
-    is not falsely reported as stale. The release dates stay primary because the tags list carries no dates: every
-    tag date costs a commits request, so only the one tag the releases can't answer for is fetched, and a tag-only
-    backport below that tag's version is knowingly missed.
+    Every release counts, pre-releases and backports included, and so does the highest tag when it runs ahead of
+    them, so a repo that tags without releasing is not reported as stale. Only that one tag is fetched, since the
+    tags list carries no dates and each date costs a commits request.
     """
-    releases = _list_releases(owner, repository) or ()
-    dates = [newest_timestamp(release["published_at"] for release in releases)]
+    versions = [
+        TaggedVersion.from_release(owner, repository, release) for release in _list_releases(owner, repository) or ()
+    ]
     if (tag := _newest_tag_beyond_releases(owner, repository)) is not None:
-        dates.append(_commit_datetime(owner, repository, tag["commit"]["sha"]))
-    return max((date for date in dates if date is not None), default=None)
+        versions.append(TaggedVersion.from_tag(owner, repository, tag, release=None))
+    return Release.newest(
+        Release(version=version.version_string, published=published)
+        for version in versions
+        if (published := version.publication_date) is not None
+    )
 
 
 def get_release(owner: str, repository: str, package: str, version: str) -> TaggedVersion | None:

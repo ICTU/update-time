@@ -2,17 +2,23 @@
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 from unittest.mock import Mock, patch
+
+import requests
 
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion
+from update_time.domain.dependency import DependencyVersion, Release
 from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
+from update_time.references import github as references_github
+from update_time.sources import github as sources_github
 from update_time.updaters.update_github_action import update_github_actions
 
 from tests.helpers import mock_path, patch_environ
+from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.helpers import (
@@ -21,9 +27,15 @@ from tests.update_time.helpers import (
     github_commits_json,
     github_release_json,
     patch_github,
+    staleness_disabled,
 )
 
 _GITHUB_DIR = Path("/repo/.github")
+# A publication date old enough that the default staleness threshold warns about it, and one too fresh to.
+_STALE_ISO = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+_FRESH_ISO = datetime.now(UTC).isoformat()
+# A publication date the default threshold passes over, which a marker's own threshold of 90 days warns about.
+_HUNDRED_DAYS_ISO = (datetime.now(UTC) - timedelta(days=100)).isoformat()
 
 
 @patch("update_time.references.github.get_latest_version")
@@ -108,12 +120,13 @@ class UpdateGitHubActionsTest(LoggingTestCase):
     def test_stale_action_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an action whose newest release is old is warned about, even when it is up to date."""
         old = datetime.now(UTC) - timedelta(days=512)
-        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=OLD_SHA, newest_published=old)
+        newest = Release("1.2", old)
+        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=OLD_SHA, newest=newest)
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions(_GITHUB_DIR)
         workflow_yml.write_text.assert_not_called()
-        self.assert_stale_dependency_logged("action/action", "1.0", Location(workflow_yml, 1))
+        self.assert_stale_dependency_logged("action/action", "1.2", Location(workflow_yml, 1))
 
     def test_pin_unpinned_action(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an action referenced by version tag only is pinned to the commit SHA with a version comment."""
@@ -196,19 +209,21 @@ class UpdateGitHubActionsTest(LoggingTestCase):
     def test_ignore_update_marker_skips_repin_but_still_checks_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[update]` leaves the action's pin unchanged but still warns when it is stale."""
         old = datetime.now(UTC) - timedelta(days=512)
-        mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA, newest_published=old)
+        newest = Release("1.2", old)
+        mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA, newest=newest)
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore[update]\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions(_GITHUB_DIR)
         workflow_yml.write_text.assert_not_called()  # the pin is held back
         location = Location(workflow_yml, 1)
-        self.assert_stale_dependency_logged("action/action", "1.1", location)  # but staleness is still checked
+        self.assert_stale_dependency_logged("action/action", "1.2", location)  # but staleness is still checked
         self.assert_ignored_logged("action/action", location)
 
     def test_ignore_stale_marker_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[stale]` repins the action but skips the staleness check even for an old release."""
         old = datetime.now(UTC) - timedelta(days=512)
-        mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA, newest_published=old)
+        newest = Release("1.2", old)
+        mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA, newest=newest)
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore[stale]\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions(_GITHUB_DIR)
@@ -231,8 +246,131 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
+    @patch_github(releases=[github_release_json("v1.0", published_at=_STALE_ISO)], tags=[])
+    def test_stale_branch_reference_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an action referenced by a branch is warned about when its repository's newest release is old."""
+        workflow_yml = mock_path("uses: actions/checkout@main\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        update_github_actions(_GITHUB_DIR)
+        workflow_yml.write_text.assert_not_called()
+        mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
+        self.assert_stale_dependency_logged("actions/checkout", "1.0", Location(workflow_yml, 1))
+
+    @kills(
+        Mutation(
+            references_github,
+            "        log.report_staleness(resolved, marker, threshold)",
+            "        log.warn_if_stale(resolved, threshold)",
+            "a marker silencing the staleness warning of a branch reference is passed over",
+        )
+    )
+    @patch_github(releases=[github_release_json("v1.0", published_at=_STALE_ISO)], tags=[])
+    def test_an_ignore_stale_marker_on_a_branch_reference_holds_the_warning_back(
+        self, mock_glob: Mock, mock_get_latest_version: Mock
+    ):
+        """Test that `ignore[stale]` on a branch reference silences the warning its old repository would get."""
+        workflow_yml = mock_path("uses: actions/checkout@main  # update-time: ignore[stale]\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        update_github_actions(_GITHUB_DIR)
+        mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
+        self.assert_ignored_staleness_logged("actions/checkout", Location(workflow_yml, 1), "ignore[stale]")
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            references_github,
+            "    if (threshold := marker.stale.value_or(STALE_AFTER.get())) == NO_STALENESS_CHECK:",
+            "    if (threshold := STALE_AFTER.get()) == NO_STALENESS_CHECK:",
+            "a branch reference's own staleness threshold is passed over for the run-wide one",
+        )
+    )
+    @patch_github(releases=[github_release_json("v1.0", published_at=_HUNDRED_DAYS_ISO)], tags=[])
+    def test_a_branch_reference_is_warned_about_at_its_own_threshold(
+        self, mock_glob: Mock, mock_get_latest_version: Mock
+    ):
+        """Test that `ignore[stale<90]` on a branch reference warns at 90 days, where the default 365 would not."""
+        workflow_yml = mock_path("uses: actions/checkout@main  # update-time: ignore[stale<90]\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        update_github_actions(_GITHUB_DIR)
+        mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
+        self.assert_stale_dependency_logged("actions/checkout", "1.0", Location(workflow_yml, 1))
+
+    @kills(
+        Mutation(
+            sources_github,
+            "@cache\ndef _list_releases(owner: str, repository: str) -> tuple[_ReleaseJSON, ...] | None:",
+            "def _list_releases(owner: str, repository: str) -> tuple[_ReleaseJSON, ...] | None:",
+            "every reference to a repository asks GitHub for its releases again",
+        )
+    )
+    @patch_github(releases=[github_release_json("v1.0", published_at=_STALE_ISO)], tags=[])
+    def test_two_branch_references_to_one_repository_cost_one_lookup(
+        self, mock_glob: Mock, mock_get_latest_version: Mock
+    ):
+        """Test that a repository two branch references name is asked for its releases once, not once per file."""
+        workflow_ymls = [mock_path("uses: actions/checkout@main\n"), mock_path("uses: actions/checkout@master\n")]
+        mock_glob.side_effect = [workflow_ymls, []]
+        update_github_actions(_GITHUB_DIR)
+        mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
+        requests_get = cast("Mock", requests.get)  # Patched by `patch_github`, which hands the test no mock.
+        releases_requests = [call for call in requests_get.call_args_list if "/releases" in call.args[0]]
+        self.assertEqual(len(releases_requests), 1)
+        self.assert_stale_dependency_logged(
+            "actions/checkout", "1.0", Location(workflow_ymls[0], 1), Location(workflow_ymls[1], 1)
+        )
+
+    @patch("update_time.references.github.newest_release")
+    def test_a_local_action_is_passed_over(
+        self, mock_newest_release: Mock, mock_glob: Mock, mock_get_latest_version: Mock
+    ):
+        """Test that an action in the repository itself names no GitHub repository, so none is asked about."""
+        workflow_yml = mock_path("uses: ./.github/actions/build\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        update_github_actions(_GITHUB_DIR)
+        workflow_yml.write_text.assert_not_called()
+        mock_newest_release.assert_not_called()
+        mock_get_latest_version.assert_not_called()
+        self.assert_no_warnings_logged()
+
+    @patch("update_time.references.github.newest_release")
+    def test_a_bare_ignore_on_a_branch_reference_asks_github_nothing(
+        self, mock_newest_release: Mock, mock_glob: Mock, mock_get_latest_version: Mock
+    ):
+        """Test that a bare `ignore` on a branch reference holds the staleness check back, GitHub unasked."""
+        workflow_yml = mock_path("uses: actions/checkout@main  # update-time: ignore\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        update_github_actions(_GITHUB_DIR)
+        mock_newest_release.assert_not_called()
+        mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
+        self.assert_no_warnings_logged()
+
+    @patch("update_time.references.github.newest_release")
+    def test_a_branch_reference_is_not_looked_up_with_the_check_switched_off(
+        self, mock_newest_release: Mock, mock_glob: Mock, mock_get_latest_version: Mock
+    ):
+        """Test that `--stale-after 0` leaves a branch reference unlooked-up, staleness being its only check."""
+        workflow_yml = mock_path("uses: actions/checkout@main\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        with staleness_disabled:
+            update_github_actions(_GITHUB_DIR)
+        mock_newest_release.assert_not_called()
+        mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
+        self.assert_no_warnings_logged()
+
+    @patch_github(releases=[], tags=[])
+    def test_a_branch_reference_whose_repository_has_released_nothing(
+        self, mock_glob: Mock, mock_get_latest_version: Mock
+    ):
+        """Test that a branch reference is not warned about when its repository has published no release to date."""
+        workflow_yml = mock_path("uses: actions/checkout@main\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        update_github_actions(_GITHUB_DIR)
+        mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
+        self.assert_no_warnings_logged()
+
+    @patch_github(releases=[github_release_json("v1.0", published_at=_FRESH_ISO)], tags=[])
     def test_branch_reference_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that an action referenced by a branch (no resolvable version) is not touched."""
+        """Test that an action referenced by a branch is not rewritten, its repository still publishing."""
         workflow_yml = mock_path("uses: actions/checkout@main\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions(_GITHUB_DIR)
@@ -242,8 +380,9 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
+    @patch_github(releases=[github_release_json("v1.0", published_at=_FRESH_ISO)], tags=[])
     def test_v_prefixed_non_version_reference_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that a v-prefixed reference that isn't a version (e.g. a floating `@vnext` tag) is not touched."""
+        """Test that a v-prefixed reference that isn't a version (e.g. a floating `@vnext` tag) is not rewritten."""
         workflow_yml = mock_path("uses: actions/checkout@vnext\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions(_GITHUB_DIR)

@@ -16,7 +16,7 @@ from tests.update_time.helpers import (
 
 if TYPE_CHECKING:
     from update_time.primitives.command import Command
-    from update_time.sources.pypi import Release
+    from update_time.sources.pypi import ReleaseMetadata
 
 
 def _discovered_script(glob: Mock, spec: str) -> Mock:
@@ -37,7 +37,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
     """Unit tests for the update python-inline-script-metadatas function."""
 
     @staticmethod
-    def pypi_metadata() -> Release:
+    def pypi_metadata() -> ReleaseMetadata:
         """Create PyPI release metadata fixture carrying a changelog URL."""
         return {
             "info": {
@@ -48,7 +48,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         }
 
     @staticmethod
-    def pypi_metadata_without_changelog() -> Release:
+    def pypi_metadata_without_changelog() -> ReleaseMetadata:
         """Create PyPI release metadata without project URLs, so the test needs no changelog response mocked."""
         return {
             "info": {"description": "Package", "project_urls": {}},

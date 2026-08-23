@@ -18,9 +18,11 @@ from packaging.version import InvalidVersion, Version
 
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.dependency import (
+    LOWEST_VERSION,
     DependencyName,
     DependencyVersion,
     FloatingPin,
+    Release,
     VersionString,
     first_eligible,
 )
@@ -92,9 +94,10 @@ _MANIFEST_MEDIA_TYPES = (
 # matching linear.
 _TAG = re.compile(r"(?P<prefix>[^\d-]*+)(?P<version>\d[^-]*+)-?(?P<suffix>.*)$")
 
-# A version lower than any real version, used as the sortable version of a tag (or, via `_suffix_tag`, a suffix) that
-# has no valid version, so versions can always be compared and ordered uniformly (a missing one sorts as lowest).
-_LOWEST_VERSION = Version("0")
+# A dated snapshot the repository labels, such as `bookworm-20260803`: the line the snapshot was built for, and the
+# day it was built. `_TAG` reads no version in one, its prefix admitting no dash, so the label is read as the prefix
+# here and the date as the version, which puts such a snapshot on the line its label names.
+_DATED_SNAPSHOT = re.compile(r"(?P<prefix>.+-)(?P<version>\d{8})(?P<suffix>)$")
 
 # What orders two tags: each version axis, and the number of components it is spelled with.
 type _SortKey = tuple[Version, Version, int, int]
@@ -116,7 +119,7 @@ class Tag:
     @cached_property
     def _match(self) -> re.Match[str] | None:
         """Parse the tag name into its prefix, version, and suffix once, or None when the tag has no version."""
-        return _TAG.match(self.name)
+        return _TAG.match(self.name) or _DATED_SNAPSHOT.match(self.name)
 
     @property
     def prefix(self) -> str:
@@ -146,7 +149,7 @@ class Tag:
         Unlike `version` this is never None, so tags (and, via `_suffix_tag`, their suffixes) compare and sort
         uniformly; a tag without a valid version sorts and compares as the lowest.
         """
-        return self.version or _LOWEST_VERSION
+        return self.version or LOWEST_VERSION
 
     @property
     def suffix(self) -> str:
@@ -245,11 +248,10 @@ class Tag:
 
     @property
     def _is_dated_snapshot(self) -> bool:
-        """Return whether the tag's version is a date, such as `20260805`, rather than a release.
+        """Return whether the tag's version is a date rather than a release.
 
         A repository can publish dated snapshots of a development branch beside its releases, in one tag namespace.
-        Such a snapshot is a version of one component that reads as a calendar date. This is asked only of a tag
-        whose version parsed.
+        Examples are `20260805` and `bookworm-20260803`.
         """
         release = cast("Version", self.version).release
         if len(release) != 1:
@@ -322,38 +324,42 @@ def is_docker_hub_image(image: str) -> bool:
 def get_latest_tag(
     image: DependencyName, current_tag: VersionString, version_bound: VersionBound, cooldown_days: int
 ) -> DependencyVersion:
-    """Find the latest compatible tag for an image. Keeps the same non-numerical parts while upgrading the version.
+    """Return the tag to pin the reference to, carrying the image's newest release.
 
-    Resolves images on any OCI registry (Docker Hub, ghcr.io, mcr.microsoft.com, quay.io, ...). Returns the digest
-    of the resulting tag, including when the current version is already the latest, so that unpinned references can
-    be pinned without bumping their version. A tag naming a channel rather than a version is floating, and resolves
-    to the concrete tag that channel currently serves instead of to a newer one. A reference naming no tag names
-    `latest`, so it resolves the way a floating tag does.
+    Resolves images on any OCI registry (Docker Hub, ghcr.io, mcr.microsoft.com, quay.io, ...). The digest comes
+    back even when the current version is already the latest, so an unpinned reference can be pinned without
+    bumping its version.
+    """
+    resolved = _resolved_tag(image, current_tag, version_bound, cooldown_days)
+    return replace(resolved, newest=_newest_release(image))
 
-    One request lists the tag names, and each candidate examined costs one more, for its digest and its push
-    date. A bound narrows the candidates by their main version alone, leaving the labels to match as they
-    otherwise would, and staleness follows the newest compatible tag whatever the bound admits.
+
+def _resolved_tag(
+    image: DependencyName, current_tag: VersionString, version_bound: VersionBound, cooldown_days: int
+) -> DependencyVersion:
+    """Return the tag the run leaves the reference on, with the digest that pins it.
+
+    Keeps the tag's non-numerical parts while upgrading its version. A tag naming a channel rather than a version
+    is floating, and resolves to the concrete tag that channel currently serves instead of to a newer one. A
+    reference naming no tag equals `latest`, so it resolves the way a floating tag does. One request lists the tag
+    names, and each candidate examined costs one more, for its digest and its push date. A bound narrows the
+    candidates by their main version alone, leaving the labels to match as they otherwise would.
     """
     current = Tag(name=current_tag or _DEFAULT_TAG)
     if _is_floating(current):
         return _resolved_floating_tag(image, current)
     if current.version is None:
-        # A tag Update-time can read as neither a version nor a channel, such as the dated snapshot
-        # `debian:bookworm-20260803`: the tag stands, and the digest it serves pins it. The registry leaves such a
-        # tag on the image it was pushed for, so that push date is the date the staleness check measures it by.
-        if (snapshot := _get_tag(image, current.name)) is None:
-            return DependencyVersion(version=current.name)
-        return DependencyVersion(version=current.name, sha=snapshot.digest, newest_published=snapshot.last_pushed)
-    tags = [Tag(name=name) for name in _tag_names(image)]
-    compatible = [tag for tag in tags if tag.is_candidate_for(current)]
-    candidates = [tag for tag in compatible if version_bound.keeps(cast("Version", tag.version), current_tag)]
-    latest = first_eligible(
+        # A tag Update-time can read as neither a version nor a channel, such as `debian:dev-2024`: it names no
+        # version to advance, so the tag stands and the digest it serves pins it.
+        return DependencyVersion(version=current.name, sha=_manifest_digest(image, current.name))
+    candidates = [
+        tag
+        for tag in (Tag(name=name) for name in _tag_names(image))
+        if tag.is_candidate_for(current) and version_bound.keeps(cast("Version", tag.version), current_tag)
+    ]
+    return first_eligible(
         candidates, lambda candidate: _eligible_tag(image, current, candidate, cooldown_days), current_tag
     )
-    # Staleness is measured against all compatible tags, not just the bounded candidates, so a version bound narrows
-    # the update only: a reference kept on an old line by a bound is still warned about when the image has gone quiet
-    # overall, and never merely because the bounded line has.
-    return replace(latest, newest_published=_newest_tag_push_date(image, compatible))
 
 
 def tag_getter(registry_serves: Callable[[DependencyName], bool]) -> NewVersionGetter:
@@ -381,9 +387,10 @@ def tag_getter(registry_serves: Callable[[DependencyName], bool]) -> NewVersionG
 
 
 def _is_floating(tag: Tag) -> bool:
-    """Return whether the tag names a channel the registry re-points, rather than a version or a snapshot of one.
+    """Return whether the tag names a channel the registry re-points, rather than a version or a dated snapshot.
 
-    A snapshot such as `bookworm-20260803` carries a digit that is no version, which is what rules it out here.
+    A channel names no version and carries no digit. `latest` and `bookworm` are channels. `dev-2024` is not,
+    because its digits name a build.
     """
     return tag.version is None and not any(character.isdigit() for character in tag.name)
 
@@ -488,7 +495,7 @@ def _alias_key(alias: Tag, labels: list[str]) -> _AliasKey:
 def _variant_version(tag: Tag, label: str) -> Version:
     """Return the version the tag attaches to the label, or the lowest sentinel when it attaches none."""
     versions = [part.version for part in _labels(tag) if part.prefix == label and part.version is not None]
-    return max(versions, default=_LOWEST_VERSION)
+    return max(versions, default=LOWEST_VERSION)
 
 
 def _variant_labels(current: Tag, concrete: list[Tag]) -> list[str]:
@@ -525,20 +532,26 @@ def _labels(tag: Tag) -> tuple[Tag, ...]:
     return tuple(Tag(name=part) for part in tag.name.split("-"))
 
 
-def _newest_tag_push_date(image: str, compatible: list[Tag]) -> datetime | None:
-    """Return the push date of the newest compatible tag for the staleness check, or None.
+def _newest_release(image: str) -> Release | None:
+    """Return the image's newest release: the tag its registry pushed most recently, or None when it dates none.
 
-    Only Docker Hub exposes a push date (the OCI protocol doesn't), so a tag on another registry resolves to no
-    date and is never flagged as stale — the same limitation as the cooldown. Unlike the cooldown, eligibility is
-    ignored: the newest tag's date is used even if it is still within the cooldown, so a freshly re-pushed tag is
-    not reported as stale. The newest compatible tag was usually already resolved while picking the latest eligible
-    tag, so this reuses that cached result without an extra request; only a version bound that excludes the newest
-    tag from the update makes it cost one. When no compatible tag is listed there is nothing to date.
+    The release is the whole image's, whatever labels its tag carries and whatever tag the reference names. Only
+    Docker Hub exposes a push date (the OCI protocol doesn't), so an image on another registry is never flagged
+    as stale — the same limitation as the cooldown.
+
+    A tag is pushed together with the tags serving the same image, so one push date is shared by a tag naming a
+    version and its aliases. `_alias_key` ranks them by version, then by how precisely it is spelled, so the
+    release is named `3.14.7` rather than the `latest` or `3` beside it. Where no tag pushed at that moment names
+    a version, the release is named by the tag itself, such as the `dev` of an image tagged `dev` and `prod`.
     """
-    if not compatible:
+    if not is_docker_hub_image(image):
         return None
-    resolved = _get_tag(image, max(compatible).name)
-    return resolved.last_pushed if resolved else None
+    if not (pushes := docker_hub.newest_pushes(_repository(image))):
+        return None
+    published = max(pushes.values())
+    pushed_together = [Tag(name=name) for name, pushed in pushes.items() if pushed == published]
+    named_by = max(pushed_together, key=lambda tag: _alias_key(tag, labels=[]))
+    return Release(version=named_by.name, published=published)
 
 
 def _eligible_tag(image: str, current: Tag, candidate: Tag, cooldown_days: int) -> DependencyVersion | None:

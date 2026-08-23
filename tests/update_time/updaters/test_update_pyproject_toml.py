@@ -18,7 +18,7 @@ from tests.update_time.helpers import (
 )
 
 if TYPE_CHECKING:
-    from update_time.sources.pypi import Release
+    from update_time.sources.pypi import ReleaseMetadata
 
 
 def _discovered_pyproject_toml(glob: Mock, spec: str) -> Mock:
@@ -44,7 +44,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
     def pypi_metadata(
         changelog_url: str = "https://changelog",
         repository: str = "https://github.com/repo/package_with_github_releases",
-    ) -> Release:
+    ) -> ReleaseMetadata:
         """Create PyPI release metadata fixture."""
         project_urls = {"Homepage": "https://home", "repository": repository}
         if changelog_url:
@@ -55,7 +55,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         }
 
     @staticmethod
-    def pypi_metadata_without_changelog() -> Release:
+    def pypi_metadata_without_changelog() -> ReleaseMetadata:
         """Create PyPI release metadata without project URLs, so the test needs no changelog response mocked."""
         return {
             "info": {"description": "Package", "project_urls": {}},

@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 
 from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
-from update_time.domain.dependency import DependencyVersion, FloatingPin, Yank
+from update_time.domain.dependency import DependencyVersion, FloatingPin, Release, Yank
 from update_time.domain.directive import Reason
 from update_time.domain.drift import DriftedPin
 from update_time.domain.marker import Marker, Scope, Threshold
@@ -142,7 +142,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     dockerfile = Location(Path("Dockerfile"), 2)
 
     published = stale_publication_date()
-    stale = DependencyVersion("4.15.0", newest_published=published)
+    stale = DependencyVersion("4.15.0", newest=Release("4.15.0", published))
     log.warn_if_stale(resolved("humanize", requirements, stale), STALE_AFTER.get())
     staleness = capture.take()
 

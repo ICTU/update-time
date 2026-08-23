@@ -7,6 +7,7 @@ not at all: its package is checked for staleness instead.
 
 from typing import TYPE_CHECKING
 
+from update_time.domain.dependency import DependencyVersion
 from update_time.domain.directive import DIRECTIVES, Reason
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
@@ -87,8 +88,8 @@ def _warn_about_stale_loose_requirements(lines: list[Line]) -> None:
             continue  # A bare `ignore` holds the staleness check back, so PyPI is not asked for a release date.
         if (threshold := marker.stale.value_or(run_wide_threshold)) == NO_STALENESS_CHECK:
             continue
-        if (release := newest_release(reference.dependency)) is not None:
-            resolved = ResolvedReference(**vars(reference), release=release)
+        if (newest := newest_release(reference.dependency)) is not None:
+            resolved = ResolvedReference(**vars(reference), release=DependencyVersion.unpinned(newest))
             _LOG.report_staleness(resolved, marker, threshold)
 
 
