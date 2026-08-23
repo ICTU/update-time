@@ -1,9 +1,12 @@
 """Test helpers that name nothing of this project's domain, so tests of any part of it can share them."""
 
 import logging
+import os
 from logging import INFO
 from typing import TYPE_CHECKING, TypeVar, cast
 from unittest.mock import Mock, patch
+
+from tests.mutation import CHECKS_OFF
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -38,7 +41,10 @@ def patch_environ(environment_variables: dict[str, str] | None = None, *, clear:
     If none are given, clear the environment, unless overridden by an explicit clear=True or clear=False.
     """
     clear = not environment_variables if clear is None else clear
-    return patch.dict("os.environ", environment_variables or {}, clear=clear)
+    in_dict = environment_variables or {}
+    if checks_off := os.environ.get(CHECKS_OFF):
+        in_dict[CHECKS_OFF] = checks_off  # Keep the checks-off flag; it's used by tools/mutate.py to turn off @kills
+    return patch.dict("os.environ", in_dict, clear=clear)
 
 
 def patch_pathlib_path(*methods: str, **methods_and_return_values: object) -> Callable[[_Decorated], _Decorated]:

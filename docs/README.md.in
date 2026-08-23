@@ -232,11 +232,11 @@ Every kind of dependency Update-time updates is checked for staleness, against t
 | :-------------- | :--------------- |
 | [Python dependencies](#python-dependencies) | the newest release of the package on PyPI |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | the newest release on the npm registry, for the dependencies that resolve to one |
-| [Node engine version](#node-engine-version-and-python-version) | the base image it follows, or the Node image tag's push date when it follows Docker Hub |
-| [Python version](#node-engine-version-and-python-version) | the base image it follows, or the Python image tag's push date when it follows Docker Hub |
-| [Docker images](#docker-images) | the tag's push date, and on Docker Hub only, since other registries expose no publication date |
-| [GitHub Actions](#github-actions-and-pre-commit-hooks) | the newest version's release date, or its tagged commit's date |
-| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | the newest version's release date, or its tagged commit's date |
+| [Node engine version](#node-engine-version-and-python-version) | the base image it follows, or the newest Node release on Docker Hub when no Dockerfile declares one |
+| [Python version](#node-engine-version-and-python-version) | the base image it follows, or the newest Python release on Docker Hub when no Dockerfile declares one |
+| [Docker images](#docker-images) | the image's newest release, and on Docker Hub only, since other registries expose no publication date |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | the newest release of the action's repository |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | the newest release of the hook's repository |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | the newest release of the package on the npm registry |
 
 ### 🚫 Yanked dependencies
@@ -701,7 +701,7 @@ For inline script metadata, Update-time also applies the cooldown through uv's `
 
 #### Stale dependencies
 
-Every Python pin is checked against the newest release of its package on PyPI, whichever of the three file kinds declares it, and stale ones are reported. In a `requirements.txt`, a requirement that pins no exact version is checked as well, whether it names a looser specifier such as `humanize>=4` or `django~=5.0`, or no version at all: staleness is measured against the package's newest release, which the name alone is enough to look up. A dependency declared that way in a `pyproject.toml` or an inline script metadata block is checked as well, wherever the file declares it: in the project's dependencies, in an extra, in a dependency group, in uv's legacy `[tool.uv] dev-dependencies`, or in the `[build-system]` requirements. Two kinds are left out, because PyPI serves no release to measure them against: a dependency that points at a URL or a git repository, and one uv resolves through a `[tool.uv] sources` entry, such as a path or a workspace member.
+Every Python pin is checked against the newest release of its package on PyPI, whichever of the three file kinds declares it, and stale ones are reported. In a `requirements.txt`, a requirement that pins no exact version is checked as well, whether it names a looser specifier such as `humanize>=4` or `django~=5.0`, or no version at all: staleness is measured against the package's newest release, which the name alone is enough to look up. A dependency declared that way in a `pyproject.toml` or an inline script metadata block is checked as well, wherever the file declares it: in the project's dependencies, in an extra, in a dependency group, in uv's legacy `[tool.uv] dev-dependencies`, or in the `[build-system]` requirements. Two kinds are left out, because PyPI serves no release to measure them against: a dependency that points at a URL or a git repository, and one uv resolves through a `[tool.uv] sources` entry, such as a path or a workspace member. A package whose files are all named the way PyPI no longer accepts, such as one published only as `.egg` files, is left out too.
 
 #### Yanked dependencies
 
@@ -767,9 +767,9 @@ For pre-commit hooks, it looks for `.pre-commit-config.yaml` files, recursively 
 
 #### What dependencies are updated?
 
-In a workflow or action definition, the actions in the `uses:` references. Actions referenced by a branch (e.g. `@main`) or as a local action without an `@` don't resolve to a version and are left untouched.
+In a workflow or action definition, the actions in the `uses:` references. Actions referenced by a branch (e.g. `@main`) or as a local action without an `@` don't resolve to a version, so they are not updated.
 
-In a `.pre-commit-config.yaml`, the `rev:` of each hook repository hosted on GitHub. A `repo: local` or `repo: meta` entry has no `rev:` and is left untouched, as is a `rev:` that names a branch rather than a version, and a repository hosted outside GitHub.
+In a `.pre-commit-config.yaml`, the `rev:` of each hook repository hosted on GitHub. A `repo: local` or `repo: meta` entry has no `rev:` and is left untouched, as is a repository hosted outside GitHub. A `rev:` that names a branch rather than a version is not updated.
 
 #### What versions are updated?
 
@@ -789,7 +789,7 @@ The cooldown is measured against the release's publication date, or, for a versi
 
 #### Stale dependencies
 
-Staleness is measured against the newest version overall: its release's publication date, or the tagged commit's date when that newest version was only tagged.
+Staleness is measured against the repository's newest release, whatever the reference names: a version, a branch, or a commit.
 
 #### Yanked dependencies
 
@@ -843,7 +843,7 @@ A version taken from Docker Hub honours the cooldown through the Node or Python 
 
 #### Stale dependencies
 
-Both are indirect cases. When the version is derived from the project's Dockerfile, only the staleness of the base image is reported, so the entry itself is never checked and a `stale` marker on it is reported as redundant; an entry that follows Docker Hub is checked against the Python image tag's push date.
+Both are indirect cases. When the version is derived from the project's Dockerfile, only the staleness of the base image is reported. The entry itself is never checked then, and a `stale` marker on it is reported as redundant. A version taken from Docker Hub is checked against the newest Node or Python release there.
 
 #### Yanked dependencies
 
@@ -900,7 +900,7 @@ When updating an image tag, Update-time keeps the non-numeric parts of the tag a
 
 A suffix without an embedded version (`bookworm-slim`, `windows`) is never updated.
 
-A tag naming a channel in labels alone, such as `latest` or `trixie`, floats, and is replaced by the version tag serving the same image, keeping the labels the tag itself carries (see [Floating image tags](#floating-image-tags)). A reference that names no tag asks for `latest`, the tag a registry serves by default, so it floats too and is pinned the same way. A dated snapshot such as `debian:bookworm-20260803` names no channel and no version: the registry leaves such a tag on the image it was pushed for, so its tag stands and only a digest is added. A repository can also name a snapshot by the date alone, as Alpine names one `20260805` beside its `3.24.1` release. Such a tag does name a version, and one that sorts above the releases beside it, so adopting it would carry a reference off its release line. Update-time passes it over instead: a reference on a release keeps following releases, and a reference on a snapshot keeps following snapshots.
+A tag naming a channel in labels alone, such as `latest` or `trixie`, floats, and is replaced by the version tag serving the same image, keeping the labels the tag itself carries (see [Floating image tags](#floating-image-tags)). A reference that names no tag asks for `latest`, the tag a registry serves by default, so it floats too and is pinned the same way. A dated snapshot such as `debian:bookworm-20260803` names the day its image was built. It is updated to the newest snapshot under its label, so a reference on `bookworm-20240110` moves to `bookworm-20260803`. A repository can also name a snapshot by the date alone, as Alpine names one `20260805` beside its `3.24.1` release. Such a tag is updated to the newest snapshot as well. A reference on a release keeps following releases, and a reference on a snapshot keeps following snapshots.
 
 #### Pinning
 
@@ -918,7 +918,7 @@ Pinning a floating tag adopts no newer image, so the cooldown holds it back not 
 
 #### Stale dependencies
 
-Image tags are only checked on Docker Hub, for the same reason the cooldown is, so a `stale` marker on an image hosted elsewhere is reported as redundant. So is one on a CircleCI machine-executor image, which no registry serves. Because a maintained image tag is rebuilt (re-pushed) periodically, its push date reflects that maintenance, so a still-maintained tag is not reported as stale even when its version is old. A dated snapshot is the exception to that: the registry never moves such a tag, so nothing re-pushes it, and its own push date is what the check measures. A snapshot pinned years ago is reported as stale. A snapshot named by the date alone is passed over here too, so a reference on a release is dated by the newest release and not by the snapshot, however much newer that snapshot is. Alpine's `20260805` is newer than its `3.24.1`, and a reference on `3.24.1` is dated by Alpine's newest release all the same.
+Staleness is measured against the image's newest release, on Docker Hub only, since other registries expose no publication date. A `stale` marker on an image hosted elsewhere is therefore reported as redundant. So is one on a CircleCI machine-executor image, which no registry serves.
 
 #### Yanked dependencies
 

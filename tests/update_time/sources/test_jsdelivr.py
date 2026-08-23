@@ -5,11 +5,13 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion, Yank
+from update_time.domain.dependency import DependencyVersion, Release, Yank
 from update_time.io.log import Logger
+from update_time.sources import jsdelivr
 from update_time.sources.jsdelivr import version_getter
 
 from tests.helpers import mock_response
+from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import HASH1, HASH2
 from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, npm_registry, staleness_disabled
 
@@ -163,18 +165,31 @@ class GetLatestVersionTest(LoggingTestCase):
         message = Logger._MESSAGE_NO_INTEGRITY_HASH
         self.assert_logged(message, dependency="clipboard", version="1.1", filename=_FILENAME)
 
-    def test_newest_published_attached(self, mock_get: Mock):
-        """Test that the package's newest npm publication date is attached for the staleness check."""
-        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
-        mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": old})]
-        self.assertEqual(
-            datetime.fromisoformat(old), _get_latest_version("clipboard", "1.0", _FILENAME).newest_published
+    @kills(
+        Mutation(
+            jsdelivr,
+            "        return replace(latest, newest=newest_release(dependency))",
+            "        _n = newest_release(dependency)\n"
+            "        return replace(latest, newest=None if _n is None else type(_n)(latest.version, _n.published))",
+            "the release attached names the version the run leaves the URL on, not the package's newest",
         )
+    )
+    def test_newest_release_attached(self, mock_get: Mock):
+        """Test that the newest release is attached, and not the version the run leaves the URL on.
 
-    def test_newest_published_attached_when_globally_disabled(self, mock_get: Mock):
-        """Test that the date is attached even with the global check disabled, so a marker can set its own threshold."""
+        The cooldown holds 1.1 back, so the URL stays on 1.0 while 1.1 is the release that dates the package.
+        """
+        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        fresh = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        mock_get.side_effect = [jsdelivr_versions("1.1", "1.0"), npm_registry({"1.0": old, "1.1": fresh})]
+        latest = _get_latest_version("clipboard", "1.0", _FILENAME)
+        self.assertEqual(latest.version, "1.0")
+        self.assertEqual(Release("1.1", datetime.fromisoformat(fresh)), latest.newest)
+
+    def test_newest_release_attached_when_globally_disabled(self, mock_get: Mock):
+        """Test that the newest release is attached with the check off, so a marker can set its own threshold."""
         old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
         mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": old})]
         with staleness_disabled:
             latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)
-        self.assertEqual(datetime.fromisoformat(old), latest_version.newest_published)
+        self.assertEqual(Release("1.0", datetime.fromisoformat(old)), latest_version.newest)

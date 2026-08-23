@@ -4,8 +4,10 @@ A GitHub Action `uses:` pinned as `<sha> # v4.1.1` and a pre-commit hook `rev:` 
 are the same kind of reference: a GitHub repository pinned to a commit SHA, with the human-readable version travelling
 in a trailing comment. Both are (re)pinned to the latest version's commit SHA the same way; only the surrounding
 syntax — and so how the new reference text is spelled — differs. This module owns what the two share: reading the
-reference from a match, deciding the version to pin it to, and rewriting the line. Each updater supplies only how its
-own reference is spelled.
+reference from a match, deciding the version to pin it to, and rewriting the line. It owns one more decision they
+share, for a reference that names no version at all: a branch, a floating tag, or a bare commit SHA. No update is
+resolved for such a reference. Its repository is checked for staleness alone. Each updater supplies only how its own
+reference is spelled.
 """
 
 from dataclasses import dataclass, replace
@@ -14,19 +16,19 @@ from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
-from update_time.domain.dependency import is_valid
+from update_time.domain.dependency import DependencyVersion, is_valid
 from update_time.domain.drift import DriftedPin, hash_drifted, report_drift
-from update_time.domain.reference import Reference
+from update_time.domain.reference import Reference, ResolvedReference
+from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
 from update_time.primitives.text import replace_match
 from update_time.references.match import matched_dependency
 from update_time.references.resolve import latest_version
-from update_time.sources.github import get_latest_version
+from update_time.sources.github import get_latest_version, newest_release
 
 if TYPE_CHECKING:
     import re
     from collections.abc import Callable
 
-    from update_time.domain.dependency import DependencyVersion
     from update_time.domain.marker import Marker
     from update_time.io.log import Logger
     from update_time.primitives.location import Location
@@ -56,6 +58,7 @@ def _latest_pin(reference: Reference, marker: Marker, log: Logger) -> Dependency
     """
     current_version, current_sha = reference.current_version, reference.current_sha
     if not is_valid(current_version):
+        _warn_if_stale(reference, marker, log)
         return None
     latest = latest_version(reference, get_latest_version, marker, log)
     if latest is None or not latest.sha:
@@ -109,3 +112,20 @@ class PinUpdater:
         if latest is None:
             return match.string
         return replace_match(match, self.spell(reference, latest))
+
+
+def _warn_if_stale(reference: Reference, marker: Marker, log: Logger) -> None:
+    """Warn when the repository of a reference naming no version has gone quiet.
+
+    A branch such as `@main`, a floating tag such as `@vnext`, and a bare commit SHA all resolve no update, so
+    staleness is the only check they get. GitHub is left unasked for a reference whose threshold in force is 0,
+    and for one whose marker holds every check back.
+    """
+    if marker.holds_everything_back:
+        return  # A bare `ignore` holds the staleness check back, so GitHub is not asked for a release.
+    if (threshold := marker.stale.value_or(STALE_AFTER.get())) == NO_STALENESS_CHECK:
+        return
+    owner, repository, *_path = reference.dependency.split("/")
+    if (newest := newest_release(owner, repository)) is not None:
+        resolved = ResolvedReference(**vars(reference), release=DependencyVersion.unpinned(newest))
+        log.report_staleness(resolved, marker, threshold)

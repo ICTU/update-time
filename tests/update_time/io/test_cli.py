@@ -13,7 +13,7 @@ from update_time.domain.vulnerability import NO_RISK_LEVEL, RISK_LEVELS, VULNERA
 from update_time.io.cli import parse_args
 from update_time.io.log import LOG_LEVEL
 
-from tests.helpers import patch_pathlib_path
+from tests.helpers import patch_environ, patch_pathlib_path
 
 if TYPE_CHECKING:
     import argparse
@@ -23,8 +23,9 @@ class CommandLineInterfaceTest(unittest.TestCase):
     """Unit tests for the command-line interface."""
 
     def setUp(self) -> None:
-        """Treat the PATH as inside a git repository by default, so parsing succeeds unless a test says otherwise."""
+        """Treat the PATH as inside a git repository, and keep argparse's help colourless whatever the run sets."""
         self.enterContext(patch("update_time.io.cli.inside_git_repository", Mock(return_value=True)))
+        self.enterContext(patch_environ({"NO_COLOR": "1"}, clear=False))  # Make argparse write colourless help
 
     def parsed(self, *argv: str) -> argparse.Namespace:
         """Parse the given command-line arguments and return the resulting namespace."""

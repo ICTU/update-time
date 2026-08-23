@@ -4,10 +4,10 @@ import re
 from functools import cache
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import DependencyVersion, Yank
+from update_time.domain.dependency import Release, Yank
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
-from update_time.primitives.timestamp import newest_timestamp, parse_timestamp
+from update_time.primitives.timestamp import parse_timestamp
 from update_time.sources.github import changes_from_release, github_owner_and_repository
 
 if TYPE_CHECKING:
@@ -62,7 +62,7 @@ def get_changes(package: str, version: str) -> str:
 def _package_metadata(package: str) -> dict:
     """Get the npm registry's package document, or an empty dict if it can't be fetched.
 
-    Shared by `get_publication_datetime` and `newest_publication_date` so both read the same `time` map in one
+    Shared by `get_publication_datetime` and `newest_release` so both read the same `time` map in one
     (cached) request.
     """
     response = fetch(f"{_REGISTRY}/{package}", _LOG)
@@ -79,16 +79,6 @@ def get_publication_datetime(package: str, version: str) -> datetime | None:
     return parse_timestamp(_package_metadata(package).get("time", {}).get(version))
 
 
-def newest_publication_date(package: str) -> datetime | None:
-    """Return the package's most recent publication date across all versions, or None if it can't be fetched.
-
-    Read from the npm registry's `time` map, ignoring its `created`/`modified` bookkeeping entries, so the date
-    reflects the latest version actually published.
-    """
-    times = _package_metadata(package).get("time", {})
-    return newest_timestamp(time for key, time in times.items() if key not in _TIME_BOOKKEEPING_KEYS)
-
-
 def deprecation(package: str, version: str) -> Yank:
     """Return the version's deprecation state as a yank (npm's counterpart to a PyPI yank).
 
@@ -99,14 +89,14 @@ def deprecation(package: str, version: str) -> Yank:
     return Yank(yanked=bool(deprecated), reason=deprecated if isinstance(deprecated, str) else "")
 
 
-def newest_release(package: str) -> DependencyVersion | None:
-    """Return the package's newest published release (its `latest` dist-tag) with its date, or None if unavailable.
+def newest_release(package: str) -> Release | None:
+    """Return the version the package published most recently with its date, or None when the registry dates none.
 
-    Feeds the package.json staleness check: unlike PyPI there is no update-target source call to reuse (npm/pnpm do
-    the update themselves), so the newest release is read straight from the registry document. Returns None when the
-    package has no `latest` dist-tag (e.g. it can't be fetched, or the dependency isn't an npm registry package).
+    The release is read from the registry document's `time` map, which dates every version the package published.
     """
-    latest = _package_metadata(package).get("dist-tags", {}).get("latest")
-    if latest is None:
-        return None
-    return DependencyVersion(version=latest, newest_published=newest_publication_date(package))
+    times = _package_metadata(package).get("time", {})
+    return Release.newest(
+        Release(version=version, published=published)
+        for version, time in times.items()
+        if version not in _TIME_BOOKKEEPING_KEYS and (published := parse_timestamp(time)) is not None
+    )

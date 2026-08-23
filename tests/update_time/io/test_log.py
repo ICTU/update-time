@@ -13,7 +13,7 @@ from rich.logging import RichHandler
 from rich.text import Text
 
 from update_time.domain.bound import Redundancy, Verb
-from update_time.domain.dependency import DependencyVersion, FloatingPin, Yank
+from update_time.domain.dependency import DependencyVersion, FloatingPin, Release, Yank
 from update_time.domain.directive import Reason
 from update_time.domain.drift import DriftedPin
 from update_time.domain.marker import Marker, Scope
@@ -270,19 +270,21 @@ class LoggerTests(TestCase):
         )
 
     def test_warn_if_stale(self, mock_log: Mock):
-        """Test that an old newest release is warned about at warning level, against the threshold passed in.
+        """Test that an old newest release is warned about at warning level, naming the release that was measured.
 
-        The 90 differs from the global default, so the reported `(> 90)` can only have come from the argument.
+        The reference was left on 4.15.0 while the dependency's newest release is 5.0.0, so the version in the
+        message can only be the one whose date was measured. The 90 differs from the global default, so the
+        reported `(> 90)` can only have come from the argument.
         """
         published = datetime.now(UTC) - timedelta(days=512, hours=1)
-        version = DependencyVersion("4.15.0", newest_published=published)
+        version = DependencyVersion("4.15.0", newest=Release("5.0.0", published))
         location = _create_location("requirements.txt", 9)
         Logger("stale").warn_if_stale(resolved_reference("humanize", location, version), 90)
         self.assert_message(
             mock_log,
             Logger._MESSAGE_STALE,
             f"Stale dependency {dependency('humanize')} in {_at('requirements.txt:9')}: "
-            "newest release 4.15.0 was published 512 days ago (> 90)",
+            "newest release 5.0.0 was published 512 days ago (> 90)",
         )
 
     def test_report_staleness(self, mock_log: Mock):
@@ -292,7 +294,7 @@ class LoggerTests(TestCase):
         either line is logged only when the given threshold is the one applied.
         """
         published = datetime.now(UTC) - timedelta(days=100, hours=1)
-        version = DependencyVersion("4.15.0", newest_published=published)
+        version = DependencyVersion("4.15.0", newest=Release("4.15.0", published))
         resolved = resolved_reference("humanize", _create_location("requirements.txt", 9), version)
         Logger("stale").report_staleness(resolved, Marker(), 90)
         mock_log.assert_called_once_with(Logger._MESSAGE_STALE.level, Logger._MESSAGE_STALE, ANY)
@@ -309,7 +311,7 @@ class LoggerTests(TestCase):
 
     def test_warn_if_stale_does_nothing_when_not_stale(self, mock_log: Mock):
         """Test that nothing is logged when the newest release date is recent or unknown."""
-        recent = DependencyVersion("4.15.0", newest_published=datetime.now(UTC) - timedelta(days=1))
+        recent = DependencyVersion("4.15.0", newest=Release("4.15.0", datetime.now(UTC) - timedelta(days=1)))
         undated = DependencyVersion("4.15.0")
         logger = Logger("stale")
         location = _create_location("requirements.txt", 9)
@@ -495,7 +497,7 @@ class LoggerTests(TestCase):
 
     def test_report_staleness_does_nothing_when_not_stale(self, mock_log: Mock):
         """Test that a marker holding back a staleness warning that would not be given reports nothing either."""
-        recent = DependencyVersion("4.15.0", newest_published=datetime.now(UTC) - timedelta(days=1))
+        recent = DependencyVersion("4.15.0", newest=Release("4.15.0", datetime.now(UTC) - timedelta(days=1)))
         undated = DependencyVersion("4.15.0")
         logger = Logger("stale")
         marker = Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")

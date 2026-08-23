@@ -273,7 +273,9 @@ def _staleness_release(declaration: Reference) -> DependencyVersion | None:
     """
     if declaration.current_version:
         return get_latest_version(declaration.dependency, declaration.current_version, NO_BOUND, COOLDOWN.get())
-    return newest_release(declaration.dependency)
+    if (newest := newest_release(declaration.dependency)) is None:
+        return None
+    return DependencyVersion.unpinned(newest)
 
 
 def pinned_pypi_releases(path: Path) -> Iterable[ResolvedReference]:

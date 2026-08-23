@@ -414,9 +414,9 @@ class StaleDependencyTest(LoggingTestCase):
         ]
 
     @staticmethod
-    def registry_doc(latest: str, published: str) -> Mock:
-        """Mock the npm registry document with the `latest` dist-tag and that version's publish time."""
-        return mock_response({"dist-tags": {"latest": latest}, "time": {latest: published}})
+    def registry_doc(version: str, published: str) -> Mock:
+        """Mock the npm registry document dating the version it names."""
+        return mock_response({"time": {version: published}})
 
     def package_json(self, glob: Mock) -> Mock:
         """Discover a single mock package.json depending on `clipboard`, whose entry sits on line 4."""
@@ -463,7 +463,7 @@ class StaleDependencyTest(LoggingTestCase):
     def test_dependency_without_release_skipped(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that a declared dependency the registry has no release for is skipped without warning or crashing."""
         self.stub_no_update(mock_run)
-        get.return_value = mock_response({})  # no `dist-tags`, so newest_release returns None
+        get.return_value = mock_response({})  # the document dates no version, so newest_release returns None
         self.package_json(glob)
         update_package_jsons()
         self.assert_no_warnings_logged()

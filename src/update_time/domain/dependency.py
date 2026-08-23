@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from datetime import UTC
 from enum import StrEnum, auto
+from functools import total_ordering
 from typing import TYPE_CHECKING
 
 from packaging.version import InvalidVersion, Version
@@ -54,6 +55,37 @@ class Yank:
         return f'"{self.reason}"' if self.reason else "reason not specified"
 
 
+# A version lower than any real version, standing in for a version that reads as none, so any two versions compare
+# and order uniformly and the one that reads as none sorts lowest.
+LOWEST_VERSION = Version("0")
+
+
+@total_ordering
+@dataclass(frozen=True)
+class Release:
+    """A version a dependency's source published, and the date it was published on."""
+
+    version: VersionString
+    published: datetime
+
+    def __lt__(self, other: Release) -> bool:
+        """Order releases by publication date, and by version where two were published at the same moment.
+
+        The tie-breaker keeps the order the same on every run, whatever order the source listed the releases in.
+        """
+        return (self.published, self._sortable_version) < (other.published, other._sortable_version)
+
+    @property
+    def _sortable_version(self) -> Version:
+        """Return the version parsed, or the lowest there is when the source spells it as no version at all."""
+        return Version(self.version) if is_valid(self.version) else LOWEST_VERSION
+
+    @staticmethod
+    def newest(releases: Iterable[Release]) -> Release | None:
+        """Return the release published most recently, or None when the source published none."""
+        return max(releases, default=None)
+
+
 @dataclass(frozen=True)
 class DependencyVersion:
     """A version of a dependency."""
@@ -62,9 +94,14 @@ class DependencyVersion:
     changes: str = ""  # Changelog for this version, empty when none could be found
     sha: str = ""
     published: datetime | None = None  # Publication date of this (candidate) version, when known
-    newest_published: datetime | None = None  # Publication date of the dependency's newest release, for staleness
+    newest: Release | None = None  # The dependency's newest release, for staleness
     yank: Yank = Yank()  # The version's withdrawal state (yanked on PyPI, deprecated on npm)
     floating: FloatingPin | None = None  # What happened to the floating pin if the reference had one
+
+    @classmethod
+    def unpinned(cls, newest: Release) -> DependencyVersion:
+        """Return the version for a reference that pins none, carrying the dependency's newest release."""
+        return cls(version="", newest=newest)
 
     def __str__(self) -> str:
         """Render the version as its version string, followed by its publication date in UTC when that is known."""

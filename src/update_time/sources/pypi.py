@@ -14,6 +14,7 @@ from update_time.domain.cooldown import within_cooldown
 from update_time.domain.dependency import (
     DependencyName,
     DependencyVersion,
+    Release,
     VersionString,
     Yank,
     first_eligible,
@@ -24,7 +25,7 @@ from update_time.domain.vulnerability import vulnerability_reporting
 from update_time.domain.yank import with_yank_state, yank_reporting
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
-from update_time.primitives.timestamp import newest_timestamp
+from update_time.primitives.timestamp import newest_timestamp, parse_timestamp
 from update_time.sources.github import (
     changes_from_changelog_file,
     changes_from_release,
@@ -114,7 +115,7 @@ class _Info(TypedDict):
     yanked: NotRequired[bool]
 
 
-class Release(TypedDict):
+class ReleaseMetadata(TypedDict):
     """PyPI release metadata."""
 
     info: _Info
@@ -122,7 +123,7 @@ class Release(TypedDict):
 
 
 @cache
-def release_metadata(package: str, version: str) -> Release | None:
+def release_metadata(package: str, version: str) -> ReleaseMetadata | None:
     """Get the release metadata from PyPI, or None if it can't be fetched."""
     response = fetch(f"{_PYPI}/pypi/{package}/{version}/json", _LOG)
     return response.json() if response is not None else None
@@ -144,7 +145,7 @@ def _index_metadata(package: str) -> dict:
     Uses the Index (Simple) API rather than the project JSON API's `releases` key, which is deprecated. See
     https://docs.pypi.org/api/json/ and https://docs.pypi.org/api/index-api/. The response carries both the
     available `versions` (PEP 700) and each distribution file's `upload-time` (PEP 700), so `_project_versions`
-    and `newest_publication_date` share this single request.
+    and `newest_release` share this single request.
     """
     headers = {"Accept": "application/vnd.pypi.simple.v1+json"}
     response = fetch(f"{_PYPI}/simple/{package}/", _LOG, headers=headers)
@@ -154,17 +155,6 @@ def _index_metadata(package: str) -> dict:
 def _project_versions(package: str) -> list[str]:
     """Get all version strings of a package from PyPI's Index API, or an empty list if they can't be fetched."""
     return _project_metadata(package).get("versions", [])
-
-
-def newest_publication_date(package: str) -> datetime | None:
-    """Return the most recent distribution-file upload time across all of the package's releases, or None.
-
-    This is the "newest release" date the staleness check compares against: the latest moment the project
-    published anything at all. It is taken over every file (any version, including pre-releases), so a project
-    that recently shipped a pre-release or a back-ported patch still counts as active and is not flagged as stale.
-    """
-    files = _project_metadata(package).get("files", [])
-    return newest_timestamp(file.get("upload-time") for file in files)
 
 
 def _versions(package: str) -> list[Version]:
@@ -177,15 +167,19 @@ def _stable_versions(package: str) -> list[Version]:
     return [version for version in _versions(package) if not version.is_prerelease and not version.is_devrelease]
 
 
-def newest_release(package: DependencyName) -> DependencyVersion | None:
-    """Return the package's newest release, dated by `newest_publication_date`, or None when the index lists none.
+def newest_release(package: DependencyName) -> Release | None:
+    """Return the release the package published most recently, or None when the index dates none it can name.
 
-    Read over every version the index lists, prereleases included, since the date it is paired with is read the
-    same way: `newest_publication_date` takes the latest upload of any file.
+    The release is read off the distribution files, pre-releases included. So a project that has just shipped a
+    pre-release or a back-ported patch is dated by that upload. A file with no upload time is passed over, and so
+    is one whose name holds no version, such as the `.egg` and `.exe` files PyPI stopped accepting.
     """
-    if not (versions := _versions(package)):
-        return None
-    return DependencyVersion(version=str(max(versions)), newest_published=newest_publication_date(package))
+    return Release.newest(
+        Release(version=str(version), published=published)
+        for file in _project_metadata(package).get("files", [])
+        if (published := parse_timestamp(file.get("upload-time"))) is not None
+        and (version := _distribution_version(file.get("filename", ""))) is not None
+    )
 
 
 def _release_datetime(urls: list[_Distribution]) -> datetime | None:
@@ -215,10 +209,10 @@ def get_latest_version(
         candidates, lambda version: _eligible_release(package, version, cooldown_days), current_version
     )
     latest = with_yank_state(latest, current_version, partial(yank_state, package))
-    # Always attach the newest release date so an already-up-to-date pin can still be flagged as stale. It rides on
-    # the Index API response fetched above, so it costs no extra request; whether it counts as stale (and whether the
-    # check is enabled at all) is decided by `is_stale` where the warning would be logged.
-    return replace(latest, newest_published=newest_publication_date(package))
+    # Always attach the newest release so an already-up-to-date pin can still be flagged as stale. It rides on
+    # the Index API response fetched above, so it costs no extra request; whether it counts as stale (and whether
+    # the check is enabled at all) is decided by `is_stale` where the warning would be logged.
+    return replace(latest, newest=newest_release(package))
 
 
 def yank_state(package: str, version: str) -> Yank:

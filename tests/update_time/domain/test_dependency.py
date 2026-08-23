@@ -1,9 +1,12 @@
 """Unit tests for the dependency module."""
 
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
-from update_time.domain.dependency import DependencyVersion, Yank, first_eligible, is_valid
+from update_time.domain import dependency
+from update_time.domain.dependency import DependencyVersion, Release, Yank, first_eligible, is_valid
+
+from tests.mutation import Mutation, kills
 
 
 class IsValidTest(unittest.TestCase):
@@ -32,6 +35,29 @@ class YankTest(unittest.TestCase):
     def test_str_reports_an_unspecified_reason(self):
         """Test that a yank the maintainer gave no reason for renders as `reason not specified`."""
         self.assertEqual(str(Yank(yanked=True)), "reason not specified")
+
+
+class ReleaseTest(unittest.TestCase):
+    """Unit tests for the release a dependency's source published."""
+
+    @kills(
+        Mutation(
+            dependency,
+            "        return Version(self.version) if is_valid(self.version) else LOWEST_VERSION",
+            "        return LOWEST_VERSION",
+            "releases published at one moment order by the order the source listed them in",
+        )
+    )
+    def test_a_tie_is_broken_by_version(self):
+        """Test that two releases published at the same moment are ordered by version, in either listing order.
+
+        The versions compare as versions rather than as strings, so `10.0.0` is the newer of the two.
+        """
+        moment = datetime(2026, 8, 24, tzinfo=UTC)
+        older, newer = Release("9.9.4", moment), Release("10.0.0", moment)
+        for case, releases in (("newest listed last", [older, newer]), ("newest listed first", [newer, older])):
+            with self.subTest(case=case):
+                self.assertEqual(Release.newest(releases), newer)
 
 
 class DependencyVersionTest(unittest.TestCase):

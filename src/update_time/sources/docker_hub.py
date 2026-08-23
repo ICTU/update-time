@@ -1,15 +1,16 @@
-"""Docker Hub specifics: credentials and the proprietary push-date API the cooldown relies on.
+"""Docker Hub specifics: credentials and the proprietary push-date API the cooldown and staleness check rely on.
 
-The OCI protocol exposes no publish date. Its optional `org.opencontainers.image.created` annotation is the image's
-*build* time, not when the tag was pushed, and reproducible builds commonly zero it (`SOURCE_DATE_EPOCH`), so it is
-not a usable cooldown signal. Docker Hub's proprietary tags API is the only source of a real push date, so the
-cooldown can only be enforced for Docker Hub images. This module isolates everything Docker-Hub-specific; the
-generic OCI client in `oci` uses it only for that push date and for credentials (which raise the rate limit).
+The OCI protocol exposes no publish date. Its optional `org.opencontainers.image.created` annotation dates the
+image's *build*, not the push of its tag. Reproducible builds commonly zero that annotation (`SOURCE_DATE_EPOCH`),
+so it is no substitute. Docker Hub's proprietary tags API is the only source of a real push date, so the
+cooldown can only be enforced for Docker Hub images, and only there can an image be dated for the staleness check.
+This module isolates everything Docker-Hub-specific. The generic OCI client in `oci` uses this module for those
+push dates, for the digests Docker Hub's listing gives, and for credentials, which raise the rate limit.
 """
 
 import os
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
@@ -50,6 +51,14 @@ def api_headers() -> dict[str, str]:
     return {}
 
 
+class _TagJSON(TypedDict):
+    """One tag as Docker Hub's tag listing carries it."""
+
+    name: str
+    digest: NotRequired[str]
+    tag_last_pushed: NotRequired[str]
+
+
 # The page size of Docker Hub's tag listing, which is also the largest page it serves.
 _TAG_LISTING_PAGE_SIZE = 100
 
@@ -67,20 +76,49 @@ def tag_digests(repository: str, tag: str) -> dict[str, str]:
     tag is pushed together with the other tags serving its digest, so reading stops at the first page holding none
     of them, and at `_MAX_TAG_LISTING_PAGES` pages whatever the listing holds.
     """
-    namespace, repo = repository.split("/", maxsplit=1)
-    url = f"{_REGISTRY}/v2/namespaces/{namespace}/repositories/{repo}/tags?page_size={_TAG_LISTING_PAGE_SIZE}"
+    url = _listing_url(repository)
     digests: dict[str, str] = {}
     for _page in range(_MAX_TAG_LISTING_PAGES):
-        page, url = _listing_page(url)
+        entries, url = _listing_page(url)
+        page = {entry["name"]: entry.get("digest", "") for entry in entries}
         digests |= page
         if not url or _lists_every_alias(digests, page, tag):
             break
     return digests
 
 
+def newest_pushes(repository: str) -> dict[str, datetime]:
+    """Return each tag on the first page of a Docker Hub repository's listing, with the date it was pushed.
+
+    The listing is ordered by push date, so its first page holds the repository's most recent pushes, which is
+    what dates the dependency. One page answers that, however many tags the repository has. A tag without a push
+    date is left out.
+    """
+    entries, _next_page = _listing_page(_listing_url(repository))
+    return {
+        entry["name"]: published
+        for entry in entries
+        if (published := parse_timestamp(entry.get("tag_last_pushed"))) is not None
+    }
+
+
+def _listing_url(repository: str) -> str:
+    """Return the URL of the first page of a Docker Hub repository's tag listing."""
+    return f"{_tags_url(repository)}?page_size={_TAG_LISTING_PAGE_SIZE}"
+
+
+def _tags_url(repository: str) -> str:
+    """Return the URL of a Docker Hub repository's tags, which the listing and each tag's metadata hang off.
+
+    `repository` is the `namespace/repository` path (e.g. `library/redis`), which the API splits into two segments.
+    """
+    namespace, repo = repository.split("/", maxsplit=1)
+    return f"{_REGISTRY}/v2/namespaces/{namespace}/repositories/{repo}/tags"
+
+
 @cache
-def _listing_page(url: str) -> tuple[dict[str, str], str]:
-    """Return the digest of each tag on one page of the listing, and the URL of the page after it.
+def _listing_page(url: str) -> tuple[tuple[_TagJSON, ...], str]:
+    """Return the tags listed on one page, and the URL of the page after it.
 
     Cached by page rather than by reference, so a repository holding a second floating tag reads the pages the
     first one read without asking the registry for them again. A page that can't be fetched is logged and read as
@@ -88,9 +126,9 @@ def _listing_page(url: str) -> tuple[dict[str, str], str]:
     """
     response = fetch(url, _LOG, headers=api_headers())
     if response is None:
-        return {}, ""
+        return (), ""
     listing = response.json()
-    return {tag["name"]: tag.get("digest", "") for tag in listing.get("results") or []}, listing.get("next") or ""
+    return tuple(listing.get("results") or []), listing.get("next") or ""
 
 
 def _lists_every_alias(digests: dict[str, str], page: dict[str, str], tag: str) -> bool:
@@ -112,9 +150,7 @@ def last_pushed(repository: str, tag: str) -> datetime | None:
     of a real push date (see the module docstring); when it can't be fetched the response is logged and None is
     returned, which means no cooldown is applied to the tag.
     """
-    namespace, repo = repository.split("/", maxsplit=1)
-    url = f"{_REGISTRY}/v2/namespaces/{namespace}/repositories/{repo}/tags/{tag}"
-    response = fetch(url, _LOG, headers=api_headers())
+    response = fetch(f"{_tags_url(repository)}/{tag}", _LOG, headers=api_headers())
     if response is None:
         return None
     return parse_timestamp(response.json().get("tag_last_pushed"))

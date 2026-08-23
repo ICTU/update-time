@@ -18,7 +18,7 @@ from update_time.domain.vulnerability import vulnerability_reporting
 from update_time.domain.yank import with_yank_state, yank_reporting
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
-from update_time.sources.npmjs import deprecation, get_publication_datetime, newest_publication_date
+from update_time.sources.npmjs import deprecation, get_publication_datetime, newest_release
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter, VersionBound
@@ -62,8 +62,7 @@ def version_getter(filename: str) -> NewVersionGetter:
             current_version_string,
         )
         latest = with_yank_state(latest, current_version_string, partial(deprecation, dependency))
-        # Attach the newest npm publication date for the staleness check.
-        return replace(latest, newest_published=newest_publication_date(dependency))
+        return replace(latest, newest=newest_release(dependency))
 
     return publication_date_reporting(vulnerability_reporting(yank_reporting(get_latest_version)))
 

@@ -7,14 +7,14 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import Yank
+from update_time.domain.dependency import Release, Yank
 from update_time.sources import github, pypi
 from update_time.sources.pypi import (
     _changelog_from_url,
     get_changes,
     get_latest_version,
     get_publication_datetime,
-    newest_publication_date,
+    newest_release,
 )
 
 from tests.helpers import mock_response, patch_get
@@ -576,31 +576,37 @@ class GetPublicationDateTimeTest(CacheClearingTestCase):
         self.assertEqual(published, get_publication_datetime("package", "1.0"))
 
 
-class NewestPublicationDateTest(LoggingTestCase):
-    """Unit tests for the newest publication date across all of a package's releases."""
+class NewestReleaseTest(LoggingTestCase):
+    """Unit tests for the release a package published most recently."""
 
     @patch_get({"versions": ["1.0"]})
     def test_no_files(self):
-        """Test that no date is returned when the Index API lists no distribution files."""
-        self.assertIsNone(newest_publication_date("no_files"))
+        """Test that no release is returned when the Index API lists no distribution files."""
+        self.assertIsNone(newest_release("no_files"))
 
     @patch_get(
         {
+            "versions": ["1.0.1", "2.0"],
             "files": [
-                {"upload-time": "2020-01-01T00:00:00Z"},
-                {"upload-time": "2020-06-01T00:00:00Z"},
+                {"filename": "example-2.0.tar.gz", "upload-time": "2020-01-01T00:00:00Z"},
+                {"filename": "example-1.0.1.tar.gz", "upload-time": "2020-06-01T00:00:00Z"},
                 {"filename": "no-upload-time.whl"},
-            ]
+                {"filename": "unreadable-name.txt", "upload-time": "2021-01-01T00:00:00Z"},
+            ],
         }
     )
     def test_newest_across_files(self):
-        """Test that the most recent upload time across all files is returned, ignoring files without one."""
-        self.assertEqual(datetime(2020, 6, 1, tzinfo=UTC), newest_publication_date("files"))
+        """Test that the newest release is the one whose upload is the most recent.
+
+        The backport 1.0.1 was uploaded after 2.0, so the highest version is not the one measured. The upload
+        after it names no version, and the file without an upload time names no date.
+        """
+        self.assertEqual(Release("1.0.1", datetime(2020, 6, 1, tzinfo=UTC)), newest_release("files"))
 
     @patch_get(ok=False)
     def test_fetch_failure(self):
-        """Test that no date is returned when the Index API can't be fetched."""
-        self.assertIsNone(newest_publication_date("error"))
+        """Test that no release is returned when the Index API can't be fetched."""
+        self.assertIsNone(newest_release("error"))
         self.assert_could_not_fetch_logged()
 
 
@@ -644,12 +650,27 @@ class GetLatestVersionTest(LoggingTestCase):
         mock_get.side_effect = [pypi_index("1.0", "1.2", "1.1"), pypi_release()]
         self.assertEqual(get_latest_version("highest", "1.0", NO_BOUND, COOLDOWN.default).version, "1.2")
 
-    def test_newest_published_attached(self, mock_get: Mock):
-        """Test that the newest release date is attached, so an up-to-date pin can still be flagged as stale."""
-        mock_get.side_effect = [pypi_index("1.0", files=[{"upload-time": PYPI_OLD_UPLOAD}])]
+    @kills(
+        Mutation(
+            pypi,
+            "    return replace(latest, newest=newest_release(package))",
+            "    _n = newest_release(package)\n"
+            "    return replace(latest, newest=None if _n is None else type(_n)(latest.version, _n.published))",
+            "the release attached names the version the run leaves the pin on, not the package's newest",
+        )
+    )
+    def test_newest_release_attached(self, mock_get: Mock):
+        """Test that the newest release is attached, and not the version the run leaves the pin on.
+
+        The cooldown holds 2.0 back, so the pin stays on 1.0 while 2.0 is the release that dates the package.
+        """
+        fresh = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        files = [{"filename": "package-1.0.tar.gz", "upload-time": PYPI_OLD_UPLOAD}]
+        files += [{"filename": "package-2.0.tar.gz", "upload-time": fresh}]
+        mock_get.side_effect = [pypi_index("1.0", "2.0", files=files), pypi_release(fresh)]
         latest = get_latest_version("stale", "1.0", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "1.0")
-        self.assertEqual(datetime(2020, 1, 1, tzinfo=UTC), latest.newest_published)
+        self.assertEqual(Release("2.0", datetime.fromisoformat(fresh)), latest.newest)
 
     def test_prerelease_ignored(self, mock_get: Mock):
         """Test that pre-releases are ignored without fetching their metadata."""

@@ -8,8 +8,9 @@ from unittest.mock import Mock, call, patch
 
 from update_time.primitives import timestamp
 
+from tests import helpers, mutation_subject
 from tests import mutation as checker
-from tests import mutation_subject
+from tests.helpers import patch_environ
 from tests.mutation import CHECKED_TEST, CHECKS_OFF, Mutation, Outcome, Result, kills
 from tests.mutation_subject import is_even
 
@@ -426,6 +427,20 @@ class KillsTest(unittest.TestCase):
                 self.assertEqual((result.failures, result.errors), ([], []))
                 is_even_stub.assert_called_once_with(3)
                 self.checked.assert_not_called()
+
+    @kills(
+        Mutation(
+            helpers,
+            "        in_dict[CHECKS_OFF] = checks_off  # Keep the checks-off flag; it's used by tools/mutate.py "
+            "to turn off @kills",
+            "        pass  # Keep the checks-off flag; it's used by tools/mutate.py to turn off @kills",
+            "a test whose class clears the environment loses the sentinel, so `just mutate` checks it after all",
+        )
+    )
+    def test_the_sentinel_survives_a_cleared_environment(self):
+        """Test that patching the environment keeps the checks-off sentinel, whatever else it clears."""
+        with patch.dict(os.environ, {CHECKS_OFF: "1"}, clear=True), patch_environ():
+            self.assertEqual(os.environ.get(CHECKS_OFF), "1")
 
     @kills(
         Mutation(
