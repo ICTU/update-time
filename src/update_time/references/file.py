@@ -1,14 +1,14 @@
 """Rewrite the references in files: read a file, transform its lines, and write it back when they changed.
 
 The orchestration around the line-rewrite engine in `rewrite`: `rewrite_file` owns the read/compare/write cycle for
-one file, `update_file` runs the engine over one file's lines, and `update_files` does so for every file matching a
-set of glob patterns (discovered through `io.filesystem`).
+one file, `update_file` runs the engine over one file's lines, and `update_files` does so for every file of a
+kind (discovered through `io.filesystem`).
 """
 
 from typing import TYPE_CHECKING
 
 from update_time.domain.line import located_lines
-from update_time.io.filesystem import glob
+from update_time.io.filesystem import glob_for
 from update_time.references.rewrite import update_references_in_lines
 
 if TYPE_CHECKING:
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from update_time.domain.bound import NewVersionGetter
+    from update_time.domain.file_type import FileType
     from update_time.domain.line import Line
     from update_time.io.log import Logger
 
@@ -61,13 +62,7 @@ def update_file(
     )
 
 
-def update_files(
-    *glob_patterns: str,
-    regexp: str,
-    get_new_version: NewVersionGetter,
-    logger: Logger,
-    start: Path | None = None,
-) -> None:
-    """Update the files using the regexp to find the current version and get_new_version to find new versions."""
-    for path in glob(*glob_patterns, start=start):
+def update_files(file_type: FileType, *, regexp: str, get_new_version: NewVersionGetter, logger: Logger) -> None:
+    """Update the files of this kind, using the regexp to find the current version and get_new_version the new one."""
+    for path in glob_for(file_type):
         update_file(path, regexp, get_new_version=get_new_version, logger=logger)

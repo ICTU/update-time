@@ -2,10 +2,10 @@
 
 import re
 from functools import partial
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from update_time.io.filesystem import YAML_GLOB_PATTERNS, glob
+from update_time.domain.file_type import GITHUB_WORKFLOWS
+from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.primitives.digest import COMMIT_SHA
 from update_time.references.file import rewrite_file
@@ -37,16 +37,16 @@ def _spell_action(reference: Reference, latest: DependencyVersion) -> str:
 _ACTION = PinUpdater(_spell_action, _LOG)
 
 
-def update_github_actions(github_dir: Path) -> None:
+def update_github_actions() -> None:
     """Update the GitHub Actions in all YAML files under the GitHub directory, including composite actions."""
     pin_the_references = partial(updated_lines, regexp=_ACTION_RE, update_line=_ACTION.update_line, logger=_LOG)
-    for yaml_file in glob(*YAML_GLOB_PATTERNS, start=github_dir):
+    for yaml_file in glob_for(GITHUB_WORKFLOWS):
         rewrite_file(yaml_file, pin_the_references, _LOG)
 
 
 def main() -> None:  # pragma: no cover
     """Update the GitHub Actions in the repository's workflows."""
-    update_github_actions(Path.cwd() / ".github")
+    update_github_actions()
 
 
 if __name__ == "__main__":  # pragma: no cover

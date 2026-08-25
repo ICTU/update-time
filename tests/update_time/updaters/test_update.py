@@ -7,70 +7,110 @@ from typing import cast
 from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.drift import ALLOW_HASH_DRIFT
 from update_time.domain.floating import ALLOW_FLOATING_PIN
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES
 from update_time.io.filesystem import EXCLUDE_PATHS
 from update_time.io.log import LOG_LEVEL
-from update_time.updaters.update import main, run_script, update_dependencies
+from update_time.updaters import update as update_module
+from update_time.updaters.update import _SCRIPTS, _SRC, _Script, _Scripts, main
 
 from tests.helpers import patch_environ, patch_pathlib_path
+from tests.mutation import Mutation, kills
 
-# The updaters that must run, spelled out so this pins which ones rather than echoing the registry back at itself.
-# `update.py` fails on import when these names and the `update_*.py` scripts on disk disagree.
-_PARALLEL_SCRIPT_NAMES = (
-    "dockerfile_base_image",
-    "pyproject_toml",
-    "requirements_txt",
-    "github_action",
-    "circle_ci_config",
-    "gitlab_ci_config",
-    "manifest_images",
-    "devcontainer",
-    "jsdelivr",
-    "python_inline_script_metadata",
-    "pre_commit_config",
-)
+# The scripts that may not run beside another, spelled out so this pins which ones rather than echoing the registry
+# back at itself: node_engine and package_json both rewrite package.json, and node_engine and python_version_file
+# read the base image that dockerfile_base_image updates. The parallel ones need no list of their own, since which
+# scripts exist at all is pinned against the files on disk.
 _SEQUENTIAL_SCRIPT_NAMES = ("node_engine", "package_json", "python_version_file")
 
 
-@patch("subprocess.run")
-class RunScriptTest(unittest.TestCase):
-    """Unit tests for the run_script function."""
+def _registration_problems(registered: _Scripts, on_disk: set[str]) -> list[str]:
+    """Return a message for each way the registration, the dependency types, and the scripts on disk disagree."""
+    names = {script.name for script in registered}
+    problems = [
+        f"no updater script is registered for '{dependency_type.name}'"
+        for dependency_type in DEPENDENCY_TYPES
+        if not registered.scripts.get(dependency_type)
+    ]
+    problems += [
+        f"the updater script '{name}' is on disk but registered for no dependency type"
+        for name in sorted(on_disk - names)
+    ]
+    problems += [f"the updater script '{name}' is registered but not on disk" for name in sorted(names - on_disk)]
+    return problems
 
-    def test_run_script(self, mock_run: Mock):
+
+class RegistrationTest(unittest.TestCase):
+    """Unit tests for the agreement between the registered updater scripts and the dependency types."""
+
+    @kills(
+        Mutation(
+            update_module,
+            '        DEPENDENCY_TYPES.jsdelivr_npm_urls: (_Script("jsdelivr"),),\n',
+            "",
+            "an updater script is left out of the registry, so it never runs",
+        )
+    )
+    def test_the_registration_agrees_with_the_scripts_on_disk(self):
+        """Test that the registry names every dependency type and every `update_*.py` script beside it."""
+        on_disk = {path.stem.removeprefix("update_") for path in _SRC.glob("update_*.py")}
+        self.assertNotEqual(on_disk, set())  # An empty scan would pass the assertion below without examining anything
+        self.assertEqual(_registration_problems(_SCRIPTS, on_disk), [])
+
+    def test_dependency_type_without_a_script_is_reported(self):
+        """Test that a dependency type no updater script is registered for is reported, naming the type."""
+        scripts = dict.fromkeys(list(DEPENDENCY_TYPES)[:-1], (_Script("a_script"),))
+        expected = [f"no updater script is registered for '{list(DEPENDENCY_TYPES)[-1].name}'"]
+        self.assertEqual(_registration_problems(_Scripts(scripts), {"a_script"}), expected)
+
+    def test_scripts_disagreeing_with_the_files_on_disk_are_reported(self):
+        """Test that a script on disk nothing registers, and a registered script that is not on disk, are reported."""
+        registered = dict.fromkeys(DEPENDENCY_TYPES, (_Script("registered"),))
+        cases = {
+            "on disk but registered for no dependency type": (
+                {"registered", "stray"},
+                ["the updater script 'stray' is on disk but registered for no dependency type"],
+            ),
+            "registered but not on disk": (set(), ["the updater script 'registered' is registered but not on disk"]),
+        }
+        for case, (on_disk, expected) in cases.items():
+            with self.subTest(case=case):
+                self.assertEqual(_registration_problems(_Scripts(registered), on_disk), expected)
+
+
+@patch("subprocess.run")
+class ScriptTest(unittest.TestCase):
+    """Unit tests for running one updater script."""
+
+    def test_run(self, mock_run: Mock):
         """Test that a script is run and its exit code is returned."""
         mock_run.return_value = Mock(returncode=0)
-        self.assertEqual(run_script("dockerfile_base_image"), 0)
+        self.assertEqual(_Script("dockerfile_base_image").run(), 0)
         args = mock_run.call_args.args[0]
         self.assertEqual(args[-1].split("/")[-1], "update_dockerfile_base_image.py")
 
 
 @patch("subprocess.run")
-class UpdateDependenciesTest(unittest.TestCase):
-    """Unit tests for the update_dependencies function."""
+class ScriptsTest(unittest.TestCase):
+    """Unit tests for running every updater script."""
 
     def test_all_scripts_are_run(self, mock_run: Mock):
-        """Test that all updater scripts are run, the parallel ones before the sequential ones."""
+        """Test that every updater script is run, and that the sequential ones run after the parallel ones."""
         mock_run.return_value = Mock(returncode=0)
-        self.assertEqual(update_dependencies(), 0)
+        self.assertEqual(_SCRIPTS.run(), 0)
         scripts_run = [run_call.args[0][-1].split("/")[-1] for run_call in mock_run.call_args_list]
-        expected = [f"update_{name}.py" for name in (*_PARALLEL_SCRIPT_NAMES, *_SEQUENTIAL_SCRIPT_NAMES)]
-        self.assertEqual(sorted(expected), sorted(scripts_run))
-        sequential = [f"update_{name}.py" for name in _SEQUENTIAL_SCRIPT_NAMES]
-        self.assertEqual(sequential, scripts_run[-len(_SEQUENTIAL_SCRIPT_NAMES) :])
-
-    def test_sequential_scripts_run_in_order(self, mock_run: Mock):
-        """Test that node_engine runs before package_json (they share the package.json they both rewrite)."""
-        mock_run.return_value = Mock(returncode=0)
-        update_dependencies()
-        scripts_run = [run_call.args[0][-1].split("/")[-1] for run_call in mock_run.call_args_list]
-        self.assertLess(scripts_run.index("update_node_engine.py"), scripts_run.index("update_package_json.py"))
+        expected = [f"update_{script.name}.py" for script in _SCRIPTS]
+        self.assertEqual(sorted(scripts_run), sorted(expected))
+        # The scripts that may not run beside another are the last ones run, in whichever order among themselves.
+        sequential = {f"update_{name}.py" for name in _SEQUENTIAL_SCRIPT_NAMES}
+        self.assertEqual(set(scripts_run[-len(sequential) :]), sequential)
 
     def test_highest_exit_code_is_returned(self, mock_run: Mock):
         """Test that the highest exit code of all scripts is returned."""
         mock_run.return_value = Mock(returncode=1)
-        self.assertEqual(update_dependencies(), 1)
+        self.assertEqual(_SCRIPTS.run(), 1)
 
 
 @patch("os.chdir", Mock())

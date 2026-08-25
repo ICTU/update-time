@@ -3,10 +3,11 @@
 from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import DependencyVersion
+from update_time.domain.file_type import PACKAGE_JSON
 from update_time.domain.reference import ResolvedReference
 from update_time.domain.staleness import warn_about_stale_dependencies
 from update_time.file_formats import package_json as package_json_format
-from update_time.io.filesystem import glob
+from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.package_managers import node
 from update_time.sources import npmjs
@@ -40,7 +41,7 @@ def _package_manager(package_json: Path) -> str:
 def update_package_jsons() -> None:
     """Find all package.json files and update each with its (supported) package manager, skipping the rest."""
     supported = []
-    for package_json in glob("package.json"):
+    for package_json in glob_for(PACKAGE_JSON):
         if (manager := node.SUPPORTED_MANAGERS.get(name := _package_manager(package_json))) is None:
             _LOG.unsupported_package_manager(package_json, name, " and ".join(node.SUPPORTED_MANAGERS))
         else:

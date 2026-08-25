@@ -1,7 +1,8 @@
 """Find uv-managed pyproject.toml files and update their dependencies and lockfiles."""
 
+from update_time.domain.file_type import PYPROJECT_TOML
 from update_time.file_formats import pyproject_toml as pyproject_toml_format
-from update_time.io.filesystem import glob
+from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.package_managers import uv
 from update_time.updaters.uv_pins import warn_about_pins
@@ -12,7 +13,7 @@ _LOG = get_logger("pyproject.toml")
 def update_pyproject_tomls() -> None:
     """Find all uv-managed pyproject.toml files, update them, and then update the uv.lock files."""
     files = []
-    for pyproject_toml in glob("pyproject.toml"):
+    for pyproject_toml in glob_for(PYPROJECT_TOML):
         config = pyproject_toml_format.read(pyproject_toml)
         if config is None:
             _LOG.invalid_pyproject_toml(pyproject_toml)  # Exists but isn't valid TOML: skip rather than crash on it.

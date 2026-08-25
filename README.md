@@ -90,11 +90,11 @@ usage: update-time [-h] [-V] [--cooldown DAYS] [--stale-after DAYS]
 
 Scan the PATH for pinned dependencies and update them to their latest
 versions, rewriting the pinned versions in place. Looks at pyproject.toml,
-requirements.txt, Python PEP 723 inline script metadata, .python-version
-files, package.json, Dockerfiles, GitHub Actions workflows, pre-commit
-configs, CircleCI configs, GitLab CI configs, Docker Compose and Helm
-manifests, devcontainer configs, and jsDelivr URLs. A cooldown period holds
-back releases that are too fresh to trust.
+requirements.txt, PEP 723 inline script metadata, package.json, .python-
+version, Dockerfiles, CircleCI configs, .gitlab-ci.yml, Docker Compose files,
+Helm charts, devcontainer configs, YAML files under .github/, .pre-commit-
+config.yaml, and Sphinx config. A cooldown period holds back releases that are
+too fresh to trust.
 
 positional arguments:
   PATH                  the directory to scan recursively for dependencies to
@@ -104,13 +104,10 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   -V, --version         show program's version number and exit
-  --cooldown DAYS       number of days to hold back newly published Docker
-                        image, GitHub Action, pre-commit hook,
-                        requirements.txt, npm, pnpm, pyproject.toml, Python
-                        inline script metadata, .python-version, and jsDelivr
-                        versions, except for references that set a cooldown of
-                        their own with an # update-time: ignore[cooldown<DAYS]
-                        marker (default: 7)
+  --cooldown DAYS       number of days to hold back a newly published version,
+                        except for references that set a cooldown of their own
+                        with an # update-time: ignore[cooldown<DAYS] marker
+                        (default: 7)
   --stale-after DAYS    warn when a dependency's newest release is older than
                         this many days; 0 disables the check, except for
                         references that set a threshold of their own with an #
@@ -1000,27 +997,27 @@ Either way a marker wins over a version derived from the Dockerfile, so a delibe
 
 #### What files are updated?
 
-Update-time looks for Dockerfiles, CircleCI configs, `.gitlab-ci.yml`, Docker Compose files, Helm charts, and devcontainer configs from the starting path. Most are searched for recursively; the CircleCI and Helm configs are looked for under their conventional `.circleci/` and `helm/` folders, and GitLab CI uses a single `.gitlab-ci.yml` at the repository root. It uses the following filenames and globs:
+Update-time looks for these files, each with its own globs and in its own folder, searching recursively where the table says so:
 
-| Files | Globs |
-| :---- | :---- |
-| Dockerfile | `Dockerfile`, `*.Dockerfile`, `Dockerfile.*` |
-| CircleCI YAML configs | `*.yml`, `*.yaml` under `.circleci/` |
-| GitLab CI config | `.gitlab-ci.yml` at the repository root |
-| Docker Compose files | `docker-compose*.yml` |
-| Helm charts | `*.yml`, `*.yaml` under `helm/` |
-| Devcontainer configs | `.devcontainer.json`, `.devcontainer/devcontainer.json`, `.devcontainer/*/devcontainer.json` |
+| Files | Globs | Folder | Recursive |
+| :---- | :---- | :----- | :-------: |
+| Dockerfiles | `Dockerfile`, `*.Dockerfile`, `Dockerfile.*` | the scan root | ✅ |
+| CircleCI configs | `*.yml`, `*.yaml` | `.circleci/` | ✅ |
+| .gitlab-ci.yml | `.gitlab-ci.yml` | the scan root |  |
+| Docker Compose files | `docker-compose*.yml` | the scan root | ✅ |
+| Helm charts | `*.yml`, `*.yaml` | `helm/` | ✅ |
+| devcontainer configs | `.devcontainer.json`, `.devcontainer/devcontainer.json`, `.devcontainer/*/devcontainer.json` | the scan root | ✅ |
 
 #### What dependencies are updated?
 
 | Files | Dependencies |
 | :---- | :-----------  |
-| Dockerfile | Base images (`FROM` references) |
-| CircleCI YAML configs | Docker images (machine-executor images are left unchanged) |
-| GitLab CI config | Docker images (`image:` references) |
+| Dockerfiles | Base images (`FROM` references) |
+| CircleCI configs | Docker images (machine-executor images are left unchanged) |
+| .gitlab-ci.yml | Docker images (`image:` references) |
 | Docker Compose files | Service images (`image:` references) |
 | Helm charts | Container images (`image:` references) |
-| Devcontainer configs | The base image and each feature |
+| devcontainer configs | The base image and each feature |
 
 A Dockerfile's `FROM` is read the way Docker reads it: in upper or lower case, and only where it opens its line, so a `FROM` written in prose is left alone. Two kinds of `FROM` name no image a registry serves and are left alone as well: `FROM scratch`, which starts a stage from nothing, and a `FROM` naming one of the file's own build stages, which an earlier `FROM ... AS name` introduced.
 

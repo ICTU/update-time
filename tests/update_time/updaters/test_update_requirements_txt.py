@@ -8,6 +8,7 @@ from unittest.mock import ANY, MagicMock, Mock, patch
 
 from update_time.domain import directive as directive_module
 from update_time.domain.directive import Reason
+from update_time.domain.file_type import REQUIREMENTS_TXT
 from update_time.domain.marker import Marker, Scope
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
 from update_time.io.log import Logger
@@ -908,12 +909,14 @@ class RequirementsGlobPatternsTest(unittest.TestCase):
         """
         return any(PurePath(path).full_match(f"**/{pattern}", case_sensitive=True) for pattern in _GLOB_PATTERNS)
 
-    @patch("update_time.updaters.update_requirements_txt.glob")
-    def test_the_updater_looks_for_these_patterns(self, mock_glob: Mock):
+    @patch("update_time.updaters.update_requirements_txt.glob_for")
+    def test_the_updater_looks_for_these_patterns(self, mock_glob_for: Mock):
         """Test that the updater discovers files with the very patterns the tests below match paths against."""
-        mock_glob.return_value = []
+        mock_glob_for.return_value = []
         update_requirements_txts()
-        mock_glob.assert_called_once_with(*_GLOB_PATTERNS, case_sensitive=True)
+        mock_glob_for.assert_called_once_with(REQUIREMENTS_TXT)
+        self.assertEqual(REQUIREMENTS_TXT.patterns, _GLOB_PATTERNS)
+        self.assertTrue(REQUIREMENTS_TXT.case_sensitive)
 
     def test_recognized_flat_names(self):
         """Test that the flat requirements naming conventions match."""

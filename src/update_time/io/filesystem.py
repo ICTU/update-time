@@ -9,6 +9,8 @@ from update_time.primitives.environment import EnvVar
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from update_time.domain.file_type import FileType
+
 # Private channel that passes --exclude-path from the CLI to the updater subprocesses. The scan-root-relative
 # directories to skip, validated by the CLI (relative, non-escaping) so they are trusted here.
 EXCLUDE_PATHS: EnvVar[list[Path]] = EnvVar(
@@ -17,13 +19,6 @@ EXCLUDE_PATHS: EnvVar[list[Path]] = EnvVar(
     parse=lambda value: [Path(entry) for entry in value.split(",") if entry],
     serialize=lambda paths: ",".join(str(path) for path in paths),
 )
-
-YAML_GLOB_PATTERNS = ("*.yml", "*.yaml")
-# Dockerfiles are conventionally named `Dockerfile`, or `<purpose>.Dockerfile` / `Dockerfile.<purpose>` when a
-# project has more than one (e.g. `python.Dockerfile`, `Dockerfile.dev`). The three patterns don't overlap for any
-# realistic name, so a file is discovered once. Shared by the base-image and Node-engine updaters.
-DOCKERFILE_NAME = "Dockerfile"
-DOCKERFILE_GLOB_PATTERNS = (DOCKERFILE_NAME, f"*.{DOCKERFILE_NAME}", f"{DOCKERFILE_NAME}.*")
 
 # Directories whose contents `glob` always skips, on top of hidden (dot-prefixed) folders and the directories passed
 # to --exclude-path. The --exclude-path help in `io.cli` lists them, so it stays in step with this tuple.
@@ -66,21 +61,28 @@ def inside_git_repository(start: Path | None = None) -> bool:
     return any((parent / ".git").exists() for parent in (directory, *directory.parents))
 
 
-def glob(*glob_patterns: str, start: Path | None = None, case_sensitive: bool | None = None) -> Iterator[Path]:
+def glob(
+    *glob_patterns: str,
+    start: Path | None = None,
+    case_sensitive: bool | None = None,
+    recursive: bool = True,
+) -> Iterator[Path]:
     """Return an iterator over all paths matching any of the given glob patterns.
 
     Hidden folders and files (dot-prefixed, e.g. `.git`, `.venv`) and build-output folders are skipped, so a broad
     pattern like `*.yml` doesn't reach into them. A hidden folder or file named literally in the pattern itself is
     the exception: `glob(".devcontainer/devcontainer.json")` visits `.devcontainer`, so callers can target hidden
     locations directly instead of working around the default skip. Directories passed to `--exclude-path` (see
-    `EXCLUDE_PATHS`) are skipped on top of these built-in ignores.
+    `EXCLUDE_PATHS`) are skipped on top of these built-in ignores. A walk that is not recursive searches the start
+    directory alone, which is what a file its format keeps in one place needs.
     """
     if start is None:
         start = Path.cwd()
     excluded = EXCLUDE_PATHS.get()
     for glob_pattern in glob_patterns:
         named_hidden = _named_hidden_parts(glob_pattern)
-        for path in start.rglob(glob_pattern, case_sensitive=case_sensitive):
+        walk = start.rglob if recursive else start.glob
+        for path in walk(glob_pattern, case_sensitive=case_sensitive):
             relative_path = path.relative_to(start)
             if any(part.startswith(".") and part not in named_hidden for part in relative_path.parts):
                 continue
@@ -89,3 +91,13 @@ def glob(*glob_patterns: str, start: Path | None = None, case_sensitive: bool | 
             if any(relative_path.is_relative_to(excluded_dir) for excluded_dir in excluded):
                 continue
             yield path
+
+
+def glob_for(file_type: FileType) -> Iterator[Path]:
+    """Return an iterator over the paths of this kind of file, walked where and how its declaration says."""
+    return glob(
+        *file_type.patterns,
+        start=Path.cwd() / file_type.start,
+        case_sensitive=file_type.case_sensitive,
+        recursive=file_type.recursive,
+    )

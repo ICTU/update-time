@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 from update_time.domain import floating
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.directive import Reason
-from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS
+from update_time.domain.file_type import DOCKERFILES
 from update_time.primitives.location import Location
 from update_time.sources import oci
 from update_time.updaters import update_dockerfile_base_image
@@ -42,10 +42,11 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     def test_alternate_filenames_are_scanned(self):
         """Test that `*.Dockerfile` and `Dockerfile.*` files are scanned, not only an exact `Dockerfile`."""
-        with patch("update_time.updaters.update_dockerfile_base_image.glob", return_value=[]) as glob:
+        with patch("update_time.updaters.update_dockerfile_base_image.glob_for", return_value=[]) as glob_for:
             update_dockerfiles()
-        self.assertEqual(glob.call_args.args, DOCKERFILE_GLOB_PATTERNS)
-        self.assertEqual(glob.call_args.kwargs, {"case_sensitive": False})  # A `dockerfile` is found as well
+        glob_for.assert_called_once_with(DOCKERFILES)
+        self.assertEqual(DOCKERFILES.patterns, ("Dockerfile", "*.Dockerfile", "Dockerfile.*"))
+        self.assertFalse(DOCKERFILES.case_sensitive)  # A `dockerfile` is found as well
 
     @kills(
         Mutation(

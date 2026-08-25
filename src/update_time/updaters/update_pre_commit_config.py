@@ -4,7 +4,8 @@ import re
 from functools import partial
 from typing import TYPE_CHECKING
 
-from update_time.io.filesystem import glob
+from update_time.domain.file_type import PRE_COMMIT_CONFIG
+from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.primitives.digest import COMMIT_SHA
 from update_time.references.file import rewrite_file
@@ -13,17 +14,11 @@ from update_time.references.rewrite import apply_marker
 from update_time.sources.github import github_owner_and_repository
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from update_time.domain.dependency import DependencyVersion
     from update_time.domain.line import Line
     from update_time.domain.reference import Reference
 
 _LOG = get_logger("pre-commit config")
-
-# The pre-commit configuration file, read from the repository root but supported per sub-project too (a monorepo can
-# carry one per package), so it is looked up recursively from the scan root.
-_PRE_COMMIT_CONFIG = ".pre-commit-config.yaml"
 
 # Match a `repo:` key and capture its value: a repository URL (`https://github.com/owner/repo`), or the `local` /
 # `meta` sentinels that carry no `rev:`. The value sets the repository the following `rev:` lines belong to.
@@ -80,9 +75,9 @@ def _updated_lines(lines: list[Line]) -> list[str]:
     return result
 
 
-def update_pre_commit_configs(start: Path | None = None) -> None:
+def update_pre_commit_configs() -> None:
     """Update the hook revs in all `.pre-commit-config.yaml` files found recursively from the start directory."""
-    for config in glob(_PRE_COMMIT_CONFIG, start=start):
+    for config in glob_for(PRE_COMMIT_CONFIG):
         rewrite_file(config, _updated_lines, _LOG)
 
 
