@@ -1,4 +1,4 @@
-tag_last_pushed  # unused variable (src/update_time/sources/docker_hub.py:58)
+tag_last_pushed  # unused variable (src/update_time/sources/docker_hub.py:59)
 download_url  # unused variable (src/update_time/sources/github.py:73)
 database_specific  # unused variable (src/update_time/sources/osv.py:51)
 upload_time_iso_8601  # unused variable (src/update_time/sources/pypi.py:105)
