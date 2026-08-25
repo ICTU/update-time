@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.30 - 2026-08-25
+
 ### Added
 
 - Warn about a stale dated snapshot tag, such as `debian:bookworm-20260803`, instead of never checking such a tag for staleness. Part of [#245](https://github.com/ICTU/update-time/issues/245).
