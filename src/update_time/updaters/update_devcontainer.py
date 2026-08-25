@@ -7,7 +7,8 @@ The file is edited line by line with the same machinery as the other image updat
 comments and trailing commas (which devcontainer.json allows, and plain JSON forbids) are preserved untouched.
 """
 
-from update_time.io.filesystem import glob
+from update_time.domain.file_type import DEVCONTAINER_CONFIGS
+from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
 from update_time.sources.oci import IMAGE_REFERENCE, OPTIONALLY_TAGGED_IMAGE_REFERENCE, get_latest_tag
@@ -24,14 +25,10 @@ _IMAGE_RE = rf'"image":\s*"{OPTIONALLY_TAGGED_IMAGE_REFERENCE}"'
 # and a local feature's `"./my-feature"` alike.
 _FEATURE_RE = rf'"{IMAGE_REFERENCE}":\s*{{'
 
-# Standard devcontainer.json locations: a top-level file, the conventional `.devcontainer/` folder, and
-# per-configuration subfolders under it. `glob` visits these dot-paths because they are named in the patterns.
-_DEVCONTAINER_GLOBS = (".devcontainer.json", ".devcontainer/devcontainer.json", ".devcontainer/*/devcontainer.json")
-
 
 def update_devcontainers() -> None:
     """Update the base image and feature references in the repository's devcontainer.json files."""
-    for devcontainer in glob(*_DEVCONTAINER_GLOBS):
+    for devcontainer in glob_for(DEVCONTAINER_CONFIGS):
         update_file(devcontainer, _IMAGE_RE, _FEATURE_RE, get_new_version=get_latest_tag, logger=_LOG)
 
 

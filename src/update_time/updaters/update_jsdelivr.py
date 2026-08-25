@@ -11,12 +11,12 @@ on the line directly above the URL.
 
 import re
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from update_time.domain.drift import hash_drifted
+from update_time.domain.file_type import SPHINX_CONFIG
 from update_time.domain.reference import ResolvedReference
-from update_time.io.filesystem import glob
+from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.primitives.text import rewrite_string
 from update_time.references.file import rewrite_file
@@ -161,7 +161,7 @@ class _Rewriter:
 
 def update_jsdelivrs() -> None:
     """Find the Sphinx config files under docs/ and update the jsDelivr URLs in them."""
-    for sphinx_config_py in glob("conf.py", start=Path.cwd() / "docs"):
+    for sphinx_config_py in glob_for(SPHINX_CONFIG):
         lines = rewrite_file(sphinx_config_py, _Rewriter().updated_lines, _LOG)
         warn_about_vulnerable_references(lines, _URL_RE, Ecosystem.NPM, _LOG)
 

@@ -3,7 +3,8 @@
 import re
 from typing import TYPE_CHECKING
 
-from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, glob
+from update_time.domain.file_type import DOCKERFILES
+from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
 from update_time.sources.oci import OPTIONALLY_TAGGED_IMAGE_REFERENCE, tag_getter
@@ -44,7 +45,7 @@ def _update_dockerfile(dockerfile: Path) -> None:
 
 def update_dockerfiles() -> None:
     """Update the base image of Dockerfiles."""
-    for dockerfile in glob(*DOCKERFILE_GLOB_PATTERNS, case_sensitive=False):
+    for dockerfile in glob_for(DOCKERFILES):
         _update_dockerfile(dockerfile)
 
 

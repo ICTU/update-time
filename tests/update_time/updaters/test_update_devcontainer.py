@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import ANY, Mock, patch
 
+from update_time.domain.file_type import DEVCONTAINER_CONFIGS
 from update_time.primitives.location import Location
 from update_time.updaters import update_devcontainer
 from update_time.updaters.update_devcontainer import update_devcontainers
@@ -29,7 +30,7 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
 
     def run_updater(self, mock_file: Mock) -> None:
         """Run the devcontainer updater with the mock file as the only discovered devcontainer.json."""
-        with patch("update_time.updaters.update_devcontainer.glob", return_value=[mock_file]):
+        with patch("update_time.updaters.update_devcontainer.glob_for", return_value=[mock_file]):
             update_devcontainers()
 
     def test_feature_updated_and_pinned(self):
@@ -96,17 +97,17 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
 class ScannedDevcontainersTest(unittest.TestCase):
     """Unit tests for which devcontainer files are scanned and which references are updated in them."""
 
-    @patch("update_time.updaters.update_devcontainer.glob")
-    def test_standard_locations_are_scanned(self, mock_glob: Mock):
+    @patch("update_time.updaters.update_devcontainer.glob_for")
+    def test_standard_locations_are_scanned(self, mock_glob_for: Mock):
         """Test that the top-level, `.devcontainer/`, and per-configuration subfolder locations are all scanned."""
-        mock_glob.return_value = []
+        mock_glob_for.return_value = []
         update_devcontainers()
-        mock_glob.assert_called_once_with(
-            ".devcontainer.json", ".devcontainer/devcontainer.json", ".devcontainer/*/devcontainer.json"
-        )
+        mock_glob_for.assert_called_once_with(DEVCONTAINER_CONFIGS)
+        locations = ".devcontainer.json", ".devcontainer/devcontainer.json", ".devcontainer/*/devcontainer.json"
+        self.assertEqual(DEVCONTAINER_CONFIGS.patterns, locations)
 
     @patch("update_time.updaters.update_devcontainer.update_file", return_value=0)
-    @patch("update_time.updaters.update_devcontainer.glob")
+    @patch("update_time.updaters.update_devcontainer.glob_for")
     def test_image_and_features_are_updated(self, mock_glob: Mock, mock_update_file: Mock):
         """Test that each devcontainer.json is scanned for both its image and its feature references in one pass."""
         mock_file = mock_path("{}")

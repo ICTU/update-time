@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
 from update_time.domain.dependency import DependencyVersion
+from update_time.domain.file_type import FileType
 from update_time.domain.reference import Reference
 from update_time.primitives.location import Location
 from update_time.references.file import rewrite_file, update_file, update_files
@@ -60,7 +61,8 @@ class UpdateFilesTest(unittest.TestCase):
         mock_file = mock_path("line1\nline2\n")
         mock_glob.return_value = [mock_file]
         mock_logger = Mock()
-        update_files("Dockerfile", regexp=_REGEXP, get_new_version=new_version_getter("1.1"), logger=mock_logger)
+        file_type = FileType("Dockerfiles", ("Dockerfile",))
+        update_files(file_type, regexp=_REGEXP, get_new_version=new_version_getter("1.1"), logger=mock_logger)
         mock_file.write_text.assert_not_called()
         mock_logger.new_version.assert_not_called()
 
@@ -69,7 +71,8 @@ class UpdateFilesTest(unittest.TestCase):
         mock_file = mock_path("line1\nimage: python:3.14\n")
         mock_glob.return_value = [mock_file]
         mock_logger = Mock()
-        update_files("config.yml", regexp=_REGEXP, get_new_version=new_version_getter("3.15"), logger=mock_logger)
+        file_type = FileType("configs", ("config.yml",))
+        update_files(file_type, regexp=_REGEXP, get_new_version=new_version_getter("3.15"), logger=mock_logger)
         mock_file.write_text.assert_called_with("line1\nimage: python:3.15\n")
         # "line1" then the reference, so the reference is on line 2.
         reference = Reference("python", "3.14", Location(mock_file, 2))
@@ -81,7 +84,7 @@ class UpdateFilesTest(unittest.TestCase):
         yaml_file = mock_path("image: python:3.14\n")
         mock_glob.side_effect = [[yml_file], [yaml_file]]
         mock_logger = Mock()
-        patterns = "*.yml", "*.yaml"
-        update_files(*patterns, regexp=_REGEXP, get_new_version=new_version_getter("3.15"), logger=mock_logger)
+        file_type = FileType("YAML files", ("*.yml", "*.yaml"))
+        update_files(file_type, regexp=_REGEXP, get_new_version=new_version_getter("3.15"), logger=mock_logger)
         yml_file.write_text.assert_called_with("image: python:3.15\n")
         yaml_file.write_text.assert_called_with("image: python:3.15\n")

@@ -4,6 +4,7 @@ The template's placeholders are substituted so the machine-generated parts of th
 
 - `@@TABLE_OF_CONTENTS@@` — the table of contents chapter, linking to each of the template's chapters.
 - `@@HELP_OUTPUT@@` — the output of `update-time -h`, wrapped to 80 columns.
+- `@@DOCKER_IMAGE_FILES_TABLE@@` — the files the Docker images type is declared in, and the globs finding them.
 - `@@LOG_OUTPUT@@`  — the sample log output as text, from `generate_log_svg`, which also renders the screenshot
   embedded above that fallback.
 - the sample log lines the sections below quote, from `log_samples`, each filling the placeholder it names.
@@ -17,11 +18,17 @@ import io
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tools.generate_log_svg import generate as generate_log_output
 from tools.log_samples import sample_log_lines
 from tools.markdown import anchor, headings
+from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.staleness import STALE_AFTER
+
+if TYPE_CHECKING:
+    from update_time.domain.dependency_type import DependencyType
+    from update_time.domain.file_type import FileType
 
 _ROOT = Path(__file__).parents[1]
 _DOCS = _ROOT / "docs"
@@ -61,6 +68,26 @@ def _table_of_contents(template: str, depth: int = 3) -> str:
     return "\n".join(["## ☰ Table of contents", "", *entries])
 
 
+def _globs(file_type: FileType) -> str:
+    """Return the file type's glob patterns, in code."""
+    return ", ".join(f"`{pattern}`" for pattern in file_type.patterns)
+
+
+def _folder(file_type: FileType) -> str:
+    """Return the folder the file type is walked in, in code, or the scan root itself where it names none."""
+    return f"`{file_type.start}/`" if file_type.start else "the scan root"
+
+
+def _file_types_table(dependency_type: DependencyType) -> str:
+    """Return the table naming the files this dependency type is declared in, and how each of them is found."""
+    header = ["| Files | Globs | Folder | Recursive |", "| :---- | :---- | :----- | :-------: |"]
+    rows = [
+        f"| {file_type.name} | {_globs(file_type)} | {_folder(file_type)} | {'✅' if file_type.recursive else ''} |"
+        for file_type in dependency_type.file_types
+    ]
+    return "\n".join(header + rows)
+
+
 def render() -> dict[Path, str]:
     """Return the content each generated file should have, keyed by the file it belongs in."""
     STALE_AFTER.set(STALE_AFTER.default)  # Pin the threshold the samples report, whatever the environment holds
@@ -68,6 +95,8 @@ def render() -> dict[Path, str]:
     template = _TEMPLATE.read_text()
     readme = template.replace("@@TABLE_OF_CONTENTS@@", _table_of_contents(template))
     readme = readme.replace("@@HELP_OUTPUT@@", _help_output()).replace("@@LOG_OUTPUT@@", log_output.text)
+    docker_images = _file_types_table(DEPENDENCY_TYPES.docker_images)
+    readme = readme.replace("@@DOCKER_IMAGE_FILES_TABLE@@", docker_images)
     for placeholder, log_lines in sample_log_lines().items():
         readme = readme.replace(placeholder, log_lines)
     return {_README: readme, _SCREENSHOT: log_output.svg}

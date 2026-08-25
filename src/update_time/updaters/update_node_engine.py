@@ -6,14 +6,16 @@ Note: this script does not update package-lock.json.
 from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import DependencyVersion
+from update_time.domain.file_type import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, PACKAGE_JSON
 from update_time.file_formats import package_json as package_json_format
-from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, first_line_match, glob
+from update_time.io.filesystem import first_line_match, glob, glob_for
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
 from update_time.sources.oci import get_latest_tag
 
 if TYPE_CHECKING:
     from pathlib import Path
+
 
 _LOG = get_logger("node engine")
 _NODE_IMAGE_RE = r"FROM node:(?P<version>[\d\.]+)"
@@ -82,7 +84,7 @@ def _update_node_engine(package_json: Path) -> None:
 
 def update_node_engines() -> None:
     """Find all package.json files and update the Node engine."""
-    for pkg_json in glob("package.json"):
+    for pkg_json in glob_for(PACKAGE_JSON):
         if _has_node_engine(pkg_json):
             _update_node_engine(pkg_json)
 

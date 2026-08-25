@@ -14,7 +14,9 @@ from tests.helpers import patch_environ
 _PLACEHOLDER = re.compile(r"@@\w+@@")
 
 # The placeholders `render` fills itself, rather than from the log samples.
-_FILLED_BY_RENDER = frozenset({"@@HELP_OUTPUT@@", "@@LOG_OUTPUT@@", "@@TABLE_OF_CONTENTS@@"})
+_FILLED_BY_RENDER = frozenset(
+    {"@@DOCKER_IMAGE_FILES_TABLE@@", "@@HELP_OUTPUT@@", "@@LOG_OUTPUT@@", "@@TABLE_OF_CONTENTS@@"}
+)
 
 _TABLE_OF_CONTENTS_HEADER = "## ☰ Table of contents\n\n"
 

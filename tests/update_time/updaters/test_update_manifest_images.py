@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from update_time.io.filesystem import YAML_GLOB_PATTERNS
+from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
 from update_time.primitives.location import Location
 from update_time.sources import oci
 from update_time.updaters.update_manifest_images import update_manifest_images
@@ -72,13 +72,13 @@ class ScannedManifestsTest(unittest.TestCase):
     def test_docker_compose_files_are_scanned(self, mock_update_files: Mock):
         """Test that the Docker Compose files are scanned from the repository root."""
         update_manifest_images()
-        compose_call = mock_update_files.call_args_list[0]
-        self.assertIn("docker-compose*.yml", compose_call.args)
-        self.assertIsNone(compose_call.kwargs.get("start"))
+        self.assertEqual(mock_update_files.call_args_list[0].args, (DOCKER_COMPOSE_FILES,))
+        self.assertEqual(DOCKER_COMPOSE_FILES.patterns, ("docker-compose*.yml",))
+        self.assertEqual(DOCKER_COMPOSE_FILES.start, "")
 
     def test_helm_yaml_files_are_scanned(self, mock_update_files: Mock):
         """Test all YAML files in the Helm folder are scanned, so pinned images stay in sync with Docker Compose."""
         update_manifest_images()
-        helm_call = mock_update_files.call_args_list[1]
-        self.assertEqual(YAML_GLOB_PATTERNS, helm_call.args)
-        self.assertEqual(helm_call.kwargs["start"].name, "helm")
+        self.assertEqual(mock_update_files.call_args_list[1].args, (HELM_CHARTS,))
+        self.assertEqual(HELM_CHARTS.patterns, ("*.yml", "*.yaml"))
+        self.assertEqual(HELM_CHARTS.start, "helm")

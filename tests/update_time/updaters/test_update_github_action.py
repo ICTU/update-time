@@ -1,7 +1,6 @@
 """Unit tests for the GitHub Action update script."""
 
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import cast
 from unittest.mock import Mock, patch
 
@@ -30,7 +29,6 @@ from tests.update_time.helpers import (
     staleness_disabled,
 )
 
-_GITHUB_DIR = Path("/repo/.github")
 # A publication date old enough that the default staleness threshold warns about it, and one too fresh to.
 _STALE_ISO = (datetime.now(UTC) - timedelta(days=512)).isoformat()
 _FRESH_ISO = datetime.now(UTC).isoformat()
@@ -54,7 +52,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
         composite_action_yaml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], [composite_action_yaml]]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
         composite_action_yaml.write_text.assert_called_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
         self.assert_path_logged(composite_action_yaml)
@@ -67,7 +65,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that YAML files without actions are left untouched."""
         dependabot_yml = mock_path("version: 2\n")
         mock_glob.side_effect = [[dependabot_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         dependabot_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
         self.assert_path_logged(dependabot_yml)
@@ -79,7 +77,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=OLD_SHA)
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_not_called()
         self.assert_path_logged(workflow_yml)
         self.assert_no_new_version_logged()
@@ -90,7 +88,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=NEW_SHA)
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_not_called()
         self.assert_tag_drift_logged(self.drifted(workflow_yml))
         self.assert_no_new_version_logged()
@@ -101,7 +99,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         marker = "  # update-time: allow[hash-drift]"
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0{marker}\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0{marker}\n")
         self.assert_adopted_tag_drift_logged(self.drifted(workflow_yml), "update-time: allow[hash-drift]")
         self.assert_no_warnings_logged()
@@ -112,7 +110,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
         with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
-            update_github_actions(_GITHUB_DIR)
+            update_github_actions()
         workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0\n")
         self.assert_adopted_tag_drift_logged(self.drifted(workflow_yml), "--allow-hash-drift")
         self.assert_no_warnings_logged()
@@ -124,7 +122,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=OLD_SHA, newest=newest)
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_not_called()
         self.assert_stale_dependency_logged("action/action", "1.2", Location(workflow_yml, 1))
 
@@ -133,7 +131,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="4.1.1", sha=NEW_SHA)
         workflow_yml = mock_path("uses: actions/checkout@v4\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
         mock_get_latest_version.assert_called_once_with("actions/checkout", "4", NO_BOUND, COOLDOWN.default)
         self.assert_path_logged(workflow_yml)
@@ -146,7 +144,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="4.1.1", sha=NEW_SHA)
         workflow_yml = mock_path("uses: actions/checkout@v4.1.1\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
         mock_get_latest_version.assert_called_once_with("actions/checkout", "4.1.1", NO_BOUND, COOLDOWN.default)
         self.assert_path_logged(workflow_yml)
@@ -159,7 +157,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="4.2.0", sha=NEW_SHA)
         workflow_yml = mock_path("uses: actions/checkout@v4  # update-time: allow[update<5]\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_called_with(
             f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: allow[update<5]\n"
         )
@@ -174,7 +172,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="4.2.0", sha=NEW_SHA)
         workflow_yml = mock_path("uses: actions/checkout@v4  # update-time: ignore[major-update]\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_called_with(
             f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: ignore[major-update]\n"
         )
@@ -188,7 +186,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that an inline `# update-time: ignore` comment leaves the action untouched, looking up no version."""
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
         self.assert_ignored_logged("action/action", Location(workflow_yml, 1))
@@ -199,7 +197,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that a standalone `# update-time: ignore` comment pins the action on the line below it."""
         workflow_yml = mock_path(f"# update-time: ignore\nuses: action/action@{OLD_SHA} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
         self.assert_ignored_logged("action/action", Location(workflow_yml, 2))
@@ -213,7 +211,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA, newest=newest)
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore[update]\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_not_called()  # the pin is held back
         location = Location(workflow_yml, 1)
         self.assert_stale_dependency_logged("action/action", "1.2", location)  # but staleness is still checked
@@ -226,7 +224,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA, newest=newest)
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore[stale]\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_called_once_with(
             f"uses: action/action@{NEW_SHA} # v1.1  # update-time: ignore[stale]\n"
         )
@@ -240,7 +238,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="4")
         workflow_yml = mock_path("uses: actions/checkout@v4\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_not_called()
         self.assert_path_logged(workflow_yml)
         self.assert_no_new_version_logged()
@@ -251,7 +249,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that an action referenced by a branch is warned about when its repository's newest release is old."""
         workflow_yml = mock_path("uses: actions/checkout@main\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         self.assert_stale_dependency_logged("actions/checkout", "1.0", Location(workflow_yml, 1))
@@ -271,7 +269,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that `ignore[stale]` on a branch reference silences the warning its old repository would get."""
         workflow_yml = mock_path("uses: actions/checkout@main  # update-time: ignore[stale]\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         self.assert_ignored_staleness_logged("actions/checkout", Location(workflow_yml, 1), "ignore[stale]")
         self.assert_no_warnings_logged()
@@ -291,7 +289,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that `ignore[stale<90]` on a branch reference warns at 90 days, where the default 365 would not."""
         workflow_yml = mock_path("uses: actions/checkout@main  # update-time: ignore[stale<90]\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         self.assert_stale_dependency_logged("actions/checkout", "1.0", Location(workflow_yml, 1))
 
@@ -310,7 +308,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that a repository two branch references name is asked for its releases once, not once per file."""
         workflow_ymls = [mock_path("uses: actions/checkout@main\n"), mock_path("uses: actions/checkout@master\n")]
         mock_glob.side_effect = [workflow_ymls, []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         requests_get = cast("Mock", requests.get)  # Patched by `patch_github`, which hands the test no mock.
         releases_requests = [call for call in requests_get.call_args_list if "/releases" in call.args[0]]
@@ -326,7 +324,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that an action in the repository itself names no GitHub repository, so none is asked about."""
         workflow_yml = mock_path("uses: ./.github/actions/build\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_not_called()
         mock_newest_release.assert_not_called()
         mock_get_latest_version.assert_not_called()
@@ -339,7 +337,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that a bare `ignore` on a branch reference holds the staleness check back, GitHub unasked."""
         workflow_yml = mock_path("uses: actions/checkout@main  # update-time: ignore\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         mock_newest_release.assert_not_called()
         mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         self.assert_no_warnings_logged()
@@ -352,7 +350,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml = mock_path("uses: actions/checkout@main\n")
         mock_glob.side_effect = [[workflow_yml], []]
         with staleness_disabled:
-            update_github_actions(_GITHUB_DIR)
+            update_github_actions()
         mock_newest_release.assert_not_called()
         mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         self.assert_no_warnings_logged()
@@ -364,7 +362,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that a branch reference is not warned about when its repository has published no release to date."""
         workflow_yml = mock_path("uses: actions/checkout@main\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         self.assert_no_warnings_logged()
 
@@ -373,7 +371,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that an action referenced by a branch is not rewritten, its repository still publishing."""
         workflow_yml = mock_path("uses: actions/checkout@main\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
         self.assert_path_logged(workflow_yml)
@@ -385,7 +383,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that a v-prefixed reference that isn't a version (e.g. a floating `@vnext` tag) is not rewritten."""
         workflow_yml = mock_path("uses: actions/checkout@vnext\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
         self.assert_path_logged(workflow_yml)
@@ -407,6 +405,6 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         marker = "  # update-time: ignore[cooldown<30]"
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0{marker}\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions(_GITHUB_DIR)
+        update_github_actions()
         workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.1{marker}\n")
         self.assert_no_warnings_logged()

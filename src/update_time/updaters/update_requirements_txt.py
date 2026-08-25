@@ -9,10 +9,11 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.directive import DIRECTIVES, Reason
+from update_time.domain.file_type import REQUIREMENTS_TXT
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
 from update_time.file_formats import requirements_txt as requirements_txt_format
-from update_time.io.filesystem import glob
+from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
 from update_time.references.match import reference_matches
@@ -44,12 +45,6 @@ _LOOSE_REQUIREMENT_RE = _REQUIREMENT_NAME + r"(?:===|[<>!~]=|[<>]|[;#]|$)"
 # `ARCHIVE_EXTENSIONS`). A filename with no path in front of it, `mypkg-1.0.tar.gz`, is spelled like a bare
 # requirement, so the pattern above matches it and PyPI would be asked for a package by that name.
 _ARCHIVE_SUFFIXES = (".zip", ".whl", ".tar.gz", ".tar.bz2", ".tar", ".tgz", ".tar.xz", ".txz", ".tlz", ".tar.lzma")
-# Requirements files follow the flat conventions `requirements.txt`, `requirements-<purpose>.txt` (e.g.
-# `requirements-dev.txt`) and `<purpose>-requirements.txt` (e.g. `dev-requirements.txt`), plus a nested
-# `requirements/` directory. The purpose is hyphen-separated on both sides for symmetry, and matching is
-# restricted to the `.txt` extension, so unrelated files such as `constraints.txt`, `requirements.in`, or an
-# arbitrary `requirementsfoo.txt` are not picked up.
-_REQUIREMENTS_GLOB_PATTERNS = ("requirements.txt", "requirements-*.txt", "*-requirements.txt", "requirements/*.txt")
 
 
 def _warn_about_items_that_decide_nothing(marker: Marker, reference: Reference) -> None:
@@ -105,7 +100,7 @@ def _update_requirements_txt(requirements_txt: Path) -> None:
 
 def update_requirements_txts() -> None:
     """Find all requirements files and update the exact pins in them."""
-    requirements_files = set(glob(*_REQUIREMENTS_GLOB_PATTERNS, case_sensitive=True))
+    requirements_files = set(glob_for(REQUIREMENTS_TXT))
     for requirements_txt in requirements_files:
         _update_requirements_txt(requirements_txt)
 

@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 from packaging.version import Version
 
 from update_time.domain.dependency import DependencyVersion, is_valid
-from update_time.io.filesystem import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, first_line_match, glob
+from update_time.domain.file_type import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, PYTHON_VERSION_FILE
+from update_time.io.filesystem import first_line_match, glob, glob_for
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
 from update_time.sources.oci import get_latest_tag
@@ -20,11 +21,6 @@ if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter, VersionBound
 
 _LOG = get_logger("python version file")
-
-# The Python version file, read from the repository root but supported per package too (a monorepo can carry one per
-# package), so it is looked up recursively from the scan root. It is a hidden (dot-prefixed) file, but naming it in
-# the glob pattern makes `glob` visit it anyway.
-_PYTHON_VERSION_FILE = ".python-version"
 
 # The dependency name reported for every `.python-version` entry. Unlike most references, the name is not in the file
 # (the file holds only a bare version), so it is supplied here rather than captured from the line.
@@ -82,9 +78,9 @@ def _image_version_getter(image_version: str) -> NewVersionGetter:
     return get_new_version
 
 
-def update_python_version_files(start: Path | None = None) -> None:
+def update_python_version_files() -> None:
     """Update the CPython version in all `.python-version` files found recursively from the start directory."""
-    for version_file in glob(_PYTHON_VERSION_FILE, start=start):
+    for version_file in glob_for(PYTHON_VERSION_FILE):
         image_version = _find_python_base_image_version(version_file)
         get_new_version = _image_version_getter(image_version) if image_version else get_latest_tag
         update_file(version_file, _VERSION_RE, get_new_version=get_new_version, logger=_LOG, dependency=_PYTHON)
