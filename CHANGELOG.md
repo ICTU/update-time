@@ -120,7 +120,7 @@ No changes yet.
 ### Fixed
 
 - Leave a file's line endings alone when updating a reference in it: CRLF endings are no longer rewritten to LF, and a file without a final newline no longer gains one. Part of [#181](https://github.com/ICTU/update-time/issues/181).
-- Apply a very large cooldown, from `--cooldown` or an `# update-time: ignore[cooldown<DAYS]` marker, instead of aborting the run with an error. Part of [#193](https://github.com/ICTU/update-time/issues/193).
+- Apply a cooldown of more days than a date can express, from `--cooldown` or an `# update-time: ignore[cooldown<DAYS]` marker, instead of aborting the run with an error. Part of [#193](https://github.com/ICTU/update-time/issues/193).
 
 ## 0.0.22 - 2026-07-28
 
@@ -166,7 +166,7 @@ No changes yet.
 
 ### Fixed
 
-- Keep an image tag's spelling when the registry lists the same version under another name: a reference pinned to e.g. `node:22.15.0` was sometimes rewritten to the alias tag `node:22.15` — the same version, spelled shorter — when no newer version was eligible.
+- Keep an image tag's spelling when the registry lists the same version under another name: a reference pinned to, for example, `node:22.15.0` was sometimes rewritten to the alias tag `node:22.15` — the same version, spelled shorter — when no newer version was eligible.
 
 ## 0.0.19 - 2026-07-16
 
@@ -180,7 +180,7 @@ No changes yet.
 ### Fixed
 
 - Keep pnpm-managed `package.json` dependencies within their declared version ranges, as npm-managed dependencies already were, instead of bumping every dependency to the newest release regardless of the declared range. Closes [#135](https://github.com/ICTU/update-time/issues/135).
-- Colour a `sha256:` digest as a single token in the log output. Rich's automatic highlighting previously matched only a fragment of a digest — reading e.g. `a256:a4fd` as an IPv6 address — so the digest came out partly coloured and partly plain.
+- Colour a `sha256:` digest as a single token in the log output. Rich's automatic highlighting previously matched only a fragment of a digest — reading for example `a256:a4fd` as an IPv6 address — so the digest came out partly coloured and partly plain.
 
 ## 0.0.18 - 2026-07-10
 
@@ -190,7 +190,7 @@ No changes yet.
 
 ### Fixed
 
-- Update and pin base images in Dockerfile `FROM` lines that carry a `--platform=…` flag (e.g. `FROM --platform=$BUILDPLATFORM python:3.14`), common in multi-arch builds. Previously such lines didn't match and were silently left un-updated and un-pinned. The `--platform=…` flag is left untouched. Closes [#90](https://github.com/ICTU/update-time/issues/90).
+- Update and pin base images in Dockerfile `FROM` lines that carry a `--platform=…` flag (for example `FROM --platform=$BUILDPLATFORM python:3.14`), common in multi-arch builds. Previously such lines didn't match and were silently left un-updated and un-pinned. The `--platform=…` flag is left untouched. Closes [#90](https://github.com/ICTU/update-time/issues/90).
 
 ## 0.0.17 - 2026-07-09
 
@@ -198,13 +198,13 @@ No changes yet.
 
 - Warn when a dependency's newest release is older than a threshold, surfacing pins on abandoned or long-unmaintained projects. The threshold defaults to 365 days and is set with the new `--stale-after DAYS` option. Closes [#116](https://github.com/ICTU/update-time/issues/116).
 - Scope the `# update-time: ignore` marker with an optional `[update]` or `[stale]` suffix: `ignore[update]` holds back the version update but still warns when the dependency is stale, and `ignore[stale]` silences the staleness warning while still updating. A bare `ignore` holds back both.
-- Discover and update requirements files named `<purpose>-requirements.txt` (e.g. `dev-requirements.txt`), in addition to the already recognized `requirements.txt`, `requirements-<purpose>.txt` (e.g. `requirements-dev.txt`), and `requirements/*.txt`. Closes [#114](https://github.com/ICTU/update-time/issues/114).
+- Discover and update requirements files named `<purpose>-requirements.txt` (for example `dev-requirements.txt`), in addition to the already recognized `requirements.txt`, `requirements-<purpose>.txt` (for example `requirements-dev.txt`), and `requirements/*.txt`. Closes [#114](https://github.com/ICTU/update-time/issues/114).
 
 ## 0.0.16 - 2026-07-07
 
 ### Added
 
-- Upgrade a version number embedded in an image tag's suffix. A pin such as `python:3.14.6-alpine3.23` now advances its `alpine3.23` to a newer `alpine3.24` (on its own or together with a bump of the main version, e.g. to `3.15.0-alpine3.24`) instead of keeping the suffix version forever. Closes [#107](https://github.com/ICTU/update-time/issues/107).
+- Upgrade a version number embedded in an image tag's suffix. A pin such as `python:3.14.6-alpine3.23` now advances its `alpine3.23` to a newer `alpine3.24` (on its own or together with a bump of the main version, for example to `3.15.0-alpine3.24`) instead of keeping the suffix version forever. Closes [#107](https://github.com/ICTU/update-time/issues/107).
 - Warn when an already-pinned image tag has been re-pushed with a different digest. If a reference such as `python:3.14.6@sha256:…` is already at the latest version but the registry now serves a different digest for that tag, Update-time logs a warning and leaves the pin unchanged, rather than silently adopting the new digest. Closes [#110](https://github.com/ICTU/update-time/issues/110).
 
 ### Fixed
@@ -220,7 +220,7 @@ No changes yet.
 
 ### Fixed
 
-- Keep uv-managed projects reproducible after an update: `uv sync --locked` no longer fails with "Resolving despite existing lockfile due to removal of global exclude newer". Update-time now writes its cooldown into `[tool.uv] exclude-newer` in `pyproject.toml` instead of passing it to uv only on the command line, so uv applies the same cooldown on every command. Closes [#94](https://github.com/ICTU/update-time/issues/94).
+- Keep uv-managed projects reproducible after an update: `uv sync --locked` no longer fails with "Resolving despite existing lockfile due to removal of global exclude newer." Update-time now writes its cooldown into `[tool.uv] exclude-newer` in `pyproject.toml` instead of passing it to uv only on the command line, so uv applies the same cooldown on every command. Closes [#94](https://github.com/ICTU/update-time/issues/94).
 
 ## 0.0.14 - 2026-07-03
 
@@ -243,13 +243,13 @@ No changes yet.
 
 - Update `package.json` files managed by [pnpm](https://pnpm.io) using pnpm, instead of skipping them, keeping both `package.json` and `pnpm-lock.yaml` in sync. The cooldown is applied via pnpm's `minimumReleaseAge`; yarn and bun are still skipped with a warning. Closes [#47](https://github.com/ICTU/update-time/issues/47).
 - Update the base `image` and each `features` entry in `.devcontainer/devcontainer.json` and `.devcontainer.json`, bumping each OCI reference to its latest tag and pinning it with the digest. Devcontainers that build from a `dockerfile` or `dockerComposeFile` are updated as part of that Dockerfile or Compose file. Closes [#49](https://github.com/ICTU/update-time/issues/49).
-- Update Dockerfiles named `*.Dockerfile` or `Dockerfile.*` (e.g. `python.Dockerfile`, `Dockerfile.dev`), not only files named exactly `Dockerfile`.
+- Update Dockerfiles named `*.Dockerfile` or `Dockerfile.*` (for example `python.Dockerfile`, `Dockerfile.dev`), not only files named exactly `Dockerfile`.
 
 ### Fixed
 
 - Resolve images on registries that reject a host-prefixed repository path, such as `mcr.microsoft.com`, which previously returned a 404. The registry host is now dropped from the repository path for every registry.
 - Apply the cooldown to jsDelivr npm URLs, which previously adopted a freshly published version immediately; Update-time now picks the latest version published outside the cooldown window. Closes [#68](https://github.com/ICTU/update-time/issues/68).
-- Compute the jsDelivr Subresource Integrity hash for the file referenced in the URL rather than the package's default entry point, which previously crashed on packages whose default file jsDelivr doesn't list (e.g. `mathjax`). When the referenced file's hash can't be resolved, the reference is left unchanged and a warning is logged instead of crashing. Closes [#69](https://github.com/ICTU/update-time/issues/69).
+- Compute the jsDelivr Subresource Integrity hash for the file referenced in the URL rather than the package's default entry point, which previously crashed on packages whose default file jsDelivr doesn't list (for example `mathjax`). When the referenced file's hash can't be resolved, the reference is left unchanged and a warning is logged instead of crashing. Closes [#69](https://github.com/ICTU/update-time/issues/69).
 
 ## 0.0.12 - 2026-06-30
 
@@ -259,7 +259,7 @@ No changes yet.
 
 ### Added
 
-- Resolve image versions on registries other than Docker Hub (e.g. `ghcr.io`, `mcr.microsoft.com`, `gcr.io`, `quay.io`), wherever Update-time finds image references (Dockerfiles, Docker Compose / Helm manifests, CircleCI, GitLab CI). This reverses the earlier "skip non-Docker Hub images" behavior. The cooldown still only applies to Docker Hub, because the OCI protocol exposes no publication date. Closes [#48](https://github.com/ICTU/update-time/issues/48).
+- Resolve image versions on registries other than Docker Hub (for example `ghcr.io`, `mcr.microsoft.com`, `gcr.io`, `quay.io`), wherever Update-time finds image references (Dockerfiles, Docker Compose / Helm manifests, CircleCI, GitLab CI). This reverses the earlier "skip non-Docker Hub images" behavior. The cooldown still only applies to Docker Hub, because the OCI protocol exposes no publication date. Closes [#48](https://github.com/ICTU/update-time/issues/48).
 - Update image tags whose version carries a non-numeric label prefix, such as `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` (bumped to `python3.13-bookworm-slim` and digest-pinned), preserving the prefix and suffix. Previously these tags were left unchanged. Closes [#55](https://github.com/ICTU/update-time/issues/55).
 - Leave a reference unchanged when its line carries an `# update-time: ignore` comment, so an update can be pinned deliberately. It works for Dockerfiles, Docker Compose / Helm manifests, CircleCI, GitLab CI, GitHub Actions, and `requirements.txt`, inline or as a comment on the line directly above, and each ignored reference is logged at `DEBUG`. Closes [#56](https://github.com/ICTU/update-time/issues/56).
 
@@ -286,7 +286,7 @@ No changes yet.
 
 ### Changed
 
-- Resolve the latest Docker Hub tag by listing tag names once and fetching metadata only for the chosen tag, instead of paginating through every tag's metadata. For heavily-tagged images such as `node` (~9,000 tags) this cuts the requests per image from ~90 to a handful. Closes [#34](https://github.com/ICTU/update-time/issues/34).
+- Resolve the latest Docker Hub tag by listing tag names once and fetching metadata only for the chosen tag, instead of paginating through every tag's metadata. For images with many tags such as `node` (~9,000 tags) this cuts the requests per image from ~90 to a handful. Closes [#34](https://github.com/ICTU/update-time/issues/34).
 
 ## 0.0.8 - 2026-06-28
 
@@ -296,7 +296,7 @@ No changes yet.
 
 ### Changed
 
-- Log available new versions at the `INFO` level instead of `WARNING`, so the `WARNING` level is reserved for genuinely unexpected situations. The per-file "Checking ..." progress now logs at `DEBUG`.
+- Log available new versions at the `INFO` level instead of `WARNING`, so the `WARNING` level is reserved for genuinely unexpected situations. The per-file "Checking …" progress now logs at `DEBUG`.
 
 ## 0.0.7 - 2026-06-28
 
@@ -342,11 +342,11 @@ No changes yet.
 ### Added
 
 - Automatically pin Docker images that are referenced by tag only — Dockerfile base images, CircleCI images, and Docker Compose / Helm manifest images — by appending the `@sha256:digest` of the (latest) tag, instead of leaving them untouched.
-- Automatically pin GitHub Actions that are referenced by version tag only (e.g. `@v4`) to the commit SHA of the latest version, adding the version as a trailing comment, instead of leaving them untouched.
+- Automatically pin GitHub Actions that are referenced by version tag only (for example `@v4`) to the commit SHA of the latest version, adding the version as a trailing comment, instead of leaving them untouched.
 
 ### Fixed
 
-- Don't say "Updating ..." when checking whether there are any updates because there may well be no updates.
+- Don't say "Updating …" when checking whether there are any updates because there may well be no updates.
 
 ## 0.0.2 - 2026-06-22
 

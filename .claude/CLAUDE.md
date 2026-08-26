@@ -42,13 +42,13 @@ Review code against these criteria, whether on its own or in the TDD refactor st
 - **Failure paths**: For every call that can fail — a request, a parse, a subprocess — check what happens when it does, and mock it so that it fails the same way. A mock that answers where the real thing raises lets a test pass without the branch it is named for. Log every exception you catch, or the failure is invisible. An exception that escapes aborts the whole run over one bad reference. A write that fails partway has to leave the file as it was.
 - **Cost**: The work here is network requests, so count them. Watch for a request added inside a per-reference loop, and for a call path that bypasses a cache the old one used.
 - **Readability**: Use the domain vocabulary that the code and the README establish. Use it in code, docstrings, log messages, and tests alike, and never coin a second word for a concept one of them already names. Prefer an early return to a nested conditional. Say what a test asserts in its method name. Keep implementation terms out of anything the user reads. When a behaviour is described in more than one place, change every place, not only the one you are in.
-- **Prose**: Write plainly — in docstrings, comments, log messages, CLI help, the README, and your replies to me. One sentence, one claim. Put the subject first and the verb right after it. Split a sentence instead of nesting a clause in it. Name the thing when `it` or `which` could point at two things. Don't stack negatives. Don't rank ("the least", "the only", "the one thing"). Give the concrete case, not the general rule. Don't skip a step in an explanation. Read each new sentence again, and rewrite it if it needs a second read.
+- **Prose**: Write plainly — in docstrings, comments, log messages, CLI help, the README, and your replies to me. One sentence, one claim. Put the subject first and the verb right after it. Split a sentence instead of nesting a clause in it. Name the thing when `it` or `which` could point at two things. Don't stack negatives. Don't rank; saying for example "the least," "the only," "the one thing." Give the concrete case, not the general rule. Don't skip a step in an explanation. Read each new sentence again, and rewrite it if it needs a second read.
 
 ## TDD
 
 Develop test-first, in small steps, so I can steer.
 
-Keep a numbered list of candidate tests (T1, T2, ...) with the status of each: todo, pass, or fail. Drop a test from the list only once every test on it passes, or when I tell you to drop it.
+Keep a numbered list of candidate tests (T1, T2, …) with the status of each: todo, pass, or fail. Drop a test from the list only once every test on it passes, or when I tell you to drop it.
 
 Prepare a cycle by adding at most five candidate tests to the list, then let me choose where to start. This holds for a feature, a bug fix, a task, and an increment alike.
 
@@ -109,7 +109,7 @@ A few rules that keep the cycle honest:
    - When only CI can decide, try each option locally and say what stays unverified.
    - Don't announce a comparison and then not run it.
    - A probe is evidence only when it would fail if the answer were the other way. A rule that matched nothing, or a probe whose signal the code under test swallows, passes exactly like one that holds.
-9. Check a claim against the code or the tools before you state it. One run or a look at a sibling module usually settles one, such as "nothing covers this yet".
+9. Check a claim against the code or the tools before you state it. One run or a look at a sibling module usually settles one, such as "nothing covers this yet."
    - A review finding is a claim, and the most plausible findings are the ones to check hardest. Mutate the code the finding describes and say what that showed, or don't report it.
    - Anything an issue says is a claim too, whether you carry out its instruction or copy its sentence into the README. A spec says what was intended, not what got built.
    - So is the reason you give for an option you put to me, because I choose on that reason.

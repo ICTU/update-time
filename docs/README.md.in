@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/update-time?logo=pypi&logoColor=white)](https://pypi.org/project/update-time/) [![Python versions](https://img.shields.io/pypi/pyversions/update-time?logo=python&logoColor=white)](https://pypi.org/project/update-time/) [![License](https://img.shields.io/pypi/l/update-time)](https://github.com/ICTU/update-time/blob/main/LICENSE)
 
-Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for [dependencies](#-what-is-updated) and updates them to their latest versions. Where possible, it [pins](#-pinning) references — no more `latest` — and adds hashes. To protect against supply-chain attacks, it applies a [cooldown](#-cooldown) period. And it warns you about [stale dependencies](#-stale-dependencies), [yanked versions](#-yanked-dependencies), and [vulnerable dependencies](#-vulnerable-dependencies).
+Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for [dependencies](#-what-is-updated) and updates them to their latest versions. Where possible, it [pins](#-pinning) references — no more `latest` — and adds hashes. To protect against supply chain attacks, it applies a [cooldown](#-cooldown) period. And it warns you about [stale dependencies](#-stale-dependencies), [yanked versions](#-yanked-dependencies), and [vulnerable dependencies](#-vulnerable-dependencies).
 
 Update-time rewrites the files in place and logs what it did:
 
@@ -105,7 +105,7 @@ Each type links to its own section under [Details per dependency type](#-details
 
 A **version pin** names an exact version instead of something that floats: `python:3.14` instead of `python:latest`, `humanize==4.15.0` instead of `humanize>=4`. Its opposite is a **floating pin**, which leaves the version to the source: a channel such as `python:latest`, a range such as `humanize>=4` or npm's `^17.0.0`, and a branch such as the `main` in `actions/checkout@main`. Update-time updates version pins, and replaces the floating pin of an image reference with the version it currently serves (see [Floating image tags](#floating-image-tags)). The floating pin of any other reference is left as it is.
 
-A **hash pin** adds a cryptographic hash of the artefact the version resolves to — an image digest, a commit SHA, or an integrity hash. The difference with a version pin is immutability: a version pin can be re-pointed under you, because a tag can be moved or re-pushed, while a hash pin can only match the one thing it was computed from. That is what protects against a supply-chain attack, and Update-time strives to add a hash pin where possible.
+A **hash pin** adds a cryptographic hash of the artefact the version resolves to — an image digest, a commit SHA, or an integrity hash. The difference with a version pin is immutability: a version pin can be re-pointed under you, because a tag can be moved or re-pushed, while a hash pin can only match the one thing it was computed from. That is what protects against a supply chain attack, and Update-time strives to add a hash pin where possible.
 
 Update-time works on both version pins and hash pins: it moves a version pin forward, taking the most precise spelling the source has for the version it lands on, and adds a hash pin to any reference that can hold one.
 
@@ -671,7 +671,7 @@ For each dependency type, this chapter answers the same questions: what files, d
 
 #### What files are updated?
 
-Python files containing requirements are discovered by name, case-sensitively: `pyproject.toml`, `requirements.txt`, `requirements-<purpose>.txt` and `<purpose>-requirements.txt` (e.g. `requirements-dev.txt` and `dev-requirements.txt`), and any `.txt` file in a `requirements/` directory. Unrelated files such as `constraints.txt` or `requirements.in` are not touched.
+Python files containing requirements are discovered by name, case-sensitively: `pyproject.toml`, `requirements.txt`, `requirements-<purpose>.txt` and `<purpose>-requirements.txt` (for example `requirements-dev.txt` and `dev-requirements.txt`), and any `.txt` file in a `requirements/` directory. Unrelated files such as `constraints.txt` or `requirements.in` are not touched.
 
 In addition, any `*.py` file that carries a [PEP 723](https://peps.python.org/pep-0723/) inline script metadata block is updated: a `# /// script … # ///` comment block that declares the standalone script's dependencies. `*.py` files without such a block are left untouched and never invoke uv.
 
@@ -679,13 +679,13 @@ Compiled or hash-pinned requirements files, such as a `requirements.txt` generat
 
 #### What dependencies are updated?
 
-Update-time cannot update individual git, VCS, and URL dependencies (e.g. `git+https://github.com/org/repo.git@v8.0.3.0`, direct URLs, and `-e`/editable installs) in both `requirements.txt` and `pyproject.toml` files. Update them manually.
+Update-time cannot update individual git, VCS, and URL dependencies (for example `git+https://github.com/org/repo.git@v8.0.3.0`, direct URLs, and `-e`/editable installs) in both `requirements.txt` and `pyproject.toml` files. Update them manually.
 
 In a PEP 723 inline script metadata block, only the pins in the `dependencies` array are updated; the `requires-python` value and any other inline-metadata fields are left untouched.
 
 #### What versions are updated?
 
-Only versions specified with an exact match are updated, i.e. dependency versions pinned with `==`. Looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. In a `pyproject.toml` or an inline script metadata block, a new version for such a dependency is still reported. In a `requirements.txt` it is not reported at all, although the package behind it is still checked for staleness, as described under Stale dependencies below.
+Only versions specified with an exact match are updated, that is dependency versions pinned with `==`. Looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. In a `pyproject.toml` or an inline script metadata block, a new version for such a dependency is still reported. In a `requirements.txt` it is not reported at all, although the package behind it is still checked for staleness, as described under Stale dependencies below.
 
 #### Pinning
 
@@ -767,7 +767,7 @@ For pre-commit hooks, it looks for `.pre-commit-config.yaml` files, recursively 
 
 #### What dependencies are updated?
 
-In a workflow or action definition, the actions in the `uses:` references. Actions referenced by a branch (e.g. `@main`) or as a local action without an `@` don't resolve to a version, so they are not updated.
+In a workflow or action definition, the actions in the `uses:` references. Actions referenced by a branch (for example `@main`) or as a local action without an `@` don't resolve to a version, so they are not updated.
 
 In a `.pre-commit-config.yaml`, the `rev:` of each hook repository hosted on GitHub. A `repo: local` or `repo: meta` entry has no `rev:` and is left untouched, as is a repository hosted outside GitHub. A `rev:` that names a branch rather than a version is not updated.
 

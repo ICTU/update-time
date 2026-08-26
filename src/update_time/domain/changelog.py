@@ -84,7 +84,7 @@ def _find_version_index(lines: list[str], version: str) -> int | None:
     """Return the index of the line that introduces the version's changes, or None when absent.
 
     A heading naming the version wins over any other line that names it, so that a prose mention inside another
-    version's section (e.g. "shipped in 0.10.0") doesn't anchor parsing in the wrong place. Where no heading
+    version's section (for example "shipped in 0.10.0") doesn't anchor parsing in the wrong place. Where no heading
     names the version, the first line that names it anchors parsing.
     """
     fallback = None

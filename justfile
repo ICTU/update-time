@@ -204,6 +204,11 @@ vulture: (py-check "vulture" f"{{ vulture }} {{ code }} {{ vulture_whitelist }}"
 [private]
 codespell: (py-check "codespell" f"{{ uv_run }} codespell")
 
+# Run vale to check the prose for style. `vale sync` fetches the styles `.vale.ini` names, on every run and over the
+# network, so this check needs a connection as `pip-audit` and `uv-audit` do.
+[private]
+vale: (py-check "vale" f"{{ uv_run }} vale sync && {{ uv_run }} vale --no-wrap --glob '*.md*' {{ prose }}")
+
 # Run yamllint to lint YAML files such as workflow definitions.
 [private]
 yamllint:
@@ -231,11 +236,11 @@ check-readme-structure:
 # Check prose for too complex sentences, in the code and documentation.
 [private]
 check-sentence-complexity:
-    {{ start_capture() }} {{ python_m }} tools.sentence_complexity_check {{ code }} docs *.md .claude/CLAUDE.md {{ end_capture("check-sentence-complexity") }}
+    {{ start_capture() }} {{ python_m }} tools.sentence_complexity_check {{ code }} {{ prose }} {{ end_capture("check-sentence-complexity") }}
 
 # Run the quality checks. Run one by name for a quicker loop, e.g. `just ruff` or `just mypy`.
 [parallel]
-check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-readme-is-up-to-date check-readme-structure check-sentence-complexity yamllint zizmor
+check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-readme-is-up-to-date check-readme-structure check-sentence-complexity vale yamllint zizmor
 
 # Run the tests and the checks at the same time, neither of which reads what the other writes.
 [parallel]
@@ -326,6 +331,9 @@ _ci: _sonarcloud check
 # The folders holding Python code. `docs` holds the README template and the screenshot, so it is checked for
 # prose but has no Python to check.
 code := "src tests tools"
+
+# The prose outside the Python code: the README's template, the Markdown files at the root, and the guidelines.
+prose := "docs *.md .claude/CLAUDE.md"
 
 # === Output functions ===
 
