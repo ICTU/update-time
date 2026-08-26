@@ -3,6 +3,7 @@ __pycache__
 .coverage
 .nltk
 .pypirc
+.vale
 .venv/
 build/
 dist/

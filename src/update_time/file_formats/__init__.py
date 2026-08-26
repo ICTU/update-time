@@ -1,8 +1,8 @@
 """Read, write, and parse the specific manifest file formats Update-time updates.
 
 Boundary — mechanics, not semantics: a `file_formats` module owns operations that need a format library or the
-serialized form itself, i.e. parsing a manifest and format-preserving reads/writes of specific constructs (e.g.
-tomlkit edits that keep comments, or a regex rewrite over the raw text). Pure queries over the already-parsed
+serialized form itself, that is parsing a manifest and format-preserving reads/writes of specific constructs (for
+example tomlkit edits that keep comments, or a regex rewrite over the raw text). Pure queries over the already-parsed
 structure stay with the caller (an updater or, later, a package manager): they navigate the dict a `read` returns
 and need no format library. So `read`/`set_tool_key`/`rewrite_pinned_versions` live here, while predicates like
 `has_node_engine` or `python_manager`'s `[tool.poetry]` check — plain dict navigation — do not.
