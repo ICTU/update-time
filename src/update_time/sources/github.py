@@ -37,9 +37,13 @@ _GITHUB_API = "https://api.github.com/repos"
 # GitHub's maximum page size, for the releases and tags endpoints. Only the first page of each is fetched, so at
 # most this many of the most recent releases and tags are considered.
 _PER_PAGE = 100
-# The names a repository gives the changelog file in its root, and the extensions it carries, compared in lower case.
+# The host serving a repository's files as raw content.
+_RAW_GITHUB = "https://raw.githubusercontent.com"
+# The names a repository gives the changelog file, and the extensions it carries, compared in lower case.
 _CHANGELOG_FILE_NAMES = frozenset({"changes", "changelog", "history", "news", "releases"})
 _CHANGELOG_FILE_EXTENSIONS = frozenset({"", ".md", ".rst", ".txt"})
+# The names a repository gives the directory it keeps its documentation in, compared in lower case.
+_DOCUMENTATION_DIRECTORY_NAMES = frozenset({"doc", "docs"})
 
 
 class _ReleaseJSON(TypedDict):
@@ -71,6 +75,16 @@ class _ContentJSON(TypedDict):
     name: str
     # Null for an entry that is no file to fetch, such as a directory: pip's root keeps its `news` fragments in one.
     download_url: str | None
+    # The endpoint listing the entry: its tree for a directory, its blob for a file.
+    git_url: str
+
+
+class _TreeEntryJSON(TypedDict):
+    """An entry in a GitHub repository's tree listing."""
+
+    # Relative to the tree that was listed, so a path below `doc` reads `source/changes.rst`.
+    path: str
+    type: str  # `blob` for a file, `tree` for a directory
 
 
 class _Committer(TypedDict):
@@ -233,9 +247,8 @@ def github_to_raw(url: str) -> str:
     """Convert GitHub URLs to URLs that return raw content."""
     parsed = urlparse(url)
     if parsed.scheme == "https" and parsed.netloc == "github.com":
-        # Build the corresponding raw.githubusercontent.com URL based on the parsed path.
         raw_path = parsed.path.replace("/blob/", "/")
-        return f"https://raw.githubusercontent.com{raw_path}"
+        return f"{_RAW_GITHUB}{raw_path}"
     return url
 
 
@@ -486,15 +499,56 @@ def changes_from_release(owner: str, repository: str, package: str, version: str
 
 
 def changes_from_changelog_file(owner: str, repository: str, version: str) -> str:
-    """Return the version's changes from a changelog file in the repository's root, or nothing when there is none."""
+    """Return the version's changes from a changelog file in the repository, or nothing when there is none.
+
+    Some projects keep the changelog in a documentation directory, and leave a file in the root that only links
+    to that changelog.
+    """
     if not (owner and repository):
         return ""
-    for entry in _list_root(owner, repository) or ():
-        if _is_changelog_file(entry["name"]) and (url := entry["download_url"]):
-            response = fetch(url, _LOG)
-            if response is not None and (changes := get_version_changes_from_changelog(response.text, version)):
-                return changes
+    root = _list_root(owner, repository) or ()
+    for entry in root:
+        url = entry["download_url"]
+        if _is_changelog_file(entry["name"]) and url and (changes := _changes_from_changelog_url(url, version)):
+            return changes
+    return _changes_from_documentation(owner, repository, root, version)
+
+
+def _changes_from_changelog_url(url: str, version: str) -> str:
+    """Return the version's changes from the changelog file the URL serves, or nothing when there are none."""
+    response = fetch(url, _LOG)
+    return get_version_changes_from_changelog(response.text, version) if response is not None else ""
+
+
+def _changes_from_documentation(owner: str, repository: str, root: tuple[_ContentJSON, ...], version: str) -> str:
+    """Return the version's changes from a changelog file below a documentation directory the root names."""
+    for entry in root:
+        if entry["name"].lower() in _DOCUMENTATION_DIRECTORY_NAMES and (
+            changes := _changes_from_tree(owner, repository, entry, version)
+        ):
+            return changes
     return ""
+
+
+def _changes_from_tree(owner: str, repository: str, directory: _ContentJSON, version: str) -> str:
+    """Return the version's changes from a changelog file below the directory, or nothing when none names them."""
+    root_url = f"{_RAW_GITHUB}/{owner}/{repository}/HEAD/{directory['name']}"
+    for path in _list_tree(directory["git_url"]):
+        if _is_changelog_file(path.rpartition("/")[2]) and (
+            changes := _changes_from_changelog_url(f"{root_url}/{path}", version)
+        ):
+            return changes
+    return ""
+
+
+@cache
+def _list_tree(git_url: str) -> tuple[str, ...]:
+    """Fetch the paths of the files below the tree the URL names, or an empty tuple when they can't be fetched."""
+    response = fetch(f"{git_url}?recursive=1", _LOG, headers=_github_headers())
+    if response is None:
+        return ()
+    tree: list[_TreeEntryJSON] = response.json().get("tree", [])
+    return tuple(entry["path"] for entry in tree if entry["type"] == "blob")
 
 
 def _github_headers() -> dict[str, str]:

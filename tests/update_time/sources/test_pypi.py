@@ -1,8 +1,8 @@
 """Unit tests for the PyPI module."""
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
-from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
@@ -30,8 +30,10 @@ from tests.update_time.helpers import (
     yanked_file,
 )
 
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+# What a name in a repository's root listing maps to: a file's text, a directory with no tree to list, or a
+# directory's recursive tree listing as an entry per path below it. A path maps to its text, or to None for a
+# path that is itself a directory.
+type RootEntry = str | Mapping[str, str | None] | None
 
 # The mutations of how a null the PyPI metadata reports for the project URLs is read. The tests of the updater that
 # rewrites the pins kill them too, so they are named here rather than spelled out in each registration.
@@ -110,13 +112,30 @@ class GetChangesTest(LoggingTestCase):
         """Return the URL the repository serves the file of that name at."""
         return f"https://raw/{name}"
 
+    @staticmethod
+    def tree_url(directory: str) -> str:
+        """Return the URL GitHub serves the directory's recursive tree listing at."""
+        return f"https://tree/{directory}?recursive=1"
+
+    @staticmethod
+    def nested_file_url(repository: str, directory: str, path: str) -> str:
+        """Return the URL of the file at that path below the directory."""
+        return f"https://raw.githubusercontent.com/{repository}/HEAD/{directory}/{path}"
+
+    @staticmethod
+    def tree_entry(path: str, text: str | None) -> dict[str, str]:
+        """Return the tree listing entry for the path, a directory below the tree when it maps to no text."""
+        return {"path": path, "type": "blob" if text is not None else "tree"}
+
     @classmethod
-    def root_entry(cls, name: str, text: str | None) -> dict[str, object]:
-        """Return the root listing entry for the file, one with no file to fetch when its text is None."""
+    def root_entry(cls, name: str, entry: RootEntry) -> dict[str, object]:
+        """Return the root listing entry for the name, one with no file to fetch when the name maps to no text."""
+        is_file = isinstance(entry, str)
         return {
             "name": name,
-            "type": "dir" if text is None else "file",
-            "download_url": None if text is None else cls.file_url(name),
+            "type": "file" if is_file else "dir",
+            "download_url": cls.file_url(name) if is_file else None,
+            "git_url": f"https://tree/{name}",
         }
 
     @staticmethod
@@ -134,25 +153,38 @@ class GetChangesTest(LoggingTestCase):
         self,
         mock_get: Mock,
         *packages: str,
-        files: Mapping[str, str | None] | None = None,
+        files: Mapping[str, RootEntry] | None = None,
         repository: str,
         description: str = "Package description",
         extra: Mapping[str | None, Mock] | None = None,
     ) -> None:
         """Point the mock requests.get at the responses for packages whose metadata names one GitHub repository.
 
-        The repository's root lists an entry per name in `files`, each answering its text, and the entry of a name
-        mapped to None is one with no file to fetch, as a directory is. The repository publishes no releases.
-        `extra` adds a response, or replaces one, under the URL it is keyed by. A URL neither holds raises a
-        KeyError, so a request the test did not expect fails loudly rather than being answered.
+        The repository's root lists an entry per name in `files`. A name mapped to a text is a file answering that
+        text. A name mapped to None is an entry with no file to fetch, as a directory is. A name mapped to a
+        mapping is a directory answering a recursive tree listing of the paths it maps. A path mapped to a text is
+        a file answering it, and a path mapped to None is a directory below the tree. The repository publishes no
+        releases. `extra` adds a response, or replaces one, under the URL it is keyed by. A URL neither holds
+        raises a KeyError, so a request the test did not expect fails loudly rather than being answered.
         """
         info = {"description": description, "project_urls": {"Source": f"https://github.com/{repository}"}}
-        listing = [self.root_entry(name, text) for name, text in (files or {}).items()]
+        entries = (files or {}).items()
+        trees = {name: paths for name, paths in entries if isinstance(paths, Mapping)}
         responses: dict[str | None, Mock] = {
             **{self.metadata_url(package): mock_response({"info": info}) for package in packages},
             self.releases_url(repository): mock_response([]),
-            self.contents_url(repository): mock_response(listing),
-            **{self.file_url(name): mock_response(text=text) for name, text in (files or {}).items() if text},
+            self.contents_url(repository): mock_response([self.root_entry(name, entry) for name, entry in entries]),
+            **{self.file_url(name): mock_response(text=text) for name, text in entries if isinstance(text, str)},
+            **{
+                self.tree_url(directory): mock_response({"tree": [self.tree_entry(*path) for path in paths.items()]})
+                for directory, paths in trees.items()
+            },
+            **{
+                self.nested_file_url(repository, directory, path): mock_response(text=text)
+                for directory, paths in trees.items()
+                for path, text in paths.items()
+                if text is not None
+            },
             **(extra or {}),
         }
         mock_get.side_effect = lambda url, **_kwargs: responses[url]
@@ -359,19 +391,121 @@ class GetChangesTest(LoggingTestCase):
         "a package keeping its changelog in a file in its repository reports no changes at all",
     )
 
-    @kills(_NO_DISCOVERY)
+    _DOCUMENTATION_READ_FIRST = Mutation(
+        github,
+        "    root = _list_root(owner, repository) or ()\n    for entry in root:",
+        "    root = _list_root(owner, repository) or ()\n"
+        "    if changes := _changes_from_documentation(owner, repository, root, version):\n"
+        "        return changes\n"
+        "    for entry in root:",
+        "a repository whose root answers costs a documentation tree listing it has no need of",
+    )
+
+    @kills(_NO_DISCOVERY, _DOCUMENTATION_READ_FIRST)
     def test_changelog_file_in_the_repository_root(self, mock_get: Mock):
-        """Test that a changelog file in the repository root supplies the changes when no earlier heuristic does."""
+        """Test that a changelog file in the root supplies the changes, leaving the documentation directory unread."""
         changelog = "Changelog\n=========\n\n1.1\n===\n\n- Fixed foo\n\n1.0\n===\n\n- Fixed bar\n"
-        files = {"README.md": "Not a changelog", "CHANGES.rst": changelog}
+        files: dict[str, RootEntry] = {
+            "README.md": "Not a changelog",
+            "CHANGES.rst": changelog,
+            "doc": {"source/changes.rst": changelog},
+        }
         self.create_discovery_responses(mock_get, "gevent", files=files, repository="gevent/gevent")
         self.assertEqual(get_changes("gevent", "1.1"), "1.1\n===\n\n- Fixed foo")
+        self.assertNotIn(self.tree_url("doc"), self.requested_urls(mock_get))
+
+    _ROOT_ONLY = Mutation(
+        github,
+        "    return _changes_from_documentation(owner, repository, root, version)",
+        '    return ""',
+        "a project keeping its changelog below its documentation directory reports no changes at all",
+    )
+
+    @kills(_ROOT_ONLY)
+    def test_changelog_file_in_a_documentation_directory(self, mock_get: Mock):
+        """Test that a changelog file below a documentation directory supplies the changes the root's file lacks."""
+        changelog = "Changelog\n=========\n\n1.1\n===\n\n- Fixed foo\n"
+        stub = "Please see the online documentation for the latest changelog\n"
+        for directory, path, package, repository in (
+            ("doc", "source/changes.rst", "gitpython", "gitpython-developers/GitPython"),
+            ("docs", "changelog.rst", "celery", "celery/celery"),
+        ):
+            with self.subTest(directory=directory):
+                files: dict[str, RootEntry] = {"CHANGES": stub, directory: {path: changelog}}
+                self.create_discovery_responses(mock_get, package, files=files, repository=repository)
+                self.assertEqual(get_changes(package, "1.1"), "1.1\n===\n\n- Fixed foo")
+
+    def test_documentation_changelog_naming_no_version(self, mock_get: Mock):
+        """Test that a documentation directory whose changelog names another version supplies no changes."""
+        repository = "gitpython-developers/GitPython"
+        tree = {"source/conf.py": "project = 'GitPython'\n", "source/changes.rst": "0.9\n===\n\n- Fixed bar\n"}
+        self.create_discovery_responses(mock_get, "gitpython", files={"doc": tree}, repository=repository)
+        self.assertEqual(get_changes("gitpython", "1.1"), "")
+        requested = self.requested_urls(mock_get)
+        self.assertIn(self.tree_url("doc"), requested)
+        self.assertIn(self.nested_file_url(repository, "doc", "source/changes.rst"), requested)
+        self.assertNotIn(self.nested_file_url(repository, "doc", "source/conf.py"), requested)
+
+    _EVERY_DIRECTORY_LISTED = Mutation(
+        github,
+        '        if entry["name"].lower() in _DOCUMENTATION_DIRECTORY_NAMES and (',
+        '        if entry["name"].lower() not in {"nonesuch"} and (',
+        "every directory in a repository's root costs a tree listing of its own",
+    )
+
+    @kills(_EVERY_DIRECTORY_LISTED)
+    def test_root_directory_other_than_documentation(self, mock_get: Mock):
+        """Test that a root directory other than the documentation directory is not listed."""
+        files: dict[str, RootEntry] = {
+            "tests": {"test_app.py": "import flask\n"},
+            "docs": {"changelog.rst": "1.1\n===\n\n- Fixed foo\n"},
+        }
+        self.create_discovery_responses(mock_get, "flask", files=files, repository="pallets/flask")
+        self.assertEqual(get_changes("flask", "1.1"), "1.1\n===\n\n- Fixed foo")
+        self.assertNotIn(self.tree_url("tests"), self.requested_urls(mock_get))
+
+    _UNFILTERED_TREE = Mutation(
+        github,
+        '    return tuple(entry["path"] for entry in tree if entry["type"] == "blob")',
+        '    return tuple(entry["path"] for entry in tree)',
+        "a directory named like a changelog in a documentation tree costs a request for the file it has none of",
+    )
+
+    @kills(_UNFILTERED_TREE)
+    def test_changelog_named_directory_in_the_tree(self, mock_get: Mock):
+        """Test that a directory in the tree named like a changelog is passed over without a request."""
+        repository = "pallets/flask"
+        directory_url = self.nested_file_url(repository, "docs", "changelog")
+        # The `changelog` directory answers a text naming no version, rather than raising, so a request for it
+        # fails the assertion below rather than the whole test.
+        self.create_discovery_responses(
+            mock_get,
+            "flask",
+            files={"docs": {"changelog": None, "changelog.rst": "1.1\n===\n\n- Fixed foo\n"}},
+            repository=repository,
+            extra={directory_url: mock_response(text="Nothing to report")},
+        )
+        self.assertEqual(get_changes("flask", "1.1"), "1.1\n===\n\n- Fixed foo")
+        self.assertNotIn(directory_url, self.requested_urls(mock_get))
+
+    def test_tree_listing_unreachable(self, mock_get: Mock):
+        """Test that a tree listing that can't be fetched yields no changes, and is reported as unreachable."""
+        tree_url = self.tree_url("doc")
+        unreachable = mock_response(status_code=HTTPStatus.NOT_FOUND, ok=False, url=tree_url)
+        self.create_discovery_responses(
+            mock_get,
+            "gitpython",
+            files={"doc": {"source/changes.rst": "1.1\n===\n\n- Fixed foo\n"}},
+            repository="gitpython-developers/GitPython",
+            extra={tree_url: unreachable},
+        )
+        self.assertEqual(get_changes("gitpython", "1.1"), "")
+        self.assert_could_not_fetch_logged(url=tree_url)
 
     _UNGUARDED_URL = Mutation(
         github,
-        '        if _is_changelog_file(entry["name"]) and (url := entry["download_url"]):\n'
-        "            response = fetch(url, _LOG)",
-        '        if _is_changelog_file(entry["name"]):\n            response = fetch(entry["download_url"], _LOG)',
+        '        if _is_changelog_file(entry["name"]) and url and (changes := ',
+        '        if _is_changelog_file(entry["name"]) and (changes := ',
         "a directory named like a changelog, such as pip's `news`, costs a request for the file it has none of",
     )
 
@@ -526,8 +660,8 @@ class GetChangesTest(LoggingTestCase):
 
     _FIRST_FILE_ONLY = Mutation(
         github,
-        "(changes := get_version_changes_from_changelog(response.text, version)):",
-        "(changes := get_version_changes_from_changelog(response.text, version)) is not None:",
+        "and url and (changes := _changes_from_changelog_url(url, version)):",
+        "and url and (changes := _changes_from_changelog_url(url, version)) is not None:",
         "a root whose first changelog file names no version reports no changes, though another file names it",
     )
 

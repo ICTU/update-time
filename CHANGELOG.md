@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Find a changelog anywhere below a repository's `doc` or `docs` directory, such as GitPython's `doc/source/changes.rst`, instead of reading its root only. Closes [#301](https://github.com/ICTU/update-time/issues/301).
 
 ## 0.0.30 - 2026-08-25
 
