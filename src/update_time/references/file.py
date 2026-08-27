@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
     from update_time.domain.file_type import FileType
     from update_time.domain.line import Line
+    from update_time.domain.marker import Marker
     from update_time.io.log import Logger
 
 
@@ -46,17 +47,19 @@ def update_file(
     get_new_version: NewVersionGetter,
     logger: Logger,
     dependency: str = "",
+    marker: Marker | None = None,
 ) -> list[Line]:
     """Update the references in the file, write it back if the new lines differ from the old ones, and return them.
 
     Multiple regexps are applied in turn to the same content, so a file that pins more than one kind of reference (a
     devcontainer.json's base `image` and its `features`) is read and written once, not once per regexp. A regexp that
-    captures no `dependency` group — a `.python-version` entry is a bare version — names it in `dependency`.
+    captures no `dependency` group — a `.python-version` entry is a bare version — names it in `dependency`. A
+    format that cannot hold a comment names its reference's marker elsewhere, and passes it in `marker`.
     """
     return rewrite_file(
         path,
         lambda lines: update_references_in_lines(
-            lines, *regexps, get_new_version=get_new_version, logger=logger, dependency=dependency
+            lines, *regexps, get_new_version=get_new_version, logger=logger, dependency=dependency, marker=marker
         ),
         logger,
     )

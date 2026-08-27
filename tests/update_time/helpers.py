@@ -120,8 +120,8 @@ class LoggingTestCase(CacheClearingTestCase):
     """Base test case for any test of code that logs.
 
     It mocks the logger's log method, exposed as the mock_log attribute, and offers the assert_*_logged helpers below.
-    The mock lives for the whole test, so a `subTest` table whose cases each assert on the records of their own run
-    resets it between them with `self.mock_log.reset_mock()`.
+    The mock lives for the whole test, so a `subTest` table whose cases each run the tool starts each case with
+    `start_new_run`.
     """
 
     def setUp(self) -> None:
@@ -137,6 +137,14 @@ class LoggingTestCase(CacheClearingTestCase):
         super().tearDown()
         if not self._error_expected:
             self.assertEqual(self.records(ERROR), [])
+
+    def start_new_run(self) -> None:
+        """Forget what the previous run logged and reported, so the next case reads the records of its own run.
+
+        `setUp` does this for each test, and a table whose cases each run the tool does it for each case.
+        """
+        self.mock_log.reset_mock()
+        reset_changelog_suppression()
 
     def records(self, level: int) -> list[_Call]:
         """Return the records logged at the level, as the arguments they were logged with, without the level itself."""
@@ -494,6 +502,16 @@ def resolved_reference(
 def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGetter:
     """Return a new-version-getter."""
     return lambda *_args: DependencyVersion(version=version, sha=sha)
+
+
+def mock_new_version_getter() -> Mock:
+    """Return a mock new-version getter that claims no source capability, as an unregistered getter claims none.
+
+    A bare `Mock` grows any attribute it is asked for, so it would claim every capability a caller reads off a
+    getter (see `primitives.capability`). Specifying it against a real getter keeps it callable and lets those
+    reads answer as they do for a source that registers nothing.
+    """
+    return Mock(spec=new_version_getter(""))
 
 
 def bound(verb: Verb, item: str) -> VersionBound:

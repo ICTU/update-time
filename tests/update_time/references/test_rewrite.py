@@ -25,7 +25,7 @@ from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.fixtures import DIGEST1 as OLD_DIGEST
 from tests.update_time.fixtures import DIGEST2 as NEW_DIGEST
-from tests.update_time.helpers import bound, new_version_getter, reference
+from tests.update_time.helpers import bound, mock_new_version_getter, new_version_getter, reference
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
@@ -628,7 +628,7 @@ class UpdateReferencesTest(unittest.TestCase):
 
     def test_redundant_bound_is_warned_although_the_reference_is_held_back(self):
         """Test that a bound is judged for redundancy beside the three scopes that skip the source."""
-        get_new_version = Mock()
+        get_new_version = mock_new_version_getter()
         scopes = "ignore[update] ignore[stale] ignore[yanked]"
         lines = [f"image: python:3.12  # update-time: {scopes} allow[update>=3.12]"]
         self.assertEqual(self.rewrite(lines, _REGEXP, get_new_version), lines)

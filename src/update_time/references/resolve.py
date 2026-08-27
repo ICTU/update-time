@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.directive import DIRECTIVES, Reason
+from update_time.domain.downgrade import downgrades
 from update_time.domain.marker import Scope
 from update_time.domain.reference import ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
@@ -93,7 +94,8 @@ def latest_version(
     may carry a hash worth pinning.
     """
     dependency, current_version = reference.dependency, reference.current_version
-    log.warn_if_redundant_bound(reference, marker)
+    if not downgrades(get_new_version, dependency):
+        log.warn_if_redundant_bound(reference, marker)
     warn_about_inverted_items(marker, reference, log)
     _warn_about_directives_the_source_cannot_apply(marker, get_new_version, reference, log)
     if marker.holds_back_source_checks:
