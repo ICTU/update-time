@@ -41,8 +41,8 @@ class ScannedFileTypesTest(unittest.TestCase):
     @kills(
         Mutation(
             update_node_engine,
-            "    for pkg_json in glob_for(PACKAGE_JSON):",
-            "    for pkg_json in glob(*PACKAGE_JSON.patterns):",
+            "    for path in glob_for(PACKAGE_JSON):",
+            "    for path in glob(*PACKAGE_JSON.patterns):",
             "a script walks a file type's patterns while ignoring where and how its declaration says to walk them",
         )
     )

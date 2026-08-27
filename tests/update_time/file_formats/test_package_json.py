@@ -2,21 +2,35 @@
 
 import json
 import unittest
+from typing import TYPE_CHECKING
 
+from update_time.file_formats import json as json_format
 from update_time.file_formats import package_json
 from update_time.primitives.location import Location
 
 from tests.helpers import mock_path
 
+if TYPE_CHECKING:
+    from unittest.mock import Mock
 
-class ReadTest(unittest.TestCase):
-    """Unit tests for parsing a package.json."""
 
-    def test_read(self):
-        """Test that a package.json is parsed into a dict."""
-        self.assertEqual(
-            package_json.read(mock_path('{"name": "x", "version": "1.0"}')), {"name": "x", "version": "1.0"}
-        )
+class ReferenceMarkerTest(unittest.TestCase):
+    """Unit tests for reading the marker a package.json names for one entry, and where that entry sits."""
+
+    @staticmethod
+    def location(path: Mock) -> Location:
+        """Return where the package.json declares its Node engine."""
+        return package_json.reference_marker(json_format.read(path), "engines", "node").reference_location
+
+    def test_the_entry_the_section_declares(self):
+        """Test that the entry is located at the line and the column the section declares it on."""
+        path = mock_path('{\n  "engines": {\n    "node": "18"\n  }\n}\n')
+        self.assertEqual(self.location(path), Location(path, 3, column=4))
+
+    def test_a_file_declaring_no_such_entry(self):
+        """Test that an entry the file does not declare is located at the file, rather than at a guessed line."""
+        path = mock_path('{"engines": {"npm": ">=10"}}')
+        self.assertEqual(self.location(path), Location(path))
 
 
 class DependencyLocationsTest(unittest.TestCase):
@@ -35,10 +49,10 @@ class DependencyLocationsTest(unittest.TestCase):
         self.assertEqual(
             package_json.dependency_locations(path),
             {
-                "react": [Location(path, 3), Location(path, 8)],  # declared twice, so it keeps both lines
-                "left-pad": [Location(path, 4)],
-                "typescript": [Location(path, 7)],
-                "fsevents": [Location(path, 11)],
+                "react": [Location(path, 3, 4), Location(path, 8, 4)],  # declared twice, so it keeps both lines
+                "left-pad": [Location(path, 4, 4)],
+                "typescript": [Location(path, 7, 4)],
+                "fsevents": [Location(path, 11, 4)],
             },
         )
 
@@ -47,7 +61,7 @@ class DependencyLocationsTest(unittest.TestCase):
         path = mock_path('{\n  "dependencies": {\n    "react": "^18.0.0",\n    "left-pad": "1.3.0"\n  }\n}\n')
         self.assertEqual(
             package_json.dependency_locations(path),
-            {"react": [Location(path, 3)], "left-pad": [Location(path, 4)]},
+            {"react": [Location(path, 3, 4)], "left-pad": [Location(path, 4, 4)]},
         )
 
     def test_a_name_declared_in_a_section_that_is_not_installed_from(self):
@@ -61,13 +75,8 @@ class DependencyLocationsTest(unittest.TestCase):
         )
         self.assertEqual(
             package_json.dependency_locations(path),
-            {"react": [Location(path, 9)], "left-pad": [Location(path, 10)]},
+            {"react": [Location(path, 9, 4)], "left-pad": [Location(path, 10, 4)]},
         )
-
-    def test_a_dependency_whose_entry_cannot_be_found(self):
-        """Test that a dependency the search cannot find is located at the file, rather than at a guessed line."""
-        path = mock_path('{"dependencies": {"\\u0072eact": "^18.0.0"}}')  # a JSON escape: the key parses as `react`
-        self.assertEqual(package_json.dependency_locations(path), {"react": [Location(path)]})
 
     def test_non_registry_specs_skipped(self):
         """Test that git, file, workspace, alias and github-shorthand specs are skipped (only registry ranges kept)."""

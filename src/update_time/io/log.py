@@ -610,6 +610,14 @@ class Logger:
         """Warn that a jsDelivr file's integrity hash couldn't be resolved, so the reference is left unchanged."""
         self._log(self._MESSAGE_NO_INTEGRITY_HASH, dependency=dependency, version=version, filename=filename)
 
+    _MESSAGE_NO_ENTRY = LogMessage(
+        WARNING, "Could not find where %(location)s declares %(dependency)s, leaving it unchanged"
+    )
+
+    def no_entry(self, dependency: str, path: Path) -> None:
+        """Warn that a file declares the dependency but the entry declaring it cannot be found in the file."""
+        self._log_file(self._MESSAGE_NO_ENTRY, path, dependency=dependency)
+
     _MESSAGE_INVALID_BRACKET_ITEM = LogMessage(
         WARNING,
         "Invalid %(bracket_item)r in the update-time marker for %(dependency)s in %(location)s; "

@@ -8,10 +8,10 @@ and need no format library. So `read`/`set_tool_key`/`rewrite_pinned_versions` l
 `has_node_engine` or `python_manager`'s `[tool.poetry]` check — plain dict navigation — do not.
 
 The package has two tiers, kept together for now. Generic serialization formats parse a format: `yaml.read` parses
-any YAML, and the tomllib/json parsing sits behind `pyproject_toml.read` and `package_json.read`. Package-manifest
-specifics handle one manifest: `pyproject_toml`'s `tool_key`, `set_tool_key`, and `rewrite_pinned_versions`, and
-`requirements_txt.is_compiled`.
-They are kept together because each parsed format currently serves a single manifest and the generic halves are
-one-liners, so separate `formats/` and `manifests/` sub-packages would be structure ahead of need. Split them when
-a second manifest has to parse the same format, or when the manifest-specific logic outgrows the format mechanics.
+any YAML, `json.read` reads any JSON file and `json.entry_offset` finds where a JSON document declares an entry,
+and the tomllib parsing sits behind `pyproject_toml.read`. Package-manifest specifics handle one manifest:
+`pyproject_toml`'s `tool_key`, `set_tool_key`, and `rewrite_pinned_versions`, and `requirements_txt.is_compiled`.
+They are kept together because each parsed format currently serves a single manifest, so separate `formats/` and
+`manifests/` sub-packages would be structure ahead of need. Split them when a second manifest has to parse the same
+format, or when the manifest-specific logic outgrows the format mechanics.
 """

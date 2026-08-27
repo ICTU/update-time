@@ -832,7 +832,7 @@ For the Python version, it looks for `.python-version` files recursively from th
 
 #### What dependencies are updated?
 
-The Node engine version in the `package.json`.
+The Node engine version in the `package.json`: the `node` entry its `engines` section declares.
 
 In a `.python-version` file, each entry that is a plain CPython version, `X.Y` or `X.Y.Z` (for example `3.12` or `3.12.6`), on a line of its own. A file may list several entries, one per line (pyenv reads more than one), each handled independently. Alternative implementations (`pypy3.10-7.3.12`, `miniconda3-…`), free-threaded and other variant suffixes (`3.13t`), prefixed forms (`cpython@3.12`, `>=3.10`), and the `system` sentinel are left untouched.
 
