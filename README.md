@@ -345,7 +345,7 @@ Update-time also reports what updating cannot put right: a dependency whose newe
 
 ### 🕸️ Stale dependencies
 
-Keeping a pin on the latest version doesn't help if that latest version is itself years old: the project may have been abandoned or superseded. Alongside updating, Update-time warns when a dependency's newest release is older than a threshold, so you can decide whether to keep it, replace it, or vendor it. The threshold defaults to **365 days** and is set with `--stale-after DAYS`; pass `--stale-after 0` to disable the check. A single reference can carry a threshold of its own, which wins over whatever `--stale-after` says (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). For example, a pin whose newest release came out well over a year ago is reported as:
+Update-time warns when a dependency's newest release is older than a threshold, which may mean the project was abandoned or superseded. The threshold defaults to **365 days** and is set with `--stale-after DAYS`; pass `--stale-after 0` to disable the check. A single reference can carry a threshold of its own, which wins over whatever `--stale-after` says (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). For example, a pin whose newest release came out well over a year ago is reported as:
 
 ```console
 WARNING Stale dependency humanize in docs/requirements.txt:12: newest release 4.15.0 was published 512 days ago (> 365)
@@ -368,7 +368,7 @@ Every kind of dependency Update-time updates is checked for staleness, against t
 
 ### 🚫 Yanked dependencies
 
-A yank means "stop using this": a release the maintainer withdrew because it was broken, botched, or insecure. An exact pin keeps installing a yanked release anyway — pip and uv honour it by design — so Update-time warns when the version a dependency is pinned to has been yanked. The maintainer's reason is included when they gave one:
+A yank means "stop using this": a release the maintainer withdrew because it was broken, botched, or insecure. An exact pin keeps installing one anyway, so Update-time warns when the version a dependency is pinned to has been yanked. The maintainer's reason is included when they gave one:
 
 ```console
 WARNING Yanked dependency humanize in docs/requirements.txt:12: version 4.15.0 was yanked ("accidentally broke Python 3.10 support")
@@ -376,7 +376,7 @@ WARNING Yanked dependency humanize in docs/requirements.txt:12: version 4.15.0 w
 
 When no reason was given, the message reports `(reason not specified)` instead.
 
-The warning is only given when the run leaves the reference on the yanked version. This happens when the replacement is still within the [cooldown](#-cooldown), a marker holds it back, or the yanked release is the newest one and there is nothing to move to. A dependency a package manager updates stays on the yanked version for one more reason: the manager left the pin where it was. When the run updates away from the yanked version, the warning would be noise and is not given. A yank is never a reason to adopt a release that is too fresh to trust: the cooldown still applies, so Update-time warns and leaves the decision to update to you. A reference can also be left out of the check altogether by a marker (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
+The warning is given only when the run leaves the reference on the yanked version. This happens when the replacement is still within the [cooldown](#-cooldown), a marker holds it back, a package manager left the pin where it was, or the yanked release is the newest one. A reference can also be left out of the check altogether by a marker (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
 
 Which dependencies are checked follows from where a yank can be observed. PyPI reports one as [PEP 592](https://peps.python.org/pep-0592/) yank metadata. On npm there is no yank, but a per-version *deprecation* is the same signal, and is reported in the same wording as one. Where a withdrawal can be observed, that version is skipped when picking a new one, and a reference left on it is warned about:
 
@@ -393,7 +393,7 @@ Which dependencies are checked follows from where a yank can be observed. PyPI r
 
 ### 🛡️ Vulnerable dependencies
 
-A pin on the newest version is no protection when that version has a known security vulnerability. Update-time looks the pinned version up in the [OSV](https://osv.dev) database, which aggregates GitHub's advisory database, PyPA's, and others, and warns when an advisory names that version as affected. It names the risk level, what the advisory says, and where to read the advisory in full:
+Update-time looks the pinned version up in the [OSV](https://osv.dev) database, which aggregates GitHub's advisory database, PyPA's, and others, and warns when an advisory names that version as affected. It names the risk level, what the advisory says, and where to read the advisory in full:
 
 ```console
 WARNING Vulnerable dependency django in docs/requirements.txt:12: version 3.2.0 has a critical vulnerability, "SQL Injection in Django" (GHSA-2gwj-7jmv-h26r, https://osv.dev/GHSA-2gwj-7jmv-h26r)
@@ -417,7 +417,7 @@ To silence one advisory across the whole scan, rather than on the one reference 
 
 Every risk level is warned about by default. To hear only about the more severe ones, raise the threshold with `--vulnerability-level`, for example `--vulnerability-level high`. A vulnerability whose risk level Update-time cannot read is warned about whatever the threshold is, since leaving the vulnerabilities nobody has rated out of the warnings would hide exactly the ones nobody has looked at.
 
-Looking a pin up sends its package name and version to OSV. Pass `--vulnerability-level none` to switch the check off, which stops those requests altogether. A reference that sets a level of its own is still looked up though, since no command-line option overrides a marker (see [Setting a risk level](#setting-a-risk-level)).
+Looking a pin up sends its package name and version to OSV. Pass `--vulnerability-level none` to switch the check off, which stops those requests altogether. A reference that sets a level of its own is still looked up though (see [Setting a risk level](#setting-a-risk-level)).
 
 Which dependencies are checked follows from what OSV can match a pinned version against:
 
@@ -475,7 +475,7 @@ A bracket holds one or more items, separated by commas: the `ignore` bracket abo
 | Bare `ignore` | the verb with no bracket at all, which holds back every scope it can without naming one | `# update-time: ignore` |
 | Reason | free text after the last directive, which Update-time keeps none of | `(pinned until the 3.13 migration)` |
 
-Which verb a scope takes follows from what it steers. An `ignore` item naming a scope alone holds that scope back, so `ignore[stale]` silences the staleness warning altogether while `ignore[stale<90]` sets what it warns at. `hash-drift` goes the other way, being off by default: it is opted into with `allow[hash-drift]` and never held back. `floating-pin` goes the other way again: Update-time drops a floating pin by default, so `allow[floating-pin]` keeps one and `ignore[floating-pin]` asks for what happens anyway. And the cooldown takes neither form alone, since it sets a number of days rather than being switched on or off. A bare `ignore` names no scope while holding every scope it can back, which is why no warning ever calls a bare `ignore` redundant: there would be no directive to tell you to delete.
+A marker wins over the command-line option that sets the same thing, whatever that option is set to. An item that sets a value — a threshold, a cooldown, a risk level, or a bound — is written once per reference, and the result of pairing two, of either verb, is undefined.
 
 ### Holding a reference back
 
@@ -504,7 +504,7 @@ humanize==4.15.0  # update-time: ignore[stale<90] (critical, warn early)
 FROM python:3.12
 ```
 
-The threshold applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--stale-after` whatever that is set to, `--stale-after 0` included: no command-line option overrides a marker, so disabling the check globally still leaves a reference with its own threshold checked. To disable the check for one reference, `ignore[stale<0]` does what `--stale-after 0` does globally, and `ignore[stale]` is the plainer way to spell it.
+The threshold applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--stale-after`, `--stale-after 0` included, so disabling the check globally still leaves a reference with its own threshold checked. To disable the check for one reference, `ignore[stale<0]` does what `--stale-after 0` does globally, and `ignore[stale]` is the plainer way to spell it.
 
 `allow` and `ignore` are complements here as elsewhere, so `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`. Inverting the operator would warn while a release is fresh and go quiet once it is old, so neither `allow[stale<90]` nor `ignore[stale>=90]` sets a threshold. Update-time logs an inverted comparison at `WARNING` and holds nothing back, so the reference updates as usual and the global threshold applies to it:
 
@@ -512,7 +512,7 @@ The threshold applies to the reference carrying it, and every other reference in
 WARNING Incorrect 'stale>=90' in the update-time marker for python in Dockerfile:2: this comparison warns while a release is fresh and goes quiet once it is old, so it sets no threshold
 ```
 
-A day count must be a whole number of days, so `ignore[stale<-5]` and `ignore[stale>=1.5]` are reported as invalid and leave the reference unchanged. An unreadable count is judged before the direction, so `ignore[stale>=1.5]` is reported as an unreadable count rather than as an inverted comparison. Where a reference carries both a threshold and a bare `ignore[stale]`, the `ignore[stale]` wins and the warning is suppressed whatever the threshold says. Use a single threshold per reference; the result of pairing one with another, say an `ignore[stale<90]` with an `allow[stale>=30]`, is undefined.
+A day count must be a whole number of days, so `ignore[stale<-5]` and `ignore[stale>=1.5]` are reported as invalid and leave the reference unchanged. An unreadable count is judged before the direction, so `ignore[stale>=1.5]` is reported as an unreadable count rather than as an inverted comparison. Where a reference carries both a threshold and a bare `ignore[stale]`, the `ignore[stale]` wins and the warning is suppressed whatever the threshold says.
 
 Staleness is measured against the publication date of a dependency's newest release. Where the reference's own source reports no such date, Update-time reports the marker as holding nothing back, and the reference is updated as usual:
 
@@ -535,7 +535,7 @@ some-flaky-lib==2.1.0  # update-time: ignore[cooldown<30] (burned by 2.0.0)
 FROM python:3.12
 ```
 
-The cooldown applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--cooldown` whatever that is set to. `allow` and `ignore` are complements here as elsewhere, so `allow[cooldown>=30]` sets the same 30-day window as `ignore[cooldown<30]`. To adopt new releases for one reference as soon as they ship, write `allow[cooldown>=0]` or `ignore[cooldown<0]`: a zero-day window holds nothing back, which is what `--cooldown 0` means globally.
+The cooldown applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--cooldown`. `allow` and `ignore` are complements here as elsewhere, so `allow[cooldown>=30]` sets the same 30-day window as `ignore[cooldown<30]`. To adopt new releases for one reference as soon as they ship, write `allow[cooldown>=0]` or `ignore[cooldown<0]`: a zero-day window holds nothing back, which is what `--cooldown 0` means globally.
 
 Inverting the operator would adopt a release only while it is fresh and hold it back once it is old, so neither `allow[cooldown<30]` nor `ignore[cooldown>=30]` sets a cooldown. Update-time logs an inverted comparison at `WARNING` and holds nothing back, so the reference updates as usual and the global cooldown applies to it:
 
@@ -543,7 +543,7 @@ Inverting the operator would adopt a release only while it is fresh and hold it 
 WARNING Incorrect 'cooldown>=30' in the update-time marker for python in Dockerfile:2: this comparison adopts a release only while it is fresh and holds it back once it is old, so it sets no cooldown
 ```
 
-A bare `ignore[cooldown]` can be understood in two ways: adopt at once, or never adopt at all. Rather than guess, Update-time reports it as invalid and leaves the reference unchanged. `allow[cooldown]` is reported the same way. Write `allow[cooldown>=0]` to adopt at once, and `ignore[update]` to freeze the reference. A day count must be a whole number of days, so `ignore[cooldown<-5]` and `ignore[cooldown<1.5]` are reported as invalid too. Use a single `cooldown` directive per reference; the result of pairing one with another is undefined.
+A bare `ignore[cooldown]` can be understood in two ways: adopt at once, or never adopt at all. Rather than guess, Update-time reports it as invalid and leaves the reference unchanged. `allow[cooldown]` is reported the same way. Write `allow[cooldown>=0]` to adopt at once, and `ignore[update]` to freeze the reference. A day count must be a whole number of days, so `ignore[cooldown<-5]` and `ignore[cooldown<1.5]` are reported as invalid too.
 
 The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)). Where the reference's own source reports no publication date to measure a cooldown against, Update-time reports the marker as holding nothing back, and the reference is updated as usual:
 
@@ -587,7 +587,7 @@ The reference keeps updating, and every other advisory affecting the version it 
 django==3.2.0  # update-time: ignore[vulnerable<high] (assessed the moderate ones, acting on high and worse)
 ```
 
-The level applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--vulnerability-level` whatever that is set to, `--vulnerability-level none` included: no command-line option overrides a marker, so switching the check off globally still leaves a reference with its own level looked up at OSV and warned about. As with the global level, a vulnerability whose risk level Update-time cannot read is warned about whatever the level in force, since leaving the vulnerabilities nobody has rated out of the warnings would hide exactly the ones nobody has looked at.
+The level applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--vulnerability-level`, `--vulnerability-level none` included, so switching the check off globally still leaves a reference with its own level looked up at OSV and warned about. As with the global level, a vulnerability whose risk level Update-time cannot read is warned about whatever the level in force, since leaving the vulnerabilities nobody has rated out of the warnings would hide exactly the ones nobody has looked at.
 
 When none of the version's vulnerabilities falls below the level, Update-time reports the marker as holding nothing back, since a level that silences nothing is one the reference no longer needs:
 
@@ -601,7 +601,7 @@ WARNING Redundant update-time directive ignore[vulnerable<high] for django in do
 WARNING Incorrect 'vulnerable>=high' in the update-time marker for django in docs/requirements.txt:12: this comparison warns about the mild vulnerabilities and stays quiet about the severe ones, so it sets no risk level
 ```
 
-A level must be one of `low`, `moderate`, `high`, and `critical`, spelled in lower case, so `ignore[vulnerable<hgih]` is reported as invalid and leaves the reference unchanged. `none` is a value for `--vulnerability-level` rather than a level, so it is reported as invalid too: to switch the warning off for one reference, write `ignore[vulnerable]`. An unreadable level is judged before the direction, so `ignore[vulnerable>=hgih]` is reported as an unreadable level rather than as an inverted comparison. Use a single level per reference; the result of pairing one with another is undefined.
+A level must be one of `low`, `moderate`, `high`, and `critical`, spelled in lower case, so `ignore[vulnerable<hgih]` is reported as invalid and leaves the reference unchanged. `none` is a value for `--vulnerability-level` rather than a level, so it is reported as invalid too: to switch the warning off for one reference, write `ignore[vulnerable]`. An unreadable level is judged before the direction, so `ignore[vulnerable>=hgih]` is reported as an unreadable level rather than as an inverted comparison.
 
 #### Redundant markers
 
@@ -665,7 +665,7 @@ DEBUG Keeping the floating tag python:latest in Dockerfile:2: it resolves to 3.1
 
 A reference that names no tag is kept as it is in the same way, and reported by its name alone, since it has no tag to name after it.
 
-A reference kept floating is still checked for [hash drift](#hash-drift). Where it already records a digest and its tag now serves another, the drift is warned about, and a reference opted into drift adopts the new digest while its tag stays as it is. It follows the same placement rules as the other markers, and the global `--allow-floating-pin` flag keeps every reference in the scan floating at once. `ignore[floating-pin]` is the opposite and the default, so a reference carrying it is pinned exactly as one carrying no marker at all. It is pinned in a run passing `--allow-floating-pin` as well, since no command-line option overrides a marker. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched, tag and all.
+A reference kept floating is still checked for [hash drift](#hash-drift). Where it already records a digest and its tag now serves another, the drift is warned about, and a reference opted into drift adopts the new digest while its tag stays as it is. It follows the same placement rules as the other markers, and the global `--allow-floating-pin` flag keeps every reference in the scan floating at once. `ignore[floating-pin]` is the opposite and the default, so a reference carrying it is pinned exactly as one carrying no marker at all. It is pinned in a run passing `--allow-floating-pin` as well. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched, tag and all.
 
 An `allow[floating-pin]` on a reference whose pin does not float keeps nothing floating, so Update-time reports it as redundant and updates the reference as usual:
 
@@ -711,7 +711,7 @@ Choose the operator deliberately. To keep `3.12` together with its patch release
 
 #### Bounding by update level
 
-A bound with a specifier names the version it must not reach, so it goes stale: after migrating to `3.13`, an `allow[update<3.13]` blocks every update (Update-time warns about it) until the comment is rewritten. To express the policy ("no major jumps") rather than the fence ("not past 3.13"), bound the update by its *level* instead: `# update-time: ignore[major-update]` or `ignore[minor-update]`, or their complements `allow[minor-update]` and `allow[patch-update]`. An update's level is the most significant version component it changes relative to the currently pinned version: a major update changes the first component, a minor update the second, and a patch update the third. A component the current version doesn't have counts as zero, so `node:22` followed by `23` is a major update, and `22` followed by `22.1` a minor one. `ignore` holds back updates of the named level *or more significant*, `allow` keeps updates of the named level *or less significant* — "block minor but allow major" is never meaningful — which makes the two verbs exact complements, just like specifier bounds:
+A specifier bound names the version it must not reach, so it goes stale: after migrating to `3.13`, an `allow[update<3.13]` blocks every update until you rewrite the comment. A level-based bound states the policy instead, holding back or keeping updates by how significant they are:
 
 | Directive | Effect | Complement |
 | :-------- | :----- | :--------- |
@@ -725,14 +725,13 @@ Pick whichever verb reads best in context. Unlike a specifier bound, a level-bas
 FROM python:3.12.1-bookworm-slim
 ```
 
-The levels are positional, not semantic: they refer to the component's position in the version, not to the project's compatibility promises. Projects may ship breaking changes in releases that bump the *second* component, so "stay on Python 3.12" is `ignore[minor-update]` despite Python 3.13 shipping breaking changes (it removed 19 legacy modules from the standard library). The same caution applies to projects using calendar versioning. And as with specifier bounds, the level applies to a Docker tag's main version; a version embedded in the suffix (the `3.23` in `alpine3.23`) is unaffected by the bound.
+The levels are positional, not semantic: they refer to the component's position in the version, not to the project's compatibility promises. Projects may ship breaking changes in releases that bump the *second* component, so "stay on Python 3.12" is `ignore[minor-update]` despite Python 3.13 shipping breaking changes (it removed 19 legacy modules from the standard library). The same caution applies to projects using calendar versioning. And as with specifier bounds, the level applies to a Docker tag's main version; a version embedded in the suffix (the `3.23` in `alpine3.23`) is unaffected by the bound. A component the current version doesn't have counts as zero, so `ignore[minor-update]` on `node:22` blocks `22.1`.
 
 #### How a bound interacts with the other markers
 
 A few rules govern how a bound — with a specifier or level-based — interacts with the other markers and checks:
 
 - A bare `# update-time: ignore` (or `# update-time: ignore[update]` with no specifier) holds back *all* updates and wins over any bound on the same reference.
-- Use a single bound per reference; pairing two bounds, say an `allow[update<specifier>]` with an `ignore[update<specifier>]`, or a specifier bound with a level-based one, on one reference is undefined.
 - A bound narrows updates only, not staleness. Staleness is always measured against the project's newest overall release; the bound doesn't come into play.
 - The hash pin is still added or refreshed for whichever version the bound selects, exactly as without a bound.
 - To combine a bound with another directive of the same verb (say, `allow[hash-drift]`), list both as comma-separated items in one bracket: `# update-time: allow[update<3.13, hash-drift]` or `# update-time: allow[minor-update, hash-drift]`. To combine directives of different verbs, list them after the `# update-time:` prefix, separated by a space: `# update-time: ignore[stale] allow[update<3.13]`. A reason can still follow the last directive.
@@ -794,13 +793,15 @@ Run with `--log-level DEBUG` to confirm a marker is recognised: every recognised
 DEBUG Recognised update-time marker ignore[stale] for python in Dockerfile:2
 ```
 
-That line reports the marker itself, and says it was read and understood. What the marker held back is reported separately, in lines about the update or the warning rather than about the marker, each naming the directive it obeyed:
+That line reports the marker itself, and says it was read and understood. No `Recognised` line at all means the marker was not read. The prefix and the verbs are case-sensitive, and a field marker is read by name, so a typo in any of them leaves the reference updated as usual. A typo inside the brackets is logged at `WARNING` as an invalid item instead (see [Invalid markers](#invalid-markers)).
+
+What the marker held back is reported separately, in lines about the update or the warning rather than about the marker, each naming the directive it obeyed:
 
 ```console
 DEBUG Ignoring the staleness warning for python in Dockerfile:2 (update-time: ignore[stale])
 ```
 
-Update-time reports a held-back update or warning only where there was one to hold back, so an `ignore[yanked]` on a version that was never yanked produces none. A marker that earns no such report suppressed nothing. It may still have done something: a bound that keeps an update out earns no report either, and the reference simply stays where it is. Since the marker is case-sensitive, a typo (or wrong case) in the `# update-time:` prefix or in a verb produces no `Recognised` line at all, and the reference is updated as usual. A typo inside the brackets produces no `Recognised` line either, but is logged at `WARNING` as an invalid item (see [Invalid markers](#invalid-markers)). A field marker is read by name, so a typo in the `update-time` field, in the section, or in the reference it names leaves Update-time looking where nothing is: no `Recognised` line, and no warning either.
+Such a line appears only when the marker actually held something back. An `ignore[yanked]` on a version that was never yanked produces no such line, and neither does a bound that keeps an update out.
 
 ## 📖 Details per dependency type
 
@@ -834,21 +835,21 @@ Update-time adds no hash pin to a Python dependency. A `requirements.txt` pin ca
 
 For a `requirements.txt` pin, Update-time enforces the cooldown itself, against the release's publication date on PyPI.
 
-For `pyproject.toml` dependencies, Update-time applies the cooldown through uv's `exclude-newer` setting, which it writes into your `pyproject.toml` under `[tool.uv]` (as a relative value such as `exclude-newer = "7 days"`, tagged with a `managed by Update-time` comment). It writes this to the workspace root, so a plain `uv sync --locked` keeps working afterwards without having to repeat the setting on the command line. Because the value lives in `[tool.uv]`, the cooldown then applies to every uv command in the project (`uv lock`, `uv add`, CI), not just to Update-time. Update-time keeps its own commented value in step with `--cooldown`, but never touches a value you set yourself: if your `pyproject.toml` already sets `exclude-newer` without the marker comment, or the `UV_EXCLUDE_NEWER` environment variable is set, Update-time leaves that in place instead. Remove the marker comment to take ownership of the line and stop Update-time from changing it.
+For `pyproject.toml` dependencies, Update-time applies the cooldown through uv's `exclude-newer` setting. It writes the setting into the workspace root's `pyproject.toml` under `[tool.uv]`, as a relative value such as `exclude-newer = "7 days"` tagged with a `managed by Update-time` comment. The setting then applies to every uv command in the project (`uv lock`, `uv add`, CI), not just to Update-time. Update-time keeps its own tagged value in step with `--cooldown`, and leaves a value you set yourself alone: an `exclude-newer` without the comment, or a `UV_EXCLUDE_NEWER` environment variable, stays as it is. Remove the comment to take ownership of the line.
 
 For inline script metadata, Update-time also applies the cooldown through uv's `exclude-newer`, but passes it to `uv tree` on the command line rather than persisting it, since a standalone script has no lockfile to keep reproducible. The cutoff is derived from `--cooldown` on every run, so, unlike `pyproject.toml`, nothing is written into the `# /// script` block.
 
 #### Stale dependencies
 
-Every Python pin is checked against the newest release of its package on PyPI, whichever of the three file kinds declares it, and stale ones are reported. In a `requirements.txt`, a requirement that pins no exact version is checked as well, whether it names a looser specifier such as `humanize>=4` or `django~=5.0`, or no version at all: staleness is measured against the package's newest release, which the name alone is enough to look up. A dependency declared that way in a `pyproject.toml` or an inline script metadata block is checked as well, wherever the file declares it: in the project's dependencies, in an extra, in a dependency group, in uv's legacy `[tool.uv] dev-dependencies`, or in the `[build-system]` requirements. Two kinds are left out, because PyPI serves no release to measure them against: a dependency that points at a URL or a git repository, and one uv resolves through a `[tool.uv] sources` entry, such as a path or a workspace member. A package whose files are all named the way PyPI no longer accepts, such as one published only as `.egg` files, is left out too.
+Every Python pin is checked against the newest release of its package on PyPI, whichever of the three file kinds declares it, and stale ones are reported. A requirement that pins no exact version is checked as well, wherever the file declares it, since the package name alone is enough to look the newest release up. Two kinds are left out, because PyPI serves no release to measure them against: a dependency that points at a URL or a git repository, and one uv resolves through a `[tool.uv] sources` entry, such as a path or a workspace member. A package published only as `.egg` files is left out too, since PyPI no longer accepts files named that way.
 
 #### Yanked dependencies
 
-Each exact pin a Python file declares is checked against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI, whichever of the three file kinds it sits in. A yanked release is skipped when picking a new version: by Update-time for a `requirements.txt` pin, and by uv for the other two file kinds. The version checked is the one the file holds when the run ends, so a pin uv held back — because the project caps it, or sets an `exclude-newer` cutoff of its own — is warned about although PyPI has a newer release. A `requirements.txt` pin the run leaves on a yanked release is reported unless an `ignore[yanked]` marker silences that warning. A `pyproject.toml` or inline script metadata pin left on one is reported as well, but takes no marker to silence that warning. A dependency those files declare without an exact pin is not checked, since a yank is about the version a reference is left on and such a declaration names none; the version uv resolved for it is recorded in `uv.lock`, which Update-time does not read.
+Each exact pin a Python file declares is checked against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI, whichever of the three file kinds it sits in, and a yanked release is skipped when picking a new version. The version checked is the one the file holds when the run ends, so a pin uv held back is warned about although PyPI has a newer release. A `requirements.txt` pin the run leaves on a yanked release is reported unless an `ignore[yanked]` marker silences that warning. A `pyproject.toml` or inline script metadata pin left on one is reported as well, but takes no marker to silence that warning. A dependency those files declare without an exact pin is not checked, since a yank is about the version a reference is left on and such a declaration names none.
 
 #### Vulnerable dependencies
 
-Each exact pin a Python file declares is checked against OSV's PyPI advisories, whichever of the three file kinds it sits in. A compiled or hash-pinned `requirements.txt` is the exception: Update-time skips it whole, as described under What files are updated? above, so its pins are neither updated nor checked. The transitive dependencies those pins pull in are not checked, so a vulnerability that reaches your project through one goes unreported here; reading a resolved dependency tree is what `uv audit` and `pip-audit` are for. A vulnerable `requirements.txt` pin is reported unless an `ignore[vulnerable]` marker silences that warning. A vulnerable `pyproject.toml` or inline script metadata pin is reported as well, but takes no marker to silence that warning. A dependency those files declare without an exact pin is not checked either, since an advisory is matched against a version and such a declaration names none.
+Each exact pin a Python file declares is checked against OSV's PyPI advisories, whichever of the three file kinds it sits in. A compiled or hash-pinned `requirements.txt` is the exception: Update-time skips it whole, so its pins are neither updated nor checked. The transitive dependencies those pins pull in are not checked. Reading a resolved dependency tree is what `uv audit` and `pip-audit` are for. A vulnerable `requirements.txt` pin is reported unless an `ignore[vulnerable]` marker silences that warning. A vulnerable `pyproject.toml` or inline script metadata pin is reported as well, but takes no marker to silence that warning. A dependency those files declare without an exact pin is not checked either, since an advisory is matched against a version and such a declaration names none.
 
 #### Markers
 
