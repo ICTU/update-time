@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
     from update_time.domain.dependency import DependencyVersion
     from update_time.domain.line import Line
-    from update_time.domain.marker import Marker
+    from update_time.domain.marker import Marker, ReferenceMarker
     from update_time.domain.reference import Reference
     from update_time.io.log import Logger
     from update_time.primitives.location import Location
@@ -184,30 +184,50 @@ def apply_marker(  # noqa: PLR0913 — a marker named elsewhere in the file cann
     return update_line(match, location, marker)
 
 
-def updated_lines(  # noqa: PLR0913 — a marker named elsewhere in the file cannot be read from the line
+def updated_lines(  # noqa: PLR0913 — a reference named elsewhere in the file cannot be read from the line
     lines: list[Line],
     regexp: str | re.Pattern[str],
     update_line: Callable[[re.Match[str], Location, Marker], str],
     logger: Logger,
     dependency: str = "",
     *,
-    marker: Marker | None = None,
+    reference_marker: ReferenceMarker | None = None,
 ) -> list[str]:
     """Return the lines with `update_line` applied to each line carrying a reference, honouring any marker.
 
     A line that carries no reference (no `regexp` match) is left untouched — a marker on it is for the line below. A
     line that does carry one goes to the shared `apply_marker` gate together with `update_line`, which the gate reads
     the marker for, logs, and either holds back or runs. `dependency` names the reference for a regexp that captures
-    none, and `marker` is the one the file names for it, where its format places none beside it.
+    none. `reference_marker` is the marker a file names for a reference of its own, carrying where that reference
+    sits. It limits the pass to that line and that column, so another match, on that line or elsewhere, is left as
+    it is.
     """
+    marker = None if reference_marker is None else reference_marker.marker
+    # A start position is something only a compiled pattern takes, and `re.compile` hands back one it is given.
+    pattern = re.compile(regexp)
     result = []
     for line in lines:
-        match = re.search(regexp, line.text)
+        match = _reference_match(pattern, line, reference_marker)
         if match is None:
-            result.append(line.text)  # No reference on this line; a marker here applies to the line below it.
+            result.append(line.text)  # No reference to update here; a marker on this line applies to the one below.
             continue
         result.append(apply_marker(line, match, update_line, logger, dependency, marker=marker))
     return result
+
+
+def _reference_match(
+    pattern: re.Pattern[str], line: Line, reference_marker: ReferenceMarker | None
+) -> re.Match[str] | None:
+    """Return the reference the pattern matches on the line, or None where the line carries none to update.
+
+    A file that names a reference of its own is read at that reference alone, so another line is passed over, and
+    so is a match sitting before it on its own line.
+    """
+    if reference_marker is None:
+        return pattern.search(line.text)
+    if not reference_marker.reference_location.is_on_the_same_line_as(line.location):
+        return None
+    return pattern.search(line.text, reference_marker.reference_location.column)
 
 
 def update_references_in_lines(
@@ -216,7 +236,7 @@ def update_references_in_lines(
     get_new_version: NewVersionGetter,
     logger: Logger,
     dependency: str = "",
-    marker: Marker | None = None,
+    reference_marker: ReferenceMarker | None = None,
 ) -> list[str]:
     """Return the lines with each unpinned reference updated to its new version (and digest).
 
@@ -230,5 +250,6 @@ def update_references_in_lines(
     path = lines[0].location.path
     update_line = _Rewriter(get_new_version, logger, dependency).update_line
     for regexp in regexps:
-        lines = located_lines(path, updated_lines(lines, regexp, update_line, logger, dependency, marker=marker))
+        updated = updated_lines(lines, regexp, update_line, logger, dependency, reference_marker=reference_marker)
+        lines = located_lines(path, updated)
     return [line.text for line in lines]

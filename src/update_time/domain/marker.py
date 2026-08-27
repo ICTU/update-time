@@ -13,6 +13,7 @@ from update_time.domain.vulnerability import RISK_LEVELS
 if TYPE_CHECKING:
     from update_time.domain.bound import VersionBound
     from update_time.domain.line import Line
+    from update_time.primitives.location import Location
 
 
 class Scope(Flag):
@@ -299,6 +300,19 @@ class Marker:
             written_scopes=self.written_scopes | other.written_scopes,
             raw=" ".join(part for part in (self.raw, other.raw) if part),
         )
+
+
+@dataclass(frozen=True)
+class ReferenceMarker:
+    """A marker for one reference, and the location of that reference.
+
+    A format that holds no comment beside a reference names the marker elsewhere, and names the reference the
+    marker steers along with it. `reference_location` is where that reference sits, down to the column, so a line
+    declaring two references is read from the one this marker steers.
+    """
+
+    reference_location: Location
+    marker: Marker
 
 
 # The marker a bare `ignore` expresses: hold everything back.

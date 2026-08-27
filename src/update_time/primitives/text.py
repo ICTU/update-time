@@ -11,6 +11,11 @@ def line_number(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
+def column(text: str, offset: int) -> int:
+    """Return the 0-based column the offset sits at on its own line."""
+    return offset - text.rfind("\n", 0, offset) - 1
+
+
 def rewrite_match(match: re.Match[str], replacements: dict[str, str]) -> str:
     """Return the matched text with the named groups replaced, leaving the rest of the match untouched.
 

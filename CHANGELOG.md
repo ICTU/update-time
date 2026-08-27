@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Fixed
 
+- Update the `node` version a `package.json` declares under `engines` alone, instead of every `node` version the file declares, such as a Volta pin or a dependency of that name. Closes [#304](https://github.com/ICTU/update-time/issues/304).
 - Leave the Node engine version alone when the Node base image's tag carries no version to sync it to, such as `node:22.x`, instead of writing the tag's digits into the `package.json`.
 
 ## 0.0.31 - 2026-08-26

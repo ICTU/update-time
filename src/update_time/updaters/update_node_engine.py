@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.base_image import image_version_getter
 from update_time.domain.dependency import is_valid
 from update_time.domain.file_type import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, PACKAGE_JSON
+from update_time.file_formats import json as json_format
 from update_time.file_formats import package_json as package_json_format
 from update_time.io.filesystem import first_line_match, glob, glob_for
 from update_time.io.log import get_logger
@@ -17,7 +18,8 @@ from update_time.sources.oci import get_latest_tag
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from update_time.domain.marker import Marker
+    from update_time.domain.marker import ReferenceMarker
+    from update_time.file_formats.json import JsonFile
 
 
 _LOG = get_logger("node engine")
@@ -33,7 +35,8 @@ _NODE_ENGINE_RE = rf'"(?P<dependency>{_NODE})": "(?P<version>[\d\.]+)"'
 
 def _has_node_engine(contents: dict) -> bool:
     """Return whether the parsed package.json declares a Node engine."""
-    return _ENGINES in contents and _NODE in contents[_ENGINES]
+    engines = contents.get(_ENGINES)
+    return isinstance(engines, dict) and _NODE in engines
 
 
 def _node_base_image_version(dockerfile: Path) -> str:
@@ -72,22 +75,36 @@ def _find_node_dockerfile(package_json: Path) -> Path:
     return local_dockerfile
 
 
-def _engine_marker(contents: dict) -> Marker:
-    """Return the marker the package.json names for its Node engine, in the section and under the name it uses."""
-    return package_json_format.marker(contents, _ENGINES, _NODE)
+def _engine_reference_marker(package_json: JsonFile) -> ReferenceMarker:
+    """Return the entry declaring the Node engine, and the marker the package.json names for it.
+
+    The engine is the entry the `engines` section declares under `node`. A `node` version another section
+    declares — a Volta pin, a dependency of that name — is neither taken for the engine nor steered by the
+    engine's marker.
+    """
+    return package_json_format.reference_marker(package_json, _ENGINES, _NODE)
 
 
-def _update_node_engine(package_json: Path, contents: dict) -> None:
-    """Update the Node engine version to the Docker Node base image version, or the latest Node release."""
-    dockerfile = _find_node_dockerfile(package_json)
+def _update_node_engine(package_json: JsonFile) -> None:
+    """Update the Node engine version to the Docker Node base image version, or the latest Node release.
+
+    An engine the file declares but whose entry cannot be found is reported rather than passed over, since the
+    file's two readings disagree. A file declaring the section twice reads that way: the parse keeps the last
+    section, and the entry is looked for in the first.
+    """
+    engine_marker = _engine_reference_marker(package_json)
+    if engine_marker.reference_location.line_number is None:
+        _LOG.no_entry(_NODE, package_json.path)
+        return
+    dockerfile = _find_node_dockerfile(package_json.path)
     if version := _node_base_image_version(dockerfile):
         update_file(
-            package_json,
+            package_json.path,
             _NODE_ENGINE_RE,
             # The engine declares the runtime the project ships, so it follows the base image down as well as up.
             get_new_version=image_version_getter(version, allow_downgrade=True),
             logger=_LOG,
-            marker=_engine_marker(contents),
+            reference_marker=engine_marker,
         )
         return
     if tag := _node_base_image_tag(dockerfile):
@@ -95,16 +112,17 @@ def _update_node_engine(package_json: Path, contents: dict) -> None:
         # version to sync the engine to, so skip without failing the run.
         _LOG.non_numeric_node_base_image(dockerfile, tag)
         return
-    marker = _engine_marker(contents)
-    update_file(package_json, _NODE_ENGINE_RE, get_new_version=get_latest_tag, logger=_LOG, marker=marker)
+    update_file(
+        package_json.path, _NODE_ENGINE_RE, get_new_version=get_latest_tag, logger=_LOG, reference_marker=engine_marker
+    )
 
 
 def update_node_engines() -> None:
     """Find all package.json files and update the Node engine."""
-    for pkg_json in glob_for(PACKAGE_JSON):
-        contents = package_json_format.read(pkg_json)
-        if _has_node_engine(contents):
-            _update_node_engine(pkg_json, contents)
+    for path in glob_for(PACKAGE_JSON):
+        package_json = json_format.read(path)
+        if _has_node_engine(package_json.contents):
+            _update_node_engine(package_json)
 
 
 def main() -> None:  # pragma: no cover

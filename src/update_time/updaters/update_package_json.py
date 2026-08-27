@@ -6,6 +6,7 @@ from update_time.domain.dependency import DependencyVersion
 from update_time.domain.file_type import PACKAGE_JSON
 from update_time.domain.reference import ResolvedReference
 from update_time.domain.staleness import warn_about_stale_dependencies
+from update_time.file_formats import json as json_format
 from update_time.file_formats import package_json as package_json_format
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
@@ -30,7 +31,7 @@ def _package_manager(package_json: Path) -> str:
     The corepack `packageManager` field (e.g. `"pnpm@9.15.0"`) is authoritative; otherwise a sibling lockfile is
     used as a fallback signal.
     """
-    if declared := package_json_format.read(package_json).get("packageManager", ""):
+    if declared := json_format.read(package_json).contents.get("packageManager", ""):
         return declared.split("@", maxsplit=1)[0]
     for lockfile, manager in _LOCKFILES.items():
         if (package_json.parent / lockfile).exists():

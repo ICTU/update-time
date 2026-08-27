@@ -29,10 +29,28 @@ if TYPE_CHECKING:
 _PACKAGE_JSON = '{"engines": {"node": "18" }}\n'
 
 
-def _marked_package_json(directives: str, node: str = "18") -> str:
-    """Return a package.json whose `update-time` field carries the directives steering its Node engine."""
-    contents = json.dumps({"engines": {"node": node}, "update-time": {"engines": {"node": directives}}}, indent=2)
+# The node version another section declares, which is neither the engine's nor the base image's.
+_OTHER_NODE_VERSION = "20.11.0"
+
+
+def _package_json(node: str = "18", *, section: str = "", directives: str = "", field: object = None) -> str:
+    """Return a package.json declaring the Node engine, with the section and the marker the test asks for.
+
+    `section` declares a `node` version of its own above the engine, and `directives` steers the engine from the
+    file's `update-time` field. `field` sets that field's whole value instead, for a file whose field the marker
+    language cannot read. The engine sits on line 3, and on line 6 where a section is declared above it.
+    """
+    other = {section: {"node": _OTHER_NODE_VERSION}} if section else {}
+    marker: dict[str, object] = {"update-time": {"engines": {"node": directives}}} if directives else {}
+    if field is not None:
+        marker = {"update-time": field}
+    contents = json.dumps({**other, "engines": {"node": node}, **marker}, indent=2)
     return f"{contents}\n"
+
+
+def _compact_package_json(node: str = "18") -> str:
+    """Return a package.json declaring a node version and the Node engine on one line."""
+    return f'{{"volta": {{"node": "{_OTHER_NODE_VERSION}"}}, "engines": {{"node": "{node}"}}}}\n'
 
 
 @mock_docker_hub_auth
@@ -69,6 +87,40 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_new_version_logged("node", "19", Location(mock_package_json, 1))
         self.assert_no_warnings_logged()
 
+    @kills(
+        Mutation(
+            rewrite,
+            """    if not reference_marker.reference_location.is_on_the_same_line_as(line.location):
+        return None
+    return pattern.search(line.text, reference_marker.reference_location.column)""",
+            "    return pattern.search(line.text, reference_marker.reference_location.column)",
+            "every line the pattern matches is read, not the one the file names",
+        )
+    )
+    @patch_pathlib_path(exists=True, read_text="FROM node:19")
+    def test_a_node_version_outside_the_engines_section_is_left_as_it_is(self, mock_glob: Mock):
+        """Test that a node version another section declares is not taken for the engine."""
+        mock_package_json = self.update_engine(mock_glob, _package_json(section="volta"))
+        mock_package_json.write_text.assert_called_once_with(_package_json("19", section="volta"))
+        self.assert_new_version_logged("node", "19", Location(mock_package_json, 6))
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            rewrite,
+            "    return pattern.search(line.text, reference_marker.reference_location.column)",
+            "    return pattern.search(line.text)",
+            "the named line is read from its start, so the entry declared before the engine is taken for it",
+        )
+    )
+    @patch_pathlib_path(exists=True, read_text="FROM node:19")
+    def test_the_engine_is_updated_where_another_node_entry_shares_its_line(self, mock_glob: Mock):
+        """Test that the engine is the entry updated where another section declares a node version on its line."""
+        mock_package_json = self.update_engine(mock_glob, _compact_package_json())
+        mock_package_json.write_text.assert_called_once_with(_compact_package_json("19"))
+        self.assert_new_version_logged("node", "19", Location(mock_package_json, 1))
+        self.assert_no_warnings_logged()
+
     @patch_pathlib_path(exists=True, read_text="FROM node:lts AS base")
     def test_non_numeric_node_base_image(self, mock_glob: Mock):
         """Test that a non-numeric Node base image tag (e.g. node:lts) is skipped with a warning, not an error."""
@@ -101,13 +153,50 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         mock_package_json.write_text.assert_not_called()
         self.assert_no_new_version_logged()
 
+    @kills(
+        Mutation(
+            update_node_engine,
+            "    return isinstance(engines, dict) and _NODE in engines",
+            "    return engines is not None and _NODE in engines",
+            "a section that is a string or a list is read as one naming the engine, so the file is opened for it",
+        )
+    )
+    @patch_pathlib_path(exists=True, read_text="FROM node:19")
     def test_no_node_engine(self, mock_glob: Mock):
-        """Test that the package.json is skipped if it has no Node engine."""
-        mock_package_json = self.update_engine(mock_glob, "{}")
+        """Test that a package.json whose `engines` section declares no Node version is skipped."""
+        for case, contents in (
+            ("no engines section", "{}"),
+            ("an engines section that is a string", '{"engines": "node >=18"}'),
+            ("an engines section that is a list", '{"engines": ["node"]}'),
+        ):
+            with self.subTest(case=case):
+                self.start_new_run()
+                mock_package_json = self.update_engine(mock_glob, contents)
+                mock_package_json.write_text.assert_not_called()
+                self.assert_no_path_logged()
+                self.assert_no_new_version_logged()
+                self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            update_node_engine,
+            """    if engine_marker.reference_location.line_number is None:
+        _LOG.no_entry(_NODE, package_json.path)
+        return
+    dockerfile = _find_node_dockerfile(package_json.path)""",
+            "    dockerfile = _find_node_dockerfile(package_json.path)",
+            "an engine the scan cannot find is passed over in silence, as it was before",
+        )
+    )
+    @patch_pathlib_path(exists=True, read_text="FROM node:19")
+    def test_an_engine_whose_entry_cannot_be_found(self, mock_glob: Mock):
+        """Test that an engine the file declares but whose entry cannot be found is warned about, not passed over."""
+        # The section is declared twice: the parse reads the engine off the second, the entry off the first.
+        contents = '{"engines": {"npm": ">=10"}, "engines": {"node": "18"}}\n'
+        mock_package_json = self.update_engine(mock_glob, contents)
         mock_package_json.write_text.assert_not_called()
-        self.assert_no_path_logged()
+        self.assert_logged(Logger._MESSAGE_NO_ENTRY, dependency="node", location=Location(mock_package_json))
         self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
 
     def assert_falls_back_to_latest_node(self, mock_glob: Mock) -> None:
         """Assert the engine is updated to the latest Node release on Docker Hub, with no local version to derive."""
@@ -174,26 +263,37 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     )
     @patch_pathlib_path(exists=True, read_text="FROM node:19")
     def test_marker_in_the_update_time_field_holds_the_engine_back(self, mock_glob: Mock):
-        """Test that an `ignore` directive in the `update-time` field holds the engine's update back."""
-        mock_package_json = self.update_engine(mock_glob, _marked_package_json("ignore"))
+        """Test that an `ignore` directive in the `update-time` field holds back the engine's update, and it alone."""
+        mock_package_json = self.update_engine(mock_glob, _package_json(section="volta", directives="ignore"))
         mock_package_json.write_text.assert_not_called()
-        self.assert_ignored_logged("node", Location(mock_package_json, 3), "ignore")
+        self.assert_ignored_logged("node", Location(mock_package_json, 6), "ignore")
+        self.assertEqual(len(self.records_of(Logger._MESSAGE_IGNORED)), 1)  # The volta pin is steered by no marker.
         self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+    @patch_pathlib_path(exists=True, read_text="FROM node:19")
+    def test_the_engine_is_updated_when_the_marker_field_is_declared_above_it(self, mock_glob: Mock):
+        """Test that the `engines` the `update-time` field mirrors is not taken for the engine it steers."""
+        marked = {"update-time": {"engines": {"node": "allow[update<20]"}}, "engines": {"node": "18"}}
+        mock_package_json = self.update_engine(mock_glob, f"{json.dumps(marked, indent=2)}\n")
+        updated = json.dumps({**marked, "engines": {"node": "19"}}, indent=2)
+        mock_package_json.write_text.assert_called_once_with(f"{updated}\n")
+        self.assert_new_version_logged("node", "19", Location(mock_package_json, 8))
         self.assert_no_warnings_logged()
 
     @kills(
         Mutation(
             update_node_engine,
-            "logger=_LOG, marker=marker)",
-            "logger=_LOG)",
-            "a marker is read but never handed to the gate, where the engine follows Docker Hub",
+            "logger=_LOG, reference_marker=engine_marker",
+            "logger=_LOG",
+            "the engine's entry and marker are read but never handed to the gate, where it follows Docker Hub",
         )
     )
     @patch_pathlib_path(exists=False)
     def test_marker_holds_the_engine_back_when_it_follows_docker_hub(self, mock_glob: Mock):
         """Test that a field marker holds the engine back when no Dockerfile derives its version."""
         self.requests.side_effect = mock_docker_registry(docker_tag("20", DIGEST))
-        mock_package_json = self.update_engine(mock_glob, _marked_package_json("ignore"))
+        mock_package_json = self.update_engine(mock_glob, _package_json(directives="ignore"))
         mock_package_json.write_text.assert_not_called()
         self.assert_ignored_logged("node", Location(mock_package_json, 3), "ignore")
         self.assert_no_new_version_logged()
@@ -202,7 +302,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @patch_pathlib_path(exists=True, read_text="FROM node:20")
     def test_bound_in_the_update_time_field_blocks_a_base_image_jump(self, mock_glob: Mock):
         """Test that a bound in the `update-time` field keeps a base image version it excludes from being adopted."""
-        mock_package_json = self.update_engine(mock_glob, _marked_package_json("allow[update<20]"))
+        mock_package_json = self.update_engine(mock_glob, _package_json(directives="allow[update<20]"))
         mock_package_json.write_text.assert_not_called()
         self.assert_logged_among_others(
             Logger._MESSAGE_RECOGNISED_MARKER,
@@ -216,8 +316,8 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @patch_pathlib_path(exists=True, read_text="FROM node:19")
     def test_bound_in_the_update_time_field_admits_a_version_it_covers(self, mock_glob: Mock):
         """Test that a bounded engine still adopts a base image version the bound admits."""
-        mock_package_json = self.update_engine(mock_glob, _marked_package_json("allow[update<20]"))
-        mock_package_json.write_text.assert_called_once_with(_marked_package_json("allow[update<20]", "19"))
+        mock_package_json = self.update_engine(mock_glob, _package_json(directives="allow[update<20]"))
+        mock_package_json.write_text.assert_called_once_with(_package_json("19", directives="allow[update<20]"))
         self.assert_new_version_logged("node", "19", Location(mock_package_json, 3))
         self.assert_no_warnings_logged()
 
@@ -232,15 +332,15 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         ):
             with self.subTest(directives=directives):
                 self.start_new_run()
-                mock_package_json = self.update_engine(mock_glob, _marked_package_json(directives))
-                mock_package_json.write_text.assert_called_once_with(_marked_package_json(directives, "19"))
+                mock_package_json = self.update_engine(mock_glob, _package_json(directives=directives))
+                mock_package_json.write_text.assert_called_once_with(_package_json("19", directives=directives))
                 self.assert_redundant_directive_logged(reason, "node", Location(mock_package_json, 3), directives)
                 self.assert_new_version_logged("node", "19", Location(mock_package_json, 3))
 
     @patch_pathlib_path(exists=True, read_text="FROM node:19")
     def test_invalid_item_in_the_update_time_field_leaves_the_engine_unchanged(self, mock_glob: Mock):
         """Test that an item Update-time cannot read is warned about and holds the engine's update back."""
-        mock_package_json = self.update_engine(mock_glob, _marked_package_json("ignore[updaet]"))
+        mock_package_json = self.update_engine(mock_glob, _package_json(directives="ignore[updaet]"))
         mock_package_json.write_text.assert_not_called()
         self.assert_logged(
             Logger._MESSAGE_INVALID_BRACKET_ITEM,
@@ -279,22 +379,21 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @patch_pathlib_path(exists=True, read_text="FROM node:19")
     def test_a_field_the_marker_language_cannot_read_leaves_the_engine_unchanged(self, mock_glob: Mock):
         """Test that an `update-time` field of the wrong shape is warned about, and the engine left as it is."""
-        fields: dict[str, dict[str, object]] = {
-            "a field that is not an object": {"update-time": "ignore"},
-            "a section that is not an object": {"update-time": {"engines": "ignore"}},
-            "directives that are not a string": {"update-time": {"engines": {"node": ["ignore"]}}},
+        fields: dict[str, object] = {
+            "a field that is not an object": "ignore",
+            "a section that is not an object": {"engines": "ignore"},
+            "directives that are not a string": {"engines": {"node": ["ignore"]}},
         }
         for case, field in fields.items():
             with self.subTest(case=case):
                 self.start_new_run()
-                contents = json.dumps({"engines": {"node": "18"}, **field})
-                mock_package_json = self.update_engine(mock_glob, f"{contents}\n")
+                mock_package_json = self.update_engine(mock_glob, _package_json(field=field))
                 mock_package_json.write_text.assert_not_called()
                 self.assert_logged(
                     Logger._MESSAGE_INVALID_BRACKET_ITEM,
                     bracket_item="update-time.engines.node",
                     dependency="node",
-                    location=Location(mock_package_json, 1),
+                    location=Location(mock_package_json, 3),
                 )
                 self.assert_no_new_version_logged()
 
@@ -326,7 +425,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @patch_pathlib_path(exists=True, read_text="FROM node:20")
     def test_a_bound_that_blocks_a_downgrade_is_not_reported_as_redundant(self, mock_glob: Mock):
         """Test that a bound blocking a base image below the engine holds something back, so it is not reported."""
-        mock_package_json = self.update_engine(mock_glob, _marked_package_json("allow[update>=21]", "22.1"))
+        mock_package_json = self.update_engine(mock_glob, _package_json("22.1", directives="allow[update>=21]"))
         mock_package_json.write_text.assert_not_called()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()

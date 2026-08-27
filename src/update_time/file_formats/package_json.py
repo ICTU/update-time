@@ -4,18 +4,18 @@ This module owns parsing the package.json *format*. What the parsed contents mea
 engines, which dependencies to update) is the caller's concern.
 """
 
-import json
-import re
 from typing import TYPE_CHECKING
 
-from update_time.domain.marker import Marker, parse_directives
+from update_time.domain.marker import Marker, ReferenceMarker, parse_directives
+from update_time.file_formats import json as json_format
 from update_time.primitives.location import Location
-from update_time.primitives.text import line_number
+from update_time.primitives.text import column, line_number
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName
+    from update_time.file_formats.json import JsonFile
 
 # The dependency sections whose direct dependencies npm/pnpm install for this project (peerDependencies are
 # constraints on the consumer, not installed here, so they are left out). pnpm's `list --json` output splits its
@@ -27,12 +27,13 @@ DEPENDENCY_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies"
 _MARKER_FIELD = "update-time"
 
 
-def read(path: Path) -> dict:
-    """Return the parsed package.json."""
-    return json.loads(path.read_text())
+def reference_marker(package_json: JsonFile, section: str, name: DependencyName) -> ReferenceMarker:
+    """Return where the section declares the name, and the marker the `update-time` field names for that entry."""
+    location = _entry_location(package_json, section, name)
+    return ReferenceMarker(location, _marker(package_json.contents, section, name))
 
 
-def marker(contents: dict, section: str, name: DependencyName) -> Marker:
+def _marker(contents: dict, section: str, name: DependencyName) -> Marker:
     """Return the marker the `update-time` field names for the reference, or an empty one where it names none.
 
     The field mirrors the file's own sections, so `{"update-time": {"engines": {"node": "ignore"}}}` steers the
@@ -63,13 +64,12 @@ def dependency_locations(path: Path) -> dict[DependencyName, list[Location]]:
     The dependency sections are read in turn, leaving out a dependency whose spec resolves to no registry release.
     A name declared in several of them carries a location per entry, so none of the lines it sits on is lost.
     """
-    contents = path.read_text()
-    config = json.loads(contents)
+    package_json = json_format.read(path)
     locations: dict[DependencyName, list[Location]] = {}
     for section in DEPENDENCY_SECTIONS:
-        for name, spec in config.get(section, {}).items():
+        for name, spec in package_json.contents.get(section, {}).items():
             if _is_registry_spec(spec):
-                locations.setdefault(name, []).append(_entry_location(path, contents, section, name))
+                locations.setdefault(name, []).append(_entry_location(package_json, section, name))
     return locations
 
 
@@ -82,18 +82,13 @@ def _is_registry_spec(spec: object) -> bool:
     return isinstance(spec, str) and ":" not in spec and "/" not in spec
 
 
-def _entry_location(path: Path, contents: str, section: str, name: str) -> Location:
-    """Return where the section declares the dependency, or the file alone when its entry cannot be found.
+def _entry_location(package_json: JsonFile, section: str, name: str) -> Location:
+    """Return where the section declares the name, down to the column its entry starts on.
 
-    The name is looked for as a key inside the section's own object, so a key of the same name elsewhere in the
-    file — in `peerDependencies` or `overrides`, say — is never taken for it, and neither is a spec naming the
-    package as a value. Where the search comes up empty, the dependency is located at the file rather than at a
-    line guessed from elsewhere.
+    Where the file declares no such entry, it is located at the file rather than at a line guessed from elsewhere.
     """
-    entry = rf'"{re.escape(name)}"\s*:'
-    # A dependency section is a flat object, so `[^}]` cannot reach past its closing brace: the entry matched is
-    # one of this section's own.
-    match = re.search(rf'"{section}"\s*:\s*\{{[^}}]*?({entry})', contents)
-    if match is None:
-        return Location(path)
-    return Location(path, line_number(contents, match.start(1)))
+    text = package_json.text
+    offset = json_format.entry_offset(text, section, name)
+    if offset is None:
+        return Location(package_json.path)
+    return Location(package_json.path, line_number(text, offset), column(text, offset))
