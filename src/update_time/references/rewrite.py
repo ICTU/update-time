@@ -37,8 +37,8 @@ if TYPE_CHECKING:
 class _Rewriter:
     """Everything needed to rewrite one kind of reference in a file.
 
-    That is: how to resolve a new version, where to report, and — for a regexp that captures no `dependency` group —
-    what to call the reference.
+    That is: how to resolve a new version, where to report, and what to call a reference whose regexp captures no
+    `dependency` group.
     """
 
     get_new_version: NewVersionGetter
@@ -152,34 +152,27 @@ class _Rewriter:
             replacements["sha"] = latest.sha
         return rewrite_string(match, replacements)
 
-    def updated_lines(self, lines: list[Line], regexp: str | re.Pattern[str]) -> list[str]:
-        """Return the lines with every reference the regexp matches updated, honouring each one's marker."""
-        return updated_lines(lines, regexp, self.update_line, self.logger, self.dependency)
 
-
-def apply_marker(
+def apply_marker(  # noqa: PLR0913 — a marker named elsewhere in the file cannot be read from the line
     line: Line,
     match: re.Match[str],
     update_line: Callable[[re.Match[str], Location, Marker], str],
     logger: Logger,
     dependency: str = "",
+    *,
+    marker: Marker | None = None,
 ) -> str:
     """Read a matched reference's `# update-time:` marker and update it, or leave the line unchanged when held back.
 
-    The marker gate shared by every line-based reference, so no updater has to remember the placement rule (see
-    `parse_marker`). An item that could not be parsed is reported here, where the logger and location are available,
-    unlike in the pure `parse_marker`. It holds the update back, since it may have been meant to bound one, and
-    leaves the checks running, since it is not read as silencing what it may equally have been meant to silence.
-    Otherwise the marker is reported as recognised at the debug level, as is the held-back update when the marker
-    holds the update back, so users can tell a marker that was understood from one that suppressed something. A
-    marker is then handed to `update_line` along with the match and the line's location, whatever it holds back, so
-    the checks it leaves live still run, with its bound and its `allow` directives. It is handed over even when it
-    holds every check back, since what a marker gets wrong is reported for a reference no source is queried for too
-    (see `latest_version`). The dependency comes from the regexp's `dependency` group; a regexp that captures none —
-    a pre-commit `rev:` takes it from the `repo:` above, a `.python-version` entry is a bare version — names it in
-    `dependency` instead.
+    The gate every reference goes through. It reads a marker written as a comment, on the reference's own line or
+    above it, and takes one the file names elsewhere from the updater that read it, in `marker`.
+
+    An unreadable item holds the update back, in case it was meant to bound one. It silences nothing, since an
+    unreadable marker holds back what Update-time would write, never what it would tell you. The marker reaches
+    `update_line` whatever it holds back, so its bound, its `allow` directives, and what it gets wrong are still
+    acted on (see `latest_version`).
     """
-    marker = parse_marker(line)
+    marker = parse_marker(line) if marker is None else marker
     location = line.location
     dependency = matched_dependency(match, dependency)
     if marker.invalid_item is not None:
@@ -191,19 +184,21 @@ def apply_marker(
     return update_line(match, location, marker)
 
 
-def updated_lines(
+def updated_lines(  # noqa: PLR0913 — a marker named elsewhere in the file cannot be read from the line
     lines: list[Line],
     regexp: str | re.Pattern[str],
     update_line: Callable[[re.Match[str], Location, Marker], str],
     logger: Logger,
     dependency: str = "",
+    *,
+    marker: Marker | None = None,
 ) -> list[str]:
     """Return the lines with `update_line` applied to each line carrying a reference, honouring any marker.
 
     A line that carries no reference (no `regexp` match) is left untouched — a marker on it is for the line below. A
     line that does carry one goes to the shared `apply_marker` gate together with `update_line`, which the gate reads
     the marker for, logs, and either holds back or runs. `dependency` names the reference for a regexp that captures
-    none.
+    none, and `marker` is the one the file names for it, where its format places none beside it.
     """
     result = []
     for line in lines:
@@ -211,7 +206,7 @@ def updated_lines(
         if match is None:
             result.append(line.text)  # No reference on this line; a marker here applies to the line below it.
             continue
-        result.append(apply_marker(line, match, update_line, logger, dependency))
+        result.append(apply_marker(line, match, update_line, logger, dependency, marker=marker))
     return result
 
 
@@ -221,6 +216,7 @@ def update_references_in_lines(
     get_new_version: NewVersionGetter,
     logger: Logger,
     dependency: str = "",
+    marker: Marker | None = None,
 ) -> list[str]:
     """Return the lines with each unpinned reference updated to its new version (and digest).
 
@@ -232,7 +228,7 @@ def update_references_in_lines(
     if not lines:
         return []
     path = lines[0].location.path
-    rewriter = _Rewriter(get_new_version, logger, dependency)
+    update_line = _Rewriter(get_new_version, logger, dependency).update_line
     for regexp in regexps:
-        lines = located_lines(path, rewriter.updated_lines(lines, regexp))
+        lines = located_lines(path, updated_lines(lines, regexp, update_line, logger, dependency, marker=marker))
     return [line.text for line in lines]

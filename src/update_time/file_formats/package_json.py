@@ -8,6 +8,7 @@ import json
 import re
 from typing import TYPE_CHECKING
 
+from update_time.domain.marker import Marker, parse_directives
 from update_time.primitives.location import Location
 from update_time.primitives.text import line_number
 
@@ -21,10 +22,39 @@ if TYPE_CHECKING:
 # installed dependencies over the same sections, so `package_managers.node` reads them from here too.
 DEPENDENCY_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies")
 
+# The field a package.json names its markers in. JSON has no comments, so a marker cannot sit beside the reference
+# it steers, and npm keeps a field it does not know, so the file can carry one.
+_MARKER_FIELD = "update-time"
+
 
 def read(path: Path) -> dict:
     """Return the parsed package.json."""
     return json.loads(path.read_text())
+
+
+def marker(contents: dict, section: str, name: DependencyName) -> Marker:
+    """Return the marker the `update-time` field names for the reference, or an empty one where it names none.
+
+    The field mirrors the file's own sections, so `{"update-time": {"engines": {"node": "ignore"}}}` steers the
+    Node engine, and a reference is named the way the file itself names it. The value is the directive list a
+    comment carries behind its `# update-time:` prefix. A file names no marker by leaving any of the three out.
+    Whatever a file holds reaches here, so each step down is checked: a level that is not an object, and a value
+    that is not a directive list, are both a shape the language cannot read, and leave the reference as it is
+    rather than ending the run.
+    """
+    field = contents.get(_MARKER_FIELD, {})
+    if not isinstance(field, dict):
+        return _unreadable_field(section, name)
+    references = field.get(section, {})
+    if not isinstance(references, dict):
+        return _unreadable_field(section, name)
+    directives = references.get(name, "")
+    return parse_directives(directives) if isinstance(directives, str) else _unreadable_field(section, name)
+
+
+def _unreadable_field(section: str, name: DependencyName) -> Marker:
+    """Return the marker for a field the language cannot read: an invalid item naming where the marker would sit."""
+    return Marker(invalid_item=f"{_MARKER_FIELD}.{section}.{name}")
 
 
 def dependency_locations(path: Path) -> dict[DependencyName, list[Location]]:

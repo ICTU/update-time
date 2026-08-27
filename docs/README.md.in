@@ -307,7 +307,7 @@ Which dependencies are checked follows from what OSV can match a pinned version 
 
 ## 🎛️ Controlling updates and warnings per reference
 
-Comments of the form `# update-time: <directive>` let you steer what happens to an individual reference — to hold it back, but also to bound how far it may move, or to opt it into behaviour that is off by default. To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
+Markers of the form `# update-time: <directive>` let you steer what happens to an individual reference — to hold it back, but also to bound how far it may move, or to opt it into behaviour that is off by default. A marker is a comment wherever the file can hold one, and a field where it cannot (see [Where to put a marker](#where-to-put-a-marker)). To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
 
 > [!WARNING]
 > As long as Update-time is alpha (version `0.0.X`), marker syntax and semantics are subject to change without deprecation notice or migration support.
@@ -323,7 +323,7 @@ humanize==4.15.0  # update-time: ignore[yanked, stale<90] allow[update<5] (until
                                  └verb┘└─── bracket ────┘ └verb┘└bracket┘
 ```
 
-A marker is the `# update-time:` comment up to its last directive, and holds one or more directives, each a verb and the bracket that may follow it. Directives that use the same verb can be combined: `ignore[yanked, stale<90]` is equivalent to `ignore[yanked] ignore[stale<90]`. Free text after the last directive is a reason, which Update-time ignores.
+A marker is the `# update-time:` comment up to its last directive, and holds one or more directives, each a verb and the bracket that may follow it. Directives that use the same verb can be combined: `ignore[yanked, stale<90]` is equivalent to `ignore[yanked] ignore[stale<90]`. Free text after the last directive is a reason, which Update-time ignores. In a file that can hold no comment the directives are the value of an `update-time` field instead, and everything below reads the same (see [Where to put a marker](#where-to-put-a-marker)).
 
 Zooming in on brackets:
 
@@ -339,7 +339,7 @@ A bracket holds one or more items, separated by commas: the `ignore` bracket abo
 
 | Term | What it is | Example |
 | :--- | :--------- | :------ |
-| Marker | the `# update-time:` comment steering one reference, up to its last directive | `# update-time: ignore[stale] allow[update<3.13]` |
+| Marker | the directives steering one reference: a `# update-time:` comment, up to its last directive, or a field's value | `# update-time: ignore[stale] allow[update<3.13]` |
 | Directive | a verb and the bracket it may carry; a marker holds as many directives as you write | `ignore[stale<90]` |
 | Verb | `ignore` drops what its items name and `allow` keeps it, so `ignore[stale<90]` and `allow[stale>=90]` say the same thing | `ignore`, `allow` |
 | Bracket | what a directive's `[…]` holds: its items, separated by commas | `[yanked, stale<90]` |
@@ -393,7 +393,7 @@ Staleness is measured against the publication date of a dependency's newest rele
 @@REDUNDANT_STALE_SOURCE_WARNING@@
 ```
 
-Three kinds of reference get that warning. An image on a registry other than Docker Hub does, since only Docker Hub reports a push date, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves. And so does a `.python-version` entry whose version comes from the project's Dockerfile, since the staleness reported is the base image's, not the entry's. A bare `ignore[stale]` is reported there too, since it silences a warning those references never get.
+Three kinds of reference get that warning. An image on a registry other than Docker Hub does, since only Docker Hub reports a push date, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves. And so does a runtime version that follows the project's Dockerfile, whether it is a `.python-version` entry or a Node engine. The staleness reported for it is the base image's, not its own. A bare `ignore[stale]` is reported there too, since it silences a warning those references never get.
 
 #### Setting a cooldown period
 
@@ -424,7 +424,7 @@ The override reaches the dependencies whose cooldown Update-time enforces itself
 @@REDUNDANT_COOLDOWN_ITEM_WARNING@@
 ```
 
-The same three kinds of reference get that warning as for staleness (see [Setting a staleness threshold](#setting-a-staleness-threshold)), and for the same reasons but one. A `.python-version` entry whose version comes from the project's Dockerfile gets it because its cooldown was already applied when the base image was updated. An image on a registry other than Docker Hub does too, since only Docker Hub reports a push date to measure a cooldown against, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves.
+The same three kinds of reference get that warning as for staleness (see [Setting a staleness threshold](#setting-a-staleness-threshold)), and for the same reasons but one. A runtime version that follows the project's Dockerfile gets it, whether it is a `.python-version` entry or a Node engine, because its cooldown was already applied when the base image was updated. An image on a registry other than Docker Hub does too, since only Docker Hub reports a push date to measure a cooldown against, so the same marker on a Docker Hub image is left alone. So does a CircleCI machine-executor image, which no registry serves.
 
 A `requirements.txt` requirement that pins no exact version is reported for a reason of its own, in its own words: PyPI dates its releases, but Update-time resolves no update for such a requirement, so a cooldown holds no release back.
 
@@ -478,7 +478,7 @@ A level must be one of `low`, `moderate`, `high`, and `critical`, spelled in low
 
 #### Redundant markers
 
-A yank can only be observed where the dependency's source reports one — of the references that accept a marker, `requirements.txt` pins and jsDelivr URLs (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so Update-time logs it as redundant at `WARNING`:
+A yank can only be observed where the dependency's source reports one — of the references that accept a marker, `requirements.txt` pins and jsDelivr URLs (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, a `.python-version` entry, or a Node engine the scope can never suppress anything, so Update-time logs it as redundant at `WARNING`:
 
 ```console
 @@REDUNDANT_YANK_SCOPE_WARNING@@
@@ -490,7 +490,7 @@ A `requirements.txt` requirement that pins no exact version is reported too: PyP
 @@REDUNDANT_YANK_WITHOUT_A_VERSION_WARNING@@
 ```
 
-A vulnerability can only be reported where OSV holds advisories for the dependency — of the references that accept a marker, `requirements.txt` pins and jsDelivr URLs (see [Vulnerable dependencies](#-vulnerable-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, or a `.python-version` entry the scope can never suppress anything, so it is reported as redundant in all its forms:
+A vulnerability can only be reported where OSV holds advisories for the dependency — of the references that accept a marker, `requirements.txt` pins and jsDelivr URLs (see [Vulnerable dependencies](#-vulnerable-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, a `.python-version` entry, or a Node engine the scope can never suppress anything, so it is reported as redundant in all its forms:
 
 ```console
 @@REDUNDANT_VULNERABLE_SOURCE_WARNING@@
@@ -517,6 +517,12 @@ A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — i
 ```
 
 The reference is left as it is, because an item Update-time cannot read may have been meant to bound the update, so applying one would be guessing. The checks still run, since that item is never read as silencing a warning: an unreadable marker holds back what Update-time would write, never what it would tell you. Every item beside it that Update-time does read applies as written, so `ignore[stale, stlae]` still silences the staleness warning.
+
+An `update-time` field Update-time cannot read is reported as an invalid item too. A field is read whole rather than item by item, so an unreadable one holds back every directive it carries, where an unreadable bracket item leaves the items beside it standing. The warning names where the marker would sit rather than the value that is wrong, because a field of the wrong shape holds no marker to quote:
+
+```console
+WARNING Invalid 'update-time.engines.node' in the update-time marker for node in package.json:3; leaving the reference unchanged
+```
 
 ### Adopting hash drift
 
@@ -612,11 +618,11 @@ A `requirements.txt` requirement that pins no exact version is reported whatever
 
 ### Writing a marker
 
-Where a marker goes depends on the file it sits in, and a run at `--log-level DEBUG` reports which markers Update-time read.
+Where a marker goes depends on the format of the file it sits in, and a run at `--log-level DEBUG` reports which markers Update-time read.
 
 #### Where to put a marker
 
-Any of these markers can be placed two ways:
+A marker is written in one of three places, and the file's format decides which:
 
 - **Inline**, on the reference's own line (in YAML files, `requirements.txt`, `devcontainer.json`, `.python-version`, and Sphinx `conf.py` files):
 
@@ -643,7 +649,13 @@ Any of these markers can be placed two ways:
   FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   ```
 
-This works for every reference Update-time rewrites line by line: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, `.pre-commit-config.yaml` files, `devcontainer.json` files, `requirements.txt` files, `.python-version` files, and the jsDelivr URLs in a Sphinx `conf.py`. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it. Where one placement is safer than the other, the details per dependency type say so.
+- **In an `update-time` field**, for a reference in a file that can hold no comment. A `package.json` is strict JSON, so its Node engine's marker names the reference it steers instead of sitting beside it, in a field mirroring the file's own structure:
+
+  ```json
+  "update-time": { "engines": { "node": "ignore" } }
+  ```
+
+Every reference but the Node engine takes its marker in a comment, in files of these kinds: Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, GitHub Actions workflows, `.pre-commit-config.yaml` files, `devcontainer.json` files, `requirements.txt` files, `.python-version` files, and the jsDelivr URLs in a Sphinx `conf.py`. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it. Where one comment placement is safer than the other, the details per dependency type say so.
 
 A dependency updated through uv, npm, or pnpm takes no marker. Opt one out with a version specifier instead, as described under [Python dependencies](#python-dependencies) and [npm and pnpm dependencies](#npm-and-pnpm-dependencies).
 
@@ -655,13 +667,13 @@ Run with `--log-level DEBUG` to confirm a marker is recognised: every recognised
 @@RECOGNISED_MARKER@@
 ```
 
-A recognised line means the marker was read and understood. Whatever the marker held back is logged too:
+That line reports the marker itself, and says it was read and understood. What the marker held back is reported separately, in lines about the update or the warning rather than about the marker, each naming the directive it obeyed:
 
 ```console
 @@HELD_BACK_MARKER@@
 ```
 
-A hold-back line means the marker actually suppressed something: an `ignore[yanked]` on a version that was never yanked produces none. A missing hold-back line therefore tells you the marker did nothing this run. Since the marker is case-sensitive, a typo (or wrong case) in the `# update-time:` prefix or in a verb produces no `Recognised` line at all, and the reference is updated as usual. A typo inside the brackets produces no `Recognised` line either, but is logged at `WARNING` as an invalid item (see [Invalid markers](#invalid-markers)).
+Update-time reports a held-back update or warning only where there was one to hold back, so an `ignore[yanked]` on a version that was never yanked produces none. A marker that earns no such report suppressed nothing. It may still have done something: a bound that keeps an update out earns no report either, and the reference simply stays where it is. Since the marker is case-sensitive, a typo (or wrong case) in the `# update-time:` prefix or in a verb produces no `Recognised` line at all, and the reference is updated as usual. A typo inside the brackets produces no `Recognised` line either, but is logged at `WARNING` as an invalid item (see [Invalid markers](#invalid-markers)). A field marker is read by name, so a typo in the `update-time` field, in the section, or in the reference it names leaves Update-time looking where nothing is: no `Recognised` line, and no warning either.
 
 ## 📖 Details per dependency type
 
@@ -829,29 +841,29 @@ Other Python version pins are left untouched too: the `requires-python` value in
 
 The new version is taken from the matching base image in the project's Dockerfile, provided there is a Dockerfile in the same folder and its base image has a numeric version. When no Dockerfile declares one, the version is instead taken from the latest [Node](https://hub.docker.com/_/node) or [Python](https://hub.docker.com/_/python) release on Docker Hub.
 
-The Node engine version is updated only when it contains a specific version (for example, `26.4`); a range or other non-numeric value is left untouched. A Node base image pinned to a non-numeric tag such as `node:lts` is the exception to following the Dockerfile: the engine is left alone rather than overridden with a mismatched concrete version.
+The Node engine version is updated only when it contains a specific version (for example, `26.4`); a range or other non-numeric value is left untouched. A Node base image whose tag carries no version to sync to, such as `node:lts` or `node:22.x`, is the exception to following the Dockerfile: the engine is left alone rather than overridden with a mismatched concrete version.
 
-A `.python-version` entry is moved forward to a fuller version. It adopts the image's version at the precision the tag provides, so `python:3.14.2-slim` yields `3.14.2` and a bare `python:3.14` yields `3.14`, and an entry already ahead of the image is left alone rather than downgraded. Docker Hub always names a full version, so an entry that follows Docker Hub gains precision it didn't have: both `3.12.6` and `3.12` become `3.13.2` (or whatever the latest is).
+A `.python-version` entry is moved forward to a fuller version. It adopts the image's version at the precision the tag provides, so `python:3.14.2-slim` yields `3.14.2` and a bare `python:3.14` yields `3.14`, and an entry already ahead of the image is left alone rather than downgraded. The Node engine goes the other way, since it declares the runtime the project ships: an engine ahead of its base image is brought back to the image's version. Docker Hub always names a full version, so an entry that follows Docker Hub gains precision it didn't have: both `3.12.6` and `3.12` become `3.13.2` (or whatever the latest is).
 
 #### Pinning
 
-Neither can carry a hash pin. Both name a version rather than one artefact — a version covers every build ever published for it — so there is no image digest, commit SHA, or integrity hash to add. Neither format has anywhere to put one either: `package.json` is strict JSON, and a `.python-version` line is a bare version. Update-time only moves them to a fuller version, which makes them more precise but verifies nothing.
+Neither can carry a hash pin. Both name a version rather than one artefact — a version covers every build ever published for it — so there is no image digest, commit SHA, or integrity hash to add. Neither format has anywhere to put one either: a `package.json` entry names a version, and a `.python-version` line is a bare version. Update-time only moves them to a fuller version, which makes them more precise but verifies nothing.
 
 #### Cooldown
 
-A version taken from Docker Hub honours the cooldown through the Node or Python image tag's push date. A version that instead follows the project's Dockerfile needs no cooldown of its own, since it was already applied when the base image was updated, so a `cooldown` marker on such a `.python-version` entry is reported as redundant.
+A version taken from Docker Hub honours the cooldown through the Node or Python image tag's push date. A version that instead follows the project's Dockerfile needs no cooldown of its own, since it was already applied when the base image was updated, so a `cooldown` marker on such a reference is reported as redundant, whether it is a `.python-version` entry or a Node engine.
 
 #### Stale dependencies
 
-Both are indirect cases. When the version is derived from the project's Dockerfile, only the staleness of the base image is reported. The entry itself is never checked then, and a `stale` marker on it is reported as redundant. A version taken from Docker Hub is checked against the newest Node or Python release there.
+Both are indirect cases. When the version is derived from the project's Dockerfile, only the staleness of the base image is reported. Neither the entry nor the engine is checked itself then, and a `stale` marker on either is reported as redundant. A version taken from Docker Hub is checked against the newest Node or Python release there.
 
 #### Yanked dependencies
 
-Neither source has a yank concept, so neither is checked for one, and an `ignore[yanked]` marker on a `.python-version` entry is reported as redundant.
+Neither source has a yank concept, so neither is checked for one, and an `ignore[yanked]` marker on either is reported as redundant.
 
 #### Vulnerable dependencies
 
-Neither is checked: both name a version of a runtime rather than a release of a package, which is not something OSV matches an advisory against. A `vulnerable` scope on a `.python-version` entry is reported as redundant.
+Neither is checked: both name a version of a runtime rather than a release of a package, which is not something OSV matches an advisory against. A `vulnerable` scope on either is reported as redundant.
 
 #### Markers
 
@@ -862,7 +874,18 @@ A `.python-version` entry takes a marker in either placement, but uv rejects an 
 3.12
 ```
 
-The Node engine version takes no marker: `package.json` is strict JSON, which has nowhere to put a comment. Opt it out by giving the engine a range instead of a specific version.
+The Node engine version takes a marker too, but not as a comment: `package.json` is strict JSON, which has nowhere to put one. Its marker goes in an `update-time` field instead, which mirrors the file's own structure, so the marker steering the engine is named under `engines` and `node`, as the engine itself is:
+
+```json
+{
+  "engines": { "node": "22" },
+  "update-time": { "engines": { "node": "allow[update<23]" } }
+}
+```
+
+The field holds the directives a comment holds, without the `# update-time:` prefix that introduces them there. npm and pnpm keep a field they do not know, so the marker survives an `npm update` and a `pnpm update`. Both rewrite the file onto one key per line, so the field comes back spread over several lines rather than the one shown here. A field of the wrong shape is reported as an invalid item and leaves the engine as it is (see [Invalid markers](#invalid-markers)).
+
+Update-time reads the marker while it updates the engine, so an engine it never updates keeps a marker nobody reads. Two kinds are never updated: an engine declared as a range, and an engine whose base image tag names no version to sync to, such as `node:lts`. A marker on either holds nothing back, and Update-time reports nothing such a marker gets wrong.
 
 Either way a marker wins over a version derived from the Dockerfile, so a deliberately held-back development version is never dragged forward by an image update.
 

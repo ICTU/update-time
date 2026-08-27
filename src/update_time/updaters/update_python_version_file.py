@@ -6,9 +6,7 @@ The version comes from the Python base image in a Dockerfile, or from Docker Hub
 import re
 from typing import TYPE_CHECKING
 
-from packaging.version import Version
-
-from update_time.domain.dependency import DependencyVersion, is_valid
+from update_time.domain.base_image import image_version_getter
 from update_time.domain.file_type import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, PYTHON_VERSION_FILE
 from update_time.io.filesystem import first_line_match, glob, glob_for
 from update_time.io.log import get_logger
@@ -18,7 +16,6 @@ from update_time.sources.oci import get_latest_tag
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from update_time.domain.bound import NewVersionGetter, VersionBound
 
 _LOG = get_logger("python version file")
 
@@ -56,34 +53,13 @@ def _find_python_base_image_version(version_file: Path) -> str:
     return ""
 
 
-def _image_version_getter(image_version: str) -> NewVersionGetter:
-    """Return a new-version getter that offers the Dockerfile's Python base image version, honouring the marker's bound.
-
-    The image is the source of truth in the Dockerfile tier, so the entry adopts its version. That happens only
-    when the image is newer than the current entry, never a downgrade, and when the entry's own version bound admits
-    it, so an `# update-time: allow[update<3.13]` on the entry still wins over an image that jumped to `3.13`.
-    The cooldown and staleness check have already been applied to the image itself, so the version carries no
-    dates and is neither held back nor flagged here.
-    """
-
-    def get_new_version(
-        _dependency: str, current_version: str, version_bound: VersionBound, _cooldown_days: int
-    ) -> DependencyVersion:
-        candidate = Version(image_version)
-        newer = is_valid(current_version) and candidate > Version(current_version)
-        if newer and version_bound.keeps(candidate, current_version):
-            return DependencyVersion(version=image_version)
-        return DependencyVersion(version=current_version)
-
-    return get_new_version
-
-
 def update_python_version_files() -> None:
     """Update the CPython version in all `.python-version` files found recursively from the start directory."""
     for version_file in glob_for(PYTHON_VERSION_FILE):
         image_version = _find_python_base_image_version(version_file)
-        get_new_version = _image_version_getter(image_version) if image_version else get_latest_tag
-        update_file(version_file, _VERSION_RE, get_new_version=get_new_version, logger=_LOG, dependency=_PYTHON)
+        # An entry ahead of the base image is deliberate, so it is never dragged back to the image's version.
+        getter = image_version_getter(image_version, allow_downgrade=False) if image_version else get_latest_tag
+        update_file(version_file, _VERSION_RE, get_new_version=getter, logger=_LOG, dependency=_PYTHON)
 
 
 def main() -> None:  # pragma: no cover

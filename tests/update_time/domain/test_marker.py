@@ -10,7 +10,7 @@ from pathlib import Path
 from update_time.domain import marker as marker_module
 from update_time.domain.bound import Verb
 from update_time.domain.line import Line
-from update_time.domain.marker import _IGNORABLE_SCOPES, Marker, Scope, Threshold, parse_marker
+from update_time.domain.marker import _IGNORABLE_SCOPES, Marker, Scope, Threshold, parse_directives, parse_marker
 from update_time.primitives.location import Location
 
 from tests.mutation import Mutation, kills
@@ -453,3 +453,34 @@ class ParseMarkerRawTest(unittest.TestCase):
     def test_no_marker_has_empty_raw(self):
         """Test that a line without a marker parses to an empty verbatim text, so nothing is echoed for it."""
         self.assertEqual(parse_marker(line("image: python:3.12")).raw, "")
+
+
+class ParseDirectivesTest(unittest.TestCase):
+    """Unit tests for reading a directive list that carries no `# update-time:` prefix."""
+
+    # Each case: the directive list, the marker it expresses, and the verbatim text the marker keeps.
+    CASES = (
+        ("ignore", BARE_IGNORE, "ignore"),
+        ("ignore[stale]", Marker(ignored_scopes=Scope.STALE), "ignore[stale]"),
+        (
+            "ignore[stale] allow[update<23]",
+            Marker(ignored_scopes=Scope.STALE, version_bound=bound(Verb.ALLOW, "update<23")),
+            "ignore[stale] allow[update<23]",
+        ),
+        (
+            "allow[update<3.15, hash-drift]",
+            Marker(version_bound=bound(Verb.ALLOW, "update<3.15"), allow_drift=True),
+            "allow[update<3.15, hash-drift]",
+        ),
+        ("ignore[updaet]", Marker(invalid_item="updaet"), "ignore[updaet]"),
+        ("ignore[stale] (until the migration)", Marker(ignored_scopes=Scope.STALE), "ignore[stale]"),
+        ("", Marker(), ""),
+    )
+
+    def test_the_list_expresses_the_marker_its_directives_name(self):
+        """Test that a list without the prefix parses to the marker its directives express, verbatim text included."""
+        for directives, expected, raw in self.CASES:
+            with self.subTest(directives=directives):
+                marker = parse_directives(directives)
+                self.assertEqual(marker, expected)
+                self.assertEqual(marker.raw, raw)

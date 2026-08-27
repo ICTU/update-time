@@ -366,23 +366,31 @@ def parse_marker(line: Line) -> Marker:
     return marker
 
 
+def parse_directives(directives: str) -> Marker:
+    """Return the marker a list of directives expresses, written without the `# update-time:` prefix.
+
+    The first token that is not a directive ends the list, so a trailing reason is allowed. Each directive folds
+    into the marker with `Marker.merge`, so earlier directives win over later ones. The text up to the last
+    directive is folded in as the marker's `raw` text, so the marker can later be echoed back to the user exactly
+    as they spelled it (see `Marker.raw`).
+    """
+    marker = Marker()
+    position = 0
+    while directive := _DIRECTIVE.match(directives, position):
+        position = directive.end()
+        marker = marker.merge(_parse_directive(directive))
+    return marker.merge(Marker(raw=directives[:position].strip()))
+
+
 def _parse_marker_contents(text: str) -> Marker:
     """Return the marker expressed by the `# update-time:` directives in one line of text.
 
-    Each `# update-time:` prefix introduces a whitespace-separated list of directives, so directives combine behind
-    a single prefix (`# update-time: ignore[stale] allow[update>=3.13]`); the first token that is not a directive
-    ends the list, so a trailing reason is allowed. Each directive folds into the marker with `Marker.merge`, so
-    earlier directives win over later ones. Each prefix's whole directive run — the text from the prefix to the last
-    directive, without the prefix itself or a trailing reason — is folded in as the marker's `raw` text, so the
-    marker can later be echoed back to the user exactly as they spelled it (see `Marker.raw`).
+    A line may carry more than one prefix, and the directives behind each of them fold into one marker, the
+    earliest winning.
     """
     marker = Marker()
     for prefix in _MARKER_PREFIX.finditer(text):
-        position = prefix.end()
-        while directive := _DIRECTIVE.match(text, position):
-            position = directive.end()
-            marker = marker.merge(_parse_directive(directive))
-        marker = marker.merge(Marker(raw=text[prefix.end() : position].strip()))
+        marker = marker.merge(parse_directives(text[prefix.end() :]))
     return marker
 
 

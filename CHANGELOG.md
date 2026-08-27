@@ -6,7 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Support a marker on the Node engine version in a `package.json`. Closes [#257](https://github.com/ICTU/update-time/issues/257).
+
+### Fixed
+
+- Leave the Node engine version alone when the Node base image's tag carries no version to sync it to, such as `node:22.x`, instead of writing the tag's digits into the `package.json`.
 
 ## 0.0.31 - 2026-08-26
 
