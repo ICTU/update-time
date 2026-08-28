@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.32 - 2026-08-28
+
 ### Added
 
 - Support a marker on the Node engine version in a `package.json`. Closes [#257](https://github.com/ICTU/update-time/issues/257).
