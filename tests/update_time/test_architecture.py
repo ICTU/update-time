@@ -25,6 +25,7 @@ _READS_A_SETTING = "reads a setting the command line configures a run with"
 _RANKS = (
     ("primitives",),
     ("domain",),
+    ("markers",),
     ("io",),
     ("file_formats", "sources"),
     ("package_managers", "references"),
@@ -61,12 +62,16 @@ def _package_init(package: str) -> str:
     return f"*/{package}/__init__.py"
 
 
-def _env_var_globals(files: list[pathlib.Path]) -> set[str]:
-    """Return the names assigned an `EnvVar`: the settings the command line configures a run with."""
+# The calls that build a setting, `flag` being the one that wraps an `EnvVar` for an on-or-off command-line option.
+_SETTING_CALLS = ("EnvVar", "flag")
+
+
+def _setting_globals(files: list[pathlib.Path]) -> set[str]:
+    """Return the names assigned a setting: what the command line configures a run with."""
     names: set[str] = set()
     for path in files:
         for targets, value in module_level_assignments(ast.parse(path.read_text())):
-            if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "EnvVar":
+            if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id in _SETTING_CALLS:
                 names.update(target.id for target in targets if isinstance(target, ast.Name))
     return names
 
@@ -156,9 +161,10 @@ class LayeringTest(unittest.TestCase):
     - `primitives` are project-agnostic building blocks, like a typed environment variable, that even the pure core may
       reach for.
     - `domain` is the pure, I/O-free core.
+    - `markers` parse the `# update-time:` language and decide what each directive steers.
     - `io` wraps file, process, log, network, and command-line I/O.
     - `file_formats` read, write, and parse specific manifest formats.
-    - `sources` are the registry and API clients.
+    - `sources` are the backends the outer layers ask about a dependency.
     - `package_managers` drive the external managers, uv, npm, and pnpm, using file_formats and sources.
     - `references` decide which version a pinned reference should update to, and rewrite the reference accordingly.
     - `updaters` wire everything together.
@@ -201,11 +207,8 @@ class LayeringTest(unittest.TestCase):
         self.assertEqual(sorted(name for name in folders if not name.startswith("__")), sorted(_LAYERS))
 
     def test_network_access_goes_through_io(self):
-        """Test that no layer but io and file_formats imports `requests`, so all HTTP goes through `io.fetch`.
-
-        Nothing under `file_formats` imports `requests`, so exempting it holds nothing back.
-        """
-        for layer in (name for name in _LAYERS if name not in ("io", "file_formats")):
+        """Test that no layer but io imports `requests`, so all HTTP goes through `io.fetch`."""
+        for layer in (name for name in _LAYERS if name != "io"):
             with self.subTest(layer=layer):
                 rule = project_files("src/").in_folder(layer).should_not().depend_on_external_modules()
                 assert_passes(rule.matching(_module_pattern("requests")))
@@ -223,23 +226,29 @@ class LayeringTest(unittest.TestCase):
                 with self.subTest(layer=layer, module=module):
                     rule = project_files("src/").in_folder(layer).should_not().depend_on_external_modules()
                     assert_passes(rule.matching(_module_pattern(module)))
-        for module in ("json", *_MANIFEST_PARSERS):
-            with self.subTest(layer="updaters", module=module):
-                rule = project_files("src/").in_folder("updaters").should_not().depend_on_external_modules()
-                assert_passes(rule.matching(_module_pattern(module)))
+        # The loop above already covers `updaters` for the manifest parsers; an updater parses no `json` either.
+        with self.subTest(layer="updaters", module="json"):
+            rule = project_files("src/").in_folder("updaters").should_not().depend_on_external_modules()
+            assert_passes(rule.matching(_module_pattern("json")))
 
 
 class ConfigurationReadingTest(unittest.TestCase):
     """Test that a module which decides nothing about a run's configuration is told it rather than reading it."""
 
-    def test_sources_read_no_configuration_global(self):
-        """Test that no source reads a setting, and that there are settings to be read.
+    def settings(self) -> set[str]:
+        """Return the settings a run is configured with, asserting the scan found them.
 
-        The settings are discovered from `src` alone, since the tests declare `EnvVar`s of their own to exercise the
+        Without the assertion a scan that found nothing would pass every rule below without checking anything. The
+        settings are discovered from `src` alone, since the tests declare `EnvVar`s of their own to exercise the
         class, and those are not settings a run is configured with.
         """
-        settings = _env_var_globals(sorted(pathlib.Path("src").rglob("*.py")))
-        self.assertIn("COOLDOWN", settings)  # Assert the settings were found, so an empty scan can't pass silently.
+        settings = _setting_globals(sorted(pathlib.Path("src").rglob("*.py")))
+        self.assertIn("COOLDOWN", settings)
+        return settings
+
+    def test_sources_read_no_configuration_global(self):
+        """Test that no source reads a setting."""
+        settings = self.settings()
         sources = project_files("src/").in_folder("sources")
         assert_passes(sources.should_not().adhere_to(_reads_one_of(settings), _READS_A_SETTING))
 
@@ -249,8 +258,7 @@ class ConfigurationReadingTest(unittest.TestCase):
         `marker.py` imports `RISK_LEVELS` from the module that also defines `VULNERABILITY_LEVEL`, which puts a
         setting one import away.
         """
-        settings = _env_var_globals(sorted(pathlib.Path("src").rglob("*.py")))
-        self.assertIn("COOLDOWN", settings)  # Assert the settings were found, so an empty scan can't pass silently.
+        settings = self.settings()
         marker_parser = project_files("src/").with_name("marker.py")
         assert_passes(marker_parser.should_not().adhere_to(_reads_one_of(settings), _READS_A_SETTING))
 
@@ -258,21 +266,23 @@ class ConfigurationReadingTest(unittest.TestCase):
         """Test that a module is reported whether it imports the setting or reads it off its module.
 
         Without this the rule above would pass just as well when the condition found nothing whatever a source does.
-        A class member of the setting's name is not a read, so the file carrying one is left unreported.
+        A class member of the setting's name is not a read, so the file carrying one is left unreported. A setting
+        `flag` builds counts as one too.
         """
         files = {
-            "settings.py": "SETTING = EnvVar('X')\n",
+            "settings.py": "SETTING = EnvVar('X')\nFLAG = flag('Y')\n",
             "importer.py": "from settings import SETTING\n",
+            "flag_importer.py": "from settings import FLAG\n",
             "attribute.py": "import settings\n\nsettings.SETTING.get()\n",
             "reader.py": "from settings import read_setting\n",
             "namesake.py": "class Scope:\n    SETTING = 'setting'\n\nScope.SETTING\n",
         }
         with project(files) as directory:
-            settings = _env_var_globals(sorted(pathlib.Path(directory).rglob("*.py")))
+            settings = _setting_globals(sorted(pathlib.Path(directory).rglob("*.py")))
             rule = project_files(directory).should_not().adhere_to(_reads_one_of(settings), _READS_A_SETTING)
             violations = [violation for violation in rule.check() if isinstance(violation, CustomFileViolation)]
             reported = sorted(pathlib.Path(violation.file_info.path).name for violation in violations)
-        self.assertEqual(reported, ["attribute.py", "importer.py"])
+        self.assertEqual(reported, ["attribute.py", "flag_importer.py", "importer.py"])
 
 
 class ToolInvocationTest(unittest.TestCase):

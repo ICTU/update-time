@@ -10,18 +10,18 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.directive import DIRECTIVES, Reason
 from update_time.domain.downgrade import downgrades
-from update_time.domain.marker import Scope
 from update_time.domain.reference import ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
+from update_time.markers.directive import DIRECTIVES, Reason
+from update_time.markers.marker import Scope
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
     from update_time.domain.dependency import DependencyVersion
-    from update_time.domain.marker import Marker
     from update_time.domain.reference import Reference
     from update_time.io.log import Logger
+    from update_time.markers.marker import Marker
 
 
 def warn_about_inverted_items(marker: Marker, reference: Reference, log: Logger) -> None:
@@ -49,8 +49,10 @@ def _warn_about_directives_the_source_cannot_apply(
     """
     as_written = marker.as_written
     for directive in DIRECTIVES:
-        if directive.is_part_of(as_written) and not directive.is_applied_by(get_new_version, reference.dependency):
-            log.redundant_directive(reference, directive.spelling(as_written), directive.reason)
+        if as_written.directive_for(directive.scope) and not directive.is_applied_by(
+            get_new_version, reference.dependency
+        ):
+            log.redundant_directive(reference, as_written.directive_for(directive.scope), directive.reason)
 
 
 def _floating_pin_redundancy(marker: Marker, latest: DependencyVersion | None) -> Reason | None:
@@ -60,7 +62,7 @@ def _floating_pin_redundancy(marker: Marker, latest: DependencyVersion | None) -
     source's answer decides, since only a source that resolves a floating pin reports one: a reference whose pin
     names a version is reported, and so is one whose source knows no floating pin at all.
     """
-    if not marker.allow_floating_pin:
+    if not marker.allows(Scope.FLOATING_PIN):
         return None
     if marker.ignores(Scope.UPDATE):
         return Reason.UPDATE_HELD_BACK
@@ -75,7 +77,7 @@ def _warn_if_the_floating_pin_holds_nothing_back(
     `latest` is what the source resolved for the reference, or None where the marker left the source unasked.
     """
     if (reason := _floating_pin_redundancy(marker, latest)) is not None:
-        log.redundant_directive(reference, marker.floating_pin_directive, reason)
+        log.redundant_directive(reference, marker.allow_directive(Scope.FLOATING_PIN), reason)
 
 
 def latest_version(

@@ -1,10 +1,4 @@
-"""Which sources can observe that a version was yanked, what they report for one, and the pass over a manager's pins.
-
-A source whose versions can carry a yank state registers its new-version getter with `yank_reporting`, and
-`reports_yanks` reads the fact back, so an `ignore[yanked]` marker on a reference resolved through any other source
-can be reported as redundant instead of silently holding nothing back. Only the getters that resolve a marked
-reference take part.
-"""
+"""Which sources can observe a yanked version, what they report for one, and the pass over a manager's pins."""
 
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -40,12 +34,9 @@ def warn_about_yanked_dependencies(
     pinned_releases: Callable[[Path], Iterable[ResolvedReference]],
     warn: Callable[[ResolvedReference], None],
 ) -> None:
-    """Run the yank pass shared by the updaters that delegate to a package manager.
+    """Warn about each pin the run leaves on a withdrawn release, for a delegated update.
 
-    An updater that delegates the update never calls a source per dependency, so it makes this pass itself. Each pin
-    is located by the resolver that read it back from the file, which is the only party that knows where in the file
-    it sits. A delegated dependency has no marker to hold the check back, so every pin is checked. Callback-driven
-    so `domain` stays free of I/O.
+    A delegated dependency has no marker to hold the check back, so every pin is checked.
     """
     for file in files:
         for resolved in pinned_releases(file):

@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING
 from packaging.version import Version
 
 from update_time.domain.dependency import DependencyVersion, is_valid
-from update_time.domain.drift import DriftedPin, hash_drifted, report_drift
-from update_time.domain.reference import Reference, ResolvedReference
+from update_time.domain.reference import DriftedPin, Reference, ResolvedReference, hash_drifted
 from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
+from update_time.markers.drift import report_drift
 from update_time.primitives.text import replace_match
 from update_time.references.match import matched_dependency
 from update_time.references.resolve import latest_version
@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     import re
     from collections.abc import Callable
 
-    from update_time.domain.marker import Marker
     from update_time.io.log import Logger
+    from update_time.markers.marker import Marker
     from update_time.primitives.location import Location
 
 

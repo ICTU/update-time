@@ -19,6 +19,11 @@ if TYPE_CHECKING:
 def warn_about_pins(files: Sequence[Path], log: Logger) -> None:
     """Warn about the dependencies the files declare: the stale ones, the yanked ones, and the vulnerable ones.
 
+    An updater that delegates the update never calls a source per dependency, so it makes these passes itself, over
+    the references a resolver reads back from the file — the only party that knows where in each file a reference
+    sits. Each pass takes that resolver as a callback, which is what keeps `domain` free of I/O and lets the pins
+    be read by whichever file format declares them.
+
     Run after the update, so each check reads the `==` pins as the run rewrote them rather than as the file held
     them before. Stating the set here is what keeps a file kind uv updates from being given one check and not the
     others. The files are a sequence rather than an iterable, since each check walks them again. The staleness

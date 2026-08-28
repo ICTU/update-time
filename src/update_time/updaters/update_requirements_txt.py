@@ -8,13 +8,13 @@ not at all: its package is checked for staleness instead.
 from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import DependencyVersion
-from update_time.domain.directive import DIRECTIVES, Reason
 from update_time.domain.file_type import REQUIREMENTS_TXT
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
 from update_time.file_formats import requirements_txt as requirements_txt_format
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
+from update_time.markers.directive import DIRECTIVES, Reason
 from update_time.references.file import update_file
 from update_time.references.match import reference_matches
 from update_time.references.resolve import warn_about_inverted_items
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from update_time.domain.line import Line
-    from update_time.domain.marker import Marker
+    from update_time.markers.marker import Marker
 
 _LOG = get_logger("requirements.txt")
 # Where a requirement line starts: the package name, optionally indented and optionally extra'd, and whatever space
@@ -52,17 +52,17 @@ def _warn_about_items_that_decide_nothing(marker: Marker, reference: Reference) 
 
     An item Update-time cannot read is left to say nothing, and a comparison item running the wrong way round sets
     nothing either. A `yanked` or `vulnerable` scope holds nothing back, since both checks need the version such a
-    requirement does not pin. The caller hands the marker as written, so a scope a bare `ignore` only implies is
-    reported for none of this.
+    requirement does not pin.
     """
-    if marker.invalid_item is not None:
-        _LOG.invalid_bracket_item(reference.dependency, marker.invalid_item, reference.location)
-    warn_about_inverted_items(marker, reference, _LOG)
-    if bound_directive := marker.bound_directive:
+    as_written = marker.as_written
+    if as_written.invalid_item is not None:
+        _LOG.invalid_bracket_item(reference.dependency, as_written.invalid_item, reference.location)
+    warn_about_inverted_items(as_written, reference, _LOG)
+    if bound_directive := as_written.bound_directive:
         _LOG.redundant_directive(reference, bound_directive, Reason.NO_VERSION_TO_UPDATE)
     for directive in DIRECTIVES:
-        if directive.without_a_version is not None and directive.is_part_of(marker):
-            _LOG.redundant_directive(reference, directive.spelling(marker), directive.without_a_version)
+        if directive.without_a_version is not None and as_written.directive_for(directive.scope):
+            _LOG.redundant_directive(reference, as_written.directive_for(directive.scope), directive.without_a_version)
 
 
 def _warn_about_stale_loose_requirements(lines: list[Line]) -> None:
@@ -78,7 +78,7 @@ def _warn_about_stale_loose_requirements(lines: list[Line]) -> None:
         if (dependency := match["dependency"]).endswith(_ARCHIVE_SUFFIXES):
             continue
         reference = Reference(dependency, "", line.location)
-        _warn_about_items_that_decide_nothing(marker.as_written, reference)
+        _warn_about_items_that_decide_nothing(marker, reference)
         if marker.holds_everything_back:
             continue  # A bare `ignore` holds the staleness check back, so PyPI is not asked for a release date.
         if (threshold := marker.stale.value_or(run_wide_threshold)) == NO_STALENESS_CHECK:

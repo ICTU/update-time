@@ -1,4 +1,4 @@
-"""Version bounds expressed by `# update-time:` marker directives."""
+"""The bound on which versions a reference may update to, and the contract every source implements to resolve one."""
 
 import enum
 import re
@@ -8,24 +8,25 @@ from typing import TYPE_CHECKING, cast
 from packaging.specifiers import SpecifierSet
 from packaging.version import InvalidVersion, Version
 
-from update_time.domain.dependency import DependencyName, DependencyVersion, VersionString, is_valid
+from update_time.domain.dependency import (
+    MAIN_VERSION,
+    DependencyName,
+    DependencyVersion,
+    VersionString,
+    is_valid,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-# The contract every updater binds and every source implements: given a dependency, its current version, a version
-# bound (NO_BOUND when the reference carries no bound), and a cooldown in days, return the latest version to use.
-# The bound and the cooldown are the two constraints on the candidates, by version and by age.
+# The contract every updater binds and every source implements. The bound and the cooldown are the two constraints
+# on the candidates, by version and by age.
 type NewVersionGetter = Callable[[DependencyName, VersionString, VersionBound, int], DependencyVersion]
 
 # A version higher than any real one, used to probe whether a bound caps anything above the current version.
 _SENTINEL_VERSION = Version("9" * 18)
 
-# The main version component of a version string that is not a version on its own, such as an image tag: the first
-# run of characters that starts with a digit and stops before a `-` (`python3.12-bookworm-slim` -> `3.12`). This
-# mirrors the tag grammar in `sources/oci.py`, so a bound on an image reference is classified against the same main
-# version it bounds.
-_MAIN_VERSION_COMPONENT = re.compile(r"\d[^-]*")
+_MAIN_VERSION_COMPONENT = re.compile(MAIN_VERSION)
 
 
 def _parse_version(version: VersionString) -> Version | None:
@@ -66,25 +67,17 @@ class UpdateLevel(enum.IntEnum):
 
 @dataclass(frozen=True)
 class VersionBound:
-    """A version bound from an `allow[…]` / `ignore[…]` marker directive: keep or drop matching update candidates.
+    """A constraint on the versions a reference may update to: keep the candidates it matches, or drop them.
 
-    The bound holds exactly one of two parsed forms, recognised and constructed by `parse_bound`. A `specifier`
-    is an absolute bound (`update<3.13`): with `Verb.ALLOW` the bound keeps only candidates whose version
-    satisfies it, with `Verb.IGNORE` it drops them. A `level` is a level-based bound (`minor-update`) that limits
-    how far an update may move relative to whatever version is currently pinned (see `_resolve` for the anchoring).
-    The `item` is the bracket item as its creator spelled it, so a log message never shows a bound the user did not
-    type, while bounds that mean the same thing still compare (and cache) as equal however they are spelled. Frozen
-    and hashable so it threads through the `@cache`d source lookups.
+    The bound holds exactly one of two forms: a `specifier` is absolute (`update<3.13`), a `level` is relative to
+    whatever version is currently pinned (`minor-update`, anchored by `_resolve`). The `item` is the text its
+    creator spelled, compared as no part of the bound, so two spellings of one bound are equal and cache alike.
     """
 
     verb: Verb
     specifier: SpecifierSet | None = None
     level: UpdateLevel | None = None
     item: str = field(compare=False, default="")
-
-    def __str__(self) -> str:
-        """Return the bound as the marker directive that expresses it, e.g. `allow[update<3.13]`."""
-        return f"{self.verb}[{self.item}]"
 
     def keeps(self, version: Version, current_version: VersionString) -> bool:
         """Return whether a candidate version survives the bound for a reference currently at `current_version`.
@@ -98,13 +91,10 @@ class VersionBound:
     def _resolve(self, current_version: VersionString) -> VersionBound:
         """Return a level-based bound anchored to the current version: its concrete, absolute equivalent.
 
-        A level-based bound may not change the current version's leading components: those before the named level
-        for `allow`, those up to and including it for `ignore`. The fixed components are pinned with a
-        `==<prefix>.*` specifier, so `ignore[minor-update]` on `3.12.1` resolves to `==3.12.*` — and to `==3.13.*`
-        once the reference has migrated to `3.13`. A component the current version is missing counts as zero,
-        matching how version comparison pads it, so `ignore[minor-update]` on `22` resolves to `==22.0.*`. A bound
-        that fixes nothing, or whose current version has no parsable version to anchor to, resolves to the keep-all
-        `NO_BOUND`.
+        The bound may not change the components before the named level, and for `ignore` the level's own component
+        too. Those are pinned with a `==<prefix>.*` specifier, so `ignore[minor-update]` on `3.12.1` resolves to
+        `==3.12.*`, and on `3.13.0` to `==3.13.*`. A missing component counts as zero, so `22` resolves to
+        `==22.0.*`. A bound that fixes nothing, or a current version that will not parse, resolves to `NO_BOUND`.
         """
         level = cast("UpdateLevel", self.level)  # `keeps` and `redundancy` only anchor level-based bounds.
         fixed = level + (0 if self.verb is Verb.ALLOW else 1)
@@ -122,15 +112,10 @@ class VersionBound:
     def redundancy(self, current_version: VersionString) -> Redundancy | None:
         """Classify the bound for the current version, or None when it is live (bounds some updates but not all).
 
-        A level-based bound is classified by its anchored equivalent, so `allow[major-update]` comes out as never
-        having an effect and `ignore[patch-update]` as blocking every update. A bound that keeps the current
-        version and every version above it caps nothing (`NO_EFFECT`) — the empty (keep-all) bound trivially so.
-        Whether an empty bound is worth reporting on is the caller's call, since it may be the no-op default of an
-        unmarked reference. A bound that keeps no version above the current one blocks every update (`BLOCKS_ALL`);
-        anything in between is a genuine ceiling or floor that will bite, and is left alone. "Every version above"
-        is tested by sampling each region above the current version (see `_probe_versions`), so a bounded range
-        that sits entirely above the current version — `allow[update>=3.13,<3.15]` on a `3.12` pin — is correctly
-        seen as live rather than blocking.
+        A level-based bound is classified by its anchored equivalent, so `allow[major-update]` never has an effect
+        and `ignore[patch-update]` blocks every update. "Every version above" is sampled per region rather than
+        enumerated (see `_probe_versions`), so `allow[update>=3.13,<3.15]` on a `3.12` pin comes out live rather
+        than blocking.
         """
         if self.level is not None:
             return self._resolve(current_version).redundancy(current_version)
@@ -146,13 +131,10 @@ class VersionBound:
     def _probe_versions(self, current: Version) -> set[Version]:
         """Return versions that sample every region strictly above `current`, so `keeps` can be evaluated across it.
 
-        `keeps` only changes value at the specifier's boundary versions. The probes are therefore each boundary
-        itself, `current` and an arbitrarily large sentinel included, plus two derived from its base release: the
-        base itself and a hair above it, to catch a region opened by a `>` bound or a `.*`/`~=` interval. The extra
-        probes are derived from the base release (epoch and release segments) because appending to that is valid for
-        any boundary, whereas appending to a version with a pre/post/dev segment (`4.15.0.post1`) would not parse.
-        The cost is that regions between sub-release boundaries are sampled at release granularity, which matches
-        the sources: they never select pre-release candidates anyway.
+        `keeps` only changes value at the specifier's boundary versions, so each boundary is a probe. A region
+        opened by a `>` bound or a `.*`/`~=` interval needs two more, taken from the boundary's base release
+        because appending to a pre/post/dev segment (`4.15.0.post1`) would not parse. The cost is that sub-release
+        regions are sampled at release granularity.
         """
         boundaries = {current, _SENTINEL_VERSION}
         for specifier in self.specifier or ():
@@ -167,27 +149,10 @@ class VersionBound:
         return {version for version in probes if version > current}
 
 
-def parse_bound(verb: Verb, item: str) -> VersionBound | None:
-    """Parse a marker item into a version bound, or None when the item is not a bound.
-
-    An `update` bound whose specifier is unparsable raises `InvalidSpecifier` rather than returning None, so a
-    caller can tell a malformed bound (which it should report) from an item that is simply not a bound. Apart from
-    `NO_BOUND` and `_resolve`, this is the only place bounds are built, which is what keeps every bound holding
-    exactly one of its two forms.
-    """
-    if (level := next((level for level in UpdateLevel if item == f"{level}-update"), None)) is not None:
-        return VersionBound(verb, level=level, item=item)
-    if item.startswith("update"):
-        return VersionBound(verb, SpecifierSet(item.removeprefix("update")), item=item)
-    return None
-
-
-# The absence of a version bound, represented as a keep-all bound (an empty specifier matches every version) so that
-# `version_bound` is never None: sources apply it uniformly and it is the default for an unmarked reference.
+# The absence of a bound, as a keep-all bound (an empty specifier matches every version), so `version_bound` is
+# never None. It is the default for an unmarked reference.
 NO_BOUND = VersionBound(Verb.ALLOW, SpecifierSet(""), item="update")
 
-# The bound an `ignore[update]` expresses: the drop-everything case, the complement of `NO_BOUND`. Ignoring an empty
-# specifier drops every version, so a source given this bound finds no candidate and keeps the current version. That
-# tells the source the reference cannot move, so it reports on the version the reference stays on — a yanked pin is
-# still detected — instead of resolving an update that would be discarded afterwards.
+# The bound an `ignore[update]` expresses: the complement of `NO_BOUND`, dropping every version. A source given it
+# finds no candidate and keeps the current version, so a yanked pin on a frozen reference is still detected.
 BLOCK_ALL_UPDATES = VersionBound(Verb.IGNORE, SpecifierSet(""), item="update")

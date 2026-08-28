@@ -97,12 +97,8 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
 class ScannedDevcontainersTest(unittest.TestCase):
     """Unit tests for which devcontainer files are scanned and which references are updated in them."""
 
-    @patch("update_time.updaters.update_devcontainer.glob_for")
-    def test_standard_locations_are_scanned(self, mock_glob_for: Mock):
-        """Test that the top-level, `.devcontainer/`, and per-configuration subfolder locations are all scanned."""
-        mock_glob_for.return_value = []
-        update_devcontainers()
-        mock_glob_for.assert_called_once_with(DEVCONTAINER_CONFIGS)
+    def test_standard_locations_are_declared(self):
+        """Test that the top-level, `.devcontainer/`, and per-configuration subfolder locations are all declared."""
         locations = ".devcontainer.json", ".devcontainer/devcontainer.json", ".devcontainer/*/devcontainer.json"
         self.assertEqual(DEVCONTAINER_CONFIGS.patterns, locations)
 

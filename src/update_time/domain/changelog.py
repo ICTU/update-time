@@ -1,4 +1,4 @@
-"""Changelog parsing."""
+"""The changes a changelog records for one version."""
 
 import re
 import string

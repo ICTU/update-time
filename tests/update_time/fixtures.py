@@ -1,6 +1,6 @@
 """Test fixtures."""
 
-from update_time.domain.marker import Marker, Scope
+from update_time.markers.marker import Marker, Scope
 
 HASH1 = "a" * 64
 HASH2 = "b" * 64
@@ -18,3 +18,6 @@ BARE_IGNORE = Marker(ignored_scopes=Scope.UPDATE | Scope.STALE | Scope.YANKED | 
 
 # A changelog naming version 1.1, so parsing it for 1.1 yields the whole fixture.
 CHANGELOG = "## 1.1\n- Fixed ..."
+
+# A regexp matching an `image: name:version` reference, as a Docker Compose or Helm manifest holds one.
+IMAGE_REGEXP = r"image: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"

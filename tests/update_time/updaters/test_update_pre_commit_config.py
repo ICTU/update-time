@@ -6,7 +6,7 @@ from unittest.mock import ANY, Mock, patch
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, Release
-from update_time.domain.drift import DriftedPin
+from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_pre_commit_config import update_pre_commit_configs

@@ -6,7 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Find a lowercase `dockerfile` when deriving the Node engine version and the `.python-version` entry from a base image, as the Docker image updater already does.
+- Name the directive that opted a reference in when reporting an adopted hash drift or a kept floating tag, instead of every `allow` directive its marker carries.
+- Name the `ignore` directive that held a reference's update or warning back, instead of every `ignore` directive its marker carries.
+- Read an `# update-time: ignore[hash-drift]` marker, which keeps a reference's hash pin in a run passing `--allow-hash-drift`, instead of reporting it as an invalid item and freezing the reference.
 
 ## 0.0.32 - 2026-08-28
 

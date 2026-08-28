@@ -3,8 +3,8 @@
 from unittest.mock import Mock, patch
 
 from update_time.domain.dependency import FloatingPin
-from update_time.domain.directive import Reason
 from update_time.io.log import Logger
+from update_time.markers.directive import Reason
 from update_time.primitives.location import Location
 from update_time.updaters import update_circle_ci_config as circle_ci
 from update_time.updaters.update_circle_ci_config import update_circle_ci_config

@@ -19,6 +19,7 @@ from packaging.version import InvalidVersion, Version
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.dependency import (
     LOWEST_VERSION,
+    MAIN_VERSION,
     DependencyName,
     DependencyVersion,
     FloatingPin,
@@ -89,10 +90,9 @@ _MANIFEST_MEDIA_TYPES = (
 # `python3.12-bookworm-slim` -> prefix `python`, version `3.12`, suffix `bookworm-slim`. Prefix and version both
 # exclude `-`, so the version ends where the suffix begins; numeric-leading tags (`3.12-slim`) get an empty prefix.
 # Tags without a version (e.g. `bookworm-slim`) don't match at all; `version` still validates the match with packaging.
-# The prefix and version classes are possessive (`*+`) so the engine never backtracks across them: neither can give
-# back characters to salvage a failing match (a non-digit before `\d`, or a dash inside the version), which keeps
-# matching linear.
-_TAG = re.compile(r"(?P<prefix>[^\d-]*+)(?P<version>\d[^-]*+)-?(?P<suffix>.*)$")
+# The prefix class is possessive (`*+`) for the same reason `MAIN_VERSION` is: the engine never backtracks across
+# it to salvage a failing match, which keeps matching linear.
+_TAG = re.compile(rf"(?P<prefix>[^\d-]*+)(?P<version>{MAIN_VERSION})-?(?P<suffix>.*)$")
 
 # A dated snapshot the repository labels, such as `bookworm-20260803`: the line the snapshot was built for, and the
 # day it was built. `_TAG` reads no version in one, its prefix admitting no dash, so the label is read as the prefix

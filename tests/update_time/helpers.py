@@ -16,13 +16,13 @@ from unittest.mock import ANY, Mock, call, patch
 from packaging.version import Version
 
 import update_time
-from update_time.domain.bound import NewVersionGetter, Verb, VersionBound, parse_bound
 from update_time.domain.dependency import DependencyVersion, FloatingPin, VersionString
-from update_time.domain.directive import Reason
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import NO_RISK_LEVEL, VULNERABILITY_LEVEL, Vulnerability
 from update_time.io.log import Logger, LogMessage, reset_changelog_suppression
+from update_time.markers.bound import parse_bound
+from update_time.markers.directive import Reason
 from update_time.primitives.location import Location
 
 from tests.helpers import mock_response, patch_environ
@@ -34,7 +34,8 @@ if TYPE_CHECKING:
     from types import ModuleType
     from unittest.mock import _Call, _patch
 
-    from update_time.domain.drift import DriftedPin
+    from update_time.domain.bound import NewVersionGetter, Verb, VersionBound
+    from update_time.domain.reference import DriftedPin
 
 
 def module_level_assignments(tree: ast.Module) -> Iterator[tuple[list[ast.expr], ast.expr | None]]:

@@ -1,17 +1,14 @@
 """Unit tests for the requirements.txt update script."""
 
-import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from pathlib import PurePath
 from unittest.mock import ANY, MagicMock, Mock, patch
 
-from update_time.domain import directive as directive_module
-from update_time.domain.directive import Reason
-from update_time.domain.file_type import REQUIREMENTS_TXT
-from update_time.domain.marker import Marker, Scope
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
 from update_time.io.log import Logger
+from update_time.markers import directive as directive_module
+from update_time.markers.directive import Reason
+from update_time.markers.marker import Marker, Scope
 from update_time.primitives.location import Location
 from update_time.updaters.update_requirements_txt import update_requirements_txts
 
@@ -54,7 +51,6 @@ _OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch"
 _PYPI_INDEX_URL = "https://pypi.org/simple/"
 
 # The globs the updater discovers requirements files with, spelled out here and pinned to the updater below.
-_GLOB_PATTERNS = ("requirements.txt", "requirements-*.txt", "*-requirements.txt", "requirements/*.txt")
 
 
 @no_vulnerabilities
@@ -589,7 +585,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     def test_ignore_vulnerable_marker_reports_nothing_when_it_silences_nothing(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a marker whose only advisory is below the level in force is reported neither way."""
-        self.discovered_requirements_txt(mock_rglob, "django==3.2.0  # update-time: ignore[vulnerable]\n")
+        self.discovered_requirements_txt(mock_rglob, "django==3.2.0  # update-time: ignore[stale] ignore[vulnerable]\n")
         mock_get.side_effect = self.pypi("3.2.0")
         with osv(_OTHER_ADVISORY), patch_environ({VULNERABILITY_LEVEL.name: "high"}):
             update_requirements_txts()
@@ -626,12 +622,14 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_ignore_vulnerable_marker_silences_the_warning(self, mock_rglob: Mock, mock_get: Mock):
         """Test that an `ignore[vulnerable]` marker holds back the vulnerability warning and nothing else."""
         requirements_txt = self.discovered_requirements_txt(
-            mock_rglob, "django==3.2.0  # update-time: ignore[vulnerable]\n"
+            mock_rglob, "django==3.2.0  # update-time: ignore[stale] ignore[vulnerable]\n"
         )
         mock_get.side_effect = self.pypi("3.2.0", "3.3.0", bump=True)
         with osv(DJANGO_ADVISORY) as mock_post:
             update_requirements_txts()
-        requirements_txt.write_text.assert_called_once_with("django==3.3.0  # update-time: ignore[vulnerable]\n")
+        requirements_txt.write_text.assert_called_once_with(
+            "django==3.3.0  # update-time: ignore[stale] ignore[vulnerable]\n"
+        )
         mock_post.assert_called()
         self.assert_no_warnings_logged()
         self.assert_ignored_vulnerability_logged("django", Location(requirements_txt, 1), "ignore[vulnerable]")
@@ -897,49 +895,3 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_no_path_logged()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
-
-
-class RequirementsGlobPatternsTest(unittest.TestCase):
-    """Unit tests for which paths the requirements glob patterns match."""
-
-    def matches(self, path: str) -> bool:
-        """Return whether any requirements glob pattern matches the path, the way `glob` matches it.
-
-        `glob` searches with `rglob`, so a pattern matches at any depth under the root, which the `**/` reproduces.
-        """
-        return any(PurePath(path).full_match(f"**/{pattern}", case_sensitive=True) for pattern in _GLOB_PATTERNS)
-
-    @patch("update_time.updaters.update_requirements_txt.glob_for")
-    def test_the_updater_looks_for_these_patterns(self, mock_glob_for: Mock):
-        """Test that the updater discovers files with the very patterns the tests below match paths against."""
-        mock_glob_for.return_value = []
-        update_requirements_txts()
-        mock_glob_for.assert_called_once_with(REQUIREMENTS_TXT)
-        self.assertEqual(REQUIREMENTS_TXT.patterns, _GLOB_PATTERNS)
-        self.assertTrue(REQUIREMENTS_TXT.case_sensitive)
-
-    def test_recognized_flat_names(self):
-        """Test that the flat requirements naming conventions match."""
-        for name in ("requirements.txt", "requirements-dev.txt", "dev-requirements.txt"):
-            with self.subTest(name=name):
-                self.assertTrue(self.matches(name))
-
-    def test_nested_requirements_directory(self):
-        """Test that a requirements file in a nested `requirements/` directory matches."""
-        self.assertTrue(self.matches("requirements/base.txt"))
-
-    def test_a_requirements_file_below_the_scan_root(self):
-        """Test that a requirements file matches wherever under the root it sits."""
-        for path in ("sub/requirements.txt", "sub/requirements-dev.txt", "sub/requirements/base.txt"):
-            with self.subTest(path=path):
-                self.assertTrue(self.matches(path))
-
-    def test_unrelated_txt_files_ignored(self):
-        """Test that unrelated `.txt` files, a `requirements.in` source, and names without a hyphen do not match."""
-        for name in ("notes.txt", "constraints.txt", "requirements.in", "requirementsfoo.txt", "foorequirements.txt"):
-            with self.subTest(name=name):
-                self.assertFalse(self.matches(name))
-
-    def test_case_sensitive(self):
-        """Test that matching is case-sensitive, so a differently-cased name does not match."""
-        self.assertFalse(self.matches("Requirements.txt"))

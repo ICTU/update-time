@@ -19,8 +19,8 @@ if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
     from update_time.domain.file_type import FileType
     from update_time.domain.line import Line
-    from update_time.domain.marker import ReferenceMarker
     from update_time.io.log import Logger
+    from update_time.markers.marker import ReferenceMarker
 
 
 def rewrite_file(path: Path, transform: Callable[[list[Line]], list[str]], logger: Logger) -> list[Line]:

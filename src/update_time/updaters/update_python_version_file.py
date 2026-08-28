@@ -6,11 +6,11 @@ The version comes from the Python base image in a Dockerfile, or from Docker Hub
 import re
 from typing import TYPE_CHECKING
 
-from update_time.domain.base_image import image_version_getter
-from update_time.domain.file_type import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, PYTHON_VERSION_FILE
-from update_time.io.filesystem import first_line_match, glob, glob_for
+from update_time.domain.file_type import DOCKERFILE_NAME, DOCKERFILES, PYTHON_VERSION_FILE
+from update_time.io.filesystem import first_line_match, glob_for
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
+from update_time.sources.base_image import advancing_image_version_getter
 from update_time.sources.oci import get_latest_tag
 
 if TYPE_CHECKING:
@@ -47,7 +47,7 @@ def _find_python_base_image_version(version_file: Path) -> str:
     version, so when none is found `''` is returned and the caller updates the entry from Docker Hub instead.
     """
     local_dockerfile = version_file.parent / DOCKERFILE_NAME
-    for dockerfile in (local_dockerfile, *glob(*DOCKERFILE_GLOB_PATTERNS)):
+    for dockerfile in (local_dockerfile, *glob_for(DOCKERFILES)):
         if version := first_line_match(dockerfile, _PYTHON_IMAGE_RE, "version"):
             return version
     return ""
@@ -57,8 +57,7 @@ def update_python_version_files() -> None:
     """Update the CPython version in all `.python-version` files found recursively from the start directory."""
     for version_file in glob_for(PYTHON_VERSION_FILE):
         image_version = _find_python_base_image_version(version_file)
-        # An entry ahead of the base image is deliberate, so it is never dragged back to the image's version.
-        getter = image_version_getter(image_version, allow_downgrade=False) if image_version else get_latest_tag
+        getter = advancing_image_version_getter(image_version) if image_version else get_latest_tag
         update_file(version_file, _VERSION_RE, get_new_version=getter, logger=_LOG, dependency=_PYTHON)
 
 

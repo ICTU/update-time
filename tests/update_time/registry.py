@@ -14,9 +14,10 @@ from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
 from update_time.domain.dependency import DependencyVersion, FloatingPin
-from update_time.domain.directive import Reason
-from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
-from update_time.domain.floating import ALLOW_FLOATING_PIN
+from update_time.domain.reference import DriftedPin
+from update_time.markers.directive import Reason
+from update_time.markers.drift import ALLOW_HASH_DRIFT
+from update_time.markers.floating import ALLOW_FLOATING_PIN
 from update_time.primitives.location import Location
 from update_time.references import resolve, rewrite
 from update_time.sources import oci

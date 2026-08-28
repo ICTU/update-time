@@ -13,9 +13,8 @@ import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from update_time.domain.drift import hash_drifted
 from update_time.domain.file_type import SPHINX_CONFIG
-from update_time.domain.reference import ResolvedReference
+from update_time.domain.reference import ResolvedReference, hash_drifted
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.primitives.text import rewrite_string
@@ -29,7 +28,7 @@ from update_time.sources.osv import Ecosystem
 
 if TYPE_CHECKING:
     from update_time.domain.line import Line
-    from update_time.domain.marker import Marker
+    from update_time.markers.marker import Marker
     from update_time.primitives.location import Location
 
 _LOG = get_logger("jsdelivr")

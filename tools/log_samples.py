@@ -15,11 +15,11 @@ from pathlib import Path
 
 from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
 from update_time.domain.dependency import DependencyVersion, FloatingPin, Release, Yank
-from update_time.domain.directive import Reason
-from update_time.domain.drift import DriftedPin
-from update_time.domain.marker import Marker, Scope, Threshold
+from update_time.domain.reference import DriftedPin
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.log import DEPENDENCY_DELIMITER, LOCATION_DELIMITER, Logger
+from update_time.markers.directive import Reason
+from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.primitives.location import Location
 
 _ELIDED = "…"

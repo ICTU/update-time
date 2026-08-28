@@ -8,15 +8,15 @@ and to the reporting pass for one being checked.
 import re
 from typing import TYPE_CHECKING
 
-from update_time.domain.marker import parse_marker
 from update_time.domain.reference import Reference
+from update_time.markers.marker import parse_marker
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from update_time.domain.line import Line
-    from update_time.domain.marker import Marker
     from update_time.io.log import Logger
+    from update_time.markers.marker import Marker
     from update_time.primitives.location import Location
 
 

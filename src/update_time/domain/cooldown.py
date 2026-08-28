@@ -1,4 +1,4 @@
-"""Dependency update cooldown helpers."""
+"""When a release is still too fresh to adopt."""
 
 from datetime import UTC, datetime, timedelta
 

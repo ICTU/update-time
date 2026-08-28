@@ -11,9 +11,10 @@ from rich.highlighter import ReprHighlighter
 from rich.logging import RichHandler
 from rich.theme import Theme
 
-from update_time.domain.bound import NO_BOUND, Verb
-from update_time.domain.marker import Scope
+from update_time.domain.bound import NO_BOUND
 from update_time.domain.staleness import stale_release
+from update_time.markers.bound import spell
+from update_time.markers.marker import Scope
 from update_time.primitives.digest import SHA256_DIGEST
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
@@ -26,11 +27,10 @@ if TYPE_CHECKING:
     from rich.text import Text
 
     from update_time.domain.dependency import DependencyVersion, FloatingPin, VersionString
-    from update_time.domain.directive import Reason
-    from update_time.domain.drift import DriftedPin
-    from update_time.domain.marker import Marker
-    from update_time.domain.reference import Reference, ResolvedReference
+    from update_time.domain.reference import DriftedPin, Reference, ResolvedReference
     from update_time.domain.vulnerability import Vulnerability
+    from update_time.markers.directive import Reason
+    from update_time.markers.marker import Marker
     from update_time.primitives.command import Command
 
 
@@ -204,12 +204,12 @@ class Logger:
         """Return the fields every message about a reference carries, plus the ones the message reporting it adds."""
         return {"dependency": reference.dependency, "location": reference.location, **extra}
 
-    def _log_ignored(self, message: LogMessage, dependency: str, marker: Marker, location: Location) -> None:
+    def _log_ignored(self, message: LogMessage, dependency: str, directive: str, location: Location) -> None:
         """Log that a marker held a reference's update or one of its warnings back, at the message's own level.
 
-        Only the `ignore` directive is named, because it is the one that held the update or the warning back.
+        The caller names the directive that held this back, so a directive written beside it is left out.
         """
-        self._log(message, dependency=dependency, location=location, directive=marker.raw_directives(Verb.IGNORE))
+        self._log(message, dependency=dependency, location=location, directive=directive)
 
     def _log_file(self, message: LogMessage, path: Path, **fields: object) -> None:
         """Log a message about a file the scan found, at the message's own level.
@@ -418,7 +418,8 @@ class Logger:
     def _ignored_staleness(self, resolved: ResolvedReference, marker: Marker, threshold: int) -> None:
         """Log that the marker held back a staleness warning, so a marker that suppresses nothing stays silent."""
         if stale_release(resolved.release, threshold) is not None:
-            self._log_ignored(self._MESSAGE_IGNORED_STALENESS, resolved.dependency, marker, resolved.location)
+            directive = marker.hold_back_directive(Scope.STALE)
+            self._log_ignored(self._MESSAGE_IGNORED_STALENESS, resolved.dependency, directive, resolved.location)
 
     def report_staleness(self, resolved: ResolvedReference, marker: Marker, threshold: int) -> None:
         """Report the reference's staleness, as a warning or as the hold-back of the marker that silences it.
@@ -457,7 +458,8 @@ class Logger:
         Guards on the same condition as `warn_if_yanked`, so a marker that suppresses nothing stays silent.
         """
         if resolved.release.yank.yanked:
-            self._log_ignored(self._MESSAGE_IGNORED_YANK, resolved.dependency, marker, resolved.location)
+            directive = marker.hold_back_directive(Scope.YANKED)
+            self._log_ignored(self._MESSAGE_IGNORED_YANK, resolved.dependency, directive, resolved.location)
 
     def report_yank(self, resolved: ResolvedReference, marker: Marker) -> None:
         """Report the version's yank, as a warning or as the hold-back of the marker that silences it.
@@ -511,7 +513,8 @@ class Logger:
         silent, as the staleness and yank hold-backs do. This is what the reference is looked up for although its
         warning is suppressed: without the lookup there is nothing to say the marker held anything back.
         """
-        self._log_ignored(self._MESSAGE_IGNORED_VULNERABILITY, reference.dependency, marker, reference.location)
+        directive = marker.hold_back_directive(Scope.VULNERABLE)
+        self._log_ignored(self._MESSAGE_IGNORED_VULNERABILITY, reference.dependency, directive, reference.location)
 
     _MESSAGE_GLOBALLY_IGNORED_VULNERABILITY = LogMessage(
         DEBUG,
@@ -678,7 +681,7 @@ class Logger:
             return
         self._log(
             self._MESSAGE_REDUNDANT_BOUND,
-            **self._reference_fields(reference, bound=bound, version=current_version, redundancy=redundancy),
+            **self._reference_fields(reference, bound=spell(bound), version=current_version, redundancy=redundancy),
         )
 
     # --- File scanning and selection ---
@@ -710,8 +713,13 @@ class Logger:
     )
 
     def ignored(self, dependency: str, marker: Marker, location: Location) -> None:
-        """Log that a reference's update was held back by the marker's `ignore` directive, echoing it as written."""
-        self._log_ignored(self._MESSAGE_IGNORED, dependency, marker, location)
+        """Log that a reference's update was held back, naming the `ignore` directive that held it back.
+
+        A bare `ignore` names no scope, so it is echoed as the user wrote it rather than spelled out as
+        `ignore[update]`, a directive they never typed.
+        """
+        directive = marker.hold_back_directive(Scope.UPDATE)
+        self._log_ignored(self._MESSAGE_IGNORED, dependency, directive, location)
 
     _MESSAGE_EXCLUDING_PATH = LogMessage(DEBUG, "Excluding %(path)s from the scan (--exclude-path)")
 

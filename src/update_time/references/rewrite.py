@@ -13,10 +13,11 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import FloatingPin
-from update_time.domain.drift import DriftedPin, hash_drifted, report_drift
-from update_time.domain.floating import floating_pin_cause
 from update_time.domain.line import located_lines
-from update_time.domain.marker import Scope, parse_marker
+from update_time.domain.reference import DriftedPin, hash_drifted
+from update_time.markers.drift import report_drift
+from update_time.markers.floating import floating_pin_cause
+from update_time.markers.marker import Scope, parse_marker
 from update_time.primitives.text import rewrite_string
 from update_time.references.match import matched_dependency, matched_reference
 from update_time.references.resolve import latest_version
@@ -27,9 +28,9 @@ if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
     from update_time.domain.dependency import DependencyVersion
     from update_time.domain.line import Line
-    from update_time.domain.marker import Marker, ReferenceMarker
     from update_time.domain.reference import Reference
     from update_time.io.log import Logger
+    from update_time.markers.marker import Marker, ReferenceMarker
     from update_time.primitives.location import Location
 
 
