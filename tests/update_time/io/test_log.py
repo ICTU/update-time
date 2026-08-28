@@ -14,9 +14,7 @@ from rich.text import Text
 
 from update_time.domain.bound import Redundancy, Verb
 from update_time.domain.dependency import DependencyVersion, FloatingPin, Release, Yank
-from update_time.domain.directive import Reason
-from update_time.domain.drift import DriftedPin
-from update_time.domain.marker import Marker, Scope
+from update_time.domain.reference import DriftedPin
 from update_time.io import log as log_module
 from update_time.io.log import (
     DEPENDENCY_DELIMITER,
@@ -27,10 +25,13 @@ from update_time.io.log import (
     get_logger,
     reset_changelog_suppression,
 )
+from update_time.markers import marker as marker_module
+from update_time.markers.directive import Reason
+from update_time.markers.marker import Marker, Scope
 from update_time.primitives.location import Location
 
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
+from tests.update_time.fixtures import BARE_IGNORE, DIGEST, DIGEST1, DIGEST2
 from tests.update_time.helpers import bound, reference, resolved_reference
 
 
@@ -69,8 +70,8 @@ class LogMessageTests(TestCase):
             for name, value in vars(Logger).items()
             if isinstance(value, LogMessage | str) and not name.startswith("__")
         ]
-        # The domain owns the fragments naming one of its own facts, so they are read from there rather than off the
-        # logger: a `Reason` a warning reports, and the `Redundancy` a bound is reported with.
+        # Two enums carry message fragments of their own, so the fragments are read off the enums rather than
+        # off the logger: the `Reason` a warning reports, and the `Redundancy` a bound is reported with.
         messages += [str(member) for enum in (Reason, Redundancy) for member in enum]
         # Guard against the introspection silently covering the fragments alone, as it did when the messages stopped
         # being plain strings:
@@ -300,7 +301,13 @@ class LoggerTests(TestCase):
         mock_log.assert_called_once_with(Logger._MESSAGE_STALE.level, Logger._MESSAGE_STALE, ANY)
         mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
         Logger("stale").report_staleness(
-            resolved, Marker(ignored_scopes=Scope.STALE, raw="ignore[stale] allow[hash-drift]"), 90
+            resolved,
+            Marker(
+                ignored_scopes=Scope.UPDATE | Scope.STALE,
+                written_scopes=Scope.UPDATE | Scope.STALE,
+                raw="ignore[update] ignore[stale] allow[hash-drift]",
+            ),
+            90,
         )
         self.assert_message(
             mock_log,
@@ -465,7 +472,7 @@ class LoggerTests(TestCase):
         raw = "ignore[update] ignore[stale] allow[update<3.13, hash-drift]"
         marker = Marker(
             ignored_scopes=Scope.STALE,
-            allow_drift=True,
+            allowed_scopes=Scope.HASH_DRIFT,
             version_bound=bound(Verb.ALLOW, "update<3.13"),
             raw=raw,
         )
@@ -483,16 +490,37 @@ class LoggerTests(TestCase):
         mock_log.assert_not_called()
 
     def test_ignored(self, mock_log: Mock):
-        """Test that a held-back reference logs its `ignore` directive verbatim, exactly as the user spelled it."""
-        # `ignored` names the `ignore` directives from the verbatim `raw` text, each scope as the user spelled it.
-        marker = Marker(ignored_scopes=Scope.UPDATE, raw="ignore[update] ignore[stale] allow[hash-drift]")
+        """Test that a held-back reference names the directive that held it back, not the ones written beside it."""
+        marker = Marker(
+            ignored_scopes=Scope.UPDATE,
+            written_scopes=Scope.UPDATE | Scope.STALE,
+            raw="ignore[update] ignore[stale] allow[hash-drift]",
+        )
         location = _create_location("Dockerfile", 6)
         Logger("marker").ignored("python", marker, location)
         self.assert_message(
             mock_log,
             Logger._MESSAGE_IGNORED,
-            f"Ignoring updates for {dependency('python')} in {_at('Dockerfile:6')} "
-            "(update-time: ignore[update] ignore[stale])",
+            f"Ignoring updates for {dependency('python')} in {_at('Dockerfile:6')} (update-time: ignore[update])",
+        )
+
+    @kills(
+        Mutation(
+            marker_module,
+            "        return self.as_written.directive_for(scope) or self.raw_directives(Verb.IGNORE)",
+            "        return self.as_written.directive_for(scope)",
+            "a bare `ignore` names nothing at all, instead of echoing itself",
+        )
+    )
+    def test_ignored_by_a_bare_marker(self, mock_log: Mock):
+        """Test that a bare `ignore` names itself, rather than a scoped directive the user never wrote."""
+        marker = Marker(ignored_scopes=BARE_IGNORE.ignored_scopes, raw="ignore")
+        location = _create_location("Dockerfile", 6)
+        Logger("marker").ignored("python", marker, location)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_IGNORED,
+            f"Ignoring updates for {dependency('python')} in {_at('Dockerfile:6')} (update-time: ignore)",
         )
 
     def test_report_staleness_does_nothing_when_not_stale(self, mock_log: Mock):
@@ -514,7 +542,12 @@ class LoggerTests(TestCase):
         mock_log.assert_called_once_with(Logger._MESSAGE_YANKED.level, Logger._MESSAGE_YANKED, ANY)
         mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
         Logger("yanked").report_yank(
-            resolved, Marker(ignored_scopes=Scope.YANKED, raw="ignore[yanked] allow[hash-drift]")
+            resolved,
+            Marker(
+                ignored_scopes=Scope.UPDATE | Scope.YANKED,
+                written_scopes=Scope.UPDATE | Scope.YANKED,
+                raw="ignore[update] ignore[yanked] allow[hash-drift]",
+            ),
         )
         self.assert_message(
             mock_log,

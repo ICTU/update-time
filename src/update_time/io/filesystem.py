@@ -20,15 +20,15 @@ EXCLUDE_PATHS: EnvVar[list[Path]] = EnvVar(
     serialize=lambda paths: ",".join(str(path) for path in paths),
 )
 
-# Directories whose contents `glob` always skips, on top of hidden (dot-prefixed) folders and the directories passed
-# to --exclude-path. The --exclude-path help in `io.cli` lists them, so it stays in step with this tuple.
+# Directories whose contents `glob_for` always skips, on top of hidden (dot-prefixed) folders and the directories
+# passed to --exclude-path. The --exclude-path help in `io.cli` lists them, so it stays in step with this tuple.
 ALWAYS_IGNORED_DIRECTORIES = ("build", "node_modules", "__pycache__")
 
 
 def _named_hidden_parts(glob_pattern: str) -> set[str]:
     """Return the hidden (dot-prefixed) path segments a glob pattern names, e.g. `.devcontainer`.
 
-    Hidden folders and files are skipped by default (see `glob`), but a pattern that names one (like
+    Hidden folders and files are skipped by default (see `glob_for`), but a pattern that names one (like
     `.devcontainer/devcontainer.json` or `.github/workflows/*.yml`) is asking for it, so it should be visited.
     A wildcard segment such as `.*` needs no special handling: these are compared to real path segments by exact
     equality, which a wildcard never satisfies, so including it grants no exception anyway.
@@ -61,28 +61,22 @@ def inside_git_repository(start: Path | None = None) -> bool:
     return any((parent / ".git").exists() for parent in (directory, *directory.parents))
 
 
-def glob(
-    *glob_patterns: str,
-    start: Path | None = None,
-    case_sensitive: bool | None = None,
-    recursive: bool = True,
-) -> Iterator[Path]:
-    """Return an iterator over all paths matching any of the given glob patterns.
+def glob_for(file_type: FileType) -> Iterator[Path]:
+    """Return an iterator over the paths of this kind of file, walked where and how its declaration says.
 
     Hidden folders and files (dot-prefixed, e.g. `.git`, `.venv`) and build-output folders are skipped, so a broad
     pattern like `*.yml` doesn't reach into them. A hidden folder or file named literally in the pattern itself is
-    the exception: `glob(".devcontainer/devcontainer.json")` visits `.devcontainer`, so callers can target hidden
-    locations directly instead of working around the default skip. Directories passed to `--exclude-path` (see
-    `EXCLUDE_PATHS`) are skipped on top of these built-in ignores. A walk that is not recursive searches the start
-    directory alone, which is what a file its format keeps in one place needs.
+    the exception: a `.devcontainer/devcontainer.json` pattern visits `.devcontainer`, so a file type can target a
+    hidden location directly instead of working around the default skip. Directories passed to `--exclude-path`
+    (see `EXCLUDE_PATHS`) are skipped on top of these built-in ignores. A walk that is not recursive searches the
+    start directory alone, which is what a file its format keeps in one place needs.
     """
-    if start is None:
-        start = Path.cwd()
+    start = Path.cwd() / file_type.start
     excluded = EXCLUDE_PATHS.get()
-    for glob_pattern in glob_patterns:
+    for glob_pattern in file_type.patterns:
         named_hidden = _named_hidden_parts(glob_pattern)
-        walk = start.rglob if recursive else start.glob
-        for path in walk(glob_pattern, case_sensitive=case_sensitive):
+        walk = start.rglob if file_type.recursive else start.glob
+        for path in walk(glob_pattern, case_sensitive=file_type.case_sensitive):
             relative_path = path.relative_to(start)
             if any(part.startswith(".") and part not in named_hidden for part in relative_path.parts):
                 continue
@@ -91,13 +85,3 @@ def glob(
             if any(relative_path.is_relative_to(excluded_dir) for excluded_dir in excluded):
                 continue
             yield path
-
-
-def glob_for(file_type: FileType) -> Iterator[Path]:
-    """Return an iterator over the paths of this kind of file, walked where and how its declaration says."""
-    return glob(
-        *file_type.patterns,
-        start=Path.cwd() / file_type.start,
-        case_sensitive=file_type.case_sensitive,
-        recursive=file_type.recursive,
-    )

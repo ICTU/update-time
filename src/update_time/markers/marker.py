@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING
 
 from packaging.specifiers import InvalidSpecifier
 
-from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb, parse_bound
+from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
 from update_time.domain.vulnerability import RISK_LEVELS
+from update_time.markers.bound import directive as _directive
+from update_time.markers.bound import parse_bound, spell
 
 if TYPE_CHECKING:
     from update_time.domain.bound import VersionBound
@@ -47,6 +49,9 @@ _NO_SCOPE = Scope(0)
 # The four things an `ignore` marker can switch off: updates, and the staleness, yank, and vulnerability warnings.
 _IGNORABLE_SCOPES = Scope.UPDATE | Scope.STALE | Scope.YANKED | Scope.VULNERABLE
 
+# The scopes that are off until an `allow` directive switches them on, whose `ignore` therefore spells the default.
+_OPTIONAL_SCOPES = Scope.HASH_DRIFT | Scope.FLOATING_PIN
+
 # The scopes whose checks need the source queried, so a marker holding all three back leaves nothing to ask it for.
 _SOURCE_CHECK_SCOPES = Scope.UPDATE | Scope.STALE | Scope.YANKED
 
@@ -73,8 +78,7 @@ class Threshold[T]:
     def value_or(self, setting: T) -> T:
         """Return what the reference's own item set, or the run's setting when the reference sets none.
 
-        A marker wins over the command line, so this is the one place that precedence is decided, whichever check
-        asks.
+        A marker wins over the command line, whichever check asks.
         """
         return setting if self.value is None else self.value
 
@@ -101,9 +105,9 @@ class Marker:
     `ignore[stale]`, `ignore[yanked]`, and `ignore[vulnerable]` each hold back just one.
     `ignored_advisories` are the advisories an `ignore[vulnerable=ID]` directive holds the warning back for, each as
     the identifier the user spelled it by; empty when the reference names none.
-    `allow_drift` is whether an `allow[hash-drift]` directive opts the reference into adopting a drifted hash pin.
-    `allow_floating_pin` is whether an `allow[floating-pin]` directive keeps the reference's pin floating, so that a
-    tag naming no version is left as it is rather than pinned to the version it serves.
+    `allowed_scopes` are the scopes an `allow` directive opts the reference into, each off by default:
+    `allow[hash-drift]` adopts a drifted hash pin, and `allow[floating-pin]` keeps a tag naming no version as it is
+    rather than pinning it to the version it serves.
     `version_bound` is the version bound from an `allow`/`ignore` directive (see `VersionBound`), defaulting to
     `NO_BOUND` (keep every candidate) when there is none.
     `stale`, `cooldown`, and `vulnerable` are what the reference's comparison items set (see `Threshold`).
@@ -121,8 +125,7 @@ class Marker:
 
     ignored_scopes: Scope = _NO_SCOPE
     ignored_advisories: frozenset[str] = frozenset()
-    allow_drift: bool = False
-    allow_floating_pin: bool = False
+    allowed_scopes: Scope = _NO_SCOPE
     version_bound: VersionBound = NO_BOUND
     stale: Threshold[int] = Threshold()
     cooldown: Threshold[int] = Threshold()
@@ -160,20 +163,20 @@ class Marker:
         """Return whether the marker holds back the update, the staleness warning, and the yank warning alike."""
         return _SOURCE_CHECK_SCOPES in self.ignored_scopes
 
-    @property
-    def sets_cooldown(self) -> bool:
-        """Return whether the marker sets a cooldown for the reference."""
-        return self.cooldown.value is not None
+    def directive_for(self, scope: Scope) -> str:
+        """Return the directive the marker carries for this scope, as the language spells it, or nothing for none.
 
-    @property
-    def decides_staleness(self) -> bool:
-        """Return whether the marker decides the staleness check for the reference, in whichever of its forms.
-
-        The one place the `stale` scope's forms are enumerated: silencing the warning altogether, and setting the
-        threshold to warn from, which asks for more warnings as often as fewer. A comparison running the wrong way
-        sets no threshold, so it decides nothing and is reported as incorrect instead.
+        A scope taking more than one form is asked for the forms it takes: `vulnerable` names every one the
+        reference wrote, while `stale` and `cooldown` name the bare `ignore` ahead of the threshold, which wins.
+        It is empty exactly when the marker decides nothing for the scope, so a caller reads it as both.
         """
-        return self.ignores(Scope.STALE) or self.stale.value is not None
+        if scope is Scope.VULNERABLE:
+            return self.vulnerable_directives
+        if scope is Scope.STALE:
+            return self.stale_directive
+        if scope is Scope.COOLDOWN:
+            return self.cooldown_directive
+        return self.scope_directive(scope)
 
     @property
     def frozen(self) -> Marker:
@@ -186,19 +189,9 @@ class Marker:
         The bare form of a scope, which neither a threshold nor a bound can express: `ignore[stale]` silences the
         staleness warning at every age where `ignore[stale<90]` sets what it warns at, and `ignore[update]` admits
         no version where a bound narrows which ones it may take. A check whose forms fold into one decision reads
-        this alongside them (see `decides_staleness`).
+        this alongside them (see `directive_for`).
         """
         return scope in self.ignored_scopes
-
-    @property
-    def suppresses_vulnerabilities(self) -> bool:
-        """Return whether the marker holds the vulnerability warning back, in whichever of its forms.
-
-        The one place the `vulnerable` scope's forms are enumerated: holding every warning back, holding back the
-        one about a named advisory, and setting the level to warn from. A comparison running the wrong way sets no
-        level, so it suppresses nothing and is reported as incorrect instead.
-        """
-        return self.ignores(Scope.VULNERABLE) or bool(self.ignored_advisories) or self.vulnerable.value is not None
 
     @property
     def cooldown_directive(self) -> str:
@@ -217,8 +210,8 @@ class Marker:
         holds every update back whatever the bound would admit.
         """
         if self.ignores(Scope.UPDATE):
-            return str(BLOCK_ALL_UPDATES)
-        return "" if self.version_bound == NO_BOUND else str(self.version_bound)
+            return spell(BLOCK_ALL_UPDATES)
+        return "" if self.version_bound == NO_BOUND else spell(self.version_bound)
 
     def scope_directive(self, scope: Scope) -> str:
         """Return the directive holding the scope back, as the language spells it, or nothing when it holds it not.
@@ -229,14 +222,17 @@ class Marker:
         """
         return _directive(Verb.IGNORE, str(scope)) if self.ignores(scope) else ""
 
-    @property
-    def floating_pin_directive(self) -> str:
-        """Return the directive keeping the reference's pin floating, or nothing when the marker keeps none.
+    def allows(self, scope: Scope) -> bool:
+        """Return whether an `allow` directive opts the reference into the scope, which is off without one."""
+        return scope in self.allowed_scopes
 
-        Only `allow` keeps a pin floating, so the directive is spelled out rather than read back from the text the
-        user wrote. Spelling it out leaves out an `allow` directive beside it that does hold something back.
+    def allow_directive(self, scope: Scope) -> str:
+        """Return the directive opting the reference into the scope, or nothing when the marker opts into it not.
+
+        Spelled out rather than read back from the text the user wrote, for the reason `scope_directive` gives:
+        spelling it out leaves out an `allow` directive beside it that opts into something else.
         """
-        return _directive(Verb.ALLOW, str(Scope.FLOATING_PIN)) if self.allow_floating_pin else ""
+        return _directive(Verb.ALLOW, str(scope)) if self.allows(scope) else ""
 
     @property
     def stale_directive(self) -> str:
@@ -270,6 +266,15 @@ class Marker:
         forms = (self.scope_directive(Scope.VULNERABLE), self.advisory_directives, self.vulnerable.directive)
         return " ".join(form for form in forms if form)
 
+    def hold_back_directive(self, scope: Scope) -> str:
+        """Return the directive holding this scope back, as the user wrote it, or the bare `ignore` naming no scope.
+
+        Reading it off `as_written` leaves out a scope the user never typed, which a bare `ignore` holds back
+        without naming, so such a marker is echoed rather than spelled out as a directive nobody wrote. The
+        `vulnerable` scope is asked for every form it takes, since any of the three can be the one holding back.
+        """
+        return self.as_written.directive_for(scope) or self.raw_directives(Verb.IGNORE)
+
     def raw_directives(self, verb: Verb) -> str:
         """Return just the directives of one verb, as the user spelled them."""
         directives = (match for match in _DIRECTIVE.finditer(self.raw) if match.group("verb") == verb)
@@ -290,8 +295,7 @@ class Marker:
         return Marker(
             ignored_scopes=self.ignored_scopes | other.ignored_scopes,
             ignored_advisories=self.ignored_advisories | other.ignored_advisories,
-            allow_drift=self.allow_drift or other.allow_drift,
-            allow_floating_pin=self.allow_floating_pin or other.allow_floating_pin,
+            allowed_scopes=self.allowed_scopes | other.allowed_scopes,
             version_bound=other.version_bound if self.version_bound == NO_BOUND else self.version_bound,
             stale=self.stale.merge(other.stale),
             cooldown=self.cooldown.merge(other.cooldown),
@@ -320,15 +324,19 @@ _BARE_IGNORE = Marker(ignored_scopes=_IGNORABLE_SCOPES)
 
 # The keyword bracket items each verb recognises, and the marker each expresses. An `ignore` takes a bare item per
 # scope, which holds that scope back and records that the reader named it, so the scopes decide what is recognised.
-_KEYWORD_ITEMS = {
-    (Verb.IGNORE, str(scope)): Marker(ignored_scopes=scope, written_scopes=scope) for scope in _IGNORABLE_SCOPES
-} | {
-    (Verb.ALLOW, str(Scope.UPDATE)): Marker(),  # bare `allow[update]`: the default no-op
-    (Verb.ALLOW, str(Scope.HASH_DRIFT)): Marker(allow_drift=True),
-    (Verb.ALLOW, str(Scope.FLOATING_PIN)): Marker(allow_floating_pin=True),
-    # `ignore[floating-pin]`: the default spelled out, recorded as written so it wins over --allow-floating-pin.
-    (Verb.IGNORE, str(Scope.FLOATING_PIN)): Marker(written_scopes=Scope.FLOATING_PIN),
-}
+_KEYWORD_ITEMS = (
+    {(Verb.IGNORE, str(scope)): Marker(ignored_scopes=scope, written_scopes=scope) for scope in _IGNORABLE_SCOPES}
+    | {
+        (Verb.ALLOW, str(Scope.UPDATE)): Marker(),  # bare `allow[update]`: the default no-op
+    }
+    | {(Verb.ALLOW, str(scope)): Marker(allowed_scopes=scope) for scope in _OPTIONAL_SCOPES}
+    | {
+        # The `ignore` of an optional scope spells the default out, recorded as written so it wins over the flag
+        # that opts every reference in.
+        (Verb.IGNORE, str(scope)): Marker(written_scopes=scope)
+        for scope in _OPTIONAL_SCOPES
+    }
+)
 
 # The comment leads that can carry a marker: `#` in most formats we update, `//` in devcontainer.json (which is
 # JSONC).
@@ -457,11 +465,11 @@ def _parse_bracket_item(verb: Verb, item: str) -> Marker | None:
         return keyword_marker
     if (advisory_marker := _parse_advisory_item(verb, item)) is not None:
         return advisory_marker
+    if (risk_level_marker := _parse_risk_level_item(verb, item)) is not None:
+        return risk_level_marker
+    if (day_count_marker := _parse_day_count_item(verb, item)) is not None:
+        return day_count_marker
     try:
-        if (risk_level_marker := _parse_risk_level_item(verb, item)) is not None:
-            return risk_level_marker
-        if (day_count_marker := _parse_day_count_item(verb, item)) is not None:
-            return day_count_marker
         version_bound = parse_bound(verb, item)
     except InvalidSpecifier:
         # A bound's `update` names the item rather than the version it bounds, so the item reports its specifier.
@@ -480,11 +488,6 @@ def _parse_advisory_item(verb: Verb, item: str) -> Marker | None:
     if match is None or verb is not Verb.IGNORE:
         return None
     return Marker(ignored_advisories=frozenset({match.group("advisory")}))
-
-
-def _directive(verb: Verb, item: str) -> str:
-    """Return a directive as the language spells it: a verb and the bracketed item that sets a scope."""
-    return f"{verb}[{item}]"
 
 
 def _threshold[T](verb: Verb, match: re.Match[str], value: T) -> Threshold[T]:

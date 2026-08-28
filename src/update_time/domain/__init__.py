@@ -1,1 +1,1 @@
-"""The domain model: the core concepts the tool reasons about, independent of external sources and I/O."""
+"""The concepts the tool reasons about, and what a source must be able to answer about them."""

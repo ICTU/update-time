@@ -20,6 +20,12 @@ type DependencyName = str
 type VersionString = str
 
 
+# The main version of a string that is not a version on its own, such as an image tag or a tag-like pin:
+# the run starting at a digit and stopping before a `-`, so `python3.12-bookworm-slim` yields `3.12`. Possessive
+# (`*+`) so the engine never backtracks into it, giving back characters to salvage a failing match.
+MAIN_VERSION = r"\d[^-]*+"
+
+
 def is_valid(version: VersionString) -> bool:
     """Return whether `packaging` parses the version as PEP 440.
 
@@ -117,13 +123,9 @@ def first_eligible[Candidate: SupportsRichComparison](
 ) -> DependencyVersion:
     """Return the highest candidate that resolves to an eligible version, or the current version unchanged.
 
-    Every source (PyPI, OCI, jsDelivr, GitHub) picks a new version the same way: order the candidates newest-first,
-    then walk them until one is eligible. `first_eligible` owns that ordering — the candidates are comparable, so it
-    sorts them itself (newest first) and sources need only supply the set. Eligibility can only be decided after
-    fetching the candidate's metadata (its publication date for the cooldown, a digest or integrity hash to pin,
-    whether it was yanked), so `resolve` does that fetch and returns the resulting `DependencyVersion`, or None to
-    skip the candidate and try the next (older) one. When no candidate is eligible the current version is returned
-    unchanged.
+    The candidates are comparable, so they are walked newest-first. Eligibility can only be decided once the
+    candidate's metadata has been fetched, so `resolve` does that and answers with the version, or None to skip
+    the candidate and try the next.
     """
     for candidate in sorted(candidates, reverse=True):
         if (version := resolve(candidate)) is not None:

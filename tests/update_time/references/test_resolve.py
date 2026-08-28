@@ -7,11 +7,11 @@ from unittest.mock import Mock, call
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, FloatingPin
-from update_time.domain.directive import Reason
-from update_time.domain.marker import Marker, Scope, Threshold
 from update_time.domain.publication import publication_date_reporting
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.yank import yank_reporting
+from update_time.markers.directive import Reason
+from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.references import resolve
 from update_time.references.resolve import latest_version
 
@@ -257,7 +257,7 @@ class LatestVersionTest(unittest.TestCase):
 
     def test_warns_about_a_redundant_floating_pin_directive(self):
         """Test that `allow[floating-pin]` is reported as redundant when the reference's pin does not float."""
-        marker = Marker(allow_floating_pin=True, raw="allow[floating-pin]")
+        marker = Marker(allowed_scopes=Scope.FLOATING_PIN, raw="allow[floating-pin]")
         latest = self.latest_version(marker)
         self.log.redundant_directive.assert_called_once_with(
             self.reference(), "allow[floating-pin]", Reason.NOTHING_FLOATING
@@ -278,7 +278,7 @@ class LatestVersionTest(unittest.TestCase):
         One case per reason it reports, each of which leaves the tag floating. A pin it did resolve is covered by
         `test_marker_keeps_the_tag_floating`, per file format.
         """
-        marker = Marker(allow_floating_pin=True, raw="allow[floating-pin]")
+        marker = Marker(allowed_scopes=Scope.FLOATING_PIN, raw="allow[floating-pin]")
         unresolved = [pin for pin in FloatingPin if pin is not FloatingPin.RESOLVED]
         for floating in unresolved:
             with self.subTest(floating=floating):
@@ -290,8 +290,8 @@ class LatestVersionTest(unittest.TestCase):
     @kills(
         Mutation(
             resolve,
-            "if not marker.allow_floating_pin:",
-            "if not marker.allow_floating_pin and Scope.FLOATING_PIN not in marker.written_scopes:",
+            "if not marker.allows(Scope.FLOATING_PIN):",
+            "if not marker.allows(Scope.FLOATING_PIN) and Scope.FLOATING_PIN not in marker.written_scopes:",
             "the explicit default is reported as redundant, as if it kept the pin floating",
         )
     )
@@ -304,7 +304,7 @@ class LatestVersionTest(unittest.TestCase):
     def test_warns_about_a_floating_pin_directive_beside_a_bare_ignore(self):
         """Test that `allow[floating-pin]` is reported when a bare `ignore` freezes the reference, unqueried."""
         get_new_version = Mock()
-        marker = BARE_IGNORE.merge(Marker(allow_floating_pin=True, raw="ignore allow[floating-pin]"))
+        marker = BARE_IGNORE.merge(Marker(allowed_scopes=Scope.FLOATING_PIN, raw="ignore allow[floating-pin]"))
         self.latest_version(marker, get_new_version)
         self.log.redundant_directive.assert_called_once_with(
             self.reference(), "allow[floating-pin]", Reason.UPDATE_HELD_BACK
@@ -326,7 +326,7 @@ class LatestVersionTest(unittest.TestCase):
     def test_a_frozen_reference_keeping_its_pin_floating_is_warned_about_once(self):
         """Test that `ignore[update] allow[floating-pin]` draws one warning, though two call sites can report it."""
         raw = "ignore[update] allow[floating-pin]"
-        marker = Marker(ignored_scopes=Scope.UPDATE, allow_floating_pin=True, raw=raw)
+        marker = Marker(ignored_scopes=Scope.UPDATE, allowed_scopes=Scope.FLOATING_PIN, raw=raw)
         self.assertIsNone(self.latest_version(marker))
         self.log.redundant_directive.assert_called_once_with(
             self.reference(), "allow[floating-pin]", Reason.UPDATE_HELD_BACK
@@ -347,7 +347,7 @@ class LatestVersionTest(unittest.TestCase):
     def test_a_frozen_reference_is_warned_about_although_its_tag_floats(self):
         """Test that a frozen reference's `allow[floating-pin]` is reported, since the freeze keeps its tag as well."""
         raw = "ignore[update] allow[floating-pin]"
-        marker = Marker(ignored_scopes=Scope.UPDATE, allow_floating_pin=True, raw=raw)
+        marker = Marker(ignored_scopes=Scope.UPDATE, allowed_scopes=Scope.FLOATING_PIN, raw=raw)
         floating = DependencyVersion(version="3.14.7", sha=DIGEST, floating=FloatingPin.RESOLVED)
         self.assertIsNone(self.latest_version(marker, Mock(return_value=floating)))
         self.log.redundant_directive.assert_called_once_with(

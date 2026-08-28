@@ -653,7 +653,7 @@ WARNING Invalid 'update-time.engines.node' in the update-time marker for node in
 
 ### Adopting hash drift
 
-One further marker does the opposite of holding a reference back. `# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting what it now points at, so a re-pushed image tag's new digest, or the commit a moved version tag points at, is pinned instead of only warned about (see [Hash drift](#hash-drift)). It follows the same placement rules as the other markers, and the global `--allow-hash-drift` flag applies it to every reference at once. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.
+One further marker does the opposite of holding a reference back. `# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting what it now points at, so a re-pushed image tag's new digest, or the commit a moved version tag points at, is pinned instead of only warned about (see [Hash drift](#hash-drift)). It follows the same placement rules as the other markers, and the global `--allow-hash-drift` flag applies it to every reference at once. `ignore[hash-drift]` is the opposite and the default, so a reference carrying it keeps its pin exactly as one carrying no marker at all, in a run passing `--allow-hash-drift` as well. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and the reference is left untouched.
 
 ### Keeping a tag floating
 

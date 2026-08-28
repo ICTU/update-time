@@ -1,4 +1,4 @@
-"""What a file records about a dependency it pins, and what a source resolved for it."""
+"""What a file records about a dependency it pins, what a source resolved for it, and whether the two agree."""
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -17,7 +17,8 @@ class Reference:
 
     `current_sha` is the commit SHA the reference is pinned to when it carries one in a `<sha> # <version>` form (a
     GitHub Action `uses:` or pre-commit hook `rev:`); it is empty for a reference that is still an unpinned version
-    tag or that records no SHA of its own.
+    tag or that records no SHA of its own. A subclass declares its own fields keyword-only, because `current_sha`
+    carries a default and Python refuses the class otherwise.
     """
 
     dependency: DependencyName
@@ -31,7 +32,18 @@ class ResolvedReference(Reference):
     """A reference and the release a source resolved for it, which the staleness and yank checks report on.
 
     The release is the one the run leaves the reference on: the version it moved to, or the version it stayed on.
-    Every field a subclass of `Reference` adds is keyword-only, since `current_sha` above it carries a default.
     """
 
     release: DependencyVersion
+
+
+@dataclass(frozen=True, kw_only=True)
+class DriftedPin(Reference):
+    """A hash pin that no longer matches what it points at, and the hash it now resolves to."""
+
+    new_sha: str
+
+
+def hash_drifted(resolved: str, pinned: str) -> bool:
+    """Return whether a hash (resolved digest, commit SHA, or integrity hash) differs from the one already pinned."""
+    return bool(resolved) and resolved != pinned

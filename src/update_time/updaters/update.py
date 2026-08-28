@@ -10,13 +10,13 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES, DependencyType
-from update_time.domain.drift import ALLOW_HASH_DRIFT
-from update_time.domain.floating import ALLOW_FLOATING_PIN
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
 from update_time.io.cli import parse_args
 from update_time.io.filesystem import EXCLUDE_PATHS, inside_git_repository
 from update_time.io.log import LOG_LEVEL, get_logger
+from update_time.markers.drift import ALLOW_HASH_DRIFT
+from update_time.markers.floating import ALLOW_FLOATING_PIN
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping

@@ -4,12 +4,11 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from update_time.domain import base_image
 from update_time.domain.bound import Verb
-from update_time.domain.directive import Reason
-from update_time.domain.marker import Marker
 from update_time.file_formats import package_json
 from update_time.io.log import Logger
+from update_time.markers.directive import Reason
+from update_time.markers.marker import Marker
 from update_time.primitives.location import Location
 from update_time.references import resolve, rewrite
 from update_time.updaters import update_node_engine
@@ -399,9 +398,10 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            base_image,
-            "        adoptable = allow_downgrade or (",
-            "        adoptable = (",
+            update_node_engine,
+            "from update_time.sources.base_image import following_image_version_getter",
+            "from update_time.sources.base_image import "
+            "advancing_image_version_getter as following_image_version_getter",
             "an engine ahead of its base image keeps its version, as a `.python-version` entry does",
         )
     )

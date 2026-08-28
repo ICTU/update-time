@@ -9,8 +9,9 @@ import requests
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, Release
-from update_time.domain.drift import ALLOW_HASH_DRIFT, DriftedPin
+from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
+from update_time.markers.drift import ALLOW_HASH_DRIFT
 from update_time.primitives.location import Location
 from update_time.references import github as references_github
 from update_time.sources import github as sources_github

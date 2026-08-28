@@ -10,7 +10,7 @@
           },
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command' | grep -qE '(^|[^[:alnum:]_.-])python3' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Run anything you point at this repository with just py, which puts the package on the path, or with uv run where no recipe fits; never the system python3 (see the Running and rewriting code section of CLAUDE.md).\"}}' || true"
+            "command": "jq -r '.tool_input.command' | grep -qE '(^[[:space:]]*|[;&|][[:space:]]+|\\$\\()([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(sudo[[:space:]]+|env[[:space:]]+|time[[:space:]]+|xargs[[:space:]]+)*((/[[:alnum:]_.-]+)*/)?python3' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Run anything you point at this repository with just py, which puts the package on the path, or with uv run where no recipe fits; never the system python3 (see the Running and rewriting code section of CLAUDE.md).\"}}' || true"
           },
           {
             "type": "command",

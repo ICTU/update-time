@@ -8,11 +8,11 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
-from update_time.domain.drift import ALLOW_HASH_DRIFT
-from update_time.domain.floating import ALLOW_FLOATING_PIN
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES
 from update_time.io.filesystem import EXCLUDE_PATHS
 from update_time.io.log import LOG_LEVEL
+from update_time.markers.drift import ALLOW_HASH_DRIFT
+from update_time.markers.floating import ALLOW_FLOATING_PIN
 from update_time.updaters import update as update_module
 from update_time.updaters.update import _SCRIPTS, _SRC, _Script, _Scripts, main
 

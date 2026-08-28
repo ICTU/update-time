@@ -5,21 +5,21 @@ Note: this script does not update package-lock.json.
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.base_image import image_version_getter
 from update_time.domain.dependency import is_valid
-from update_time.domain.file_type import DOCKERFILE_GLOB_PATTERNS, DOCKERFILE_NAME, PACKAGE_JSON
+from update_time.domain.file_type import DOCKERFILE_NAME, DOCKERFILES, PACKAGE_JSON
 from update_time.file_formats import json as json_format
 from update_time.file_formats import package_json as package_json_format
-from update_time.io.filesystem import first_line_match, glob, glob_for
+from update_time.io.filesystem import first_line_match, glob_for
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
+from update_time.sources.base_image import following_image_version_getter
 from update_time.sources.oci import get_latest_tag
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from update_time.domain.marker import ReferenceMarker
     from update_time.file_formats.json import JsonFile
+    from update_time.markers.marker import ReferenceMarker
 
 
 _LOG = get_logger("node engine")
@@ -65,7 +65,7 @@ def _find_node_dockerfile(package_json: Path) -> Path:
     falls back to the latest Node release instead.
     """
     local_dockerfile = package_json.parent / DOCKERFILE_NAME
-    candidates = [local_dockerfile, *glob(*DOCKERFILE_GLOB_PATTERNS)]
+    candidates = [local_dockerfile, *glob_for(DOCKERFILES)]
     for dockerfile in candidates:
         if _node_base_image_version(dockerfile):
             return dockerfile
@@ -101,8 +101,7 @@ def _update_node_engine(package_json: JsonFile) -> None:
         update_file(
             package_json.path,
             _NODE_ENGINE_RE,
-            # The engine declares the runtime the project ships, so it follows the base image down as well as up.
-            get_new_version=image_version_getter(version, allow_downgrade=True),
+            get_new_version=following_image_version_getter(version),
             logger=_LOG,
             reference_marker=engine_marker,
         )

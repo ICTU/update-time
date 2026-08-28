@@ -9,10 +9,8 @@ the updater subprocesses.
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from update_time.domain.bound import Verb
-
 if TYPE_CHECKING:
-    from update_time.domain.marker import Marker
+    from update_time.markers.marker import Marker, Scope
     from update_time.primitives.environment import EnvVar
 
 
@@ -21,17 +19,22 @@ class RunWideOptIn:
     """The command-line option that opts every reference into a behaviour, and the channel that carries it.
 
     `env_var` is the private channel the CLI passes the option down through; `flag` is the option as the user
-    spells it, which the message reporting what opted the reference in names.
+    spells it, which the message reporting what opted the reference in names. `scope` is the behaviour itself, as
+    the marker language names it, so the marker and the directive naming it cannot come apart.
     """
 
     env_var: EnvVar[bool]
     flag: str
+    scope: Scope
 
-    def cause(self, marker: Marker, *, allowed: bool) -> str | None:
-        """Return what opts the reference in, the marker or the flag, or None when neither does.
+    def cause(self, marker: Marker) -> str | None:
+        """Return what opts the reference in, the marker's own directive or the flag, or None when neither does.
 
-        `allowed` is whether the reference's marker opts it in, which each behaviour reads off the field of its own.
+        An empty directive means the marker says nothing about this behaviour, whatever else it opts into, so the
+        flag decides — unless the reference asked for the default itself, which no command-line option overrides.
         """
-        if allowed:
-            return f"update-time: {marker.raw_directives(Verb.ALLOW)}"
+        if directive := marker.allow_directive(self.scope):
+            return f"update-time: {directive}"
+        if self.scope in marker.written_scopes:
+            return None
         return self.flag if self.env_var.get() else None

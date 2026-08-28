@@ -6,8 +6,8 @@ engines, which dependencies to update) is the caller's concern.
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.marker import Marker, ReferenceMarker, parse_directives
 from update_time.file_formats import json as json_format
+from update_time.markers.marker import Marker, ReferenceMarker, parse_directives
 from update_time.primitives.location import Location
 from update_time.primitives.text import column, line_number
 
