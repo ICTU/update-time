@@ -92,6 +92,10 @@ class Release:
         return max(releases, default=None)
 
 
+# The contract the project checks bind and a source implements, answering what a dependency last released.
+type NewestReleaseGetter = Callable[[DependencyName], Release | None]
+
+
 @dataclass(frozen=True)
 class DependencyVersion:
     """A version of a dependency."""

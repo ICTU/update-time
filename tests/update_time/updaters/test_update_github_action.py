@@ -13,7 +13,7 @@ from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
 from update_time.markers.drift import ALLOW_HASH_DRIFT
 from update_time.primitives.location import Location
-from update_time.references import github as references_github
+from update_time.references import resolve as references_resolve
 from update_time.sources import github as sources_github
 from update_time.updaters.update_github_action import update_github_actions
 
@@ -257,9 +257,9 @@ class UpdateGitHubActionsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            references_github,
+            references_resolve,
             "        log.report_staleness(resolved, marker, threshold)",
-            "        log.warn_if_stale(resolved, threshold)",
+            "        log.report_staleness(resolved, type(marker)(), threshold)",
             "a marker silencing the staleness warning of a branch reference is passed over",
         )
     )
@@ -277,7 +277,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            references_github,
+            references_resolve,
             "    if (threshold := marker.stale.value_or(STALE_AFTER.get())) == NO_STALENESS_CHECK:",
             "    if (threshold := STALE_AFTER.get()) == NO_STALENESS_CHECK:",
             "a branch reference's own staleness threshold is passed over for the run-wide one",

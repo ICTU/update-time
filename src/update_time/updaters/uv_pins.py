@@ -2,10 +2,9 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.staleness import warn_about_stale_dependencies
-from update_time.domain.yank import warn_about_yanked_dependencies
 from update_time.file_formats import pyproject_toml as pyproject_toml_format
 from update_time.package_managers import uv
+from update_time.references.delegated import warn_about_stale_dependencies, warn_about_yanked_dependencies
 from update_time.references.vulnerability import warn_about_vulnerable_dependencies
 from update_time.sources.osv import Ecosystem
 
@@ -21,8 +20,8 @@ def warn_about_pins(files: Sequence[Path], log: Logger) -> None:
 
     An updater that delegates the update never calls a source per dependency, so it makes these passes itself, over
     the references a resolver reads back from the file — the only party that knows where in each file a reference
-    sits. Each pass takes that resolver as a callback, which is what keeps `domain` free of I/O and lets the pins
-    be read by whichever file format declares them.
+    sits. Each pass takes that resolver as a callback, which lets the pins be read by whichever file format
+    declares them.
 
     Run after the update, so each check reads the `==` pins as the run rewrote them rather than as the file held
     them before. Stating the set here is what keeps a file kind uv updates from being given one check and not the
@@ -31,6 +30,6 @@ def warn_about_pins(files: Sequence[Path], log: Logger) -> None:
     each pin itself names, since that is the version the run leaves the pin on. Both read the package's PyPI index,
     which is cached for the run, so the second to run costs no request of its own.
     """
-    warn_about_stale_dependencies(files, uv.newest_pypi_releases, log.warn_if_stale)
-    warn_about_yanked_dependencies(files, uv.pinned_pypi_releases, log.warn_if_yanked)
+    warn_about_stale_dependencies(files, uv.newest_pypi_releases, log)
+    warn_about_yanked_dependencies(files, uv.pinned_pypi_releases, log)
     warn_about_vulnerable_dependencies(files, pyproject_toml_format.pinned_versions, Ecosystem.PYPI, log)

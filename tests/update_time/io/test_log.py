@@ -22,6 +22,7 @@ from update_time.io.log import (
     Logger,
     LogHighlighter,
     LogMessage,
+    _Check,
     get_logger,
     reset_changelog_suppression,
 )
@@ -270,7 +271,7 @@ class LoggerTests(TestCase):
             f"re-pinned from {DIGEST1} to {DIGEST2} ({cause})",
         )
 
-    def test_warn_if_stale(self, mock_log: Mock):
+    def test_stale_dependency_warning(self, mock_log: Mock):
         """Test that an old newest release is warned about at warning level, naming the release that was measured.
 
         The reference was left on 4.15.0 while the dependency's newest release is 5.0.0, so the version in the
@@ -280,7 +281,7 @@ class LoggerTests(TestCase):
         published = datetime.now(UTC) - timedelta(days=512, hours=1)
         version = DependencyVersion("4.15.0", newest=Release("5.0.0", published))
         location = _create_location("requirements.txt", 9)
-        Logger("stale").warn_if_stale(resolved_reference("humanize", location, version), 90)
+        Logger("stale").report_staleness(resolved_reference("humanize", location, version), Marker(), 90)
         self.assert_message(
             mock_log,
             Logger._MESSAGE_STALE,
@@ -316,21 +317,11 @@ class LoggerTests(TestCase):
             "(update-time: ignore[stale])",
         )
 
-    def test_warn_if_stale_does_nothing_when_not_stale(self, mock_log: Mock):
-        """Test that nothing is logged when the newest release date is recent or unknown."""
-        recent = DependencyVersion("4.15.0", newest=Release("4.15.0", datetime.now(UTC) - timedelta(days=1)))
-        undated = DependencyVersion("4.15.0")
-        logger = Logger("stale")
-        location = _create_location("requirements.txt", 9)
-        logger.warn_if_stale(resolved_reference("humanize", location, recent), 90)
-        logger.warn_if_stale(resolved_reference("humanize", location, undated), 90)
-        mock_log.assert_not_called()
-
-    def test_warn_if_yanked_without_reason(self, mock_log: Mock):
+    def test_yanked_dependency_warning_without_reason(self, mock_log: Mock):
         """Test that a yanked pin with no maintainer reason reports that the reason was not specified."""
         version = DependencyVersion("4.15.0", yank=Yank(yanked=True))
-        Logger("yanked").warn_if_yanked(
-            resolved_reference("humanize", _create_location("requirements.txt", 9), version)
+        Logger("yanked").report_yank(
+            resolved_reference("humanize", _create_location("requirements.txt", 9), version), Marker()
         )
         self.assert_message(
             mock_log,
@@ -339,12 +330,12 @@ class LoggerTests(TestCase):
             "version 4.15.0 was yanked (reason not specified)",
         )
 
-    def test_warn_if_yanked_with_reason(self, mock_log: Mock):
+    def test_yanked_dependency_warning_with_reason(self, mock_log: Mock):
         """Test that the warning renders the maintainer's yank reason in parentheses."""
         yank = Yank(yanked=True, reason="broke Python 3.10 support")
         location = _create_location("requirements.txt", 9)
-        Logger("yanked").warn_if_yanked(
-            resolved_reference("humanize", location, DependencyVersion("4.15.0", yank=yank))
+        Logger("yanked").report_yank(
+            resolved_reference("humanize", location, DependencyVersion("4.15.0", yank=yank)), Marker()
         )
         self.assert_message(
             mock_log,
@@ -352,14 +343,6 @@ class LoggerTests(TestCase):
             f"Yanked dependency {dependency('humanize')} in {_at('requirements.txt:9')}: "
             'version 4.15.0 was yanked ("broke Python 3.10 support")',
         )
-
-    def test_warn_if_yanked_does_nothing_when_not_yanked(self, mock_log: Mock):
-        """Test that nothing is logged when the version was not yanked."""
-        version = DependencyVersion("4.15.0")
-        Logger("yanked").warn_if_yanked(
-            resolved_reference("humanize", _create_location("requirements.txt", 9), version)
-        )
-        mock_log.assert_not_called()
 
     def test_invalid_specifier(self, mock_log: Mock):
         """Test that an unparsable version bound specifier is warned about at warning level."""
@@ -524,15 +507,17 @@ class LoggerTests(TestCase):
         )
 
     def test_report_staleness_does_nothing_when_not_stale(self, mock_log: Mock):
-        """Test that a marker holding back a staleness warning that would not be given reports nothing either."""
+        """Test that a release that is recent or undated is reported by nothing, marker or no marker."""
         recent = DependencyVersion("4.15.0", newest=Release("4.15.0", datetime.now(UTC) - timedelta(days=1)))
         undated = DependencyVersion("4.15.0")
         logger = Logger("stale")
-        marker = Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")
         location = _create_location("requirements.txt", 9)
-        logger.report_staleness(resolved_reference("humanize", location, recent), marker, 90)
-        logger.report_staleness(resolved_reference("humanize", location, undated), marker, 90)
-        mock_log.assert_not_called()
+        for marker in (Marker(), Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")):
+            with self.subTest(marker=marker.raw or "no marker"):
+                mock_log.reset_mock()
+                logger.report_staleness(resolved_reference("humanize", location, recent), marker, 90)
+                logger.report_staleness(resolved_reference("humanize", location, undated), marker, 90)
+                mock_log.assert_not_called()
 
     def test_report_yank(self, mock_log: Mock):
         """Test that a yank is reported as a warning, or as the hold-back of a marker that silences it."""
@@ -759,15 +744,21 @@ class LogHighlighterTests(TestCase):
 
 
 class LoggerMessageTest(TestCase):
-    """Test that Logger's message templates and its log methods pair one-to-one.
+    """Test that Logger's message templates pair one-to-one with the log methods and checks that own them.
 
-    Each `MESSAGE_` template sits directly above the log method that emits it, which nothing but convention enforces.
+    Each `MESSAGE_` template sits directly above its owner, which nothing but convention enforces. That owner is
+    the log method emitting it, or, for the pair of messages a check reports through, the check naming both.
     """
 
     @staticmethod
-    def methods_by_template() -> dict[str, set[str]]:
+    def _templates() -> set[str]:
+        """Return the names of the message templates on Logger."""
+        return {name for name in vars(Logger) if name.removeprefix("_").startswith("MESSAGE_")}
+
+    @classmethod
+    def methods_by_template(cls) -> dict[str, set[str]]:
         """Return, for each message template on Logger, the names of the log methods that reference it."""
-        templates = {name for name in vars(Logger) if name.removeprefix("_").startswith("MESSAGE_")}
+        templates = cls._templates()
         references: dict[str, set[str]] = {template: set() for template in templates}
         for name in vars(Logger):
             if name.startswith("__") or not inspect.isfunction(function := getattr(Logger, name)):
@@ -776,10 +767,36 @@ class LoggerMessageTest(TestCase):
                 references[template].add(name)
         return references
 
-    def test_each_template_belongs_to_exactly_one_method(self):
-        """Test that each message template is referenced by exactly one log method: no orphans, no sharing."""
-        unpaired = {template: methods for template, methods in self.methods_by_template().items() if len(methods) != 1}
-        self.assertEqual(unpaired, {})
+    @classmethod
+    def checks_by_template(cls) -> dict[str, set[str]]:
+        """Return, for each message template on Logger, the names of the checks that name it.
+
+        A check names its warning and its hold-back, which the dispatch every check shares emits, so neither
+        message is named by a log method of its own. The templates are matched by identity, since a check holds
+        the message rather than its name.
+        """
+        template_of = {id(getattr(Logger, template)): template for template in cls._templates()}
+        holders: dict[str, set[str]] = {template: set() for template in cls._templates()}
+        for name, value in vars(Logger).items():
+            if isinstance(value, _Check):
+                for message in (value.warning, value.ignored):
+                    holders[template_of[id(message)]].add(name)
+        return holders
+
+    @kills(
+        Mutation(
+            log_module,
+            '    _MESSAGE_NO_VERSION = LogMessage(ERROR, "No valid version found for %(dependency)s")',
+            '    _MESSAGE_ORPHANED = LogMessage(ERROR, "Nothing emits this")\n\n'
+            '    _MESSAGE_NO_VERSION = LogMessage(ERROR, "No valid version found for %(dependency)s")',
+            "a message template that neither a log method nor a check emits goes unnoticed",
+        )
+    )
+    def test_each_template_belongs_to_exactly_one_owner(self):
+        """Test that each message template is owned by exactly one log method or check: no orphans, no sharing."""
+        methods, checks = self.methods_by_template(), self.checks_by_template()
+        owners = {template: names | checks[template] for template, names in methods.items()}
+        self.assertEqual({template: names for template, names in owners.items() if len(names) != 1}, {})
 
     def test_each_method_references_at_most_one_template(self):
         """Test that no log method references more than one message template."""

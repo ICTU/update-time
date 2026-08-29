@@ -5,7 +5,7 @@ import re
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from functools import cache, cached_property, total_ordering
-from typing import TYPE_CHECKING, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 from urllib.parse import urlparse
 
 from packaging.version import Version
@@ -271,40 +271,43 @@ def github_owner_and_repository(url: str) -> tuple[str, str]:
     return "", ""
 
 
+def owner_and_repository(dependency: DependencyName) -> tuple[str, str]:
+    """Return the owner and repository the dependency names, dropping any path below the repository.
+
+    A dependency names the two directly, as `actions/checkout` does, and as `actions/checkout/sub-action` does for
+    an action in a subdirectory. `github_owner_and_repository` reads the same pair out of a URL instead.
+    """
+    owner, repository, *_path = dependency.split("/")
+    return owner, repository
+
+
+def _list(owner: str, repository: str, path: str) -> tuple[Any, ...] | None:
+    """Fetch a listing under the repository's API path, or None when it couldn't be fetched.
+
+    An empty tuple means the repository was reached but listed nothing; None means the fetch itself failed
+    (already logged by `fetch`). Distinguishing the two lets callers avoid reporting a network problem a second
+    time. Each caller caches its own listing, so a repository asked about twice costs one request per listing.
+    """
+    response = fetch(f"{_GITHUB_API}/{owner}/{repository}/{path}", _LOG, headers=_github_headers())
+    return tuple(response.json()) if response is not None else None
+
+
 @cache
 def _list_releases(owner: str, repository: str) -> tuple[_ReleaseJSON, ...] | None:
-    """Fetch the GitHub releases for a repo, or None when they couldn't be fetched.
-
-    An empty tuple means the repo was reached but has no releases; None means the fetch itself failed (already
-    logged by `fetch`). Distinguishing the two lets callers avoid reporting a network problem a second time.
-    """
-    releases_url = f"{_GITHUB_API}/{owner}/{repository}/releases?per_page={_PER_PAGE}"
-    response = fetch(releases_url, _LOG, headers=_github_headers())
-    return tuple(response.json()) if response is not None else None
+    """Fetch the GitHub releases for a repository, or None when they couldn't be fetched."""
+    return _list(owner, repository, f"releases?per_page={_PER_PAGE}")
 
 
 @cache
 def _list_tags(owner: str, repository: str) -> tuple[_TagJSON, ...] | None:
-    """Fetch the GitHub tags for a repo, or None when they couldn't be fetched.
-
-    Mirrors `_list_releases`: an empty tuple means the repo was reached but has no tags; None means the fetch
-    itself failed (already logged by `fetch`).
-    """
-    tags_url = f"{_GITHUB_API}/{owner}/{repository}/tags?per_page={_PER_PAGE}"
-    response = fetch(tags_url, _LOG, headers=_github_headers())
-    return tuple(response.json()) if response is not None else None
+    """Fetch the GitHub tags for a repository, or None when they couldn't be fetched."""
+    return _list(owner, repository, f"tags?per_page={_PER_PAGE}")
 
 
 @cache
 def _list_root(owner: str, repository: str) -> tuple[_ContentJSON, ...] | None:
-    """Fetch the entries in the root of a repository, or None when they couldn't be fetched.
-
-    Mirrors `_list_releases`: an empty tuple means the repository was reached but its root holds nothing; None
-    means the fetch itself failed (already logged by `fetch`).
-    """
-    contents_url = f"{_GITHUB_API}/{owner}/{repository}/contents/"
-    response = fetch(contents_url, _LOG, headers=_github_headers())
-    return tuple(response.json()) if response is not None else None
+    """Fetch the entries in the root of a repository, or None when they couldn't be fetched."""
+    return _list(owner, repository, "contents/")
 
 
 def _is_changelog_file(name: str) -> bool:
@@ -392,7 +395,7 @@ def get_latest_version(
     """
     if not is_valid(current_version):
         return DependencyVersion(version=current_version)
-    owner, repository, *_path = action.split("/")
+    owner, repository = owner_and_repository(action)
     newest = newest_release(owner, repository)
     unchanged = DependencyVersion(current_version, newest=newest)
     tagged_versions = _tagged_versions(owner, repository)

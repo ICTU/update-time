@@ -143,11 +143,11 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     published = stale_publication_date()
     stale = DependencyVersion("4.15.0", newest=Release("4.15.0", published))
-    log.warn_if_stale(resolved("humanize", requirements, stale), STALE_AFTER.get())
+    log.report_staleness(resolved("humanize", requirements, stale), Marker(), STALE_AFTER.get())
     staleness = capture.take()
 
     yanked = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="accidentally broke Python 3.10 support"))
-    log.warn_if_yanked(resolved("humanize", requirements, yanked))
+    log.report_yank(resolved("humanize", requirements, yanked), Marker())
     yank = capture.take()
 
     log.vulnerable_dependency(reference("django", requirements, "3.2.0"), VULNERABILITY)
