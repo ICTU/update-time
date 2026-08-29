@@ -140,5 +140,6 @@ class MainTest(unittest.TestCase):
 
     def test_missing_file_is_named(self, render: Mock):
         """Test that a generated file that does not exist yet counts as out of date."""
+        path = self.generated_file(None)
         with self.assertRaises(SystemExit):
-            self.check(render, self.generated_file(None))
+            self.check(render, path)

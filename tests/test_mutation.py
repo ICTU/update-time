@@ -474,8 +474,9 @@ class KillsTest(unittest.TestCase):
             with self.subTest(case=case):
                 with patch.object(Mutation, "check", autospec=True) as checked:
                     checked.return_value = Result(Outcome.KILLED)
+                    twice_registered = kills(_ODD_REPORTED_AS_EVEN)(stacked)
                     with self.assertRaises(self.failureException) as raised:
-                        kills(_ODD_REPORTED_AS_EVEN)(stacked)(self)
+                        twice_registered(self)
                 self.assertIn("more than one kills decorator", str(raised.exception))
                 checked.assert_not_called()
 
@@ -489,8 +490,9 @@ class KillsTest(unittest.TestCase):
     )
     def test_a_registration_of_no_mutation_fails_the_test(self):
         """Test that a kills decorator given no mutation fails the test, rather than leaving it checking nothing."""
+        decorated = kills()(_stand_in)
         with self.assertRaises(self.failureException) as raised:
-            kills()(_stand_in)(self)
+            decorated(self)
         self.assertIn("registers no mutation", str(raised.exception))
 
     @kills(
