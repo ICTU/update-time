@@ -460,6 +460,29 @@ class Logger:
         """Report the version's yank, as a warning or as the hold-back of the marker that silences it."""
         self._report(self._YANK, marker, resolved, self._yank_fields(resolved))
 
+    _MESSAGE_ARCHIVED = LogMessage(
+        WARNING, "Archived dependency %(dependency)s in %(location)s: the %(subject)s was archived%(reason)s"
+    )
+
+    _MESSAGE_IGNORED_ARCHIVAL = LogMessage(
+        DEBUG, "Ignoring the archival warning for %(dependency)s in %(location)s (update-time: %(directive)s)"
+    )
+
+    _ARCHIVAL = _Check(Scope.ARCHIVED, _MESSAGE_ARCHIVED, _MESSAGE_IGNORED_ARCHIVAL)
+
+    @classmethod
+    def _archival_fields(cls, resolved: ResolvedReference) -> dict[str, object] | None:
+        """Return the archival warning's fields, or None when the source declares nothing archived."""
+        archival = resolved.release.project.archival
+        if not archival.archived:
+            return None
+        reason = f' ("{archival.reason}")' if archival.reason else ""
+        return cls._reference_fields(resolved, subject=archival.subject, reason=reason)
+
+    def report_archival(self, resolved: ResolvedReference, marker: Marker) -> None:
+        """Report the reference's archival, as a warning or as the hold-back of the marker that silences it."""
+        self._report(self._ARCHIVAL, marker, resolved, self._archival_fields(resolved))
+
     _MESSAGE_MALFORMED_CVSS_VECTOR = LogMessage(
         WARNING,
         "Could not score the CVSS vector of advisory %(advisory)s (%(error)s), so it is reported at unknown severity",

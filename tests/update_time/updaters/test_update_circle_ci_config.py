@@ -13,8 +13,9 @@ from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
+from tests.update_time.helpers import docker_tag
 from tests.update_time.registry import mock_docker_registry
+from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
 
 @mock_docker_hub_auth
@@ -113,10 +114,10 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
 
     def test_docker_image_with_auth_before_image(self):
         """Test that a Docker image is updated even when its list item lists `auth:` before `image:`."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST2))
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST))
         config = "jobs:\n  build:\n    docker:\n      - auth:\n          username: u\n        image: cimg/python:3.13\n"
         config_yml = mock_path(config)
         self.run_updater(config_yml)
-        config_yml.write_text.assert_called_with(config.replace("cimg/python:3.13", f"cimg/python:3.14@{DIGEST2}"))
+        config_yml.write_text.assert_called_with(config.replace("cimg/python:3.13", f"cimg/python:3.14@{DIGEST}"))
         self.assert_new_version_logged("cimg/python", "3.14", Location(config_yml, 6))
         self.assert_no_warnings_logged()

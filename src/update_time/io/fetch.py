@@ -19,10 +19,10 @@ if TYPE_CHECKING:
 
 _TIMEOUT = 10  # Seconds to wait for a registry before giving up on the request.
 
+type Fetched = requests.Response | None
 
-def fetch(
-    url: str, logger: Logger, *, method: str = "get", require_ok: bool = True, **kwargs: object
-) -> requests.Response | None:
+
+def fetch(url: str, logger: Logger, *, method: str = "get", require_ok: bool = True, **kwargs: object) -> Fetched:
     """Make an HTTP request and return the response, or None (logged) on a network error or non-OK status.
 
     `method` selects the requests function (`get`, `head`, `post`); `kwargs` (headers, params, auth, json, ...) are

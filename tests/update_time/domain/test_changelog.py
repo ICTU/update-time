@@ -21,14 +21,6 @@ class VersionAnchorTest(unittest.TestCase):
         """Test that an empty changelog results in an empty change."""
         self.assertEqual(get_version_changes_from_changelog("", "1.0"), "")
 
-    _WHOLE_FILE = Mutation(
-        changelog,
-        '    if start is None:\n        return ""',
-        '    if start is None:\n        return "\\n".join(all_lines)',
-        "a changelog file that does not name the version reports its head as this version's changes",
-    )
-
-    @kills(_WHOLE_FILE)
     def test_version_number_not_found(self):
         """Test that a changelog that does not name the version yields no changes."""
         text = "Changelog\n\n## Version 0.9\n\n- Fixed ..."

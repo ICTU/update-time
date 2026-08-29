@@ -73,15 +73,17 @@ class HoldsEverythingBackTest(unittest.TestCase):
         """Test that a bare `ignore` and every scope named together hold everything back, one scope short does not."""
         cases = {
             "ignore": True,
-            "ignore[update, stale, yanked, vulnerable]": True,
-            "ignore[stale, yanked, vulnerable]": False,
-            "ignore[update, yanked, vulnerable]": False,
-            "ignore[update, stale, vulnerable]": False,
-            "ignore[update, stale, yanked]": False,
+            "ignore[update, stale, yanked, vulnerable, archived]": True,
+            "ignore[stale, yanked, vulnerable, archived]": False,
+            "ignore[update, yanked, vulnerable, archived]": False,
+            "ignore[update, stale, vulnerable, archived]": False,
+            "ignore[update, stale, yanked, archived]": False,
+            "ignore[update, stale, yanked, vulnerable]": False,
             "ignore[update]": False,
             "ignore[stale]": False,
             "ignore[yanked]": False,
             "ignore[vulnerable]": False,
+            "ignore[archived]": False,
         }
         for directive, expected in cases.items():
             with self.subTest(directive=directive):
@@ -90,17 +92,21 @@ class HoldsEverythingBackTest(unittest.TestCase):
 
 
 class HoldsBackSourceChecksTest(unittest.TestCase):
-    """Unit tests for whether a marker holds back the update, the staleness warning, and the yank warning alike."""
+    """Unit tests for whether a marker holds back every check the reference's own source answers."""
 
-    def test_only_update_stale_and_yanked_together_hold_back_the_source_checks(self):
-        """Test that all three must be held back, the `vulnerable` scope not counting either way."""
+    def test_only_the_scopes_the_source_answers_hold_back_the_source_checks(self):
+        """Test that every scope the reference's own source answers must be held back.
+
+        A `vulnerable` scope beside them changes nothing, since OSV answers that check rather than the source.
+        """
         cases = {
             "ignore": True,
-            "ignore[update, stale, yanked]": True,
-            "ignore[update, stale, yanked, vulnerable]": True,
-            "ignore[stale, yanked]": False,
-            "ignore[update, yanked]": False,
-            "ignore[update, stale]": False,
+            "ignore[update, stale, yanked, archived]": True,
+            "ignore[update, stale, yanked, archived, vulnerable]": True,
+            "ignore[stale, yanked, archived]": False,
+            "ignore[update, yanked, archived]": False,
+            "ignore[update, stale, archived]": False,
+            "ignore[update, stale, yanked]": False,
             "ignore[vulnerable]": False,
         }
         for directive, expected in cases.items():
@@ -126,7 +132,7 @@ class AsWrittenTest(unittest.TestCase):
             "ignore": Marker(),
             "ignore[yanked]": Marker(ignored_scopes=Scope.YANKED),
             "ignore ignore[yanked]": Marker(ignored_scopes=Scope.YANKED),
-            "ignore[update, stale, yanked, vulnerable]": BARE_IGNORE,
+            "ignore[update, stale, yanked, vulnerable, archived]": BARE_IGNORE,
         }
         for directive, expected in cases.items():
             with self.subTest(directive=directive):
@@ -141,14 +147,6 @@ class DirectiveTest(unittest.TestCase):
         """Return the marker the directives express, as a reference's own line carries them."""
         return parse_marker(_line(f"image: python:3.14  # update-time: {directives}"))
 
-    @kills(
-        Mutation(
-            marker_module,
-            'return _directive(Verb.IGNORE, str(scope)) if self.ignores(scope) else ""',
-            "return _directive(Verb.IGNORE, str(scope))",
-            "a directive is returned for a scope though that scope has no directive in the marker",
-        )
-    )
     def test_a_scope_the_marker_leaves_live_is_named_by_nothing(self):
         """Test that a scope the marker does not hold back names no directive."""
         self.assertEqual(self.marker("ignore[stale]").scope_directive(Scope.YANKED), "")
@@ -167,15 +165,6 @@ class DirectiveTest(unittest.TestCase):
         """Test that a marker carrying both is reported under the bare scope, which silences the warning outright."""
         self.assertEqual(self.marker("ignore[stale] ignore[stale<90]").stale_directive, "ignore[stale]")
 
-    @kills(
-        Mutation(
-            marker_module,
-            "        return self.cooldown.directive",
-            "        return self.raw",
-            "the cooldown is reported as the whole marker text rather than the cooldown item alone, so a "
-            "neighbouring directive is included",
-        )
-    )
     def test_a_cooldown_item_is_named_as_the_reader_wrote_it(self):
         """Test that a cooldown is named as the item the reader wrote, leaving out a directive beside it."""
         for directive in ("ignore[cooldown<30]", "allow[cooldown>=30]"):

@@ -5,7 +5,7 @@ from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion, Release
+from update_time.domain.dependency import Archival, ArchivedSubject, DependencyVersion, Project, Release
 from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
@@ -246,12 +246,24 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         """Test that a hook whose newest version is old is warned about, even when it is up to date."""
         old = datetime.now(UTC) - timedelta(days=512)
         newest = Release("4.7.0", old)
-        mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=OLD_SHA, newest=newest)
+        project = Project(newest=newest)
+        mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=OLD_SHA, project=project)
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         self.assert_stale_dependency_logged(self.HOOK, "4.7.0", Location(config_file, 3))
+
+    def test_archived_hook_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that a hook whose repository GitHub declares archived is warned about, even when it is up to date."""
+        archival = Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
+        project = Project(archival=archival)
+        mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=OLD_SHA, project=project)
+        config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0\n"))
+        mock_glob.return_value = [config_file]
+        update_pre_commit_configs()
+        config_file.write_text.assert_not_called()
+        self.assert_archived_repository_logged(self.HOOK, Location(config_file, 3))
 
     def test_inline_ignore_marker(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an inline `# update-time: ignore` comment leaves the rev untouched, looking up no version."""
@@ -289,7 +301,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         """Test that `ignore[update]` leaves the rev unchanged but still warns when the hook is stale."""
         old = datetime.now(UTC) - timedelta(days=512)
         newest = Release("4.7.0", old)
-        mock_latest.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA, newest=newest)
+        mock_latest.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA, project=Project(newest=newest))
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0  # update-time: ignore[update]\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
@@ -302,7 +314,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         """Test that `ignore[stale]` bumps the rev but skips the staleness check even for an old release."""
         old = datetime.now(UTC) - timedelta(days=512)
         newest = Release("4.7.0", old)
-        mock_latest.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA, newest=newest)
+        mock_latest.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA, project=Project(newest=newest))
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0  # update-time: ignore[stale]\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()

@@ -61,6 +61,22 @@ class Yank:
         return f'"{self.reason}"' if self.reason else "reason not specified"
 
 
+class ArchivedSubject(StrEnum):
+    """What a source archives: PyPI archives a project, GitHub a repository."""
+
+    PROJECT = auto()
+    REPOSITORY = auto()
+
+
+@dataclass(frozen=True)
+class Archival:
+    """A dependency's archival state, as its source declares it."""
+
+    archived: bool = False
+    reason: str = ""  # The reason the source published, empty when it published none
+    subject: ArchivedSubject = ArchivedSubject.PROJECT
+
+
 # A version lower than any real version, standing in for a version that reads as none, so any two versions compare
 # and order uniformly and the one that reads as none sorts lowest.
 LOWEST_VERSION = Version("0")
@@ -92,8 +108,16 @@ class Release:
         return max(releases, default=None)
 
 
-# The contract the project checks bind and a source implements, answering what a dependency last released.
-type NewestReleaseGetter = Callable[[DependencyName], Release | None]
+@dataclass(frozen=True)
+class Project:
+    """What a source reports about the project behind a dependency, rather than about one of its versions."""
+
+    newest: Release | None = None
+    archival: Archival = Archival()
+
+
+# The contract the project checks bind and a source implements, answering what it reports about a project.
+type ProjectGetter = Callable[[DependencyName], Project]
 
 
 @dataclass(frozen=True)
@@ -104,14 +128,14 @@ class DependencyVersion:
     changes: str = ""  # Changelog for this version, empty when none could be found
     sha: str = ""
     published: datetime | None = None  # Publication date of this (candidate) version, when known
-    newest: Release | None = None  # The dependency's newest release, for staleness
     yank: Yank = Yank()  # The version's withdrawal state (yanked on PyPI, deprecated on npm)
+    project: Project = Project()  # What the source reports about the project behind the dependency
     floating: FloatingPin | None = None  # What happened to the floating pin if the reference had one
 
     @classmethod
-    def unpinned(cls, newest: Release) -> DependencyVersion:
-        """Return the version for a reference that pins none, carrying the dependency's newest release."""
-        return cls(version="", newest=newest)
+    def unpinned(cls, project: Project) -> DependencyVersion:
+        """Return the version for a reference that pins no version, carrying its source's report on the project."""
+        return cls(version="", project=project)
 
     def __str__(self) -> str:
         """Render the version as its version string, followed by its publication date in UTC when that is known."""

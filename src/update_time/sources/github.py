@@ -10,18 +10,22 @@ from urllib.parse import urlparse
 
 from packaging.version import Version
 
+from update_time.domain.archival import archival_reporting
 from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.dependency import (
+    Archival,
+    ArchivedSubject,
     DependencyName,
     DependencyVersion,
+    Project,
     Release,
     VersionString,
     first_eligible,
     is_valid,
 )
 from update_time.domain.publication import publication_date_reporting
-from update_time.io.fetch import fetch
+from update_time.io.fetch import Fetched, fetch
 from update_time.io.log import get_logger
 from update_time.primitives.timestamp import parse_timestamp
 
@@ -32,7 +36,7 @@ if TYPE_CHECKING:
 
 _LOG = get_logger("github")
 
-# The GitHub REST API's per-repository base URL, shared by the releases, tags, and commits endpoints.
+# The GitHub REST API's per-repository base URL: the repository's own endpoint, which the listings hang below.
 _GITHUB_API = "https://api.github.com/repos"
 # GitHub's maximum page size, for the releases and tags endpoints. Only the first page of each is fetched, so at
 # most this many of the most recent releases and tags are considered.
@@ -44,6 +48,12 @@ _CHANGELOG_FILE_NAMES = frozenset({"changes", "changelog", "history", "news", "r
 _CHANGELOG_FILE_EXTENSIONS = frozenset({"", ".md", ".rst", ".txt"})
 # The names a repository gives the directory it keeps its documentation in, compared in lower case.
 _DOCUMENTATION_DIRECTORY_NAMES = frozenset({"doc", "docs"})
+
+
+class _RepositoryJSON(TypedDict):
+    """A repository from the GitHub repository endpoint."""
+
+    archived: NotRequired[bool]  # Absent from the empty payload a repository that couldn't be fetched reports
 
 
 class _ReleaseJSON(TypedDict):
@@ -271,7 +281,7 @@ def github_owner_and_repository(url: str) -> tuple[str, str]:
     return "", ""
 
 
-def owner_and_repository(dependency: DependencyName) -> tuple[str, str]:
+def _owner_and_repository(dependency: DependencyName) -> tuple[str, str]:
     """Return the owner and repository the dependency names, dropping any path below the repository.
 
     A dependency names the two directly, as `actions/checkout` does, and as `actions/checkout/sub-action` does for
@@ -281,30 +291,46 @@ def owner_and_repository(dependency: DependencyName) -> tuple[str, str]:
     return owner, repository
 
 
+@cache
+def _fetch_github(url: str, *, require_ok: bool = True) -> Fetched:
+    """Fetch a GitHub API URL once per run, authenticated where a token is set, or None when the request failed.
+
+    Omitting the authorization header or the cache spends rate limit rather than failing, which nothing but an
+    exhausted run catches, so every API request goes through here.
+    """
+    return fetch(url, _LOG, headers=_github_headers(), require_ok=require_ok)
+
+
 def _list(owner: str, repository: str, path: str) -> tuple[Any, ...] | None:
     """Fetch a listing under the repository's API path, or None when it couldn't be fetched.
 
     An empty tuple means the repository was reached but listed nothing; None means the fetch itself failed
     (already logged by `fetch`). Distinguishing the two lets callers avoid reporting a network problem a second
-    time. Each caller caches its own listing, so a repository asked about twice costs one request per listing.
+    time.
     """
-    response = fetch(f"{_GITHUB_API}/{owner}/{repository}/{path}", _LOG, headers=_github_headers())
+    response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}/{path}")
     return tuple(response.json()) if response is not None else None
 
 
-@cache
+def _repository_metadata(owner: str, repository: str) -> _RepositoryJSON:
+    """Fetch what GitHub reports about the repository itself, or an empty dict when it can't be fetched.
+
+    GitHub answers 404 when the repository's URL ends in a slash.
+    """
+    response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}")
+    return response.json() if response is not None else {}
+
+
 def _list_releases(owner: str, repository: str) -> tuple[_ReleaseJSON, ...] | None:
     """Fetch the GitHub releases for a repository, or None when they couldn't be fetched."""
     return _list(owner, repository, f"releases?per_page={_PER_PAGE}")
 
 
-@cache
 def _list_tags(owner: str, repository: str) -> tuple[_TagJSON, ...] | None:
     """Fetch the GitHub tags for a repository, or None when they couldn't be fetched."""
     return _list(owner, repository, f"tags?per_page={_PER_PAGE}")
 
 
-@cache
 def _list_root(owner: str, repository: str) -> tuple[_ContentJSON, ...] | None:
     """Fetch the entries in the root of a repository, or None when they couldn't be fetched."""
     return _list(owner, repository, "contents/")
@@ -316,7 +342,6 @@ def _is_changelog_file(name: str) -> bool:
     return stem in _CHANGELOG_FILE_NAMES and dot + extension in _CHANGELOG_FILE_EXTENSIONS
 
 
-@cache
 def _get_commit(owner: str, repository: str, ref: str) -> tuple[_CommitJSON | None, str]:
     """Fetch the commit for the ref (a tag name or commit SHA): the commit and an empty string, or None and why not.
 
@@ -326,7 +351,7 @@ def _get_commit(owner: str, repository: str, ref: str) -> tuple[_CommitJSON | No
     response explains itself in its body's `message` (e.g. "API rate limit exceeded for …"), so that is included.
     """
     commits_url = f"{_GITHUB_API}/{owner}/{repository}/commits/{ref}"
-    response = fetch(commits_url, _LOG, headers=_github_headers(), require_ok=False)
+    response = _fetch_github(commits_url, require_ok=False)
     if response is None:
         return None, "the request failed"
     if not response.ok:
@@ -376,6 +401,7 @@ def _tagged_versions(owner: str, repository: str) -> list[TaggedVersion] | None:
     return tagged_versions
 
 
+@archival_reporting
 @publication_date_reporting
 @cache
 def get_latest_version(
@@ -390,14 +416,14 @@ def get_latest_version(
     `first_eligible`, resolving each candidate's publication date, cooldown, and commit SHA until one is eligible.
     A `version_bound` bound narrows the candidates before the highest is picked. When the versions were fetched
     but none is valid, that's logged as "no valid version"; a fetch failure is left to `fetch`'s own warning, so a
-    network problem isn't reported twice. The newest publication date is always attached (for the staleness
-    check), even when the version is unchanged.
+    network problem isn't reported twice. What GitHub reports about the repository is always attached, even when
+    the version is unchanged, so a reference that is already up to date is still checked for staleness and archival.
     """
     if not is_valid(current_version):
         return DependencyVersion(version=current_version)
-    owner, repository = owner_and_repository(action)
-    newest = newest_release(owner, repository)
-    unchanged = DependencyVersion(current_version, newest=newest)
+    owner, repository = _owner_and_repository(action)
+    repository_project = project(action)
+    unchanged = DependencyVersion(current_version, project=repository_project)
     tagged_versions = _tagged_versions(owner, repository)
     if tagged_versions is None:
         return unchanged  # Couldn't reach GitHub; the fetches already logged a warning.
@@ -412,7 +438,7 @@ def get_latest_version(
         if version.version >= current and version_bound.keeps(version.version, current_version)
     ]
     latest = first_eligible(candidates, lambda version: _eligible_version(version, cooldown_days), current_version)
-    return replace(latest, newest=newest)
+    return replace(latest, project=repository_project)
 
 
 def _eligible_version(tagged_version: TaggedVersion, cooldown_days: int) -> DependencyVersion | None:
@@ -435,9 +461,7 @@ def _eligible_version(tagged_version: TaggedVersion, cooldown_days: int) -> Depe
 def _newest_tag_beyond_releases(owner: str, repository: str) -> _TagJSON | None:
     """Return the highest-versioned tag when it runs ahead of every dated release, or None.
 
-    This decides whether the repo's newest activity might be a tag rather than a release, so that
-    `newest_release` knows to fetch that tag's commit date. Pre-release versions count on both sides,
-    mirroring the newest-release date, which also includes pre-releases.
+    The highest tag may be a pre-release, and so may the dated releases the tag is measured against.
     """
     versioned_tags = [
         (Version(tag["name"]), tag) for tag in _list_tags(owner, repository) or () if is_valid(tag["name"])
@@ -457,7 +481,24 @@ def _newest_tag_beyond_releases(owner: str, repository: str) -> _TagJSON | None:
     return newest_tag
 
 
-def newest_release(owner: str, repository: str) -> Release | None:
+@archival_reporting
+def project(dependency: DependencyName) -> Project:
+    """Return what GitHub reports about the repository the dependency names: its newest release, and its archival."""
+    owner, repository = _owner_and_repository(dependency)
+    return Project(newest=_newest_release(owner, repository), archival=_archival(owner, repository))
+
+
+def _archival(owner: str, repository: str) -> Archival:
+    """Return what GitHub declares about the repository: whether it is archived.
+
+    GitHub publishes no reason beside the flag, so an archived repository carries none.
+    """
+    if not _repository_metadata(owner, repository).get("archived", False):
+        return Archival()
+    return Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
+
+
+def _newest_release(owner: str, repository: str) -> Release | None:
     """Return the repo's most recently published version with its date, or None if it has none.
 
     Every release counts, pre-releases and backports included, and so does the highest tag when it runs ahead of
@@ -476,7 +517,7 @@ def newest_release(owner: str, repository: str) -> Release | None:
     )
 
 
-def get_release(owner: str, repository: str, package: str, version: str) -> TaggedVersion | None:
+def _get_release(owner: str, repository: str, package: str, version: str) -> TaggedVersion | None:
     """Get the release matching the package and version from the GitHub releases API.
 
     Tries tag names in order of preference:
@@ -497,7 +538,7 @@ def changes_from_release(owner: str, repository: str, package: str, version: str
     """Return the body of the GitHub release matching the package and version, or empty string if absent."""
     if not (owner and repository):
         return ""
-    release = get_release(owner, repository, package, version)
+    release = _get_release(owner, repository, package, version)
     return release.body if release else ""
 
 
@@ -544,10 +585,9 @@ def _changes_from_tree(owner: str, repository: str, directory: _ContentJSON, ver
     return ""
 
 
-@cache
 def _list_tree(git_url: str) -> tuple[str, ...]:
     """Fetch the paths of the files below the tree the URL names, or an empty tuple when they can't be fetched."""
-    response = fetch(f"{git_url}?recursive=1", _LOG, headers=_github_headers())
+    response = _fetch_github(f"{git_url}?recursive=1")
     if response is None:
         return ()
     tree: list[_TreeEntryJSON] = response.json().get("tree", [])

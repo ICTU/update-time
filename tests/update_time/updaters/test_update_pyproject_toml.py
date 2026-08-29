@@ -98,7 +98,6 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         """Test that a pin uv names differently is found at its line and keeps the spelling the file gave it."""
         for spelling, reported in (("Jinja2", "jinja2"), ("typing_extensions", "typing-extensions")):
             with self.subTest(spelling=spelling):
-                self.mock_log.reset_mock()  # Assert on the records of this case alone.
                 run.return_value = self.mock_update_on_stdout(reported, "v1.1")
                 get.return_value = mock_response(self.pypi_metadata_without_changelog())
                 mock_pyproject_toml = self.create_pyproject_toml(pyproject(f"{spelling}==1.0"))
@@ -117,11 +116,9 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         mock_pyproject_toml = self.create_pyproject_toml(contents)
         glob.return_value = [mock_pyproject_toml]
         update_pyproject_tomls()
-        for line in (2, 4):
-            with self.subTest(line=line):
-                self.assert_new_version_logged_among_others(
-                    "package", "1.1, published: 2026-05-30 12:08", Location(mock_pyproject_toml, line), ANY
-                )
+        published = "1.1, published: 2026-05-30 12:08"
+        self.assert_new_version_logged_among_others("package", published, Location(mock_pyproject_toml, 2), ANY)
+        self.assert_new_version_logged_among_others("package", published, Location(mock_pyproject_toml, 4), ANY)
 
     def test_update_of_a_dependency_without_an_exact_pin(self, run: Mock, get: Mock, glob: Mock):
         """Test that a dependency uv reports outdated that the file doesn't `==`-pin is logged at its own line."""

@@ -8,19 +8,23 @@ import requests
 
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion, Release
+from update_time.domain.dependency import DependencyVersion, Project, Release
 from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
+from update_time.markers.directive import Reason
 from update_time.markers.drift import ALLOW_HASH_DRIFT
 from update_time.primitives.location import Location
+from update_time.references import github as references_github
 from update_time.references import resolve as references_resolve
 from update_time.sources import github as sources_github
+from update_time.updaters import update_github_action
 from update_time.updaters.update_github_action import update_github_actions
 
 from tests.helpers import mock_path, patch_environ
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
+from tests.update_time.fixtures import GITHUB_UNCACHED
 from tests.update_time.helpers import (
     LoggingTestCase,
     bound,
@@ -120,7 +124,8 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that an action whose newest release is old is warned about, even when it is up to date."""
         old = datetime.now(UTC) - timedelta(days=512)
         newest = Release("1.2", old)
-        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=OLD_SHA, newest=newest)
+        project = Project(newest=newest)
+        mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=OLD_SHA, project=project)
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()
@@ -209,7 +214,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that `ignore[update]` leaves the action's pin unchanged but still warns when it is stale."""
         old = datetime.now(UTC) - timedelta(days=512)
         newest = Release("1.2", old)
-        mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA, newest=newest)
+        mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA, project=Project(newest=newest))
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore[update]\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()
@@ -222,7 +227,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         """Test that `ignore[stale]` repins the action but skips the staleness check even for an old release."""
         old = datetime.now(UTC) - timedelta(days=512)
         newest = Release("1.2", old)
-        mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA, newest=newest)
+        mock_latest.return_value = DependencyVersion(version="1.1", sha=NEW_SHA, project=Project(newest=newest))
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore[stale]\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()
@@ -258,8 +263,8 @@ class UpdateGitHubActionsTest(LoggingTestCase):
     @kills(
         Mutation(
             references_resolve,
-            "        log.report_staleness(resolved, marker, threshold)",
-            "        log.report_staleness(resolved, type(marker)(), threshold)",
+            "    log.report_staleness(resolved, marker, threshold)",
+            "    log.report_staleness(resolved, type(marker)(), threshold)",
             "a marker silencing the staleness warning of a branch reference is passed over",
         )
     )
@@ -278,9 +283,9 @@ class UpdateGitHubActionsTest(LoggingTestCase):
     @kills(
         Mutation(
             references_resolve,
-            "    if (threshold := marker.stale.value_or(STALE_AFTER.get())) == NO_STALENESS_CHECK:",
-            "    if (threshold := STALE_AFTER.get()) == NO_STALENESS_CHECK:",
-            "a branch reference's own staleness threshold is passed over for the run-wide one",
+            "    return marker.stale.value_or(STALE_AFTER.get())",
+            "    return STALE_AFTER.get()",
+            "a reference's own staleness threshold is passed over for the run-wide one",
         )
     )
     @patch_github(releases=[github_release_json("v1.0", published_at=_HUNDRED_DAYS_ISO)], tags=[])
@@ -294,14 +299,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         self.assert_stale_dependency_logged("actions/checkout", "1.0", Location(workflow_yml, 1))
 
-    @kills(
-        Mutation(
-            sources_github,
-            "@cache\ndef _list_releases(owner: str, repository: str) -> tuple[_ReleaseJSON, ...] | None:",
-            "def _list_releases(owner: str, repository: str) -> tuple[_ReleaseJSON, ...] | None:",
-            "every reference to a repository asks GitHub for its releases again",
-        )
-    )
+    @kills(GITHUB_UNCACHED)
     @patch_github(releases=[github_release_json("v1.0", published_at=_STALE_ISO)], tags=[])
     def test_two_branch_references_to_one_repository_cost_one_lookup(
         self, mock_glob: Mock, mock_get_latest_version: Mock
@@ -318,41 +316,26 @@ class UpdateGitHubActionsTest(LoggingTestCase):
             "actions/checkout", "1.0", Location(workflow_ymls[0], 1), Location(workflow_ymls[1], 1)
         )
 
-    @patch("update_time.references.github.newest_release")
-    def test_a_local_action_is_passed_over(
-        self, mock_newest_release: Mock, mock_glob: Mock, mock_get_latest_version: Mock
-    ):
+    @patch("update_time.references.github.project")
+    def test_a_local_action_is_passed_over(self, mock_project: Mock, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an action in the repository itself names no GitHub repository, so none is asked about."""
         workflow_yml = mock_path("uses: ./.github/actions/build\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()
         workflow_yml.write_text.assert_not_called()
-        mock_newest_release.assert_not_called()
+        mock_project.assert_not_called()
         mock_get_latest_version.assert_not_called()
         self.assert_no_warnings_logged()
 
-    @patch("update_time.references.github.newest_release")
+    @patch("update_time.references.github.project")
     def test_a_bare_ignore_on_a_branch_reference_asks_github_nothing(
-        self, mock_newest_release: Mock, mock_glob: Mock, mock_get_latest_version: Mock
+        self, mock_project: Mock, mock_glob: Mock, mock_get_latest_version: Mock
     ):
         """Test that a bare `ignore` on a branch reference holds the staleness check back, GitHub unasked."""
         workflow_yml = mock_path("uses: actions/checkout@main  # update-time: ignore\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()
-        mock_newest_release.assert_not_called()
-        mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
-        self.assert_no_warnings_logged()
-
-    @patch("update_time.references.github.newest_release")
-    def test_a_branch_reference_is_not_looked_up_with_the_check_switched_off(
-        self, mock_newest_release: Mock, mock_glob: Mock, mock_get_latest_version: Mock
-    ):
-        """Test that `--stale-after 0` leaves a branch reference unlooked-up, staleness being its only check."""
-        workflow_yml = mock_path("uses: actions/checkout@main\n")
-        mock_glob.side_effect = [[workflow_yml], []]
-        with staleness_disabled:
-            update_github_actions()
-        mock_newest_release.assert_not_called()
+        mock_project.assert_not_called()
         mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         self.assert_no_warnings_logged()
 
@@ -400,6 +383,14 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     real one is.
     """
 
+    @staticmethod
+    def scanned_workflow(mock_glob: Mock, workflow: str) -> Mock:
+        """Run the updater on a workflow file holding the given line, and return that file."""
+        workflow_yml = mock_path(workflow)
+        mock_glob.side_effect = [[workflow_yml], []]
+        update_github_actions()
+        return workflow_yml
+
     @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA))
     def test_cooldown_marker_is_not_reported_as_redundant(self, mock_glob: Mock):
         """Test that a `cooldown` marker on an action holds something back, since GitHub dates its versions."""
@@ -409,3 +400,85 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         update_github_actions()
         workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.1{marker}\n")
         self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            sources_github,
+            "    return Project(newest=_newest_release(owner, repository), archival=_archival(owner, repository))",
+            "    return Project(newest=_newest_release(owner, repository))",
+            "the source attaches no archival to the version it resolves, so an archived repository is never reported",
+        )
+    )
+    @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA), archived=True)
+    def test_archived_repository_warned(self, mock_glob: Mock):
+        """Test that an action whose repository GitHub declares archived is warned about, and still updated."""
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@{OLD_SHA} # v1.0\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.1\n")
+        self.assert_archived_repository_logged("action/action", Location(workflow_yml, 1))
+
+    @kills(
+        Mutation(
+            update_github_action,
+            r'    r"uses: (?P<dependency>[\w\d\.-]+/[\w\d\./-]+)@"',
+            r'    r"uses: (?P<dependency>[\w\d\./-]+)@"',
+            "a reference naming no repository is read as one, ending the run over that single line",
+            raises="ValueError: not enough values to unpack (expected at least 2, got 1)",
+        )
+    )
+    @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA))
+    def test_a_reference_naming_no_repository_is_passed_over(self, mock_glob: Mock):
+        """Test that a `uses:` naming no owner and repository is left alone rather than ending the run."""
+        workflow_yml = self.scanned_workflow(mock_glob, "uses: myaction@v1\n")
+        workflow_yml.write_text.assert_not_called()
+        cast("Mock", requests.get).assert_not_called()  # A reference naming no repository asks GitHub nothing.
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            references_github,
+            "        warn_about_directives_the_source_cannot_apply(marker, get_latest_version, reference, log)",
+            "",
+            "a reference naming no version has its marker passed over, so a directive holding nothing back is "
+            "never reported for it",
+        )
+    )
+    @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA))
+    def test_a_scope_the_source_cannot_apply_is_reported_on_a_reference_naming_no_version(self, mock_glob: Mock):
+        """Test that a scope GitHub can never apply is reported for a branch reference, which resolves no update."""
+        marker = "  # update-time: ignore[yanked]"
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@main{marker}\n")
+        workflow_yml.write_text.assert_not_called()  # A branch names no version to resolve an update for.
+        self.assert_redundant_directive_logged(
+            Reason.NO_YANK_CONCEPT, "action/action", Location(workflow_yml, 1), "ignore[yanked]"
+        )
+
+    @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA), archived=True)
+    def test_ignore_archived_marker_silences_the_warning(self, mock_glob: Mock):
+        """Test that `ignore[archived]` on an action silences the warning its archived repository would get."""
+        marker = "  # update-time: ignore[archived]"
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@{OLD_SHA} # v1.0{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.1{marker}\n")
+        self.assert_ignored_archival_logged("action/action", Location(workflow_yml, 1), "ignore[archived]")
+        self.assert_no_warnings_logged()
+
+    @patch_github(releases=[github_release_json("v1.0", published_at=_FRESH_ISO)], tags=[], archived=True)
+    def test_archived_repository_of_a_branch_reference_warned(self, mock_glob: Mock):
+        """Test that an action referenced by a branch is warned about when GitHub declares its repository archived."""
+        workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
+        workflow_yml.write_text.assert_not_called()  # A branch names no version to resolve an update for.
+        self.assert_archived_repository_logged("actions/checkout", Location(workflow_yml, 1))
+
+    @kills(
+        Mutation(
+            sources_github,
+            "@archival_reporting\ndef project(dependency: DependencyName) -> Project:",
+            "def project(dependency: DependencyName) -> Project:",
+            "the source claims to report no archival, so switching the staleness check off leaves it unasked",
+        )
+    )
+    @patch_github(releases=[github_release_json("v1.0", published_at=_FRESH_ISO)], tags=[], archived=True)
+    def test_a_branch_reference_is_looked_up_with_the_staleness_check_switched_off(self, mock_glob: Mock):
+        """Test that `--stale-after 0` still asks GitHub about a branch reference, since GitHub reports archival."""
+        with staleness_disabled:
+            workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
+        self.assert_archived_repository_logged("actions/checkout", Location(workflow_yml, 1))

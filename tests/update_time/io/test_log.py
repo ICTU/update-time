@@ -13,7 +13,7 @@ from rich.logging import RichHandler
 from rich.text import Text
 
 from update_time.domain.bound import Redundancy, Verb
-from update_time.domain.dependency import DependencyVersion, FloatingPin, Release, Yank
+from update_time.domain.dependency import Archival, DependencyVersion, FloatingPin, Project, Release, Yank
 from update_time.domain.reference import DriftedPin
 from update_time.io import log as log_module
 from update_time.io.log import (
@@ -279,7 +279,7 @@ class LoggerTests(TestCase):
         reported `(> 90)` can only have come from the argument.
         """
         published = datetime.now(UTC) - timedelta(days=512, hours=1)
-        version = DependencyVersion("4.15.0", newest=Release("5.0.0", published))
+        version = DependencyVersion("4.15.0", project=Project(newest=Release("5.0.0", published)))
         location = _create_location("requirements.txt", 9)
         Logger("stale").report_staleness(resolved_reference("humanize", location, version), Marker(), 90)
         self.assert_message(
@@ -296,7 +296,7 @@ class LoggerTests(TestCase):
         either line is logged only when the given threshold is the one applied.
         """
         published = datetime.now(UTC) - timedelta(days=100, hours=1)
-        version = DependencyVersion("4.15.0", newest=Release("4.15.0", published))
+        version = DependencyVersion("4.15.0", project=Project(newest=Release("4.15.0", published)))
         resolved = resolved_reference("humanize", _create_location("requirements.txt", 9), version)
         Logger("stale").report_staleness(resolved, Marker(), 90)
         mock_log.assert_called_once_with(Logger._MESSAGE_STALE.level, Logger._MESSAGE_STALE, ANY)
@@ -343,6 +343,35 @@ class LoggerTests(TestCase):
             f"Yanked dependency {dependency('humanize')} in {_at('requirements.txt:9')}: "
             'version 4.15.0 was yanked ("broke Python 3.10 support")',
         )
+
+    @kills(
+        Mutation(
+            log_module,
+            '        reason = f\' ("{archival.reason}")\' if archival.reason else ""',
+            '        reason = ""',
+            "the reason the source published is left out of the warning",
+        )
+    )
+    def test_archived_dependency_warning(self, mock_log: Mock):
+        """Test that the warning quotes the reason the source published, and ends where it published none."""
+        for case, (archival, clause) in {
+            "no reason": (Archival(archived=True), "the project was archived"),
+            "a reason": (
+                Archival(archived=True, reason="superseded by humanize2"),
+                'the project was archived ("superseded by humanize2")',
+            ),
+        }.items():
+            with self.subTest(case=case):
+                mock_log.reset_mock()
+                version = DependencyVersion("4.15.0", project=Project(archival=archival))
+                Logger("archived").report_archival(
+                    resolved_reference("humanize", _create_location("requirements.txt", 9), version), Marker()
+                )
+                self.assert_message(
+                    mock_log,
+                    Logger._MESSAGE_ARCHIVED,
+                    f"Archived dependency {dependency('humanize')} in {_at('requirements.txt:9')}: {clause}",
+                )
 
     def test_invalid_specifier(self, mock_log: Mock):
         """Test that an unparsable version bound specifier is warned about at warning level."""
@@ -508,7 +537,8 @@ class LoggerTests(TestCase):
 
     def test_report_staleness_does_nothing_when_not_stale(self, mock_log: Mock):
         """Test that a release that is recent or undated is reported by nothing, marker or no marker."""
-        recent = DependencyVersion("4.15.0", newest=Release("4.15.0", datetime.now(UTC) - timedelta(days=1)))
+        newest = Release("4.15.0", datetime.now(UTC) - timedelta(days=1))
+        recent = DependencyVersion("4.15.0", project=Project(newest=newest))
         undated = DependencyVersion("4.15.0")
         logger = Logger("stale")
         location = _create_location("requirements.txt", 9)

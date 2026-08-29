@@ -12,7 +12,7 @@ from update_time.references.file import rewrite_file, update_file, update_files
 
 from tests.helpers import mock_path
 from tests.update_time.fixtures import IMAGE_REGEXP
-from tests.update_time.helpers import new_version_getter
+from tests.update_time.references.helpers import new_version_getter
 
 if TYPE_CHECKING:
     from update_time.domain.line import Line

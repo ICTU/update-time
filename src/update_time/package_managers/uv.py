@@ -9,7 +9,7 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from update_time.domain.bound import NO_BOUND
+from update_time.domain.archival import archival_reporting
 from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.reference import Reference, ResolvedReference
@@ -20,10 +20,9 @@ from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.sources.pypi import (
     get_changes,
-    get_latest_version,
     get_publication_datetime,
-    newest_release,
     normalized_name,
+    project,
     yank_state,
 )
 
@@ -252,30 +251,12 @@ def update_python_inline_script_metadata(script: Path, log: Logger) -> bool:
     return _update_dependencies(uv_tree, script, log)
 
 
-def newest_pypi_releases(path: Path) -> Iterable[ResolvedReference]:
-    """Yield each dependency the file declares, carrying the newest PyPI release of the package it names.
-
-    Resolves each name against PyPI rather than reporting the version the file records. A pyproject.toml and an
-    inline script metadata block declare their dependencies the same way, so one reader serves both. A package the
-    index lists no release for is left out.
-    """
+@archival_reporting
+def pypi_projects(path: Path) -> Iterable[ResolvedReference]:
+    """Yield each dependency the file declares, carrying PyPI's report on the project the dependency names."""
     for declaration in pyproject_toml_format.declared_dependencies(path):
-        if (release := _staleness_release(declaration)) is not None:
-            yield ResolvedReference(**vars(declaration), release=release)
-
-
-def _staleness_release(declaration: Reference) -> DependencyVersion | None:
-    """Return the release to measure the declaration's staleness against, or None when the index lists none.
-
-    An exact pin is resolved as an update would resolve it, which reports the newest release along the way. A
-    declaration that pins no version has no update to resolve, so its newest release is looked up by name alone,
-    which is all measuring staleness needs.
-    """
-    if declaration.current_version:
-        return get_latest_version(declaration.dependency, declaration.current_version, NO_BOUND, COOLDOWN.get())
-    if (newest := newest_release(declaration.dependency)) is None:
-        return None
-    return DependencyVersion.unpinned(newest)
+        release = DependencyVersion.unpinned(project(declaration.dependency))
+        yield ResolvedReference(**vars(declaration), release=release)
 
 
 def pinned_pypi_releases(path: Path) -> Iterable[ResolvedReference]:

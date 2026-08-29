@@ -32,9 +32,10 @@ class Reference:
 
 @dataclass(frozen=True, kw_only=True)
 class ResolvedReference(Reference):
-    """A reference and the release a source resolved for it, which the staleness and yank checks report on.
+    """A reference, and the release a source resolved for that reference.
 
-    The release is the one the run leaves the reference on: the version it moved to, or the version it stayed on.
+    The release is the version the run leaves the reference on. That is the new version when the run updated
+    the reference, and the current version otherwise.
     """
 
     release: DependencyVersion

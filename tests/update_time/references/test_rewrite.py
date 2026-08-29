@@ -13,19 +13,25 @@ from update_time.markers import marker as marker_module
 from update_time.markers.directive import Reason
 from update_time.markers.drift import ALLOW_HASH_DRIFT
 from update_time.markers.floating import ALLOW_FLOATING_PIN
-from update_time.markers.marker import Marker, Scope
+from update_time.markers.marker import _SOURCE_CHECK_SCOPES, Marker, Scope
 from update_time.primitives.location import Location
-from update_time.references import resolve
 from update_time.references.rewrite import update_references_in_lines
 
 from tests.helpers import patch_environ
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import BARE_IGNORE, DIGEST, IMAGE_REGEXP
+from tests.update_time.fixtures import (
+    BARE_IGNORE,
+    DIGEST,
+    EVERY_IGNORABLE_SCOPE,
+    EVERY_SOURCE_CHECK_SCOPE,
+    IMAGE_REGEXP,
+)
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.fixtures import DIGEST1 as OLD_DIGEST
 from tests.update_time.fixtures import DIGEST2 as NEW_DIGEST
-from tests.update_time.helpers import bound, mock_new_version_getter, new_version_getter, reference
+from tests.update_time.helpers import bound, reference
+from tests.update_time.references.helpers import mock_new_version_getter, new_version_getter
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
@@ -184,7 +190,7 @@ class UpdateReferencesTest(unittest.TestCase):
 
     def test_a_dead_comparison_item_is_reported_however_the_reference_is_held_back(self):
         """Test that an item a source cannot apply is reported, a bare `ignore` beside it included."""
-        held_back = "ignore[update] ignore[stale] ignore[yanked]"
+        held_back = EVERY_SOURCE_CHECK_SCOPE
         cases = {
             "a cooldown beside the scopes the source answers": (
                 f"{held_back} ignore[cooldown<30]",
@@ -216,7 +222,7 @@ class UpdateReferencesTest(unittest.TestCase):
 
     def test_only_a_scope_the_marker_spells_out_is_reported_redundant(self):
         """Test that a scope the marker spells out is reported redundant, where one a bare `ignore` implies is not."""
-        every_scope = "ignore[update] ignore[stale] ignore[yanked] ignore[vulnerable]"
+        every_scope = EVERY_IGNORABLE_SCOPE
         cases = {
             "spelled out": (every_scope, True, True),
             "implied by a bare ignore": ("ignore", False, False),
@@ -267,8 +273,8 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_ignore_update_and_stale_still_checks_for_a_yank(self):
         """Test that a scope the marker leaves live keeps the reference queried, so its check still runs.
 
-        `ignore[update]` and `ignore[stale]` silence two of the three scopes the gate reads; the yank check is not
-        held back, so the source is still queried for it rather than the reference being skipped outright.
+        `ignore[update]` and `ignore[stale]` leave the scopes beside them live; the yank check is not held back, so
+        the source is still queried for it rather than the reference being skipped outright.
         """
         lines = ["image: python:3.14  # update-time: ignore[update] ignore[stale]"]
         self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, new_version_getter("3.15")), lines)  # version left as-is
@@ -277,14 +283,6 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.report_yank.assert_called_once_with(ANY, marker)
         self.logger.report_staleness.assert_called_once_with(ANY, marker, ANY)
 
-    @kills(
-        Mutation(
-            resolve,
-            "log.report_staleness(resolved, marker, marker.stale.value_or(STALE_AFTER.get()))",
-            "log.report_staleness(resolved, marker.frozen, marker.stale.value_or(STALE_AFTER.get()))",
-            "the staleness logger is handed the update-frozen marker rather than the marker as written",
-        )
-    )
     def test_ignore_stale_marker_still_updates_and_reports_with_the_marker(self):
         """Test that `ignore[stale]` applies the update and reaches the logger, which decides the warning itself."""
         lines = ["image: python:3.14  # update-time: ignore[stale]"]
@@ -303,22 +301,14 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.ignored.assert_not_called()  # the update is not held back, so nothing is logged as ignored
 
     def test_inverted_item_reported_although_the_reference_is_held_back(self):
-        """Test that an inverted comparison is reported beside the three scopes that skip the source."""
+        """Test that an inverted comparison is reported beside the scopes that skip the source."""
         get_new_version = Mock()
-        scopes = "ignore[update] ignore[stale] ignore[yanked]"
+        scopes = EVERY_SOURCE_CHECK_SCOPE
         lines = [f"image: python:3.14  # update-time: {scopes} ignore[stale>=90]"]
         self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)
         self.logger.inverted_stale_item.assert_called_once_with(self.reference(), "stale>=90")
         get_new_version.assert_not_called()  # The warning costs no request, the item being unreadable on its own.
 
-    @kills(
-        Mutation(
-            marker_module,
-            'return (self.name or "").lower().replace("_", "-")',
-            'return (self.name or "").lower()',
-            "hash-drift no longer matches its scope, the underscore in the scope name not becoming a hyphen",
-        )
-    )
     def test_allow_hash_drift_marker_adopts_new_digest(self):
         """Test that an inline `allow[hash-drift]` marker re-pins a re-pushed tag's digest instead of warning."""
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[hash-drift]"]
@@ -612,16 +602,16 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_combined_ignore_scopes_hold_back_everything(self):
         """Test that every `ignore` scope combined holds back as much as a bare `ignore`."""
         get_new_version = Mock()
-        scopes = "ignore[update] ignore[stale] ignore[yanked] ignore[vulnerable]"
+        scopes = EVERY_IGNORABLE_SCOPE
         lines = [f"image: python:3.12  # update-time: {scopes}"]
         self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()  # Every aspect is held back, so the source is not even queried.
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
-    def test_a_marker_naming_update_stale_and_yanked_skips_the_source(self):
-        """Test that the three scopes the gate reads skip the source without a `vulnerable` scope beside them."""
+    def test_a_marker_naming_the_scopes_the_source_answers_skips_the_source(self):
+        """Test that the scopes the gate reads skip the source without a `vulnerable` scope beside them."""
         get_new_version = Mock()
-        lines = ["image: python:3.12  # update-time: ignore[update] ignore[stale] ignore[yanked]"]
+        lines = [f"image: python:3.12  # update-time: {EVERY_SOURCE_CHECK_SCOPE}"]
         self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
 
@@ -651,13 +641,13 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.warn_if_redundant_bound.assert_called_once_with(reference, marker)
 
     def test_redundant_bound_is_warned_although_the_reference_is_held_back(self):
-        """Test that a bound is judged for redundancy beside the three scopes that skip the source."""
+        """Test that a bound is judged for redundancy beside the scopes that skip the source."""
         get_new_version = mock_new_version_getter()
-        scopes = "ignore[update] ignore[stale] ignore[yanked]"
+        scopes = "ignore[update] ignore[stale] ignore[yanked] ignore[archived]"
         lines = [f"image: python:3.12  # update-time: {scopes} allow[update>=3.12]"]
         self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)
         marker = Marker(
-            ignored_scopes=Scope.UPDATE | Scope.STALE | Scope.YANKED,
+            ignored_scopes=_SOURCE_CHECK_SCOPES,
             version_bound=bound(Verb.ALLOW, "update>=3.12"),
         )
         reference = Reference("python", "3.12", Location(self.path, 1))

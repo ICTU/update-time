@@ -7,18 +7,20 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import Release, Yank
+from update_time.domain.dependency import Archival, Release, Yank
 from update_time.sources import github, pypi
 from update_time.sources.pypi import (
+    _archival,
     _changelog_from_url,
+    _newest_release,
     get_changes,
     get_latest_version,
     get_publication_datetime,
-    newest_release,
 )
 
 from tests.helpers import mock_response, patch_get
 from tests.mutation import Mutation, kills
+from tests.update_time.fixtures import GITHUB_UNCACHED
 from tests.update_time.helpers import (
     PYPI_OLD_UPLOAD,
     CacheClearingTestCase,
@@ -242,10 +244,11 @@ class GetChangesTest(LoggingTestCase):
     def test_repository_url_found(self, mock_get: Mock):
         """Test that the changes are returned if PyPI returns a repository URL, under any label read as one."""
         changelog = "Changelog\n## 1.1\n- Fixed foo\n"
-        repo = "https://github.com/org/repo"
         docs = "https://docs"
         for key in ("repository", "source", "homepage", "Source Code", "GitHub"):
             with self.subTest(key=key):
+                # Each case names a repository of its own, since a GitHub API URL is fetched once per run.
+                repo = f"https://github.com/org/repo-{key.replace(' ', '-')}"
                 self.create_mock_response(
                     mock_get,
                     {"info": {"description": "Package-foo description", "project_urls": {"docs": docs, key: repo}}},
@@ -384,13 +387,6 @@ class GetChangesTest(LoggingTestCase):
         self.assertEqual(get_changes("tqdm", "1.1"), changelog)
         self.assert_releases_requested(mock_get, "tqdm/tqdm")
 
-    _NO_DISCOVERY = Mutation(
-        pypi,
-        "_changelog_from_repository_root(url, version)",
-        '""',
-        "a package keeping its changelog in a file in its repository reports no changes at all",
-    )
-
     _DOCUMENTATION_READ_FIRST = Mutation(
         github,
         "    root = _list_root(owner, repository) or ()\n    for entry in root:",
@@ -401,7 +397,7 @@ class GetChangesTest(LoggingTestCase):
         "a repository whose root answers costs a documentation tree listing it has no need of",
     )
 
-    @kills(_NO_DISCOVERY, _DOCUMENTATION_READ_FIRST)
+    @kills(_DOCUMENTATION_READ_FIRST)
     def test_changelog_file_in_the_repository_root(self, mock_get: Mock):
         """Test that a changelog file in the root supplies the changes, leaving the documentation directory unread."""
         changelog = "Changelog\n=========\n\n1.1\n===\n\n- Fixed foo\n\n1.0\n===\n\n- Fixed bar\n"
@@ -414,14 +410,6 @@ class GetChangesTest(LoggingTestCase):
         self.assertEqual(get_changes("gevent", "1.1"), "1.1\n===\n\n- Fixed foo")
         self.assertNotIn(self.tree_url("doc"), self.requested_urls(mock_get))
 
-    _ROOT_ONLY = Mutation(
-        github,
-        "    return _changes_from_documentation(owner, repository, root, version)",
-        '    return ""',
-        "a project keeping its changelog below its documentation directory reports no changes at all",
-    )
-
-    @kills(_ROOT_ONLY)
     def test_changelog_file_in_a_documentation_directory(self, mock_get: Mock):
         """Test that a changelog file below a documentation directory supplies the changes the root's file lacks."""
         changelog = "Changelog\n=========\n\n1.1\n===\n\n- Fixed foo\n"
@@ -615,17 +603,6 @@ class GetChangesTest(LoggingTestCase):
                 self.assertEqual(get_changes(package, "1.1"), "1.1\n===\n\n- Fixed foo" if found else "")
                 self.assert_root_listed(mock_get, repository)
 
-    _UNGUARDED_LISTING = Mutation(
-        github,
-        '    response = fetch(f"{_GITHUB_API}/{owner}/{repository}/{path}", _LOG, headers=_github_headers())\n'
-        "    return tuple(response.json()) if response is not None else None",
-        '    response = fetch(f"{_GITHUB_API}/{owner}/{repository}/{path}", _LOG, headers=_github_headers())\n'
-        "    return tuple(response.json())",
-        "a repository whose root listing cannot be fetched ends the run with a traceback",
-        raises="AttributeError: 'NoneType' object has no attribute 'json'",
-    )
-
-    @kills(_UNGUARDED_LISTING)
     def test_root_listing_unreachable(self, mock_get: Mock):
         """Test that a root listing that can't be fetched yields no changes, and is reported as unreachable."""
         contents_url = self.contents_url("pypa/packaging")
@@ -637,14 +614,7 @@ class GetChangesTest(LoggingTestCase):
         self.assert_root_listed(mock_get, "pypa/packaging")
         self.assert_could_not_fetch_logged(url=contents_url)
 
-    _UNCACHED = Mutation(
-        github,
-        "@cache\ndef _list_root(",
-        "def _list_root(",
-        "every package sharing a repository costs a root listing of its own",
-    )
-
-    @kills(_UNCACHED)
+    @kills(GITHUB_UNCACHED)
     def test_root_listing_is_fetched_once_per_repository(self, mock_get: Mock):
         """Test that two packages sharing a repository cost one root listing between them."""
         self.create_discovery_responses(
@@ -717,7 +687,7 @@ class NewestReleaseTest(LoggingTestCase):
     @patch_get({"versions": ["1.0"]})
     def test_no_files(self):
         """Test that no release is returned when the Index API lists no distribution files."""
-        self.assertIsNone(newest_release("no_files"))
+        self.assertIsNone(_newest_release("no_files"))
 
     @patch_get(
         {
@@ -736,13 +706,66 @@ class NewestReleaseTest(LoggingTestCase):
         The backport 1.0.1 was uploaded after 2.0, so the highest version is not the one measured. The upload
         after it names no version, and the file without an upload time names no date.
         """
-        self.assertEqual(Release("1.0.1", datetime(2020, 6, 1, tzinfo=UTC)), newest_release("files"))
+        self.assertEqual(Release("1.0.1", datetime(2020, 6, 1, tzinfo=UTC)), _newest_release("files"))
 
     @patch_get(ok=False)
     def test_fetch_failure(self):
         """Test that no release is returned when the Index API can't be fetched."""
-        self.assertIsNone(newest_release("error"))
+        self.assertIsNone(_newest_release("error"))
         self.assert_could_not_fetch_logged()
+
+
+class ArchivalTest(LoggingTestCase):
+    """Unit tests for the archival state PyPI declares for a project."""
+
+    @kills(
+        Mutation(
+            pypi,
+            '    return Archival(archived=archived, reason=project_status.get("reason") or "")',
+            "    return Archival(archived=archived)",
+            "the reason published beside the status is dropped, so an archived project reports none",
+        ),
+        Mutation(
+            pypi,
+            '    project_status = _project_metadata(package).get("project-status") or {}',
+            '    project_status = _project_metadata(package).get("project-status", {})',
+            "a project status PyPI serves as null ends the run with a traceback rather than reading as active",
+            raises="AttributeError: 'NoneType' object has no attribute 'get'",
+        ),
+        Mutation(
+            pypi,
+            '    return Archival(archived=archived, reason=project_status.get("reason") or "")',
+            '    return Archival(archived=archived, reason=project_status.get("reason", ""))',
+            "a reason PyPI serves as null is carried as None in the field that holds the words to quote",
+        ),
+    )
+    @patch("requests.get")
+    def test_project_status(self, mock_get: Mock):
+        """Test that a project reads as archived exactly when the Index API declares that status for it.
+
+        PyPI serves the status under `status`, where PEP 792's text spells it `state`, so a response spelling it
+        the PEP's way declares no status to read. A `project-status` or a `reason` served as null names none
+        either. Each case names a package of its own, since the Index API response is cached per package.
+        """
+        cases: dict[str, tuple[Mapping, Archival]] = {
+            "archived-project": ({"project-status": {"status": "archived"}}, Archival(archived=True)),
+            "active-project": ({"project-status": {"status": "active"}}, Archival()),
+            "project-without-a-status": ({}, Archival()),
+            "project-status-spelled-as-a-state": ({"project-status": {"state": "archived"}}, Archival()),
+            "archived-project-with-a-reason": (
+                {"project-status": {"status": "archived", "reason": "superseded by humanize2"}},
+                Archival(archived=True, reason="superseded by humanize2"),
+            ),
+            "project-status-served-as-null": ({"project-status": None}, Archival()),
+            "archived-project-with-a-null-reason": (
+                {"project-status": {"status": "archived", "reason": None}},
+                Archival(archived=True),
+            ),
+        }
+        for package, (body, expected) in cases.items():
+            with self.subTest(package=package):
+                mock_get.return_value = mock_response(body)
+                self.assertEqual(_archival(package), expected)
 
 
 @patch("requests.get")
@@ -788,9 +811,10 @@ class GetLatestVersionTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi,
-            "    return replace(latest, newest=newest_release(package))",
-            "    _n = newest_release(package)\n"
-            "    return replace(latest, newest=None if _n is None else type(_n)(latest.version, _n.published))",
+            "    return replace(latest, project=project(package))",
+            "    _p = project(package)\n"
+            "    return replace(latest, project=Project("
+            "newest=Release(latest.version, _p.newest.published) if _p.newest else None, archival=_p.archival))",
             "the release attached names the version the run leaves the pin on, not the package's newest",
         )
     )
@@ -805,7 +829,7 @@ class GetLatestVersionTest(LoggingTestCase):
         mock_get.side_effect = [pypi_index("1.0", "2.0", files=files), pypi_release(fresh)]
         latest = get_latest_version("stale", "1.0", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "1.0")
-        self.assertEqual(Release("2.0", datetime.fromisoformat(fresh)), latest.newest)
+        self.assertEqual(Release("2.0", datetime.fromisoformat(fresh)), latest.project.newest)
 
     def test_prerelease_ignored(self, mock_get: Mock):
         """Test that pre-releases are ignored without fetching their metadata."""

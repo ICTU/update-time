@@ -13,6 +13,7 @@ import sys
 import types
 import unittest
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, cast
@@ -29,6 +30,9 @@ CHECKED_TEST = "_UPDATE_TIME_MUTATION_CHECKED_TEST"
 # Set for the whole of a `just mutate` run, which applies a mutation of its own: the registered checks stand aside,
 # so that run's kill list holds the tests that failed on the mutation it was given.
 CHECKS_OFF = "_UPDATE_TIME_MUTATION_CHECKS_OFF"
+
+# The package the suite is discovered under, whose modules a mutation makes stale.
+_SUITE = "tests"
 
 # The attribute a decorated test carries, holding the mutations it registers. A second `kills` on the same test
 # finds it there and fails the test. It survives a decorator written between the two, since `functools.wraps`
@@ -117,6 +121,28 @@ class Mutation:
             return Result(Outcome.KILLED) if raised == self.raises else Result(Outcome.BROKEN, raised)
         return Result(Outcome.KILLED if test_result.failures else Outcome.SURVIVED)
 
+    def killers(self) -> list[str] | None:
+        """Return the ids of the tests that fail against this mutation, or None when it cannot be applied.
+
+        Where `check` runs the one test the mutation is registered on, this runs the whole suite. The mutated
+        source is executed in memory and installed under the module's name, so the working tree is never written
+        to. It cannot be applied when the snippet is not in the file exactly once, or when the mutated source will
+        not import.
+        """
+        source = Path(self._path).read_text()
+        if source.count(self.old) != 1:
+            return None
+        imported = dict(sys.modules)
+        try:
+            self._purge(_SUITE)
+            sys.modules[self.module.__name__] = _executed_module(source.replace(self.old, self.new, 1), self.module)
+            return suite_failures()
+        except _SourceError:
+            return None
+        finally:
+            sys.modules.clear()
+            sys.modules.update(imported)
+
     def _run_test(self, test_name: str, source: str) -> unittest.TestResult:
         """Run the test with the mutated source installed under the module's name.
 
@@ -189,6 +215,24 @@ def _reason(error: Exception) -> str:
     return f"{type(error).__name__}: {error}"
 
 
+def suite_failures() -> list[str]:
+    """Return the ids of the tests that fail, with the `@kills` checks switched off so none checks its own.
+
+    A test is named once however many of its subTest cases failed, since a subTest carries its parameters in its id.
+    """
+    checked = os.environ.get(CHECKS_OFF)
+    os.environ[CHECKS_OFF] = "1"
+    try:
+        result = unittest.TestResult()
+        unittest.defaultTestLoader.discover(_SUITE, top_level_dir=".").run(result)
+    finally:
+        if checked is None:
+            del os.environ[CHECKS_OFF]
+        else:
+            os.environ[CHECKS_OFF] = checked
+    return sorted({test.id().partition(" (")[0] for test, _traceback in result.failures + result.errors})
+
+
 def _failure(mutation: Mutation, result: Result) -> str:
     """Return the message a mutation the test did not kill fails that test with, leading with the regression.
 
@@ -198,6 +242,28 @@ def _failure(mutation: Mutation, result: Result) -> str:
     if result.outcome == Outcome.SURVIVED:
         return f"{mutation.regression} — the test did not kill this mutation of {mutation.module.__name__}"
     return f"{mutation.regression} — this mutation of {mutation.module.__name__} is {result.outcome}: {result.reason}"
+
+
+# Where a survived registration is recorded, so how often the mechanism catches a test that stopped guarding can
+# be counted later. Only SURVIVED is recorded: it is rare and it is the event the registrations exist for, where a
+# stale snippet is common and fixed within the minute.
+_SURVIVALS = Path("tests/mutation-survivals.md")
+
+
+def _record_survival(test_name: str, mutation: Mutation) -> None:
+    """Record the survived registration in `_SURVIVALS`, creating the file when it holds nothing yet.
+
+    A mutation of a test module is passed over: the framework's own targets survive by design, so recording them
+    would fill the file with entries that say nothing about a guard. An entry names the day it was recorded on and
+    is written once, so re-running the suite while the test is being fixed adds nothing, where the same
+    registration surviving on a later day is recorded as the separate event it is.
+    """
+    if mutation.module.__name__.startswith("tests."):
+        return
+    recorded = _SURVIVALS.read_text() if _SURVIVALS.exists() else "# Registrations that survived\n\n"
+    entry = f"- {datetime.now(UTC):%Y-%m-%d} `{test_name}` — {mutation.regression}\n"
+    if entry not in recorded:
+        _SURVIVALS.write_text(recorded + entry)
 
 
 def _fail_unless_killed(test_case: unittest.TestCase, mutations: tuple[Mutation, ...]) -> None:
@@ -214,6 +280,8 @@ def _fail_unless_killed(test_case: unittest.TestCase, mutations: tuple[Mutation,
         for mutation in mutations:
             with test_case.subTest(regression=mutation.regression):
                 result = mutation.check(test_name)
+                if result.outcome is Outcome.SURVIVED:
+                    _record_survival(test_name, mutation)
                 test_case.assertEqual(result.outcome, Outcome.KILLED, _failure(mutation, result))
     finally:
         if checked is None:

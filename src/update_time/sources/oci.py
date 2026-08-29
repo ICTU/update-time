@@ -23,6 +23,7 @@ from update_time.domain.dependency import (
     DependencyName,
     DependencyVersion,
     FloatingPin,
+    Project,
     Release,
     VersionString,
     first_eligible,
@@ -331,7 +332,7 @@ def get_latest_tag(
     bumping its version.
     """
     resolved = _resolved_tag(image, current_tag, version_bound, cooldown_days)
-    return replace(resolved, newest=_newest_release(image))
+    return replace(resolved, project=Project(newest=_newest_release(image)))
 
 
 def _resolved_tag(

@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import DependencyVersion
+from update_time.domain.dependency import DependencyVersion, Project
 from update_time.domain.file_type import PACKAGE_JSON
 from update_time.domain.reference import ResolvedReference
 from update_time.file_formats import json as json_format
@@ -10,7 +10,7 @@ from update_time.file_formats import package_json as package_json_format
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.package_managers import node
-from update_time.references.delegated import warn_about_stale_dependencies
+from update_time.references.delegated import warn_about_projects
 from update_time.sources import npmjs
 
 if TYPE_CHECKING:
@@ -48,7 +48,7 @@ def update_package_jsons() -> None:
         else:
             manager.update_package_json(package_json)
             supported.append(package_json)
-    warn_about_stale_dependencies(supported, _newest_releases, _LOG)
+    warn_about_projects(supported, _newest_releases, _LOG)
 
 
 def _newest_releases(package_json: Path) -> Iterable[ResolvedReference]:
@@ -58,7 +58,7 @@ def _newest_releases(package_json: Path) -> Iterable[ResolvedReference]:
     in the lock file. Staleness is measured against the package's newest release, so the range is not needed.
     """
     return (
-        ResolvedReference(name, "", location, release=DependencyVersion.unpinned(newest))
+        ResolvedReference(name, "", location, release=DependencyVersion.unpinned(Project(newest=newest)))
         for name, locations in package_json_format.dependency_locations(package_json).items()
         for location in locations
         if (newest := npmjs.newest_release(name)) is not None

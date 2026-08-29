@@ -1,10 +1,9 @@
 """Render the sample log lines the README quotes, by logging them through Update-time's own `Logger`.
 
-The README quotes what Update-time logs for a drifted hash pin, a stale dependency, a yanked version, and the
-markers it reads. Logging those samples here rather than transcribing them into the template is what keeps them
-true: a reworded message rewrites the README on the next `just readme`, instead of leaving it quoting output the
-tool no longer produces. The lines are rendered as the plain `LEVEL message` the README's `console` blocks show, so
-unlike the screenshot (see `generate_log_svg`) they carry neither colour nor a timestamp.
+Logging those samples here rather than transcribing them into the template is what keeps them true: a reworded
+message rewrites the README on the next `just readme`, instead of leaving it quoting output the tool no longer
+produces. The lines are rendered as the plain `LEVEL message` the README's `console` blocks show, so unlike the
+screenshot (see `generate_log_svg`) they carry neither colour nor a timestamp.
 
 An elided value stands in where a real one would be noise: a digest, a commit, and an integrity hash say only that
 two of them differ, and their full length would wrap the line several times over.
@@ -14,7 +13,15 @@ import logging
 from pathlib import Path
 
 from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
-from update_time.domain.dependency import DependencyVersion, FloatingPin, Release, Yank
+from update_time.domain.dependency import (
+    Archival,
+    ArchivedSubject,
+    DependencyVersion,
+    FloatingPin,
+    Project,
+    Release,
+    Yank,
+)
 from update_time.domain.reference import DriftedPin
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.log import DEPENDENCY_DELIMITER, LOCATION_DELIMITER, Logger
@@ -94,6 +101,9 @@ def _redundant_directives(
     )
     redundant_yank_without_a_version = capture.take()
 
+    log.redundant_directive(reference("python", dockerfile), "ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL)
+    redundant_archived_scope = capture.take()
+
     log.redundant_directive(
         reference("humanize", requirements), "ignore[vulnerable]", Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY
     )
@@ -119,6 +129,7 @@ def _redundant_directives(
         "@@REDUNDANT_VULNERABLE_SOURCE_WARNING@@": redundant_vulnerable_source,
         "@@REDUNDANT_YANK_SCOPE_WARNING@@": redundant_yank_scope,
         "@@REDUNDANT_YANK_WITHOUT_A_VERSION_WARNING@@": redundant_yank_without_a_version,
+        "@@REDUNDANT_ARCHIVED_SCOPE_WARNING@@": redundant_archived_scope,
         "@@REDUNDANT_VULNERABLE_WITHOUT_A_VERSION_WARNING@@": redundant_vulnerable_without_a_version,
         "@@REDUNDANT_COOLDOWN_ITEM_WARNING@@": redundant_cooldown_item,
         "@@REDUNDANT_STALE_SOURCE_WARNING@@": redundant_stale_source,
@@ -142,7 +153,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     dockerfile = Location(Path("Dockerfile"), 2)
 
     published = stale_publication_date()
-    stale = DependencyVersion("4.15.0", newest=Release("4.15.0", published))
+    stale = DependencyVersion("4.15.0", project=Project(newest=Release("4.15.0", published)))
     log.report_staleness(resolved("humanize", requirements, stale), Marker(), STALE_AFTER.get())
     staleness = capture.take()
 
@@ -152,6 +163,13 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     log.vulnerable_dependency(reference("django", requirements, "3.2.0"), VULNERABILITY)
     vulnerable = capture.take()
+
+    archived_project = DependencyVersion.unpinned(Project(archival=Archival(archived=True)))
+    log.report_archival(resolved("aioredis", requirements, archived_project), Marker())
+    repository = Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
+    archived_repository = DependencyVersion.unpinned(Project(archival=repository))
+    log.report_archival(resolved("actions/setup-ruby", workflow, archived_repository), Marker())
+    archival = capture.take()
 
     redundant = _redundant_directives(log, capture, requirements, dockerfile)
 
@@ -203,6 +221,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@VULNERABILITY_WARNING@@": vulnerable,
+        "@@ARCHIVED_WARNING@@": archival,
         **redundant,
         "@@UNRECOGNISED_ITEM_WARNING@@": unrecognised,
         "@@INVERTED_STALE_WARNING@@": inverted,

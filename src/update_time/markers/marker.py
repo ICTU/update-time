@@ -32,6 +32,7 @@ class Scope(Flag):
     STALE = auto()
     YANKED = auto()
     VULNERABLE = auto()
+    ARCHIVED = auto()
     HASH_DRIFT = auto()
     FLOATING_PIN = auto()
 
@@ -46,8 +47,7 @@ class Scope(Flag):
 # No scope at all: what a line without a marker names, and what the union in `Marker.merge` starts from.
 _NO_SCOPE = Scope(0)
 
-# The four things an `ignore` marker can switch off: updates, and the staleness, yank, and vulnerability warnings.
-_IGNORABLE_SCOPES = Scope.UPDATE | Scope.STALE | Scope.YANKED | Scope.VULNERABLE
+_IGNORABLE_SCOPES = Scope.UPDATE | Scope.STALE | Scope.YANKED | Scope.VULNERABLE | Scope.ARCHIVED
 
 # The scopes that are off until an `allow` directive switches them on, whose `ignore` therefore spells the default.
 _OPTIONAL_SCOPES = Scope.HASH_DRIFT | Scope.FLOATING_PIN
@@ -102,9 +102,9 @@ class Threshold[T]:
 class Marker:
     """The `# update-time:` directives affecting a line (see `parse_marker`).
 
-    `ignored_scopes` are the scopes an `ignore` directive holds back: the reference's update, its staleness warning,
-    its yank warning, and its vulnerability warning. A bare `ignore` holds back all four, while `ignore[update]`,
-    `ignore[stale]`, `ignore[yanked]`, and `ignore[vulnerable]` each hold back just one.
+    `ignored_scopes` are the scopes an `ignore` directive holds back — the reference's update and its warnings,
+    which `_IGNORABLE_SCOPES` names. A bare `ignore` holds every one of them back, while a directive naming a
+    scope, such as `ignore[stale]`, holds back that one alone.
     `ignored_advisories` are the advisories an `ignore[vulnerable=ID]` directive holds the warning back for, each as
     the identifier the user spelled it by; empty when the reference names none.
     `allowed_scopes` are the scopes an `allow` directive opts the reference into, each off by default:
@@ -162,7 +162,7 @@ class Marker:
 
     @property
     def holds_back_source_checks(self) -> bool:
-        """Return whether the marker holds back the update, the staleness warning, and the yank warning alike."""
+        """Return whether the marker holds back every check the reference's own source answers."""
         return _SOURCE_CHECK_SCOPES in self.ignored_scopes
 
     def directive_for(self, scope: Scope) -> str:

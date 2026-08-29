@@ -4,14 +4,15 @@ import importlib
 import os
 import sys
 import unittest
-from unittest.mock import Mock, call, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, Mock, call, patch
 
 from update_time.primitives import timestamp
 
 from tests import helpers, mutation_subject
 from tests import mutation as checker
 from tests.helpers import patch_environ
-from tests.mutation import CHECKED_TEST, CHECKS_OFF, Mutation, Outcome, Result, kills
+from tests.mutation import CHECKED_TEST, CHECKS_OFF, Mutation, Outcome, Result, _record_survival, kills
 from tests.mutation_subject import is_even
 
 _EVEN = "number % 2 == 0"
@@ -269,6 +270,93 @@ class CheckTest(unittest.TestCase):
 
 def _stand_in(_test_case: unittest.TestCase, *_args: object) -> None:
     """Stand in for the test that a registration under test decorates."""
+
+
+class KillersTest(unittest.TestCase):
+    """Unit tests for the tests across the whole suite that fail against a mutation."""
+
+    def failing(self, *ids: str) -> Mock:
+        """Return a stand-in for the suite whose run reports the tests with the given ids as failing."""
+
+        def run(result: unittest.TestResult) -> None:
+            result.failures.extend((Mock(id=Mock(return_value=test)), "traceback") for test in ids)
+
+        return Mock(run=Mock(side_effect=run))
+
+    def killers(self, mutation: Mutation, suite: Mock) -> list[str] | None:
+        """Return what the mutation names as its killers, against the given suite rather than the real one."""
+        with patch("unittest.defaultTestLoader.discover", Mock(return_value=suite)):
+            return mutation.killers()
+
+    def test_each_failing_test_is_named_once(self):
+        """Test that a test failing in several subTest cases is named once, by its method rather than by its cases."""
+        cases = ("case.test_one (case='x')", "case.test_one (case='y')", "case.test_two")
+        self.assertEqual(self.killers(_ODD_REPORTED_AS_EVEN, self.failing(*cases)), ["case.test_one", "case.test_two"])
+
+    def test_a_snippet_the_file_does_not_hold_once_names_no_killers(self):
+        """Test that a mutation whose snippet is not in the file exactly once names none, and runs nothing."""
+        suite = self.failing()
+        self.assertIsNone(self.killers(Mutation(mutation_subject, "absent", "other", _REGRESSION), suite))
+        suite.run.assert_not_called()
+
+    def test_a_source_that_will_not_import_names_no_killers(self):
+        """Test that a mutation leaving the source unparsable names no killers rather than raising."""
+        unparsable = Mutation(mutation_subject, _EVEN, _UNPARSABLE, _REGRESSION)
+        self.assertIsNone(self.killers(unparsable, self.failing()))
+
+    def test_the_checks_off_switch_is_put_back(self):
+        """Test that a sweep run from inside a check leaves that switch set, rather than removing it."""
+        with patch_environ({CHECKS_OFF: "1"}):
+            self.killers(_ODD_REPORTED_AS_EVEN, self.failing())
+            self.assertEqual(os.environ[CHECKS_OFF], "1")
+
+    def test_the_caller_keeps_the_modules_it_had(self):
+        """Test that the run leaves the interpreter as it found it, so a sweep of registrations does not drift."""
+        before = dict(sys.modules)
+        self.killers(_ODD_REPORTED_AS_EVEN, self.failing())
+        self.assertEqual(sys.modules, before)
+
+
+class RecordSurvivalTest(unittest.TestCase):
+    """Unit tests for the record kept of registrations that survived."""
+
+    _HEADING = "# Registrations that survived\n\n"
+
+    def record(self, mutation: Mutation, recorded: str | None = None) -> MagicMock:
+        """Return the mocked file after recording, standing in for one holding `recorded`, or for none at all."""
+        survivals = MagicMock(
+            exists=Mock(return_value=recorded is not None), read_text=Mock(return_value=recorded or "")
+        )
+        with patch.object(checker, "_SURVIVALS", survivals):
+            _record_survival("tests.test_module.Case.test_name", mutation)
+        return survivals
+
+    def written(self, recorded: str | None = None) -> str:
+        """Return what recording a survived registration of a production module leaves the file holding."""
+        survivals = self.record(Mutation(timestamp, "old", "new", _REGRESSION), recorded)
+        return survivals.write_text.call_args.args[0]
+
+    def test_the_entry_names_the_day_the_test_and_the_regression(self):
+        """Test that the entry dates the survival and names the test that stopped guarding, and against what."""
+        written = self.written(self._HEADING)
+        self.assertIn("`tests.test_module.Case.test_name`", written)
+        self.assertIn(_REGRESSION, written)
+        self.assertIn(f"{datetime.now(UTC):%Y-%m-%d}", written)
+
+    def test_a_file_holding_nothing_yet_is_given_its_heading(self):
+        """Test that the first entry carries the heading, and that a file that exists keeps what it holds."""
+        self.assertTrue(self.written().startswith(self._HEADING))
+        earlier = f"{self._HEADING}- an earlier entry\n"
+        self.assertTrue(self.written(earlier).startswith(earlier))
+
+    def test_an_entry_the_file_already_holds_is_not_repeated(self):
+        """Test that re-running the suite while the test is fixed adds no second entry for the same day."""
+        already = self._HEADING + self.written(self._HEADING).removeprefix(self._HEADING)
+        self.record(Mutation(timestamp, "old", "new", _REGRESSION), already).write_text.assert_not_called()
+
+    def test_a_mutation_of_a_test_module_is_passed_over(self):
+        """Test that the framework's own targets, which survive by design, are recorded not at all."""
+        self.record(_ODD_REPORTED_AS_EVEN, self._HEADING).write_text.assert_not_called()
 
 
 class KillsTest(unittest.TestCase):

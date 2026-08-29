@@ -8,18 +8,18 @@ import pkgutil
 import tempfile
 import unittest
 from functools import cache
-from http import HTTPStatus
 from logging import DEBUG, ERROR, WARNING
 from typing import TYPE_CHECKING, Protocol, cast
 from unittest.mock import ANY, Mock, call, patch
+from urllib.parse import urlparse
 
 from packaging.version import Version
 
 import update_time
-from update_time.domain.dependency import DependencyVersion, FloatingPin, VersionString
+from update_time.domain.dependency import ArchivedSubject, DependencyVersion, FloatingPin
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
-from update_time.domain.vulnerability import NO_RISK_LEVEL, VULNERABILITY_LEVEL, Vulnerability
+from update_time.domain.vulnerability import Vulnerability
 from update_time.io.log import Logger, LogMessage, reset_changelog_suppression
 from update_time.markers.bound import parse_bound
 from update_time.markers.directive import Reason
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from types import ModuleType
     from unittest.mock import _Call, _patch
 
-    from update_time.domain.bound import NewVersionGetter, Verb, VersionBound
+    from update_time.domain.bound import Verb, VersionBound
     from update_time.domain.reference import DriftedPin
 
 
@@ -139,10 +139,21 @@ class LoggingTestCase(CacheClearingTestCase):
         if not self._error_expected:
             self.assertEqual(self.records(ERROR), [])
 
+    @contextlib.contextmanager
+    def subTest(self, *args: object, **kwargs: object) -> Iterator[None]:  # noqa: N802
+        """Run the case against the records of its own run, so a table cannot forget to start one.
+
+        A case therefore sees nothing an earlier case logged. Write out the assertions about a single run rather
+        than looping them, and keep `subTest` for the cases that each run the tool.
+        """
+        self.start_new_run()
+        with super().subTest(*args, **kwargs):
+            yield
+
     def start_new_run(self) -> None:
         """Forget what the previous run logged and reported, so the next case reads the records of its own run.
 
-        `setUp` does this for each test, and a table whose cases each run the tool does it for each case.
+        `setUp` does this for each test and `subTest` for each case, so a table needs no call of its own.
         """
         self.mock_log.reset_mock()
         reset_changelog_suppression()
@@ -331,6 +342,25 @@ class LoggingTestCase(CacheClearingTestCase):
             Logger._MESSAGE_YANKED, dependency=dependency, location=location, version=version, reason=reason
         )
 
+    def assert_archived_dependency_logged(
+        self,
+        dependency: str,
+        location: Location,
+        reason: object = ANY,
+        *,
+        subject: ArchivedSubject = ArchivedSubject.PROJECT,
+        among_others: bool = False,
+    ) -> None:
+        """Assert that an archived dependency was warned about, as the file's only warning by default."""
+        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
+        assert_logged(
+            Logger._MESSAGE_ARCHIVED, dependency=dependency, location=location, subject=subject, reason=reason
+        )
+
+    def assert_archived_repository_logged(self, dependency: str, location: Location) -> None:
+        """Assert that a repository GitHub declares archived was warned about, GitHub publishing no reason."""
+        self.assert_archived_dependency_logged(dependency, location, reason="", subject=ArchivedSubject.REPOSITORY)
+
     def assert_vulnerable_dependency_logged(
         self,
         dependency: str,
@@ -461,6 +491,12 @@ class LoggingTestCase(CacheClearingTestCase):
             Logger._MESSAGE_IGNORED_YANK, dependency=dependency, location=location, directive=directive
         )
 
+    def assert_ignored_archival_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
+        """Assert that an archival warning held back by a marker was logged, among the other records."""
+        self.assert_logged_among_others(
+            Logger._MESSAGE_IGNORED_ARCHIVAL, dependency=dependency, location=location, directive=directive
+        )
+
     def assert_skipped_logged(self, path: Path, reason: str) -> None:
         """Assert that deliberately skipping a file was logged with the given reason."""
         self.assert_logged(Logger._MESSAGE_SKIP_PATH, location=Location(path), reason=reason)
@@ -500,21 +536,6 @@ def resolved_reference(
     return ResolvedReference(dependency, version, location, release=release)
 
 
-def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGetter:
-    """Return a new-version-getter."""
-    return lambda *_args: DependencyVersion(version=version, sha=sha)
-
-
-def mock_new_version_getter() -> Mock:
-    """Return a mock new-version getter that claims no source capability, as an unregistered getter claims none.
-
-    A bare `Mock` grows any attribute it is asked for, so it would claim every capability a caller reads off a
-    getter (see `primitives.capability`). Specifying it against a real getter keeps it callable and lets those
-    reads answer as they do for a source that registers nothing.
-    """
-    return Mock(spec=new_version_getter(""))
-
-
 def bound(verb: Verb, item: str) -> VersionBound:
     """Return the version bound the marker item expresses, for tests that need a bound as input."""
     version_bound = parse_bound(verb, item)
@@ -522,11 +543,6 @@ def bound(verb: Verb, item: str) -> VersionBound:
         message = f"Not a version bound item: {item!r}"
         raise ValueError(message)
     return version_bound
-
-
-# Reusable class decorator that mocks the Docker Hub auth token request made by sources.docker_hub.api_headers
-# when DOCKER_HUB_USERNAME/DOCKER_HUB_TOKEN are set, so the image updater tests never make a real network call.
-mock_docker_hub_auth = patch("requests.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec[B105]
 
 
 # Reusable decorator that disables the staleness check, for update tests that focus on the update flow and would
@@ -574,37 +590,57 @@ def github_commits_json(sha: str = COMMIT_SHA, date: str = "") -> dict[str, obje
     return {"sha": sha, "commit": {"committer": committer}}
 
 
-def _github_api(
-    releases: list | None = None, tags: list | None = None, commit: Mapping | Mock | Exception | None = None
-) -> Mock:
-    """Return a requests.get mock that serves the GitHub releases, tags, and commits endpoints from the arguments.
+def _github_endpoint(url: str) -> str:
+    """Return the endpoint the URL names below the repository, empty for the repository's own URL."""
+    _owner, _, below_owner = urlparse(url).path.removeprefix("/repos/").partition("/")
+    _repository, _, endpoint = below_owner.partition("/")
+    return endpoint.partition("/")[0]
 
-    Routing by URL keeps tests independent of the order in which the source hits the endpoints. An endpoint given
-    as None fails (a non-OK response), so tests can exercise unreachable endpoints. The commits endpoint serves the
-    same commit for every ref; pass a Mock to serve a full response instead of JSON (e.g. a non-OK response with an
-    error body), or an exception to make the request itself fail.
+
+def _github_api(
+    releases: list | None = None,
+    tags: list | None = None,
+    commit: Mapping | Mock | Exception | None = None,
+    *,
+    archived: bool = False,
+) -> Mock:
+    """Return a requests.get mock serving the GitHub releases, tags, commits, and repository endpoints.
+
+    Each request is answered by the endpoint it names, so a test needs no expectation about the order the source
+    asks in. An endpoint given as None answers non-OK, so a test can make it unreachable. The commits endpoint
+    serves the same commit for every ref. Pass a Mock there to serve a whole response rather than JSON, such as a
+    non-OK one with an error body, or an exception to fail the request itself.
     """
 
     def serve(url: str, **_kwargs: object) -> Mock:
         json: Mapping | list | None
-        if "/commits/" in url:
+        endpoint = _github_endpoint(url)
+        if endpoint == "commits":
             if isinstance(commit, Exception):
                 raise commit
             if isinstance(commit, Mock):
                 return commit
             json = commit
+        elif endpoint == "releases":
+            json = releases
+        elif endpoint:
+            json = tags
         else:
-            json = releases if "/releases" in url else tags
+            json = {"archived": archived}
         return mock_response(json, ok=json is not None, status_code=200 if json is not None else 404, url=url)
 
     return Mock(side_effect=serve)
 
 
 def patch_github(
-    releases: list | None = None, tags: list | None = None, commit: Mapping | Mock | Exception | None = None
+    releases: list | None = None,
+    tags: list | None = None,
+    commit: Mapping | Mock | Exception | None = None,
+    *,
+    archived: bool = False,
 ) -> _patch:
     """Patch requests.get to serve the GitHub API endpoints from the given values (see `_github_api`)."""
-    return patch("requests.get", _github_api(releases, tags, commit))
+    return patch("requests.get", _github_api(releases, tags, commit, archived=archived))
 
 
 def jsdelivr_versions(*version_strings: str) -> Mock:
@@ -637,21 +673,6 @@ def vulnerability(advisory: str, summary: str, level: str, aliases: list[str] | 
     return Vulnerability(advisory, summary, level, f"https://osv.dev/{advisory}", frozenset(aliases or []))
 
 
-def osv_vulnerability(advisory: str, summary: str, level: str) -> tuple[dict[str, object], Vulnerability]:
-    """Return an OSV advisory record and the vulnerability Update-time reads it as.
-
-    Returned as a pair because a test that needs one needs the other: the record is what the mocked API serves, and
-    the vulnerability is what the warning is asserted to carry. `level` is spelled the lower-case way Update-time
-    reads it, since OSV states it upper-case.
-    """
-    return osv_advisory(advisory, summary, level.upper()), vulnerability(advisory, summary, level)
-
-
-# The advisory the updater tests pin django to a vulnerable version for, and what Update-time reads it as. Shared,
-# since the requirements.txt, pyproject.toml, and inline-script tests all check the same pin against the same answer.
-DJANGO_ADVISORY, DJANGO_VULNERABILITY = osv_vulnerability("GHSA-2gwj-7jmv-h26r", "SQL Injection in Django", "critical")
-
-
 def _osv_response(*advisories: dict[str, object]) -> Mock:
     """Return a mock OSV response listing the advisories that affect a version."""
     return mock_response({"vulns": list(advisories)})
@@ -674,28 +695,6 @@ def osv_api(*advisories: dict[str, object]) -> Mock:
     return Mock(side_effect=serve)
 
 
-def osv(*advisories: dict[str, object]) -> _patch:
-    """Return a patch answering OSV with the advisories affecting a version, and with none when given none."""
-    return patch("requests.post", osv_api(*advisories))
-
-
-def unreachable_osv() -> _patch:
-    """Return a patch failing every OSV request, as an OSV a run cannot reach does."""
-    status = HTTPStatus.SERVICE_UNAVAILABLE
-    unreachable = mock_response(ok=False, status_code=status, reason=status.phrase, url="https://api.osv.dev")
-    return patch("requests.post", Mock(return_value=unreachable))
-
-
-# Reusable class decorator that answers OSV with no advisories, for update tests that focus on the update flow.
-# Without it their pins are looked up at OSV for real, since nothing else in those tests patches `requests.post`.
-no_vulnerabilities = osv()
-
-
-# Reusable decorator that switches the vulnerability check off, for update tests that focus on the update flow and
-# would otherwise trigger the vulnerability pass's own OSV request.
-vulnerability_check_disabled = patch_environ({VULNERABILITY_LEVEL.name: NO_RISK_LEVEL})
-
-
 def npm_registry(published: dict[str, str], deprecated: dict[str, str] | None = None) -> Mock:
     """Return a mock npm registry response mapping versions to publish times and optional deprecation messages."""
     versions = {version: {"deprecated": reason} for version, reason in (deprecated or {}).items()}
@@ -705,16 +704,17 @@ def npm_registry(published: dict[str, str], deprecated: dict[str, str] | None = 
 PYPI_OLD_UPLOAD = "2020-01-01T00:00:00.000000Z"  # A distribution upload time well outside the cooldown window.
 
 
-def pypi_index(*versions: str, files: Sequence[Mapping[str, str | bool]] | None = None) -> Mock:
-    """Return a mock PyPI Index (Simple) API response listing the versions and, when given, distribution files.
-
-    A file entry that names no distribution is named after the highest version listed, since the index names every
-    file it dates.
-    """
+def pypi_index(
+    *versions: str, files: Sequence[Mapping[str, str | bool]] | None = None, archived: bool | str = False
+) -> Mock:
+    """Return a mock PyPI Index API response listing the versions, distribution files, and project status."""
     body: dict[str, object] = {"versions": list(versions)}
     if files is not None:
         newest = str(max(Version(version) for version in versions))
         body["files"] = [{"filename": f"package-{newest}.tar.gz", **file} for file in files]
+    if archived:
+        reason = archived if isinstance(archived, str) else None
+        body["project-status"] = {"status": "archived", "reason": reason}
     return mock_response(body)
 
 

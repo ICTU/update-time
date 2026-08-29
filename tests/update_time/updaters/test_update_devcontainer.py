@@ -11,9 +11,10 @@ from update_time.updaters.update_devcontainer import update_devcontainers
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time import registry
-from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST3
-from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
+from tests.update_time.fixtures import DIGEST
+from tests.update_time.helpers import docker_tag
 from tests.update_time.registry import mock_docker_registry
+from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
 
 @mock_docker_hub_auth
@@ -35,24 +36,22 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
 
     def test_feature_updated_and_pinned(self):
         """Test that a feature key (an OCI reference) is bumped and pinned with its digest."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("2.1", DIGEST1))
+        self.requests.side_effect = mock_docker_registry(docker_tag("2.1", DIGEST))
         devcontainer = mock_path('    "ghcr.io/devcontainers/features/node:1": {}\n')
         self.run_updater(devcontainer)
         devcontainer.write_text.assert_called_once_with(
-            f'    "ghcr.io/devcontainers/features/node:2.1@{DIGEST1}": {{}}\n'
+            f'    "ghcr.io/devcontainers/features/node:2.1@{DIGEST}": {{}}\n'
         )
         self.assert_new_version_logged("ghcr.io/devcontainers/features/node", "2.1", Location(devcontainer, 1))
         self.assert_no_warnings_logged()
 
     def test_feature_pinned_when_already_latest(self):
         """Test that an unpinned feature that is already at the latest version is still pinned with its digest."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("2", DIGEST3))
+        self.requests.side_effect = mock_docker_registry(docker_tag("2", DIGEST))
         devcontainer = mock_path('    "ghcr.io/devcontainers/features/node:2": {}\n')
         self.run_updater(devcontainer)
-        devcontainer.write_text.assert_called_once_with(
-            f'    "ghcr.io/devcontainers/features/node:2@{DIGEST3}": {{}}\n'
-        )
-        self.assert_pinned_logged("ghcr.io/devcontainers/features/node", "2", DIGEST3, Location(devcontainer, 1))
+        devcontainer.write_text.assert_called_once_with(f'    "ghcr.io/devcontainers/features/node:2@{DIGEST}": {{}}\n')
+        self.assert_pinned_logged("ghcr.io/devcontainers/features/node", "2", DIGEST, Location(devcontainer, 1))
         self.assert_no_warnings_logged()
 
     def test_pin_tagless_image(self):

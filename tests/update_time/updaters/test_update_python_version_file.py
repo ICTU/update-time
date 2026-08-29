@@ -16,8 +16,9 @@ from update_time.updaters.update_python_version_file import update_python_versio
 from tests.helpers import mock_path, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import LoggingTestCase, docker_tag, mock_docker_hub_auth
+from tests.update_time.helpers import LoggingTestCase, docker_tag
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
+from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
 
 def _python_tag(last_pushed: str | None = None) -> dict[str, object]:
@@ -155,24 +156,20 @@ class UpdatePythonVersionFilesTest(_VersionFileTestCase):
         self.assert_no_warnings_logged()
 
     @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
-    def test_cooldown_marker_is_reported_as_redundant(self, mock_glob: Mock):
-        """Test that a `cooldown` marker on an entry following the Dockerfile is reported, and the entry updated."""
-        version_file = self.update_version_file(mock_glob, "# update-time: ignore[cooldown<30]\n3.12.6\n")
-        version_file.write_text.assert_called_once_with("# update-time: ignore[cooldown<30]\n3.14\n")
-        self.assert_redundant_directive_logged(
-            Reason.NO_COOLDOWN_DATES, "python", Location(version_file, 2), "ignore[cooldown<30]"
-        )
-        self.assert_new_version_logged("python", "3.14", Location(version_file, 2))
-
-    @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
-    def test_stale_marker_is_reported_as_redundant(self, mock_glob: Mock):
-        """Test that a `stale` marker on an entry following the Dockerfile is reported, and the entry updated."""
-        version_file = self.update_version_file(mock_glob, "# update-time: ignore[stale<90]\n3.12.6\n")
-        version_file.write_text.assert_called_once_with("# update-time: ignore[stale<90]\n3.14\n")
-        self.assert_redundant_directive_logged(
-            Reason.NO_STALENESS_DATES, "python", Location(version_file, 2), "ignore[stale<90]"
-        )
-        self.assert_new_version_logged("python", "3.14", Location(version_file, 2))
+    def test_directives_that_hold_nothing_back_are_reported_as_redundant(self, mock_glob: Mock):
+        """Test that a directive holding nothing back for the entry is reported, and the entry still updates."""
+        for directive, reason in (
+            ("ignore[cooldown<30]", Reason.NO_COOLDOWN_DATES),
+            ("ignore[stale<90]", Reason.NO_STALENESS_DATES),
+            ("ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL),
+            ("ignore[yanked]", Reason.NO_YANK_CONCEPT),
+            ("ignore[vulnerable]", Reason.NO_VULNERABILITY_REPORTS),
+        ):
+            with self.subTest(directive=directive):
+                version_file = self.update_version_file(mock_glob, f"# update-time: {directive}\n3.12.6\n")
+                version_file.write_text.assert_called_once_with(f"# update-time: {directive}\n3.14\n")
+                self.assert_redundant_directive_logged(reason, "python", Location(version_file, 2), directive)
+                self.assert_new_version_logged("python", "3.14", Location(version_file, 2))
 
     @patch_pathlib_path(exists=True, read_text="FROM python:3.14")
     def test_the_reported_cooldown_directive_is_the_one_that_won(self, mock_glob: Mock):
@@ -256,6 +253,19 @@ class UpdatePythonVersionFilesFallbackTest(RegistryRequestsMixin, _VersionFileTe
         version_file = self.update_version_file(mock_glob, f"{marker}\n3.12.6\n")
         version_file.write_text.assert_called_once_with(f"{marker}\n3.13.2\n")
         self.assert_no_warnings_logged()
+
+    def test_fallback_scopes_docker_hub_cannot_answer_are_reported_as_redundant(self, mock_glob: Mock):
+        """Test that a scope Docker Hub cannot answer is reported for an entry following it, which still updates."""
+        for directive, reason in (
+            ("ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL),
+            ("ignore[yanked]", Reason.NO_YANK_CONCEPT),
+            ("ignore[vulnerable]", Reason.NO_VULNERABILITY_REPORTS),
+        ):
+            with self.subTest(directive=directive):
+                self.requests.side_effect = mock_docker_registry(_python_tag())
+                version_file = self.update_version_file(mock_glob, f"# update-time: {directive}\n3.12.6\n")
+                version_file.write_text.assert_called_once_with(f"# update-time: {directive}\n3.13.2\n")
+                self.assert_redundant_directive_logged(reason, "python", Location(version_file, 2), directive)
 
     def test_fallback_stale_warned(self, mock_glob: Mock):
         """Test that a stale `python` release (newest tag pushed long ago) is warned about via the fallback."""
