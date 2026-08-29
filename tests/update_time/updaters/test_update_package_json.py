@@ -141,11 +141,9 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
             Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
         )
         update_package_jsons()
-        for line in (3, 6):
-            with self.subTest(line=line):
-                self.assert_new_version_logged_among_others(
-                    "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json, line), ANY
-                )
+        published = "1.1, published: 2026-05-30 10:26"
+        self.assert_new_version_logged_among_others("package", published, Location(mock_package_json, 3), ANY)
+        self.assert_new_version_logged_among_others("package", published, Location(mock_package_json, 6), ANY)
 
     @patch("requests.get", _package_lookup_responses())
     def test_new_version_of_a_dependency_the_manifest_declares_without_a_registry_spec(

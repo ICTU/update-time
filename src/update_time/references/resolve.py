@@ -10,6 +10,7 @@ A reference the run resolves no update for takes `report_project_checks` instead
 
 from typing import TYPE_CHECKING
 
+from update_time.domain.archival import reports_archival
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion
@@ -21,7 +22,7 @@ from update_time.markers.marker import Scope
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
-    from update_time.domain.dependency import NewestReleaseGetter
+    from update_time.domain.dependency import ProjectGetter
     from update_time.domain.reference import Reference
     from update_time.io.log import Logger
     from update_time.markers.marker import Marker
@@ -39,16 +40,16 @@ def warn_about_inverted_items(marker: Marker, reference: Reference, log: Logger)
             warn(reference, threshold.inverted_item)
 
 
-def _warn_about_directives_the_source_cannot_apply(
+def warn_about_directives_the_source_cannot_apply(
     marker: Marker, get_new_version: NewVersionGetter, reference: Reference, log: Logger
 ) -> None:
     """Warn about each directive the reference's source cannot apply, so it holds nothing back."""
     as_written = marker.as_written
     for directive in DIRECTIVES:
-        if as_written.directive_for(directive.scope) and not directive.is_applied_by(
+        if (written := as_written.directive_for(directive.scope)) and not directive.is_applied_by(
             get_new_version, reference.dependency
         ):
-            log.redundant_directive(reference, as_written.directive_for(directive.scope), directive.reason)
+            log.redundant_directive(reference, written, directive.reason)
 
 
 def _floating_pin_redundancy(marker: Marker, latest: DependencyVersion | None) -> Reason | None:
@@ -68,6 +69,11 @@ def _warn_if_the_floating_pin_holds_nothing_back(
         log.redundant_directive(reference, marker.allow_directive(Scope.FLOATING_PIN), reason)
 
 
+def _staleness_threshold(marker: Marker) -> int:
+    """Return the number of days the reference is checked for staleness against: its own, or the run's."""
+    return marker.stale.value_or(STALE_AFTER.get())
+
+
 def latest_version(
     reference: Reference,
     get_new_version: NewVersionGetter,
@@ -79,7 +85,7 @@ def latest_version(
     if not downgrades(get_new_version, dependency):
         log.warn_if_redundant_bound(reference, marker)
     warn_about_inverted_items(marker, reference, log)
-    _warn_about_directives_the_source_cannot_apply(marker, get_new_version, reference, log)
+    warn_about_directives_the_source_cannot_apply(marker, get_new_version, reference, log)
     if marker.holds_back_source_checks:
         _warn_if_the_floating_pin_holds_nothing_back(marker, reference, log, latest=None)
         return None
@@ -87,23 +93,33 @@ def latest_version(
     cooldown = marker.cooldown.value_or(COOLDOWN.get())
     latest = get_new_version(dependency, current_version, version_bound, cooldown)
     resolved = ResolvedReference(**vars(reference), release=latest)
-    log.report_staleness(resolved, marker, marker.stale.value_or(STALE_AFTER.get()))
+    report_project(resolved, marker, _staleness_threshold(marker), log)
     log.report_yank(resolved, marker)
     _warn_if_the_floating_pin_holds_nothing_back(marker, reference, log, latest)
     return None if marker.ignores(Scope.UPDATE) else latest
 
 
-def report_project_checks(
-    reference: Reference,
-    marker: Marker,
-    log: Logger,
-    newest_release: NewestReleaseGetter,
-) -> None:
-    """Report the checks a reference's project gets, which is the staleness check."""
+def project_is_checked(source: object, subject: object, threshold: int) -> bool:
+    """Return whether a project check runs: the staleness check at this threshold, or the archival check.
+
+    The archival check has no threshold to switch it off, so it runs whenever the source reports archival.
+    """
+    return threshold != NO_STALENESS_CHECK or reports_archival(source, subject)
+
+
+def report_project(resolved: ResolvedReference, marker: Marker, threshold: int, log: Logger) -> None:
+    """Report the staleness and the archival of a project a source has already answered for."""
+    log.report_staleness(resolved, marker, threshold)
+    log.report_archival(resolved, marker)
+
+
+def report_project_checks(reference: Reference, marker: Marker, log: Logger, get_project: ProjectGetter) -> None:
+    """Ask the source about the reference's project, where a check needs it, and report what it answers."""
     if marker.holds_everything_back:
         return
-    if (threshold := marker.stale.value_or(STALE_AFTER.get())) == NO_STALENESS_CHECK:
+    threshold = _staleness_threshold(marker)
+    if not project_is_checked(get_project, reference.dependency, threshold):
         return
-    if (newest := newest_release(reference.dependency)) is not None:
-        resolved = ResolvedReference(**vars(reference), release=DependencyVersion.unpinned(newest))
-        log.report_staleness(resolved, marker, threshold)
+    release = DependencyVersion.unpinned(get_project(reference.dependency))
+    resolved = ResolvedReference(**vars(reference), release=release)
+    report_project(resolved, marker, threshold, log)

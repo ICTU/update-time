@@ -31,5 +31,5 @@ def is_stale(published: datetime, threshold: int) -> bool:
 
 def stale_release(version: DependencyVersion, threshold: int) -> Release | None:
     """Return the dependency's newest release when it is old enough to warn about, or None when it is not."""
-    newest = version.newest
+    newest = version.project.newest
     return newest if newest is not None and is_stale(newest.published, threshold) else None

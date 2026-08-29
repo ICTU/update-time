@@ -6,8 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Warn when a dependency's source declares it archived. Closes [#226](https://github.com/ICTU/update-time/issues/226).
+
 ### Fixed
 
+- Report a directive its source cannot apply as redundant for a GitHub Action or a pre-commit hook that names a branch rather than a version, instead of passing the marker over.
 - Find a lowercase `dockerfile` when deriving the Node engine version and the `.python-version` entry from a base image, as the Docker image updater already does.
 - Name the directive that opted a reference in when reporting an adopted hash drift or a kept floating tag, instead of every `allow` directive its marker carries.
 - Name the `ignore` directive that held a reference's update or warning back, instead of every `ignore` directive its marker carries.

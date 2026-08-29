@@ -6,8 +6,9 @@ in a trailing comment. Both are (re)pinned to the latest version's commit SHA th
 syntax — and so how the new reference text is spelled — differs. This module owns what the two share: reading the
 reference from a match, deciding the version to pin it to, and rewriting the line. It handles one more case they
 share, a reference that names no version at all: a branch, a floating tag, or a bare commit SHA. No update is
-resolved for such a reference, so it goes to `report_project_checks` with the lookup that reads its repository's
-newest release. Each updater supplies only how its own reference is spelled.
+resolved for such a reference, so it goes to `report_project_checks` with the lookup that reads its repository. Its
+marker is judged all the same, so a directive the source cannot apply is reported for it as for any other reference.
+Each updater supplies only how its own reference is spelled.
 """
 
 from dataclasses import dataclass, replace
@@ -21,8 +22,12 @@ from update_time.domain.reference import DriftedPin, Reference, hash_drifted
 from update_time.markers.drift import report_drift
 from update_time.primitives.text import replace_match
 from update_time.references.match import matched_dependency
-from update_time.references.resolve import latest_version, report_project_checks
-from update_time.sources.github import get_latest_version, newest_release, owner_and_repository
+from update_time.references.resolve import (
+    latest_version,
+    report_project_checks,
+    warn_about_directives_the_source_cannot_apply,
+)
+from update_time.sources.github import get_latest_version, project
 
 if TYPE_CHECKING:
     import re
@@ -57,7 +62,8 @@ def _latest_pin(reference: Reference, marker: Marker, log: Logger) -> Dependency
     """
     current_version, current_sha = reference.current_version, reference.current_sha
     if not is_valid(current_version):
-        report_project_checks(reference, marker, log, lambda name: newest_release(*owner_and_repository(name)))
+        warn_about_directives_the_source_cannot_apply(marker, get_latest_version, reference, log)
+        report_project_checks(reference, marker, log, project)
         return None
     latest = latest_version(reference, get_latest_version, marker, log)
     if latest is None or not latest.sha:

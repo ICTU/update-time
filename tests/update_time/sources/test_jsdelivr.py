@@ -12,12 +12,12 @@ from update_time.sources.jsdelivr import version_getter
 
 from tests.helpers import mock_response
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import HASH1, HASH2
+from tests.update_time.fixtures import HASH, HASH1, HASH2
 from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, npm_registry, staleness_disabled
 
 # The file referenced in the jsDelivr URL, and a flat package listing as returned by the API with ?structure=flat.
 _FILENAME = "/dist/clipboard.min.js"
-_FLAT_FILES = {"default": _FILENAME, "files": [{"name": _FILENAME, "hash": HASH2}]}
+_FLAT_FILES = {"default": _FILENAME, "files": [{"name": _FILENAME, "hash": HASH}]}
 
 
 def _get_latest_version(
@@ -57,7 +57,7 @@ class GetLatestVersionTest(LoggingTestCase):
         ]
         latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)
         self.assertEqual(latest_version.version, "1.1")
-        self.assertEqual(latest_version.sha, f"sha256-{HASH2}")
+        self.assertEqual(latest_version.sha, f"sha256-{HASH}")
 
     def test_fresh_version_held_back(self, mock_get: Mock):
         """Test that a version within the cooldown is skipped and the newest eligible older version is chosen."""
@@ -68,7 +68,7 @@ class GetLatestVersionTest(LoggingTestCase):
         ]
         latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)
         self.assertEqual(latest_version.version, "1.5")
-        self.assertEqual(latest_version.sha, f"sha256-{HASH2}")
+        self.assertEqual(latest_version.sha, f"sha256-{HASH}")
 
     def test_all_newer_versions_within_cooldown(self, mock_get: Mock):
         """Test that the current version is kept when every newer version is still within the cooldown."""
@@ -157,7 +157,7 @@ class GetLatestVersionTest(LoggingTestCase):
 
     def test_missing_referenced_file_hash_left_unchanged(self, mock_get: Mock):
         """Test that a version whose referenced file has no listed hash is left unchanged, and the reason is logged."""
-        flat = {"default": _FILENAME, "files": [{"name": "/other.js", "hash": HASH1}]}  # _FILENAME is absent
+        flat = {"default": _FILENAME, "files": [{"name": "/other.js", "hash": HASH}]}  # _FILENAME is absent
         mock_get.side_effect = [jsdelivr_versions("1.1", "1.0"), npm_registry({"1.1": _ELIGIBLE}), mock_response(flat)]
         latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)
         self.assertEqual(latest_version.version, "1.0")
@@ -168,9 +168,10 @@ class GetLatestVersionTest(LoggingTestCase):
     @kills(
         Mutation(
             jsdelivr,
-            "        return replace(latest, newest=newest_release(dependency))",
+            "        return replace(latest, project=Project(newest=newest_release(dependency)))",
             "        _n = newest_release(dependency)\n"
-            "        return replace(latest, newest=None if _n is None else type(_n)(latest.version, _n.published))",
+            "        return replace(latest, project=Project("
+            "newest=None if _n is None else type(_n)(latest.version, _n.published)))",
             "the release attached names the version the run leaves the URL on, not the package's newest",
         )
     )
@@ -184,7 +185,7 @@ class GetLatestVersionTest(LoggingTestCase):
         mock_get.side_effect = [jsdelivr_versions("1.1", "1.0"), npm_registry({"1.0": old, "1.1": fresh})]
         latest = _get_latest_version("clipboard", "1.0", _FILENAME)
         self.assertEqual(latest.version, "1.0")
-        self.assertEqual(Release("1.1", datetime.fromisoformat(fresh)), latest.newest)
+        self.assertEqual(Release("1.1", datetime.fromisoformat(fresh)), latest.project.newest)
 
     def test_newest_release_attached_when_globally_disabled(self, mock_get: Mock):
         """Test that the newest release is attached with the check off, so a marker can set its own threshold."""
@@ -192,4 +193,4 @@ class GetLatestVersionTest(LoggingTestCase):
         mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": old})]
         with staleness_disabled:
             latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)
-        self.assertEqual(Release("1.0", datetime.fromisoformat(old)), latest_version.newest)
+        self.assertEqual(Release("1.0", datetime.fromisoformat(old)), latest_version.project.newest)

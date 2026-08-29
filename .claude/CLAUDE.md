@@ -75,7 +75,7 @@ Each cycle has three steps:
    - End the step with `just verify`, green. When the smallest change that passes the test leaves a check failing, the step is too small: widen it rather than ending red.
 3. **Refactor**:
    - Review and refactor the production code and the tests. A fix that a linter flagged is not this review.
-   - Review the whole diff against the criteria above, comments and docstrings included: the ones you wrote, and the ones that stayed the same while the code they describe changed. Ask of each whether it should exist at all, not only whether it is still true.
+   - Review the whole diff against the criteria above, comments and docstrings included: the ones you wrote, and the ones that stayed the same while the code they describe changed. Ask of each whether it should exist at all, not only whether it is still true. A sentence you edited is yours entire, so judge the words you kept as hard as the words you added.
    - Review the call sites of anything whose signature, fields, or behaviour the step changed, and their docstrings. The diff doesn't show them.
    - Review the architecture. A step that adds a dependency between modules, or widens what a module exposes, wants a new or a tightened architecture test.
    - Work through the findings one at a time, running `just verify` after all findings have been fixed.
@@ -83,11 +83,11 @@ Each cycle has three steps:
 
 A few rules that keep the cycle honest:
 
-1. Follow the conventions of the nearest existing test for the same kind of behaviour, unless that test breaks a rule below. Cover the cases it covers as well: a construct of the same shape has the same edges, so read them off that test before you choose where to start. Loop a table of cases with `subTest`, naming each case, rather than repeating an assertion or a helper call. Such a table reports one failure per failing case, so predict that many.
+1. Follow the conventions of the nearest existing test for the same kind of behaviour, unless that test breaks a rule below. Cover the cases it covers as well: a construct of the same shape has the same edges, so read them off that test before you choose where to start. Loop a table of cases with `subTest`, naming each case, rather than repeating an assertion or a helper call. Such a table reports one failure per failing case, so predict that many. A `subTest` starts a new run, so it names a case that runs the tool itself; write out the assertions about a single run rather than looping them.
 2. Build a behaviour before its off-switch. Don't test an opt-out, a flag, or any other suppression until the thing it suppresses exists.
 3. Assert what happens and what doesn't. An assertion runs on every run; a claim in a docstring is checked by nobody.
    - A test that asserts nothing was found also passes when nothing was examined, so assert that something was.
-   - Neither a test's name nor a green run is evidence of what the test guards. Settle that with `just mutate`, for a duplicate you would fold or delete as much as for anything else, and register the mutation on the test with `@kills`.
+   - Neither a test's name nor a green run is evidence of what the test guards. Settle that with `just mutate`, for a duplicate you would fold or delete as much as for anything else. Register the mutation with `@kills` only where that test is what kills it, and leave it unregistered where the suite kills it anyway.
    - Call a stub that varies its answer by an argument with more than one value of that argument, or the test shows something other than what its name claims. The same holds for a fixture whose docstring names a case it does not create.
    - Pick the mutation from the regression the guard defends against, not from the nearest line to mutate. One that leaves the guard green says nothing about it. One that fails a dozen other tests says little more: it shows the suite reacting, not that guard.
    - When a stub quotes more than a handful of lines, look for a shorter form that isolates the same regression.

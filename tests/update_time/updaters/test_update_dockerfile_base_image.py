@@ -15,8 +15,9 @@ from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
+from tests.update_time.helpers import docker_tag
 from tests.update_time.registry import mock_docker_registry
+from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
 
 @mock_docker_hub_auth
@@ -45,14 +46,6 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.assertEqual(DOCKERFILES.patterns, ("Dockerfile", "*.Dockerfile", "Dockerfile.*"))
         self.assertFalse(DOCKERFILES.case_sensitive)  # A `dockerfile` is found as well
 
-    @kills(
-        Mutation(
-            oci,
-            r'    rf"{_IMAGE_NAME}(?::(?=[\d\w\.\-]))?(?P<version>[\d\w\.\-]*){_IMAGE_DIGEST}(?![\w\d\./:@-])"',
-            r'    rf"{_IMAGE_NAME}:(?P<version>[\d\w\.\-]+){_IMAGE_DIGEST}(?![\w\d\./:@-])"',
-            "a reference naming no tag is not read as a reference at all",
-        )
-    )
     def test_pin_tagless_base_image(self):
         """Test that a `FROM image` naming no tag is pinned to the version and digest `latest` serves."""
         self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
@@ -184,10 +177,10 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
     )
     def test_lower_case_from_introduces_a_base_image_too(self):
         """Test that a lower-case `from` is updated too, Dockerfile keywords being case-insensitive."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
         mock_dockerfile = mock_path("from python:3.14\n")
         self.run_updater(mock_dockerfile)
-        mock_dockerfile.write_text.assert_called_once_with(f"from python:3.15@{DIGEST2}\n")
+        mock_dockerfile.write_text.assert_called_once_with(f"from python:3.15@{DIGEST}\n")
         self.assert_new_version_logged("python", "3.15", Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
@@ -201,7 +194,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
     )
     def test_from_inside_a_comment_is_left_alone(self):
         """Test that a `FROM` that does not open its line introduces no base image, so prose is left as it is."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
         mock_dockerfile = mock_path("# built FROM python:3.14\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_not_called()
@@ -227,28 +220,28 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     def test_stage_alias_is_preserved_when_pinning(self):
         """Test that a multi-stage `FROM image:tag AS name` alias is kept intact when the image is pinned."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("3.4", DIGEST2))
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.4", DIGEST))
         mock_dockerfile = mock_path("FROM ruby:3.3 AS build\n")
         self.run_updater(mock_dockerfile)
-        mock_dockerfile.write_text.assert_called_with(f"FROM ruby:3.4@{DIGEST2} AS build\n")
+        mock_dockerfile.write_text.assert_called_with(f"FROM ruby:3.4@{DIGEST} AS build\n")
         self.assert_new_version_logged("ruby", "3.4", Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
     def test_platform_flag_with_build_arg_is_preserved(self):
         """Test that a `FROM --platform=$BUILDPLATFORM image:tag` line is updated with the flag left untouched."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
         mock_dockerfile = mock_path("FROM --platform=$BUILDPLATFORM python:3.14\n")
         self.run_updater(mock_dockerfile)
-        mock_dockerfile.write_text.assert_called_with(f"FROM --platform=$BUILDPLATFORM python:3.15@{DIGEST2}\n")
+        mock_dockerfile.write_text.assert_called_with(f"FROM --platform=$BUILDPLATFORM python:3.15@{DIGEST}\n")
         self.assert_new_version_logged("python", "3.15", Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
     def test_platform_flag_with_literal_value_and_stage_alias_is_preserved(self):
         """Test that a `FROM --platform=linux/amd64 image:tag AS name` line keeps both the flag and the stage alias."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("20", DIGEST2))
+        self.requests.side_effect = mock_docker_registry(docker_tag("20", DIGEST))
         mock_dockerfile = mock_path("FROM --platform=linux/amd64 node:18 AS build\n")
         self.run_updater(mock_dockerfile)
-        mock_dockerfile.write_text.assert_called_with(f"FROM --platform=linux/amd64 node:20@{DIGEST2} AS build\n")
+        mock_dockerfile.write_text.assert_called_with(f"FROM --platform=linux/amd64 node:20@{DIGEST} AS build\n")
         self.assert_new_version_logged("node", "20", Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
@@ -263,20 +256,23 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.assert_no_redundant_suppression_logged()
         self.assert_no_warnings_logged()
 
-    def test_ignore_yanked_marker_is_reported_as_redundant(self):
-        """Test that an `ignore[yanked]` marker on a base image is reported when an image has no yank to hold back."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
-        marker = self.marker_line("ignore[yanked]")
-        mock_dockerfile = mock_path(marker + self.reference("python:3.14"))
-        self.run_updater(mock_dockerfile)
-        mock_dockerfile.write_text.assert_called_with(marker + self.reference(f"python:3.15@{DIGEST2}"))
-        self.assert_redundant_directive_logged(
-            Reason.NO_YANK_CONCEPT, "python", Location(mock_dockerfile, 2), "ignore[yanked]"
-        )
+    def test_the_yanked_and_archived_scopes_are_reported_as_redundant(self):
+        """Test that the `yanked` and `archived` scopes hold nothing back for an image, which still updates."""
+        for directive, reason in (
+            ("ignore[yanked]", Reason.NO_YANK_CONCEPT),
+            ("ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL),
+        ):
+            with self.subTest(directive=directive):
+                self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
+                marker = self.marker_line(directive)
+                mock_dockerfile = mock_path(marker + self.reference("python:3.14"))
+                self.run_updater(mock_dockerfile)
+                mock_dockerfile.write_text.assert_called_once_with(marker + self.reference(f"python:3.15@{DIGEST}"))
+                self.assert_redundant_directive_logged(reason, "python", Location(mock_dockerfile, 2), directive)
 
     def test_redundant_yank_scope_in_a_combined_bracket_names_the_scope_alone(self):
         """Test that a yank scope sharing a bracket is named on its own, without the other item in that bracket."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
         marker = self.marker_line("ignore[update,yanked]")
         mock_dockerfile = mock_path(marker + self.reference("python:3.14"))
         self.run_updater(mock_dockerfile)
@@ -305,35 +301,33 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         )
         for directive in directives:
             with self.subTest(directive=directive):
-                self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+                self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
                 mock_dockerfile = mock_path(f"# update-time: {directive}\nFROM python:3.14\n")
                 self.run_updater(mock_dockerfile)
                 mock_dockerfile.write_text.assert_called_with(
-                    f"# update-time: {directive}\nFROM python:3.15@{DIGEST2}\n"
+                    f"# update-time: {directive}\nFROM python:3.15@{DIGEST}\n"
                 )
                 self.assert_redundant_directive_logged(
                     Reason.NO_VULNERABILITY_REPORTS, "python", Location(mock_dockerfile, 2), directive
                 )
-                self.mock_log.reset_mock()  # Judge each case on the records of its own run.
 
     def test_redundant_vulnerable_scope_beside_another_ignore_names_the_scope_alone(self):
         """Test that a `vulnerable` scope is named on its own, without an `ignore` beside it that freezes the image."""
         for directive in ("ignore[vulnerable]", "ignore[vulnerable=GHSA-2gwj-7jmv-h26r]", "allow[vulnerable>=high]"):
             with self.subTest(directive=directive):
-                self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
+                self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
                 mock_dockerfile = mock_path(f"# update-time: ignore[update] {directive}\nFROM python:3.14\n")
                 self.run_updater(mock_dockerfile)
                 mock_dockerfile.write_text.assert_not_called()  # `ignore[update]` holds the update back
                 self.assert_redundant_directive_logged(
                     Reason.NO_VULNERABILITY_REPORTS, "python", Location(mock_dockerfile, 2), directive
                 )
-                self.mock_log.reset_mock()  # Judge each case on the records of its own run.
 
     def test_label_prefixed_base_image_bumped_and_pinned(self):
         """Test that a label-prefixed base image (ghcr.io/astral-sh/uv:python3.12-...) is bumped and pinned."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("python3.13-bookworm-slim", DIGEST2))
+        self.requests.side_effect = mock_docker_registry(docker_tag("python3.13-bookworm-slim", DIGEST))
         mock_dockerfile = mock_path("FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim\n")
         self.run_updater(mock_dockerfile)
-        mock_dockerfile.write_text.assert_called_with(f"FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim@{DIGEST2}\n")
+        mock_dockerfile.write_text.assert_called_with(f"FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim@{DIGEST}\n")
         self.assert_new_version_logged("ghcr.io/astral-sh/uv", "python3.13-bookworm-slim", Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()

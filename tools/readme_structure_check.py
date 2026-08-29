@@ -36,6 +36,7 @@ _SUBSECTIONS = (
     "Stale dependencies",
     "Yanked dependencies",
     "Vulnerable dependencies",
+    "Archived dependencies",
     "Markers",
 )
 

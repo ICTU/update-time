@@ -12,8 +12,9 @@ from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import docker_tag, mock_docker_hub_auth
+from tests.update_time.helpers import docker_tag
 from tests.update_time.registry import mock_docker_registry
+from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
 
 @mock_docker_hub_auth

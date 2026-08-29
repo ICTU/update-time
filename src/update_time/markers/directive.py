@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from update_time.domain.archival import reports_archival
 from update_time.domain.publication import reports_publication_dates
 from update_time.domain.vulnerability import reports_vulnerabilities
 from update_time.domain.yank import reports_yanks
@@ -26,6 +27,7 @@ class Reason(StrEnum):
     NO_COOLDOWN_DATES = "this dependency's source reports no publication date to measure a cooldown against"
     NO_STALENESS_DATES = "this dependency's source reports no publication date to measure staleness against"
     NO_YANK_CONCEPT = "this dependency's source has no yank concept"
+    NO_ARCHIVAL_SIGNAL = "this dependency's source publishes no archival signal"
     NO_VERSION_TO_UPDATE = "this requirement pins no version to update"
     NO_VERSION_TO_CHECK_FOR_A_YANK = "this requirement pins no version to check for a yank"
     NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY = "this requirement pins no version to check for a vulnerability"
@@ -50,10 +52,8 @@ class _Directive:
     without_a_version: Reason | None = None
 
 
-# Each directive a getter may be unable to apply, and — where it needs the version a reference pins — why it holds
-# nothing back without one. The staleness directive has no such reason: staleness is the one check a reference that
-# pins no version still gets. Which getter has which capability is registered by the getters themselves, so no row
-# repeats it.
+# Every directive a getter may be unable to apply, in the order their warnings are reported. `update` is the one
+# scope with no row: every source resolves a version, so there is no capability a source could lack for it.
 DIRECTIVES = (
     _Directive(
         Scope.YANKED,
@@ -66,6 +66,11 @@ DIRECTIVES = (
         reports_vulnerabilities,
         Reason.NO_VULNERABILITY_REPORTS,
         Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
+    ),
+    _Directive(
+        Scope.ARCHIVED,
+        reports_archival,
+        Reason.NO_ARCHIVAL_SIGNAL,
     ),
     _Directive(
         Scope.COOLDOWN,

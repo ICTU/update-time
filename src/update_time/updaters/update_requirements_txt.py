@@ -2,7 +2,7 @@
 
 An exact pin is bumped to its latest PyPI version, with the extras, environment markers and inline comments on its
 line preserved, since only the version substring is replaced. A requirement that pins no exact version is rewritten
-not at all: its package is checked for staleness instead.
+not at all: the project behind it is checked instead.
 """
 
 from typing import TYPE_CHECKING
@@ -18,7 +18,7 @@ from update_time.references.match import reference_matches
 from update_time.references.resolve import report_project_checks, warn_about_inverted_items
 from update_time.references.vulnerability import warn_about_vulnerable_references
 from update_time.sources.osv import Ecosystem
-from update_time.sources.pypi import get_latest_version, newest_release
+from update_time.sources.pypi import get_latest_version, project
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,7 +36,7 @@ _REQUIREMENT_NAME = r"^\s*(?P<dependency>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\
 _REQUIREMENT_RE = _REQUIREMENT_NAME + r"==\s*(?P<version>[A-Za-z0-9][A-Za-z0-9._!+-]*)"
 # Match a requirement that pins no exact version: the name followed by any PEP 440 operator but `==`, or by no
 # specifier at all — an environment marker, a comment, or the end of the line. Such a requirement pins no version
-# to update, but its package has a newest release to measure staleness against. An option line (`-r`,
+# to update, but the project behind it is checked all the same. An option line (`-r`,
 # `--index-url`), a comment line, and a direct reference (`name @ url`, a bare URL) match none of that.
 _LOOSE_REQUIREMENT_RE = _REQUIREMENT_NAME + r"(?:===|[<>!~]=|[<>]|[;#]|$)"
 # The filename suffixes pip installs as a local archive rather than resolving as a requirement (its
@@ -46,12 +46,7 @@ _ARCHIVE_SUFFIXES = (".zip", ".whl", ".tar.gz", ".tar.bz2", ".tar", ".tgz", ".ta
 
 
 def _warn_about_items_that_decide_nothing(marker: Marker, reference: Reference) -> None:
-    """Warn about each item of the requirement's marker that decides nothing, so it is reported rather than acted on.
-
-    An item Update-time cannot read is left to say nothing, and a comparison item running the wrong way round sets
-    nothing either. A `yanked` or `vulnerable` scope holds nothing back, since both checks need the version such a
-    requirement does not pin.
-    """
+    """Warn about each item of the requirement's marker that decides nothing."""
     as_written = marker.as_written
     if as_written.invalid_item is not None:
         _LOG.invalid_bracket_item(reference.dependency, as_written.invalid_item, reference.location)
@@ -59,8 +54,8 @@ def _warn_about_items_that_decide_nothing(marker: Marker, reference: Reference) 
     if bound_directive := as_written.bound_directive:
         _LOG.redundant_directive(reference, bound_directive, Reason.NO_VERSION_TO_UPDATE)
     for directive in DIRECTIVES:
-        if directive.without_a_version is not None and as_written.directive_for(directive.scope):
-            _LOG.redundant_directive(reference, as_written.directive_for(directive.scope), directive.without_a_version)
+        if directive.without_a_version is not None and (written := as_written.directive_for(directive.scope)):
+            _LOG.redundant_directive(reference, written, directive.without_a_version)
 
 
 def _check_loose_requirements(lines: list[Line]) -> None:
@@ -74,7 +69,7 @@ def _check_loose_requirements(lines: list[Line]) -> None:
             continue
         reference = Reference(dependency, "", line.location)
         _warn_about_items_that_decide_nothing(marker, reference)
-        report_project_checks(reference, marker, _LOG, newest_release)
+        report_project_checks(reference, marker, _LOG, project)
 
 
 def _update_requirements_txt(requirements_txt: Path) -> None:

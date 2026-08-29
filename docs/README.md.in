@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/update-time?logo=pypi&logoColor=white)](https://pypi.org/project/update-time/) [![Python versions](https://img.shields.io/pypi/pyversions/update-time?logo=python&logoColor=white)](https://pypi.org/project/update-time/) [![License](https://img.shields.io/pypi/l/update-time)](https://github.com/ICTU/update-time/blob/main/LICENSE)
 
-Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for [dependencies](#-what-is-updated) and updates them to their latest versions. Where possible, it [pins](#-pinning) references — no more `latest` — and adds hashes. To protect against supply chain attacks, it applies a [cooldown](#-cooldown) period. And it warns you about [stale dependencies](#-stale-dependencies), [yanked versions](#-yanked-dependencies), and [vulnerable dependencies](#-vulnerable-dependencies).
+Keeping dependencies up-to-date is an important aspect of software maintenance. Update-time is a command line tool that scans your repository for [dependencies](#-what-is-updated) and updates them to their latest versions. Where possible, it [pins](#-pinning) references — no more `latest` — and adds hashes. To protect against supply chain attacks, it applies a [cooldown](#-cooldown) period. And it warns you about [stale dependencies](#-stale-dependencies), [yanked versions](#-yanked-dependencies), [vulnerable dependencies](#-vulnerable-dependencies), and [archived dependencies](#-archived-dependencies).
 
 Update-time rewrites the files in place and logs what it did:
 
@@ -52,7 +52,7 @@ Update-time logs at four levels. `--log-level` sets the lowest one shown, which 
 | :-: | :---- | :------------- |
 | 🔍 | `DEBUG` | what Update-time is doing: each file it checks, each directory `--exclude-path` skips, each [marker](#-controlling-updates-and-warnings-per-reference) it recognises, and everything a marker or `--ignore-vulnerability` held back |
 | ℹ️ | `INFO` | what Update-time changed: a version updated, a [hash pinned](#-pinning) |
-| ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), or [vulnerable](#-vulnerable-dependencies) dependency, [hash drift](#hash-drift), a source it could not reach, a marker that is invalid, incorrect, or redundant |
+| ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a source it could not reach, a marker that is invalid, incorrect, or redundant |
 | ❌ | `ERROR` | failures that stop an update, such as a package manager that is not installed |
 
 ### Workflow
@@ -97,7 +97,7 @@ Update-time updates the following types of dependencies, found in the listed fil
 
 Dependency types that Update-time updates itself, it rewrites line by line: it picks the new version from the source and edits the reference in place. Dependency types it delegates, it hands to uv, npm, or pnpm, which resolves the versions itself and keeps the project's lock file in step where there is one. Update-time runs that package manager for you, so a delegated dependency is updated by the same `update-time` run as every other one. A Python dependency pinned with `==` is updated by both: uv resolves its new version, and Update-time writes that version into the `pyproject.toml` or the `# /// script` block. Two things follow for a delegated dependency: it takes no [marker](#-controlling-updates-and-warnings-per-reference), and the [cooldown](#-cooldown) is handed to the manager, which applies it per run rather than per reference.
 
-Each type links to its own section under [Details per dependency type](#-details-per-dependency-type), which covers the files and dependencies it updates, and how pinning, the cooldown, staleness, yanks, vulnerabilities, and markers apply to it.
+Each type links to its own section under [Details per dependency type](#-details-per-dependency-type), which covers the files and dependencies it updates, and how pinning, the cooldown, staleness, yanks, vulnerabilities, archival, and markers apply to it.
 
 ### 📌 Pinning
 
@@ -214,7 +214,7 @@ Where a package manager applies it, Update-time hands the value to uv, npm, or p
 
 ## ⚠️ Warnings
 
-Update-time also reports what updating cannot put right: a dependency whose newest release is years old, a version its maintainer withdrew, and a version a security advisory names. These warnings are informational, so they change no file and do not affect the exit status.
+Update-time also reports what updating cannot put right: a dependency whose newest release is years old, a version its maintainer withdrew, a version a security advisory names, and a dependency its maintainer has archived. These warnings are informational, so they change no file and do not affect the exit status.
 
 ### 🕸️ Stale dependencies
 
@@ -305,6 +305,33 @@ Which dependencies are checked follows from what OSV can match a pinned version 
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | none: a hook repository is not an OSV package |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | the version in the URL, against OSV's npm advisories |
 
+### 🗄️ Archived dependencies
+
+An archived dependency is one its maintainer has declared finished: no further release is expected. Update-time warns when a dependency's source declares it archived:
+
+```console
+@@ARCHIVED_WARNING@@
+```
+
+The clause after the colon names what the source archived: PyPI archives a project, GitHub a repository. The warning quotes a reason where the source publishes one.
+
+An archived dependency is still updated to its newest release, if one is available.
+
+Which dependencies are checked follows from where an archival declaration can be read:
+
+| Dependency type | Archival check |
+| :-------------- | :------------- |
+| [Python dependencies](#python-dependencies) | the project status PyPI publishes for the package a Python file declares |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: the npm registry publishes no archival signal |
+| [Node engine version](#node-engine-version-and-python-version) | none: it follows a Docker image, and no registry publishes an archival signal |
+| [Python version](#node-engine-version-and-python-version) | none: it follows a Docker image, and no registry publishes an archival signal |
+| [Docker images](#docker-images) | none: no OCI registry publishes an archival signal |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | whether GitHub reports the action's repository as archived |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | whether GitHub reports the hook's repository as archived |
+| [jsDelivr npm URLs](#jsdelivr-npm-urls) | none: the npm registry publishes no archival signal |
+
+No command-line option switches the archival check off. `--stale-after 0` does not switch it off either, so a run with the staleness check off still asks the sources above about the projects they report on. A marker silences the warning rather than the lookup, and only a bare `# update-time: ignore` skips both.
+
 ## 🎛️ Controlling updates and warnings per reference
 
 Markers of the form `# update-time: <directive>` let you steer what happens to an individual reference — to hold it back, but also to bound how far it may move, or to opt it into behaviour that is off by default. A marker is a comment wherever the file can hold one, and a field where it cannot (see [Where to put a marker](#where-to-put-a-marker)). To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. The reference is then left untouched and no registry or source is queried for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
@@ -335,7 +362,7 @@ ignore[yanked, stale<90]
          └─ item: a scope named alone holds it back outright, here to not warn about yanked versions
 ```
 
-A bracket holds one or more items, separated by commas: the `ignore` bracket above holds the two items `yanked` and `stale<90`, and the `allow` bracket holds the single item `update<5`. An item names the scope it steers — the update, the cooldown, the hash drift, or one of the three warnings — and may set what that scope runs at.
+A bracket holds one or more items, separated by commas: the `ignore` bracket above holds the two items `yanked` and `stale<90`, and the `allow` bracket holds the single item `update<5`. An item names the scope it steers — the update, the cooldown, the hash drift, or one of the warnings — and may set what that scope runs at.
 
 | Term | What it is | Example |
 | :--- | :--------- | :------ |
@@ -344,7 +371,7 @@ A bracket holds one or more items, separated by commas: the `ignore` bracket abo
 | Verb | `ignore` drops what its items name and `allow` keeps it, so `ignore[stale<90]` and `allow[stale>=90]` say the same thing | `ignore`, `allow` |
 | Bracket | what a directive's `[…]` holds: its items, separated by commas | `[yanked, stale<90]` |
 | Item | one entry in a bracket: a scope, a scope with a threshold, a [bound](#bounding-an-update), or an [advisory](#silencing-specific-vulnerabilities) | `stale<90` |
-| Scope | what an item steers: `update`, `cooldown`, `stale`, `yanked`, `vulnerable`, `hash-drift`, or `floating-pin` | `ignore[yanked]` steers the yank warning |
+| Scope | what an item steers: `update`, `cooldown`, `stale`, `yanked`, `vulnerable`, `archived`, `hash-drift`, or `floating-pin` | `ignore[yanked]` steers the yank warning |
 | Bare `ignore` | the verb with no bracket at all, which holds back every scope it can without naming one | `# update-time: ignore` |
 | Reason | free text after the last directive, which Update-time keeps none of | `(pinned until the 3.13 migration)` |
 
@@ -352,17 +379,18 @@ A marker wins over the command-line option that sets the same thing, whatever th
 
 ### Holding a reference back
 
-By default the marker holds a reference back from version updates, the [staleness](#-stale-dependencies) check, the [yank](#-yanked-dependencies) check, and the [vulnerability](#-vulnerable-dependencies) check. Add a bracketed scope to narrow it to just one:
+By default the marker holds a reference back from version updates, the [staleness](#-stale-dependencies) check, the [yank](#-yanked-dependencies) check, the [vulnerability](#-vulnerable-dependencies) check, and the [archival](#-archived-dependencies) check. Add a bracketed scope to narrow it to just one:
 
-| Marker | Version update | ⚠️ Staleness warning | 🚫 Yank warning | 🛡️ Vulnerability warning |
-| :----- | :------------- | :---------------- | :----------- | :-------------------- |
-| `# update-time: ignore` | held back | held back | held back | held back |
-| `# update-time: ignore[update]` | held back | still checked | still checked | still checked |
-| `# update-time: ignore[stale]` | applied | held back | still checked | still checked |
-| `# update-time: ignore[yanked]` | applied | still checked | held back | still checked |
-| `# update-time: ignore[vulnerable]` | applied | still checked | still checked | held back |
+| Marker | Version update | ⚠️ Staleness warning | 🚫 Yank warning | 🛡️ Vulnerability warning | 🗄️ Archival warning |
+| :----- | :------------- | :---------------- | :----------- | :-------------------- | :------------------ |
+| `# update-time: ignore` | held back | held back | held back | held back | held back |
+| `# update-time: ignore[update]` | held back | still checked | still checked | still checked | still checked |
+| `# update-time: ignore[stale]` | applied | held back | still checked | still checked | still checked |
+| `# update-time: ignore[yanked]` | applied | still checked | held back | still checked | still checked |
+| `# update-time: ignore[vulnerable]` | applied | still checked | still checked | held back | still checked |
+| `# update-time: ignore[archived]` | applied | still checked | still checked | still checked | held back |
 
-So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet or its version was withdrawn, `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version, and `# update-time: ignore[yanked]` does the same for a yank you have decided to live with. `# update-time: ignore[vulnerable]` silences the vulnerability warning for one you have assessed, while the reference keeps updating. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
+So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen while still telling you when the project behind it has gone quiet or its version was withdrawn, `# update-time: ignore[stale]` silences a staleness warning you've acknowledged without freezing the version, and `# update-time: ignore[yanked]` does the same for a yank you have decided to live with. `# update-time: ignore[vulnerable]` silences the vulnerability warning for one you have assessed, while the reference keeps updating. `# update-time: ignore[archived]` silences the archival warning for a dependency you have decided to keep using. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
 
 #### Setting a staleness threshold
 
@@ -501,6 +529,14 @@ A requirement that pins no exact version is reported here too: an advisory is ma
 ```console
 @@REDUNDANT_VULNERABLE_WITHOUT_A_VERSION_WARNING@@
 ```
+
+Archival can only be observed where the dependency's source publishes an archival signal — of the references that accept a marker, `requirements.txt` requirements, GitHub Actions, and pre-commit hooks (see [Archived dependencies](#-archived-dependencies)). On a Docker image, a jsDelivr URL, a `.python-version` entry, or a Node engine the scope can never suppress anything, so it is reported as redundant:
+
+```console
+@@REDUNDANT_ARCHIVED_SCOPE_WARNING@@
+```
+
+A `requirements.txt` requirement that pins no exact version is checked for archival all the same, so an `ignore[archived]` on it holds a warning back. That directive is not reported as redundant, where an `ignore[yanked]` and an `ignore[vulnerable]` are.
 
 In all its forms, the `stale` scope is reported as redundant for a reference whose source reports no publication date to measure staleness against. [Setting a staleness threshold](#setting-a-staleness-threshold) names the three kinds of reference that get that warning.
 
@@ -678,7 +714,7 @@ Such a line appears only when the marker actually held something back. An `ignor
 
 ## 📖 Details per dependency type
 
-For each dependency type, this chapter answers the same questions: what files, dependencies, and versions are updated, how pinning, the cooldown, staleness, yanks, and vulnerabilities are handled, and how markers can be placed. Two sections cover a pair of types that behave alike, so there are fewer sections than types.
+For each dependency type, this chapter answers the same questions: what files, dependencies, and versions are updated, how pinning, the cooldown, staleness, yanks, vulnerabilities, and archival are handled, and how markers can be placed. Two sections cover a pair of types that behave alike, so there are fewer sections than types.
 
 ### Python dependencies
 
@@ -698,7 +734,7 @@ In a PEP 723 inline script metadata block, only the pins in the `dependencies` a
 
 #### What versions are updated?
 
-Only versions specified with an exact match are updated, that is dependency versions pinned with `==`. Looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. In a `pyproject.toml` or an inline script metadata block, a new version for such a dependency is still reported. In a `requirements.txt` it is not reported at all, although the package behind it is still checked for staleness, as described under Stale dependencies below.
+Only versions specified with an exact match are updated, that is dependency versions pinned with `==`. Looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. In a `pyproject.toml` or an inline script metadata block, a new version for such a dependency is still reported. In a `requirements.txt` it is not reported at all, although the package behind it is still checked for staleness and archival, as described below.
 
 #### Pinning
 
@@ -724,9 +760,13 @@ Each exact pin a Python file declares is checked against [PEP 592](https://peps.
 
 Each exact pin a Python file declares is checked against OSV's PyPI advisories, whichever of the three file kinds it sits in. A compiled or hash-pinned `requirements.txt` is the exception: Update-time skips it whole, so its pins are neither updated nor checked. The transitive dependencies those pins pull in are not checked. Reading a resolved dependency tree is what `uv audit` and `pip-audit` are for. A vulnerable `requirements.txt` pin is reported unless an `ignore[vulnerable]` marker silences that warning. A vulnerable `pyproject.toml` or inline script metadata pin is reported as well, but takes no marker to silence that warning. A dependency those files declare without an exact pin is not checked either, since an advisory is matched against a version and such a declaration names none.
 
+#### Archived dependencies
+
+PyPI publishes a project status, which Update-time reads for each dependency a Python file declares, whether or not it pins an exact version: archival is a fact about the project, so the package's name alone is enough to look it up. A compiled or hash-pinned `requirements.txt` is the exception: Update-time skips it whole, so its requirements are neither updated nor checked. Two kinds of dependency are left out as well, since neither names a PyPI project to read a status from: one that points at a URL or a git repository, and one uv resolves through a `[tool.uv] sources` entry, such as a path or a workspace member. A `requirements.txt` requirement whose project is archived is reported unless an `ignore[archived]` marker silences that warning. A `pyproject.toml` or inline script metadata dependency is reported as well, but takes no marker to silence that warning.
+
 #### Markers
 
-A `requirements.txt` pin takes an inline marker on its own line, as in `humanize==4.15.0  # update-time: ignore`; see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference) for the directives and where they go. A requirement that pins no exact version takes one too. Staleness is the only check such a requirement gets, so only a `stale` directive holds anything back there: `humanize>=4  # update-time: ignore[stale<1095]` warns once that package's newest release is more than three years old. A `yanked` or `vulnerable` scope on such a requirement is reported as redundant, since both checks need the version it does not pin. So are a `cooldown` and a bound, which steer an update Update-time never resolves for it. Dependencies in `pyproject.toml` and inline script metadata take no marker. Opt one of those out by pinning it with a maximum or non-`==` specifier instead, for example `package<=3.12`.
+Write a marker for a `requirements.txt` pin inline, on the pin's own line, as in `humanize==4.15.0  # update-time: ignore`; see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference) for the directives and where they go. A requirement that pins no exact version is checked for staleness and archival. It can carry a marker as well: `humanize>=4  # update-time: ignore[stale<1095]` warns once that package's newest release is more than three years old. A `yanked` or `vulnerable` scope on a requirement that pins no exact version is reported as redundant, since these checks need a pinned version. As Update-time does not update such a requirement, a `cooldown` and a bound are also reported as redundant. Update-time reads no markers in `pyproject.toml` or inline script metadata. Opt a requirement in one of those out of updating by pinning it with a maximum or non-`==` specifier instead, for example `package<=3.12`.
 
 ### npm and pnpm dependencies
 
@@ -763,6 +803,10 @@ There is no yank on npm, and the per-version deprecation that plays the same rol
 #### Vulnerable dependencies
 
 A `package.json` dependency is not checked. It declares a range rather than a version, and the version that range resolves to is recorded in the lock file, which Update-time does not read; auditing that lock file is what `npm audit` is for.
+
+#### Archived dependencies
+
+The npm registry publishes no archival signal, so a `package.json` dependency is not checked. What npmjs.com shows as a deprecated package is a deprecation on the release its `latest` tag points at, which says something about that release rather than about the project.
 
 #### Markers
 
@@ -806,11 +850,15 @@ Staleness is measured against the repository's newest release, whatever the refe
 
 #### Yanked dependencies
 
-GitHub has no yank concept, so neither an action nor a hook `rev:` is checked for one, and an `ignore[yanked]` marker on either is reported as redundant.
+GitHub has no yank concept, so neither an action nor a hook `rev:` is checked for one, and a `yanked` scope on either is reported as redundant.
 
 #### Vulnerable dependencies
 
 Neither is checked. OSV does hold advisories for actions, but their affected entries enumerate no versions, so asking OSV about a version of an action comes back empty however that version is spelled: silence there says nothing about whether the action is safe. A hook repository is not an OSV package at all. A `vulnerable` scope on either is reported as redundant.
+
+#### Archived dependencies
+
+Both are checked against the `archived` flag GitHub publishes for a repository. Archival is a fact about the repository rather than about one of its versions, so the flag is read whatever the reference names: a version, a branch, or a commit. GitHub publishes no reason beside the flag, so the warning gives none. An action or a hook whose repository is archived is reported unless an `ignore[archived]` marker silences that warning.
 
 #### Markers
 
@@ -860,11 +908,15 @@ Both are indirect cases. When the version is derived from the project's Dockerfi
 
 #### Yanked dependencies
 
-Neither source has a yank concept, so neither is checked for one, and an `ignore[yanked]` marker on either is reported as redundant.
+Neither source has a yank concept, so neither is checked for one, and a `yanked` scope on either is reported as redundant.
 
 #### Vulnerable dependencies
 
 Neither is checked: both name a version of a runtime rather than a release of a package, which is not something OSV matches an advisory against. A `vulnerable` scope on either is reported as redundant.
+
+#### Archived dependencies
+
+Neither is checked. Both take their version from a Docker base image or from Docker Hub, and no OCI registry publishes an archival signal. An `archived` scope on either is reported as redundant.
 
 #### Markers
 
@@ -939,11 +991,15 @@ Staleness is measured against the image's newest release, on Docker Hub only, si
 
 #### Yanked dependencies
 
-An OCI registry has no yank concept, so an image is not checked for one, and an `ignore[yanked]` marker on an image reference is reported as redundant.
+An OCI registry has no yank concept, so an image is not checked for one, and a `yanked` scope on an image reference is reported as redundant.
 
 #### Vulnerable dependencies
 
 An image is not checked, because OSV has no ecosystem for container images. Reporting the vulnerabilities of the packages inside an image is what an image scanner is for. A `vulnerable` scope on an image reference is reported as redundant.
+
+#### Archived dependencies
+
+An image is not checked, because no OCI registry publishes an archival signal. An `archived` scope on an image reference is reported as redundant.
 
 #### Markers
 
@@ -986,6 +1042,10 @@ There is no yank on npm, but a per-version deprecation is the same signal, so it
 #### Vulnerable dependencies
 
 The version in the URL is checked against OSV's npm advisories, and a URL the run leaves on a version an advisory names is warned about unless an `ignore[vulnerable]` marker silences that warning.
+
+#### Archived dependencies
+
+A jsDelivr URL is not checked, since the npm registry publishes no archival signal. An `archived` scope on a URL is reported as redundant.
 
 #### Markers
 

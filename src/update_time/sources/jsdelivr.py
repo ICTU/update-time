@@ -12,7 +12,14 @@ from typing import TYPE_CHECKING
 from packaging.version import Version
 
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.dependency import DependencyName, DependencyVersion, VersionString, first_eligible, is_valid
+from update_time.domain.dependency import (
+    DependencyName,
+    DependencyVersion,
+    Project,
+    VersionString,
+    first_eligible,
+    is_valid,
+)
 from update_time.domain.publication import publication_date_reporting
 from update_time.domain.vulnerability import vulnerability_reporting
 from update_time.domain.yank import with_yank_state, yank_reporting
@@ -62,7 +69,7 @@ def version_getter(filename: str) -> NewVersionGetter:
             current_version_string,
         )
         latest = with_yank_state(latest, current_version_string, partial(deprecation, dependency))
-        return replace(latest, newest=newest_release(dependency))
+        return replace(latest, project=Project(newest=newest_release(dependency)))
 
     return publication_date_reporting(vulnerability_reporting(yank_reporting(get_latest_version)))
 

@@ -3,8 +3,9 @@
 from typing import TYPE_CHECKING
 
 from update_time.domain.reference import resolved_references
-from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
+from update_time.domain.staleness import STALE_AFTER
 from update_time.markers.marker import Marker
+from update_time.references.resolve import project_is_checked, report_project
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -18,23 +19,15 @@ if TYPE_CHECKING:
 _NO_MARKER = Marker()
 
 
-def warn_about_stale_dependencies(files: Iterable[Path], newest_releases: ReferenceResolver, log: Logger) -> None:
-    """Warn about each dependency whose newest release is older than the threshold, for a delegated update.
-
-    The resolver leaves out a dependency it resolved no release for. The threshold is the global one, which a
-    delegated dependency has no marker to override. Skipped entirely when the check is disabled, so the resolver
-    never runs and makes no registry request.
-    """
-    if (threshold := STALE_AFTER.get()) == NO_STALENESS_CHECK:
-        return
-    for resolved in resolved_references(files, newest_releases):
-        log.report_staleness(resolved, _NO_MARKER, threshold)
+def warn_about_projects(files: Iterable[Path], projects: ReferenceResolver, log: Logger) -> None:
+    """Ask the resolver about the dependencies the files declare, where a check needs it, and report what it answers."""
+    threshold = STALE_AFTER.get()
+    checked = [file for file in files if project_is_checked(projects, file, threshold)]
+    for resolved in resolved_references(checked, projects):
+        report_project(resolved, _NO_MARKER, threshold, log)
 
 
 def warn_about_yanked_dependencies(files: Iterable[Path], pinned_releases: ReferenceResolver, log: Logger) -> None:
-    """Warn about each pin the run leaves on a withdrawn release, for a delegated update.
-
-    A delegated dependency has no marker to hold the check back, so every pin is checked.
-    """
+    """Warn about each pin the run leaves on a withdrawn release, for a delegated update."""
     for resolved in resolved_references(files, pinned_releases):
         log.report_yank(resolved, _NO_MARKER)

@@ -131,8 +131,27 @@ mutate-help:
     @echo "\nA killed run ends by naming each test that killed it, a subTest case with its parameters. Read that"
     @echo "list rather than the outcome alone: a case of a table missing from it guards nothing its neighbours"
     @echo "don't, and two tests in it for a one-line change say one of them guards nothing the other doesn't."
-    @echo "That list judges the suite rather than the mutation: one that other tests kill as well is still"
-    @echo "evidence for the test you register it on with @kills, which re-runs that test alone."
+    @echo "\nThat list judges the registration as much as the suite, so register a mutation with @kills only"
+    @echo "where the tests it is registered on are the ones that kill it. One the rest of the suite kills as well"
+    @echo "shows the suite reacting rather than that guard, so re-aim it at what the test's own name claims, or"
+    @echo "leave it unregistered and keep the probe. Registering it changes nothing about what is guarded: it"
+    @echo "claims the test is what guards it, and just test-mutations reads that claim across every registration."
+
+# Measure what each registered `@kills` mutation is worth. Slow: it runs the suite once per registration.
+test-mutations:
+    {{ python_m }} tools.mutation_yield
+
+[private]
+test-mutations-help:
+    @echo "\nRun the whole suite against every distinct mutation the suite registers, and report which tests kill"
+    @echo "each one. A mutation only its registered tests kill guards something no other test does; one a dozen"
+    @echo "tests kill as well shows the suite reacting rather than that guard, so it is a candidate to re-aim or"
+    @echo "drop. A mutation registered on several tests is measured once and read against all of them."
+    @echo "\nThe sweep refuses to start while any test fails without a mutation, since such a test fails against"
+    @echo "every mutation and would be counted among the killers of each."
+    @echo "\nEach mutation runs in memory and in a process of its own, so the working tree is never written to"
+    @echo "and other work can carry on meanwhile. The run costs a suite run per mutation, so it is a periodic"
+    @echo "measurement rather than a check, and just check does not run it."
 
 # Run Python with the package importable, to probe how it behaves. See `just help py`.
 [env("PYTHONPATH", "src")]
@@ -259,7 +278,8 @@ rename old new +files:
 [private]
 rename-help:
     @echo "\nRename OLD to NEW in FILES, resolving the name against each module's scopes, so the same word in a"
-    @echo "docstring, a help string, or an f-string is left alone, as is a parameter or a local of that name:"
+    @echo "docstring, a help string, or an f-string is left alone, as is a parameter or a local of that name."
+    @echo "A keyword argument spelled like the name is rewritten, though, so read the diff:"
     @echo "\n    just rename release_metadata _release_metadata src/update_time/sources/pypi.py"
     @echo "\nA name defined in one module and used in another is renamed only where the files named cover both, so"
     @echo "name every file that refers to it, and spell OLD as the fully qualified name, since a bare name reaches"

@@ -1,29 +1,34 @@
 """Unit tests for the checks the updaters that delegate to uv run over the dependencies their files declare."""
 
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
 from unittest.mock import Mock, patch
 
 from update_time.domain.dependency import Yank
 from update_time.io.log import get_logger
+from update_time.package_managers import uv as uv_module
 from update_time.primitives.location import Location
 from update_time.updaters.uv_pins import warn_about_pins
 
 from tests.helpers import mock_path
+from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
-    DJANGO_ADVISORY,
-    DJANGO_VULNERABILITY,
     PYPI_OLD_UPLOAD,
     LoggingTestCase,
-    no_vulnerabilities,
-    osv,
     pypi_index,
     pypi_release,
     pyproject,
     staleness_disabled,
-    vulnerability_check_disabled,
     yanked_file,
+)
+from tests.update_time.updaters.helpers import (
+    DJANGO_ADVISORY,
+    DJANGO_VULNERABILITY,
+    PYPI_RECENT_UPLOAD,
+    dated_pypi_index,
+    no_vulnerabilities,
+    osv,
+    vulnerability_check_disabled,
 )
 
 _LOG = get_logger("uv pins")
@@ -48,30 +53,25 @@ class DependencyFileTestCase(LoggingTestCase):
 @no_vulnerabilities
 @patch("requests.get")
 class StaleDependencyTest(DependencyFileTestCase):
-    """Unit tests for the staleness check, whose PyPI pass reads the newest release of every dependency declared."""
-
-    @staticmethod
-    def simple_api(version: str, upload_time: str) -> Mock:
-        """Mock the PyPI Index API response listing one version with a distribution-file upload time."""
-        return pypi_index(version, files=[{"upload-time": upload_time}])
+    """Unit tests for the staleness check, which reads the newest release PyPI lists for each dependency."""
 
     def test_stale_pin_warned(self, get: Mock):
         """Test that a pin whose newest release is old is warned about, located at the line the pin sits on."""
-        get.return_value = self.simple_api("1.0", (datetime.now(UTC) - timedelta(days=512)).isoformat())
+        get.return_value = dated_pypi_index("1.0")
         file = self.dependency_file("package==1.0")
         warn_about_pins([file], _LOG)
         self.assert_stale_dependency_logged("package", "1.0", Location(file, 2))
 
     def test_stale_dependency_without_an_exact_pin_warned(self, get: Mock):
         """Test that a dependency declared without an exact pin is warned about, at the line declaring it."""
-        get.return_value = self.simple_api("1.0", (datetime.now(UTC) - timedelta(days=512)).isoformat())
+        get.return_value = dated_pypi_index("1.0")
         file = self.dependency_file("package>=1.0")
         warn_about_pins([file], _LOG)
         self.assert_stale_dependency_logged("package", "1.0", Location(file, 2))
 
     def test_a_script_whose_block_does_not_parse_leaves_the_other_files_checked(self, get: Mock):
         """Test that a script whose metadata block is not valid TOML leaves the files after it checked."""
-        get.return_value = self.simple_api("1.0", (datetime.now(UTC) - timedelta(days=512)).isoformat())
+        get.return_value = dated_pypi_index("1.0")
         malformed = mock_path("# /// script\n# dependencies = [\n# ///\n", parent=Path("/"))  # array never closed
         file = self.dependency_file("package>=1.0")
         warn_about_pins([malformed, file], _LOG)
@@ -85,7 +85,7 @@ class StaleDependencyTest(DependencyFileTestCase):
 
     def test_recent_pin_not_warned(self, get: Mock):
         """Test that a pin whose newest release is recent is not warned about as stale."""
-        get.return_value = self.simple_api("1.0", datetime.now(UTC).isoformat())
+        get.return_value = dated_pypi_index("1.0", upload_time=PYPI_RECENT_UPLOAD)
         warn_about_pins([self.dependency_file("package==1.0")], _LOG)
         self.assert_no_warnings_logged()
 
@@ -93,7 +93,7 @@ class StaleDependencyTest(DependencyFileTestCase):
 @no_vulnerabilities
 @patch("requests.get")
 class YankedPinTest(DependencyFileTestCase):
-    """Unit tests for the yank check, whose PyPI pass reads the yank state of the version each pin is left on."""
+    """Unit tests for the yank check, which reads the yank state PyPI reports for the version each pin is left on."""
 
     reason: ClassVar = "broke Python 3.10"
 
@@ -161,11 +161,9 @@ class VulnerablePinTest(DependencyFileTestCase):
         )
         with osv(DJANGO_ADVISORY):
             warn_about_pins([file], _LOG)
-        for version, line in (("3.2.0", 2), ("4.2.0", 4)):
-            with self.subTest(version=version):
-                self.assert_vulnerable_dependency_logged(
-                    "django", version, DJANGO_VULNERABILITY, Location(file, line), among_others=True
-                )
+        vulnerable = DJANGO_VULNERABILITY
+        self.assert_vulnerable_dependency_logged("django", "3.2.0", vulnerable, Location(file, 2), among_others=True)
+        self.assert_vulnerable_dependency_logged("django", "4.2.0", vulnerable, Location(file, 4), among_others=True)
 
     @vulnerability_check_disabled
     def test_disabled_makes_no_osv_request(self):
@@ -174,3 +172,64 @@ class VulnerablePinTest(DependencyFileTestCase):
             warn_about_pins([self.dependency_file("django==3.2.0")], _LOG)
         mock_post.assert_not_called()
         self.assert_no_warnings_logged()
+
+
+@no_vulnerabilities
+@patch("requests.get")
+class ArchivedDependencyTest(DependencyFileTestCase):
+    """Unit tests for the archival check, which reads the project status PyPI publishes for each dependency."""
+
+    def test_archived_dependency_without_an_exact_pin_warned(self, get: Mock):
+        """Test that a dependency declared without an exact pin is warned about, at the line declaring it."""
+        get.return_value = dated_pypi_index("1.0", upload_time=PYPI_RECENT_UPLOAD, archived=True)
+        file = self.dependency_file("package>=1.0")
+        warn_about_pins([file], _LOG)
+        self.assert_archived_dependency_logged("package", Location(file, 2))
+
+    def test_stale_and_archived_dependency_warned_about_on_both_counts(self, get: Mock):
+        """Test that a project whose newest release is old and that PyPI declares archived gets both warnings."""
+        get.return_value = dated_pypi_index("1.0", archived=True)
+        file = self.dependency_file("package==1.0")
+        warn_about_pins([file], _LOG)
+        self.assert_stale_dependency_logged("package", "1.0", Location(file, 2), among_others=True)
+        self.assert_archived_dependency_logged("package", Location(file, 2), among_others=True)
+
+    @kills(
+        Mutation(
+            uv_module,
+            "@archival_reporting\ndef pypi_projects(",
+            "def pypi_projects(",
+            "the resolver reports no archival, so a switched-off staleness check skips the file it reads",
+        ),
+    )
+    @staleness_disabled
+    def test_staleness_disabled_still_warns_about_an_archived_project(self, get: Mock):
+        """Test that an archived project is warned about when the staleness check is switched off."""
+        get.return_value = dated_pypi_index("1.0", archived=True)
+        file = self.dependency_file("package==1.0")
+        warn_about_pins([file], _LOG)
+        self.assert_archived_dependency_logged("package", Location(file, 2))
+
+    def test_archived_pin_warned_at_the_cost_of_one_request(self, get: Mock):
+        """Test that a pin on an archived project is warned about, reading the index the staleness check fetched."""
+        get.return_value = dated_pypi_index("1.0", upload_time=PYPI_RECENT_UPLOAD, archived=True)
+        file = self.dependency_file("package==1.0")
+        warn_about_pins([file], _LOG)
+        self.assert_archived_dependency_logged("package", Location(file, 2))
+        self.assertEqual(get.call_count, 1)
+
+    @kills(
+        Mutation(
+            uv_module,
+            "        yield ResolvedReference(**vars(declaration), release=release)",
+            "        if release.project.newest is not None:\n"
+            "            yield ResolvedReference(**vars(declaration), release=release)",
+            "a declaration whose package the index lists no release for is dropped, archival and all",
+        )
+    )
+    def test_archived_project_the_index_lists_no_release_for_warned(self, get: Mock):
+        """Test that an archived project is warned about although the index lists no release for it."""
+        get.return_value = pypi_index(archived=True)
+        file = self.dependency_file("package>=1.0")
+        warn_about_pins([file], _LOG)
+        self.assert_archived_dependency_logged("package", Location(file, 2))

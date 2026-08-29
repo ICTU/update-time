@@ -29,7 +29,7 @@ def reference(dependency: str, location: Location, version: str = "") -> Referen
 
 
 def resolved(dependency: str, location: Location, release: DependencyVersion) -> ResolvedReference:
-    """Return the resolved reference a sample staleness or yank message reports on."""
+    """Return the resolved reference a sample warning reports on."""
     return ResolvedReference(dependency, "", location, release=release)
 
 

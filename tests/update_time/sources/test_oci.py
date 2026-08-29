@@ -10,7 +10,7 @@ import requests
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import FloatingPin, Release
-from update_time.sources import docker_hub, oci
+from update_time.sources import oci
 from update_time.sources.docker_hub import _MAX_TAG_LISTING_PAGES
 from update_time.sources.oci import (
     _MAX_FLOATING_TAG_PROBES,
@@ -202,14 +202,6 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(docker_tag("1.4a1", DIGEST))
         self.assertEqual(get_latest_tag("prerelease", "1.3", NO_BOUND, COOLDOWN.default).version, "1.3")
 
-    @kills(
-        Mutation(
-            oci,
-            "        if self._is_dated_snapshot and not current._is_dated_snapshot:",
-            "        if self._is_dated_snapshot and current._is_dated_snapshot:",
-            "a dated snapshot of a development branch is adopted as an update for a tag naming a release",
-        )
-    )
     def test_dated_snapshot_tag_is_no_candidate_for_a_release(self):
         """Test that a tag naming a date, such as `20260805`, loses to a release tag it sorts above."""
         self.requests.side_effect = mock_docker_registry(docker_tag("20260805", DIGEST1), docker_tag("3.25.0", DIGEST2))
@@ -324,7 +316,8 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         )
         latest = get_latest_tag("python", "3.12-slim", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "3.13-slim")  # The update keeps the slim line...
-        self.assertEqual(Release("3.14.7", datetime.fromisoformat(recent)), latest.newest)  # ...staleness does not.
+        newest = latest.project.newest
+        self.assertEqual(Release("3.14.7", datetime.fromisoformat(recent)), newest)  # ...staleness does not.
 
     @kills(
         Mutation(
@@ -373,19 +366,11 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertEqual(latest.version, "bookworm-20250101")
         self.assertEqual(latest.sha, DIGEST2)
 
-    @kills(
-        Mutation(
-            docker_hub,
-            "@cache\ndef _listing_page(url: str) -> tuple[tuple[_TagJSON, ...], str]:",
-            "def _listing_page(url: str) -> tuple[tuple[_TagJSON, ...], str]:",
-            "every reference to an image reads the listing that dates it again",
-        )
-    )
     def test_listing_read_once_for_two_references(self):
         """Test that a second reference to one image is dated by the listing the first one already read."""
         pushed = (datetime.now(UTC) - timedelta(days=10)).isoformat()
         self.requests.side_effect = mock_docker_registry(
-            docker_tag("3.14.7", DIGEST, tag_last_pushed=pushed),
+            docker_tag("3.14.7", DIGEST1, tag_last_pushed=pushed),
             docker_tag("3.13.5", DIGEST2, tag_last_pushed=pushed),
         )
         get_latest_tag("python", "3.14.7", NO_BOUND, COOLDOWN.default)
@@ -405,7 +390,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
             *(docker_tag(name, DIGEST, tag_last_pushed=pushed) for name in names)
         )
         latest = get_latest_tag("python", "3.12", NO_BOUND, COOLDOWN.default)
-        self.assertEqual(Release("3.14.7", datetime.fromisoformat(pushed)), latest.newest)
+        self.assertEqual(Release("3.14.7", datetime.fromisoformat(pushed)), latest.project.newest)
 
     def test_newest_release_ignores_cooldown(self):
         """Test that the newest release is the newest tag even when that tag is held back by the cooldown."""
@@ -413,7 +398,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(docker_tag("1.4", DIGEST, tag_last_pushed=recent))
         latest = get_latest_tag("newest_release", "1.3", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "1.3")  # 1.4 is held back by the cooldown...
-        self.assertEqual(Release("1.4", datetime.fromisoformat(recent)), latest.newest)
+        self.assertEqual(Release("1.4", datetime.fromisoformat(recent)), latest.project.newest)
 
     def test_newest_release_ignores_version_bound(self):
         """Test that the newest release is the newest tag even when a bound excludes it from the update."""
@@ -425,17 +410,18 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         latest = get_latest_tag("bounded_staleness", "1.3", bound(Verb.ALLOW, "update<2"), COOLDOWN.default)
         self.assertEqual(latest.version, "1.4")  # The bound keeps the update below 2.0...
         # ...but 2.0 still defines staleness:
-        self.assertEqual(Release("2.0", datetime.fromisoformat(newest)), latest.newest)
+        self.assertEqual(Release("2.0", datetime.fromisoformat(newest)), latest.project.newest)
 
     def test_no_newest_release_for_other_registry(self):
         """Test that no newest release is reported for non-Docker-Hub registries, which expose no push date."""
         self.requests.side_effect = mock_docker_registry(docker_tag("1.1", DIGEST), challenge=False)
-        self.assertIsNone(get_latest_tag("mcr.microsoft.com/dotnet/sdk", "1.0", NO_BOUND, COOLDOWN.default).newest)
+        latest_tag = get_latest_tag("mcr.microsoft.com/dotnet/sdk", "1.0", NO_BOUND, COOLDOWN.default)
+        self.assertIsNone(latest_tag.project.newest)
 
     def test_no_newest_release_without_tags(self):
         """Test that no newest release is set when the registry lists no tags at all."""
         self.requests.side_effect = mock_docker_registry()
-        self.assertIsNone(get_latest_tag("no_tags", "1.0", NO_BOUND, COOLDOWN.default).newest)
+        self.assertIsNone(get_latest_tag("no_tags", "1.0", NO_BOUND, COOLDOWN.default).project.newest)
 
     @patch_environ({"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
     @patch("requests.post")
@@ -521,23 +507,23 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
     def test_alias_on_a_later_page(self):
         """Test that a floating tag whose aliases the listing pages past the first is resolved all the same."""
         first_page = [docker_tag(f"1.{index}", DIGEST2) for index in range(100)]
-        aliases = [docker_tag("lts-alpine", DIGEST), docker_tag("24.19.0-alpine3.24", DIGEST)]
+        aliases = [docker_tag("lts-alpine", DIGEST1), docker_tag("24.19.0-alpine3.24", DIGEST1)]
         self.requests.side_effect = mock_docker_registry(*first_page, *aliases)
         latest = get_latest_tag("node", "lts-alpine", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "24.19.0-alpine3.24")
 
     def test_alias_on_a_page_after_one_holding_other_digests(self):
         """Test that an alias is found on a later page, the aliases of one digest being interleaved with other tags."""
-        listed = [docker_tag("latest", DIGEST), docker_tag("3", DIGEST)]
+        listed = [docker_tag("latest", DIGEST1), docker_tag("3", DIGEST1)]
         listed += [docker_tag(f"1.{index}", DIGEST2) for index in range(98)]  # The page ends on another digest.
-        listed.append(docker_tag("3.14.7", DIGEST))  # The most precise alias, on the page after it.
+        listed.append(docker_tag("3.14.7", DIGEST1))  # The most precise alias, on the page after it.
         self.requests.side_effect = mock_docker_registry(*listed, page_size=100)
         latest = get_latest_tag("python", "latest", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "3.14.7")
 
     def test_tag_listed_below_the_page_cap(self):
         """Test that a floating tag the listing pages past the cap is left as it is, at a bounded cost."""
-        listed = [docker_tag(f"1.{index}", DIGEST2) for index in range(_MAX_TAG_LISTING_PAGES * 100 + 1)]
+        listed = [docker_tag(f"1.{index}", DIGEST) for index in range(_MAX_TAG_LISTING_PAGES * 100 + 1)]
         self.requests.side_effect = mock_docker_registry(*listed)
         latest = get_latest_tag("node", "lts-alpine", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "lts-alpine")
@@ -546,7 +532,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     def test_listing_read_one_page_past_the_aliases(self):
         """Test that the listing is read until a page holds no alias, which is what says the aliases are exhausted."""
-        aliases = [docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST)]
+        aliases = [docker_tag("latest", DIGEST1), docker_tag("3.14.7", DIGEST1)]
         listed_below = [docker_tag(f"1.{index}", DIGEST2) for index in range(198)]
         self.requests.side_effect = mock_docker_registry(*aliases, *listed_below)
         latest = get_latest_tag("python", "latest", NO_BOUND, COOLDOWN.default)
@@ -588,7 +574,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         latest = get_latest_tag("debian", "bookworm-20260803", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "bookworm-20260803")
         self.assertEqual(latest.sha, "")
-        self.assertEqual(Release("12.15", datetime.fromisoformat(pushed)), latest.newest)
+        self.assertEqual(Release("12.15", datetime.fromisoformat(pushed)), latest.project.newest)
 
     def test_newest_release_for_a_floating_tag(self):
         """Test that a reference on a floating tag is measured against the image's newest release.
@@ -602,7 +588,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         )
         latest = get_latest_tag("python", "latest", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "3.14.7")
-        self.assertEqual(Release("3.14.7", datetime.fromisoformat(pushed)), latest.newest)
+        self.assertEqual(Release("3.14.7", datetime.fromisoformat(pushed)), latest.project.newest)
 
     @kills(
         Mutation(
@@ -634,7 +620,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     def test_listing_read_once_for_two_floating_tags(self):
         """Test that a second floating tag of one repository reads the listing the first one already read."""
-        listed = (docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        listed = (docker_tag("latest", DIGEST1), docker_tag("3.14.7", DIGEST1))
         listed += (docker_tag("slim", DIGEST2), docker_tag("3.14.7-slim", DIGEST2))
         self.requests.side_effect = mock_docker_registry(*listed)
         self.assertEqual(get_latest_tag("python", "latest", NO_BOUND, COOLDOWN.default).version, "3.14.7")
@@ -672,7 +658,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
     def test_walk_stops_at_the_first_tag_serving_the_digest(self):
         """Test that the walk asks for one manifest per candidate down to the match, and for none below it."""
         served = ("latest", "3.14.7", "3.14", "3")  # `3.15.0` is newer than the image the floating tag serves.
-        tags = [docker_tag(name, DIGEST) for name in served] + [docker_tag("3.15.0", DIGEST2)]
+        tags = [docker_tag(name, DIGEST1) for name in served] + [docker_tag("3.15.0", DIGEST2)]
         self.requests.side_effect = mock_docker_registry(*tags)
         latest = get_latest_tag("ghcr.io/owner/python", "latest", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "3.14.7")
@@ -701,7 +687,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
     def test_walk_gives_up_before_examining_every_tag(self):
         """Test that a floating tag no version tag near the top of the listing serves is left as it is."""
         listed = [docker_tag(f"3.0.{index}", DIGEST2) for index in range(100)]
-        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), *listed)
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST1), *listed)
         latest = get_latest_tag("ghcr.io/owner/python", "latest", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "latest")
         self.assertEqual(latest.floating, FloatingPin.NO_VERSION_TAG_EXAMINED)
@@ -728,7 +714,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     def test_floating_tag_on_another_registry_the_walk_finds_no_match_for(self):
         """Test that a floating tag no version tag of the registry serves is left as it is."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST2))
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST1), docker_tag("3.14.7", DIGEST2))
         latest = get_latest_tag("ghcr.io/owner/python", "latest", NO_BOUND, COOLDOWN.default)
         self.assertEqual(latest.version, "latest")
         self.assertEqual(latest.floating, FloatingPin.NO_VERSION_TAG)

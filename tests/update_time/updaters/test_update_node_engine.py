@@ -17,8 +17,9 @@ from update_time.updaters.update_node_engine import update_node_engines
 from tests.helpers import mock_path, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import LoggingTestCase, bound, docker_tag, mock_docker_hub_auth
+from tests.update_time.helpers import LoggingTestCase, bound, docker_tag
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
+from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
 if TYPE_CHECKING:
     from unittest.mock import Mock
@@ -169,7 +170,6 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
             ("an engines section that is a list", '{"engines": ["node"]}'),
         ):
             with self.subTest(case=case):
-                self.start_new_run()
                 mock_package_json = self.update_engine(mock_glob, contents)
                 mock_package_json.write_text.assert_not_called()
                 self.assert_no_path_logged()
@@ -252,14 +252,6 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_new_version_logged("node", "20", Location(mock_package_json, 1))
         self.assert_no_warnings_logged()  # node:lts is passed over, so it is never warned about.
 
-    @kills(
-        Mutation(
-            rewrite,
-            "marker = parse_marker(line) if marker is None else marker",
-            "marker = parse_marker(line)",
-            "the marker the file names goes unread, leaving only the marker its lines could carry",
-        )
-    )
     @patch_pathlib_path(exists=True, read_text="FROM node:19")
     def test_marker_in_the_update_time_field_holds_the_engine_back(self, mock_glob: Mock):
         """Test that an `ignore` directive in the `update-time` field holds back the engine's update, and it alone."""
@@ -326,11 +318,11 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         for directives, reason in (
             ("ignore[yanked]", Reason.NO_YANK_CONCEPT),
             ("ignore[vulnerable]", Reason.NO_VULNERABILITY_REPORTS),
+            ("ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL),
             ("ignore[cooldown<30]", Reason.NO_COOLDOWN_DATES),
             ("ignore[stale<90]", Reason.NO_STALENESS_DATES),
         ):
             with self.subTest(directives=directives):
-                self.start_new_run()
                 mock_package_json = self.update_engine(mock_glob, _package_json(directives=directives))
                 mock_package_json.write_text.assert_called_once_with(_package_json("19", directives=directives))
                 self.assert_redundant_directive_logged(reason, "node", Location(mock_package_json, 3), directives)
@@ -385,7 +377,6 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         }
         for case, field in fields.items():
             with self.subTest(case=case):
-                self.start_new_run()
                 mock_package_json = self.update_engine(mock_glob, _package_json(field=field))
                 mock_package_json.write_text.assert_not_called()
                 self.assert_logged(

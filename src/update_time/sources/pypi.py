@@ -9,11 +9,14 @@ from typing import TYPE_CHECKING, NotRequired, TypedDict
 from packaging.utils import parse_sdist_filename, parse_wheel_filename
 from packaging.version import Version
 
+from update_time.domain.archival import archival_reporting
 from update_time.domain.changelog import get_version_changes_from_changelog
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.dependency import (
+    Archival,
     DependencyName,
     DependencyVersion,
+    Project,
     Release,
     VersionString,
     Yank,
@@ -145,7 +148,7 @@ def _index_metadata(package: str) -> dict:
     Uses the Index (Simple) API rather than the project JSON API's `releases` key, which is deprecated. See
     https://docs.pypi.org/api/json/ and https://docs.pypi.org/api/index-api/. The response carries both the
     available `versions` (PEP 700) and each distribution file's `upload-time` (PEP 700), so `_project_versions`
-    and `newest_release` share this single request.
+    and `_newest_release` share this single request.
     """
     headers = {"Accept": "application/vnd.pypi.simple.v1+json"}
     response = fetch(f"{_PYPI}/simple/{package}/", _LOG, headers=headers)
@@ -167,7 +170,7 @@ def _stable_versions(package: str) -> list[Version]:
     return [version for version in _versions(package) if not version.is_prerelease and not version.is_devrelease]
 
 
-def newest_release(package: DependencyName) -> Release | None:
+def _newest_release(package: DependencyName) -> Release | None:
     """Return the release the package published most recently, or None when the index dates none it can name.
 
     The release is read off the distribution files, pre-releases included. So a project that has just shipped a
@@ -182,11 +185,30 @@ def newest_release(package: DependencyName) -> Release | None:
     )
 
 
+# The project status PEP 792 defines for a project that expects no further release.
+_ARCHIVED_STATUS = "archived"
+
+
+@archival_reporting
+def project(package: DependencyName) -> Project:
+    """Return what PyPI reports about the project: its newest release, and whether it declares it archived."""
+    return Project(newest=_newest_release(package), archival=_archival(package))
+
+
+def _archival(package: DependencyName) -> Archival:
+    """Return what PyPI declares about the project: whether it is archived, and the reason published beside it."""
+    project_status = _project_metadata(package).get("project-status") or {}
+    # PEP 792's text spells the status key `state`, where PyPI's Index API documentation shows `status`.
+    archived = project_status.get("status") == _ARCHIVED_STATUS
+    return Archival(archived=archived, reason=project_status.get("reason") or "")
+
+
 def _release_datetime(urls: list[_Distribution]) -> datetime | None:
     """Return the latest upload datetime of a release's distribution files, or None if there are none."""
     return newest_timestamp(url["upload_time_iso_8601"] for url in urls)
 
 
+@archival_reporting
 @publication_date_reporting
 @vulnerability_reporting
 @yank_reporting
@@ -209,10 +231,9 @@ def get_latest_version(
         candidates, lambda version: _eligible_release(package, version, cooldown_days), current_version
     )
     latest = with_yank_state(latest, current_version, partial(yank_state, package))
-    # Always attach the newest release so an already-up-to-date pin can still be flagged as stale. It rides on
-    # the Index API response fetched above, so it costs no extra request; whether it counts as stale (and whether
-    # the check is enabled at all) is decided by `is_stale` where the warning would be logged.
-    return replace(latest, newest=newest_release(package))
+    # Always attach what PyPI reports about the project, so a pin that is already up to date can still be reported
+    # as stale or archived. It rides on the Index API response fetched above, so it costs no request of its own.
+    return replace(latest, project=project(package))
 
 
 def yank_state(package: str, version: str) -> Yank:

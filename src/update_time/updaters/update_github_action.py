@@ -19,9 +19,10 @@ if TYPE_CHECKING:
 _LOG = get_logger("github action")
 # Match a `uses:` reference: one already pinned to a commit SHA with a version comment (`<sha> # vX.Y.Z`), one
 # unpinned to a version tag (`@vX` / `@vX.Y.Z`), and one naming a branch (`@main`), whose repository is checked for
-# staleness although no update is resolved for it. A local action carries no `@`, so it doesn't match at all.
+# staleness although no update is resolved for it. The dependency names an owner and a repository, which is what an
+# action reference names, so `myaction@v1` is passed over. A local action carries no `@`, so it doesn't match at all.
 _ACTION_RE = re.compile(
-    r"uses: (?P<dependency>[\w\d\./-]+)@"
+    r"uses: (?P<dependency>[\w\d\.-]+/[\w\d\./-]+)@"
     rf"(?:(?P<sha>{COMMIT_SHA}) # v?(?P<version>[\d\w\.\-]+)|v?(?P<tag>[\d\w\.\-]+))"
 )
 
