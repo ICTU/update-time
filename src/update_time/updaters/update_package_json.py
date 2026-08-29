@@ -5,12 +5,12 @@ from typing import TYPE_CHECKING
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.file_type import PACKAGE_JSON
 from update_time.domain.reference import ResolvedReference
-from update_time.domain.staleness import warn_about_stale_dependencies
 from update_time.file_formats import json as json_format
 from update_time.file_formats import package_json as package_json_format
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.package_managers import node
+from update_time.references.delegated import warn_about_stale_dependencies
 from update_time.sources import npmjs
 
 if TYPE_CHECKING:
@@ -48,7 +48,7 @@ def update_package_jsons() -> None:
         else:
             manager.update_package_json(package_json)
             supported.append(package_json)
-    warn_about_stale_dependencies(supported, _newest_releases, _LOG.warn_if_stale)
+    warn_about_stale_dependencies(supported, _newest_releases, _LOG)
 
 
 def _newest_releases(package_json: Path) -> Iterable[ResolvedReference]:

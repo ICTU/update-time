@@ -617,9 +617,10 @@ class GetChangesTest(LoggingTestCase):
 
     _UNGUARDED_LISTING = Mutation(
         github,
-        "    response = fetch(contents_url, _LOG, headers=_github_headers())\n"
+        '    response = fetch(f"{_GITHUB_API}/{owner}/{repository}/{path}", _LOG, headers=_github_headers())\n'
         "    return tuple(response.json()) if response is not None else None",
-        "    response = fetch(contents_url, _LOG, headers=_github_headers())\n    return tuple(response.json())",
+        '    response = fetch(f"{_GITHUB_API}/{owner}/{repository}/{path}", _LOG, headers=_github_headers())\n'
+        "    return tuple(response.json())",
         "a repository whose root listing cannot be fetched ends the run with a traceback",
         raises="AttributeError: 'NoneType' object has no attribute 'json'",
     )

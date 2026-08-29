@@ -4,31 +4,31 @@ Given a reference's current version and its `# update-time:` marker, decide whic
 report on the decision through a `Logger`. The source is injected as a `NewVersionGetter`, so the decision is the
 same whatever registry the reference points at; a reference kind with extra concerns (a commit SHA to pin, a
 re-pushed digest to adopt) layers those on top of the version this decision resolves.
+
+A reference the run resolves no update for takes `report_project_checks` instead.
 """
 
 from typing import TYPE_CHECKING
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.dependency import DependencyVersion
 from update_time.domain.downgrade import downgrades
 from update_time.domain.reference import ResolvedReference
-from update_time.domain.staleness import STALE_AFTER
+from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
 from update_time.markers.directive import DIRECTIVES, Reason
 from update_time.markers.marker import Scope
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
-    from update_time.domain.dependency import DependencyVersion
+    from update_time.domain.dependency import NewestReleaseGetter
     from update_time.domain.reference import Reference
     from update_time.io.log import Logger
     from update_time.markers.marker import Marker
 
 
 def warn_about_inverted_items(marker: Marker, reference: Reference, log: Logger) -> None:
-    """Warn about each comparison item whose operator runs the wrong way, so it sets nothing for the reference.
-
-    `inverted_items` pairs each of the marker language's comparison items with the warning it gets.
-    """
+    """Warn about each comparison item whose operator runs the wrong way, so it sets nothing for the reference."""
     inverted_items = (
         (marker.stale, log.inverted_stale_item),
         (marker.cooldown, log.inverted_cooldown_item),
@@ -42,11 +42,7 @@ def warn_about_inverted_items(marker: Marker, reference: Reference, log: Logger)
 def _warn_about_directives_the_source_cannot_apply(
     marker: Marker, get_new_version: NewVersionGetter, reference: Reference, log: Logger
 ) -> None:
-    """Warn about each directive the reference's source cannot apply, so it holds nothing back.
-
-    Each warning names the directive to delete, so a bare `ignore` is never reported as redundant: it holds every
-    scope back without spelling one out (see `Marker.as_written`).
-    """
+    """Warn about each directive the reference's source cannot apply, so it holds nothing back."""
     as_written = marker.as_written
     for directive in DIRECTIVES:
         if as_written.directive_for(directive.scope) and not directive.is_applied_by(
@@ -56,12 +52,7 @@ def _warn_about_directives_the_source_cannot_apply(
 
 
 def _floating_pin_redundancy(marker: Marker, latest: DependencyVersion | None) -> Reason | None:
-    """Return why the marker's directive to keep the pin floating holds nothing back, or None when it holds it.
-
-    A frozen reference is never pinned, so the directive decides nothing there whatever the tag says. Otherwise the
-    source's answer decides, since only a source that resolves a floating pin reports one: a reference whose pin
-    names a version is reported, and so is one whose source knows no floating pin at all.
-    """
+    """Return why the marker's directive to keep the pin floating holds nothing back, or None when it holds it."""
     if not marker.allows(Scope.FLOATING_PIN):
         return None
     if marker.ignores(Scope.UPDATE):
@@ -72,10 +63,7 @@ def _floating_pin_redundancy(marker: Marker, latest: DependencyVersion | None) -
 def _warn_if_the_floating_pin_holds_nothing_back(
     marker: Marker, reference: Reference, log: Logger, latest: DependencyVersion | None
 ) -> None:
-    """Warn when the marker's directive to keep the pin floating holds nothing back, saying why.
-
-    `latest` is what the source resolved for the reference, or None where the marker left the source unasked.
-    """
+    """Warn when the marker's directive to keep the pin floating holds nothing back, saying why."""
     if (reason := _floating_pin_redundancy(marker, latest)) is not None:
         log.redundant_directive(reference, marker.allow_directive(Scope.FLOATING_PIN), reason)
 
@@ -86,15 +74,7 @@ def latest_version(
     marker: Marker,
     log: Logger,
 ) -> DependencyVersion | None:
-    """Return the latest version to update the reference to, or None when the marker holds the update back.
-
-    What the marker itself gets wrong is reported whether or not a source is queried: an inverted comparison, a
-    redundant bound, a directive the source cannot apply, and a directive keeping a frozen reference's pin floating
-    are read off the marker and the source's capabilities alone. The source is queried unless the marker holds back
-    the update, the staleness warning, and the yank warning alike, which leaves nothing to query it for; what only
-    its answer can judge is reported then. A version equal to the current one is returned like any other, since it
-    may carry a hash worth pinning.
-    """
+    """Return the latest version to update the reference to, or None when the marker holds the update back."""
     dependency, current_version = reference.dependency, reference.current_version
     if not downgrades(get_new_version, dependency):
         log.warn_if_redundant_bound(reference, marker)
@@ -111,3 +91,19 @@ def latest_version(
     log.report_yank(resolved, marker)
     _warn_if_the_floating_pin_holds_nothing_back(marker, reference, log, latest)
     return None if marker.ignores(Scope.UPDATE) else latest
+
+
+def report_project_checks(
+    reference: Reference,
+    marker: Marker,
+    log: Logger,
+    newest_release: NewestReleaseGetter,
+) -> None:
+    """Report the checks a reference's project gets, which is the staleness check."""
+    if marker.holds_everything_back:
+        return
+    if (threshold := marker.stale.value_or(STALE_AFTER.get())) == NO_STALENESS_CHECK:
+        return
+    if (newest := newest_release(reference.dependency)) is not None:
+        resolved = ResolvedReference(**vars(reference), release=DependencyVersion.unpinned(newest))
+        log.report_staleness(resolved, marker, threshold)

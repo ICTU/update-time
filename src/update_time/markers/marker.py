@@ -52,8 +52,10 @@ _IGNORABLE_SCOPES = Scope.UPDATE | Scope.STALE | Scope.YANKED | Scope.VULNERABLE
 # The scopes that are off until an `allow` directive switches them on, whose `ignore` therefore spells the default.
 _OPTIONAL_SCOPES = Scope.HASH_DRIFT | Scope.FLOATING_PIN
 
-# The scopes whose checks need the source queried, so a marker holding all three back leaves nothing to ask it for.
-_SOURCE_CHECK_SCOPES = Scope.UPDATE | Scope.STALE | Scope.YANKED
+# The scopes whose checks the reference's own source answers, so a marker holding them all back leaves nothing to
+# ask that source for. Spelled as every ignorable scope but the one OSV answers, so `_SOURCE_CHECK_SCOPES` does not
+# need editing when an ignorable scope is added.
+_SOURCE_CHECK_SCOPES = _IGNORABLE_SCOPES & ~Scope.VULNERABLE
 
 
 @dataclass(frozen=True)

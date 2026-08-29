@@ -6,12 +6,9 @@ from update_time.primitives.environment import EnvVar
 from update_time.primitives.timestamp import days_since
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
     from datetime import datetime
-    from pathlib import Path
 
     from update_time.domain.dependency import DependencyVersion, Release
-    from update_time.domain.reference import ResolvedReference
 
 # The threshold to ask for to hear about no stale dependency at all, which switches the check off rather than
 # setting a day count. It is no number of days, so nothing is ever older than it.
@@ -36,21 +33,3 @@ def stale_release(version: DependencyVersion, threshold: int) -> Release | None:
     """Return the dependency's newest release when it is old enough to warn about, or None when it is not."""
     newest = version.newest
     return newest if newest is not None and is_stale(newest.published, threshold) else None
-
-
-def warn_about_stale_dependencies(
-    files: Iterable[Path],
-    newest_releases: Callable[[Path], Iterable[ResolvedReference]],
-    warn: Callable[[ResolvedReference, int], None],
-) -> None:
-    """Warn about each dependency whose newest release is older than the threshold, for a delegated update.
-
-    The resolver leaves out a dependency it resolved no release for. The threshold is the global one, which a
-    delegated dependency has no marker to override. Skipped entirely when the check is disabled, so the resolver
-    never runs and makes no registry request.
-    """
-    if (threshold := STALE_AFTER.get()) == NO_STALENESS_CHECK:
-        return
-    for file in files:
-        for resolved in newest_releases(file):
-            warn(resolved, threshold)

@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Iterator
+    from pathlib import Path
+
     from update_time.domain.dependency import DependencyName, DependencyVersion, VersionString
     from update_time.primitives.location import Location
 
@@ -42,6 +45,16 @@ class DriftedPin(Reference):
     """A hash pin that no longer matches what it points at, and the hash it now resolves to."""
 
     new_sha: str
+
+
+# The contract a delegating updater binds and a file format implements, reading back the references a file declares.
+type ReferenceResolver = Callable[[Path], Iterable[ResolvedReference]]
+
+
+def resolved_references(files: Iterable[Path], resolve: ReferenceResolver) -> Iterator[ResolvedReference]:
+    """Yield each reference the resolver reads back from each of the files."""
+    for file in files:
+        yield from resolve(file)
 
 
 def hash_drifted(resolved: str, pinned: str) -> bool:

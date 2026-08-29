@@ -1,4 +1,4 @@
-"""Which sources can observe a yanked version, what they report for one, and the pass over a manager's pins."""
+"""Which sources can observe a yanked version, and what they report for one."""
 
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -6,11 +6,9 @@ from typing import TYPE_CHECKING
 from update_time.primitives.capability import capability
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
-    from pathlib import Path
+    from collections.abc import Callable
 
     from update_time.domain.dependency import DependencyVersion, VersionString, Yank
-    from update_time.domain.reference import ResolvedReference
 
 yank_reporting, reports_yanks = capability("reports_yanks")
 
@@ -27,17 +25,3 @@ def with_yank_state(
     if latest.version != current_version:
         return latest
     return replace(latest, yank=yank_state(current_version))
-
-
-def warn_about_yanked_dependencies(
-    files: Iterable[Path],
-    pinned_releases: Callable[[Path], Iterable[ResolvedReference]],
-    warn: Callable[[ResolvedReference], None],
-) -> None:
-    """Warn about each pin the run leaves on a withdrawn release, for a delegated update.
-
-    A delegated dependency has no marker to hold the check back, so every pin is checked.
-    """
-    for file in files:
-        for resolved in pinned_releases(file):
-            warn(resolved)

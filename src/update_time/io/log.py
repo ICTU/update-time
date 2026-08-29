@@ -148,6 +148,15 @@ class LogMessage:
         return repr(self.format)
 
 
+@dataclass(frozen=True)
+class _Check:
+    """A check a reference's marker can silence: the scope silencing it, its warning, and the hold-back instead."""
+
+    scope: Scope
+    warning: LogMessage
+    ignored: LogMessage
+
+
 def _redundant_directive(reason: str) -> str:
     """Return the warning that a marker has a redundant directive, for the given reason."""
     return f"Redundant update-time directive %(directive)s for %(dependency)s in %(location)s: {reason}"
@@ -210,6 +219,18 @@ class Logger:
         The caller names the directive that held this back, so a directive written beside it is left out.
         """
         self._log(message, dependency=dependency, location=location, directive=directive)
+
+    def _report(
+        self, check: _Check, marker: Marker, resolved: ResolvedReference, fields: dict[str, object] | None
+    ) -> None:
+        """Report what a check found, as its warning or as the hold-back of the marker that silences it."""
+        if fields is None:
+            return
+        if marker.ignores(check.scope):
+            directive = marker.hold_back_directive(check.scope)
+            self._log_ignored(check.ignored, resolved.dependency, directive, resolved.location)
+        else:
+            self._log(check.warning, **fields)
 
     def _log_file(self, message: LogMessage, path: Path, **fields: object) -> None:
         """Log a message about a file the scan found, at the message's own level.
@@ -395,82 +416,49 @@ class Logger:
         "%(days)d days ago (> %(threshold)d)",
     )
 
-    def warn_if_stale(self, resolved: ResolvedReference, threshold: int) -> None:
-        """Warn if the dependency's newest release is old enough that the project may have gone quiet.
-
-        Does nothing when the newest release is unknown or within the threshold (or the check is disabled), so
-        callers can hand off every resolved version unconditionally. Both the decision and the reported day count
-        are whole days, so the count in the message always exceeds the threshold beside it.
-        """
-        if (newest := stale_release(resolved.release, threshold)) is None:
-            return
-        self._log(
-            self._MESSAGE_STALE,
-            **self._reference_fields(
-                resolved, version=newest.version, days=days_since(newest.published), threshold=threshold
-            ),
-        )
-
     _MESSAGE_IGNORED_STALENESS = LogMessage(
         DEBUG, "Ignoring the staleness warning for %(dependency)s in %(location)s (update-time: %(directive)s)"
     )
 
-    def _ignored_staleness(self, resolved: ResolvedReference, marker: Marker, threshold: int) -> None:
-        """Log that the marker held back a staleness warning, so a marker that suppresses nothing stays silent."""
-        if stale_release(resolved.release, threshold) is not None:
-            directive = marker.hold_back_directive(Scope.STALE)
-            self._log_ignored(self._MESSAGE_IGNORED_STALENESS, resolved.dependency, directive, resolved.location)
+    _STALENESS = _Check(Scope.STALE, _MESSAGE_STALE, _MESSAGE_IGNORED_STALENESS)
+
+    @classmethod
+    def _stale_fields(cls, resolved: ResolvedReference, threshold: int) -> dict[str, object] | None:
+        """Return the staleness warning's fields, or None when the newest release is not old enough to warn about."""
+        if (newest := stale_release(resolved.release, threshold)) is None:
+            return None
+        return cls._reference_fields(
+            resolved, version=newest.version, days=days_since(newest.published), threshold=threshold
+        )
 
     def report_staleness(self, resolved: ResolvedReference, marker: Marker, threshold: int) -> None:
-        """Report the reference's staleness, as a warning or as the hold-back of the marker that silences it.
-
-        Every reference that can carry a marker is reported through here, so a caller reporting one cannot forget
-        that its marker may hold the warning back.
-        """
-        if marker.ignores(Scope.STALE):
-            self._ignored_staleness(resolved, marker, threshold)
-        else:
-            self.warn_if_stale(resolved, threshold)
+        """Report the reference's staleness, as a warning or as the hold-back of the marker that silences it."""
+        self._report(self._STALENESS, marker, resolved, self._stale_fields(resolved, threshold))
 
     _MESSAGE_YANKED = LogMessage(
         WARNING, "Yanked dependency %(dependency)s in %(location)s: version %(version)s was yanked (%(reason)s)"
     )
 
-    def warn_if_yanked(self, resolved: ResolvedReference) -> None:
-        """Warn that the version the reference is pinned to has been yanked; do nothing when it was not yanked.
-
-        The message shows the yank in parentheses, where it renders itself as the maintainer's reason.
-        """
-        release = resolved.release
-        if not release.yank.yanked:
-            return
-        self._log(
-            self._MESSAGE_YANKED, **self._reference_fields(resolved, version=release.version, reason=release.yank)
-        )
-
     _MESSAGE_IGNORED_YANK = LogMessage(
         DEBUG, "Ignoring the yank warning for %(dependency)s in %(location)s (update-time: %(directive)s)"
     )
 
-    def _ignored_yank(self, resolved: ResolvedReference, marker: Marker) -> None:
-        """Log that the marker held back a yank warning that would otherwise have been logged.
+    _YANK = _Check(Scope.YANKED, _MESSAGE_YANKED, _MESSAGE_IGNORED_YANK)
 
-        Guards on the same condition as `warn_if_yanked`, so a marker that suppresses nothing stays silent.
+    @classmethod
+    def _yank_fields(cls, resolved: ResolvedReference) -> dict[str, object] | None:
+        """Return the yank warning's fields, or None when the version the run leaves the reference on stands.
+
+        The reason is the yank itself, which renders as the maintainer's words where they gave any.
         """
-        if resolved.release.yank.yanked:
-            directive = marker.hold_back_directive(Scope.YANKED)
-            self._log_ignored(self._MESSAGE_IGNORED_YANK, resolved.dependency, directive, resolved.location)
+        release = resolved.release
+        if not release.yank.yanked:
+            return None
+        return cls._reference_fields(resolved, version=release.version, reason=release.yank)
 
     def report_yank(self, resolved: ResolvedReference, marker: Marker) -> None:
-        """Report the version's yank, as a warning or as the hold-back of the marker that silences it.
-
-        Every reference that can carry a marker is reported through here, so a caller reporting one cannot forget
-        that its marker may hold the warning back, exactly as `report_staleness` does for the staleness warning.
-        """
-        if marker.ignores(Scope.YANKED):
-            self._ignored_yank(resolved, marker)
-        else:
-            self.warn_if_yanked(resolved)
+        """Report the version's yank, as a warning or as the hold-back of the marker that silences it."""
+        self._report(self._YANK, marker, resolved, self._yank_fields(resolved))
 
     _MESSAGE_MALFORMED_CVSS_VECTOR = LogMessage(
         WARNING,
