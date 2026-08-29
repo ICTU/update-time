@@ -677,10 +677,10 @@ def _registry_token(host: str, repository: str, credentials: tuple[str, str] | N
     challenge = probe.headers.get("WWW-Authenticate", "")
     if probe.status_code != HTTPStatus.UNAUTHORIZED or not challenge.lower().startswith("bearer "):
         return None  # Anonymous registry (or an unexpected response): proceed without a token.
-    # Pull out each `key="value"` pair. The key class is possessive (`++`) so a run of word characters not followed by
-    # `="` fails at once instead of giving characters back, which keeps matching linear; the quoted value never gives
-    # characters back either, since it excludes the `"` that follows it.
-    params = dict(re.findall(r'(\w++)="([^"]*)"', challenge))
+    # Pull out each `key="value"` pair. The word boundary keeps the scan linear. It rejects a start position inside
+    # a run of word characters at once. No match can start there anyway: a match starting at the run's first
+    # character spans the same run. The `++` and the `[^"]*` match each pair without giving characters back.
+    params = dict(re.findall(r'\b(\w++)="([^"]*)"', challenge))
     realm = params.pop("realm", "")
     params["scope"] = f"repository:{repository}:pull"
     response = fetch(realm, _LOG, params=params, auth=credentials)
