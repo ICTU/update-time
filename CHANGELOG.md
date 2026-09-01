@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.33 - 2026-09-01
+
 ### Added
 
 - Warn when a dependency's source declares it archived. Closes [#226](https://github.com/ICTU/update-time/issues/226).
