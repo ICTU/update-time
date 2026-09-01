@@ -89,7 +89,8 @@ def _drifted_pin(
     if not hash_drifted(latest.sha, reference.current_sha):
         return None  # Already pinned and up to date
     # The version is reported as the source spells it, which the reference's own spelling need only equal, not match.
-    drifted = DriftedPin(**vars(replace(reference, current_version=latest.version)), new_sha=latest.sha)
+    moved = replace(reference, current_version=latest.version)
+    drifted = DriftedPin.from_reference(moved, new_sha=latest.sha)
     adopted = report_drift(marker, partial(log.tag_drift, drifted), partial(log.adopted_tag_drift, drifted))
     return latest if adopted else None
 

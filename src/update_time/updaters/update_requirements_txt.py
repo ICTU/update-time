@@ -29,16 +29,26 @@ if TYPE_CHECKING:
 _LOG = get_logger("requirements.txt")
 # Where a requirement line starts: the package name, optionally indented and optionally extra'd, and whatever space
 # follows it. Indentation counts as pip strips a line before parsing it (`req_file.ignore_comments`), so an indented
-# line is a requirement like any other. Both patterns below start here rather than spelling the name twice.
-_REQUIREMENT_NAME = r"^\s*(?P<dependency>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*"
-# Match an exact pin: the name followed by `==` and a version. `===` (arbitrary equality) and every other operator
-# is left to the pattern below, so only `==` pins are updated.
-_REQUIREMENT_RE = _REQUIREMENT_NAME + r"==\s*(?P<version>[A-Za-z0-9][A-Za-z0-9._!+-]*)"
-# Match a requirement that pins no exact version: the name followed by any PEP 440 operator but `==`, or by no
-# specifier at all — an environment marker, a comment, or the end of the line. Such a requirement pins no version
-# to update, but the project behind it is checked all the same. An option line (`-r`,
+# line is a requirement like any other. Its parts carry names of their own, since the lookahead below needs them
+# without the capturing group.
+_NAME = r"[A-Za-z0-9][A-Za-z0-9._-]*"
+_EXTRAS = r"(?:\[[^\]]*\])?"
+_REQUIREMENT_NAME = rf"^\s*(?P<dependency>{_NAME}){_EXTRAS}\s*"
+# The characters a version holds, and the lookahead that requires it to end its specifier: nothing a version or a
+# wildcard could go on with may follow, and no comma introducing a second specifier, which PEP 440 lets space
+# precede. So `==4.15.*` names a range and `==4.15.0 ,!=4.15.1` names two specifiers, and neither is an exact pin.
+_VERSION = r"[A-Za-z0-9][A-Za-z0-9._!+-]*"
+_VERSION_ENDS = r"(?![A-Za-z0-9._!+*,-])(?!\s*,)"
+# Match an exact pin: the name followed by `==` and a version that ends there. Only such a pin is updated.
+_REQUIREMENT_RE = _REQUIREMENT_NAME + rf"==\s*(?P<version>{_VERSION}){_VERSION_ENDS}"
+# The same pin without the capture groups, so the pattern below can hold a copy of it in a lookahead. Naming a
+# group twice in one pattern is an error, and both patterns capture the dependency.
+_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*{_VERSION}{_VERSION_ENDS}"
+# Match a requirement that pins no exact version, which is any requirement the pattern above does not match: the
+# lookahead rules out an exact pin, so a `==` reaching here names a range or one specifier of several. Such a
+# requirement pins no version to update, but the project behind it is checked all the same. An option line (`-r`,
 # `--index-url`), a comment line, and a direct reference (`name @ url`, a bare URL) match none of that.
-_LOOSE_REQUIREMENT_RE = _REQUIREMENT_NAME + r"(?:===|[<>!~]=|[<>]|[;#]|$)"
+_LOOSE_REQUIREMENT_RE = rf"(?!{_EXACT_PIN})" + _REQUIREMENT_NAME + r"(?:==|===|[<>!~]=|[<>]|[;#]|$)"
 # The filename suffixes pip installs as a local archive rather than resolving as a requirement (its
 # `ARCHIVE_EXTENSIONS`). A filename with no path in front of it, `mypkg-1.0.tar.gz`, is spelled like a bare
 # requirement, so the pattern above matches it and PyPI would be asked for a package by that name.

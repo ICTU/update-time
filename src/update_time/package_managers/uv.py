@@ -14,6 +14,7 @@ from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.file_formats import pyproject_toml as pyproject_toml_format
+from update_time.file_formats import toml
 from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.primitives.command import Command
@@ -30,6 +31,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from update_time.domain.dependency import DependencyName, VersionString
+    from update_time.file_formats.dependency_file import DependencyTomlFile, InlineScript, PyprojectToml
+    from update_time.file_formats.pyproject_toml import Declaration
     from update_time.io.log import Logger
 
 _LOG = get_logger("pyproject.toml")
@@ -121,7 +124,7 @@ def _workspace_table(pyproject_toml: Path) -> dict | None:
     A missing (probing an ancestor) or malformed pyproject.toml reads back as None, so resolution keeps walking up
     rather than aborting.
     """
-    config = pyproject_toml_format.read(pyproject_toml) or {}
+    config = toml.read(pyproject_toml) or {}
     return config.get("tool", {}).get("uv", {}).get("workspace")
 
 
@@ -152,7 +155,7 @@ def _parse_line_with_update(line: str) -> tuple[DependencyName, VersionString]:
     return fields[0], fields[-1].lstrip("v").rstrip(")")
 
 
-def _declarations(path: Path) -> dict[DependencyName, list[Reference]]:
+def _declarations(file: DependencyTomlFile) -> dict[DependencyName, list[Reference]]:
     """Return each dependency the file declares with its line, keyed by the name uv reports the dependency under.
 
     A name carries an entry per declaration, so a dependency the file declares in more than one array keeps every
@@ -161,8 +164,8 @@ def _declarations(path: Path) -> dict[DependencyName, list[Reference]]:
     name.
     """
     declarations: dict[DependencyName, list[Reference]] = {}
-    for reference in pyproject_toml_format.declared_dependencies(path):
-        declarations.setdefault(normalized_name(reference.dependency), []).append(reference)
+    for declaration in pyproject_toml_format.declared_dependencies(file):
+        declarations.setdefault(normalized_name(declaration.dependency), []).append(declaration)
     return declarations
 
 
@@ -180,21 +183,21 @@ def _log_new_version(log: Logger, package: DependencyName, version: VersionStrin
         log.new_version(Reference(package, "", location), dependency_version)
 
 
-def _update_dependencies(uv_tree: Command, path: Path, log: Logger) -> bool:
+def _update_dependencies(uv_tree: Command, file: DependencyTomlFile, log: Logger) -> bool:
     """Run `uv tree --outdated`, log every available new version, and rewrite the file's exact `==` pins.
 
     Shared by the pyproject.toml and inline-script-metadata updaters: both read outdated dependencies from uv and
-    rewrite the same quoted `"name==version"` specs, so only the uv command, the file, and the logger differ (the
+    rewrite the pins their dependency arrays declare, so only the uv command, the file, and the logger differ (the
     pyproject.toml updater also re-locks afterwards, which its caller handles). Returns whether `uv tree` produced
     usable output; when it didn't (e.g. an unreachable registry) nothing can be determined to update, so the caller
     can skip any follow-up work that would fail the same way.
     """
-    log.path(path)
+    log.path(file.path)
     outdated = run(uv_tree)
     if not outdated.ok:
         return False
     lines_with_updates = [line for line in outdated.stdout.splitlines() if " (latest: " in line]
-    declarations = _declarations(path)
+    declarations = _declarations(file)
     latest_versions: dict[DependencyName, VersionString] = {}
     for line in lines_with_updates:
         package, version = _parse_line_with_update(line)
@@ -203,12 +206,12 @@ def _update_dependencies(uv_tree: Command, path: Path, log: Logger) -> bool:
         latest_versions.update({reference.dependency: version for reference in declared if reference.current_version})
         # A package the file declares nowhere has no line among them, so its new version is reported at the file
         # rather than at a line guessed from elsewhere.
-        _log_new_version(log, package, version, [reference.location for reference in declared] or [Location(path)])
-    pyproject_toml_format.rewrite_pinned_versions(path, latest_versions)
+        _log_new_version(log, package, version, [reference.location for reference in declared] or [Location(file.path)])
+    pyproject_toml_format.rewrite_pinned_versions(file, latest_versions)
     return True
 
 
-def update_pyproject_toml(pyproject_toml: Path, log: Logger) -> bool:
+def update_pyproject_toml(pyproject_toml: PyprojectToml, log: Logger) -> bool:
     """Update the pyproject.toml with the latest dependency versions; return whether `uv tree` succeeded.
 
     When `uv tree` fails (e.g. the registry is unreachable) nothing can be determined to update, and re-locking
@@ -220,7 +223,7 @@ def update_pyproject_toml(pyproject_toml: Path, log: Logger) -> bool:
         "uv",
         "tree",
         "--directory",
-        str(pyproject_toml.parent),
+        str(pyproject_toml.path.parent),
         "--quiet",
         "--depth=1",
         "--all-groups",
@@ -229,7 +232,7 @@ def update_pyproject_toml(pyproject_toml: Path, log: Logger) -> bool:
     return _update_dependencies(uv_tree, pyproject_toml, log)
 
 
-def update_python_inline_script_metadata(script: Path, log: Logger) -> bool:
+def update_python_inline_script_metadata(script: InlineScript, log: Logger) -> bool:
     """Update a .py file's PEP 723 inline `# /// script` dependencies to their latest versions; return uv's success.
 
     A script has no lockfile, so — unlike the pyproject.toml path, which persists the cooldown into `[tool.uv]` —
@@ -241,7 +244,7 @@ def update_python_inline_script_metadata(script: Path, log: Logger) -> bool:
         "uv",
         "tree",
         "--script",
-        str(script),
+        str(script.path),
         "--quiet",
         "--depth=0",
         "--outdated",
@@ -251,23 +254,43 @@ def update_python_inline_script_metadata(script: Path, log: Logger) -> bool:
     return _update_dependencies(uv_tree, script, log)
 
 
+def _pypi_served(declarations: Iterable[Declaration]) -> list[Declaration]:
+    """Return each declaration PyPI serves a release for.
+
+    A dependency that points at a URL names none, and neither does one uv resolves from a source of its own, so
+    PyPI is asked about neither. Both are still declared, so `declared_dependencies` carries them and an update uv
+    resolves for one reaches the line declaring it.
+    """
+    return [declaration for declaration in declarations if not declaration.direct_url and not declaration.uv_sourced]
+
+
+def pypi_served_dependencies(file: DependencyTomlFile) -> list[Declaration]:
+    """Return a reference to each dependency the file declares that PyPI serves a release for."""
+    return _pypi_served(pyproject_toml_format.declared_dependencies(file))
+
+
+def pinned_versions(file: DependencyTomlFile) -> list[Declaration]:
+    """Return every exact pin PyPI serves a release for, carrying the version it pins and where it sits."""
+    return [reference for reference in pypi_served_dependencies(file) if reference.current_version]
+
+
 @archival_reporting
-def pypi_projects(path: Path) -> Iterable[ResolvedReference]:
-    """Yield each dependency the file declares, carrying PyPI's report on the project the dependency names."""
-    for declaration in pyproject_toml_format.declared_dependencies(path):
+def pypi_projects(file: DependencyTomlFile) -> Iterable[ResolvedReference]:
+    """Yield each dependency PyPI serves a release for, carrying PyPI's report on the project it names."""
+    for declaration in pypi_served_dependencies(file):
         release = DependencyVersion.unpinned(project(declaration.dependency))
-        yield ResolvedReference(**vars(declaration), release=release)
+        yield ResolvedReference.from_reference(declaration, release=release)
 
 
-def pinned_pypi_releases(path: Path) -> Iterable[ResolvedReference]:
-    """Yield each exact `==` pin in the file, carrying the release the pin itself names.
+def pinned_pypi_releases(file: DependencyTomlFile) -> Iterable[ResolvedReference]:
+    """Yield each exact `==` pin PyPI serves a release for, carrying the release the pin itself names.
 
     The release carries the yank state PyPI reports for it. Its version is the one the file records rather than the
     newest PyPI offers, so it is the version the run leaves the pin on, whichever version uv settled the pin on.
     """
-    for pin in pyproject_toml_format.pinned_versions(path):
+    for pin in pinned_versions(file):
         yank = yank_state(pin.dependency, pin.current_version)
-        yield ResolvedReference(**vars(pin), release=DependencyVersion(pin.current_version, yank=yank))
+        yield ResolvedReference.from_reference(pin, release=DependencyVersion(pin.current_version, yank=yank))
 
 
 def update_uv_lock(pyproject_toml: Path) -> None:

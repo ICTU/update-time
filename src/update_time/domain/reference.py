@@ -1,11 +1,10 @@
 """What a file records about a dependency it pins, what a source resolved for it, and whether the two agree."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
-    from pathlib import Path
 
     from update_time.domain.dependency import DependencyName, DependencyVersion, VersionString
     from update_time.primitives.location import Location
@@ -29,6 +28,13 @@ class Reference:
     location: Location
     current_sha: str = ""
 
+    @classmethod
+    def from_reference(cls, reference: Reference, **resolved: object) -> Self:
+        """Return this kind of reference, carrying what the given reference records and what a source resolved."""
+        return cls(
+            reference.dependency, reference.current_version, reference.location, reference.current_sha, **resolved
+        )
+
 
 @dataclass(frozen=True, kw_only=True)
 class ResolvedReference(Reference):
@@ -49,10 +55,12 @@ class DriftedPin(Reference):
 
 
 # The contract a delegating updater binds and a file format implements, reading back the references a file declares.
-type ReferenceResolver = Callable[[Path], Iterable[ResolvedReference]]
+type ReferenceResolver[FileT] = Callable[[FileT], Iterable[ResolvedReference]]
 
 
-def resolved_references(files: Iterable[Path], resolve: ReferenceResolver) -> Iterator[ResolvedReference]:
+def resolved_references[FileT](
+    files: Iterable[FileT], resolve: ReferenceResolver[FileT]
+) -> Iterator[ResolvedReference]:
     """Yield each reference the resolver reads back from each of the files."""
     for file in files:
         yield from resolve(file)

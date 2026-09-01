@@ -1,7 +1,8 @@
-"""Read the PEP 723 inline script metadata of a standalone Python script.
+"""Read and rewrite the TOML a PEP 723 `# /// script` block comments out.
 
-A `# /// script … # ///` block declares a script's dependencies as TOML commented out with `# ` prefixes, so the
-block has to be uncommented before it parses as TOML. See https://peps.python.org/pep-0723/.
+A script declares its dependencies in a `# /// script … # ///` block, as TOML commented out with `# ` prefixes, so
+the block has to be uncommented before it parses and commented back before it is written. See
+https://peps.python.org/pep-0723/.
 """
 
 import re
@@ -9,8 +10,7 @@ import re
 # The pattern PEP 723 itself gives for a metadata block of type `script`: the opening line, the commented lines
 # that follow it, and the closing line.
 _BLOCK = re.compile(r"(?m)^# /// script$\s(?P<content>(^#(| .*)$\s)+)^# ///$")
-# The line that opens a block. A file carrying one is a script whose dependencies uv resolves, whether or not the
-# block is ever closed: uv reports an unterminated block as the error it is, which passing the file over would not.
+# The line that opens a block. A file carrying one is a script, whether or not the block is ever closed.
 _OPENING = re.compile(r"^# /// script\s*$", re.MULTILINE)
 
 
@@ -29,3 +29,13 @@ def toml_block(contents: str) -> str | None:
         return None
     lines = match["content"].splitlines(keepends=True)
     return "".join(line.removeprefix("# ") if line.startswith("# ") else line.removeprefix("#") for line in lines)
+
+
+def replace_toml_block(contents: str, toml_text: str) -> str:
+    """Return the script with the TOML of its metadata block replaced, commented out again as PEP 723 wants it.
+
+    Each line regains the `# ` prefix `toml_block` stripped, and a line holding nothing regains the bare `#`.
+    """
+    lines = toml_text.splitlines(keepends=True)
+    commented = "".join(f"# {line}" if line.strip() else f"#{line}" for line in lines)
+    return _BLOCK.sub(lambda match: match[0].replace(match["content"], commented, 1), contents, count=1)

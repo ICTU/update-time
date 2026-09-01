@@ -92,7 +92,7 @@ def latest_version(
     version_bound = BLOCK_ALL_UPDATES if marker.ignores(Scope.UPDATE) else marker.version_bound
     cooldown = marker.cooldown.value_or(COOLDOWN.get())
     latest = get_new_version(dependency, current_version, version_bound, cooldown)
-    resolved = ResolvedReference(**vars(reference), release=latest)
+    resolved = ResolvedReference.from_reference(reference, release=latest)
     report_project(resolved, marker, _staleness_threshold(marker), log)
     log.report_yank(resolved, marker)
     _warn_if_the_floating_pin_holds_nothing_back(marker, reference, log, latest)
@@ -121,5 +121,5 @@ def report_project_checks(reference: Reference, marker: Marker, log: Logger, get
     if not project_is_checked(get_project, reference.dependency, threshold):
         return
     release = DependencyVersion.unpinned(get_project(reference.dependency))
-    resolved = ResolvedReference(**vars(reference), release=release)
+    resolved = ResolvedReference.from_reference(reference, release=release)
     report_project(resolved, marker, threshold, log)

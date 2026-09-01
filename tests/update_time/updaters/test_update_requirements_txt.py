@@ -1,5 +1,7 @@
 """Unit tests for the requirements.txt update script."""
 
+import re
+import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, MagicMock, Mock, patch
@@ -12,7 +14,12 @@ from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope
 from update_time.primitives.location import Location
 from update_time.references import resolve as resolve_module
-from update_time.updaters.update_requirements_txt import update_requirements_txts
+from update_time.updaters import update_requirements_txt as update_requirements_txt_module
+from update_time.updaters.update_requirements_txt import (
+    _LOOSE_REQUIREMENT_RE,
+    _REQUIREMENT_RE,
+    update_requirements_txts,
+)
 
 from tests.helpers import mock_path, patch_environ
 from tests.mutation import Mutation, kills
@@ -141,16 +148,41 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_stale_loose_requirement_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a requirement declared without an exact pin is warned about when its newest release is old.
 
-        Each case declares the same package with another of the PEP 440 operators, every one of which pins no exact
-        version. The index lists the releases out of order, so the warning names the newest rather than the last.
+        Each case declares the same package with a specifier that pins no exact version: another of the PEP 440
+        operators, or a `==` naming a range. The index lists the releases out of order, so the warning names the
+        newest rather than the last.
         """
-        for specifier in (">=4", ">4", "<=5", "<5", "!=4.14.0", "~=4.15", "===4.15.0"):
+        for specifier in (">=4", ">4", "<=5", "<5", "!=4.14.0", "~=4.15", "===4.15.0", "==4.15.*"):
             with self.subTest(specifier=specifier):
                 requirements_txt = self.discovered_requirements_txt(mock_rglob, f"humanize{specifier}\n")
                 mock_get.side_effect = self.stale_pypi("4.15.0", "4.14.0")  # The package's newest release is old.
                 update_requirements_txts()
                 requirements_txt.write_text.assert_not_called()
                 self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
+
+    @kills(
+        Mutation(
+            update_requirements_txt_module,
+            r'_VERSION_ENDS = r"(?![A-Za-z0-9._!+*,-])(?!\s*,)"',
+            r'_VERSION_ENDS = r"(?![A-Za-z0-9._!+*,-])"',
+            "a version a space and a comma follow still ends its specifier, so a requirement combining two of them "
+            "is rewritten into one no version satisfies",
+        )
+    )
+    def test_a_requirement_combining_specifiers_is_not_updated(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a requirement combining `==` with another specifier is checked but never rewritten.
+
+        PEP 508 allows space around the comma separating the specifiers, so each case spells it another way.
+        """
+        for requirement in ("humanize==4.15.0,!=4.15.1", "humanize==4.15.0 ,!=4.15.1"):
+            with self.subTest(requirement=requirement):
+                # The cases need a different number of responses, so neither may read what the other cached.
+                self.clear_caches()
+                requirements_txt = self.discovered_requirements_txt(mock_rglob, f"{requirement}\n")
+                mock_get.side_effect = [*self.stale_pypi("4.15.0", "4.16.0"), pypi_release(PYPI_OLD_UPLOAD)]
+                update_requirements_txts()
+                requirements_txt.write_text.assert_not_called()
+                self.assert_stale_dependency_logged("humanize", "4.16.0", Location(requirements_txt, 1))
 
     def test_two_spellings_of_one_package_cost_one_request(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a package a file spells two ways is fetched once, under the name PyPI spells it.
@@ -632,6 +664,16 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_post.assert_called_once_with(_OSV_BATCH_URL, timeout=ANY, json={"queries": queries})
         self.assert_no_warnings_logged()
 
+    def test_a_requirement_pinning_a_range_queries_no_vulnerabilities(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a requirement pinning a range is looked up at PyPI but not at OSV, which matches a version."""
+        self.discovered_requirements_txt(mock_rglob, "django==3.2.*\n")
+        mock_get.side_effect = self.stale_pypi("3.2.0", upload_time=self.days_ago(0))
+        with osv(DJANGO_ADVISORY) as mock_post:
+            update_requirements_txts()
+        mock_post.assert_not_called()
+        self.assertEqual(self.queried_packages(mock_get), ["django"])
+        self.assert_no_warnings_logged()
+
     def test_ignore_marker_queries_no_vulnerabilities(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin held back by a bare `ignore` marker is not looked up at OSV, so it is not warned about."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "django==3.2.0  # update-time: ignore\n")
@@ -960,3 +1002,38 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_no_path_logged()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
+
+
+class RequirementPatternTest(unittest.TestCase):
+    """Unit tests for the patterns that tell an exact pin from a requirement pinning no version."""
+
+    @kills(
+        Mutation(
+            update_requirements_txt_module,
+            r'_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*{_VERSION}{_VERSION_ENDS}"',
+            r'_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*[A-Za-z0-9][A-Za-z0-9._+-]*{_VERSION_ENDS}"',
+            "the lookahead's copy of the pin drifts from the pin itself, so a spelling only one of them "
+            "accepts matches both patterns and is read twice",
+        )
+    )
+    def test_a_requirement_matches_one_pattern(self):
+        """Test that a requirement is read as an exact pin or as pinning none, and never as both or as neither."""
+        for line in (
+            "humanize==4.15.0",
+            "humanize[fast] == 4.15.0",
+            "humanize==4.15.0  # keep",
+            "humanize==4.15.0; python_version<'3.13'",
+            "humanize==1.0+local",
+            "humanize==1!2.0",
+            "humanize==4.15.*",
+            "humanize == 4.15.*",
+            "humanize==4.15.0,!=4.15.1",
+            "humanize==4.15.0,!=4.14.*",
+            "humanize===nightly",
+            "humanize>=4",
+            "humanize",
+        ):
+            with self.subTest(line=line):
+                pinned = re.search(_REQUIREMENT_RE, line) is not None
+                pins_nothing = re.search(_LOOSE_REQUIREMENT_RE, line) is not None
+                self.assertNotEqual(pinned, pins_nothing)
