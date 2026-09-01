@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
+from update_time.file_formats.dependency_file import InlineScript
 from update_time.primitives.location import Location
 from update_time.updaters.update_python_inline_script_metadata import update_python_inline_script_metadatas
 
@@ -113,11 +114,12 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
     def test_uv_command_targets_the_script_with_the_cooldown(self, run: Mock, get: Mock, glob: Mock):
         """Test that uv is run against the script with `--depth=0` and the cooldown as an `--exclude-newer` cutoff."""
         run.return_value = self.mock_update_on_stdout("package")
-        glob.return_value = [self.create_script(script("package==1.0"))]
+        script_file = self.create_script(script("package==1.0"))
+        glob.return_value = [script_file]
         update_python_inline_script_metadatas()
         get.assert_not_called()  # nothing outdated, so no changelog is fetched
         command = self.uv_commands(run)[0]
-        self.assertEqual(command[:3], ("uv", "tree", "--script"))
+        self.assertEqual(command[:4], ("uv", "tree", "--script", str(script_file)))
         self.assertIn("--depth=0", command)
         self.assertTrue(command[command.index("--exclude-newer") + 1])  # a non-empty cutoff follows the flag
         self.assertNotIn(("uv", "lock"), [command[:2] for command in self.uv_commands(run)])  # scripts have no lockfile
@@ -167,4 +169,4 @@ class CheckedInlineScriptPinsTest(LoggingTestCase):
         script_file = _discovered_script(glob, "django==3.2.0")
         update_python_inline_script_metadatas()
         get.assert_not_called()
-        warn.assert_called_once_with([script_file], ANY)
+        warn.assert_called_once_with([InlineScript(script_file)], ANY)

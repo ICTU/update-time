@@ -20,6 +20,7 @@ from update_time.domain.dependency import ArchivedSubject, DependencyVersion, Fl
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import Vulnerability
+from update_time.file_formats.pyproject_toml import Declaration
 from update_time.io.log import Logger, LogMessage, reset_changelog_suppression
 from update_time.markers.bound import parse_bound
 from update_time.markers.directive import Reason
@@ -36,6 +37,14 @@ if TYPE_CHECKING:
 
     from update_time.domain.bound import Verb, VersionBound
     from update_time.domain.reference import DriftedPin
+
+
+def declaration(dependency: str, version: str, path: Mock, line: int) -> Declaration:
+    """Return the declaration a file makes at the line, of a dependency PyPI serves a release for.
+
+    A test about a dependency PyPI serves none for states that for itself, since that is what it is about.
+    """
+    return Declaration(dependency, version, Location(path, line), uv_sourced=False, direct_url=False)
 
 
 def module_level_assignments(tree: ast.Module) -> Iterator[tuple[list[ast.expr], ast.expr | None]]:
@@ -112,9 +121,13 @@ class CacheClearingTestCase(unittest.TestCase):
     def setUp(self) -> None:
         """Clear all caches and logger state so each test gets fresh results."""
         super().setUp()
+        self.clear_caches()
+        reset_changelog_suppression()
+
+    def clear_caches(self) -> None:
+        """Clear every cache the package holds, so the next run fetches what it needs as a real run does."""
         for cached_function in _all_cached_functions(update_time):
             cached_function.cache_clear()
-        reset_changelog_suppression()
 
 
 class LoggingTestCase(CacheClearingTestCase):
@@ -153,7 +166,9 @@ class LoggingTestCase(CacheClearingTestCase):
     def start_new_run(self) -> None:
         """Forget what the previous run logged and reported, so the next case reads the records of its own run.
 
-        `setUp` does this for each test and `subTest` for each case, so a table needs no call of its own.
+        `setUp` does this for each test and `subTest` for each case, so a table needs no call of its own. The
+        caches are left alone, since a table may span its cases deliberately to count the requests they share.
+        A case that needs its sources fetched afresh calls `clear_caches` itself.
         """
         self.mock_log.reset_mock()
         reset_changelog_suppression()

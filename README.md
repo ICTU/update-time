@@ -857,13 +857,21 @@ Compiled or hash-pinned requirements files, such as a `requirements.txt` generat
 
 #### What dependencies are updated?
 
+Update-time reads the dependency arrays a `pyproject.toml` declares: the `dependencies` array under `[project]`, one array per extra under `optional-dependencies`, one per group under `dependency-groups`, uv's legacy `[tool.uv] dev-dependencies`, and the `requires` array under `[build-system]`. Every other string the file holds is left alone, `[tool.uv] constraint-dependencies` and `override-dependencies` among them.
+
 Update-time cannot update individual git, VCS, and URL dependencies (for example `git+https://github.com/org/repo.git@v8.0.3.0`, direct URLs, and `-e`/editable installs) in both `requirements.txt` and `pyproject.toml` files. Update them manually.
+
+A dependency uv resolves through a `[tool.uv] sources` entry, such as a path, a workspace member, or another index, is updated like any other, because uv resolves it and Update-time only writes the version uv reports. PyPI serves no release for it, though, so none of the warnings below applies to it.
 
 In a PEP 723 inline script metadata block, only the pins in the `dependencies` array are updated; the `requires-python` value and any other inline-metadata fields are left untouched.
 
 #### What versions are updated?
 
-Only versions specified with an exact match are updated, that is dependency versions pinned with `==`. Looser version specifiers are left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. In a `pyproject.toml` or an inline script metadata block, a new version for such a dependency is still reported. In a `requirements.txt` it is not reported at all, although the package behind it is still checked for staleness and archival, as described below.
+A dependency's declaration is rewritten when it pins one exact version with `==`. What the declaration spells around the pin makes no difference: an extra, an environment marker, and spaces around the operator are read through, and kept as written when the version is rewritten. So `django[argon2]==3.2.0`, `humanize==4.15.0; python_version < "3.13"`, and `humanize == 4.15.0` are each rewritten to the new version.
+
+Every other specifier is left untouched, so you can pin a maximum version to opt a dependency out of automatic updates. A `==` that names more than one version pins none either: `humanize==4.15.*` names a range, `humanize===nightly` is an arbitrary equality, and `humanize==4.15.0,!=4.15.1` combines two specifiers. Each is left alone, as a looser specifier is.
+
+A new version for such a dependency is still reported, in a `pyproject.toml` and in an inline script metadata block alike. In a `pyproject.toml` it is also applied: uv resolves the specifier and records the version it picks in the `uv.lock` file, so `humanize>=4` moves from one release to the next without its line changing. A script has no lock file, so there the new version is reported and nothing more. In a `requirements.txt` no new version is reported, because Update-time resolves none for a requirement that pins no exact version. That requirement's package is still checked for staleness and archival, as described below.
 
 #### Pinning
 
@@ -883,11 +891,11 @@ Every Python pin is checked against the newest release of its package on PyPI, w
 
 #### Yanked dependencies
 
-Each exact pin a Python file declares is checked against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI, whichever of the three file kinds it sits in, and a yanked release is skipped when picking a new version. The version checked is the one the file holds when the run ends, so a pin uv held back is warned about although PyPI has a newer release. A `requirements.txt` pin the run leaves on a yanked release is reported unless an `ignore[yanked]` marker silences that warning. A `pyproject.toml` or inline script metadata pin left on one is reported as well, but takes no marker to silence that warning. A dependency those files declare without an exact pin is not checked, since a yank is about the version a reference is left on and such a declaration names none.
+Each exact pin a Python file declares is checked against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI, whichever of the three file kinds it sits in, and a yanked release is skipped when picking a new version. The version checked is the one the file holds when the run ends, so a pin uv held back is warned about although PyPI has a newer release. A `requirements.txt` pin the run leaves on a yanked release is reported unless an `ignore[yanked]` marker silences that warning. A `pyproject.toml` or inline script metadata pin left on a yanked release is reported as well, but takes no marker to silence that warning. A dependency those files declare without an exact pin is not checked, since a yank is about the version a reference is left on and such a declaration names none. A pin uv resolves through a `[tool.uv] sources` entry is left out as well, since PyPI serves no release for it.
 
 #### Vulnerable dependencies
 
-Each exact pin a Python file declares is checked against OSV's PyPI advisories, whichever of the three file kinds it sits in. A compiled or hash-pinned `requirements.txt` is the exception: Update-time skips it whole, so its pins are neither updated nor checked. The transitive dependencies those pins pull in are not checked. Reading a resolved dependency tree is what `uv audit` and `pip-audit` are for. A vulnerable `requirements.txt` pin is reported unless an `ignore[vulnerable]` marker silences that warning. A vulnerable `pyproject.toml` or inline script metadata pin is reported as well, but takes no marker to silence that warning. A dependency those files declare without an exact pin is not checked either, since an advisory is matched against a version and such a declaration names none.
+Each exact pin a Python file declares is checked against OSV's PyPI advisories, whichever of the three file kinds it sits in. A compiled or hash-pinned `requirements.txt` is the exception: Update-time skips it whole, so its pins are neither updated nor checked. The transitive dependencies those pins pull in are not checked. Reading a resolved dependency tree is what `uv audit` and `pip-audit` are for. A vulnerable `requirements.txt` pin is reported unless an `ignore[vulnerable]` marker silences that warning. A vulnerable `pyproject.toml` or inline script metadata pin is reported as well, but takes no marker to silence that warning. A dependency those files declare without an exact pin is not checked either, since an advisory is matched against a version and such a declaration names none. A pin uv resolves through a `[tool.uv] sources` entry is left out as well, since PyPI serves no release for it.
 
 #### Archived dependencies
 

@@ -120,7 +120,7 @@ class _Rewriter:
         latest = latest_version(reference, version_getter(filename), marker, _LOG)
         if latest is None:
             return match.string
-        self.resolved = _ResolvedURL(**vars(reference), release=latest, filename=filename)
+        self.resolved = _ResolvedURL.from_reference(reference, release=latest, filename=filename)
         if not self.resolved.version_moved:
             return match.string
         _LOG.new_version(reference, latest)

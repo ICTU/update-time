@@ -200,16 +200,23 @@ pyproject-fmt: (py-check "pyproject-fmt" f"{{ pyproject_fmt }} --check pyproject
 [private]
 troml: (py-check "troml" f"{{ troml }} check")
 
+# nltk's model-artifact APIs touch files outside the roots they are given (CVE-2026-81726). nltk is a development
+# dependency, so no release of Update-time carries it, and no nltk release fixes it yet. The two auditors name the
+# advisory differently, and only uv audit drops the ignore of its own accord once a fix is published.
+nltk_advisory_for_pip_audit := "PYSEC-2026-3740"
+nltk_advisory_for_uv_audit := "GHSA-8mgp-746c-j5xp"
+
 # Run pip-audit to check Python dependencies for known security vulnerabilities.
 [private]
 pip-audit: install-py-dependencies
     req=$(mktemp); trap "rm -f $req" EXIT; \
     {{ start_capture() }} uv export --quiet --color never --no-emit-local --format requirements-txt > $req && \
-    {{ uv_run }} pip-audit --requirement $req --disable-pip --progress-spinner off {{ end_capture("pip-audit") }}
+    {{ uv_run }} pip-audit --requirement $req --disable-pip --progress-spinner off \
+    --ignore-vuln {{ nltk_advisory_for_pip_audit }} {{ end_capture("pip-audit") }}
 
 # Run uv audit to check Python dependencies for known security vulnerabilities.
 [private]
-uv-audit: (py-check "uv-audit" f"uv audit --locked --quiet")
+uv-audit: (py-check "uv-audit" f"uv audit --locked --quiet --ignore-until-fixed {{ nltk_advisory_for_uv_audit }}")
 
 # Run bandit to check Python code for security vulnerabilities.
 [private]

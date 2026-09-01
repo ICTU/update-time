@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
+from update_time.file_formats.dependency_file import PyprojectToml
 from update_time.primitives.location import Location
 from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 
@@ -292,4 +293,4 @@ class CheckedPinsTest(LoggingTestCase):
         pyproject_toml = _discovered_pyproject_toml(glob, "django==3.2.0")
         update_pyproject_tomls()
         get.assert_not_called()
-        warn.assert_called_once_with([pyproject_toml], ANY)
+        warn.assert_called_once_with([PyprojectToml(pyproject_toml)], ANY)

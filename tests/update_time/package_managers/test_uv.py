@@ -6,16 +6,19 @@ from pathlib import Path
 from unittest.mock import ANY, Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN
+from update_time.file_formats.dependency_file import PyprojectToml
 from update_time.io.log import Logger
 from update_time.package_managers.uv import (
     _persist_exclude_newer,
     _workspace_root,
     _workspace_table,
     configure_cooldown,
+    pinned_versions,
+    pypi_served_dependencies,
 )
 
 from tests.helpers import mock_path, patch_environ
-from tests.update_time.helpers import LoggingTestCase, pyproject
+from tests.update_time.helpers import LoggingTestCase, declaration, pyproject
 
 # The comment Update-time tags its own `exclude-newer` value with, spelled out so the test pins the wording.
 _MARKER_COMMENT = "managed by Update-time — remove this comment to prevent Update-time from changing it"
@@ -165,3 +168,33 @@ class WorkspaceTableTest(unittest.TestCase):
     def test_malformed_toml(self):
         """Test that an unrelated, malformed pyproject.toml up the tree yields None instead of crashing."""
         self.assertIsNone(_workspace_table(mock_path("this is not valid toml =")))
+
+
+class PypiServedDependenciesTest(unittest.TestCase):
+    """Unit tests for reading the dependencies PyPI serves a release for."""
+
+    def test_a_dependency_with_a_uv_source_is_skipped_whether_or_not_it_pins(self):
+        """Test that a dependency uv resolves from a source of its own is left out, pinned or not."""
+        contents = (
+            '[project]\ndependencies = ["local==1.0", "loose", "other==2.0"]\n'
+            '[tool.uv.sources]\nlocal = {path = "../local"}\nloose = {path = "../loose"}\n'
+        )
+        path = mock_path(contents)
+        self.assertEqual(pypi_served_dependencies(PyprojectToml(path)), [declaration("other", "2.0", path, 2)])
+
+    def test_a_direct_reference_is_skipped(self):
+        """Test that a dependency given as a URL is left out, since it resolves to no release on PyPI."""
+        path = mock_path('dependencies = ["pkg @ git+https://github.com/org/repo.git", "other>=2.0"]\n')
+        self.assertEqual(pypi_served_dependencies(PyprojectToml(path)), [declaration("other", "", path, 1)])
+
+
+class PinnedVersionsTest(unittest.TestCase):
+    """Unit tests for reading the exact pins PyPI serves a release for."""
+
+    def test_a_pin_with_a_uv_source_is_skipped(self):
+        """Test that a pin uv resolves from a source of its own is left out, since PyPI serves no release for it."""
+        contents = (
+            '[project]\ndependencies = ["local==1.0", "other==2.0"]\n[tool.uv.sources]\nlocal = {path = "../local"}\n'
+        )
+        path = mock_path(contents)
+        self.assertEqual(pinned_versions(PyprojectToml(path)), [declaration("other", "2.0", path, 2)])
