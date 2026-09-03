@@ -138,6 +138,15 @@ def _redundant_directives(
     }
 
 
+def _invalid_items(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
+    """Log a sample per warning about an item Update-time cannot read, paired with the block's placeholder."""
+    log.invalid_bracket_item("python", "stlae", dockerfile)
+    unrecognised = capture.take()
+
+    log.invalid_bracket_item("node", "update-time.engines.node", Location(Path("package.json"), 3))
+    return {"@@UNRECOGNISED_ITEM_WARNING@@": unrecognised, "@@INVALID_FIELD_WARNING@@": capture.take()}
+
+
 def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log each block's sample records and pair the lines they render as with the block's placeholder."""
     log.digest_drift(
@@ -173,8 +182,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     redundant = _redundant_directives(log, capture, requirements, dockerfile)
 
-    log.invalid_bracket_item("python", "stlae", dockerfile)
-    unrecognised = capture.take()
+    invalid = _invalid_items(log, capture, dockerfile)
 
     log.inverted_stale_item(reference("python", dockerfile), "stale>=90")
     inverted = capture.take()
@@ -223,7 +231,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@VULNERABILITY_WARNING@@": vulnerable,
         "@@ARCHIVED_WARNING@@": archival,
         **redundant,
-        "@@UNRECOGNISED_ITEM_WARNING@@": unrecognised,
+        **invalid,
         "@@INVERTED_STALE_WARNING@@": inverted,
         "@@INVERTED_COOLDOWN_WARNING@@": inverted_cooldown,
         "@@INVERTED_VULNERABLE_WARNING@@": inverted_vulnerable,
