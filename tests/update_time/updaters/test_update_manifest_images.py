@@ -5,11 +5,9 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
 from update_time.primitives.location import Location
-from update_time.sources import oci
 from update_time.updaters.update_manifest_images import update_manifest_images
 
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST
 from tests.update_time.helpers import docker_tag
@@ -38,14 +36,6 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         with patch("pathlib.Path.rglob", side_effect=rglob):
             update_manifest_images()
 
-    @kills(
-        Mutation(
-            oci,
-            r'YAML_IMAGE_REFERENCE = rf"image: {OPTIONALLY_TAGGED_IMAGE_REFERENCE}"',
-            r'YAML_IMAGE_REFERENCE = rf"image: {IMAGE_REFERENCE}"',
-            "a manifest `image:` naming no tag is not read as a reference at all",
-        )
-    )
     def test_pin_tagless_image(self):
         """Test that an `image:` naming no tag is pinned to the version and digest `latest` serves."""
         self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))

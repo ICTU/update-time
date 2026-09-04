@@ -19,6 +19,7 @@ from update_time.sources.github import (
     _archival,
     _get_release,
     _newest_release,
+    changes_from_changelog_file,
     changes_from_release,
     get_latest_version,
     github_owner_and_repository,
@@ -36,6 +37,15 @@ from tests.update_time.helpers import (
     github_release_json,
     github_tag_json,
     patch_github,
+)
+from tests.update_time.sources.helpers import (
+    contents_json,
+    contents_url,
+    file_url,
+    markdown_changelog,
+    markdown_changes,
+    requested_urls,
+    respond_per_url,
 )
 
 if TYPE_CHECKING:
@@ -659,3 +669,111 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
     def test_release_without_body(self):
         """Test that the changes are empty when the release GitHub answers carries no body."""
         self.assertEqual(changes_from_release("owner", "repo without a release body", "any", "1.1"), "")
+
+
+class ChangesFromChangelogFileTest(LoggingTestCase):
+    """Unit tests for getting the changelog from a changelog file in a repository."""
+
+    MONOREPO = "org/monorepo"
+    CHANGELOG = markdown_changelog("1.1")
+    CHANGES = markdown_changes("1.1")
+
+    def create_responses(self, mock_get: Mock, listings: dict[str, tuple[str, ...]]) -> None:
+        """Point the mock requests.get at a listing per directory, each giving the files that directory holds.
+
+        A file named like a changelog answers the changelog naming version 1.1.
+        """
+        responses = {
+            contents_url(self.MONOREPO, directory): mock_response(contents_json(*names))
+            for directory, names in listings.items()
+        }
+        responses[file_url("CHANGELOG.md")] = mock_response(text=self.CHANGELOG)
+        respond_per_url(mock_get, responses)
+
+    @kills(
+        Mutation(
+            github,
+            "    if directory:",
+            "    _list_contents(owner, repository)\n    if directory:",
+            "a package whose own directory holds its changelog costs a listing of the repository's root as well",
+        ),
+    )
+    @patch("requests.get")
+    def test_changelog_file_in_a_directory(self, mock_get: Mock):
+        """Test that a changelog file in the package's directory supplies the changes, leaving the root unread."""
+        self.create_responses(mock_get, {"packages/package": ("CHANGELOG.md",), "": ("README.md",)})
+        changes = changes_from_changelog_file("org", "monorepo", "1.1", "packages/package")
+        self.assertEqual(changes, self.CHANGES)
+        self.assertNotIn(contents_url(self.MONOREPO), requested_urls(mock_get))
+
+    @patch("requests.get")
+    def test_directory_without_a_changelog_file(self, mock_get: Mock):
+        """Test that a directory naming no changelog file leaves the repository's root to supply the changes."""
+        self.create_responses(mock_get, {"packages/package": ("README.md",), "": ("CHANGELOG.md",)})
+        changes = changes_from_changelog_file("org", "monorepo", "1.1", "packages/package")
+        self.assertEqual(changes, self.CHANGES)
+        self.assertIn(contents_url(self.MONOREPO, "packages/package"), requested_urls(mock_get))
+
+    @kills(
+        Mutation(
+            github,
+            "@cache\ndef _changelog_file(",
+            "def _changelog_file(",
+            "a changelog file is downloaded again for every package that falls back to it",
+        ),
+    )
+    @patch("requests.get")
+    def test_changelog_file_is_fetched_once(self, mock_get: Mock):
+        """Test that two packages falling back to one changelog file cost a single fetch of it between them."""
+        self.create_responses(mock_get, {"packages/one": (), "packages/two": (), "": ("CHANGELOG.md",)})
+        self.assertEqual(changes_from_changelog_file("org", "monorepo", "1.1", "packages/one"), self.CHANGES)
+        self.assertEqual(changes_from_changelog_file("org", "monorepo", "1.0", "packages/two"), "")
+        self.assertEqual(requested_urls(mock_get).count(file_url("CHANGELOG.md")), 1)
+
+    @kills(
+        Mutation(
+            github,
+            '    return _list(owner, repository, f"contents/{directory}", require_ok=not directory)',
+            '    return _list(owner, repository, f"contents/{directory}")',
+            "a package whose registry metadata names a directory that moved warns on every run",
+        ),
+    )
+    @patch("requests.get")
+    def test_directory_the_repository_does_not_serve(self, mock_get: Mock):
+        """Test that a directory the repository doesn't serve leaves the root to supply the changes, without warning."""
+        not_found = mock_response(ok=False, status_code=404, reason="Not Found", url="https://not/found")
+        respond_per_url(
+            mock_get,
+            {
+                contents_url(self.MONOREPO, "packages/gone"): not_found,
+                contents_url(self.MONOREPO): mock_response(contents_json("CHANGELOG.md")),
+                file_url("CHANGELOG.md"): mock_response(text=self.CHANGELOG),
+            },
+        )
+        changes = changes_from_changelog_file("org", "monorepo", "1.1", "packages/gone")
+        self.assertEqual(changes, self.CHANGES)
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            github,
+            "    listing = response.json()\n    return tuple(listing) if isinstance(listing, list) else ()",
+            "    return tuple(response.json())",
+            "a directory the contents endpoint answers with a file ends the run with a traceback",
+            raises="TypeError: string indices must be integers, not 'str'",
+        ),
+    )
+    @patch("requests.get")
+    def test_directory_answered_as_a_file(self, mock_get: Mock):
+        """Test that a directory GitHub answers with a file leaves the repository's root to supply the changes."""
+        file_json = {"name": "package", "download_url": file_url("package"), "git_url": "https://tree/package"}
+        respond_per_url(
+            mock_get,
+            {
+                contents_url(self.MONOREPO, "packages/package"): mock_response(file_json),
+                contents_url(self.MONOREPO): mock_response(contents_json("CHANGELOG.md")),
+                file_url("CHANGELOG.md"): mock_response(text=self.CHANGELOG),
+            },
+        )
+        changes = changes_from_changelog_file("org", "monorepo", "1.1", "packages/package")
+        self.assertEqual(changes, self.CHANGES)

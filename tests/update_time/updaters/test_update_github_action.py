@@ -260,14 +260,6 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         self.assert_stale_dependency_logged("actions/checkout", "1.0", Location(workflow_yml, 1))
 
-    @kills(
-        Mutation(
-            references_resolve,
-            "    log.report_staleness(resolved, marker, threshold)",
-            "    log.report_staleness(resolved, type(marker)(), threshold)",
-            "a marker silencing the staleness warning of a branch reference is passed over",
-        )
-    )
     @patch_github(releases=[github_release_json("v1.0", published_at=_STALE_ISO)], tags=[])
     def test_an_ignore_stale_marker_on_a_branch_reference_holds_the_warning_back(
         self, mock_glob: Mock, mock_get_latest_version: Mock

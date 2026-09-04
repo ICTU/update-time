@@ -31,6 +31,17 @@ from tests.update_time.helpers import (
     pypi_release,
     yanked_file,
 )
+from tests.update_time.sources.helpers import (
+    contents_entry,
+    contents_url,
+    file_url,
+    markdown_changelog,
+    markdown_changes,
+    releases_url,
+    requested_urls,
+    respond_per_url,
+    tree_url,
+)
 
 # What a name in a repository's root listing maps to: a file's text, a directory with no tree to list, or a
 # directory's recursive tree listing as an entry per path below it. A path maps to its text, or to None for a
@@ -100,26 +111,6 @@ class GetChangesTest(LoggingTestCase):
         return f"https://pypi.org/pypi/{package}/{version}/json"
 
     @staticmethod
-    def releases_url(repository: str) -> str:
-        """Return the URL GitHub serves the repository's releases at."""
-        return f"https://api.github.com/repos/{repository}/releases?per_page=100"
-
-    @staticmethod
-    def contents_url(repository: str) -> str:
-        """Return the URL GitHub serves the repository's root listing at."""
-        return f"https://api.github.com/repos/{repository}/contents/"
-
-    @staticmethod
-    def file_url(name: str) -> str:
-        """Return the URL the repository serves the file of that name at."""
-        return f"https://raw/{name}"
-
-    @staticmethod
-    def tree_url(directory: str) -> str:
-        """Return the URL GitHub serves the directory's recursive tree listing at."""
-        return f"https://tree/{directory}?recursive=1"
-
-    @staticmethod
     def nested_file_url(repository: str, directory: str, path: str) -> str:
         """Return the URL of the file at that path below the directory."""
         return f"https://raw.githubusercontent.com/{repository}/HEAD/{directory}/{path}"
@@ -129,26 +120,16 @@ class GetChangesTest(LoggingTestCase):
         """Return the tree listing entry for the path, a directory below the tree when it maps to no text."""
         return {"path": path, "type": "blob" if text is not None else "tree"}
 
-    @classmethod
-    def root_entry(cls, name: str, entry: RootEntry) -> dict[str, object]:
+    @staticmethod
+    def root_entry(name: str, entry: RootEntry) -> dict[str, object]:
         """Return the root listing entry for the name, one with no file to fetch when the name maps to no text."""
         is_file = isinstance(entry, str)
-        return {
-            "name": name,
-            "type": "file" if is_file else "dir",
-            "download_url": cls.file_url(name) if is_file else None,
-            "git_url": f"https://tree/{name}",
-        }
-
-    @staticmethod
-    def requested_urls(mock_get: Mock) -> list[str]:
-        """Return the URLs the mock requests.get was asked for, in the order they were asked for."""
-        return [call.args[0] for call in mock_get.call_args_list]
+        return {"type": "file" if is_file else "dir", **contents_entry(name, is_file=is_file)}
 
     def assert_releases_requested(self, mock_get: Mock, *repositories: str) -> None:
         """Assert that GitHub was asked for the releases of exactly these repositories, in this order."""
-        requested = [url for url in self.requested_urls(mock_get) if "/releases" in url]
-        expected = [self.releases_url(repository) for repository in repositories]
+        requested = [url for url in requested_urls(mock_get) if "/releases" in url]
+        expected = [releases_url(repository) for repository in repositories]
         self.assertEqual(requested, expected)
 
     def create_discovery_responses(
@@ -166,19 +147,18 @@ class GetChangesTest(LoggingTestCase):
         text. A name mapped to None is an entry with no file to fetch, as a directory is. A name mapped to a
         mapping is a directory answering a recursive tree listing of the paths it maps. A path mapped to a text is
         a file answering it, and a path mapped to None is a directory below the tree. The repository publishes no
-        releases. `extra` adds a response, or replaces one, under the URL it is keyed by. A URL neither holds
-        raises a KeyError, so a request the test did not expect fails loudly rather than being answered.
+        releases. `extra` adds a response, or replaces one, under the URL it is keyed by.
         """
         info = {"description": description, "project_urls": {"Source": f"https://github.com/{repository}"}}
         entries = (files or {}).items()
         trees = {name: paths for name, paths in entries if isinstance(paths, Mapping)}
         responses: dict[str | None, Mock] = {
             **{self.metadata_url(package): mock_response({"info": info}) for package in packages},
-            self.releases_url(repository): mock_response([]),
-            self.contents_url(repository): mock_response([self.root_entry(name, entry) for name, entry in entries]),
-            **{self.file_url(name): mock_response(text=text) for name, text in entries if isinstance(text, str)},
+            releases_url(repository): mock_response([]),
+            contents_url(repository): mock_response([self.root_entry(name, entry) for name, entry in entries]),
+            **{file_url(name): mock_response(text=text) for name, text in entries if isinstance(text, str)},
             **{
-                self.tree_url(directory): mock_response({"tree": [self.tree_entry(*path) for path in paths.items()]})
+                tree_url(directory): mock_response({"tree": [self.tree_entry(*path) for path in paths.items()]})
                 for directory, paths in trees.items()
             },
             **{
@@ -189,12 +169,12 @@ class GetChangesTest(LoggingTestCase):
             },
             **(extra or {}),
         }
-        mock_get.side_effect = lambda url, **_kwargs: responses[url]
+        respond_per_url(mock_get, responses)
 
     def assert_root_listed(self, mock_get: Mock, *repositories: str) -> None:
         """Assert that GitHub was asked for the root listing of exactly these repositories, in this order."""
-        requested = [url for url in self.requested_urls(mock_get) if url.endswith("/contents/")]
-        expected = [self.contents_url(repository) for repository in repositories]
+        requested = [url for url in requested_urls(mock_get) if url.endswith("/contents/")]
+        expected = [contents_url(repository) for repository in repositories]
         self.assertEqual(requested, expected)
 
     def test_no_url_found(self, mock_get: Mock):
@@ -204,7 +184,7 @@ class GetChangesTest(LoggingTestCase):
 
     def test_changelog_url_found(self, mock_get: Mock):
         """Test that the changes are returned if PyPI returns a changelog URL, under any label read as one."""
-        changelog = "Changelog\n## 1.1\n- Fixed foo\n"
+        changelog = markdown_changelog("1.1")
         for key in ("changelog", "changes", "whatsnew", "history", "What's New"):
             with self.subTest(key=key):
                 self.create_mock_response(
@@ -212,7 +192,7 @@ class GetChangesTest(LoggingTestCase):
                     {"info": {"description": "Package-foo description", "project_urls": {key: "https://changes"}}},
                     text=changelog,
                 )
-                self.assertEqual(get_changes(f"package-2-{key}", "1.1"), "## 1.1\n- Fixed foo")
+                self.assertEqual(get_changes(f"package-2-{key}", "1.1"), markdown_changes("1.1"))
 
     @kills(
         Mutation(
@@ -228,10 +208,10 @@ class GetChangesTest(LoggingTestCase):
         self.create_mock_response(
             mock_get,
             {"info": {"description": "Package-foo description", "project_urls": {"changelog": "https://changes"}}},
-            text="Changelog\n## 1.1\n- Fixed foo\n",
+            text=markdown_changelog("1.1"),
             content_type=None,
         )
-        self.assertEqual(get_changes("humanize", "1.1"), "## 1.1\n- Fixed foo")
+        self.assertEqual(get_changes("humanize", "1.1"), markdown_changes("1.1"))
 
     def test_changelog_url_gives_error(self, mock_get: Mock):
         """Test that a changelog URL that gives an HTTP error doesn't stop the later heuristics."""
@@ -243,7 +223,7 @@ class GetChangesTest(LoggingTestCase):
 
     def test_repository_url_found(self, mock_get: Mock):
         """Test that the changes are returned if PyPI returns a repository URL, under any label read as one."""
-        changelog = "Changelog\n## 1.1\n- Fixed foo\n"
+        changelog = markdown_changelog("1.1")
         docs = "https://docs"
         for key in ("repository", "source", "homepage", "Source Code", "GitHub"):
             with self.subTest(key=key):
@@ -258,7 +238,7 @@ class GetChangesTest(LoggingTestCase):
 
     def test_github_project_url_under_another_label(self, mock_get: Mock):
         """Test that a GitHub project URL is read as the repository, whatever label it carries."""
-        changelog = "Changelog\n## 1.1\n- Fixed foo\n"
+        changelog = markdown_changelog("1.1")
         project_urls = {"Documentation": "https://idna.readthedocs.io", "Bug Tracker": "https://github.com/kjd/idna"}
         self.create_mock_response(
             mock_get,
@@ -269,7 +249,7 @@ class GetChangesTest(LoggingTestCase):
 
     def test_labelled_repository_url_is_read_first(self, mock_get: Mock):
         """Test that a project URL labelled as the repository is read before a GitHub URL under another label."""
-        changelog = "Changelog\n## 1.1\n- Fixed foo\n"
+        changelog = markdown_changelog("1.1")
         project_urls = {"Funding": "https://github.com/aio-libs/.github", "Source": "https://github.com/aio-libs/yarl"}
         self.create_mock_response(
             mock_get,
@@ -281,7 +261,7 @@ class GetChangesTest(LoggingTestCase):
 
     def test_source_url_is_read_before_the_homepage(self, mock_get: Mock):
         """Test that a project URL labelled as the source is read before one labelled as the homepage."""
-        changelog = "Changelog\n## 1.1\n- Fixed foo\n"
+        changelog = markdown_changelog("1.1")
         project_urls = {
             "Homepage": "https://github.com/python/typing",
             "Source": "https://github.com/python/typing_extensions",
@@ -389,11 +369,10 @@ class GetChangesTest(LoggingTestCase):
 
     _DOCUMENTATION_READ_FIRST = Mutation(
         github,
-        "    root = _list_root(owner, repository) or ()\n    for entry in root:",
-        "    root = _list_root(owner, repository) or ()\n"
-        "    if changes := _changes_from_documentation(owner, repository, root, version):\n"
-        "        return changes\n"
-        "    for entry in root:",
+        "    return _changes_from_files(root, version) or "
+        "_changes_from_documentation(owner, repository, root, version)",
+        "    return _changes_from_documentation(owner, repository, root, version) or "
+        "_changes_from_files(root, version)",
         "a repository whose root answers costs a documentation tree listing it has no need of",
     )
 
@@ -408,7 +387,7 @@ class GetChangesTest(LoggingTestCase):
         }
         self.create_discovery_responses(mock_get, "gevent", files=files, repository="gevent/gevent")
         self.assertEqual(get_changes("gevent", "1.1"), "1.1\n===\n\n- Fixed foo")
-        self.assertNotIn(self.tree_url("doc"), self.requested_urls(mock_get))
+        self.assertNotIn(tree_url("doc"), requested_urls(mock_get))
 
     def test_changelog_file_in_a_documentation_directory(self, mock_get: Mock):
         """Test that a changelog file below a documentation directory supplies the changes the root's file lacks."""
@@ -429,8 +408,8 @@ class GetChangesTest(LoggingTestCase):
         tree = {"source/conf.py": "project = 'GitPython'\n", "source/changes.rst": "0.9\n===\n\n- Fixed bar\n"}
         self.create_discovery_responses(mock_get, "gitpython", files={"doc": tree}, repository=repository)
         self.assertEqual(get_changes("gitpython", "1.1"), "")
-        requested = self.requested_urls(mock_get)
-        self.assertIn(self.tree_url("doc"), requested)
+        requested = requested_urls(mock_get)
+        self.assertIn(tree_url("doc"), requested)
         self.assertIn(self.nested_file_url(repository, "doc", "source/changes.rst"), requested)
         self.assertNotIn(self.nested_file_url(repository, "doc", "source/conf.py"), requested)
 
@@ -450,7 +429,7 @@ class GetChangesTest(LoggingTestCase):
         }
         self.create_discovery_responses(mock_get, "flask", files=files, repository="pallets/flask")
         self.assertEqual(get_changes("flask", "1.1"), "1.1\n===\n\n- Fixed foo")
-        self.assertNotIn(self.tree_url("tests"), self.requested_urls(mock_get))
+        self.assertNotIn(tree_url("tests"), requested_urls(mock_get))
 
     _UNFILTERED_TREE = Mutation(
         github,
@@ -474,21 +453,21 @@ class GetChangesTest(LoggingTestCase):
             extra={directory_url: mock_response(text="Nothing to report")},
         )
         self.assertEqual(get_changes("flask", "1.1"), "1.1\n===\n\n- Fixed foo")
-        self.assertNotIn(directory_url, self.requested_urls(mock_get))
+        self.assertNotIn(directory_url, requested_urls(mock_get))
 
     def test_tree_listing_unreachable(self, mock_get: Mock):
         """Test that a tree listing that can't be fetched yields no changes, and is reported as unreachable."""
-        tree_url = self.tree_url("doc")
-        unreachable = mock_response(status_code=HTTPStatus.NOT_FOUND, ok=False, url=tree_url)
+        doc_tree_url = tree_url("doc")
+        unreachable = mock_response(status_code=HTTPStatus.NOT_FOUND, ok=False, url=doc_tree_url)
         self.create_discovery_responses(
             mock_get,
             "gitpython",
             files={"doc": {"source/changes.rst": "1.1\n===\n\n- Fixed foo\n"}},
             repository="gitpython-developers/GitPython",
-            extra={tree_url: unreachable},
+            extra={doc_tree_url: unreachable},
         )
         self.assertEqual(get_changes("gitpython", "1.1"), "")
-        self.assert_could_not_fetch_logged(url=tree_url)
+        self.assert_could_not_fetch_logged(url=doc_tree_url)
 
     _UNGUARDED_URL = Mutation(
         github,
@@ -510,7 +489,7 @@ class GetChangesTest(LoggingTestCase):
             extra={None: mock_response(text="Nothing to report")},
         )
         self.assertEqual(get_changes("pip", "1.1"), "1.1\n===\n\n- Fixed foo")
-        self.assertNotIn(None, self.requested_urls(mock_get))
+        self.assertNotIn(None, requested_urls(mock_get))
 
     def test_release_is_read_before_the_repository_root(self, mock_get: Mock):
         """Test that a package whose release answers costs no root listing, and reports the release's changes."""
@@ -520,7 +499,7 @@ class GetChangesTest(LoggingTestCase):
             "urllib3",
             files={"CHANGES.rst": "1.1\n===\n\n- Fixed in the file\n"},
             repository="urllib3/urllib3",
-            extra={self.releases_url("urllib3/urllib3"): mock_response([release])},
+            extra={releases_url("urllib3/urllib3"): mock_response([release])},
         )
         self.assertEqual(get_changes("urllib3", "1.1"), "## 1.1\n- Fixed in the release")
         self.assert_root_listed(mock_get)
@@ -605,14 +584,14 @@ class GetChangesTest(LoggingTestCase):
 
     def test_root_listing_unreachable(self, mock_get: Mock):
         """Test that a root listing that can't be fetched yields no changes, and is reported as unreachable."""
-        contents_url = self.contents_url("pypa/packaging")
-        unreachable = mock_response(status_code=HTTPStatus.NOT_FOUND, ok=False, url=contents_url)
+        root_url = contents_url("pypa/packaging")
+        unreachable = mock_response(status_code=HTTPStatus.NOT_FOUND, ok=False, url=root_url)
         self.create_discovery_responses(
-            mock_get, "packaging", repository="pypa/packaging", extra={contents_url: unreachable}
+            mock_get, "packaging", repository="pypa/packaging", extra={root_url: unreachable}
         )
         self.assertEqual(get_changes("packaging", "1.1"), "")
         self.assert_root_listed(mock_get, "pypa/packaging")
-        self.assert_could_not_fetch_logged(url=contents_url)
+        self.assert_could_not_fetch_logged(url=root_url)
 
     @kills(GITHUB_UNCACHED)
     def test_root_listing_is_fetched_once_per_repository(self, mock_get: Mock):
