@@ -6,7 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Report an npm package's changes from a changelog file in its repository when no release matches its version, instead of reporting that no changelog is available. Closes [#327](https://github.com/ICTU/update-time/issues/327).
+- Look for that changelog file in the directory a monorepo builds the package from, and not only in the repository's root. Part of [#327](https://github.com/ICTU/update-time/issues/327).
 
 ## 0.0.34 - 2026-09-04
 

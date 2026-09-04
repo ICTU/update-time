@@ -122,7 +122,7 @@ A few rules that keep the cycle honest:
 
 When every candidate test passes, propose an increment review before you propose the self-improvement session. The increment is the one an issue lists, or the whole session where no issue lists one.
 
-Review everything the increment changed, against the same criteria, and report it as its own numbered list. Read the files it touched end to end rather than its diff: a finding can span cycles and show up in no single one, such as a helper the second cycle duplicated, a module head grown long with constants, or a name that restates the line beside it.
+Review everything the increment changed, against the same criteria, and report it as its own numbered list. Read the files it touched end to end rather than its diff: a finding can span cycles and show up in no single one, such as a helper the second cycle duplicated, a module head grown long with constants, or a name that restates the line beside it. Run `just test-mutations` as part of the review.
 
 A bug fix or a small diff gets that one review. An increment of several cycles gets a second review with fresh context, from subagents you give the criteria and the diff but not the reasoning that produced the code, because a review in the context that wrote the code misses what a fresh one catches. Tell the subagents to check each finding against the code before reporting it.
 

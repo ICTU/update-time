@@ -329,11 +329,9 @@ class PinnedDeclarationsTest(unittest.TestCase):
     @kills(
         Mutation(
             pyproject_toml,
-            "            requirement.name,\n            _pinned_version(requirement),\n",
-            '            str(requirement).split("==")[0] if requirement.specifier else requirement.name,\n'
-            "            _pinned_version(requirement),\n",
-            "a pin's name is taken from the spec's text, so an extra or the space before the operator "
-            "becomes part of it",
+            "            requirement.name,\n",
+            '            requirement.name + "".join(f"[{extra}]" for extra in requirement.extras),\n',
+            "a pin's name carries the extra its declaration spells, so it names no package the source knows",
         )
     )
     def test_reads_a_pin_with_an_extra_an_environment_marker_or_spaces(self):

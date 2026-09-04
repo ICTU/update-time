@@ -1,14 +1,19 @@
 """npmjs."""
 
 import re
+from dataclasses import dataclass
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from update_time.domain.dependency import Release, Yank
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.primitives.timestamp import parse_timestamp
-from update_time.sources.github import changes_from_release, github_owner_and_repository
+from update_time.sources.github import (
+    changes_from_changelog_file,
+    changes_from_release,
+    github_owner_and_repository,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -30,6 +35,28 @@ _HOST_SHORTHAND_RE = re.compile(r"^github:")
 _BARE_SHORTHAND_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 
+class _RepositoryJSON(TypedDict):
+    """The repository object an npm version document names."""
+
+    url: NotRequired[str]
+    directory: NotRequired[str]  # The directory a monorepo builds the package from
+
+
+class _VersionJSON(TypedDict):
+    """The npm registry's document for one version of a package."""
+
+    repository: NotRequired[_RepositoryJSON | str]
+    # The message the maintainer withdrew the version with, npm's counterpart to a yank
+    deprecated: NotRequired[str]
+
+
+class _PackageJSON(TypedDict):
+    """The npm registry's document for a package."""
+
+    time: NotRequired[dict[str, str]]  # The publication timestamp per version
+    versions: NotRequired[dict[str, _VersionJSON]]
+
+
 def _expanded_shorthand(url: str) -> str:
     """Return npm's `github:owner/repo` and bare `owner/repo` shorthands as GitHub URLs, leaving others unchanged."""
     if _BARE_SHORTHAND_RE.match(url):
@@ -37,15 +64,24 @@ def _expanded_shorthand(url: str) -> str:
     return _HOST_SHORTHAND_RE.sub(_GITHUB_URL, url)
 
 
-def _repository_url(metadata: dict) -> str:
-    """Return the repository URL from npm package metadata, tolerating a missing field or one of npm's shorthands.
+@dataclass(frozen=True)
+class _Repository:
+    """The GitHub repository an npm version document names, and the directory it builds the package from."""
 
-    npm's `repository` may be an object (`{"url": ...}`), a string holding a git URL or one of npm's shorthands, or
-    absent. A shorthand is expanded to a GitHub URL; a missing or unreadable field yields an empty string.
-    """
-    repository = metadata.get("repository", "")
-    url = repository.get("url", "") if isinstance(repository, dict) else repository
-    return _expanded_shorthand(url) if isinstance(url, str) else ""
+    owner: str = ""
+    name: str = ""
+    directory: str = ""
+
+    @classmethod
+    def from_metadata(cls, metadata: _VersionJSON) -> _Repository:
+        """Return the repository the metadata names."""
+        repository = metadata.get("repository", "")
+        if isinstance(repository, dict):
+            url, directory = repository.get("url", ""), repository.get("directory", "")
+        else:
+            url, directory = repository, ""
+        owner, name = github_owner_and_repository(_expanded_shorthand(url) if isinstance(url, str) else "")
+        return cls(owner=owner, name=name, directory=directory)
 
 
 @cache
@@ -54,22 +90,19 @@ def get_changes(package: str, version: str) -> str:
     response = fetch(f"{_REGISTRY}/{package}/{version}", _LOG)
     if response is None:
         return ""
-    owner, repository = github_owner_and_repository(_repository_url(response.json()))
-    return changes_from_release(owner, repository, package, version)
+    repository = _Repository.from_metadata(response.json())
+    return changes_from_release(repository.owner, repository.name, package, version) or changes_from_changelog_file(
+        repository.owner, repository.name, version, repository.directory
+    )
 
 
 @cache
-def _package_metadata(package: str) -> dict:
-    """Get the npm registry's package document, or an empty dict if it can't be fetched.
-
-    Shared by `get_publication_datetime` and `newest_release` so both read the same `time` map in one
-    (cached) request.
-    """
+def _package_metadata(package: str) -> _PackageJSON:
+    """Get the npm registry's package document, or an empty document if it can't be fetched."""
     response = fetch(f"{_REGISTRY}/{package}", _LOG)
     return response.json() if response is not None else {}
 
 
-@cache
 def get_publication_datetime(package: str, version: str) -> datetime | None:
     """Return the datetime the version was published, or None when the registry doesn't date it.
 

@@ -1,6 +1,7 @@
 """npmjs unit tests."""
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
 from update_time.domain.dependency import Release, Yank
@@ -12,9 +13,30 @@ from update_time.sources.npmjs import (
     newest_release,
 )
 
-from tests.helpers import patch_get
+from tests.helpers import mock_response, patch_get
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase
+from tests.update_time.helpers import LoggingTestCase, github_release_json
+from tests.update_time.sources.helpers import (
+    contents_json,
+    contents_url,
+    file_url,
+    markdown_changelog,
+    markdown_changes,
+    releases_url,
+    requested_urls,
+    respond_per_url,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+# The repository the packages in these tests name, as owner and repository.
+_REPOSITORY = "org/package"
+
+
+def _version_url(package: str, version: str = "1.0") -> str:
+    """Return the URL the npm registry serves the package version's document at."""
+    return f"https://registry.npmjs.org/{package}/{version}"
 
 
 class NpmjsPublicationDatetimeTest(LoggingTestCase):
@@ -101,22 +123,25 @@ class NpmjsDeprecationTest(LoggingTestCase):
         self.assertEqual(deprecation("package", "9.9"), Yank())
 
 
-class GetChangesRepositoryTest(CacheClearingTestCase):
+class GetChangesRepositoryTest(LoggingTestCase):
     """Unit tests for locating the changelog from npm's varied `repository` metadata."""
 
     def test_unreadable_repository(self):
-        """Test that repository metadata that names no GitHub URL yields no changelog, without raising."""
+        """Test that metadata naming no GitHub URL yields no changelog, without raising and without asking GitHub."""
         for package, metadata in (
             ("no_repo", {"name": "package"}),  # no `repository` field
             ("no_url", {"repository": {"type": "git"}}),
             ("url_not_a_string", {"repository": {"url": 42}}),
         ):
-            with self.subTest(metadata=metadata), patch_get(metadata):
+            with self.subTest(metadata=metadata), patch_get(metadata) as mock_get:
+                self.clear_caches()
                 self.assertEqual(get_changes(package, "1.0"), "")
+                self.assertEqual(requested_urls(mock_get), [_version_url(package)])
 
-    @patch("update_time.sources.npmjs.changes_from_release", return_value="Changelog")
-    def test_repository_naming_a_github_repository(self, changes_from_release: Mock):
+    @patch("requests.get")
+    def test_repository_naming_a_github_repository(self, mock_get: Mock):
         """Test that every spelling of a GitHub repository npm allows is used to find the changelog."""
+        release = github_release_json("1.0", body="Changelog")
         for package, repository in (
             ("host_shorthand", "github:org/package"),
             ("bare_shorthand", "org/package"),
@@ -124,7 +149,84 @@ class GetChangesRepositoryTest(CacheClearingTestCase):
             ("ssh_repo", {"url": "git+ssh://git@github.com/org/package.git"}),
             ("scp_repo", {"url": "git@github.com:org/package.git"}),
         ):
-            with self.subTest(repository=repository), patch_get({"repository": repository}):
+            with self.subTest(repository=repository):
+                self.clear_caches()
+                mock_get.reset_mock()
+                respond_per_url(
+                    mock_get,
+                    {
+                        _version_url(package): mock_response({"repository": repository}),
+                        releases_url(_REPOSITORY): mock_response([release]),
+                    },
+                )
                 self.assertEqual(get_changes(package, "1.0"), "Changelog")
-                changes_from_release.assert_called_once_with("org", "package", package, "1.0")
-                changes_from_release.reset_mock()
+                self.assertEqual(requested_urls(mock_get), [_version_url(package), releases_url(_REPOSITORY)])
+
+
+class GetChangesFallbackTest(LoggingTestCase):
+    """Unit tests for the changelog file read when the repository publishes no matching release."""
+
+    CHANGELOG = markdown_changelog("1.0")
+    CHANGES = markdown_changes("1.0")
+
+    def create_responses(
+        self, mock_get: Mock, name: str, releases: list, listings: Mapping[str, str], repository: dict | str = ""
+    ) -> None:
+        """Point the mock requests.get at the package's registry document, its releases, and a listing per directory.
+
+        The repository called `name` serves the releases and the listings, each giving the file that directory
+        holds, keyed by directory and by the empty string for its root. A file named like a changelog answers the
+        changelog naming version 1.0.
+        """
+        respond_per_url(
+            mock_get,
+            {
+                _version_url("package"): mock_response({"repository": repository or name}),
+                releases_url(name): mock_response(releases),
+                **{
+                    contents_url(name, directory): mock_response(contents_json(file))
+                    for directory, file in listings.items()
+                },
+                file_url("CHANGELOG.md"): mock_response(text=self.CHANGELOG),
+            },
+        )
+
+    @kills(
+        Mutation(
+            npmjs,
+            "    return changes_from_release(repository.owner, repository.name, package, version) "
+            "or changes_from_changelog_file(\n"
+            "        repository.owner, repository.name, version, repository.directory\n    )",
+            "    return changes_from_release(repository.owner, repository.name, package, version)",
+            "a package whose repository publishes no matching release reports no changelog",
+        ),
+    )
+    @patch("requests.get")
+    def test_changelog_file_when_no_release_matches(self, mock_get: Mock):
+        """Test that a repository publishing no release for the version has its changelog file read."""
+        self.create_responses(mock_get, _REPOSITORY, [], {"": "CHANGELOG.md"})
+        self.assertEqual(get_changes("package", "1.0"), self.CHANGES)
+
+    @patch("requests.get")
+    def test_no_changelog_file_when_a_release_matches(self, mock_get: Mock):
+        """Test that a repository publishing a release for the version has no changelog file read."""
+        release = github_release_json("1.0", body="Release notes")
+        self.create_responses(mock_get, _REPOSITORY, [release], {"": "CHANGELOG.md"})
+        self.assertEqual(get_changes("package", "1.0"), "Release notes")
+        self.assertNotIn(contents_url(_REPOSITORY), requested_urls(mock_get))
+
+    @kills(
+        Mutation(
+            npmjs,
+            "        repository.owner, repository.name, version, repository.directory",
+            '        repository.owner, repository.name, version, ""',
+            "the changelog file of a package a monorepo builds from a directory is looked for in the root",
+        ),
+    )
+    @patch("requests.get")
+    def test_changelog_file_in_the_directory_the_registry_names(self, mock_get: Mock):
+        """Test that the directory the registry names is where the package's changelog file is looked for."""
+        repository = {"url": "https://github.com/org/monorepo", "directory": "packages/package"}
+        listings = {"": "README.md", "packages/package": "CHANGELOG.md"}
+        self.create_responses(mock_get, "org/monorepo", [], listings, repository)
+        self.assertEqual(get_changes("package", "1.0"), self.CHANGES)

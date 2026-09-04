@@ -301,15 +301,20 @@ def _fetch_github(url: str, *, require_ok: bool = True) -> Fetched:
     return fetch(url, _LOG, headers=_github_headers(), require_ok=require_ok)
 
 
-def _list(owner: str, repository: str, path: str) -> tuple[Any, ...] | None:
+def _list(owner: str, repository: str, path: str, *, require_ok: bool = True) -> tuple[Any, ...] | None:
     """Fetch a listing under the repository's API path, or None when it couldn't be fetched.
 
     An empty tuple means the repository was reached but listed nothing; None means the fetch itself failed
     (already logged by `fetch`). Distinguishing the two lets callers avoid reporting a network problem a second
-    time.
+    time. A payload that is no list lists nothing: the contents endpoint answers a path naming a file with that
+    file's own object rather than with a listing. A non-OK response, which only a `require_ok=False` fetch
+    returns, is a failure like any other.
     """
-    response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}/{path}")
-    return tuple(response.json()) if response is not None else None
+    response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}/{path}", require_ok=require_ok)
+    if response is None or not response.ok:
+        return None
+    listing = response.json()
+    return tuple(listing) if isinstance(listing, list) else ()
 
 
 def _repository_metadata(owner: str, repository: str) -> _RepositoryJSON:
@@ -331,9 +336,12 @@ def _list_tags(owner: str, repository: str) -> tuple[_TagJSON, ...] | None:
     return _list(owner, repository, f"tags?per_page={_PER_PAGE}")
 
 
-def _list_root(owner: str, repository: str) -> tuple[_ContentJSON, ...] | None:
-    """Fetch the entries in the root of a repository, or None when they couldn't be fetched."""
-    return _list(owner, repository, "contents/")
+def _list_contents(owner: str, repository: str, directory: str = "") -> tuple[_ContentJSON, ...] | None:
+    """Fetch the entries in a directory of a repository, its root by default, or None when they can't be fetched.
+
+    A directory the repository does not serve is unremarkable, so only a failure to list the root is reported.
+    """
+    return _list(owner, repository, f"contents/{directory}", require_ok=not directory)
 
 
 def _is_changelog_file(name: str) -> bool:
@@ -555,26 +563,46 @@ def changes_from_release(owner: str, repository: str, package: str, version: str
     return release.body if release else ""
 
 
-def changes_from_changelog_file(owner: str, repository: str, version: str) -> str:
+def changes_from_changelog_file(owner: str, repository: str, version: str, directory: str = "") -> str:
     """Return the version's changes from a changelog file in the repository, or nothing when there is none.
+
+    A monorepo keeps a package's changelog in the directory it builds that package from. The root is read as well,
+    whatever that directory held, because a monorepo that versions its packages together documents them in one
+    changelog there. Where it versions them apart, a root changelog naming this version describes another package,
+    and those are the changes reported.
 
     Some projects keep the changelog in a documentation directory, and leave a file in the root that only links
     to that changelog.
     """
     if not (owner and repository):
         return ""
-    root = _list_root(owner, repository) or ()
-    for entry in root:
+    if directory:
+        entries = _list_contents(owner, repository, directory) or ()
+        if changes := _changes_from_files(entries, version):
+            return changes
+    root = _list_contents(owner, repository) or ()
+    return _changes_from_files(root, version) or _changes_from_documentation(owner, repository, root, version)
+
+
+def _changes_from_files(entries: tuple[_ContentJSON, ...], version: str) -> str:
+    """Return the version's changes from a changelog file among the entries, or nothing when none holds them."""
+    for entry in entries:
         url = entry["download_url"]
         if _is_changelog_file(entry["name"]) and url and (changes := _changes_from_changelog_url(url, version)):
             return changes
-    return _changes_from_documentation(owner, repository, root, version)
+    return ""
 
 
 def _changes_from_changelog_url(url: str, version: str) -> str:
     """Return the version's changes from the changelog file the URL serves, or nothing when there are none."""
+    return get_version_changes_from_changelog(_changelog_file(url), version)
+
+
+@cache
+def _changelog_file(url: str) -> str:
+    """Fetch the changelog file the URL serves once per run, or an empty string when it can't be fetched."""
     response = fetch(url, _LOG)
-    return get_version_changes_from_changelog(response.text, version) if response is not None else ""
+    return response.text if response is not None else ""
 
 
 def _changes_from_documentation(owner: str, repository: str, root: tuple[_ContentJSON, ...], version: str) -> str:
