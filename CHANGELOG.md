@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.34 - 2026-09-04
+
 ### Fixed
 
 - Read a Python dependency however PEP 508 spells it, instead of skipping or misreading one that carries an extra, an environment marker, or spaces around its operator. Closes [#315](https://github.com/ICTU/update-time/issues/315).
