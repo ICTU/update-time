@@ -475,8 +475,8 @@ class GetReleaseTest(LoggingTestCase):
     @kills(
         Mutation(
             github,
-            'f"{package}-{version}", f"{package}@{version}"',
-            'f"{package}@{version}"',
+            '("-v", "-", "@")',
+            '("-v", "@")',
             "a release whose monorepo tag carries no v prefix is reported as having no changelog",
             raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
         ),
@@ -490,37 +490,97 @@ class GetReleaseTest(LoggingTestCase):
     @kills(
         Mutation(
             github,
-            ', f"{package}@{version}"',
-            "",
+            '("-v", "-", "@")',
+            '("-v", "-")',
             "a release whose monorepo tag joins the package and the version with an @ has no changelog reported",
+            raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
+        ),
+    )
+    @patch_get([github_release_json("astro@7.1.4", body="Changelog")])
+    def test_monorepo_tag_with_at_sign_match(self):
+        """Test finding a release in a monorepo whose tags join the package and the version with an `@`."""
+        release = _get_release("owner", "monorepo with at signs", "astro", "7.1.4")
+        self.assert_release(release, "astro@7.1.4", "Changelog")
+
+    @kills(
+        Mutation(
+            github,
+            "[package] if unscoped == package else [package, unscoped]",
+            "[package]",
+            "a scoped npm package tagged without its scope has no changelog reported",
             raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
         ),
         Mutation(
             github,
-            "{package}@{version}",
-            "{package.removeprefix('@')}@{version}",
-            "a scoped npm package's release has no changelog reported",
+            'for name in _package_names(package) for joiner in ("-v", "-", "@")',
+            'for name in _package_names(package) for joiner in ("-v", "-", "@") if name == package or joiner == "@"',
+            "a monorepo prefixing the unscoped name with a dash has no changelog reported",
             raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
         ),
     )
     @patch_get(
         [
-            github_release_json("astro@7.1.4", body="Changelog"),
-            github_release_json("@aws-amplify/ui-react@6.15.5", body="Changelog"),
+            github_release_json("plugin-rsc@0.5.34"),
+            github_release_json("plugin-react@6.1.1", body="Changelog"),
+            github_release_json("widget-v1.2.3", body="Changelog"),
+            github_release_json("gadget-4.5.6", body="Changelog"),
         ]
     )
-    def test_monorepo_tag_with_at_sign_match(self):
-        """Test finding a release in a monorepo whose tags join the package and the version with an `@`."""
-        for package, version in (("astro", "7.1.4"), ("@aws-amplify/ui-react", "6.15.5")):
-            with self.subTest(package=package):
-                release = _get_release("owner", "monorepo with at signs", package, version)
-                self.assert_release(release, f"{package}@{version}", "Changelog")
+    def test_scoped_tag_without_its_scope_match(self):
+        """Test finding a scoped npm package's release, however the monorepo joins its unscoped name and version."""
+        cases = [
+            ("@vitejs/plugin-react", "6.1.1", "plugin-react@6.1.1"),
+            ("@scope/widget", "1.2.3", "widget-v1.2.3"),
+            ("@scope/gadget", "4.5.6", "gadget-4.5.6"),
+        ]
+        for package, version, tag in cases:
+            with self.subTest(tag=tag):
+                release = _get_release("owner", "monorepo tagging without the scope", package, version)
+                self.assert_release(release, tag, "Changelog")
 
     @kills(
         Mutation(
             github,
-            'f"{package}-v{version}", f"{package}-{version}"',
-            'f"{package}-{version}", f"{package}-v{version}"',
+            "[package] if unscoped == package else [package, unscoped]",
+            "[package] if unscoped == package else [unscoped, package]",
+            "a repository tagging one version both with and without the scope has the wrong release reported for it",
+        ),
+    )
+    @patch_get(
+        [
+            github_release_json("react@11.14.0", body="Unscoped"),
+            github_release_json("@emotion/react@11.14.0", body="Scoped"),
+        ]
+    )
+    def test_scoped_tag_takes_precedence(self):
+        """Test that the tag carrying the scope wins over the one spelling the same version without it."""
+        release = _get_release("emotion-js", "emotion", "@emotion/react", "11.14.0")
+        self.assert_release(release, "@emotion/react@11.14.0", "Scoped")
+
+    @kills(
+        Mutation(
+            github,
+            'for tag in [*package_tags, f"v{version}", version]:',
+            'for tag in [*package_tags[:3], f"v{version}", version, *package_tags[3:]]:',
+            "a scoped npm package whose repository also tags the version alone has the wrong release reported for it",
+        ),
+    )
+    @patch_get(
+        [
+            github_release_json("v6.1.1", body="Version only"),
+            github_release_json("plugin-react@6.1.1", body="Unscoped"),
+        ]
+    )
+    def test_unscoped_tag_takes_precedence(self):
+        """Test that the tag naming the package without its scope wins over the one naming the version alone."""
+        release = _get_release("vitejs", "vite-plugin-react", "@vitejs/plugin-react", "6.1.1")
+        self.assert_release(release, "plugin-react@6.1.1", "Unscoped")
+
+    @kills(
+        Mutation(
+            github,
+            '("-v", "-", "@")',
+            '("-", "-v", "@")',
             "a repository spelling one version's tag both ways has the wrong release reported for it",
         ),
     )

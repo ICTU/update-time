@@ -520,18 +520,31 @@ def _newest_release(owner: str, repository: str) -> Release | None:
 def _get_release(owner: str, repository: str, package: str, version: str) -> TaggedVersion | None:
     """Get the release matching the package and version from the GitHub releases API.
 
-    Tries tag names in order of preference:
-    1. `<package>-v<version>` (monorepo, e.g. `puppeteer-core-v25.0.4`).
-    2. `<package>-<version>` (monorepo without the `v`, e.g. `selenium-4.47.0`).
-    3. `<package>@<version>` (monorepo joining the two with an `@`, e.g. `astro@7.1.4`).
+    Tries tag names in order of preference, repeating the first three for each name `_package_names` returns:
+    1. `<name>-v<version>` (monorepo, e.g. `puppeteer-core-v25.0.4`).
+    2. `<name>-<version>` (monorepo without the `v`, e.g. `selenium-4.47.0`).
+    3. `<name>@<version>` (monorepo joining the two with an `@`, e.g. `astro@7.1.4`).
     4. `v<version>` (e.g. `v25.0.4`).
     5. `<version>` (e.g. `25.0.4`).
     """
     releases_by_tag = {release["tag_name"]: release for release in (_list_releases(owner, repository) or ())}
-    for tag in (f"{package}-v{version}", f"{package}-{version}", f"{package}@{version}", f"v{version}", version):
+    package_tags = [f"{name}{joiner}{version}" for name in _package_names(package) for joiner in ("-v", "-", "@")]
+    for tag in [*package_tags, f"v{version}", version]:
         if tag in releases_by_tag:
             return TaggedVersion.from_release(owner, repository, releases_by_tag[tag])
     return None
+
+
+def _package_names(package: str) -> list[str]:
+    """Return the names a repository may tag the package's releases under, npm's own spelling first.
+
+    An npm scope names the publisher rather than the package. A monorepo publishing several packages under one
+    scope tags each release by the directory it builds from, which is the name without the scope. So
+    `@vitejs/plugin-react` gets both `@vitejs/plugin-react` and `plugin-react`. An unscoped package such as
+    `clipboard` gets its own name alone.
+    """
+    unscoped = package.rpartition("/")[2]
+    return [package] if unscoped == package else [package, unscoped]
 
 
 def changes_from_release(owner: str, repository: str, package: str, version: str) -> str:

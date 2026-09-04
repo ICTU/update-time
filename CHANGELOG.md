@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Leave a `requirements.txt` requirement combining `==` with another specifier unchanged, instead of rewriting it into one no version satisfies. Part of [#315](https://github.com/ICTU/update-time/issues/315).
 - Leave a string outside a `pyproject.toml`'s dependency arrays alone, and report every declaration at its own line. Part of [#315](https://github.com/ICTU/update-time/issues/315).
 - Leave a dependency uv resolves through a `[tool.uv] sources` entry out of the PyPI checks, instead of asking PyPI for a release it does not serve. Part of [#315](https://github.com/ICTU/update-time/issues/315).
+- Report the changes of a scoped npm package whose repository tags its releases without the scope, such as `@vitejs/plugin-react`. Closes [#326](https://github.com/ICTU/update-time/issues/326).
 
 ## 0.0.33 - 2026-09-01
 
