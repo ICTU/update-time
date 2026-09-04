@@ -87,7 +87,7 @@ A few rules that keep the cycle honest:
 2. Build a behaviour before its off-switch. Don't test an opt-out, a flag, or any other suppression until the thing it suppresses exists.
 3. Assert what happens and what doesn't. An assertion runs on every run; a claim in a docstring is checked by nobody.
    - A test that asserts nothing was found also passes when nothing was examined, so assert that something was.
-   - Neither a test's name nor a green run is evidence of what the test guards. Settle that with `just mutate`, for a duplicate you would fold or delete as much as for anything else. Register the mutation with `@kills` only where that test is what kills it, and leave it unregistered where the suite kills it anyway.
+   - Neither a test's name nor a green run is evidence of what the test guards. Settle that with `just mutate`, for a duplicate you would fold or delete as much as for anything else. When it says a case guards nothing its neighbours don't, delete it, and reshape the test that leaves behind. Register the mutation with `@kills` only where that test is what kills it, and leave it unregistered where the suite kills it anyway.
    - Call a stub that varies its answer by an argument with more than one value of that argument, or the test shows something other than what its name claims. The same holds for a fixture whose docstring names a case it does not create.
    - Pick the mutation from the regression the guard defends against, not from the nearest line to mutate. One that leaves the guard green says nothing about it. One that fails a dozen other tests says little more: it shows the suite reacting, not that guard.
    - When a stub quotes more than a handful of lines, look for a shorter form that isolates the same regression.
