@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import Mock, patch
 
+from update_time.domain.archival import IGNORE_ARCHIVED
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES
@@ -179,6 +180,18 @@ class UpdateMainTest(unittest.TestCase):
         exit_code, environment = self.run_main(mock_run, "--allow-floating-pin")
         self.assertEqual(exit_code, 0)
         self.assertEqual(environment[ALLOW_FLOATING_PIN.name], "1")
+
+    def test_main_passes_ignore_archived_off_by_default(self, mock_run: Mock):
+        """Test that main exports the archival switch as off when --ignore-archived is not given."""
+        exit_code, environment = self.run_main(mock_run)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[IGNORE_ARCHIVED.name], "0")
+
+    def test_main_passes_ignore_archived_when_set(self, mock_run: Mock):
+        """Test that main exports the archival switch as on when --ignore-archived is given."""
+        exit_code, environment = self.run_main(mock_run, "--ignore-archived")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(environment[IGNORE_ARCHIVED.name], "1")
 
     def test_main_passes_ignored_vulnerabilities_to_subprocesses(self, mock_run: Mock):
         """Test that main exports the advisories to ignore so the updater subprocesses inherit them."""

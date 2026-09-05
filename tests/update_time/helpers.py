@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from packaging.version import Version
 
 import update_time
+from update_time.domain.archival import IGNORE_ARCHIVED
 from update_time.domain.dependency import ArchivedSubject, DependencyVersion, FloatingPin
 from update_time.domain.reference import Reference, ResolvedReference
 from update_time.domain.staleness import STALE_AFTER
@@ -563,6 +564,10 @@ def bound(verb: Verb, item: str) -> VersionBound:
 # Reusable decorator that disables the staleness check, for update tests that focus on the update flow and would
 # otherwise trigger the staleness pass's own registry requests. The staleness pass has its own dedicated tests.
 staleness_disabled = patch_environ({STALE_AFTER.name: "0"})
+
+# Reusable decorator that switches the archival check off run-wide, as --ignore-archived does, for the tests
+# of what a run then leaves unasked and unreported.
+archival_check_disabled = patch_environ({IGNORE_ARCHIVED.name: "1"})
 
 
 def pyproject(*specs: str) -> str:

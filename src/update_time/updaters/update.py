@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from update_time.domain.archival import IGNORE_ARCHIVED
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES, DependencyType
 from update_time.domain.staleness import STALE_AFTER
@@ -120,12 +121,13 @@ def main() -> int:
     args = parse_args()
     # Scope the whole run to the requested directory; everything downstream keys off the current working directory.
     os.chdir(args.path)
-    # Pass the cooldown, thresholds, ignored advisories, log level, and the drift and floating-pin opt-ins down to
-    # the subprocesses via the environment.
+    # Pass the cooldown, thresholds, ignored advisories, the archival check, log level, and the drift and
+    # floating-pin opt-ins down to the subprocesses via the environment.
     COOLDOWN.set(args.cooldown)
     STALE_AFTER.set(args.stale_after)
     VULNERABILITY_LEVEL.set(args.vulnerability_level)
     IGNORE_VULNERABILITIES.set(args.ignore_vulnerability)
+    IGNORE_ARCHIVED.set(args.ignore_archived)
     LOG_LEVEL.set(args.log_level)
     ALLOW_HASH_DRIFT.set(args.allow_hash_drift)
     ALLOW_FLOATING_PIN.set(args.allow_floating_pin)

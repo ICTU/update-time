@@ -24,7 +24,7 @@ def _get_latest_version(
     dependency: str, current_version: str, filename: str, cooldown_days: int = COOLDOWN.default
 ) -> DependencyVersion:
     """Return the version the source resolves for the file the URL references, unbounded."""
-    return version_getter(filename)(dependency, current_version, NO_BOUND, cooldown_days)
+    return version_getter(filename)(dependency, current_version, NO_BOUND, cooldown_days, check_archival=True)
 
 
 # npm publication dates, relative to now so the cooldown decision is independent of the wall clock.

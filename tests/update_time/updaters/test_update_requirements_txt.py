@@ -14,6 +14,7 @@ from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope
 from update_time.primitives.location import Location
 from update_time.references import resolve as resolve_module
+from update_time.sources import pypi as pypi_module
 from update_time.updaters import update_requirements_txt as update_requirements_txt_module
 from update_time.updaters.update_requirements_txt import (
     _LOOSE_REQUIREMENT_RE,
@@ -27,6 +28,7 @@ from tests.update_time.fixtures import BARE_IGNORE, EVERY_SOURCE_CHECK_SCOPE
 from tests.update_time.helpers import (
     PYPI_OLD_UPLOAD,
     LoggingTestCase,
+    archival_check_disabled,
     osv_advisory,
     pypi_index,
     pypi_release,
@@ -287,6 +289,24 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
         self.assert_archived_dependency_logged("humanize", Location(requirements_txt, 1))
+
+    @kills(
+        Mutation(
+            pypi_module,
+            "    if not check_archival:\n        return Archival()\n",
+            "",
+            "the source is told not to check for archival but answers anyway, so an archived project is warned "
+            "about with the check off",
+        )
+    )
+    def test_archival_check_disabled(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that an archived project is not warned about when the check is switched off run-wide."""
+        self.discovered_requirements_txt(mock_rglob, "humanize>=4\n")
+        mock_get.side_effect = [pypi_index("4.15.0", archived=True)]
+        with archival_check_disabled:
+            update_requirements_txts()
+        self.assertEqual(self.queried_packages(mock_get), ["humanize"])  # the project was examined, just not reported
+        self.assert_no_warnings_logged()
 
     @kills(
         Mutation(

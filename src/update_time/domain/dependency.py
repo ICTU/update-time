@@ -11,8 +11,20 @@ from packaging.version import InvalidVersion, Version
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
     from datetime import datetime
+    from typing import Protocol
 
     from _typeshed import SupportsRichComparison
+
+    class ProjectGetter(Protocol):
+        """The contract the project checks bind and a source implements, answering what it reports about a project."""
+
+        def __call__(self, dependency: DependencyName, /, *, check_archival: bool) -> Project:
+            """Return what the source reports about the dependency's project.
+
+            `check_archival` is the run's archival setting, so a source that pays a request to answer it can skip
+            that request rather than reading the setting itself.
+            """
+
 
 # The name of a dependency as it appears in a manifest: a Docker image (`cimg/python`), a GitHub action
 # (`actions/checkout`), a PyPI or npm package, etc. A version string is an arbitrary version or tag (`3.14.2`, `v1`).
@@ -114,10 +126,6 @@ class Project:
 
     newest: Release | None = None
     archival: Archival = Archival()
-
-
-# The contract the project checks bind and a source implements, answering what it reports about a project.
-type ProjectGetter = Callable[[DependencyName], Project]
 
 
 @dataclass(frozen=True)

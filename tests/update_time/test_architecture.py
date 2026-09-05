@@ -76,6 +76,31 @@ def _setting_globals(files: list[pathlib.Path]) -> set[str]:
     return names
 
 
+# The setting whose readers are not followed. Every module logs, so `get_logger` reads the log level for each of
+# them, and how a run logs is no decision a module takes about what it resolves.
+_LOGGING_SETTING = "LOG_LEVEL"
+
+
+def _reads_setting(node: ast.AST, settings: set[str]) -> bool:
+    """Return whether the node reads a setting's value, which is the `get` of one called on it."""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "get"
+        and isinstance(node.value, ast.Name)
+        and node.value.id in settings
+    )
+
+
+def _setting_readers(files: list[pathlib.Path], settings: set[str]) -> set[str]:
+    """Return the functions that read one of the settings, since calling one reads it as surely as naming it does."""
+    readers: set[str] = set()
+    for path in files:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.FunctionDef) and any(_reads_setting(inner, settings) for inner in ast.walk(node)):
+                readers.add(node.name)
+    return readers
+
+
 def _imported_modules(tree: ast.Module) -> set[str]:
     """Return the names the file's imports bind to a module, so an attribute read off one can be told apart."""
     modules: set[str] = set()
@@ -247,10 +272,11 @@ class ConfigurationReadingTest(unittest.TestCase):
         return settings
 
     def test_sources_read_no_configuration_global(self):
-        """Test that no source reads a setting."""
+        """Test that no source reads a setting, whether by naming it or by calling a function that reads it."""
         settings = self.settings()
+        readers = _setting_readers(sorted(pathlib.Path("src").rglob("*.py")), settings - {_LOGGING_SETTING})
         sources = project_files("src/").in_folder("sources")
-        assert_passes(sources.should_not().adhere_to(_reads_one_of(settings), _READS_A_SETTING))
+        assert_passes(sources.should_not().adhere_to(_reads_one_of(settings | readers), _READS_A_SETTING))
 
     def test_the_marker_parser_reads_no_configuration_global(self):
         """Test that the marker parser reads no setting, so a marker means the same whatever a run is configured with.
@@ -263,26 +289,35 @@ class ConfigurationReadingTest(unittest.TestCase):
         assert_passes(marker_parser.should_not().adhere_to(_reads_one_of(settings), _READS_A_SETTING))
 
     def test_a_module_reading_a_setting_is_reported(self):
-        """Test that a module is reported whether it imports the setting or reads it off its module.
+        """Test that a module is reported whether it imports the setting, reads it off its module, or calls a reader.
 
         Without this the rule above would pass just as well when the condition found nothing whatever a source does.
         A class member of the setting's name is not a read, so the file carrying one is left unreported. A setting
-        `flag` builds counts as one too.
+        `flag` builds counts as one too, and so does a function that reads a setting on its caller's behalf. The
+        logging setting is the exception: every module logs, so its reader says nothing about the module calling it.
         """
         files = {
-            "settings.py": "SETTING = EnvVar('X')\nFLAG = flag('Y')\n",
+            "settings.py": (
+                "SETTING = EnvVar('X')\nFLAG = flag('Y')\nLOG_LEVEL = EnvVar('Z')\n\n"
+                "def read_setting():\n    return SETTING.get()\n\n"
+                "def get_logger():\n    return LOG_LEVEL.get()\n"
+            ),
             "importer.py": "from settings import SETTING\n",
             "flag_importer.py": "from settings import FLAG\n",
             "attribute.py": "import settings\n\nsettings.SETTING.get()\n",
             "reader.py": "from settings import read_setting\n",
+            "logging_importer.py": "from settings import get_logger\n",
             "namesake.py": "class Scope:\n    SETTING = 'setting'\n\nScope.SETTING\n",
         }
         with project(files) as directory:
-            settings = _setting_globals(sorted(pathlib.Path(directory).rglob("*.py")))
-            rule = project_files(directory).should_not().adhere_to(_reads_one_of(settings), _READS_A_SETTING)
+            paths = sorted(pathlib.Path(directory).rglob("*.py"))
+            settings = _setting_globals(paths)
+            readers = _setting_readers(paths, settings - {_LOGGING_SETTING})
+            condition = _reads_one_of(settings | readers)
+            rule = project_files(directory).should_not().adhere_to(condition, _READS_A_SETTING)
             violations = [violation for violation in rule.check() if isinstance(violation, CustomFileViolation)]
             reported = sorted(pathlib.Path(violation.file_info.path).name for violation in violations)
-        self.assertEqual(reported, ["attribute.py", "flag_importer.py", "importer.py"])
+        self.assertEqual(reported, ["attribute.py", "flag_importer.py", "importer.py", "reader.py"])
 
 
 class ToolInvocationTest(unittest.TestCase):

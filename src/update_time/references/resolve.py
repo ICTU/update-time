@@ -10,7 +10,7 @@ A reference the run resolves no update for takes `report_project_checks` instead
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.archival import reports_archival
+from update_time.domain.archival import archival_is_checked, reports_archival
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion
@@ -91,7 +91,7 @@ def latest_version(
         return None
     version_bound = BLOCK_ALL_UPDATES if marker.ignores(Scope.UPDATE) else marker.version_bound
     cooldown = marker.cooldown.value_or(COOLDOWN.get())
-    latest = get_new_version(dependency, current_version, version_bound, cooldown)
+    latest = get_new_version(dependency, current_version, version_bound, cooldown, check_archival=archival_is_checked())
     resolved = ResolvedReference.from_reference(reference, release=latest)
     report_project(resolved, marker, _staleness_threshold(marker), log)
     log.report_yank(resolved, marker)
@@ -102,9 +102,9 @@ def latest_version(
 def project_is_checked(source: object, subject: object, threshold: int) -> bool:
     """Return whether a project check runs: the staleness check at this threshold, or the archival check.
 
-    The archival check has no threshold to switch it off, so it runs whenever the source reports archival.
+    The archival check has no threshold of its own, so `--ignore-archived` is what switches it off.
     """
-    return threshold != NO_STALENESS_CHECK or reports_archival(source, subject)
+    return threshold != NO_STALENESS_CHECK or (archival_is_checked() and reports_archival(source, subject))
 
 
 def report_project(resolved: ResolvedReference, marker: Marker, threshold: int, log: Logger) -> None:
@@ -120,6 +120,6 @@ def report_project_checks(reference: Reference, marker: Marker, log: Logger, get
     threshold = _staleness_threshold(marker)
     if not project_is_checked(get_project, reference.dependency, threshold):
         return
-    release = DependencyVersion.unpinned(get_project(reference.dependency))
+    release = DependencyVersion.unpinned(get_project(reference.dependency, check_archival=archival_is_checked()))
     resolved = ResolvedReference.from_reference(reference, release=release)
     report_project(resolved, marker, threshold, log)

@@ -50,6 +50,8 @@ def version_getter(filename: str) -> NewVersionGetter:
         current_version_string: VersionString,
         version_bound: VersionBound,
         cooldown_days: int,
+        *,
+        check_archival: bool,
     ) -> DependencyVersion:
         """Return the latest jsDelivr version published outside the cooldown, with the file's integrity hash.
 
@@ -60,6 +62,7 @@ def version_getter(filename: str) -> NewVersionGetter:
         referenced file's integrity hash can't be resolved (updating the version without a matching hash would break
         the Subresource Integrity check).
         """
+        del check_archival
         if not is_valid(current_version_string):
             return DependencyVersion(version=current_version_string)
         candidates = _candidate_versions(dependency, current_version_string, version_bound)

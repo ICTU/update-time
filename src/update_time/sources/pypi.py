@@ -190,13 +190,18 @@ _ARCHIVED_STATUS = "archived"
 
 
 @archival_reporting
-def project(package: DependencyName) -> Project:
+def project(package: DependencyName, *, check_archival: bool) -> Project:
     """Return what PyPI reports about the project: its newest release, and whether it declares it archived."""
-    return Project(newest=_newest_release(package), archival=_archival(package))
+    return Project(newest=_newest_release(package), archival=_archival(package, check_archival=check_archival))
 
 
-def _archival(package: DependencyName) -> Archival:
-    """Return what PyPI declares about the project: whether it is archived, and the reason published beside it."""
+def _archival(package: DependencyName, *, check_archival: bool) -> Archival:
+    """Return what PyPI declares about the project: whether it is archived, and the reason published beside it.
+
+    A run that checks no dependency for archival is told none, though PyPI's answer costs no request of its own.
+    """
+    if not check_archival:
+        return Archival()
     project_status = _project_metadata(package).get("project-status") or {}
     # PEP 792's text spells the status key `state`, where PyPI's Index API documentation shows `status`.
     archived = project_status.get("status") == _ARCHIVED_STATUS
@@ -213,7 +218,12 @@ def _release_datetime(urls: list[_Distribution]) -> datetime | None:
 @vulnerability_reporting
 @yank_reporting
 def get_latest_version(
-    package: DependencyName, current_version: VersionString, version_bound: VersionBound, cooldown_days: int
+    package: DependencyName,
+    current_version: VersionString,
+    version_bound: VersionBound,
+    cooldown_days: int,
+    *,
+    check_archival: bool,
 ) -> DependencyVersion:
     """Return the latest stable release of the package that is available outside the cooldown window.
 
@@ -233,7 +243,7 @@ def get_latest_version(
     latest = with_yank_state(latest, current_version, partial(yank_state, package))
     # Always attach what PyPI reports about the project, so a pin that is already up to date can still be reported
     # as stale or archived. It rides on the Index API response fetched above, so it costs no request of its own.
-    return replace(latest, project=project(package))
+    return replace(latest, project=project(package, check_archival=check_archival))
 
 
 def yank_state(package: str, version: str) -> Yank:

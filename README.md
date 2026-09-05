@@ -84,8 +84,9 @@ update-time
 $ update-time -h
 usage: update-time [-h] [-V] [--cooldown DAYS] [--stale-after DAYS]
                    [--vulnerability-level {low,moderate,high,critical,none}]
-                   [--ignore-vulnerability IDS] [--exclude-path PATHS]
-                   [--allow-hash-drift] [--allow-floating-pin] [--force]
+                   [--ignore-vulnerability IDS] [--ignore-archived]
+                   [--exclude-path PATHS] [--allow-hash-drift]
+                   [--allow-floating-pin] [--force]
                    [--log-level {DEBUG,INFO,WARNING,ERROR}]
                    [PATH]
 
@@ -130,6 +131,10 @@ options:
                         silence one for a single reference instead, mark that
                         reference with an # update-time: ignore[vulnerable=ID]
                         marker
+  --ignore-archived     switch the archival check off, so no dependency is
+                        warned about as archived. To silence the warning for a
+                        single reference instead, mark that reference with an
+                        # update-time: ignore[archived] marker
   --exclude-path PATHS  comma-separated list of directories, relative to the
                         scan root, to exclude from the scan, for example
                         vendor,packages/legacy. Every file under an excluded
@@ -442,7 +447,7 @@ Which dependencies are checked follows from what OSV can match a pinned version 
 
 ### 🗄️ Archived dependencies
 
-An archived dependency is one its maintainer declared finished: expect no further release. Update-time warns when a dependency's source declares it archived:
+An archived dependency is one its maintainer declared finished: expect no further release. Update-time warns when a dependency's source declares it archived, and `--ignore-archived` switches that check off for the whole run. For example, Update-time reports an archived project and an archived repository as:
 
 ```console
 WARNING Archived dependency aioredis in docs/requirements.txt:12: the project was archived
@@ -466,7 +471,9 @@ Which dependencies are checked follows from where an archival declaration can be
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | whether GitHub reports the hook's repository as archived |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | none: the npm registry publishes no archival signal |
 
-No command-line option switches the archival check off. `--stale-after 0` does not switch it off either. A run with the staleness check off still asks the sources above about the projects they report on. A marker silences the warning rather than the query, and only a bare `# update-time: ignore` skips both.
+Switching the check off also stops Update-time asking GitHub for the repository metadata of each action and hook, which it reads for this check alone. It still fetches that repository's releases and tags, which it needs for other reasons. On PyPI the archival answer rides on a request another check makes anyway, so there switching the check off saves nothing while that check still runs.
+
+`--stale-after 0` does not switch the archival check off. The two checks share one lookup, so a run with the staleness check off still asks the sources above about the projects they report on. Switch both off and that lookup is skipped. A reference the run updates keeps its project all the same, read from what the update itself fetched. A marker silences the warning rather than the query, and only a bare `# update-time: ignore` skips both.
 
 ## 🎛️ Controlling updates and warnings per reference
 
@@ -530,7 +537,7 @@ A bare `# update-time: ignore` holds a reference back from version updates and f
 
 So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen. It still tells you when the project behind the reference went quiet, or when its version was withdrawn. `# update-time: ignore[stale]` silences a staleness warning you acknowledged, without freezing the version. `# update-time: ignore[yanked]` does the same for a yank you decided to live with.
 
-`# update-time: ignore[vulnerable]` silences the vulnerability warning for one you assessed, while the reference keeps updating. `# update-time: ignore[archived]` silences the archival warning for a dependency you decided to keep using. A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
+`# update-time: ignore[vulnerable]` silences the vulnerability warning for one you assessed, while the reference keeps updating. `# update-time: ignore[archived]` silences the archival warning for a dependency you decided to keep using. To silence it for every dependency in the scan, pass `--ignore-archived` (see [Archived dependencies](#-archived-dependencies)). A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
 
 #### Setting a staleness threshold
 

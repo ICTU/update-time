@@ -13,8 +13,8 @@ if TYPE_CHECKING:
 
 
 def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGetter:
-    """Return a new-version-getter."""
-    return lambda *_args: DependencyVersion(version=version, sha=sha)
+    """Return a new-version-getter, which ignores the run's archival setting as a source reporting none does."""
+    return lambda *_args, **_kwargs: DependencyVersion(version=version, sha=sha)
 
 
 def mock_new_version_getter() -> Mock:
