@@ -223,7 +223,7 @@ class UpdatePythonVersionFilesFallbackTest(RegistryRequestsMixin, _VersionFileTe
         mock_get_latest_tag.return_value = DependencyVersion(version="3.13.2")
         version_file = self.update_version_file(mock_glob)
         version_file.write_text.assert_called_once_with("3.13.2\n")
-        mock_get_latest_tag.assert_called_once_with("python", "3.12.6", NO_BOUND, COOLDOWN.default)
+        mock_get_latest_tag.assert_called_once_with("python", "3.12.6", NO_BOUND, COOLDOWN.default, check_archival=True)
         self.assert_new_version_logged("python", "3.13.2", Location(version_file, 1))
         self.assert_no_warnings_logged()
 

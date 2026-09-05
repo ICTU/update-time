@@ -62,7 +62,7 @@ Each cycle has three steps:
 
 1. **Red**:
    - Show the list with each test's status, even when nothing on it changed. Once it holds more than five tests, one line for the passing tests and a row per test still to write is enough.
-   - Write the candidate test. Don't design or write the implementation yet.
+   - Write the candidate test. Don't design or write the implementation yet, even when the test names something that does not exist: predict the import error and the tests it takes down with it.
    - Check the new test against the existing ones first. When one already covers the case, add the assertion to that test instead of writing a near-duplicate.
    - Predict the outcome before you run `just test`: how the test will fail, naming the exact error, or why it will pass.
    - Run the whole suite, not only the new test's module. A test predicted to fail is the only one failing, and fails as predicted. A test predicted to pass leaves the suite green. When anything else happens, work out why and tell me.
@@ -100,10 +100,10 @@ A few rules that keep the cycle honest:
    - One run prints all of its output, so read that run rather than starting another for a different slice of it.
    - Compare the test count whenever imports move or test methods are renamed. A module that fails to import, or a method whose new name collides with an existing one, drops tests without a word.
    - Never read a count off output you piped through `head`.
-   - Run `just mutate` unpiped. Which tests failed is the evidence you are after, and only the bare form runs without an approval prompt.
+   - Run `just mutate` and `just test-mutations` unpiped. Which tests failed is the evidence you are after, and only the bare form runs without an approval prompt.
 8. Settle a "could we do X?" question by trying X, not by reasoning about it. Settle a "there is no X" the same way: a search you stopped is not a proof.
    - Report the errors the tools name, and what the alternative costs. Bring me numbers, whether the question is one you mean to put to me or one about your own first draft. Count the call sites before you put the size of a change to me; a guess at what it touches is not a number.
-   - Try a library the project already depends on before you hand-roll one.
+   - Try a library the project already depends on before you hand-roll one. Before you design or price a change, find where the code already solves the same shape of problem and follow it.
    - Try the simplest option that could work before you measure an elaborate one. Where both work, put the simpler one to me first.
    - When something blocks the change you meant to make, price removing it before you design around it. An idiom, a helper, or a signature in the way is a candidate to change, not a constraint to obey.
    - Write a probe as a heredoc through `just py -`, not as a file to write and delete. A probe that has to type-check is the exception: put it under `src` or `tests`, where the checkers look, and take it out again once `just ty` has answered.
@@ -124,7 +124,7 @@ When every candidate test passes, propose an increment review before you propose
 
 Review everything the increment changed, against the same criteria, and report it as its own numbered list. Read the files it touched end to end rather than its diff: a finding can span cycles and show up in no single one, such as a helper the second cycle duplicated, a module head grown long with constants, or a name that restates the line beside it. Run `just test-mutations` as part of the review.
 
-A bug fix or a small diff gets that one review. An increment of several cycles gets a second review with fresh context, from subagents you give the criteria and the diff but not the reasoning that produced the code, because a review in the context that wrote the code misses what a fresh one catches. Tell the subagents to check each finding against the code before reporting it.
+A bug fix or a small diff gets that one review. An increment of several cycles gets a second review with fresh context, from subagents you give the criteria and the diff but not the reasoning that produced the code, because a review in the context that wrote the code misses what a fresh one catches. Run them in a git worktree, so the mutations they run don't rewrite the tree you are working in. Tell the subagents to check each finding against the code before reporting it.
 
 Merge both reviews into one numbered list. A finding only one review reached belongs in it as much as one they both reached, which you state once. Every finding sits in that list, so each can be referred to by its number, and the text around the list holds none. Say which findings change behaviour before I choose what to fix.
 

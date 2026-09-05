@@ -14,6 +14,10 @@
           },
           {
             "type": "command",
+            "command": "jq -r '.tool_input.command' | grep -qE 'just +(mutate|test-mutations)( [^|;]*)?\\|' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Run just mutate and just test-mutations unpiped: which tests killed each mutation is the evidence you are after, and a filter drops the lines that name them.\"}}' || true"
+          },
+          {
+            "type": "command",
             "command": "cmd=$(jq -r '.tool_input.command'); first=$(printf '%s\\n' \"$cmd\" | head -1); last=$(printf '%s\\n' \"$cmd\" | tail -1); printf '%s\\n' \"$first\" | grep -qE \"^just mutate [A-Za-z0-9_./-]+( just [a-z][a-z0-9-]*)?( <<'EOF')?( 2>&1)? *$\" && { ! printf '%s\\n' \"$first\" | grep -qF \"<<'EOF'\" || [ \"$last\" = \"EOF\" ]; } && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"permissionDecisionReason\":\"A mutation probe: it replaces one snippet, runs the command, and restores the file whatever happens.\"}}' || true"
           }
         ]

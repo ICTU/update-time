@@ -17,11 +17,28 @@ from update_time.domain.dependency import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from typing import Protocol
 
-# The contract every updater binds and every source implements. The bound and the cooldown are the two constraints
-# on the candidates, by version and by age.
-type NewVersionGetter = Callable[[DependencyName, VersionString, VersionBound, int], DependencyVersion]
+    class NewVersionGetter(Protocol):
+        """The contract every updater binds and every source implements, resolving the version to update to."""
+
+        def __call__(
+            self,
+            dependency: DependencyName,
+            current_version: VersionString,
+            version_bound: VersionBound,
+            cooldown_days: int,
+            /,
+            *,
+            check_archival: bool,
+        ) -> DependencyVersion:
+            """Return the version to update the dependency to.
+
+            The bound and the cooldown are the two constraints on the candidates, by version and by age.
+            `check_archival` is the run's archival setting, so a source that pays a request to answer it can skip
+            that request rather than reading the setting itself. A source that reports no archival ignores it.
+            """
+
 
 # A version higher than any real one, used to probe whether a bound caps anything above the current version.
 _SENTINEL_VERSION = Version("9" * 18)

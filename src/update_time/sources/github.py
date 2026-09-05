@@ -413,7 +413,12 @@ def _tagged_versions(owner: str, repository: str) -> list[TaggedVersion] | None:
 @publication_date_reporting
 @cache
 def get_latest_version(
-    action: DependencyName, current_version: VersionString, version_bound: VersionBound, cooldown_days: int
+    action: DependencyName,
+    current_version: VersionString,
+    version_bound: VersionBound,
+    cooldown_days: int,
+    *,
+    check_archival: bool,
 ) -> DependencyVersion:
     """Return the latest eligible version for the GitHub action, or the current version unchanged.
 
@@ -430,7 +435,7 @@ def get_latest_version(
     if not is_valid(current_version):
         return DependencyVersion(version=current_version)
     owner, repository = _owner_and_repository(action)
-    repository_project = project(action)
+    repository_project = project(action, check_archival=check_archival)
     unchanged = DependencyVersion(current_version, project=repository_project)
     tagged_versions = _tagged_versions(owner, repository)
     if tagged_versions is None:
@@ -490,17 +495,21 @@ def _newest_tag_beyond_releases(owner: str, repository: str) -> _TagJSON | None:
 
 
 @archival_reporting
-def project(dependency: DependencyName) -> Project:
+def project(dependency: DependencyName, *, check_archival: bool) -> Project:
     """Return what GitHub reports about the repository the dependency names: its newest release, and its archival."""
     owner, repository = _owner_and_repository(dependency)
-    return Project(newest=_newest_release(owner, repository), archival=_archival(owner, repository))
+    archival = _archival(owner, repository, check_archival=check_archival)
+    return Project(newest=_newest_release(owner, repository), archival=archival)
 
 
-def _archival(owner: str, repository: str) -> Archival:
+def _archival(owner: str, repository: str, *, check_archival: bool) -> Archival:
     """Return what GitHub declares about the repository: whether it is archived.
 
-    GitHub publishes no reason beside the flag, so an archived repository carries none.
+    GitHub publishes no reason beside the flag, so an archived repository carries none. Nothing else reads the
+    repository metadata, so a run that checks no dependency for archival leaves it unfetched.
     """
+    if not check_archival:
+        return Archival()
     if not _repository_metadata(owner, repository).get("archived", False):
         return Archival()
     return Archival(archived=True, subject=ArchivedSubject.REPOSITORY)

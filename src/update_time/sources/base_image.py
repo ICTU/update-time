@@ -26,8 +26,14 @@ def advancing_image_version_getter(image_version: VersionString) -> NewVersionGe
     """
 
     def get_new_version(
-        _dependency: DependencyName, current_version: VersionString, version_bound: VersionBound, _cooldown_days: int
+        _dependency: DependencyName,
+        current_version: VersionString,
+        version_bound: VersionBound,
+        _cooldown_days: int,
+        *,
+        check_archival: bool,
     ) -> DependencyVersion:
+        del check_archival
         if is_valid(current_version) and Version(image_version) > Version(current_version):
             return _admitted_version(image_version, current_version, version_bound)
         return DependencyVersion(version=current_version)
@@ -42,8 +48,14 @@ def following_image_version_getter(image_version: VersionString) -> NewVersionGe
     """
 
     def get_new_version(
-        _dependency: DependencyName, current_version: VersionString, version_bound: VersionBound, _cooldown_days: int
+        _dependency: DependencyName,
+        current_version: VersionString,
+        version_bound: VersionBound,
+        _cooldown_days: int,
+        *,
+        check_archival: bool,
     ) -> DependencyVersion:
+        del check_archival
         return _admitted_version(image_version, current_version, version_bound)
 
     return downgrading(get_new_version)

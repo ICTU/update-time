@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Switch the archival check off for the whole run with `--ignore-archived`. Closes [#323](https://github.com/ICTU/update-time/issues/323).
+
 ### Fixed
 
 - Report an npm package's changes from a changelog file in its repository when no release matches its version, instead of reporting that no changelog is available. Closes [#327](https://github.com/ICTU/update-time/issues/327).

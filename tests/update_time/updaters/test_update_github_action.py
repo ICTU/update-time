@@ -139,7 +139,9 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
-        mock_get_latest_version.assert_called_once_with("actions/checkout", "4", NO_BOUND, COOLDOWN.default)
+        mock_get_latest_version.assert_called_once_with(
+            "actions/checkout", "4", NO_BOUND, COOLDOWN.default, check_archival=True
+        )
         self.assert_path_logged(workflow_yml)
         self.assert_pinned_logged("actions/checkout", "4.1.1", NEW_SHA, Location(workflow_yml, 1))
         self.assert_no_new_version_logged()
@@ -152,7 +154,9 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()
         workflow_yml.write_text.assert_called_with(f"uses: actions/checkout@{NEW_SHA} # v4.1.1\n")
-        mock_get_latest_version.assert_called_once_with("actions/checkout", "4.1.1", NO_BOUND, COOLDOWN.default)
+        mock_get_latest_version.assert_called_once_with(
+            "actions/checkout", "4.1.1", NO_BOUND, COOLDOWN.default, check_archival=True
+        )
         self.assert_path_logged(workflow_yml)
         self.assert_pinned_logged("actions/checkout", "4.1.1", NEW_SHA, Location(workflow_yml, 1))
         self.assert_no_new_version_logged()
@@ -168,7 +172,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
             f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: allow[update<5]\n"
         )
         mock_get_latest_version.assert_called_once_with(
-            "actions/checkout", "4", bound(Verb.ALLOW, "update<5"), COOLDOWN.default
+            "actions/checkout", "4", bound(Verb.ALLOW, "update<5"), COOLDOWN.default, check_archival=True
         )
         self.assert_pinned_logged("actions/checkout", "4.2.0", NEW_SHA, Location(workflow_yml, 1))
         self.assert_no_warnings_logged()  # a `<5` bound on a v4 pin is live, so no redundancy warning
@@ -183,7 +187,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
             f"uses: actions/checkout@{NEW_SHA} # v4.2.0  # update-time: ignore[major-update]\n"
         )
         mock_get_latest_version.assert_called_once_with(
-            "actions/checkout", "4", bound(Verb.IGNORE, "major-update"), COOLDOWN.default
+            "actions/checkout", "4", bound(Verb.IGNORE, "major-update"), COOLDOWN.default, check_archival=True
         )
         self.assert_pinned_logged("actions/checkout", "4.2.0", NEW_SHA, Location(workflow_yml, 1))
         self.assert_no_warnings_logged()  # a major-update bound on a v4 pin is live, so no redundancy warning
@@ -393,14 +397,6 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.1{marker}\n")
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            sources_github,
-            "    return Project(newest=_newest_release(owner, repository), archival=_archival(owner, repository))",
-            "    return Project(newest=_newest_release(owner, repository))",
-            "the source attaches no archival to the version it resolves, so an archived repository is never reported",
-        )
-    )
     @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA), archived=True)
     def test_archived_repository_warned(self, mock_glob: Mock):
         """Test that an action whose repository GitHub declares archived is warned about, and still updated."""
@@ -463,8 +459,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @kills(
         Mutation(
             sources_github,
-            "@archival_reporting\ndef project(dependency: DependencyName) -> Project:",
-            "def project(dependency: DependencyName) -> Project:",
+            "@archival_reporting\ndef project(dependency: DependencyName, *, check_archival: bool) -> Project:",
+            "def project(dependency: DependencyName, *, check_archival: bool) -> Project:",
             "the source claims to report no archival, so switching the staleness check off leaves it unasked",
         )
     )

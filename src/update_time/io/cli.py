@@ -135,6 +135,12 @@ def parse_args() -> argparse.Namespace:
         "ignore[vulnerable=ID] marker",
     )
     parser.add_argument(
+        "--ignore-archived",
+        action="store_true",
+        help="switch the archival check off, so no dependency is warned about as archived. To silence the warning "
+        "for a single reference instead, mark that reference with an # update-time: ignore[archived] marker",
+    )
+    parser.add_argument(
         "--exclude-path",
         type=_exclude_paths,
         default=[],

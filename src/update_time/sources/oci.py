@@ -323,7 +323,12 @@ def is_docker_hub_image(image: str) -> bool:
 
 @partial(publication_date_reporting, when=is_docker_hub_image)
 def get_latest_tag(
-    image: DependencyName, current_tag: VersionString, version_bound: VersionBound, cooldown_days: int
+    image: DependencyName,
+    current_tag: VersionString,
+    version_bound: VersionBound,
+    cooldown_days: int,
+    *,
+    check_archival: bool,
 ) -> DependencyVersion:
     """Return the tag to pin the reference to, carrying the image's newest release.
 
@@ -331,6 +336,7 @@ def get_latest_tag(
     back even when the current version is already the latest, so an unpinned reference can be pinned without
     bumping its version.
     """
+    del check_archival
     resolved = _resolved_tag(image, current_tag, version_bound, cooldown_days)
     return replace(resolved, project=Project(newest=_newest_release(image)))
 
@@ -378,11 +384,16 @@ def tag_getter(registry_serves: Callable[[DependencyName], bool]) -> NewVersionG
 
     @partial(publication_date_reporting, when=dates_the_versions_of)
     def get_new_version(
-        image: DependencyName, tag: VersionString, version_bound: VersionBound, cooldown_days: int
+        image: DependencyName,
+        tag: VersionString,
+        version_bound: VersionBound,
+        cooldown_days: int,
+        *,
+        check_archival: bool,
     ) -> DependencyVersion:
         if not registry_serves(image):
             return DependencyVersion(version=tag)
-        return get_latest_tag(image, tag, version_bound, cooldown_days)
+        return get_latest_tag(image, tag, version_bound, cooldown_days, check_archival=check_archival)
 
     return get_new_version
 
