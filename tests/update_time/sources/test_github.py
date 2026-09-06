@@ -26,7 +26,7 @@ from update_time.sources.github import (
     github_to_raw,
 )
 
-from tests.helpers import mock_response, patch_get
+from tests.helpers import mock_response, patch_environ, patch_get
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA1, COMMIT_SHA2
 from tests.update_time.helpers import (
@@ -853,3 +853,44 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         )
         changes = changes_from_changelog_file("org", "monorepo", "1.1", "packages/package")
         self.assertEqual(changes, self.CHANGES)
+
+
+class GitHubHeadersTest(CacheClearingTestCase):
+    """Unit tests for the headers the GitHub API requests carry."""
+
+    def assert_request_headers(self, mock_get: Mock, expected: dict[str, str]) -> None:
+        """Assert that a GitHub request carries the expected headers.
+
+        The archival check is the shortest path to a single request, so that is the request the headers are read off.
+        """
+        mock_get.return_value = mock_response({})
+        _archival("owner", "repository", check_archival=True)
+        self.assertEqual(mock_get.call_args.kwargs["headers"], expected)
+
+    @kills(
+        Mutation(
+            github,
+            '{"Authorization": f"Bearer {github_token}"}',
+            "{}",
+            "every GitHub API request goes out unauthenticated, so a run spends an anonymous caller's rate limit",
+        )
+    )
+    @patch_environ({"GITHUB_TOKEN": "pat123"})  # nosec
+    @patch("requests.get")
+    def test_authorization_header_when_a_token_is_set(self, mock_get: Mock):
+        """Test that a request carries a bearer authorization header when GITHUB_TOKEN is set."""
+        self.assert_request_headers(mock_get, {"Authorization": "Bearer pat123"})
+
+    @kills(
+        Mutation(
+            github,
+            '("GITHUB_TOKEN")) else {}',
+            '("GITHUB_TOKEN")) else {"Authorization": "Bearer"}',
+            "a run given no token sends an empty bearer header instead of asking anonymously",
+        )
+    )
+    @patch_environ()
+    @patch("requests.get")
+    def test_no_authorization_header_without_a_token(self, mock_get: Mock):
+        """Test that a request carries no authorization header when GITHUB_TOKEN is not set."""
+        self.assert_request_headers(mock_get, {})

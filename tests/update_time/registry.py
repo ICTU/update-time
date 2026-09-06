@@ -149,7 +149,7 @@ def mock_docker_registry(
         if url.endswith("/v2/"):  # OCI auth challenge probe.
             return _probe_response(url, challenge=challenge)
         if "/token" in url and "/v2/" not in url:  # Token endpoint discovered from the challenge.
-            return mock_response({"token": "token"})  # nosec[B105]
+            return mock_response({"token": "token"})  # nosec
         if "/tags/list" in url:
             names_ok = unavailable is not Endpoint.TAG_NAMES
             return _tags_list_response(url, tag_names, list_ok=names_ok, page_size=page_size)

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 # Reusable class decorator that mocks the Docker Hub auth token request made by sources.docker_hub.api_headers
 # when DOCKER_HUB_USERNAME/DOCKER_HUB_TOKEN are set, so the image updater tests never make a real network call.
-mock_docker_hub_auth = patch("requests.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec[B105]
+mock_docker_hub_auth = patch("requests.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec
 
 # A distribution upload time inside every window, so the release it dates is neither stale nor past its cooldown.
 PYPI_RECENT_UPLOAD = datetime.datetime.now(datetime.UTC).isoformat()
