@@ -321,9 +321,16 @@ def get_publication_datetime(package: str, version: str) -> datetime | None:
 
 
 def _changelog_from_url(url: str, version: str) -> str:
-    """Get the changelog from the URL."""
-    changelog_response = fetch(github_to_raw(url), _LOG)
+    """Get the changelog from the URL.
+
+    Another project's metadata is not the reader's to fix, so a URL its source does not serve is reported at debug
+    level rather than warned about.
+    """
+    changelog_response = fetch(github_to_raw(url), _LOG, require_ok=False)
     if changelog_response is None:
+        return ""
+    if not changelog_response.ok:
+        _LOG.unserved_changelog(changelog_response)
         return ""
     if changelog_response.headers.get("Content-Type", "").startswith("text/html"):
         return ""
