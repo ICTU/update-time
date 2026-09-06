@@ -5,9 +5,12 @@ from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from unittest.mock import Mock, patch
 
+import requests
+
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Archival, Release, Yank
+from update_time.io.log import Logger
 from update_time.sources import github, pypi
 from update_time.sources.pypi import (
     _archival,
@@ -631,10 +634,47 @@ class GetChangesTest(LoggingTestCase):
         self.assertEqual(get_changes("setuptools", "1.1"), "")
         self.assert_releases_requested(mock_get)
 
-    def test_changelog_url_unreachable(self, mock_get: Mock):
-        """Test that an unreachable changelog URL yields an empty changelog instead of crashing."""
-        self.create_mock_response(mock_get, status_code=HTTPStatus.NOT_FOUND)
+    @kills(
+        Mutation(
+            pypi,
+            "changelog_response = fetch(github_to_raw(url), _LOG, require_ok=False)",
+            "changelog_response = fetch(github_to_raw(url), _LOG)",
+            "a changelog URL the source does not serve warns the reader about a fetch they cannot fix",
+        ),
+    )
+    def test_changelog_url_not_served(self, mock_get: Mock):
+        """Test that a changelog URL the source does not serve yields no changes, and is reported at debug level."""
+        mock_get.return_value = mock_response(
+            text=markdown_changelog("1.0"),
+            status_code=HTTPStatus.NOT_FOUND,
+            reason="Not Found",
+            ok=False,
+            url="https://changes",
+            headers={"Content-Type": "text/text"},
+        )
         self.assertEqual(_changelog_from_url("https://changes", "1.0"), "")
+        self.assert_logged(
+            Logger._MESSAGE_UNSERVED_CHANGELOG,
+            url="https://changes",
+            status=HTTPStatus.NOT_FOUND,
+            reason="Not Found",
+        )
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            pypi,
+            '    if changelog_response is None:\n        return ""\n    if not changelog_response.ok:',
+            "    if not changelog_response.ok:",
+            "a changelog URL whose request fails ends the run with a traceback",
+            raises="AttributeError: 'NoneType' object has no attribute 'ok'",
+        ),
+    )
+    def test_changelog_url_times_out(self, mock_get: Mock):
+        """Test that a changelog URL that times out yields no changes, and is reported as a timeout."""
+        mock_get.side_effect = requests.exceptions.Timeout
+        self.assertEqual(_changelog_from_url("https://changes", "1.0"), "")
+        self.assert_logged(Logger._MESSAGE_TIMEOUT, url="https://changes")
 
 
 class GetPublicationDateTimeTest(CacheClearingTestCase):

@@ -794,8 +794,20 @@ class Logger:
     _MESSAGE_NOT_OK_RESPONSE = LogMessage(WARNING, "Could not fetch %(url)s: HTTP %(status)s %(reason)s")
 
     def response(self, response: Response) -> None:
-        """Log a response's status code and reason phrase (e.g. `HTTP 404 Not Found`)."""
-        self._log(self._MESSAGE_NOT_OK_RESPONSE, url=response.url, status=response.status_code, reason=response.reason)
+        """Log that a URL could not be fetched, because the source answered it with an error."""
+        self._log_response(self._MESSAGE_NOT_OK_RESPONSE, response)
+
+    _MESSAGE_UNSERVED_CHANGELOG = LogMessage(
+        DEBUG, "Could not fetch the changelog at %(url)s: HTTP %(status)s %(reason)s"
+    )
+
+    def unserved_changelog(self, response: Response) -> None:
+        """Log that a changelog URL a project publishes is not served."""
+        self._log_response(self._MESSAGE_UNSERVED_CHANGELOG, response)
+
+    def _log_response(self, message: LogMessage, response: Response) -> None:
+        """Log the message with the response's URL, status code, and reason phrase."""
+        self._log(message, url=response.url, status=response.status_code, reason=response.reason)
 
     _MESSAGE_TIMEOUT = LogMessage(WARNING, "Timeout while fetching %(url)s")
 
