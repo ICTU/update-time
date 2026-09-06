@@ -223,11 +223,11 @@ Update-time updates the following types of dependencies, found in the listed fil
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | `.pre-commit-config.yaml` | [GitHub API](https://api.github.com) | Update-time |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | Sphinx config | [npm registry](https://registry.npmjs.org) | Update-time |
 
-Update-time rewrites the dependency types it updates itself line by line: it picks the new version from the source and edits the reference in place. It hands the types it delegates to uv, npm, or pnpm, which resolves the versions itself. That package manager also keeps the project's lock file in step where there is one. Update-time runs the package manager for you, so the same `update-time` run updates a delegated dependency and every other one. Both update a Python dependency pinned with `==`: uv resolves the new version, and Update-time writes it into the `pyproject.toml` or the `# /// script` block. This is needed because uv has no [command to upgrade dependencies](https://github.com/astral-sh/uv/issues/6794).
+Update-time rewrites the dependency types it updates itself line by line: it picks the new version from the source and edits the reference in place. It hands the types it delegates to uv, npm, or pnpm, which resolves the versions itself. That package manager also keeps the project's lock file in step where there is one. For a pyproject.toml or inline script metadata dependency pinned with `==`, uv resolves the new version and Update-time writes it into the `pyproject.toml` or the `# /// script` block. This is needed because uv has no [command to upgrade dependencies](https://github.com/astral-sh/uv/issues/6794).
 
 Two things to note for a delegated dependency. It takes no [marker](#-controlling-updates-and-warnings-per-reference). And Update-time hands the [cooldown](#-cooldown) to the manager, which applies it per run rather than per reference.
 
-Each dependency type links to its own section under [Details per dependency type](#-details-per-dependency-type). That section covers the files and dependencies the type updates. It also covers how pinning, the cooldown, staleness, yanks, vulnerabilities, archival, and markers apply to it.
+In the table above, each dependency type links to its own section under [Details per dependency type](#-details-per-dependency-type). That section covers the files and dependencies the type updates. It also covers how pinning, the cooldown, staleness, yanks, vulnerabilities, archival, and markers apply to it.
 
 ### 📌 Pinning
 
@@ -422,15 +422,13 @@ Update-time still checks a reference marked `# update-time: ignore[vulnerable]`,
 WARNING Redundant update-time directive ignore[vulnerable] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability
 ```
 
-Run with `--log-level DEBUG` to see what the marker silenced. To silence one advisory rather than every one, name it in the marker (see [Silencing specific vulnerabilities](#silencing-specific-vulnerabilities)). To skip the check altogether, mark the reference `# update-time: ignore`, which holds every check back and queries no source. Update-time still checks a reference frozen with `# update-time: ignore[update]`, so a pin you deliberately hold back keeps telling you its version is vulnerable.
+Run with `--log-level DEBUG` to see what the marker silenced. To silence one advisory rather than every one, name it in the marker (see [Silencing specific vulnerabilities](#silencing-specific-vulnerabilities)). To skip the check altogether, mark the reference `# update-time: ignore`, which holds every check back. Update-time still checks a reference frozen with `# update-time: ignore[update]`, so a pin you deliberately hold back keeps telling you its version is vulnerable.
 
-Update-time checks the version the run leaves the reference on. So it warns about a vulnerability the run updated into, and not about one the run updated away from. It checks that version alone. Auditing the transitive dependencies in a lock file is what `uv audit`, `pip-audit`, and `npm audit` are for.
+Update-time checks the version the run leaves the reference on. So it warns about a vulnerability the run updated into, and not about one the run updated away from. It does not check transitive dependencies. Auditing the transitive dependencies in a lock file is what `uv audit`, `pip-audit`, and `npm audit` are for.
 
 To silence one advisory across the whole scan, rather than on the one reference that carries a marker, pass `--ignore-vulnerability`. The option takes a comma-separated list: `--ignore-vulnerability GHSA-2gwj-7jmv-h26r,CVE-2021-31542`. It names an advisory the way a marker does, so any identifier the vulnerability is known by will do. Update-time logs what the option silenced at `DEBUG`. Where a reference's own marker silences the same advisory, the marker is the one reported.
 
-Update-time warns about every risk level by default. To hear only about the more severe ones, raise the threshold with `--vulnerability-level`, for example `--vulnerability-level high`. Update-time warns about a vulnerability whose risk level it cannot read, whatever the threshold is. Leaving the vulnerabilities nobody rated out of the warnings would hide exactly the ones nobody looked at.
-
-A query sends the pin's package name and version to OSV. Pass `--vulnerability-level none` to switch the check off, which stops those requests altogether. Update-time still queries OSV about a reference that sets a level of its own (see [Setting a risk level](#setting-a-risk-level)).
+Update-time warns about every risk level by default. To hear only about the more severe ones, raise the threshold with `--vulnerability-level`, for example `--vulnerability-level high`. Update-time warns about a vulnerability whose risk level it cannot read, whatever the threshold is. Pass `--vulnerability-level none` to switch the check off.
 
 Which dependencies are checked follows from what OSV can match a pinned version against:
 
@@ -471,15 +469,11 @@ Which dependencies are checked follows from where an archival declaration can be
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | whether GitHub reports the hook's repository as archived |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | none: the npm registry publishes no archival signal |
 
-Switching the check off also stops Update-time asking GitHub for the repository metadata of each action and hook, which it reads for this check alone. It still fetches that repository's releases and tags, which it needs for other reasons. On PyPI the archival answer rides on a request another check makes anyway, so there switching the check off saves nothing while that check still runs.
-
-`--stale-after 0` does not switch the archival check off. The two checks share one lookup, so a run with the staleness check off still asks the sources above about the projects they report on. Switch both off and that lookup is skipped. A reference the run updates keeps its project all the same, read from what the update itself fetched. A marker silences the warning rather than the query, and only a bare `# update-time: ignore` skips both.
-
 ## 🎛️ Controlling updates and warnings per reference
 
 Markers of the form `# update-time: <directive>` let you steer what happens to an individual reference. You can hold a reference back with one. You can also bound how far it may move, or opt it into behaviour that is off by default. A marker is a comment wherever the file can hold one, and a field where it cannot (see [Where to put a marker](#where-to-put-a-marker)).
 
-To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. Update-time then leaves the reference untouched, and queries no registry or source for it. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
+To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
 
 > [!WARNING]
 > As long as Update-time is alpha (version `0.0.X`), marker syntax and semantics are subject to change without deprecation notice or migration support.
@@ -637,7 +631,7 @@ The reference keeps updating, and Update-time still warns about every other advi
 django==3.2.0  # update-time: ignore[vulnerable<high] (we act on high and worse for this dependency)
 ```
 
-The level applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--vulnerability-level`, `--vulnerability-level none` included. So a run that switches the check off globally still queries OSV about a reference with its own level, and still warns about it. As with the global level, Update-time warns about a vulnerability whose risk level it cannot read, whatever level is in force. Leaving the vulnerabilities nobody rated out of the warnings would hide exactly the ones nobody looked at.
+The level applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--vulnerability-level`, `--vulnerability-level none` included. As with the global level, Update-time warns about a vulnerability whose risk level it cannot read, whatever level is in force.
 
 When none of the version's vulnerabilities falls below the level, Update-time reports the marker as holding nothing back. A level that silences nothing is one the reference no longer needs:
 
@@ -915,25 +909,25 @@ For inline script metadata, Update-time also applies the cooldown through uv's `
 
 #### Stale dependencies
 
-Update-time checks every Python pin against the newest release of its package on PyPI, whichever of the three file kinds declares it. It reports the stale ones. It checks a requirement that pins no exact version as well, wherever the file declares it. The package name alone is enough to find the newest release.
+Update-time checks each pin a Python file declares against the newest release of its package on PyPI and reports the stale ones. It checks a requirement that pins no exact version as well, wherever the file declares it. The package name alone is enough to find the newest release.
 
 Update-time skips two kinds, because PyPI serves no release to measure them against. The first points at a URL or a git repository. The second is one uv resolves through a `[tool.uv] sources` entry, such as a path or a workspace member. Update-time skips a package published only as `.egg` files too, since PyPI no longer accepts files named that way.
 
 #### Yanked dependencies
 
-Update-time checks each exact pin a Python file declares against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI. It checks the pin whichever of the three file kinds it sits in, and skips a yanked release when picking a new version. The version checked is the one the file holds when the run ends. So Update-time warns about a pin uv held back, although PyPI has a newer release.
+Update-time checks each exact pin a Python file declares against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI. It skips a yanked release when picking a new version. The version checked is the one the file holds when the run ends.
 
 Update-time reports a `requirements.txt` pin the run leaves on a yanked release, unless an `ignore[yanked]` marker silences that warning. It reports a `pyproject.toml` or inline script metadata pin left on a yanked release too, but that pin takes no marker to silence the warning. It does not check a dependency those files declare without an exact pin. A yank is about the version a reference is left on, and such a declaration names none. It skips a pin uv resolves through a `[tool.uv] sources` entry as well, since PyPI serves no release for it.
 
 #### Vulnerable dependencies
 
-Update-time checks each exact pin a Python file declares against OSV's PyPI advisories, whichever of the three file kinds it sits in. A compiled or hash-pinned `requirements.txt` is the exception: Update-time skips it whole, so its pins are neither updated nor checked. It does not check the transitive dependencies those pins require. Reading a resolved dependency tree is what `uv audit` and `pip-audit` are for.
+Update-time checks each exact pin a Python file declares against OSV's PyPI advisories. It does not check the transitive dependencies those pins require. Reading a resolved dependency tree is what `uv audit` and `pip-audit` are for.
 
 Update-time reports a vulnerable `requirements.txt` pin, unless an `ignore[vulnerable]` marker silences that warning. It reports a vulnerable `pyproject.toml` or inline script metadata pin too, but that pin takes no marker to silence the warning. It does not check a dependency those files declare without an exact pin either. An advisory is matched against a version, and such a declaration names none. It skips a pin uv resolves through a `[tool.uv] sources` entry as well, since PyPI serves no release for it.
 
 #### Archived dependencies
 
-PyPI publishes a project status. Update-time reads it for each dependency a Python file declares, whether or not the dependency pins an exact version. Archival is a fact about the project, so the package's name alone is enough to find that status. A compiled or hash-pinned `requirements.txt` is the exception: Update-time skips it whole, so its requirements are neither updated nor checked.
+PyPI publishes a project status. Update-time reads it for each dependency a Python file declares, whether or not the dependency pins an exact version. Archival is a fact about the project, so the package's name alone is enough to find that status.
 
 Update-time skips two kinds of dependency as well, since neither names a PyPI project to read a status from. The first points at a URL or a git repository. The second is one uv resolves through a `[tool.uv] sources` entry, such as a path or a workspace member. Update-time reports a `requirements.txt` requirement whose project is archived, unless an `ignore[archived]` marker silences that warning. It reports a `pyproject.toml` or inline script metadata dependency too, but that dependency takes no marker to silence the warning.
 
