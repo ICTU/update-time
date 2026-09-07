@@ -1,3 +1,4 @@
+__call__  # unused function (src/update_time/domain/bound.py:25)
 __call__  # unused function (src/update_time/domain/dependency.py:21)
 tag_last_pushed  # unused variable (src/update_time/sources/docker_hub.py:59)
 download_url  # unused variable (src/update_time/sources/github.py:87)
