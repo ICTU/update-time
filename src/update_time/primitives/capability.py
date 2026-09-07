@@ -20,10 +20,11 @@ if TYPE_CHECKING:
 
         def __call__[Function](self, function: Function, when: _Answers = ...) -> Function: ...
 
-    class _HasCapability(Protocol):
-        """Tells whether a function was registered as having the capability for a subject."""
+    class HasCapability(Protocol):
+        """Reads back whether a function has the capability."""
 
-        def __call__(self, function: object, subject: object) -> bool: ...
+        def __call__(self, function: object, subject: object) -> bool:
+            """Return whether the function was registered as having the capability for the subject."""
 
 
 def _every_subject(_subject: object) -> bool:
@@ -31,8 +32,8 @@ def _every_subject(_subject: object) -> bool:
     return True
 
 
-def capability(capability_name: str) -> tuple[_Register, _HasCapability]:
-    """Return two functions: one registers a function as having this capability, the other tells whether it has it.
+def capability(capability_name: str) -> tuple[_Register, HasCapability]:
+    """Return two functions: one registers a function as having this capability, the other reads that registration back.
 
     Only those two know the attribute they use, and each capability names its own, so two cannot collide.
     """

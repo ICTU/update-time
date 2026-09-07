@@ -243,7 +243,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(marker + self.reference(f"python:3.15@{DIGEST2}"))
         self.assert_redundant_directive_logged(
-            Reason.NOTHING_FLOATING, "python", Location(mock_file, 2), "allow[floating-pin]"
+            Reason.PIN_NOT_FLOATING, "python", Location(mock_file, 2), "allow[floating-pin]"
         )
 
     def test_floating_pin_marker_on_a_frozen_reference_is_reported_as_redundant(self) -> None:
@@ -395,7 +395,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
             self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14.7@{DIGEST2}"))
         drifted = DriftedPin("python", "latest", Location(mock_file, 1), DIGEST1, new_sha=DIGEST2)
-        self.assert_adopted_digest_drift_logged_among_others(drifted)
+        self.assert_adopted_digest_drift_logged(drifted, among_others=True)
         self.assert_pinned_logged("python", "3.14.7", DIGEST2, Location(mock_file, 1))
         self.assert_no_warnings_logged()
 

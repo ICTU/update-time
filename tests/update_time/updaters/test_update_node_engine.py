@@ -295,11 +295,10 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         """Test that a bound in the `update-time` field keeps a base image version it excludes from being adopted."""
         mock_package_json = self.update_engine(mock_glob, _package_json(directives="allow[update<20]"))
         mock_package_json.write_text.assert_not_called()
-        self.assert_logged_among_others(
-            Logger._MESSAGE_RECOGNISED_MARKER,
-            directives=Marker(version_bound=bound(Verb.ALLOW, "update<20"), raw="allow[update<20]"),
-            dependency="node",
-            location=Location(mock_package_json, 3),
+        self.assert_recognised_marker_logged(
+            "node",
+            Location(mock_package_json, 3),
+            Marker(version_bound=bound(Verb.ALLOW, "update<20")),
         )
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -333,12 +332,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         """Test that an item Update-time cannot read is warned about and holds the engine's update back."""
         mock_package_json = self.update_engine(mock_glob, _package_json(directives="ignore[updaet]"))
         mock_package_json.write_text.assert_not_called()
-        self.assert_logged(
-            Logger._MESSAGE_INVALID_BRACKET_ITEM,
-            bracket_item="updaet",
-            dependency="node",
-            location=Location(mock_package_json, 3),
-        )
+        self.assert_invalid_bracket_item_logged("node", Location(mock_package_json, 3), "updaet")
         self.assert_no_new_version_logged()
 
     @kills(
@@ -379,11 +373,8 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
             with self.subTest(case=case):
                 mock_package_json = self.update_engine(mock_glob, _package_json(field=field))
                 mock_package_json.write_text.assert_not_called()
-                self.assert_logged(
-                    Logger._MESSAGE_INVALID_BRACKET_ITEM,
-                    bracket_item="update-time.engines.node",
-                    dependency="node",
-                    location=Location(mock_package_json, 3),
+                self.assert_invalid_bracket_item_logged(
+                    "node", Location(mock_package_json, 3), "update-time.engines.node"
                 )
                 self.assert_no_new_version_logged()
 

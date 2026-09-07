@@ -54,16 +54,18 @@ class DriftedPin(Reference):
     new_sha: str
 
 
-# The contract a delegating updater binds and a file format implements, reading back the references a file declares.
-type ReferenceResolver[FileT] = Callable[[FileT], Iterable[ResolvedReference]]
+# What a delegating updater hands its checks: a function asking its source about the references of one file.
+type ReferenceResolver[ReferenceT: Reference, ResolvedT: ResolvedReference] = Callable[
+    [Iterable[ReferenceT]], Iterable[ResolvedT]
+]
 
 
-def resolved_references[FileT](
-    files: Iterable[FileT], resolve: ReferenceResolver[FileT]
-) -> Iterator[ResolvedReference]:
-    """Yield each reference the resolver reads back from each of the files."""
-    for file in files:
-        yield from resolve(file)
+def resolved_references[ReferenceT: Reference, ResolvedT: ResolvedReference](
+    declared: Iterable[Iterable[ReferenceT]], resolve: ReferenceResolver[ReferenceT, ResolvedT]
+) -> Iterator[ResolvedT]:
+    """Yield what the resolver answers for the references of each file."""
+    for references in declared:
+        yield from resolve(references)
 
 
 def hash_drifted(resolved: str, pinned: str) -> bool:

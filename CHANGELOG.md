@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Switch the archival check off for the whole run with `--ignore-archived`. Closes [#323](https://github.com/ICTU/update-time/issues/323).
+- Steer a `pyproject.toml` or inline script metadata dependency with an `# update-time:` marker, and warn about a marker item that cannot be read, whose comparison runs the wrong way, or that is redundant. Closes [#256](https://github.com/ICTU/update-time/issues/256).
 
 ### Fixed
 

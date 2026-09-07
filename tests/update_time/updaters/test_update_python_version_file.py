@@ -7,7 +7,6 @@ from unittest.mock import Mock, patch
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion
-from update_time.io.log import Logger
 from update_time.markers.directive import Reason
 from update_time.primitives.location import Location
 from update_time.updaters import update_python_version_file
@@ -203,12 +202,7 @@ class UpdatePythonVersionFilesTest(_VersionFileTestCase):
         version_file = self.update_version_file(mock_glob, "# update-time: allow[update<<3.13]\n3.12.6\n")
         version_file.write_text.assert_not_called()
         # The marker sits on line 1 and the entry it governs on line 2; the warning points at the entry's line.
-        self.assert_logged(
-            Logger._MESSAGE_INVALID_BRACKET_ITEM,
-            bracket_item="<<3.13",
-            dependency="python",
-            location=Location(version_file, 2),
-        )
+        self.assert_invalid_bracket_item_logged("python", Location(version_file, 2), "<<3.13")
         self.assert_no_new_version_logged()
 
 

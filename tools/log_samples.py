@@ -118,7 +118,7 @@ def _redundant_directives(
     )
     redundant_stale_source = capture.take()
 
-    log.redundant_directive(reference("python", dockerfile), "allow[floating-pin]", Reason.NOTHING_FLOATING)
+    log.redundant_directive(reference("python", dockerfile), "allow[floating-pin]", Reason.PIN_NOT_FLOATING)
     redundant_floating_pin = capture.take()
 
     log.redundant_directive(reference("python", dockerfile), "allow[floating-pin]", Reason.UPDATE_HELD_BACK)
@@ -145,6 +145,25 @@ def _invalid_items(log: Logger, capture: _Capture, dockerfile: Location) -> dict
 
     log.invalid_bracket_item("node", "update-time.engines.node", Location(Path("package.json"), 3))
     return {"@@UNRECOGNISED_ITEM_WARNING@@": unrecognised, "@@INVALID_FIELD_WARNING@@": capture.take()}
+
+
+def _inverted_items(log: Logger, capture: _Capture, requirements: Location, dockerfile: Location) -> dict[str, str]:
+    """Log a sample per warning about a comparison item running the wrong way, paired with the block's placeholder."""
+    stale_marker = Marker(stale=Threshold(inverted_item="stale>=90"))
+    log.report_inverted_items(reference("python", dockerfile), stale_marker)
+    stale = capture.take()
+
+    cooldown_marker = Marker(cooldown=Threshold(inverted_item="cooldown>=30"))
+    log.report_inverted_items(reference("python", dockerfile), cooldown_marker)
+    cooldown = capture.take()
+
+    vulnerable_marker = Marker(vulnerable=Threshold(inverted_item="vulnerable>=high"))
+    log.report_inverted_items(reference("django", requirements), vulnerable_marker)
+    return {
+        "@@INVERTED_STALE_WARNING@@": stale,
+        "@@INVERTED_COOLDOWN_WARNING@@": cooldown,
+        "@@INVERTED_VULNERABLE_WARNING@@": capture.take(),
+    }
 
 
 def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
@@ -184,14 +203,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     invalid = _invalid_items(log, capture, dockerfile)
 
-    log.inverted_stale_item(reference("python", dockerfile), "stale>=90")
-    inverted = capture.take()
-
-    log.inverted_cooldown_item(reference("python", dockerfile), "cooldown>=30")
-    inverted_cooldown = capture.take()
-
-    log.inverted_vulnerable_item(reference("django", requirements), "vulnerable>=high")
-    inverted_vulnerable = capture.take()
+    inverted = _inverted_items(log, capture, requirements, dockerfile)
 
     pinned_tag = DependencyVersion("3.14.7", sha=_ELIDED_DIGEST)
     log.pinned(reference("python", Location(Path("Dockerfile"), 1)), pinned_tag)
@@ -232,9 +244,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@ARCHIVED_WARNING@@": archival,
         **redundant,
         **invalid,
-        "@@INVERTED_STALE_WARNING@@": inverted,
-        "@@INVERTED_COOLDOWN_WARNING@@": inverted_cooldown,
-        "@@INVERTED_VULNERABLE_WARNING@@": inverted_vulnerable,
+        **inverted,
         "@@RECOGNISED_MARKER@@": recognised,
         "@@HELD_BACK_MARKER@@": capture.take(),
     }

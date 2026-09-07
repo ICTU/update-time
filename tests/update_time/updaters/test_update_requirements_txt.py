@@ -2,8 +2,6 @@
 
 import re
 import unittest
-from dataclasses import replace
-from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, MagicMock, Mock, patch
 
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
@@ -39,24 +37,23 @@ from tests.update_time.sources.test_pypi import (
     A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED,
     NULL_PROJECT_URLS_READ_AS_A_DICT,
 )
-from tests.update_time.updaters.helpers import (
+from tests.update_time.updaters.fixtures import (
     DJANGO_ADVISORY,
     DJANGO_VULNERABILITY,
+    OTHER_DJANGO_ADVISORY,
+    OTHER_DJANGO_VULNERABILITY,
+)
+from tests.update_time.updaters.helpers import (
     dated_pypi_index,
+    days_ago,
     no_vulnerabilities,
     osv,
-    osv_vulnerability,
+    osv_queries,
     unreachable_osv,
     vulnerability_check_disabled,
 )
 
 _PUBLISHED = "1.1, published: 2020-01-01 00:00"  # How PYPI_OLD_UPLOAD is rendered in the log.
-
-# A second advisory affecting those same pins, for the tests that need OSV to report two. Rated moderate, so a `high`
-# risk level in force filters it out where the critical one above survives.
-_OTHER_ADVISORY, _OTHER_VULNERABILITY = osv_vulnerability(
-    "GHSA-1111-1111-1111", "Denial of service in Django", "moderate"
-)
 
 # The endpoint the pins of one file are looked up at, spelled out here and pinned to the source below.
 _OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch"
@@ -103,10 +100,6 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def stale_pypi(self, *versions: str, upload_time: str = PYPI_OLD_UPLOAD, archived: bool = False) -> list[Mock]:
         """Return a mock Index API response listing the versions and a distribution file with the given upload time."""
         return [dated_pypi_index(*versions, upload_time=upload_time, archived=archived)]
-
-    def days_ago(self, days: int) -> str:
-        """Return the upload time of a distribution file published the given number of days ago."""
-        return (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
     def test_no_change(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin already on the latest version is left unchanged."""
@@ -208,7 +201,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_recent_loose_requirement_not_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a loose requirement whose newest release is recent is not warned about as stale."""
         self.discovered_requirements_txt(mock_rglob, "humanize>=4\n")
-        recent = self.days_ago(0)
+        recent = days_ago(0)
         mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=recent)
         update_requirements_txts()
         self.assertEqual(self.queried_packages(mock_get), ["humanize"])
@@ -217,10 +210,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     @kills(
         Mutation(
             resolve_module,
-            "    log.report_staleness(resolved, marker, threshold)\n    log.report_archival(resolved, marker)",
-            "    log.report_staleness(resolved, marker, threshold)\n"
-            "    if threshold:\n"
-            "        log.report_archival(resolved, marker)",
+            "    log.report_archival(resolved, resolved.marker)",
+            "    if staleness_threshold(resolved.marker):\n        log.report_archival(resolved, resolved.marker)",
             "the archival check sits behind the staleness gate, so switching staleness off silences archival too",
         )
     )
@@ -249,7 +240,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """
         contents = "humanize>=4  # update-time: ignore[stale<90]\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
-        published = self.days_ago(100)
+        published = days_ago(100)
         mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=published)
         with staleness_disabled:
             update_requirements_txts()
@@ -350,12 +341,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
                 mock_get.side_effect = self.stale_pypi("4.15.0")
                 update_requirements_txts()
-                self.assert_logged_among_others(
-                    Logger._MESSAGE_RECOGNISED_MARKER,
-                    directives=replace(marker, raw=directive),
-                    dependency="humanize",
-                    location=Location(requirements_txt, 1),
-                )
+                self.assert_recognised_marker_logged("humanize", Location(requirements_txt, 1), marker)
 
     def test_a_cooldown_on_a_loose_requirement_is_redundant(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a cooldown on a requirement that pins no version is reported, whichever verb set it."""
@@ -465,7 +451,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """
         contents = "humanize>=4  # update-time: ignore[stale<90]\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
-        published = self.days_ago(100)
+        published = days_ago(100)
         mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=published)
         update_requirements_txts()
         self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
@@ -494,7 +480,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             with self.subTest(item=item):
                 contents = f"humanize>=4  # update-time: ignore[{item}]\n"
                 requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
-                mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=self.days_ago(100))
+                mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=days_ago(100))
                 update_requirements_txts()
                 self.assert_logged(message, item=item, dependency="humanize", location=Location(requirements_txt, 1))
 
@@ -504,12 +490,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         mock_get.side_effect = self.stale_pypi("4.15.0")
         update_requirements_txts()
-        self.assert_logged_among_others(
-            Logger._MESSAGE_INVALID_BRACKET_ITEM,
-            bracket_item="stlae",
-            dependency="humanize",
-            location=Location(requirements_txt, 1),
-        )
+        self.assert_invalid_bracket_item_logged("humanize", Location(requirements_txt, 1), "stlae", among_others=True)
         self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1), among_others=True)
 
     def test_a_readable_item_beside_an_unreadable_one_still_acts(self, mock_rglob: Mock, mock_get: Mock):
@@ -518,12 +499,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         mock_get.side_effect = self.stale_pypi("4.15.0")
         update_requirements_txts()
-        self.assert_logged(  # the unreadable item is the run's only warning, so the staleness warning was held back
-            Logger._MESSAGE_INVALID_BRACKET_ITEM,
-            bracket_item="stlae",
-            dependency="humanize",
-            location=Location(requirements_txt, 1),
-        )
+        # The unreadable item is the run's only warning, so the staleness warning was held back:
+        self.assert_invalid_bracket_item_logged("humanize", Location(requirements_txt, 1), "stlae")
         self.assert_ignored_staleness_logged("humanize", Location(requirements_txt, 1))
 
     def test_yanked_dependency_warned(self, mock_rglob: Mock, mock_get: Mock):
@@ -615,7 +592,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that of the advisories affecting a pin, only those at or above the level in force are warned about."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "django==3.2.0\n")
         mock_get.side_effect = self.pypi("3.2.0")
-        with osv(DJANGO_ADVISORY, _OTHER_ADVISORY), patch_environ({VULNERABILITY_LEVEL.name: "high"}):
+        with osv(DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY), patch_environ({VULNERABILITY_LEVEL.name: "high"}):
             update_requirements_txts()
         self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(requirements_txt, 1))
 
@@ -624,7 +601,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         directive = "ignore[vulnerable<high]"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directive}\n")
         mock_get.side_effect = self.pypi("3.2.0", "3.3.0", bump=True)
-        with osv(DJANGO_ADVISORY, _OTHER_ADVISORY):
+        with osv(DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY):
             update_requirements_txts()
         requirements_txt.write_text.assert_called_once_with(f"django==3.3.0  # update-time: {directive}\n")
         self.assert_vulnerable_dependency_logged("django", "3.3.0", DJANGO_VULNERABILITY, Location(requirements_txt, 1))
@@ -653,11 +630,11 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         contents = f"django==3.2.0  # update-time: ignore[{item}]\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         mock_get.side_effect = self.pypi("3.2.0")
-        with osv(_OTHER_ADVISORY):
+        with osv(OTHER_DJANGO_ADVISORY):
             update_requirements_txts()
         self.assert_inverted_vulnerable_item_logged("django", item, Location(requirements_txt, 1))
         self.assert_vulnerable_dependency_logged(
-            "django", "3.2.0", _OTHER_VULNERABILITY, Location(requirements_txt, 1), among_others=True
+            "django", "3.2.0", OTHER_DJANGO_VULNERABILITY, Location(requirements_txt, 1), among_others=True
         )
 
     def test_the_markers_risk_level_survives_the_check_being_switched_off(self, mock_rglob: Mock, mock_get: Mock):
@@ -665,10 +642,9 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         contents = "django==3.2.0  # update-time: ignore[vulnerable<high]\nflask==1.0\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         mock_get.side_effect = [pypi_index("3.2.0"), pypi_index("1.0")]
-        with osv(DJANGO_ADVISORY, _OTHER_ADVISORY) as mock_post, vulnerability_check_disabled:
+        with osv(DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY) as mock_post, vulnerability_check_disabled:
             update_requirements_txts()
-        queries = [{"package": {"name": "django", "ecosystem": "PyPI"}, "version": "3.2.0"}]
-        mock_post.assert_any_call(_OSV_BATCH_URL, timeout=ANY, json={"queries": queries})
+        mock_post.assert_any_call(_OSV_BATCH_URL, timeout=ANY, json=osv_queries(("django", "3.2.0")))
         self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(requirements_txt, 1))
 
     def test_clean_pins_cost_one_osv_request(self, mock_rglob: Mock, mock_get: Mock):
@@ -677,17 +653,14 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = [pypi_index("3.2.0"), pypi_index("1.0")]
         with osv() as mock_post:
             update_requirements_txts()
-        queries = [
-            {"package": {"name": "django", "ecosystem": "PyPI"}, "version": "3.2.0"},
-            {"package": {"name": "flask", "ecosystem": "PyPI"}, "version": "1.0"},
-        ]
-        mock_post.assert_called_once_with(_OSV_BATCH_URL, timeout=ANY, json={"queries": queries})
+        queries = osv_queries(("django", "3.2.0"), ("flask", "1.0"))
+        mock_post.assert_called_once_with(_OSV_BATCH_URL, timeout=ANY, json=queries)
         self.assert_no_warnings_logged()
 
     def test_a_requirement_pinning_a_range_queries_no_vulnerabilities(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a requirement pinning a range is looked up at PyPI but not at OSV, which matches a version."""
         self.discovered_requirements_txt(mock_rglob, "django==3.2.*\n")
-        mock_get.side_effect = self.stale_pypi("3.2.0", upload_time=self.days_ago(0))
+        mock_get.side_effect = self.stale_pypi("3.2.0", upload_time=days_ago(0))
         with osv(DJANGO_ADVISORY) as mock_post:
             update_requirements_txts()
         mock_post.assert_not_called()
@@ -719,7 +692,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that a marker whose only advisory is below the level in force is reported neither way."""
         self.discovered_requirements_txt(mock_rglob, "django==3.2.0  # update-time: ignore[stale] ignore[vulnerable]\n")
         mock_get.side_effect = self.pypi("3.2.0")
-        with osv(_OTHER_ADVISORY), patch_environ({VULNERABILITY_LEVEL.name: "high"}):
+        with osv(OTHER_DJANGO_ADVISORY), patch_environ({VULNERABILITY_LEVEL.name: "high"}):
             update_requirements_txts()
         self.assert_no_warnings_logged()
         self.assert_no_ignored_vulnerability_logged()
@@ -809,9 +782,11 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         directive = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directive}\n")
         mock_get.side_effect = self.pypi("3.2.0")
-        with osv(DJANGO_ADVISORY, _OTHER_ADVISORY):
+        with osv(DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY):
             update_requirements_txts()
-        self.assert_vulnerable_dependency_logged("django", "3.2.0", _OTHER_VULNERABILITY, Location(requirements_txt, 1))
+        self.assert_vulnerable_dependency_logged(
+            "django", "3.2.0", OTHER_DJANGO_VULNERABILITY, Location(requirements_txt, 1)
+        )
         self.assert_ignored_vulnerability_logged("django", Location(requirements_txt, 1), directive)
 
     def test_a_redundant_advisory_names_its_own_item_alone(self, mock_rglob: Mock, mock_get: Mock):
@@ -820,7 +795,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         contents = f"django==3.2.0  # update-time: {advisory} allow[vulnerable>=high]\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         mock_get.side_effect = self.pypi("3.2.0")
-        with osv(_OTHER_ADVISORY):  # A moderate vulnerability the advisory item does not name.
+        with osv(OTHER_DJANGO_ADVISORY):  # A moderate vulnerability the advisory item does not name.
             update_requirements_txts()
         self.assert_redundant_vulnerable_advisory_logged("django", "3.2.0", Location(requirements_txt, 1), advisory)
         # The level silences the moderate vulnerability, so it is not reported as holding nothing back itself.
@@ -835,10 +810,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         with osv():  # No vulnerability, so all three forms hold nothing back.
             update_requirements_txts()
         location = Location(requirements_txt, 1)
-        # The scope's own helper asserts it was the only warning, which the two forms beside it rule out here.
-        self.assert_logged_among_others(
-            Logger._MESSAGE_REDUNDANT_VULNERABLE_SCOPE,
-            **self._redundant_suppression_fields("django", "3.2.0", location, "ignore[vulnerable]"),
+        self.assert_redundant_vulnerable_scope_logged(
+            "django", "3.2.0", location, "ignore[vulnerable]", among_others=True
         )
         self.assert_redundant_vulnerable_advisory_logged("django", "3.2.0", location, advisory)
         self.assert_redundant_vulnerable_level_logged("django", "3.2.0", "high", location, "ignore[vulnerable<high]")
@@ -864,11 +837,11 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         directive = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directive}\n")
         mock_get.side_effect = self.pypi("3.2.0")
-        with osv(_OTHER_ADVISORY):
+        with osv(OTHER_DJANGO_ADVISORY):
             update_requirements_txts()
         self.assert_redundant_vulnerable_advisory_logged("django", "3.2.0", Location(requirements_txt, 1), directive)
         self.assert_vulnerable_dependency_logged(
-            "django", "3.2.0", _OTHER_VULNERABILITY, Location(requirements_txt, 1), among_others=True
+            "django", "3.2.0", OTHER_DJANGO_VULNERABILITY, Location(requirements_txt, 1), among_others=True
         )
 
     def test_globally_ignored_advisory_silences_the_warning(self, mock_rglob: Mock, mock_get: Mock):
@@ -896,7 +869,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_recent_dependency_not_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin whose newest release is recent is not warned about as stale."""
         self.discovered_requirements_txt(mock_rglob, "humanize==4.15.0\n")
-        recent = self.days_ago(0)
+        recent = days_ago(0)
         mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=recent)
         update_requirements_txts()
         self.assert_no_warnings_logged()
@@ -981,7 +954,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_held_back_by_cooldown(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a newer version published within the cooldown period is not picked up."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "flask==1.0\n")
-        recent = self.days_ago(0)
+        recent = days_ago(0)
         mock_get.side_effect = self.pypi("1.0", "1.1", bump=True, upload_time=recent)
         update_requirements_txts()
         requirements_txt.write_text.assert_not_called()

@@ -19,8 +19,10 @@ if TYPE_CHECKING:
 # when DOCKER_HUB_USERNAME/DOCKER_HUB_TOKEN are set, so the image updater tests never make a real network call.
 mock_docker_hub_auth = patch("requests.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec
 
-# A distribution upload time inside every window, so the release it dates is neither stale nor past its cooldown.
-PYPI_RECENT_UPLOAD = datetime.datetime.now(datetime.UTC).isoformat()
+
+def days_ago(days: int) -> str:
+    """Return the upload time of a distribution file published the given number of days ago."""
+    return (datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days)).isoformat()
 
 
 def dated_pypi_index(*versions: str, upload_time: str = PYPI_OLD_UPLOAD, archived: bool | str = False) -> Mock:
@@ -38,9 +40,10 @@ def osv_vulnerability(advisory: str, summary: str, level: str) -> tuple[dict[str
     return osv_advisory(advisory, summary, level.upper()), vulnerability(advisory, summary, level)
 
 
-# The advisory the updater tests pin django to a vulnerable version for, and what Update-time reads it as. Shared,
-# since the requirements.txt, pyproject.toml, and inline-script tests all check the same pin against the same answer.
-DJANGO_ADVISORY, DJANGO_VULNERABILITY = osv_vulnerability("GHSA-2gwj-7jmv-h26r", "SQL Injection in Django", "critical")
+def osv_queries(*pins: tuple[str, str]) -> dict[str, object]:
+    """Return the payload OSV's batch endpoint is asked with for the pins, each a package name and its version."""
+    queries = [{"package": {"name": name, "ecosystem": "PyPI"}, "version": version} for name, version in pins]
+    return {"queries": queries}
 
 
 def osv(*advisories: dict[str, object]) -> _patch:

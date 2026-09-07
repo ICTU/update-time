@@ -28,7 +28,7 @@ from update_time.io.log import (
 )
 from update_time.markers import marker as marker_module
 from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker, Scope
+from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.primitives.location import Location
 
 from tests.mutation import Mutation, kills
@@ -387,7 +387,8 @@ class LoggerTests(TestCase):
     def test_inverted_stale_item(self, mock_log: Mock):
         """Test that a `stale` item comparing the wrong way round is warned about at warning level."""
         location = _create_location("Dockerfile", 2)
-        Logger("stale").inverted_stale_item(reference("python", location), "stale>=90")
+        marker = Marker(stale=Threshold(inverted_item="stale>=90"))
+        Logger("stale").report_inverted_items(reference("python", location), marker)
         self.assert_message(
             mock_log,
             Logger._MESSAGE_INVERTED_STALE_ITEM,
@@ -398,7 +399,8 @@ class LoggerTests(TestCase):
     def test_inverted_cooldown_item(self, mock_log: Mock):
         """Test that a `cooldown` item comparing the wrong way round is warned about at warning level."""
         location = _create_location("Dockerfile", 2)
-        Logger("cooldown").inverted_cooldown_item(reference("python", location), "cooldown>=30")
+        marker = Marker(cooldown=Threshold(inverted_item="cooldown>=30"))
+        Logger("cooldown").report_inverted_items(reference("python", location), marker)
         self.assert_message(
             mock_log,
             Logger._MESSAGE_INVERTED_COOLDOWN_ITEM,
@@ -410,7 +412,8 @@ class LoggerTests(TestCase):
     def test_inverted_vulnerable_item(self, mock_log: Mock):
         """Test that a `vulnerable` item comparing the wrong way round is warned about at warning level."""
         location = _create_location("Dockerfile", 2)
-        Logger("vulnerable").inverted_vulnerable_item(reference("python", location), "vulnerable>=high")
+        marker = Marker(vulnerable=Threshold(inverted_item="vulnerable>=high"))
+        Logger("vulnerable").report_inverted_items(reference("python", location), marker)
         self.assert_message(
             mock_log,
             Logger._MESSAGE_INVERTED_VULNERABLE_ITEM,

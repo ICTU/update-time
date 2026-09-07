@@ -18,13 +18,15 @@ from packaging.version import Version
 import update_time
 from update_time.domain.archival import IGNORE_ARCHIVED
 from update_time.domain.dependency import ArchivedSubject, DependencyVersion, FloatingPin
-from update_time.domain.reference import Reference, ResolvedReference
+from update_time.domain.reference import Reference
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import Vulnerability
 from update_time.file_formats.pyproject_toml import Declaration
 from update_time.io.log import Logger, LogMessage, reset_changelog_suppression
 from update_time.markers.bound import parse_bound
 from update_time.markers.directive import Reason
+from update_time.markers.marker import Marker
+from update_time.markers.reference import SteeredResolvedReference
 from update_time.primitives.location import Location
 
 from tests.helpers import mock_response, patch_environ
@@ -40,12 +42,12 @@ if TYPE_CHECKING:
     from update_time.domain.reference import DriftedPin
 
 
-def declaration(dependency: str, version: str, path: Mock, line: int) -> Declaration:
+def declaration(dependency: str, version: str, path: Mock, line: int, position: int) -> Declaration:
     """Return the declaration a file makes at the line, of a dependency PyPI serves a release for.
 
     A test about a dependency PyPI serves none for states that for itself, since that is what it is about.
     """
-    return Declaration(dependency, version, Location(path, line), uv_sourced=False, direct_url=False)
+    return Declaration(dependency, version, Location(path, line), uv_sourced=False, direct_url=False, position=position)
 
 
 def module_level_assignments(tree: ast.Module) -> Iterator[tuple[list[ast.expr], ast.expr | None]]:
@@ -306,15 +308,12 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that adopting a moved tag's new commit was logged once for the file."""
         self.assert_logged(Logger._MESSAGE_ADOPTED_TAG_DRIFT, **Logger._drift_fields(drifted), cause=cause)
 
-    def assert_adopted_digest_drift_logged(self, drifted: DriftedPin, cause: object = ANY) -> None:
-        """Assert that adopting a re-pushed tag's new digest was logged once for the file."""
-        self.assert_logged(Logger._MESSAGE_ADOPTED_DIGEST_DRIFT, **Logger._drift_fields(drifted), cause=cause)
-
-    def assert_adopted_digest_drift_logged_among_others(self, drifted: DriftedPin, cause: object = ANY) -> None:
-        """Assert that adopting a re-pushed tag's new digest was logged, among the other records at its level."""
-        self.assert_logged_among_others(
-            Logger._MESSAGE_ADOPTED_DIGEST_DRIFT, **Logger._drift_fields(drifted), cause=cause
-        )
+    def assert_adopted_digest_drift_logged(
+        self, drifted: DriftedPin, cause: object = ANY, *, among_others: bool = False
+    ) -> None:
+        """Assert that adopting a re-pushed tag's new digest was logged, as the file's only record by default."""
+        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
+        assert_logged(Logger._MESSAGE_ADOPTED_DIGEST_DRIFT, **Logger._drift_fields(drifted), cause=cause)
 
     def assert_hash_mismatch_logged(
         self,
@@ -405,10 +404,17 @@ class LoggingTestCase(CacheClearingTestCase):
         return {"directive": directive, "dependency": dependency, "location": location, "version": version}
 
     def assert_redundant_vulnerable_scope_logged(
-        self, dependency: str, version: str, location: Location, directive: object = ANY
+        self,
+        dependency: str,
+        version: str,
+        location: Location,
+        directive: object = ANY,
+        *,
+        among_others: bool = False,
     ) -> None:
-        """Assert that a vulnerability scope with nothing left to hold back was warned about once for the file."""
-        self.assert_logged(
+        """Assert that a redundant `vulnerable` scope was warned about, as the file's only warning by default."""
+        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
+        assert_logged(
             Logger._MESSAGE_REDUNDANT_VULNERABLE_SCOPE,
             **self._redundant_suppression_fields(dependency, version, location, directive),
         )
@@ -464,9 +470,29 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that no path being checked for updates was logged (nothing logged at debug level)."""
         self.assertEqual(self.records(DEBUG), [])
 
-    def assert_ignored_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
-        """Assert that ignoring a reference (via an update-time: ignore directive) was logged."""
-        self.assert_last_logged(Logger._MESSAGE_IGNORED, dependency=dependency, location=location, directive=directive)
+    def assert_recognised_marker_logged(self, dependency: str, location: Location, marker: Marker) -> None:
+        """Assert that a reference's marker was reported as recognised, among the other records at its level.
+
+        A `Marker` compares without the raw text it echoes, so that the message renders it verbatim is the
+        logger's own test to pin.
+        """
+        self.assert_logged_among_others(
+            Logger._MESSAGE_RECOGNISED_MARKER, directives=marker, dependency=dependency, location=location
+        )
+
+    def assert_invalid_bracket_item_logged(
+        self, dependency: str, location: object, item: str, *, among_others: bool = False
+    ) -> None:
+        """Assert that an item the marker language cannot read was warned about, as the only warning by default."""
+        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
+        assert_logged(Logger._MESSAGE_INVALID_BRACKET_ITEM, bracket_item=item, dependency=dependency, location=location)
+
+    def assert_ignored_logged(
+        self, dependency: str, location: Location, directive: object = ANY, *, among_others: bool = False
+    ) -> None:
+        """Assert that ignoring a reference's update was logged, by default as the last record."""
+        assert_logged = self.assert_logged_among_others if among_others else self.assert_last_logged
+        assert_logged(Logger._MESSAGE_IGNORED, dependency=dependency, location=location, directive=directive)
 
     def assert_ignored_staleness_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
         """Assert that a staleness warning held back by a marker was logged, among the other records."""
@@ -546,10 +572,16 @@ def reference(dependency: str, location: Location, version: str = "") -> Referen
 
 
 def resolved_reference(
-    dependency: str, location: Location, release: DependencyVersion, version: str = ""
-) -> ResolvedReference:
-    """Return the resolved reference a check is handed: the reference at the location, and its release."""
-    return ResolvedReference(dependency, version, location, release=release)
+    dependency: str,
+    location: Location,
+    release: DependencyVersion,
+    version: str = "",
+    marker: Marker | None = None,
+) -> SteeredResolvedReference:
+    """Return the resolved reference a check is handed: the reference, its release, and its marker."""
+    return SteeredResolvedReference(
+        dependency, version, location, release=release, marker=Marker() if marker is None else marker
+    )
 
 
 def bound(verb: Verb, item: str) -> VersionBound:
@@ -570,10 +602,27 @@ staleness_disabled = patch_environ({STALE_AFTER.name: "0"})
 archival_check_disabled = patch_environ({IGNORE_ARCHIVED.name: "1"})
 
 
-def pyproject(*specs: str) -> str:
-    """Return a minimal valid pyproject.toml pinning the given dependencies, in one dependencies array."""
+def pyproject(*specs: str, marker: str = "") -> str:
+    """Return a minimal valid pyproject.toml pinning the given dependencies, in one dependencies array.
+
+    `marker` goes in an `# update-time:` comment on that array's line, so it steers every dependency the array
+    declares.
+    """
     dependencies = ", ".join(f'"{spec}"' for spec in specs)
-    return f"[project]\ndependencies = [{dependencies}]\n"
+    comment = f"  # update-time: {marker}" if marker else ""
+    return f"[project]\ndependencies = [{dependencies}]{comment}\n"
+
+
+def pyproject_per_line(*specs: str, marker: str) -> str:
+    """Return a minimal valid pyproject.toml declaring each of the given dependencies on a line of its own.
+
+    `marker` goes in an `# update-time:` comment on the first spec's line, so it steers that declaration and leaves
+    the ones below it alone.
+    """
+    lines = [f'    "{spec}",' for spec in specs]
+    lines[0] += f"  # update-time: {marker}"
+    dependencies = "".join(f"{line}\n" for line in lines)
+    return f"[project]\ndependencies = [\n{dependencies}]\n"
 
 
 def script(*specs: str, requires_python: str = ">=3.11") -> str:

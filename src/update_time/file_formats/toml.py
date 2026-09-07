@@ -32,7 +32,7 @@ def parse_document(text: str) -> tomlkit.TOMLDocument | None:
     """Return the TOML parsed into a document that preserves the layout, or None when the text isn't valid TOML."""
     try:
         return tomlkit.parse(text)
-    except tomlkit.exceptions.ParseError:
+    except tomlkit.exceptions.TOMLKitError:
         return None
 
 

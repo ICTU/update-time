@@ -13,6 +13,8 @@ from update_time.markers.bound import directive as _directive
 from update_time.markers.bound import parse_bound, spell
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from update_time.domain.bound import VersionBound
     from update_time.domain.line import Line
     from update_time.primitives.location import Location
@@ -195,6 +197,24 @@ class Marker:
         """
         return scope in self.ignored_scopes
 
+    def report(
+        self, recognised: Callable[[], None], held_back: Callable[[], None], invalid: Callable[[str], None]
+    ) -> Marker:
+        """Report this marker, and return the marker to act on.
+
+        The rule every reference's marker follows, whichever updater read it, callback-driven so `markers` stays
+        free of I/O. An item that cannot be read is reported as invalid and comes back frozen, since it may have
+        been meant to hold the update back. A marker that reads whole is echoed instead, and an `ignore` naming
+        the update names the directive that held it.
+        """
+        if self.invalid_item is not None:
+            invalid(self.invalid_item)
+            return self.frozen
+        recognised()
+        if self.ignores(Scope.UPDATE):
+            held_back()
+        return self
+
     @property
     def cooldown_directive(self) -> str:
         """Return the directive that sets the cooldown, as the language spells it.
@@ -204,16 +224,24 @@ class Marker:
         return self.cooldown.directive
 
     @property
+    def version_bound_directive(self) -> str:
+        """Return the directive narrowing which versions an update may take, or nothing when the marker sets none.
+
+        The bound is named as the item the user wrote, since either verb can set one. An `ignore[update]` beside it
+        leaves it named, so a caller judging the two apart can name each.
+        """
+        return "" if self.version_bound == NO_BOUND else spell(self.version_bound)
+
+    @property
     def bound_directive(self) -> str:
         """Return the directive bounding the update, as the language spells it, or nothing when the marker sets none.
 
-        A bare `ignore[update]` has one spelling only, so it is spelled out; a bound is named as the item the user
-        wrote, since either verb can set one. Where a reference carries both, the bare scope is named, since it
-        holds every update back whatever the bound would admit.
+        A bare `ignore[update]` has one spelling only, so it is spelled out. Where a reference carries both, the
+        bare scope is named, since it holds every update back whatever the bound would admit.
         """
         if self.ignores(Scope.UPDATE):
             return spell(BLOCK_ALL_UPDATES)
-        return "" if self.version_bound == NO_BOUND else spell(self.version_bound)
+        return self.version_bound_directive
 
     def scope_directive(self, scope: Scope) -> str:
         """Return the directive holding the scope back, as the language spells it, or nothing when it holds it not.

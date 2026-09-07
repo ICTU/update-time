@@ -7,7 +7,6 @@ from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Archival, ArchivedSubject, DependencyVersion, Project, Release
 from update_time.domain.reference import DriftedPin
-from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_pre_commit_config import update_pre_commit_configs
 
@@ -379,4 +378,4 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         mock_get_latest_version.assert_called_once_with(
             self.HOOK, "v4.5.0", BLOCK_ALL_UPDATES, COOLDOWN.default, check_archival=True
         )
-        self.assert_logged(Logger._MESSAGE_INVALID_BRACKET_ITEM, bracket_item="@@@", dependency=self.HOOK, location=ANY)
+        self.assert_invalid_bracket_item_logged(self.HOOK, ANY, "@@@")

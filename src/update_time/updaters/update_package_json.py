@@ -4,17 +4,17 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import DependencyVersion, Project
 from update_time.domain.file_type import PACKAGE_JSON
-from update_time.domain.reference import ResolvedReference
 from update_time.file_formats import json as json_format
 from update_time.file_formats import package_json as package_json_format
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
+from update_time.markers.reference import SteeredReference, SteeredResolvedReference
 from update_time.package_managers import node
 from update_time.references.delegated import warn_about_projects
 from update_time.sources import npmjs
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
     from pathlib import Path
 
 _LOG = get_logger("package.json")
@@ -48,20 +48,27 @@ def update_package_jsons() -> None:
         else:
             manager.update_package_json(package_json)
             supported.append(package_json)
-    warn_about_projects(supported, _newest_releases, _LOG)
+    warn_about_projects([_declared_dependencies(package_json) for package_json in supported], _newest_releases, _LOG)
 
 
-def _newest_releases(package_json: Path) -> Iterable[ResolvedReference]:
-    """Yield each declared dependency the npm registry has a newest release for, at each line declaring it.
+def _declared_dependencies(package_json: Path) -> Iterator[SteeredReference]:
+    """Yield a reference to each dependency the package.json declares, at each line declaring it.
 
     The reference names no version: a `package.json` declares a range, and which version it resolves to is recorded
-    in the lock file. Staleness is measured against the package's newest release, so the range is not needed.
+    in the lock file. Staleness is measured against the package's newest release, so the range is not needed. It
+    carries no marker either, since a `package.json` dependency takes none.
     """
+    for name, locations in package_json_format.dependency_locations(package_json).items():
+        for location in locations:
+            yield SteeredReference(name, "", location)
+
+
+def _newest_releases(references: Iterable[SteeredReference]) -> Iterable[SteeredResolvedReference]:
+    """Yield each of the references the npm registry has a newest release for, carrying that release."""
     return (
-        ResolvedReference(name, "", location, release=DependencyVersion.unpinned(Project(newest=newest)))
-        for name, locations in package_json_format.dependency_locations(package_json).items()
-        for location in locations
-        if (newest := npmjs.newest_release(name)) is not None
+        SteeredResolvedReference.from_reference(reference, release=DependencyVersion.unpinned(Project(newest=newest)))
+        for reference in references
+        if (newest := npmjs.newest_release(reference.dependency)) is not None
     )
 
 

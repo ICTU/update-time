@@ -323,15 +323,15 @@ class GetChangesTest(LoggingTestCase):
 
     _NAMES_COMPARED_AS_SPELLED = Mutation(
         pypi,
-        "return normalized_name(repository) == normalized_name(package)",
+        "return normalized_python_name(repository) == normalized_python_name(package)",
         "return repository == package",
         "a package whose repository spells its name with another separator, or in another case, reports no changes",
     )
 
     _NAME_MATCHED_AS_A_SUBSTRING = Mutation(
         pypi,
-        "return normalized_name(repository) == normalized_name(package)",
-        "return normalized_name(package) in normalized_name(repository)",
+        "return normalized_python_name(repository) == normalized_python_name(package)",
+        "return normalized_python_name(package) in normalized_python_name(repository)",
         "a repository whose name merely contains the package's is read as the package's own",
     )
 

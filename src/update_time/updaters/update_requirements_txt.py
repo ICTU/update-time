@@ -15,7 +15,7 @@ from update_time.io.log import get_logger
 from update_time.markers.directive import DIRECTIVES, Reason
 from update_time.references.file import update_file
 from update_time.references.match import reference_matches
-from update_time.references.resolve import report_project_checks, warn_about_inverted_items
+from update_time.references.resolve import report_project_checks
 from update_time.references.vulnerability import warn_about_vulnerable_references
 from update_time.sources.osv import Ecosystem
 from update_time.sources.pypi import get_latest_version, project
@@ -60,7 +60,7 @@ def _warn_about_items_that_decide_nothing(marker: Marker, reference: Reference) 
     as_written = marker.as_written
     if as_written.invalid_item is not None:
         _LOG.invalid_bracket_item(reference.dependency, as_written.invalid_item, reference.location)
-    warn_about_inverted_items(as_written, reference, _LOG)
+    _LOG.report_inverted_items(reference, marker)
     if bound_directive := as_written.bound_directive:
         _LOG.redundant_directive(reference, bound_directive, Reason.NO_VERSION_TO_UPDATE)
     for directive in DIRECTIVES:

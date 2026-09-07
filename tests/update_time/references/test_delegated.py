@@ -8,6 +8,7 @@ from update_time.domain.archival import archival_reporting
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.staleness import STALE_AFTER
 from update_time.markers.marker import Marker
+from update_time.markers.reference import SteeredReference
 from update_time.primitives.location import Location
 from update_time.references.delegated import warn_about_projects
 
@@ -19,9 +20,9 @@ class WarnAboutProjectsTest(unittest.TestCase):
     """Unit tests for the project pass the delegating updaters share."""
 
     def setUp(self):
-        """Create a file, a location in it, a resolved release, and a mock logger for the tests to share."""
-        self.file = Path("pyproject.toml")
-        self.location = Location(self.file, 4)
+        """Create one file's references, a resolved release, and a mock logger for the tests to share."""
+        self.location = Location(Path("pyproject.toml"), 4)
+        self.declared = [SteeredReference("humanize", "", self.location)]
         self.release = DependencyVersion(version="1.0.0")
         self.log = Mock()
 
@@ -29,8 +30,8 @@ class WarnAboutProjectsTest(unittest.TestCase):
         """Test that each resolved reference gets both project checks, with a marker holding nothing back."""
         resolved = resolved_reference("humanize", self.location, self.release)
         projects = mock_reference_resolver(resolved)
-        warn_about_projects([self.file], projects, self.log)
-        projects.assert_called_once_with(self.file)
+        warn_about_projects([self.declared], projects, self.log)
+        projects.assert_called_once_with(self.declared)
         self.log.report_staleness.assert_called_once_with(resolved, Marker(), STALE_AFTER.default)
         self.log.report_archival.assert_called_once_with(resolved, Marker())
 
@@ -38,13 +39,13 @@ class WarnAboutProjectsTest(unittest.TestCase):
         """Test that a threshold of 0 skips the pass, so such a resolver never runs and makes no request."""
         projects = mock_reference_resolver(resolved_reference("humanize", self.location, self.release))
         with staleness_disabled:
-            warn_about_projects([self.file], projects, self.log)
+            warn_about_projects([self.declared], projects, self.log)
         projects.assert_not_called()
         self.log.report_staleness.assert_not_called()
         self.log.report_archival.assert_not_called()
 
-    def test_asks_about_the_file_the_resolver_is_about_to_read(self):
-        """Test that the resolver's archival capability is asked about the file, not about the list holding it."""
+    def test_asks_about_the_dependency_the_resolver_is_about_to_resolve(self):
+        """Test that the resolver's archival capability is asked about one dependency, not about a batch of them."""
         subjects: list[object] = []
 
         def record(subject: object) -> bool:
@@ -54,6 +55,6 @@ class WarnAboutProjectsTest(unittest.TestCase):
 
         projects = archival_reporting(mock_reference_resolver(), when=record)
         with staleness_disabled:
-            warn_about_projects([self.file], projects, self.log)
-        self.assertEqual(subjects, [self.file])
+            warn_about_projects([self.declared], projects, self.log)
+        self.assertEqual(subjects, ["humanize"])
         projects.assert_not_called()
