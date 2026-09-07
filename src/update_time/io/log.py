@@ -650,7 +650,7 @@ class Logger:
         _INVERTED_ITEM + "warns while a release is fresh and goes quiet once it is old, so it sets no threshold",
     )
 
-    def inverted_stale_item(self, reference: Reference, item: str) -> None:
+    def _inverted_stale_item(self, reference: Reference, item: str) -> None:
         """Warn that a `stale` item compares the wrong way round, so it sets no threshold."""
         self._log(self._MESSAGE_INVERTED_STALE_ITEM, **self._reference_fields(reference, item=item))
 
@@ -660,7 +660,7 @@ class Logger:
         "cooldown",
     )
 
-    def inverted_cooldown_item(self, reference: Reference, item: str) -> None:
+    def _inverted_cooldown_item(self, reference: Reference, item: str) -> None:
         """Warn that a `cooldown` item compares the wrong way round, so it sets no cooldown."""
         self._log(self._MESSAGE_INVERTED_COOLDOWN_ITEM, **self._reference_fields(reference, item=item))
 
@@ -670,9 +670,20 @@ class Logger:
         "risk level",
     )
 
-    def inverted_vulnerable_item(self, reference: Reference, item: str) -> None:
+    def _inverted_vulnerable_item(self, reference: Reference, item: str) -> None:
         """Warn that a `vulnerable` item compares the wrong way round, so it sets no risk level."""
         self._log(self._MESSAGE_INVERTED_VULNERABLE_ITEM, **self._reference_fields(reference, item=item))
+
+    def report_inverted_items(self, reference: Reference, marker: Marker) -> None:
+        """Report each of the marker's comparison items whose operator runs the wrong way, so it sets nothing."""
+        inverted_items = (
+            (marker.stale, self._inverted_stale_item),
+            (marker.cooldown, self._inverted_cooldown_item),
+            (marker.vulnerable, self._inverted_vulnerable_item),
+        )
+        for threshold, warn in inverted_items:
+            if threshold.inverted_item is not None:
+                warn(reference, threshold.inverted_item)
 
     _MESSAGE_REDUNDANT_BOUND = LogMessage(
         WARNING, "Redundant update bound %(bound)s on %(dependency)s %(version)s in %(location)s: it %(redundancy)s"

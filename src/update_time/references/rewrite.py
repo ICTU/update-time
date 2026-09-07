@@ -17,7 +17,7 @@ from update_time.domain.line import located_lines
 from update_time.domain.reference import DriftedPin, hash_drifted
 from update_time.markers.drift import report_drift
 from update_time.markers.floating import floating_pin_cause
-from update_time.markers.marker import Scope, parse_marker
+from update_time.markers.marker import parse_marker
 from update_time.primitives.text import rewrite_string
 from update_time.references.match import matched_dependency, matched_reference
 from update_time.references.resolve import latest_version
@@ -165,24 +165,20 @@ def apply_marker(  # noqa: PLR0913 — a marker named elsewhere in the file cann
 ) -> str:
     """Read a matched reference's `# update-time:` marker and update it, or leave the line unchanged when held back.
 
-    The gate every reference goes through. It reads a marker written as a comment, on the reference's own line or
-    above it, and takes one the file names elsewhere from the updater that read it, in `marker`.
-
-    An unreadable item holds the update back, in case it was meant to bound one. It silences nothing, since an
-    unreadable marker holds back what Update-time would write, never what it would tell you. The marker reaches
-    `update_line` whatever it holds back, so its bound, its `allow` directives, and what it gets wrong are still
-    acted on (see `latest_version`).
+    It reads a marker written as a comment, on the reference's own line or above it, and takes one the file names
+    elsewhere from the updater that read it, in `marker`. `Marker.report` reports that marker and decides what it
+    holds back. What that settles on reaches `update_line`, so a bound, an `allow` directive, and what the marker
+    gets wrong are still acted on (see `latest_version`).
     """
     marker = parse_marker(line) if marker is None else marker
     location = line.location
     dependency = matched_dependency(match, dependency)
-    if marker.invalid_item is not None:
-        logger.invalid_bracket_item(dependency, marker.invalid_item, location)
-        return update_line(match, location, marker.frozen)
-    logger.recognised_marker(dependency, marker, location)
-    if marker.ignores(Scope.UPDATE):
-        logger.ignored(dependency, marker, location)
-    return update_line(match, location, marker)
+    reported = marker.report(
+        lambda: logger.recognised_marker(dependency, marker, location),
+        lambda: logger.ignored(dependency, marker, location),
+        lambda item: logger.invalid_bracket_item(dependency, item, location),
+    )
+    return update_line(match, location, reported)
 
 
 def updated_lines(  # noqa: PLR0913 — a reference named elsewhere in the file cannot be read from the line

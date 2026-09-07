@@ -178,9 +178,10 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
             "  }\n}\n"
         )
         mock_package_json = self.create_package_json()
-        # Four reads: package_manager detection, the original snapshot, then the npm-normalized contents twice —
-        # once to locate the declarations, once to compare against the snapshot.
-        mock_package_json.read_text = Mock(side_effect=[original, original, normalized, normalized])
+        # Five reads: package_manager detection, the original snapshot, then the npm-normalized contents twice —
+        # once to locate the declarations, once to compare against the snapshot — and the restored contents once,
+        # when the project pass reads the dependencies to see which of them a check runs for.
+        mock_package_json.read_text = Mock(side_effect=[original, original, normalized, normalized, original])
         mock_glob.return_value = [mock_package_json]
         mock_run.side_effect = self.npm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout='{"dependencies": {}}'))
         update_package_jsons()

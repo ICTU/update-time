@@ -1,5 +1,6 @@
 """A dependency's name and versions, and what a source resolves for one."""
 
+import re
 from dataclasses import dataclass
 from datetime import UTC
 from enum import StrEnum, auto
@@ -30,6 +31,19 @@ if TYPE_CHECKING:
 # (`actions/checkout`), a PyPI or npm package, etc. A version string is an arbitrary version or tag (`3.14.2`, `v1`).
 type DependencyName = str
 type VersionString = str
+
+# The characters a Python distribution's name treats as one and the same separator (see `normalized_python_name`).
+_NAME_SEPARATORS = re.compile(r"[-_.]+")
+
+
+def normalized_python_name(name: DependencyName) -> DependencyName:
+    """Return the name as a Python package index spells it, so a name is matched however a manifest spells it.
+
+    An index names a distribution in lower case with each run of `-`, `_`, and `.` collapsed to a single `-`, as
+    https://peps.python.org/pep-0503/#normalized-names prescribes, and uv reports a package by that name. So a
+    `typing_extensions` pin and the `typing-extensions` uv reports for it are the same dependency.
+    """
+    return _NAME_SEPARATORS.sub("-", name).lower()
 
 
 # The main version of a string that is not a version on its own, such as an image tag or a tag-like pin:

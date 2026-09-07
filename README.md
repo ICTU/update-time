@@ -51,6 +51,9 @@ Update-time rewrites the files in place and logs what it did:
   - [Keeping a tag floating](#keeping-a-tag-floating)
   - [Bounding an update](#bounding-an-update)
   - [Writing a marker](#writing-a-marker)
+  - [Redundant markers](#redundant-markers)
+  - [Incorrect markers](#incorrect-markers)
+  - [Invalid markers](#invalid-markers)
 - [📖 Details per dependency type](#-details-per-dependency-type)
   - [Python dependencies](#python-dependencies)
   - [npm and pnpm dependencies](#npm-and-pnpm-dependencies)
@@ -180,7 +183,7 @@ Update-time logs at four levels. `--log-level` sets the lowest one shown, which 
 | :-: | :---- | :------------- |
 | 🔍 | `DEBUG` | what Update-time is doing: each file it checks, each directory `--exclude-path` skips, each [marker](#-controlling-updates-and-warnings-per-reference) it recognises, each changelog URL a project publishes that its source does not serve, and everything a marker or `--ignore-vulnerability` held back |
 | ℹ️ | `INFO` | what Update-time changed: a version updated, a [hash pinned](#-pinning) |
-| ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a source it could not reach, a marker that is invalid, incorrect, or redundant |
+| ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a source it could not reach, a marker that is [invalid](#invalid-markers), [incorrect](#incorrect-markers), or [redundant](#redundant-markers) |
 | ❌ | `ERROR` | failures that stop an update, such as a package manager that is not installed |
 
 ### Workflow
@@ -225,7 +228,7 @@ Update-time updates the following types of dependencies, found in the listed fil
 
 Update-time rewrites the dependency types it updates itself line by line: it picks the new version from the source and edits the reference in place. It hands the types it delegates to uv, npm, or pnpm, which resolves the versions itself. That package manager also keeps the project's lock file in step where there is one. For a pyproject.toml or inline script metadata dependency pinned with `==`, uv resolves the new version and Update-time writes it into the `pyproject.toml` or the `# /// script` block. This is needed because uv has no [command to upgrade dependencies](https://github.com/astral-sh/uv/issues/6794).
 
-Two things to note for a delegated dependency. It takes no [marker](#-controlling-updates-and-warnings-per-reference). And Update-time hands the [cooldown](#-cooldown) to the manager, which applies it per run rather than per reference.
+Update-time hands a delegated dependency's [cooldown](#-cooldown) to the manager, which applies it per run rather than per reference. So such a dependency cannot be put on a cooldown of its own.
 
 In the table above, each dependency type links to its own section under [Details per dependency type](#-details-per-dependency-type). That section covers the files and dependencies the type updates. It also covers how pinning, the cooldown, staleness, yanks, vulnerabilities, archival, and markers apply to it.
 
@@ -416,7 +419,7 @@ The risk level is the one the advisory's reviewers gave it: `low`, `moderate`, `
 
 Update-time reads an advisory carrying both a CVSS v3 and a v4 vector at its v4 score, the newer of the two assessments. It reports an advisory whose risk level it cannot read at all as `a vulnerability of unknown severity`. It reports an advisory that gives no summary, which many do not, without the quotation. That advisory's id and URL say which vulnerability it is.
 
-Update-time still checks a reference marked `# update-time: ignore[vulnerable]`, and silences what it finds rather than warning about it. The check is what can tell you the marker went stale: a suppression outlives the vulnerability it was written for. When the version has no vulnerability at all, Update-time reports the marker as holding nothing back:
+Update-time still checks a reference marked `# update-time: ignore[vulnerable]`, and silences what it finds rather than warning about it. The check is what can tell you the marker went stale: a suppression outlives the vulnerability it was written for. When the version has no vulnerability at all, Update-time reports the marker as redundant:
 
 ```console
 WARNING Redundant update-time directive ignore[vulnerable] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability
@@ -474,6 +477,8 @@ Which dependencies are checked follows from where an archival declaration can be
 Markers of the form `# update-time: <directive>` let you steer what happens to an individual reference. You can hold a reference back with one. You can also bound how far it may move, or opt it into behaviour that is off by default. A marker is a comment wherever the file can hold one, and a field where it cannot (see [Where to put a marker](#where-to-put-a-marker)).
 
 To stop Update-time from changing a specific reference, add an `# update-time: ignore` comment (all lower-case). You might do this because of a known incompatibility, a deferred migration, or to keep something reproducible. You can add a reason after the marker, for example `# update-time: ignore (pinned until the 3.13 migration)`.
+
+Update-time reports at `WARNING` what a marker gets wrong. A marker that decides nothing is [redundant](#redundant-markers), a comparison written the wrong way round is [incorrect](#incorrect-markers), and an item Update-time cannot read is [invalid](#invalid-markers). The three sections closing this chapter cover them.
 
 > [!WARNING]
 > As long as Update-time is alpha (version `0.0.X`), marker syntax and semantics are subject to change without deprecation notice or migration support.
@@ -546,25 +551,7 @@ humanize==4.15.0  # update-time: ignore[stale<90] (critical, warn early)
 FROM python:3.12
 ```
 
-The threshold applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--stale-after`, `--stale-after 0` included, so disabling the check globally still leaves a reference with its own threshold checked. To disable the check for one reference, use `ignore[stale]`.
-
-`allow` and `ignore` are complements here as elsewhere, so `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`. Inverting the operator would warn while a release is fresh, and go quiet once it is old. So neither `allow[stale<90]` nor `ignore[stale>=90]` sets a threshold. Update-time logs an inverted comparison at `WARNING` and holds nothing back, so the reference updates as usual and the global threshold applies to it:
-
-```console
-WARNING Incorrect 'stale>=90' in the update-time marker for python in Dockerfile:2: this comparison warns while a release is fresh and goes quiet once it is old, so it sets no threshold
-```
-
-A day count must be a whole number of days, so Update-time reports `ignore[stale<-5]` and `ignore[stale>=1.5]` as invalid and leaves the reference unchanged. Where a reference carries both a threshold and a bare `ignore[stale]`, the `ignore[stale]` wins and silences the warning whatever the threshold says.
-
-Staleness is measured against the publication date of a dependency's newest release. Where the reference's own source reports no such date, Update-time reports the marker as holding nothing back. It updates the reference as usual:
-
-```console
-WARNING Redundant update-time directive ignore[stale<90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source reports no publication date to measure staleness against
-```
-
-Three kinds of reference get that warning. An image on a registry other than Docker Hub does, since only Docker Hub reports a push date. So Update-time does not report the same marker on a Docker Hub image. A CircleCI machine-executor image gets the warning too, since no registry serves it. And so does a runtime version that follows the project's Dockerfile, whether it is a `.python-version` entry or a Node engine. The staleness reported for it is the base image's, not its own.
-
-Update-time reports a bare `ignore[stale]` on those references too, since it silences a warning they never get.
+The threshold applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--stale-after`, `--stale-after 0` included, so disabling the check globally still leaves a reference with its own threshold checked. To disable the check for one reference, use `ignore[stale]`. Where a reference carries both a threshold and a bare `ignore[stale]`, the `ignore[stale]` wins and silences the warning whatever the threshold says. `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`.
 
 #### Setting a cooldown period
 
@@ -579,25 +566,9 @@ some-flaky-lib==2.1.0  # update-time: ignore[cooldown<30] (burned by 2.0.0)
 FROM python:3.12
 ```
 
-The cooldown applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--cooldown`. `allow` and `ignore` are complements here as elsewhere, so `allow[cooldown>=30]` sets the same 30-day window as `ignore[cooldown<30]`. To adopt new releases for one reference as soon as they ship, write `allow[cooldown>=0]` or `ignore[cooldown<0]`. A zero-day window holds nothing back, which is what `--cooldown 0` means globally.
+The cooldown applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--cooldown`. `allow[cooldown>=30]` sets the same 30-day window as `ignore[cooldown<30]`. To adopt new releases for one reference as soon as they ship, write `allow[cooldown>=0]` or `ignore[cooldown<0]`. A zero-day window holds nothing back, which is what `--cooldown 0` means globally.
 
-Inverting the operator would adopt a release only while it is fresh, and hold it back once it is old. So neither `allow[cooldown<30]` nor `ignore[cooldown>=30]` sets a cooldown. Update-time logs an inverted comparison at `WARNING` and holds nothing back, so the reference updates as usual and the global cooldown applies to it:
-
-```console
-WARNING Incorrect 'cooldown>=30' in the update-time marker for python in Dockerfile:2: this comparison adopts a release only while it is fresh and holds it back once it is old, so it sets no cooldown
-```
-
-You can read a bare `ignore[cooldown]` in two ways: adopt at once, or never adopt at all. Rather than guess, Update-time reports it as invalid and leaves the reference unchanged. It reports `allow[cooldown]` the same way. Write `allow[cooldown>=0]` to adopt at once, and `ignore[update]` to freeze the reference. A day count must be a whole number of days, so Update-time reports `ignore[cooldown<-5]` and `ignore[cooldown<1.5]` as invalid too.
-
-The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)). Where the reference's own source reports no publication date to measure a cooldown against, Update-time reports the marker as holding nothing back. It updates the reference as usual:
-
-```console
-WARNING Redundant update-time directive ignore[cooldown<30] for python in .python-version:2: this dependency's source reports no publication date to measure a cooldown against
-```
-
-The same three kinds of reference get that warning as for staleness (see [Setting a staleness threshold](#setting-a-staleness-threshold)), and for the same reasons but one. A runtime version that follows the project's Dockerfile gets it, whether it is a `.python-version` entry or a Node engine. Update-time already applied its cooldown when it updated the base image. An image on a registry other than Docker Hub gets the warning too. Only Docker Hub reports a push date to measure a cooldown against, so Update-time does not report the same marker on a Docker Hub image. A CircleCI machine-executor image gets the warning as well, since no registry serves it.
-
-Update-time also reports a `cooldown` scope as redundant on a `requirements.txt` requirement that pins no exact version. PyPI dates its releases, but Update-time resolves no update for such a requirement, so a cooldown holds no release back.
+The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)).
 
 #### Silencing specific vulnerabilities
 
@@ -609,17 +580,9 @@ django==3.2.0  # update-time: ignore[vulnerable=GHSA-2gwj-7jmv-h26r] (assessed, 
 
 Any identifier the vulnerability is known by will do. OSV holds an advisory per database, each under an id of its own. So a marker naming the `CVE-…` silences a warning reported under the `GHSA-…`.
 
-To silence a second advisory, add a second item: `# update-time: ignore[vulnerable=GHSA-2gwj-7jmv-h26r, vulnerable=CVE-2021-31542]`. The comma separates the bracket's items, so each identifier needs a `vulnerable=` of its own. `ignore[vulnerable=GHSA-…,CVE-…]` reads the second identifier as an item. Update-time reports that item as invalid, and leaves the reference unchanged.
+To silence a second advisory, add a second item: `# update-time: ignore[vulnerable=GHSA-2gwj-7jmv-h26r, vulnerable=CVE-2021-31542]`. The comma separates the bracket's items, so each identifier needs a `vulnerable=` of its own.
 
-Sometimes none of the version's vulnerabilities answers to the identifier, because an update fixed the vulnerability or because the identifier was mistyped. Update-time then reports the marker as holding nothing back:
-
-```console
-WARNING Redundant update-time directive ignore[vulnerable=CVE-2022-28346] for django in docs/requirements.txt:12: version 4.2.0 has no such vulnerability
-```
-
-Update-time judges a marker naming several advisories together. It warns only when none of them matches a vulnerability the version has.
-
-Only `ignore` names an advisory here. `allow` naming one would keep that warning and drop the warning about every other advisory, which is not a rule the language offers. So Update-time reports `allow[vulnerable=GHSA-…]` as an invalid item and leaves the reference unchanged.
+Only the `ignore` verb silences an advisory. The `allow` verb would keep that advisory's warning and drop the warning about every other advisory, which is not a rule the language offers.
 
 The reference keeps updating, and Update-time still warns about every other advisory affecting the version it lands on. So a vulnerability found after you wrote the marker still reaches you. Run with `--log-level DEBUG` to see what the marker silenced. To silence an advisory wherever it appears, pass `--ignore-vulnerability` (see [Vulnerable dependencies](#-vulnerable-dependencies)).
 
@@ -631,75 +594,7 @@ The reference keeps updating, and Update-time still warns about every other advi
 django==3.2.0  # update-time: ignore[vulnerable<high] (we act on high and worse for this dependency)
 ```
 
-The level applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--vulnerability-level`, `--vulnerability-level none` included. As with the global level, Update-time warns about a vulnerability whose risk level it cannot read, whatever level is in force.
-
-When none of the version's vulnerabilities falls below the level, Update-time reports the marker as holding nothing back. A level that silences nothing is one the reference no longer needs:
-
-```console
-WARNING Redundant update-time directive ignore[vulnerable<high] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability below high
-```
-
-`allow` and `ignore` are complements here as elsewhere, so `allow[vulnerable>=high]` sets the same level as `ignore[vulnerable<high]`. Inverting the operator would warn about the mild vulnerabilities, and stay quiet about the severe ones. So neither `allow[vulnerable<high]` nor `ignore[vulnerable>=high]` sets a level. Update-time logs an inverted comparison at `WARNING` and holds nothing back, so it warns about the reference at the global level:
-
-```console
-WARNING Incorrect 'vulnerable>=high' in the update-time marker for django in docs/requirements.txt:12: this comparison warns about the mild vulnerabilities and stays quiet about the severe ones, so it sets no risk level
-```
-
-A level must be one of `low`, `moderate`, `high`, and `critical`, spelled in lower case. So Update-time reports `ignore[vulnerable<hgih]` as invalid and leaves the reference unchanged. `none` is a value for `--vulnerability-level` rather than a level, so Update-time reports it as invalid too. To switch the warning off for one reference, write `ignore[vulnerable]`.
-
-#### Redundant markers
-
-A yank can only be observed where the dependency's source reports one. Of the references that accept a marker, that means `requirements.txt` pins and jsDelivr URLs (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, a `.python-version` entry, or a Node engine, the scope can never suppress anything. So Update-time logs it as redundant at `WARNING`:
-
-```console
-WARNING Redundant update-time directive ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept
-```
-
-Update-time reports a `requirements.txt` requirement that pins no exact version too. PyPI does report yanks, but a yank is about the version a reference is left on, and such a requirement pins none.
-
-```console
-WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a yank
-```
-
-A vulnerability can only be reported where OSV holds advisories for the dependency. Of the references that accept a marker, that means `requirements.txt` pins and jsDelivr URLs (see [Vulnerable dependencies](#-vulnerable-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, a `.python-version` entry, or a Node engine, the scope can never suppress anything. So Update-time reports it as redundant in all its forms:
-
-```console
-WARNING Redundant update-time directive ignore[vulnerable] for python in Dockerfile:2: this dependency's source reports no vulnerabilities
-```
-
-Update-time reports a requirement that pins no exact version here too. An advisory is matched against a version, and such a requirement pins none.
-
-```console
-WARNING Redundant update-time directive ignore[vulnerable] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a vulnerability
-```
-
-Archival can only be observed where the dependency's source publishes an archival signal. Of the references that accept a marker, that means `requirements.txt` requirements, GitHub Actions, and pre-commit hooks (see [Archived dependencies](#-archived-dependencies)). On a Docker image, a jsDelivr URL, a `.python-version` entry, or a Node engine, the scope can never suppress anything. So Update-time reports it as redundant:
-
-```console
-WARNING Redundant update-time directive ignore[archived] for python in Dockerfile:2: this dependency's source publishes no archival signal
-```
-
-In all its forms, Update-time reports the `stale` scope as redundant for a reference whose source reports no publication date to measure staleness against. [Setting a staleness threshold](#setting-a-staleness-threshold) names the three kinds of reference that get that warning.
-
-Update-time reports an `allow[floating-pin]` as redundant for a reference whose pin does not float, and for one whose update a marker holds back. Neither has anything to keep floating. [Keeping a tag floating](#keeping-a-tag-floating) shows both warnings.
-
-Update-time never reports a bare `# update-time: ignore` as redundant. It names no scope, so a warning would have no directive to name. Update-time does report a scope or item written beside it, so `# update-time: ignore ignore[yanked]` on a Docker image reports the `ignore[yanked]` as redundant.
-
-#### Invalid markers
-
-A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — is logged at `WARNING` as an invalid item:
-
-```console
-WARNING Invalid 'stlae' in the update-time marker for python in Dockerfile:2; leaving the reference unchanged
-```
-
-Update-time leaves the reference as it is, because an item it cannot read may have been meant to bound the update. Applying an update would be guessing. The checks still run, since Update-time never reads that item as silencing a warning. An unreadable marker holds back what Update-time would write, never what it would tell you. Every item beside it that Update-time does read applies as written, so `ignore[cooldwn<30, stale]` still silences the staleness warning.
-
-Update-time reports an `update-time` field it cannot read as an invalid item too. It reads a field whole rather than item by item. So an unreadable field holds back every directive it carries, where an unreadable bracket item leaves the items beside it standing. The warning names where the marker would sit rather than the value that is wrong. A field of the wrong shape holds no marker to quote:
-
-```console
-WARNING Invalid 'update-time.engines.node' in the update-time marker for node in package.json:3; leaving the reference unchanged
-```
+The level applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--vulnerability-level`, `--vulnerability-level none` included. As with the global level, Update-time warns about a vulnerability whose risk level it cannot read, whatever level is in force. To switch the warning off for one reference, write `ignore[vulnerable]`. `allow[vulnerable>=high]` sets the same level as `ignore[vulnerable<high]`.
 
 ### Adopting hash drift
 
@@ -792,14 +687,6 @@ A few rules govern how a bound — with a specifier or level-based — interacts
 - The hash pin is still added or refreshed for whichever version the bound selects, exactly as without a bound.
 - To combine a bound with another directive of the same verb (say, `allow[hash-drift]`), list both as comma-separated items in one bracket: `# update-time: allow[update<3.13, hash-drift]` or `# update-time: allow[minor-update, hash-drift]`. To combine directives of different verbs, list them after the `# update-time:` prefix, separated by a space: `# update-time: ignore[stale] allow[update<3.13]`. A reason can still follow the last directive.
 
-#### Redundant bounds
-
-Update-time logs a redundant bound at `WARNING`. That may happen in two ways:
-- Either the bound **never has an effect**, so removing it would change nothing. The current version and every version above it satisfy the bound. Examples are `allow[update>=3.12]` on a `3.12` pin, and `allow[major-update]` on any pin, which allows every update and so says nothing.
-- Or the bound **blocks every update**, so it is a frozen `ignore[update]` in disguise. Use `ignore[update]` instead if you intend the freeze. No version above the current one satisfies the bound. Examples are `ignore[update>=3.12]` on a `3.12` pin, and `ignore[patch-update]` on any pin.
-
-On a `requirements.txt` requirement that pins no exact version, Update-time reports every bound as redundant, `ignore[update]` included, since it resolves no update to bound.
-
 ### Writing a marker
 
 Where a marker goes depends on the format of the file it sits in, and a run at `--log-level DEBUG` reports which markers Update-time read.
@@ -808,7 +695,7 @@ Where a marker goes depends on the format of the file it sits in, and a run at `
 
 A marker is written in one of three places, and the file's format decides which:
 
-- **Inline**, on the reference's own line (in YAML files, `requirements.txt`, `devcontainer.json`, `.python-version`, and Sphinx `conf.py` files):
+- **Inline**, on the reference's own line (in YAML files, `requirements.txt`, `pyproject.toml`, PEP 723 `# /// script` blocks, `devcontainer.json`, `.python-version`, and Sphinx `conf.py` files):
 
   ```yaml
   image: python:3.12  # update-time: ignore
@@ -816,6 +703,10 @@ A marker is written in one of three places, and the file's format decides which:
 
   ```text
   humanize==4.15.0  # update-time: ignore
+  ```
+
+  ```toml
+  dependencies = ["humanize==4.15.0"]  # update-time: ignore
   ```
 
   ```jsonc
@@ -826,11 +717,18 @@ A marker is written in one of three places, and the file's format decides which:
   "https://cdn.jsdelivr.net/npm/clipboard@2.0.11/dist/clipboard.min.js",  # update-time: ignore
   ```
 
-- **On the line directly above** the reference. Use this form in Dockerfiles, which don't allow inline comments:
+- **On the line directly above** the reference. Dockerfiles need this form, since they don't allow inline comments, and a dependency array takes it as well:
 
   ```dockerfile
   # update-time: ignore
   FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  ```
+
+  ```toml
+  dependencies = [
+      # update-time: ignore
+      "humanize==4.15.0",
+  ]
   ```
 
 - **In an `update-time` field**, for a reference in a file that can hold no comment. A `package.json` is strict JSON. So its Node engine's marker names the reference it steers instead of sitting beside it, in a field mirroring the file's own structure:
@@ -839,9 +737,23 @@ A marker is written in one of three places, and the file's format decides which:
   "update-time": { "engines": { "node": "ignore" } }
   ```
 
-Every reference but the Node engine takes its marker in a comment. Those files are Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, and GitHub Actions workflows. They also include `.pre-commit-config.yaml` files, `devcontainer.json` files, `requirements.txt` files, `.python-version` files, and the jsDelivr URLs in a Sphinx `conf.py`. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it. Where one comment placement is safer than the other, the details per dependency type say so.
+Every reference but the Node engine takes its marker in a comment. Those files are Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, and GitHub Actions workflows. They also include `.pre-commit-config.yaml` files, `devcontainer.json` files, `requirements.txt` files, `pyproject.toml` files, the `# /// script` blocks in `*.py` files, `.python-version` files, and the jsDelivr URLs in a Sphinx `conf.py`. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it. Where one comment placement is safer than the other, the details per dependency type say so.
 
-A dependency updated through uv, npm, or pnpm takes no marker. Opt one out with a version specifier instead, as described under [Python dependencies](#python-dependencies) and [npm and pnpm dependencies](#npm-and-pnpm-dependencies).
+Inside a `# /// script` block, every line of the TOML is already commented out, so the marker needs a `#` of its own:
+
+```python
+# /// script
+# dependencies = [
+#     "humanize==4.15.0",  # update-time: ignore
+# ]
+# ///
+```
+
+A marker written with the block's own `#` alone uncomments to `update-time: ignore`, which is not TOML. uv then rejects the script, and Update-time reads no dependency from that block.
+
+A dependency array can put several declarations on one line, or each on a line of its own, so two rules decide which declaration a marker steers. An inline marker steers every dependency declared on its line, so a marker beside `dependencies = ["a==1", "b==2"]` steers both. A marker on the line above steers whatever the line below it declares, wherever in the array that declaration sits. So a marker above the `dependencies = [` line steers nothing, since that line declares no dependency.
+
+A `package.json` dependency takes no marker. Opt one out with a version specifier instead, as described under [npm and pnpm dependencies](#npm-and-pnpm-dependencies).
 
 #### Confirming a marker was understood
 
@@ -859,7 +771,147 @@ Update-time reports what the marker held back separately, in lines about the upd
 DEBUG Ignoring the staleness warning for python in Dockerfile:2 (update-time: ignore[stale])
 ```
 
-Such a line appears only when the marker actually held something back. An `ignore[yanked]` on a version that was never yanked produces no such line, and neither does a bound that blocks an update.
+A line about a warning appears only when the marker actually silenced one, so an `ignore[yanked]` on a version that was never yanked produces none. A bound produces no line either, whatever it blocks. The line about the update appears whenever a marker Update-time could read holds the update back, whether or not a newer version was available. An unreadable item holds the update back too, but gets no such line: Update-time reports it as invalid instead.
+
+### Redundant markers
+
+A directive is redundant when it decides nothing for the reference it sits on: a scope silencing a warning that reference never gets, or a bound narrowing nothing. Update-time reports each one at `WARNING`.
+
+Update-time reports every warning scope as redundant for a Python dependency PyPI serves no release for. That is a dependency pointing at a URL or a git repository, and one uv resolves through a `[tool.uv] sources` entry. Update-time asks PyPI about neither, so none of those warnings is ever given there.
+
+Update-time never reports a bare `# update-time: ignore` as redundant. It names no scope, so a warning would have no directive to name. Update-time does report a scope or item written beside it, so `# update-time: ignore ignore[yanked]` on a Docker image reports the `ignore[yanked]` as redundant.
+
+#### The `stale` scope
+
+Staleness is measured against the publication date of a dependency's newest release. In all its forms, Update-time reports the `stale` scope as redundant for a reference whose source reports no such date. It updates the reference as usual:
+
+```console
+WARNING Redundant update-time directive ignore[stale<90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source reports no publication date to measure staleness against
+```
+
+Three kinds of reference get that warning. An image on a registry other than Docker Hub does, since only Docker Hub reports a push date. So Update-time does not report the same marker on a Docker Hub image. A CircleCI machine-executor image gets the warning too, since no registry serves it. And so does a runtime version that follows the project's Dockerfile, whether it is a `.python-version` entry or a Node engine. The staleness reported for it is the base image's, not its own.
+
+#### The `cooldown` scope
+
+Update-time reports the `cooldown` scope as redundant for a reference whose source reports no publication date to measure a cooldown against:
+
+```console
+WARNING Redundant update-time directive ignore[cooldown<30] for python in .python-version:2: this dependency's source reports no publication date to measure a cooldown against
+```
+
+The same three kinds of reference as for the [`stale` scope](#the-stale-scope) get that warning, and for the same reasons but one. A runtime version that follows the project's Dockerfile gets it, whether it is a `.python-version` entry or a Node engine. Update-time already applied its cooldown when it updated the base image. An image on a registry other than Docker Hub gets the warning too. Only Docker Hub reports a push date to measure a cooldown against, so Update-time does not report the same marker on a Docker Hub image. A CircleCI machine-executor image gets the warning as well, since no registry serves it.
+
+Update-time reports a `cooldown` on a `pyproject.toml` or inline script metadata dependency as redundant, since uv takes a cooldown per run rather than per dependency (see [Setting a cooldown period](#setting-a-cooldown-period)). It reports one on a `requirements.txt` requirement that pins no exact version too. PyPI dates its releases, but Update-time resolves no update for such a requirement, so a cooldown holds no release back.
+
+#### The `yanked` scope
+
+A yank can only be observed where the dependency's source reports one. Of the references that accept a marker, that means `requirements.txt` pins, `pyproject.toml` and inline script metadata pins, and jsDelivr URLs (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, a `.python-version` entry, or a Node engine, the scope can never suppress anything. So Update-time reports it as redundant:
+
+```console
+WARNING Redundant update-time directive ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept
+```
+
+Update-time reports a Python dependency that pins no exact version too. PyPI does report yanks, but a yank is about the version a reference is left on, and such a dependency pins none.
+
+```console
+WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a yank
+```
+
+#### The `vulnerable` scope
+
+A vulnerability can only be reported where OSV holds advisories for the dependency. Of the references that accept a marker, that means `requirements.txt` pins, `pyproject.toml` and inline script metadata pins, and jsDelivr URLs (see [Vulnerable dependencies](#-vulnerable-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, a `.python-version` entry, or a Node engine, the scope can never suppress anything. So Update-time reports it as redundant in all its forms:
+
+```console
+WARNING Redundant update-time directive ignore[vulnerable] for python in Dockerfile:2: this dependency's source reports no vulnerabilities
+```
+
+Update-time reports a Python dependency that pins no exact version here too. An advisory is matched against a version, and such a dependency pins none.
+
+```console
+WARNING Redundant update-time directive ignore[vulnerable] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a vulnerability
+```
+
+Update-time reports an `ignore[vulnerable=…]` as redundant when none of the version's vulnerabilities answers to the identifier. An update fixed the vulnerability, or the identifier was mistyped:
+
+```console
+WARNING Redundant update-time directive ignore[vulnerable=CVE-2022-28346] for django in docs/requirements.txt:12: version 4.2.0 has no such vulnerability
+```
+
+Update-time judges a marker naming several advisories together. It warns only when none of them matches a vulnerability the version has.
+
+Update-time reports an `ignore[vulnerable]` as redundant for a version that has no vulnerability at all. [Vulnerable dependencies](#-vulnerable-dependencies) shows that warning.
+
+Update-time reports an `ignore[vulnerable<high]` as redundant when none of the version's vulnerabilities falls below the level. A level that silences nothing is one the reference no longer needs:
+
+```console
+WARNING Redundant update-time directive ignore[vulnerable<high] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability below high
+```
+
+#### The `archived` scope
+
+Archival can only be observed where the dependency's source publishes an archival signal. Of the references that accept a marker, that means `requirements.txt` requirements, `pyproject.toml` and inline script metadata dependencies, GitHub Actions, and pre-commit hooks (see [Archived dependencies](#-archived-dependencies)). On a Docker image, a jsDelivr URL, a `.python-version` entry, or a Node engine, the scope can never suppress anything. So Update-time reports it as redundant:
+
+```console
+WARNING Redundant update-time directive ignore[archived] for python in Dockerfile:2: this dependency's source publishes no archival signal
+```
+
+#### The `floating-pin` scope
+
+Update-time reports an `allow[floating-pin]` as redundant for a reference whose pin does not float, and for one whose update a marker holds back. Neither has anything to keep floating. [Keeping a tag floating](#keeping-a-tag-floating) shows both warnings.
+
+#### A bound
+
+A [bound](#bounding-an-update) is redundant in two ways:
+- Either the bound **never has an effect**, so removing it would change nothing. The current version and every version above it satisfy the bound. Examples are `allow[update>=3.12]` on a `3.12` pin, and `allow[major-update]` on any pin, which allows every update and so says nothing.
+- Or the bound **blocks every update**, so it is a frozen `ignore[update]` in disguise. Use `ignore[update]` instead if you intend the freeze. No version above the current one satisfies the bound. Examples are `ignore[update>=3.12]` on a `3.12` pin, and `ignore[patch-update]` on any pin.
+
+On a `requirements.txt` requirement that pins no exact version, Update-time reports every bound as redundant, `ignore[update]` included, since it resolves no update to bound.
+
+On a `pyproject.toml` or inline script metadata dependency, Update-time reports every bound as redundant, since uv answers with one version rather than the candidates a bound would narrow. It reports an `ignore[update]` as redundant only for a dependency that pins no exact version.
+
+### Incorrect markers
+
+A threshold, a cooldown, and a risk level are each set by a comparison, and either verb can write it. Written the wrong way round, the comparison sets nothing. Update-time logs it at `WARNING` as incorrect and holds nothing back, so the reference updates as usual and the global value applies to it.
+
+Inverting a threshold's operator would warn while a release is fresh, and go quiet once it is old. So neither `allow[stale<90]` nor `ignore[stale>=90]` sets a threshold:
+
+```console
+WARNING Incorrect 'stale>=90' in the update-time marker for python in Dockerfile:2: this comparison warns while a release is fresh and goes quiet once it is old, so it sets no threshold
+```
+
+Inverting a cooldown's operator would adopt a release only while it is fresh, and hold it back once it is old. So neither `allow[cooldown<30]` nor `ignore[cooldown>=30]` sets a cooldown:
+
+```console
+WARNING Incorrect 'cooldown>=30' in the update-time marker for python in Dockerfile:2: this comparison adopts a release only while it is fresh and holds it back once it is old, so it sets no cooldown
+```
+
+Inverting a risk level's operator would warn about the mild vulnerabilities, and stay quiet about the severe ones. So neither `allow[vulnerable<high]` nor `ignore[vulnerable>=high]` sets a level:
+
+```console
+WARNING Incorrect 'vulnerable>=high' in the update-time marker for django in docs/requirements.txt:12: this comparison warns about the mild vulnerabilities and stays quiet about the severe ones, so it sets no risk level
+```
+
+### Invalid markers
+
+A scope Update-time does not recognise — a mistyped `ignore[stlae]`, say — is logged at `WARNING` as an invalid item:
+
+```console
+WARNING Invalid 'stlae' in the update-time marker for python in Dockerfile:2; leaving the reference unchanged
+```
+
+Update-time leaves the reference as it is, because an item it cannot read may have been meant to bound the update, or to hold it back as an `ignore[update]` does. Applying an update would be guessing. The checks still run, since Update-time never reads that item as silencing a warning. An unreadable marker holds back what Update-time would write, never what it would tell you. Every item beside it that Update-time does read applies as written, so `ignore[cooldwn<30, stale]` still silences the staleness warning.
+
+A day count must be a whole number of days. So Update-time reports `ignore[stale<-5]`, `ignore[stale>=1.5]`, `ignore[cooldown<-5]`, and `ignore[cooldown<1.5]` as invalid.
+
+You can read a bare `ignore[cooldown]` in two ways: adopt at once, or never adopt at all. Rather than guess, Update-time reports it as invalid. It reports `allow[cooldown]` the same way. Write `allow[cooldown>=0]` to adopt at once, and `ignore[update]` to freeze the reference.
+
+A risk level must be one of `low`, `moderate`, `high`, and `critical`, spelled in lower case. So Update-time reports `ignore[vulnerable<hgih]` as invalid. `none` is a value for `--vulnerability-level` rather than a level, so Update-time reports it as invalid too. An advisory is named by `ignore` alone, so `allow[vulnerable=GHSA-…]` is invalid as well. So is a second advisory written without a `vulnerable=` of its own, as in `ignore[vulnerable=GHSA-…,CVE-…]`.
+
+Update-time reports an `update-time` field it cannot read as an invalid item too. It reads a field whole rather than item by item. So an unreadable field holds back every directive it carries, where an unreadable bracket item leaves the items beside it standing. The warning names where the marker would sit rather than the value that is wrong. A field of the wrong shape holds no marker to quote:
+
+```console
+WARNING Invalid 'update-time.engines.node' in the update-time marker for node in package.json:3; leaving the reference unchanged
+```
 
 ## 📖 Details per dependency type
 
@@ -917,25 +969,31 @@ Update-time skips two kinds, because PyPI serves no release to measure them agai
 
 Update-time checks each exact pin a Python file declares against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI. It skips a yanked release when picking a new version. The version checked is the one the file holds when the run ends.
 
-Update-time reports a `requirements.txt` pin the run leaves on a yanked release, unless an `ignore[yanked]` marker silences that warning. It reports a `pyproject.toml` or inline script metadata pin left on a yanked release too, but that pin takes no marker to silence the warning. It does not check a dependency those files declare without an exact pin. A yank is about the version a reference is left on, and such a declaration names none. It skips a pin uv resolves through a `[tool.uv] sources` entry as well, since PyPI serves no release for it.
+Update-time reports a `requirements.txt` pin the run leaves on a yanked release, unless an `ignore[yanked]` marker silences that warning. It reports a `pyproject.toml` or inline script metadata pin left on a yanked release the same way. It does not check a dependency those files declare without an exact pin. A yank is about the version a reference is left on, and such a declaration names none. It skips a pin uv resolves through a `[tool.uv] sources` entry as well, since PyPI serves no release for it.
 
 #### Vulnerable dependencies
 
 Update-time checks each exact pin a Python file declares against OSV's PyPI advisories. It does not check the transitive dependencies those pins require. Reading a resolved dependency tree is what `uv audit` and `pip-audit` are for.
 
-Update-time reports a vulnerable `requirements.txt` pin, unless an `ignore[vulnerable]` marker silences that warning. It reports a vulnerable `pyproject.toml` or inline script metadata pin too, but that pin takes no marker to silence the warning. It does not check a dependency those files declare without an exact pin either. An advisory is matched against a version, and such a declaration names none. It skips a pin uv resolves through a `[tool.uv] sources` entry as well, since PyPI serves no release for it.
+Update-time reports a vulnerable `requirements.txt` pin, unless an `ignore[vulnerable]` marker silences that warning. It reports a vulnerable `pyproject.toml` or inline script metadata pin the same way. It does not check a dependency those files declare without an exact pin either. An advisory is matched against a version, and such a declaration names none. It skips a pin uv resolves through a `[tool.uv] sources` entry as well, since PyPI serves no release for it.
 
 #### Archived dependencies
 
 PyPI publishes a project status. Update-time reads it for each dependency a Python file declares, whether or not the dependency pins an exact version. Archival is a fact about the project, so the package's name alone is enough to find that status.
 
-Update-time skips two kinds of dependency as well, since neither names a PyPI project to read a status from. The first points at a URL or a git repository. The second is one uv resolves through a `[tool.uv] sources` entry, such as a path or a workspace member. Update-time reports a `requirements.txt` requirement whose project is archived, unless an `ignore[archived]` marker silences that warning. It reports a `pyproject.toml` or inline script metadata dependency too, but that dependency takes no marker to silence the warning.
+Update-time skips two kinds of dependency, since neither names a PyPI project to read a status from. The first points at a URL or a git repository. The second is one uv resolves through a `[tool.uv] sources` entry, such as a path or a workspace member. Update-time reports a `requirements.txt` requirement whose project is archived, unless an `ignore[archived]` marker silences that warning. It reports a `pyproject.toml` or inline script metadata dependency the same way.
 
 #### Markers
 
 Write a marker for a `requirements.txt` pin inline, on the pin's own line, as in `humanize==4.15.0  # update-time: ignore`. See [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference) for the directives and where they go. Update-time checks a requirement that pins no exact version for staleness and archival. Such a requirement can carry a marker as well: `humanize>=4  # update-time: ignore[stale<1095]` warns once that package's newest release is more than three years old.
 
-Update-time reports a `yanked` or `vulnerable` scope on a requirement that pins no exact version as redundant, since these checks need a pinned version. It does not update such a requirement, so it reports a `cooldown` and a bound as redundant too. Update-time reads no markers in `pyproject.toml` or inline script metadata. Opt a requirement in one of those out of updating by pinning it with a maximum or non-`==` specifier instead, for example `package<=3.12`.
+Update-time reports a `yanked` or `vulnerable` scope on a requirement that pins no exact version as redundant, since these checks need a pinned version. It does not update such a requirement, so it reports a `cooldown` and a bound as redundant too.
+
+A `pyproject.toml` dependency and an inline script metadata dependency take a marker too, in either placement. An `ignore[update]` holds the dependency's update back, so Update-time leaves that pin as the file wrote it and reports no new version for it. The pin is what constrains uv, so a pin Update-time declines to rewrite is the version uv keeps resolving. An `ignore[stale]`, an `ignore[yanked]`, an `ignore[vulnerable]`, and an `ignore[archived]` each silence the warning they name, and a bare `ignore` holds back the update and all four warnings at once. An `ignore[stale<90]` gives the dependency a staleness threshold of its own (see [Setting a staleness threshold](#setting-a-staleness-threshold)). An `ignore[vulnerable=GHSA-…]` silences the warning about the advisory it names alone (see [Silencing specific vulnerabilities](#silencing-specific-vulnerabilities)). An `ignore[vulnerable<high]` sets the risk level the dependency is warned about from (see [Setting a risk level](#setting-a-risk-level)). A name a file declares twice is steered per declaration, so a marker steers the line it sits on and leaves the other line alone.
+
+Update-time also reports the directives that decide nothing here. A bound decides nothing, since uv resolves the version rather than choosing between candidates. A `cooldown` decides nothing either, since uv applies one per run. An `ignore[update]` decides nothing for a dependency that pins no exact version, since there is no pin to freeze. And a directive naming a warning scope decides nothing for a dependency PyPI serves no release for. An `allow[floating-pin]` decides nothing either, since no Python dependency carries a tag that could float.
+
+A dependency that pins no exact version has no pin to freeze, since uv both resolves and records its version. Opt one out by pinning it with a maximum or non-`==` specifier instead, for example `package<=3.12`.
 
 ### npm and pnpm dependencies
 

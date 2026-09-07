@@ -34,7 +34,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from update_time.domain.bound import NewVersionGetter
-    from update_time.domain.reference import Reference, ResolvedReference
+    from update_time.domain.reference import Reference
+    from update_time.markers.reference import SteeredResolvedReference
 
 # The threshold `ignore[stale<90]` parses to, carrying the directive the parser sets alongside every value it reads.
 _STALE_THRESHOLD = Threshold(value=90, directive="ignore[stale<90]")
@@ -111,9 +112,9 @@ class LatestVersionTest(unittest.TestCase):
         """Return the reference the decision is run for, as the logger is handed it."""
         return reference(dependency, self.path, "3.14")
 
-    def resolved(self, release: str = "3.15") -> ResolvedReference:
+    def resolved(self, release: str = "3.15", marker: Marker | None = None) -> SteeredResolvedReference:
         """Return the resolved reference the decision hands the logger, for the version it resolved."""
-        return resolved_reference("python", self.path, DependencyVersion(version=release), "3.14")
+        return resolved_reference("python", self.path, DependencyVersion(version=release), "3.14", marker)
 
     def latest_version(
         self,
@@ -188,28 +189,28 @@ class LatestVersionTest(unittest.TestCase):
         """Test that a reference carrying its own staleness threshold is judged by that one, not the global one."""
         marker = Marker(stale=Threshold(value=90))
         self.latest_version(marker)
-        self.log.report_staleness.assert_called_once_with(self.resolved(), marker, 90)
+        self.log.report_staleness.assert_called_once_with(self.resolved(marker=marker), marker, 90)
 
     def test_warns_about_an_inverted_stale_item(self):
         """Test that a `stale` item comparing the wrong way is reported, and the global threshold is used."""
         marker = Marker(stale=Threshold(inverted_item="stale>=90"), raw="ignore[stale>=90]")
         self.latest_version(marker)
-        self.log.inverted_stale_item.assert_called_once_with(self.reference(), "stale>=90")
-        self.log.report_staleness.assert_called_once_with(self.resolved(), marker, STALE_AFTER.default)
+        self.log.report_inverted_items.assert_called_once_with(self.reference(), marker)
+        self.log.report_staleness.assert_called_once_with(self.resolved(marker=marker), marker, STALE_AFTER.default)
 
     def test_warns_about_an_inverted_cooldown_item(self):
         """Test that a `cooldown` item comparing the wrong way is reported, and the global cooldown is used."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.15"))
         marker = Marker(cooldown=Threshold(inverted_item="cooldown>=30"), raw="ignore[cooldown>=30]")
         self.latest_version(marker, get_new_version)
-        self.log.inverted_cooldown_item.assert_called_once_with(self.reference(), "cooldown>=30")
+        self.log.report_inverted_items.assert_called_once_with(self.reference(), marker)
         get_new_version.assert_called_once_with("python", "3.14", NO_BOUND, COOLDOWN.default, check_archival=True)
 
     def test_warns_about_an_inverted_vulnerability_item(self):
         """Test that a `vulnerable` item comparing the wrong way is reported."""
         marker = Marker(vulnerable=Threshold(inverted_item="vulnerable>=high"), raw="ignore[vulnerable>=high]")
         self.latest_version(marker)
-        self.log.inverted_vulnerable_item.assert_called_once_with(self.reference(), "vulnerable>=high")
+        self.log.report_inverted_items.assert_called_once_with(self.reference(), marker)
 
     def test_a_marker_silencing_a_warning_still_returns_the_update(self):
         """Test that a marker silencing a warning leaves the update in place, and reaches the check that reports it."""
@@ -219,7 +220,9 @@ class LatestVersionTest(unittest.TestCase):
                 marker = Marker(ignored_scopes=check.scope)
                 latest = self.latest_version(marker)
                 self.assertEqual(latest, DependencyVersion(version="3.15"))
-                getattr(self.log, check.reporter).assert_called_once_with(self.resolved(), marker, *check.arguments)
+                getattr(self.log, check.reporter).assert_called_once_with(
+                    self.resolved(marker=marker), marker, *check.arguments
+                )
 
     def test_warns_about_a_directive_the_source_cannot_apply(self):
         """Test that a directive is reported as redundant when the source cannot apply it, and the update stands."""
@@ -280,15 +283,15 @@ class LatestVersionTest(unittest.TestCase):
         marker = Marker(allowed_scopes=Scope.FLOATING_PIN, raw="allow[floating-pin]")
         latest = self.latest_version(marker)
         self.log.redundant_directive.assert_called_once_with(
-            self.reference(), "allow[floating-pin]", Reason.NOTHING_FLOATING
+            self.reference(), "allow[floating-pin]", Reason.PIN_NOT_FLOATING
         )
         self.assertEqual(latest, DependencyVersion(version="3.15"))
 
     @kills(
         Mutation(
             resolve,
-            "return Reason.NOTHING_FLOATING if latest is not None and latest.floating is None else None",
-            'return Reason.NOTHING_FLOATING if latest is not None and latest.floating != "resolved" else None',
+            "    floats = None if latest is None else latest.floating is not None",
+            '    floats = None if latest is None else latest.floating == "resolved"',
             "a floating pin the source could not resolve is reported as redundant, although its tag still floats",
         )
     )

@@ -13,7 +13,7 @@ from update_time.markers import marker as marker_module
 from update_time.markers.directive import Reason
 from update_time.markers.drift import ALLOW_HASH_DRIFT
 from update_time.markers.floating import ALLOW_FLOATING_PIN
-from update_time.markers.marker import _SOURCE_CHECK_SCOPES, Marker, Scope
+from update_time.markers.marker import _SOURCE_CHECK_SCOPES, Marker, Scope, Threshold
 from update_time.primitives.location import Location
 from update_time.references.rewrite import update_references_in_lines
 
@@ -185,7 +185,8 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version = Mock()
         lines = ["image: python:3.14  # update-time: ignore ignore[stale>=90]"]
         self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)
-        self.logger.inverted_stale_item.assert_called_once_with(self.reference(), "stale>=90")
+        inverted = BARE_IGNORE.merge(Marker(stale=Threshold(inverted_item="stale>=90")))
+        self.logger.report_inverted_items.assert_called_once_with(self.reference(), inverted)
         get_new_version.assert_not_called()
 
     def test_a_dead_comparison_item_is_reported_however_the_reference_is_held_back(self):
@@ -297,7 +298,8 @@ class UpdateReferencesTest(unittest.TestCase):
         new_lines = self.rewrite(lines, IMAGE_REGEXP, new_version_getter("3.15"))
         self.assertEqual(new_lines, ["image: python:3.15  # update-time: ignore[stale>=90]"])  # version bumped
         reference = Reference("python", "3.14", Location(self.path, 1))
-        self.logger.inverted_stale_item.assert_called_once_with(reference, "stale>=90")
+        inverted = Marker(stale=Threshold(inverted_item="stale>=90"))
+        self.logger.report_inverted_items.assert_called_once_with(reference, inverted)
         self.logger.ignored.assert_not_called()  # the update is not held back, so nothing is logged as ignored
 
     def test_inverted_item_reported_although_the_reference_is_held_back(self):
@@ -306,7 +308,8 @@ class UpdateReferencesTest(unittest.TestCase):
         scopes = EVERY_SOURCE_CHECK_SCOPE
         lines = [f"image: python:3.14  # update-time: {scopes} ignore[stale>=90]"]
         self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)
-        self.logger.inverted_stale_item.assert_called_once_with(self.reference(), "stale>=90")
+        inverted = Marker(ignored_scopes=_SOURCE_CHECK_SCOPES, stale=Threshold(inverted_item="stale>=90"))
+        self.logger.report_inverted_items.assert_called_once_with(self.reference(), inverted)
         get_new_version.assert_not_called()  # The warning costs no request, the item being unreadable on its own.
 
     def test_allow_hash_drift_marker_adopts_new_digest(self):
@@ -439,7 +442,8 @@ class UpdateReferencesTest(unittest.TestCase):
         new_lines = self.rewrite(lines, IMAGE_REGEXP, get_new_version)
         self.assertEqual(new_lines, ["image: python:3.12.9  # update-time: ignore[cooldown>=30]"])
         get_new_version.assert_called_once_with("python", "3.12", NO_BOUND, COOLDOWN.default, check_archival=True)
-        self.logger.inverted_cooldown_item.assert_called_once_with(ANY, "cooldown>=30")
+        inverted = Marker(cooldown=Threshold(inverted_item="cooldown>=30"))
+        self.logger.report_inverted_items.assert_called_once_with(ANY, inverted)
         self.logger.invalid_specifier.assert_not_called()
 
     def test_ignore_update_bound_passes_bound_to_source(self):

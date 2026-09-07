@@ -50,7 +50,7 @@ Develop test-first, in small steps, so I can steer.
 
 Keep a numbered list of candidate tests (T1, T2, …) with the status of each: todo, pass, or fail. Drop a test from the list only once every test on it passes, or when I tell you to drop it.
 
-Prepare a cycle by adding at most five candidate tests to the list, then let me choose where to start. This holds for a feature, a bug fix, a task, and an increment alike.
+Prepare a cycle by adding candidate tests to the list, then let me choose where to start. This holds for a feature, a bug fix, a task, and an increment alike.
 
 Some work changes no behaviour, so no test drives it. Prepare that as a numbered list of refactorings instead, each of which ends green, and let me choose where to start.
 

@@ -22,6 +22,7 @@ from update_time.domain.dependency import (
     Yank,
     first_eligible,
     is_valid,
+    normalized_python_name,
 )
 from update_time.domain.publication import publication_date_reporting
 from update_time.domain.vulnerability import vulnerability_reporting
@@ -53,22 +54,10 @@ _CHANGELOG_URL_LABELS = {"changelog", "changes", "whatsnew", "history"}
 # with its aliases, then its `homepage` label. All spelled as `_normalized_label` returns them.
 _REPOSITORY_URL_LABELS_BY_RANK = ({"source", "repository", "sourcecode", "github"}, {"homepage"})
 _LABEL_NORMALIZATION = str.maketrans("", "", string.punctuation + string.whitespace)
-# The characters PyPI treats as one and the same separator within a distribution name (see `normalized_name`).
-_NAME_SEPARATORS = re.compile(r"[-_.]+")
 # GitHub serves its sponsorship pages under this path, which it reserves, so no owner can go by this name.
 _GITHUB_SPONSORS_PATH = "sponsors"
 # Matches a GitHub repository URL wherever it sits in prose, such as the description a project posts to PyPI.
 _GITHUB_URL_RE = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+")
-
-
-def normalized_name(name: DependencyName) -> DependencyName:
-    """Return the name as PyPI spells it, so a pin is matched however the manifest spells it.
-
-    PyPI names a distribution in lower case with each run of `-`, `_`, and `.` collapsed to a single `-`, as
-    https://peps.python.org/pep-0503/#normalized-names prescribes, and uv reports a package by that name. So a
-    `typing_extensions` pin and the `typing-extensions` uv reports for it are the same dependency.
-    """
-    return _NAME_SEPARATORS.sub("-", name).lower()
 
 
 def _normalized_label(label: str) -> str:
@@ -138,7 +127,7 @@ def _project_metadata(package: str) -> dict:
     The name is normalized first, so every spelling of one package shares a single request; the index redirects
     the other spellings to that one anyway.
     """
-    return _index_metadata(normalized_name(package))
+    return _index_metadata(normalized_python_name(package))
 
 
 @cache
@@ -359,7 +348,7 @@ def _changelog_from_github_url_in_description(description: str, package: str, ve
 def _names_the_package(url: str, package: str) -> bool:
     """Return whether the URL points at a repository carrying the package's name."""
     _owner, repository = _github_repository(url)
-    return normalized_name(repository) == normalized_name(package)
+    return normalized_python_name(repository) == normalized_python_name(package)
 
 
 def _github_repository(url: str) -> tuple[str, str]:

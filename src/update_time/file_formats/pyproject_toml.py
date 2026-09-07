@@ -6,16 +6,18 @@ nothing here knows which of the two kinds of file it is looking at.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import tomlkit
 import tomlkit.items
 from packaging.requirements import InvalidRequirement, Requirement
 
-from update_time.domain.dependency import is_valid
-from update_time.domain.reference import Reference
+from update_time.domain.dependency import is_valid, normalized_python_name
+from update_time.domain.line import Line, located_lines
 from update_time.file_formats import toml
+from update_time.markers.marker import Marker, Scope, parse_marker
+from update_time.markers.reference import SteeredReference
 from update_time.primitives.location import Location
 from update_time.primitives.text import line_number
 
@@ -27,12 +29,15 @@ if TYPE_CHECKING:
     from update_time.file_formats.dependency_file import DependencyTomlFile
 
 
-def _marker(number: int) -> str:
+type _DeclarationPosition = int
+
+
+def _placeholder(position: _DeclarationPosition) -> str:
     """Return the text put in a spec's place to find the line declaring it, distinct from every other spec's.
 
-    The number is wrapped rather than appended, so one marker is never the start of another.
+    The position is wrapped rather than appended, so one placeholder is never the start of another.
     """
-    return f"update-time-spec-{number}-update-time-spec"
+    return f"update-time-spec-{position}-update-time-spec"
 
 
 def tool_key(path: Path, table: str, key: str) -> tuple[str, str] | None:
@@ -61,37 +66,48 @@ def set_tool_key(path: Path, table: str, key: str, value: str, *, comment: str =
     path.write_text(tomlkit.dumps(document))
 
 
-def rewrite_pinned_versions(file: DependencyTomlFile, versions: dict[DependencyName, VersionString]) -> None:
-    """Rewrite each declared pin to the version `versions` holds for it; write the file if changed.
+def rewrite_pinned_versions(file: DependencyTomlFile, versions: dict[Declaration, VersionString]) -> None:
+    """Rewrite each declaration to the version `versions` holds for it; write the file if changed.
 
-    The mapping is keyed by the name exactly as this file spells that name, so a name the mapping does not
-    hold keeps its pinned version.
+    One declaration of a name is rewritten while another declaration of that name keeps its pinned version. The
+    declarations are the ones `declared_dependencies` read from this file.
     """
+    declarations = {declaration.position: declaration for declaration in versions}
 
-    def new_version(spec: str) -> str | None:
-        return rewritten if (rewritten := _rewritten_spec(spec, versions)) != spec else None
+    def new_spec(position: _DeclarationPosition, spec: str) -> str | None:
+        if (declaration := declarations.get(position)) is None:
+            return None
+        rewritten = _rewritten_spec(spec, declaration, versions[declaration])
+        return rewritten if rewritten != spec else None
 
-    if (rewritten_contents := _respelled_specs(file, file.read(), new_version)) is not None:
+    if (rewritten_contents := _replaced_specs(file, file.read(), new_spec)) is not None:
         file.write(rewritten_contents)
 
 
-def _respelled_specs(file: DependencyTomlFile, contents: str, respell: Callable[[str], str | None]) -> str | None:
-    """Return the file with each declared spec `respell` gives a new spelling for, or None when it gives none.
+def _replaced_specs(
+    file: DependencyTomlFile, contents: str, replace: Callable[[_DeclarationPosition, str], str | None]
+) -> str | None:
+    """Return the file's text with each declared spec `replace` gives a replacement for, or None when it gives none.
 
-    The file comes back in its own layout. tomlkit rewrites the arrays it parsed, so a string spelled like a spec
-    elsewhere in the file is out of reach, and every line holds what it held. The comments, quoting, and whitespace
-    around the specs come back untouched. A file that is not valid TOML reads back as None, so one malformed file
-    does not abort the run.
+    Every call walks the arrays in the same order, so a spec has the same position in each of them.
+
+    Only the specs in the dependency arrays change. A string spelled like a spec elsewhere in the file, and the
+    comments, quoting, and whitespace around the specs, come back as they were. A file that is not valid TOML
+    comes back as None as well, so one malformed file does not abort the run.
     """
     if (document := toml.parse_document(file.toml(contents))) is None:
         return None
-    respelled = False
+    replaced = False
+    position = 0
     for array in _dependency_arrays(document):
         for index, spec in enumerate(array):
-            if isinstance(spec, tomlkit.items.String) and (new_spec := respell(spec)) is not None:
+            if not isinstance(spec, tomlkit.items.String):
+                continue
+            position += 1
+            if (new_spec := replace(position, spec)) is not None:
                 array[index] = toml.string(new_spec, quoted_as=spec)
-                respelled = True
-    return file.with_toml(contents, tomlkit.dumps(document)) if respelled else None
+                replaced = True
+    return file.with_toml(contents, tomlkit.dumps(document)) if replaced else None
 
 
 def _config(toml_text: str) -> dict:
@@ -105,8 +121,12 @@ def _uv_table(config: Mapping) -> Mapping:
 
 
 def _uv_source_names(config: dict) -> set[DependencyName]:
-    """Return the names of the dependencies uv resolves from a source of its own."""
-    return set(_uv_table(config).get("sources", {}))
+    """Return the names of the dependencies uv resolves from a source of its own, each normalised.
+
+    uv matches a `sources` key to a dependency by the normalised name, so a key spells the dependency any of the
+    ways that normalize to the same name.
+    """
+    return {normalized_python_name(name) for name in _uv_table(config).get("sources", {})}
 
 
 def _dependency_arrays(config: Mapping) -> list[MutableSequence]:
@@ -129,49 +149,88 @@ def _dependency_arrays(config: Mapping) -> list[MutableSequence]:
 
 
 @dataclass(frozen=True, kw_only=True)
-class Declaration(Reference):
+class Declaration(SteeredReference):
     """A dependency a file declares, and where the file says its release comes from.
 
     `uv_sourced` says the file names this dependency in its `[tool.uv] sources` table, so uv resolves it from a
     path, a workspace member, a git repository, or an index of its own. `direct_url` says the declaration points
-    at a URL or a git repository rather than at a release. What follows from either is the caller's.
+    at a URL or a git repository rather than at a release. What follows from naming no release is the caller's.
+    `position` says which spec of the file this declaration is, counting from one.
     """
 
     uv_sourced: bool
     direct_url: bool
+    position: _DeclarationPosition
+
+    @property
+    def pins_a_version(self) -> bool:
+        """Return whether the declaration pins an exact version, so a check about that version has one to run on."""
+        return bool(self.current_version)
+
+    @property
+    def names_no_release(self) -> bool:
+        """Return whether the declaration points at something other than a release of the package it names."""
+        return self.direct_url or self.uv_sourced
+
+    @property
+    def updatable(self) -> bool:
+        """Return whether the declaration's own marker leaves its version to be updated.
+
+        A declaration that pins no exact version has no pin to freeze, so an `ignore[update]` on it holds nothing
+        back.
+        """
+        return not (self.pins_a_version and self.marker.ignores(Scope.UPDATE))
 
 
 def declared_dependencies(file: DependencyTomlFile) -> list[Declaration]:
-    """Return every dependency the file declares, each parsed once and located at the line declaring it.
+    """Return every dependency the file declares, each parsed once and located and marked at the line declaring it.
 
-    Each spec is marked in a copy of the file, which comes back in the file's own layout, so the line a marker
-    lands on is the line declaring the spec it replaced. Nothing is searched for in the file's text, so a string
-    spelled like a spec elsewhere never takes its line, and a spec TOML spells with an escape is located like the
-    rest. A spec declared twice keeps a marker per declaration, and so a line of its own for each.
+    Only the dependency arrays are read, so a string spelled like a spec elsewhere in the file is not one. A spec
+    another declaration spells identically, and one TOML spells with an escape, are each located at their own line
+    too. A spec that does not parse is left out, without shifting the positions of the declarations after it.
     """
     contents = file.read()
     sourced = _uv_source_names(_config(file.toml(contents)))
-    specs: list[str] = []
+    specs: dict[_DeclarationPosition, str] = {}
 
-    def mark(spec: str) -> str:
-        specs.append(spec)
-        return _marker(len(specs))
+    def place(position: _DeclarationPosition, spec: str) -> str:
+        specs[position] = spec
+        return _placeholder(position)
 
-    marked = _respelled_specs(file, contents, mark)
-    if marked is None:
+    placed = _replaced_specs(file, contents, place)
+    if placed is None:
         return []
-    located = ((spec, _marker(number)) for number, spec in enumerate(specs, start=1))
+    requirements = {
+        position: requirement for position, spec in specs.items() if (requirement := _requirement(spec)) is not None
+    }
+    lines = located_lines(file.path, file.toml(placed).split("\n"))
+    locations = {
+        position: Location(file.path, line_number(placed, placed.index(_placeholder(position))))
+        for position in requirements
+    }
     return [
         Declaration(
             requirement.name,
             _pinned_version(requirement),
-            Location(file.path, line_number(marked, marked.index(m))),
-            uv_sourced=requirement.name in sourced,
+            locations[position],
+            uv_sourced=normalized_python_name(requirement.name) in sourced,
             direct_url=bool(requirement.url),
+            position=position,
+            marker=_marker(lines, position, locations[position]),
         )
-        for spec, m in located
-        if (requirement := _requirement(spec)) is not None
+        for position, requirement in requirements.items()
     ]
+
+
+def _marker(lines: list[Line], position: _DeclarationPosition, location: Location) -> Marker:
+    """Return the marker steering the declaration at the position, read from the line holding its placeholder.
+
+    The lines are the TOML's rather than the file's, so a marker inside a `# /// script` block is read without the
+    `#` that comments the block out. They are located from the TOML's own start, so the declaration's location
+    replaces the one its line was given.
+    """
+    line = next(line for line in lines if _placeholder(position) in line.text)
+    return parse_marker(replace(line, location=location))
 
 
 def _requirement(spec: str) -> Requirement | None:
@@ -200,14 +259,12 @@ def _pinned_version(requirement: Requirement) -> VersionString:
     return ""
 
 
-def _rewritten_spec(spec: str, versions: dict[DependencyName, VersionString]) -> str:
-    """Return the spec with its pinned version replaced by the one `versions` holds for its name.
+def _rewritten_spec(spec: str, declaration: Declaration, new_version: VersionString) -> str:
+    """Return the spec with the version the declaration pins replaced by the new one.
 
-    A spec pinning no version, and one whose name the mapping does not hold, come back as they were. Only the
-    version is replaced, so whatever the declaration spells around it stays as it is.
+    A declaration pinning no exact version has none to replace, so its spec comes back as it was. Only the version
+    is replaced, so whatever the declaration spells around it stays as it is.
     """
-    requirement = _requirement(spec)
-    if requirement is None or not (current := _pinned_version(requirement)):
+    if not (current := declaration.current_version):
         return spec
-    new_version = versions.get(requirement.name, current)
     return re.sub(rf"(==\s*){re.escape(current)}", lambda match: match[1] + new_version, spec, count=1)

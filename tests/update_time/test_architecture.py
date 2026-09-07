@@ -139,11 +139,16 @@ def _reads_one_of(names: set[str]) -> CustomFileCondition:
 
 
 class DependenciesTest(unittest.TestCase):
-    """Unit test for module dependencies within the tool."""
+    """Unit test for module dependencies within the tool, its own tooling, and the modules its tests share."""
 
     def test_no_cyclic_dependencies(self):
-        """Test that there are no cyclic dependencies."""
-        assert_passes(project_files("src/").should().have_no_cycles())
+        """Test that there are no cyclic dependencies, in the tool, under `tools/`, or among the test modules.
+
+        A cycle among the test modules leaves the suite unable to import, which reports an error per module that
+        imports either end rather than naming the two files that close the cycle.
+        """
+        for folder in ("src/", "tests/", "tools/"):
+            assert_passes(project_files(folder).should().have_no_cycles())
 
     def test_no_script_imports(self):
         """Test that scripts are not imported, by name or through the package holding them."""
@@ -164,8 +169,12 @@ class TestSupportTest(unittest.TestCase):
     """
 
     def test_fixtures_do_not_depend_on_helpers(self):
-        """Test that fixtures.py doesn't import helpers.py, so the dependency only runs from helpers to fixtures."""
-        fixtures_file = project_files("tests/").with_name("fixtures.py")
+        """Test that the shared fixtures.py imports no helpers, so the dependency runs from helpers to fixtures.
+
+        The shared `helpers.py` imports the shared `fixtures.py`, so that one is a leaf. A package's own fixtures
+        module is not, and builds its values with the helpers beside it.
+        """
+        fixtures_file = project_files("tests/").with_name("fixtures.py").in_path("*/tests/update_time/fixtures.py")
         assert_passes(fixtures_file.should_not().depend_on_files().with_name("helpers.py"))
         assert_passes(fixtures_file.should_not().depend_on_files().in_path(_package_init("tests/update_time")))
 
