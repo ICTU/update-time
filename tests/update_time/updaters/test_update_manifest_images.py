@@ -1,8 +1,10 @@
 """Unit tests for the manifest image update script."""
 
 import unittest
+from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, patch
 
+from update_time.domain.dependency import FloatingPin
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
 from update_time.primitives.location import Location
 from update_time.updaters.update_manifest_images import update_manifest_images
@@ -43,6 +45,17 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.run_updater(mock_manifest)
         mock_manifest.write_text.assert_called_once_with(self.reference(f"python:3.14.7@{DIGEST}"))
         self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(mock_manifest, 1))
+        self.assert_no_warnings_logged()
+
+    def test_image_whose_tag_the_registry_does_not_serve_is_not_stale(self):
+        """Test that an `image:` whose tag the registry does not list is not reported stale."""
+        pushed = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        self.requests.side_effect = mock_docker_registry(docker_tag("v4.7.0", DIGEST, tag_last_pushed=pushed))
+        mock_manifest = mock_path(self.reference("acme/api:ci"))
+        self.run_updater(mock_manifest)
+        mock_manifest.write_text.assert_not_called()
+        location = Location(mock_manifest, 1)
+        self.assert_unpinned_floating_tag_logged("acme/api", "ci", location, FloatingPin.NOT_LISTED)
         self.assert_no_warnings_logged()
 
     def test_variable_substitution_ignored(self):

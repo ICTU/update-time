@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
         def __call__(self, function: object, subject: object) -> bool:
             """Return whether the function was registered as having the capability for the subject."""
+            ...
 
 
 def _every_subject(_subject: object) -> bool:

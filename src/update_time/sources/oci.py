@@ -330,14 +330,17 @@ def get_latest_tag(
     *,
     check_archival: bool,
 ) -> DependencyVersion:
-    """Return the tag to pin the reference to, carrying the image's newest release.
+    """Return the tag to pin the reference to, carrying the image's newest release where one dates it.
 
     Resolves images on any OCI registry (Docker Hub, ghcr.io, mcr.microsoft.com, quay.io, ...). The digest comes
     back even when the current version is already the latest, so an unpinned reference can be pinned without
-    bumping its version.
+    bumping its version. A reference whose tag the registry does not serve names no image in the repository, so
+    the image's newest release does not date the reference.
     """
     del check_archival
     resolved = _resolved_tag(image, current_tag, version_bound, cooldown_days)
+    if not resolved.served:
+        return resolved
     return replace(resolved, project=Project(newest=_newest_release(image)))
 
 
@@ -358,7 +361,8 @@ def _resolved_tag(
     if current.version is None:
         # A tag Update-time can read as neither a version nor a channel, such as `debian:dev-2024`: it names no
         # version to advance, so the tag stands and the digest it serves pins it.
-        return DependencyVersion(version=current.name, sha=_manifest_digest(image, current.name))
+        digest = _manifest_digest(image, current.name)
+        return DependencyVersion(version=current.name, sha=digest, served=bool(digest))
     candidates = [
         tag
         for tag in (Tag(name=name) for name in _tag_names(image))
@@ -416,9 +420,10 @@ def _resolved_floating_tag(image: DependencyName, current: Tag) -> DependencyVer
     """
     if not is_docker_hub_image(image):
         return _walked_floating_tag(image, current)
-    digests = docker_hub.tag_digests(_repository(image), current.name)
+    digests, examined_all = docker_hub.tag_digests(_repository(image), current.name)
     if not (digest := digests.get(current.name)):
-        return _unpinned_floating_tag(current, FloatingPin.NOT_LISTED)
+        reason_no_version_was_pinned = FloatingPin.NOT_LISTED if examined_all else FloatingPin.NOT_AMONG_EXAMINED
+        return _unpinned_floating_tag(current, reason_no_version_was_pinned)
     aliases = [Tag(name=name) for name, tag_digest in digests.items() if tag_digest == digest]
     if (alias := _pinned_alias(current, aliases)) is None:
         return _unpinned_floating_tag(current, FloatingPin.NO_VERSION_TAG)
@@ -455,8 +460,12 @@ def _walked_floating_tag(image: DependencyName, current: Tag) -> DependencyVersi
 
 
 def _unpinned_floating_tag(current: Tag, reason: FloatingPin) -> DependencyVersion:
-    """Return the floating tag as it is, carrying why no version was pinned in its place."""
-    return DependencyVersion(version=current.name, floating=reason)
+    """Return the floating tag as it is, carrying why no version was pinned in its place.
+
+    Two of the reasons say the registry does not serve the tag, so nothing dates the reference.
+    """
+    served = reason not in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)
+    return DependencyVersion(version=current.name, floating=reason, served=served)
 
 
 def _pinned_alias(current: Tag, aliases: list[Tag]) -> Tag | None:
@@ -547,9 +556,8 @@ def _labels(tag: Tag) -> tuple[Tag, ...]:
 def _newest_release(image: str) -> Release | None:
     """Return the image's newest release: the tag its registry pushed most recently, or None when it dates none.
 
-    The release is the whole image's, whatever labels its tag carries and whatever tag the reference names. Only
-    Docker Hub exposes a push date (the OCI protocol doesn't), so an image on another registry is never flagged
-    as stale — the same limitation as the cooldown.
+    The release is the whole image's, whatever labels its tag carries. Only Docker Hub exposes a push date (the OCI
+    protocol doesn't), so an image on another registry is never flagged as stale.
 
     A tag is pushed together with the tags serving the same image, so one push date is shared by a tag naming a
     version and its aliases. `_alias_key` ranks them by version, then by how precisely it is spelled, so the

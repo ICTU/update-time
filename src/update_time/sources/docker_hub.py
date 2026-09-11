@@ -68,13 +68,15 @@ _TAG_LISTING_PAGE_SIZE = 100
 _MAX_TAG_LISTING_PAGES = 5
 
 
-def tag_digests(repository: str, tag: str) -> dict[str, str]:
-    """Return the digest each listed tag of a Docker Hub repository serves, read until `tag`'s aliases are listed.
+def tag_digests(repository: str, tag: str) -> tuple[dict[str, str], bool]:
+    """Return the digest each listed tag of a Docker Hub repository serves, and whether the listing was read out.
 
     `repository` is the `namespace/repository` path (e.g. `library/python`). The OCI listing gives tag names only,
     so this is the only listing that says which tags serve one digest. The listing is ordered by push date and a
     tag is pushed together with the other tags serving its digest, so reading stops at the first page holding none
-    of them, and at `_MAX_TAG_LISTING_PAGES` pages whatever the listing holds.
+    of them, and at `_MAX_TAG_LISTING_PAGES` pages whatever the listing holds. Where the listing ran out, a tag
+    missing from it is one the registry does not list. Where reading stopped earlier, that tag may sit on a page
+    after the last one read.
     """
     url = _listing_url(repository)
     digests: dict[str, str] = {}
@@ -84,7 +86,7 @@ def tag_digests(repository: str, tag: str) -> dict[str, str]:
         digests |= page
         if not url or _lists_every_alias(digests, page, tag):
             break
-    return digests
+    return digests, not url
 
 
 def newest_pushes(repository: str) -> dict[str, datetime]:
