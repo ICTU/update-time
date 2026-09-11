@@ -216,6 +216,9 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.unpinned_floating_tag(
         reference("acme/api", compose, "nightly"), DependencyVersion("nightly"), FloatingPin.NOT_LISTED
     )
+    log.unpinned_floating_tag(
+        reference("acme/api", compose, "canary"), DependencyVersion("canary"), FloatingPin.NOT_AMONG_EXAMINED
+    )
     ghcr = Location(Path("Dockerfile"), 1)
     log.unpinned_floating_tag(
         reference("ghcr.io/acme/api", ghcr, "latest"), DependencyVersion("latest"), FloatingPin.NO_VERSION_TAG_EXAMINED

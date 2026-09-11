@@ -25,6 +25,7 @@ if TYPE_CHECKING:
             `check_archival` is the run's archival setting, so a source that pays a request to answer it can skip
             that request rather than reading the setting itself.
             """
+            ...
 
 
 # The name of a dependency as it appears in a manifest: a Docker image (`cimg/python`), a GitHub action
@@ -70,6 +71,7 @@ class FloatingPin(StrEnum):
 
     RESOLVED = auto()
     NOT_LISTED = "its tag is not among the tags listed for the image"
+    NOT_AMONG_EXAMINED = "its tag is not among the newest tags examined for the image"
     NO_MANIFEST = "the registry serves no manifest for its tag, so what that tag serves is unknown"
     NO_VERSION_TAG = "no tag naming a version serves the same image"
     NO_VERSION_TAG_EXAMINED = "no tag naming a version among the newest examined serves the same image"
@@ -153,6 +155,7 @@ class DependencyVersion:
     yank: Yank = Yank()  # The version's withdrawal state (yanked on PyPI, deprecated on npm)
     project: Project = Project()  # What the source reports about the project behind the dependency
     floating: FloatingPin | None = None  # What happened to the floating pin if the reference had one
+    served: bool = True  # Whether the source serves the version the reference names
 
     @classmethod
     def unpinned(cls, project: Project) -> DependencyVersion:

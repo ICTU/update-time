@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Look for that changelog file in the directory a monorepo builds the package from, and not only in the repository's root. Part of [#327](https://github.com/ICTU/update-time/issues/327).
 - Report the changes of a package whose monorepo tag joins its name and the version with a slash, such as `pyproject-fmt`, instead of the release notes of another repository that carries its name. Closes [#335](https://github.com/ICTU/update-time/issues/335).
 - Log a changelog URL at `DEBUG` when the project's own source answers it with an error, instead of warning about a fetch the reader cannot fix. Part of [#335](https://github.com/ICTU/update-time/issues/335).
+- Report no staleness for an image tag the registry does not serve, instead of dating it by the repository's newest release. Closes [#341](https://github.com/ICTU/update-time/issues/341).
 
 ## 0.0.34 - 2026-09-04
 

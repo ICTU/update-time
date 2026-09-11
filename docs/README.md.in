@@ -133,12 +133,13 @@ The pin names the image the reference already serves, so the [cooldown](#-cooldo
 > [!IMPORTANT]
 > Once pinned, a reference no longer follows a channel. Later runs move `node:lts` pinned to `24.19.0` to whatever version is newest, LTS or not. To keep the channel, mark the reference `# update-time: allow[floating-pin]` (see [Keeping a tag floating](#keeping-a-tag-floating)). To keep the pin under 25, add a bound. From the next run on, `ignore[major-update]` or `allow[update<25]` holds it there (see [Bounding an update](#bounding-an-update)).
 
-Update-time leaves four kinds of floating tag as they are:
+Update-time leaves five kinds of floating tag as they are:
 
 - A tag whose image carries no version tag under the tag's own label, such as an image tagged only `dev` or `prod`.
+- A tag the registry does not list, such as an image a pipeline builds and never pushes, a tag deleted from the repository, or a mistyped tag.
+- A tag listed further down a large repository's tag list than Update-time reads.
 - A tag on a registry other than Docker Hub, where none of the version tags Update-time checks serves the same image.
 - A tag whose registry serves no manifest for it — a private image Update-time cannot authenticate to, or a registry it could not reach — so it cannot read the digest that tag serves
-- A tag listed further down a large repository's tag list than Update-time reads.
 
 Update-time reports each of them at `DEBUG`, in a line naming the reason the tag was left:
 
@@ -1080,6 +1081,10 @@ Update-time adopts a newer tag only once it is past the cooldown, provided Docke
 #### Stale dependencies
 
 Staleness is measured against the image's newest release, on Docker Hub only, since other registries expose no publication date. Update-time therefore reports a `stale` marker on an image hosted elsewhere as redundant. It reports one on a CircleCI machine-executor image as redundant too, since no registry serves that image.
+
+Update-time reports no staleness for a reference whose tag the registry does not serve. That tag names no image in the repository, so the image's newest release says nothing about the reference. An image a pipeline builds without pushing it is the common case, and a deleted or mistyped tag reads the same way.
+
+Two kinds of tags are dated all the same. A tag naming a version is, whether or not the registry serves it. So is a tag listed further down the repository's tag list than Update-time reads, since what the registry serves under such a tag is unknown.
 
 #### Yanked dependencies
 
