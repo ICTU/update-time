@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.35 - 2026-09-12
+
 ### Added
 
 - Switch the archival check off for the whole run with `--ignore-archived`. Closes [#323](https://github.com/ICTU/update-time/issues/323).
