@@ -129,7 +129,7 @@ def parse_args() -> argparse.Namespace:
         type=_advisories,
         default=IGNORE_VULNERABILITIES.default,
         metavar="IDS",
-        help="comma-separated list of advisories to never warn about, wherever in the scan they turn up, for "
+        help="comma-separated list of advisories to never warn about, wherever in the run they turn up, for "
         "example GHSA-2gwj-7jmv-h26r,CVE-2021-31542. An advisory can be named by any of the identifiers it is known "
         "by. To silence one for a single reference instead, mark that reference with an # update-time: "
         "ignore[vulnerable=ID] marker",
@@ -163,7 +163,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--allow-floating-pin",
         action="store_true",
-        help="keep every floating image tag in the scan as it is, instead of pinning it to the version and digest "
+        help="keep every floating image tag in the run as it is, instead of pinning it to the version and digest "
         "it currently serves; equivalent to marking every reference with # update-time: allow[floating-pin] (an "
         "# update-time: ignore[floating-pin] marker still pins that reference)",
     )
