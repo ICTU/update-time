@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import Mock
 
-from update_time.file_formats import toml
+from update_time.formats import toml
 
 from tests.helpers import mock_path
 

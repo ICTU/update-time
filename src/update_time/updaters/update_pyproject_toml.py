@@ -1,10 +1,10 @@
 """Find uv-managed pyproject.toml files and update their dependencies and lockfiles."""
 
 from update_time.domain.file_type import PYPROJECT_TOML
-from update_time.file_formats import toml
-from update_time.file_formats.dependency_file import PyprojectToml
+from update_time.formats import toml
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
+from update_time.manifests.dependency_file import PyprojectToml
 from update_time.package_managers import uv
 from update_time.updaters.uv_pins import warn_about_pins
 

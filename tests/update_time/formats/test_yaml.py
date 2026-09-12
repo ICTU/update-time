@@ -2,7 +2,7 @@
 
 import unittest
 
-from update_time.file_formats import yaml
+from update_time.formats import yaml
 
 from tests.helpers import mock_path
 

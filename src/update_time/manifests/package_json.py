@@ -6,7 +6,7 @@ engines, which dependencies to update) is the caller's concern.
 
 from typing import TYPE_CHECKING
 
-from update_time.file_formats import json as json_format
+from update_time.formats import json as json_format
 from update_time.markers.marker import Marker, ReferenceMarker, parse_directives
 from update_time.primitives.location import Location
 from update_time.primitives.text import column, line_number
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName
-    from update_time.file_formats.json import JsonFile
+    from update_time.formats.json import JsonFile
 
 # The dependency sections whose direct dependencies npm/pnpm install for this project (peerDependencies are
 # constraints on the consumer, not installed here, so they are left out). pnpm's `list --json` output splits its

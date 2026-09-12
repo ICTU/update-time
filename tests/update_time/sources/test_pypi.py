@@ -7,7 +7,9 @@ from unittest.mock import Mock, patch
 
 import requests
 
+from update_time.domain import changelog
 from update_time.domain.bound import NO_BOUND, Verb
+from update_time.domain.changelog import is_markdown
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Archival, Release, Yank
 from update_time.io.log import Logger
@@ -200,6 +202,60 @@ class GetChangesTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi,
+            "    return Changes(changes, markdown=is_markdown_content_type(content_type) or is_markdown_file(url))",
+            "    return Changes(changes, markdown=is_markdown_file(url))",
+            "the content type a changelog URL is served with is passed over, so its Markdown is shown raw",
+        ),
+    )
+    def test_the_content_type_says_the_changelog_url_is_markdown(self, mock_get: Mock):
+        """Test that a changelog URL served as Markdown is read as Markdown, whatever its name says."""
+        urls = {"changelog": "https://changes"}
+        self.create_mock_response(
+            mock_get,
+            {"info": {"description": "Package-foo description", "project_urls": urls}},
+            text=markdown_changelog("1.1"),
+            content_type="text/markdown",
+        )
+        changes = get_changes("package-served-as-markdown", "1.1")
+        self.assertEqual(changes, markdown_changes("1.1"))
+        self.assertTrue(is_markdown(changes))
+
+    @kills(
+        Mutation(
+            pypi,
+            "    return Changes(changes, markdown=is_markdown_content_type(content_type) or is_markdown_file(url))",
+            "    return Changes(changes, markdown=True)",
+            "a changelog URL's extension is passed over, so a reStructuredText changelog is read as Markdown",
+        ),
+        Mutation(
+            changelog,
+            "    return urlparse(name).path.lower().endswith(MARKDOWN_EXTENSION)",
+            "    return name.lower().endswith(MARKDOWN_EXTENSION)",
+            "a query or a fragment after a URL's extension hides it, so its Markdown is shown raw",
+        ),
+    )
+    def test_the_changelog_url_extension_says_whether_the_changes_are_markdown(self, mock_get: Mock):
+        """Test that the extension of the changelog URL PyPI publishes says whether its changes are Markdown."""
+        names = {
+            "CHANGELOG.rst": False,
+            "CHANGELOG.md#unreleased": True,
+            "CHANGELOG.md?token=abc": True,
+        }
+        for name, markdown in names.items():
+            with self.subTest(name=name):
+                url = f"https://changes/{name}"
+                self.create_mock_response(
+                    mock_get,
+                    {"info": {"description": "Package-foo description", "project_urls": {"changelog": url}}},
+                    text=markdown_changelog("1.1"),
+                )
+                changes = get_changes(f"package-{name}", "1.1")
+                self.assertEqual(changes, markdown_changes("1.1"))
+                self.assertEqual(is_markdown(changes), markdown)
+
+    @kills(
+        Mutation(
+            pypi,
             'changelog_response.headers.get("Content-Type", "")',
             'changelog_response.headers["Content-Type"]',
             "a changelog URL answered without a content type ends the run with a traceback",
@@ -298,6 +354,36 @@ class GetChangesTest(LoggingTestCase):
                 info = {"description": f"Package description\n{changelog}\n"} | project_urls
                 self.create_mock_response(mock_get, {"info": info})
                 self.assertEqual(get_changes(f"package-5-{case}", "1.1"), changelog)
+
+    @kills(
+        Mutation(
+            pypi,
+            "        get_version_changes_from_changelog(description, version), "
+            "markdown=is_markdown_content_type(content_type)",
+            "        get_version_changes_from_changelog(description, version), markdown=True",
+            "the content type is passed over, so a reStructuredText description is read as Markdown",
+        ),
+        Mutation(
+            changelog,
+            '    return content_type.partition(";")[0].strip().lower() == _MARKDOWN_CONTENT_TYPE',
+            "    return content_type.strip().lower() == _MARKDOWN_CONTENT_TYPE",
+            "a content type carrying parameters matches nothing, so a Markdown description is read as text",
+        ),
+    )
+    def test_the_content_type_says_whether_the_description_is_markdown(self, mock_get: Mock):
+        """Test that the content type PyPI reports for a description says whether its changes are Markdown."""
+        changelog_text = "1.1\n- Fixed ...\n- Added ..."
+        cases = {"text/markdown; charset=UTF-8; variant=GFM": True, "text/x-rst": False}
+        for content_type, markdown in cases.items():
+            with self.subTest(content_type=content_type):
+                info = {
+                    "description": f"Package description\n{changelog_text}\n",
+                    "description_content_type": content_type,
+                }
+                self.create_mock_response(mock_get, {"info": info})
+                changes = get_changes(f"package-6-{content_type}", "1.1")
+                self.assertEqual(changes, changelog_text)
+                self.assertEqual(is_markdown(changes), markdown)
 
     def test_github_url_in_description_that_has_no_changelog(self, mock_get: Mock):
         """Test that a GitHub release without a body yields no changelog."""
@@ -403,7 +489,25 @@ class GetChangesTest(LoggingTestCase):
             with self.subTest(directory=directory):
                 files: dict[str, RootEntry] = {"CHANGES": stub, directory: {path: changelog}}
                 self.create_discovery_responses(mock_get, package, files=files, repository=repository)
-                self.assertEqual(get_changes(package, "1.1"), "1.1\n===\n\n- Fixed foo")
+                changes = get_changes(package, "1.1")
+                self.assertEqual(changes, "1.1\n===\n\n- Fixed foo")
+                self.assertFalse(is_markdown(changes))
+
+    @kills(
+        Mutation(
+            github,
+            "            return Changes(changes, markdown=is_markdown_file(name))",
+            "            return Changes(changes, markdown=False)",
+            "a Markdown changelog below a documentation directory is read as text, so its markup is shown raw",
+        ),
+    )
+    def test_markdown_changelog_in_a_documentation_directory(self, mock_get: Mock):
+        """Test that a changelog file below a documentation directory is read by its own extension."""
+        files: dict[str, RootEntry] = {"docs": {"changelog.md": markdown_changelog("1.1")}}
+        self.create_discovery_responses(mock_get, "flask", files=files, repository="pallets/flask")
+        changes = get_changes("flask", "1.1")
+        self.assertEqual(changes, markdown_changes("1.1"))
+        self.assertTrue(is_markdown(changes))
 
     def test_documentation_changelog_naming_no_version(self, mock_get: Mock):
         """Test that a documentation directory whose changelog names another version supplies no changes."""
@@ -509,11 +613,11 @@ class GetChangesTest(LoggingTestCase):
 
     _ROOT_FIRST = Mutation(
         pypi,
-        '    if changelog := _changelog_from_description(info["description"], package, version):',
+        "    if changelog := _changelog_from_description(info, package, version):",
         "    for url in repository_urls:\n"
         "        if changelog := _changelog_from_repository_root(url, version):\n"
         "            return changelog\n"
-        '    if changelog := _changelog_from_description(info["description"], package, version):',
+        "    if changelog := _changelog_from_description(info, package, version):",
         "a package whose description holds the changes reports the repository file's instead, at a request extra",
     )
 
@@ -533,8 +637,8 @@ class GetChangesTest(LoggingTestCase):
 
     _URL_ENDS_THE_SEARCH = Mutation(
         pypi,
-        '    if changelog := _changelog_from_description(info["description"], package, version):',
-        '    changelog = _changelog_from_description(info["description"], package, version)\n'
+        "    if changelog := _changelog_from_description(info, package, version):",
+        "    changelog = _changelog_from_description(info, package, version)\n"
         '    if changelog or _GITHUB_URL_RE.search(info["description"]):',
         "a package whose description links another project reports no changes, though its repository's root "
         "holds a changelog file",
@@ -664,7 +768,7 @@ class GetChangesTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi,
-            '    if changelog_response is None:\n        return ""\n    if not changelog_response.ok:',
+            "    if changelog_response is None:\n        return NO_CHANGES\n    if not changelog_response.ok:",
             "    if not changelog_response.ok:",
             "a changelog URL whose request fails ends the run with a traceback",
             raises="AttributeError: 'NoneType' object has no attribute 'ok'",

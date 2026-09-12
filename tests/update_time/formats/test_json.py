@@ -2,7 +2,7 @@
 
 import unittest
 
-from update_time.file_formats import json as json_format
+from update_time.formats import json as json_format
 
 from tests.helpers import mock_path
 

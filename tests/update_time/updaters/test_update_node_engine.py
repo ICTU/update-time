@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from update_time.domain.bound import Verb
-from update_time.file_formats import package_json
 from update_time.io.log import Logger
+from update_time.manifests import package_json
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker
 from update_time.primitives.location import Location

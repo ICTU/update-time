@@ -14,8 +14,9 @@ Update-time rewrites the files in place and logs what it did:
 ```console
 [09:14:03] INFO     New version available for humanize in docs/requirements.txt:12: 4.15.0
                     Changed in 4.15.0
-                    - Fantastic new features
-                    - A few bugs squashed
+
+                     • Fantastic new features
+                     • A few bugs squashed (#42)
            INFO     Pinned python in Dockerfile:1 to
                     3.14.6@sha256:9f2c1e7bd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4
            INFO     New version available for actions/checkout in .github/workflows/ci.yml:17: 4.3.0

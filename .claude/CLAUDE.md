@@ -50,7 +50,7 @@ Develop test-first, in small steps, so I can steer.
 
 Keep a numbered list of candidate tests (T1, T2, …) with the status of each: todo, pass, or fail. Drop a test from the list only once every test on it passes, or when I tell you to drop it.
 
-Prepare a cycle by adding candidate tests to the list, then let me choose where to start. This holds for a feature, a bug fix, a task, and an increment alike.
+Where the issue specifies little, offer to write a specification first. If accepted, write the specification as a markdown file in the repo root. Prepare a cycle by adding candidate tests to the list, then let me choose where to start. This holds for a feature, a bug fix, a task, and an increment alike.
 
 Some work changes no behaviour, so no test drives it. Prepare that as a numbered list of refactorings instead, each of which ends green, and let me choose where to start.
 
@@ -64,7 +64,7 @@ Each cycle has three steps:
    - Show the list with each test's status, even when nothing on it changed. Once it holds more than five tests, one line for the passing tests and a row per test still to write is enough.
    - Write the candidate test. Don't design or write the implementation yet, even when the test names something that does not exist: predict the import error and the tests it takes down with it.
    - Check the new test against the existing ones first. When one already covers the case, add the assertion to that test instead of writing a near-duplicate.
-   - Predict the outcome before you run `just test`: how the test will fail, naming the exact error, or why it will pass.
+   - Write the prediction down in your reply before you run `just test`: how the test will fail, naming the exact error, or why it will pass.
    - Run the whole suite, not only the new test's module. A test predicted to fail is the only one failing, and fails as predicted. A test predicted to pass leaves the suite green. When anything else happens, work out why and tell me.
 2. **Green**:
    - If the test failed, design the smallest change that makes it pass, then run `just test` again.

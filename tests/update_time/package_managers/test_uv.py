@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest.mock import ANY, Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN
-from update_time.file_formats.dependency_file import PyprojectToml
-from update_time.file_formats.pyproject_toml import declared_dependencies
 from update_time.io.log import Logger
+from update_time.manifests.dependency_file import PyprojectToml
+from update_time.manifests.pyproject_toml import declared_dependencies
 from update_time.package_managers.uv import (
     _persist_exclude_newer,
     _workspace_root,

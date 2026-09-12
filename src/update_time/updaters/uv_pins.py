@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.file_formats import pyproject_toml as pyproject_toml_format
+from update_time.manifests import pyproject_toml as pyproject_toml_format
 from update_time.package_managers import uv
 from update_time.references.delegated import (
     warn_about_projects,
@@ -15,8 +15,8 @@ from update_time.sources.osv import Ecosystem
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from update_time.file_formats.dependency_file import DependencyTomlFile
     from update_time.io.log import Logger
+    from update_time.manifests.dependency_file import DependencyTomlFile
 
 
 def warn_about_pins(files: Iterable[DependencyTomlFile], log: Logger) -> None:

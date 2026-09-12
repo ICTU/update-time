@@ -5,9 +5,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
-from update_time.file_formats import pyproject_toml
-from update_time.file_formats.dependency_file import PyprojectToml
 from update_time.io.log import Logger
+from update_time.manifests import pyproject_toml
+from update_time.manifests.dependency_file import PyprojectToml
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.package_managers import uv
 from update_time.primitives.location import Location

@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Changed
+
+- Render a new version's changes as Markdown when their changelog is written in Markdown, and as the project wrote them when it is not. Closes [#340](https://github.com/ICTU/update-time/issues/340).
 
 ## 0.0.35 - 2026-09-12
 

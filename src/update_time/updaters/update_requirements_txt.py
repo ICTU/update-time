@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.file_type import REQUIREMENTS_TXT
 from update_time.domain.reference import Reference
-from update_time.file_formats import requirements_txt as requirements_txt_format
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
+from update_time.manifests import requirements_txt as requirements_txt_format
 from update_time.markers.directive import DIRECTIVES, Reason
 from update_time.references.file import update_file
 from update_time.references.match import reference_matches

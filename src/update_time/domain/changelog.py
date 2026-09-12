@@ -2,6 +2,29 @@
 
 import re
 import string
+from urllib.parse import urlparse
+
+from update_time.formats import markdown
+
+# The extension a changelog file carries, and the media type a source reports for it, when it is written in Markdown.
+MARKDOWN_EXTENSION = ".md"
+_MARKDOWN_CONTENT_TYPE = "text/markdown"
+
+
+def is_markdown(changes: str) -> bool:
+    """Return whether the changes are written in Markdown."""
+    return getattr(changes, "markdown", False)
+
+
+def is_markdown_file(name: str) -> bool:
+    """Return whether the name of a changelog file, or of the URL serving it, says it is written in Markdown."""
+    return urlparse(name).path.lower().endswith(MARKDOWN_EXTENSION)
+
+
+def is_markdown_content_type(content_type: str) -> bool:
+    """Return whether the content type says its text is written in Markdown, whatever parameters follow it."""
+    return content_type.partition(";")[0].strip().lower() == _MARKDOWN_CONTENT_TYPE
+
 
 # The characters reStructuredText allows a heading to be underlined with.
 _ADORNMENT_CHARACTERS = frozenset(string.punctuation)
@@ -11,8 +34,6 @@ _VERSION = re.compile(r"\d+(?:\.\d+)+")
 _VERSION_START = r"(?<![\d.])"
 # The number of lines a version's changes are cut at where no later version ends them.
 _MAX_LENGTH = 30
-# The runs of characters Markdown fences a code block with.
-_FENCES = ("```", "~~~")
 
 
 def _underline_character(lines: list[str], index: int) -> str:
@@ -38,10 +59,8 @@ def _heading_level(lines: list[str], index: int) -> str:
     line = lines[index]
     if not line.strip():
         return ""
-    after_hashes = line.lstrip("#")
-    hashes = line[: len(line) - len(after_hashes)]
-    if hashes and after_hashes.startswith(" "):
-        return hashes
+    if (marked := markdown.heading(line)) is not None:
+        return "#" * marked[0]
     return _underline_character(lines, index)
 
 
@@ -72,7 +91,7 @@ def _fenced_indexes(lines: list[str]) -> frozenset[int]:
     fenced = set()
     in_fence = False
     for index, line in enumerate(lines):
-        if line.startswith(_FENCES) and (in_fence or not _underlines_the_line_above(lines, index)):
+        if markdown.is_fence(line) and (in_fence or not _underlines_the_line_above(lines, index)):
             in_fence = not in_fence
             fenced.add(index)
         elif in_fence:

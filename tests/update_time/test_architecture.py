@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     from archunitpython.files.assertion import CustomFileCondition, FileInfo
 
 _MANIFEST_PARSERS = ("tomllib", "tomlkit", "yaml")
+# The layer that may read a manifest parser; every other layer reads a file through it.
+_FORMAT_LAYER = "formats"
 
 # What a file violating the settings rule did, named once so the rule and the test of the rule report it alike.
 _READS_A_SETTING = "reads a setting the command line configures a run with"
@@ -24,10 +26,11 @@ _READS_A_SETTING = "reads a setting the command line configures a run with"
 # The layers, innermost rank first; the layers sharing a rank are siblings.
 _RANKS = (
     ("primitives",),
+    ("formats",),
     ("domain",),
     ("markers",),
     ("io",),
-    ("file_formats", "sources"),
+    ("manifests", "sources"),
     ("package_managers", "references"),
     ("updaters",),
 )
@@ -194,12 +197,13 @@ class LayeringTest(unittest.TestCase):
     A layer may use the ones before it. It may use neither a sibling sharing its rank nor a layer after it:
     - `primitives` are project-agnostic building blocks, like a typed environment variable, that even the pure core may
       reach for.
+    - `formats` read, write, and rewrite the text formats a manifest is written in, knowing nothing of dependencies.
     - `domain` is the pure, I/O-free core.
     - `markers` parse the `# update-time:` language and decide what each directive steers.
     - `io` wraps file, process, log, network, and command-line I/O.
-    - `file_formats` read, write, and parse specific manifest formats.
+    - `manifests` read, write, and parse the files that declare dependencies.
     - `sources` are the backends the outer layers ask about a dependency.
-    - `package_managers` drive the external managers, uv, npm, and pnpm, using file_formats and sources.
+    - `package_managers` drive the external managers, uv, npm, and pnpm, using manifests and sources.
     - `references` decide which version a pinned reference should update to, and rewrite the reference accordingly.
     - `updaters` wire everything together.
     """
@@ -253,9 +257,9 @@ class LayeringTest(unittest.TestCase):
         assert_passes(updaters.should_not().depend_on_files().with_name("fetch.py"))
         assert_passes(updaters.should_not().depend_on_files().in_path(_package_init("io")))
 
-    def test_manifest_parsing_goes_through_file_formats(self):
-        """Test that the manifest parsers are confined to file_formats, and that updaters parse nothing themselves."""
-        for layer in (name for name in _LAYERS if name != "file_formats"):
+    def test_manifest_parsing_goes_through_the_format_layers(self):
+        """Test that the manifest parsers are confined to the formats layer, so every other layer reads through it."""
+        for layer in (name for name in _LAYERS if name != _FORMAT_LAYER):
             for module in _MANIFEST_PARSERS:
                 with self.subTest(layer=layer, module=module):
                     rule = project_files("src/").in_folder(layer).should_not().depend_on_external_modules()
@@ -352,7 +356,7 @@ class SubmoduleImportTest(unittest.TestCase):
         self.assert_reports_submodule_import("requests")
 
     def test_manifest_parsing_rule_reports_a_submodule_import(self):
-        """Test that the rule confining manifest parsing to file_formats reports a parser's submodule import."""
+        """Test that the rule confining manifest parsing to manifests reports a parser's submodule import."""
         for module in ("json", *_MANIFEST_PARSERS):
             with self.subTest(module=module):
                 self.assert_reports_submodule_import(module)

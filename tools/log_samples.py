@@ -24,7 +24,8 @@ from update_time.domain.dependency import (
 )
 from update_time.domain.reference import DriftedPin
 from update_time.domain.staleness import STALE_AFTER
-from update_time.io.log import DEPENDENCY_DELIMITER, LOCATION_DELIMITER, Logger
+from update_time.io.console import DEPENDENCY_DELIMITER, LOCATION_DELIMITER
+from update_time.io.log import Logger
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.primitives.location import Location

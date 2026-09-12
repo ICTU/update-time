@@ -6,9 +6,9 @@ from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.dependency import Yank
 from update_time.domain.vulnerability import NO_RISK_LEVEL, VULNERABILITY_LEVEL
-from update_time.file_formats import toml as toml_module
-from update_time.file_formats.dependency_file import InlineScript, PyprojectToml
+from update_time.formats import toml as toml_module
 from update_time.io.log import get_logger
+from update_time.manifests.dependency_file import InlineScript, PyprojectToml
 from update_time.markers import reference as marker_reference_module
 from update_time.markers.directive import Reason
 from update_time.package_managers import uv as uv_module

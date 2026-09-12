@@ -9,13 +9,11 @@ import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-import tomlkit
-import tomlkit.items
 from packaging.requirements import InvalidRequirement, Requirement
 
 from update_time.domain.dependency import is_valid, normalized_python_name
 from update_time.domain.line import Line, located_lines
-from update_time.file_formats import toml
+from update_time.formats import toml
 from update_time.markers.marker import Marker, Scope, parse_marker
 from update_time.markers.reference import SteeredReference
 from update_time.primitives.location import Location
@@ -26,7 +24,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName, VersionString
-    from update_time.file_formats.dependency_file import DependencyTomlFile
+    from update_time.manifests.dependency_file import DependencyTomlFile
 
 
 type _DeclarationPosition = int
@@ -46,24 +44,14 @@ def tool_key(path: Path, table: str, key: str) -> tuple[str, str] | None:
     The trailing comment is returned verbatim (with its leading `#`, or empty when there is none), so a caller can
     recognise a line it wrote itself.
     """
-    document = tomlkit.parse(path.read_text())
-    item = document.get("tool", {}).get(table, {}).get(key)
-    if item is None:
-        return None
-    return str(item), item.trivia.comment
+    return toml.nested_value(toml.read_document(path), "tool", table, key)
 
 
 def set_tool_key(path: Path, table: str, key: str, value: str, *, comment: str = "") -> None:
     """Set `[tool.<table>] <key> = value` (with an optional trailing comment) and write the file back."""
-    document = tomlkit.parse(path.read_text())
-    tool = document.setdefault("tool", tomlkit.table(is_super_table=True))
-    if table not in tool:
-        tool[table] = tomlkit.table()
-    item = tomlkit.item(value)
-    if comment:
-        item.comment(comment)
-    tool[table][key] = item
-    path.write_text(tomlkit.dumps(document))
+    document = toml.read_document(path)
+    toml.set_nested_value(document, "tool", table, key, value=value, comment=comment)
+    path.write_text(toml.dumps(document))
 
 
 def rewrite_pinned_versions(file: DependencyTomlFile, versions: dict[Declaration, VersionString]) -> None:
@@ -101,13 +89,13 @@ def _replaced_specs(
     position = 0
     for array in _dependency_arrays(document):
         for index, spec in enumerate(array):
-            if not isinstance(spec, tomlkit.items.String):
+            if not toml.is_string(spec):
                 continue
             position += 1
             if (new_spec := replace(position, spec)) is not None:
                 array[index] = toml.string(new_spec, quoted_as=spec)
                 replaced = True
-    return file.with_toml(contents, tomlkit.dumps(document)) if replaced else None
+    return file.with_toml(contents, toml.dumps(document)) if replaced else None
 
 
 def _config(toml_text: str) -> dict:

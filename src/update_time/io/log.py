@@ -1,21 +1,17 @@
 """Log helpers."""
 
 import logging
-import re
 from dataclasses import dataclass
 from logging import DEBUG, ERROR, INFO, WARNING
 from typing import TYPE_CHECKING
 
 from rich.console import Console
-from rich.highlighter import ReprHighlighter
-from rich.logging import RichHandler
-from rich.theme import Theme
 
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.staleness import stale_release
+from update_time.io.console import CHANGES, DEPENDENCY_DELIMITER, LOCATION_DELIMITER, LOG_THEME, configure_logging
 from update_time.markers.bound import spell
 from update_time.markers.marker import Scope
-from update_time.primitives.digest import SHA256_DIGEST
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
 from update_time.primitives.timestamp import days_since
@@ -24,7 +20,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from requests import Response
-    from rich.text import Text
 
     from update_time.domain.dependency import DependencyVersion, FloatingPin, VersionString
     from update_time.domain.reference import DriftedPin, Reference, ResolvedReference
@@ -40,96 +35,6 @@ if TYPE_CHECKING:
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 # Private channel that passes the log level from the CLI to the updater subprocesses.
 LOG_LEVEL = EnvVar("_UPDATE_TIME_LOG_LEVEL", default="INFO", parse=str)
-
-
-# Private-use-area character that brackets a dependency name in a log message, so the highlighter can style the name
-# without having to recognise it by shape. A dependency name has no fixed form (`humanize`, `actions/checkout`,
-# `ghcr.io/astral-sh/uv`, …), so unlike a `sha256:` digest it can't be matched by a pattern; the delimiter identifies
-# it unambiguously instead. It is a Private Use Area code point that never occurs in real content, and Rich does not
-# strip it (it strips only a handful of C0 control codes), so it survives message formatting until the highlighter
-# removes it. `Logger` wraps each name in it; `LogHighlighter` styles the wrapped run and strips the delimiters.
-DEPENDENCY_DELIMITER = ""
-
-# Private-use-area character that brackets a file location (a `path` or `path:line`) in a log message. The
-# highlighter can then colour the whole run — directory, filename, and line number — as one token, instead of the
-# several fragments Rich's default rules produce: a `repr.path` prefix, a `repr.filename`, and a `repr.number` for
-# the line. It is not matched by shape for the same reason the digest is dropped and the dependency name is
-# delimited. The path is known exactly when the message is built, whereas a regex over the finished message can't
-# tell it apart from the version numbers and digests around it, and a bare filename such as `Dockerfile` carries
-# no path marker to anchor on. A distinct code point from `DEPENDENCY_DELIMITER`, so the two runs never collide.
-# `Logger` wraps each location in it, and `LogHighlighter` styles the run and strips them.
-LOCATION_DELIMITER = ""
-
-
-class LogHighlighter(ReprHighlighter):
-    """Rich highlighter that colours a whole `sha256:` digest, dependency name, and file location as single tokens.
-
-    Rich's built-in rules otherwise match only fragments of a digest — the `256` reads as a number and a run such
-    as `a256:a4fd` reads as an IPv6 address — colouring parts of it and leaving the rest plain. Matching the full
-    digest and dropping the built-in sub-spans inside it styles the whole digest uniformly (as `repr.digest`), while
-    every other message keeps Rich's default highlighting of version numbers and the like.
-
-    A dependency name can't be matched by shape, and a file location can't be told apart from the versions and digests
-    around it, so `Logger` brackets each with its own delimiter. A bracketed dependency name is styled as
-    `repr.dependency`, keeping Rich's inner highlighting. A bracketed location is styled as `repr.filename` with its
-    inner fragments dropped, so the whole `path:line` reads as one unit. Either way the delimiters are stripped, so
-    only the colouring reaches the output.
-    """
-
-    _DIGEST = re.compile(rf"\b{SHA256_DIGEST}\b")
-    _DEPENDENCY = re.compile(f"{DEPENDENCY_DELIMITER}[^{DEPENDENCY_DELIMITER}]*{DEPENDENCY_DELIMITER}")
-    _LOCATION = re.compile(f"{LOCATION_DELIMITER}[^{LOCATION_DELIMITER}]*{LOCATION_DELIMITER}")
-
-    def highlight(self, text: Text) -> None:
-        """Apply the default highlighting, restyle each digest, then style and unwrap dependency names and locations."""
-        super().highlight(text)
-        for match in self._DIGEST.finditer(text.plain):
-            start, end = match.span()
-            text.spans[:] = [span for span in text.spans if span.end <= start or span.start >= end]
-            text.stylize("repr.digest", start, end)
-        self._restyle_delimited(text, self._DEPENDENCY, "repr.dependency", keep_inner=True)
-        self._restyle_delimited(text, self._LOCATION, "repr.filename", keep_inner=False)
-
-    @staticmethod
-    def _restyle_delimited(text: Text, pattern: re.Pattern[str], style: str, *, keep_inner: bool) -> None:
-        """Style each delimiter-bracketed run as `style` and remove its two delimiters from the text.
-
-        The run is rebuilt from slices of the original text (rather than matched by a pattern) so Rich remaps the
-        surrounding spans across the removed delimiters automatically. With `keep_inner`, the run's existing
-        highlighting is kept and `style` layered on top, so a dependency name keeps Rich's inner colours. Without it,
-        the inner spans are dropped first and the whole run takes `style` uniformly, so a location's `path:line`
-        reads as one token rather than a separate path, filename, and number.
-        """
-        matches = list(pattern.finditer(text.plain))
-        if not matches:
-            return
-        result = text[: matches[0].start()]
-        for index, match in enumerate(matches):
-            inner = text[match.start() + 1 : match.end() - 1]  # the run itself, without its two delimiters
-            if not keep_inner:
-                inner.spans.clear()  # Drop Rich's path/filename/number fragments so the run colours uniformly.
-            inner.stylize(style)
-            result += inner
-            following = matches[index + 1].start() if index + 1 < len(matches) else len(text.plain)
-            result += text[match.end() : following]
-        text.plain = result.plain
-        text.spans = result.spans
-
-
-# The theme adds the styles `LogHighlighter` applies: `repr.digest` for a whole `sha256:` digest and `repr.dependency`
-# (bold white) for a dependency name; a file location reuses Rich's built-in `repr.filename`, so it needs no entry.
-# When colour is off, all render as plain text. The theme is shared with `tools/generate_log_svg.py`, which logs its
-# sample through `Logger` and `configure_logging`, so the README screenshot renders exactly like the real output.
-LOG_THEME = Theme({"repr.digest": "dim", "repr.dependency": "bold white"})
-_LOG_TIME_FORMAT = "[%X]"
-_LOG_MESSAGE_FORMAT = "%(message)s"
-
-
-def configure_logging(console: Console, level: str) -> RichHandler:
-    """Send every record at the level or above to the console, and return the handler that renders it there."""
-    handler = RichHandler(console=console, highlighter=LogHighlighter(), show_path=False)
-    logging.basicConfig(level=level, datefmt=_LOG_TIME_FORMAT, format=_LOG_MESSAGE_FORMAT, handlers=[handler])
-    return handler
 
 
 @dataclass(frozen=True)
@@ -177,6 +82,10 @@ class Logger:
     def _log(self, message: LogMessage, **fields: object) -> None:
         """Emit a log record at the message's own level."""
         self.log.log(message.level, message, self._rendered(fields))
+
+    def _log_changes(self, message: LogMessage, changes: str, **fields: object) -> None:
+        """Emit a log record at the message's own level, carrying the changes beside its fields."""
+        self.log.log(message.level, message, self._rendered(fields), extra={CHANGES: changes})
 
     @classmethod
     def _rendered(cls, fields: dict[str, object]) -> dict[str, object]:
@@ -259,9 +168,7 @@ class Logger:
 
     # --- Source results: resolving a dependency's latest version and digest ---
 
-    _MESSAGE_NEW_VERSION = LogMessage(
-        INFO, "New version available for %(dependency)s in %(location)s: %(version)s\n%(changes)s"
-    )
+    _MESSAGE_NEW_VERSION = LogMessage(INFO, "New version available for %(dependency)s in %(location)s: %(version)s")
     _SUPPRESSING_CHANGELOG = "Suppressing changelog already shown, see above"
     _NO_CHANGELOG = "No changelog available!"
 
@@ -273,7 +180,8 @@ class Logger:
         else:
             changes = version.changes or self._NO_CHANGELOG
         self._logged_changes.add((dependency, version))
-        self._log(self._MESSAGE_NEW_VERSION, **self._reference_fields(reference, version=str(version), changes=changes))
+        fields = self._reference_fields(reference, version=str(version))
+        self._log_changes(self._MESSAGE_NEW_VERSION, changes, **fields)
 
     _MESSAGE_PINNED = LogMessage(INFO, "Pinned %(dependency)s in %(location)s to %(version)s@%(sha)s")
 

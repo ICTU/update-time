@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.reference import Reference
-from update_time.file_formats.package_json import DEPENDENCY_SECTIONS, dependency_locations
 from update_time.io.log import get_logger
 from update_time.io.process import run
+from update_time.manifests.package_json import DEPENDENCY_SECTIONS, dependency_locations
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.sources.npmjs import get_changes, get_publication_datetime
