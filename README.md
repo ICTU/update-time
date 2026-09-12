@@ -128,7 +128,7 @@ options:
                         ignore[vulnerable<LEVEL] marker (default: low)
   --ignore-vulnerability IDS
                         comma-separated list of advisories to never warn
-                        about, wherever in the scan they turn up, for example
+                        about, wherever in the run they turn up, for example
                         GHSA-2gwj-7jmv-h26r,CVE-2021-31542. An advisory can be
                         named by any of the identifiers it is known by. To
                         silence one for a single reference instead, mark that
@@ -156,7 +156,7 @@ options:
                         warning; equivalent to marking every reference with #
                         update-time: allow[hash-drift] (an # update-time:
                         ignore marker still wins)
-  --allow-floating-pin  keep every floating image tag in the scan as it is,
+  --allow-floating-pin  keep every floating image tag in the run as it is,
                         instead of pinning it to the version and digest it
                         currently serves; equivalent to marking every
                         reference with # update-time: allow[floating-pin] (an
@@ -243,32 +243,32 @@ Update-time works on both version pins and hash pins. It moves a version pin for
 
 #### Floating image tags
 
-A floating image tag pins no version: what the project pulls is whatever the registry serves under that tag at that moment. Update-time replaces it with the version and digest it serves at the time of the run, which is the image the project already pulls today:
+A floating image tag pins no version: what the project pulls is whatever the registry serves under that tag at that moment. Update-time replaces it with the version and digest it serves at the time of the run, which is the image the project pulls today:
 
 ```console
 INFO Pinned python in Dockerfile:1 to 3.14.7@sha256:…
 ```
 
-A reference that names no tag at all floats the same way: `FROM python` and `image: redis` ask for whatever their registry serves under `latest`. Update-time pins such a reference to the version and digest that the tag resolves to, writing the tag after the image's name, so `FROM python` becomes `FROM python:3.14.7@sha256:4fad23465a06cc5149a541fbec6f87e234a64dc0550f6bfdd2d290d8f03240df`.
+A reference without a tag floats the same way: `FROM python` and `image: redis` ask for whatever their registry serves under `latest`. Update-time pins such a reference to the version and digest that the tag resolves to, writing the tag after the image's name, so `FROM python` becomes `FROM python:3.14.7@sha256:4fad23465a06cc5149a541fbec6f87e234a64dc0550f6bfdd2d290d8f03240df`.
 
 Registries name one image under several tags, so a floating tag shares its digest with the version tags naming the same image. For example, `python:latest` names the same image as `python:3.14.7`, `python:3.14`, and `python:3`. Update-time can pin the reference to any of those versions. It picks between them using these rules:
 
-1. Update-time keeps a label the floating tag shares with a version tag, so `node:trixie` lands on `26.7.0-trixie` rather than on `26.7.0`, and `python:slim` on `3.14.7-slim`. It drops a label naming a channel, such as `latest`, `lts`, `stable`, and `edge`, to stop the tag from floating. So `node:lts-alpine` lands on `24-alpine` rather than on the `24-lts` that follows whichever 24 release is the LTS one.
+1. Update-time keeps a label the floating tag shares with a version tag, so `node:trixie` lands on `26.7.0-trixie` rather than on `26.7.0`, and `python:slim` on `3.14.7-slim`. It drops a label naming a channel — `latest`, `lts`, `stable`, or `edge` — to stop the tag from floating. So `node:lts-alpine` lands on `24-alpine` rather than on the `24-lts` that follows whichever 24 release is the LTS one.
 2. The most precise version wins, so `3.14.7` is preferred over `3.14` and `3`.
-3. Then the most precise version of a variant the tag asked for, so `node:lts-alpine` lands on `24.19.0-alpine3.24` rather than on `24.19.0-alpine`.
-4. The shortest name comes last, so `node:latest` lands on `26.7.0` rather than on `26.7.0-trixie`, and `amazoncorretto:latest` on `8` rather than on `8-al2023`. This prevents adopting a label the reference never asked for.
+3. Then the most precise version of a variant the floating tag names, so `node:lts-alpine` lands on `24.19.0-alpine3.24` rather than on `24.19.0-alpine`.
+4. The shortest name comes last, so `node:latest` lands on `26.7.0` rather than on `26.7.0-trixie`, and `amazoncorretto:latest` on `8` rather than on `8-al2023`. This prevents adopting a label the floating tag doesn't have.
 
-Pinning does not change the image, so the [cooldown](#-cooldown) holds nothing back. A [bound](#bounding-an-update) decides nothing either, so `allow[update<3.13]` on `python:latest` still pins to `3.14.7`, the version that tag serves. From the next run on, the reference is a version pin like any other, and Update-time updates, bounds, and checks it as one.
+Pinning does not change the image, so the [cooldown](#-cooldown) does not prevent it. A [bound](#bounding-an-update) does not either, so `allow[update<3.13]` on `python:latest` still pins to `3.14.7`, the version that tag serves. From the next run on, the reference is a version pin like any other, and Update-time updates, bounds, and checks it as one.
 
 > [!IMPORTANT]
 > Once pinned, a reference no longer follows a channel. Later runs move `node:lts` pinned to `24.19.0` to whatever version is newest, LTS or not. To keep the channel, mark the reference `# update-time: allow[floating-pin]` (see [Keeping a tag floating](#keeping-a-tag-floating)). To keep the pin under 25, add a bound. From the next run on, `ignore[major-update]` or `allow[update<25]` holds it there (see [Bounding an update](#bounding-an-update)).
 
-Update-time leaves five kinds of floating tag as they are:
+Update-time leaves the following kinds of floating tag as they are:
 
 - A tag whose image has no version tag, such as an image tagged only `dev` or `prod`.
 - A tag the registry does not list, such as an image a pipeline builds and never pushes, a tag deleted from the repository, or a mistyped tag.
 - A tag listed further down a large repository's tag list than Update-time reads.
-- A tag on a registry other than Docker Hub, where none of the version tags Update-time checks serves the same image.
+- A tag on a registry other than Docker Hub, where Update-time reads the candidate tags one at a time and none of those it tried serves the same image.
 - A tag whose registry serves no manifest for it — a private image Update-time cannot authenticate to, or a registry it could not reach — so it cannot read the digest that tag serves
 
 Update-time reports each of them at `DEBUG`, naming the reason the tag was not pinned:
@@ -322,7 +322,7 @@ An *integrity hash mismatch* means the hash a jsDelivr URL declares is not the o
 
 A reference without hash pin has nothing that can drift. So Update-time checks no `requirements.txt` pin, no `.python-version` entry, and no Node engine version. It checks none of the dependencies it delegates to a package manager either.
 
-To adopt the new value, opt the reference in with a marker (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). An image reference then adopts the re-pushed digest, and a GitHub Action or pre-commit hook adopts the commit its tag was moved to. Alternatively, pass `--allow-hash-drift` to opt every reference in the scan in at once. A marker that holds the reference back wins over both, so a reference you deliberately froze is never re-pinned. Update-time logs adopted drift at `INFO`, like any other change.
+To adopt the new value, opt the reference in with a marker (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). An image reference then adopts the re-pushed digest, and a GitHub Action or pre-commit hook adopts the commit its tag was moved to. Alternatively, pass `--allow-hash-drift` to opt every reference in the run in at once. A marker that holds the reference back wins over both, so a reference you deliberately froze is never re-pinned. Update-time logs adopted drift at `INFO`, like any other change.
 
 Update-time never adopts an integrity hash mismatch, whatever you opt in to. The whole point of the hash is to refuse content that doesn't match it. So Update-time reports the mismatch and leaves correcting it to you.
 
@@ -391,7 +391,7 @@ When no reason was given, the message reports `(reason not specified)` instead.
 
 Update-time gives the warning only when the run leaves the reference on the yanked version. That happens when the replacement is still within the [cooldown](#-cooldown), or when a marker holds the update back. It also happens when a package manager left the pin where it was, or when the yanked release is the newest one. To silence the warning itself, mark the reference `# update-time: ignore[yanked]` (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
 
-Which dependencies are checked depends on where a yank can be observed. PyPI reports one as [PEP 592](https://peps.python.org/pep-0592/) yank metadata. On npm there is no yank, but a per-version *deprecation* is the same signal, and Update-time reports it in the same wording as a yank. Where a withdrawal can be observed, Update-time skips that version when picking a new one, and warns about a reference left on it:
+Which dependencies are checked follows from where a yank can be observed. PyPI reports one as [PEP 592](https://peps.python.org/pep-0592/) yank metadata. On npm there is no yank, but a per-version *deprecation* is the same signal, and Update-time reports it in the same wording as a yank. Where a withdrawal can be observed, Update-time skips that version when picking a new one, and warns about a reference left on it:
 
 | Dependency type | Yank check |
 | :-------------- | :--------- |
@@ -422,7 +422,7 @@ Update-time checks the version the run leaves the reference on. So it warns abou
 
 A single reference can carry a risk level of its own, silence one advisory, or leave the check out altogether (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
 
-To silence one advisory across the whole scan, rather than on the one reference that carries a marker, pass `--ignore-vulnerability`. The option takes a comma-separated list: `--ignore-vulnerability GHSA-2gwj-7jmv-h26r,CVE-2021-31542`. It names an advisory the way a marker does, so any identifier the vulnerability is known by will do. Update-time logs what the option silenced at `DEBUG`. Where a reference's own marker silences the same advisory, the marker is the one reported.
+To silence one advisory across the whole run, rather than on the one reference that carries a marker, pass `--ignore-vulnerability`. The option takes a comma-separated list: `--ignore-vulnerability GHSA-2gwj-7jmv-h26r,CVE-2021-31542`. It names an advisory the way a marker does, so any identifier the vulnerability is known by will do. Update-time logs what the option silenced at `DEBUG`. Where a reference's own marker silences the same advisory, the marker is the one reported.
 
 Update-time warns about every risk level by default. To hear only about the more severe ones, raise the threshold with `--vulnerability-level`, for example `--vulnerability-level high`. Update-time warns about a vulnerability whose risk level it cannot read, whatever the threshold is. Pass `--vulnerability-level none` to switch the check off.
 
@@ -521,15 +521,17 @@ A bare `# update-time: ignore` holds a reference back from version updates and f
 | Marker | Version update | ⚠️ Staleness warning | 🚫 Yank warning | 🛡️ Vulnerability warning | 🗄️ Archival warning |
 | :----- | :------------- | :---------------- | :----------- | :-------------------- | :------------------ |
 | `# update-time: ignore` | held back | silenced | silenced | silenced | silenced |
-| `# update-time: ignore[update]` | held back | still checked | still checked | still checked | still checked |
-| `# update-time: ignore[stale]` | applied | silenced | still checked | still checked | still checked |
-| `# update-time: ignore[yanked]` | applied | still checked | silenced | still checked | still checked |
-| `# update-time: ignore[vulnerable]` | applied | still checked | still checked | silenced | still checked |
-| `# update-time: ignore[archived]` | applied | still checked | still checked | still checked | silenced |
+| `# update-time: ignore[update]` | held back | checked | checked | checked | checked |
+| `# update-time: ignore[stale]` | applied | silenced | checked | checked | checked |
+| `# update-time: ignore[yanked]` | applied | checked | silenced | checked | checked |
+| `# update-time: ignore[vulnerable]` | applied | checked | checked | silenced | checked |
+| `# update-time: ignore[archived]` | applied | checked | checked | checked | silenced |
 
 So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen. It still tells you when the project behind the reference went quiet, when its version was withdrawn, when an advisory names that version, or when the maintainer archived the project. `# update-time: ignore[stale]` silences a staleness warning you acknowledged, without freezing the version. `# update-time: ignore[yanked]` does the same for a yank you decided to live with.
 
-`# update-time: ignore[vulnerable]` silences the vulnerability warning for one you assessed, while the reference keeps updating. `# update-time: ignore[archived]` silences the archival warning for a dependency you decided to keep using. To silence it for every dependency in the scan, pass `--ignore-archived` (see [Archived dependencies](#-archived-dependencies)). A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
+`# update-time: ignore[vulnerable]` silences the vulnerability warning for one you assessed, while the reference keeps updating. `# update-time: ignore[archived]` silences the archival warning for a dependency you decided to keep using. To silence it for every dependency in the run, pass `--ignore-archived` (see [Archived dependencies](#-archived-dependencies)). A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
+
+A bare `# update-time: ignore` and an `ignore[update]` win over any directive beside them that would change the reference: a [bound](#bounding-an-update), an [`allow[hash-drift]`](#adopting-hash-drift), or an [`allow[floating-pin]`](#keeping-a-tag-floating). Update-time leaves the reference untouched, its tag included.
 
 #### Setting a staleness threshold
 
@@ -544,7 +546,7 @@ humanize==4.15.0  # update-time: ignore[stale<90] (critical, warn early)
 FROM python:3.12
 ```
 
-The threshold applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--stale-after`, `--stale-after 0` included, so disabling the check globally still leaves a reference with its own threshold checked. To disable the check for one reference, use `ignore[stale]`. Where a reference carries both a threshold and a bare `ignore[stale]`, the `ignore[stale]` wins and silences the warning whatever the threshold says. `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`.
+The threshold applies to the reference carrying it, and every other reference in the run keeps the global one. It wins over `--stale-after`, `--stale-after 0` included, so disabling the check globally still leaves a reference with its own threshold checked. To disable the check for one reference, use `ignore[stale]`. Where a reference carries both a threshold and a bare `ignore[stale]`, the `ignore[stale]` wins and silences the warning whatever the threshold says. `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`.
 
 #### Setting a cooldown period
 
@@ -559,7 +561,7 @@ some-flaky-lib==2.1.0  # update-time: ignore[cooldown<30] (burned by 2.0.0)
 FROM python:3.12
 ```
 
-The cooldown applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--cooldown`. `allow[cooldown>=30]` sets the same 30-day window as `ignore[cooldown<30]`. To adopt new releases for one reference as soon as they ship, write `allow[cooldown>=0]` or `ignore[cooldown<0]`. A zero-day window holds nothing back, which is what `--cooldown 0` means globally.
+The cooldown applies to the reference carrying it, and every other reference in the run keeps the global one. It wins over `--cooldown`. `allow[cooldown>=30]` sets the same 30-day window as `ignore[cooldown<30]`. To adopt new releases for one reference as soon as they ship, write `allow[cooldown>=0]` or `ignore[cooldown<0]`. A zero-day window holds nothing back, which is what `--cooldown 0` means globally.
 
 The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)).
 
@@ -587,13 +589,13 @@ The reference keeps updating, and Update-time still warns about every other advi
 django==3.2.0  # update-time: ignore[vulnerable<high] (we act on high and worse for this dependency)
 ```
 
-The level applies to the reference carrying it, and every other reference in the scan keeps the global one. It wins over `--vulnerability-level`, `--vulnerability-level none` included. As with the global level, Update-time warns about a vulnerability whose risk level it cannot read, whatever level is in force. To switch the warning off for one reference, write `ignore[vulnerable]`. `allow[vulnerable>=high]` sets the same level as `ignore[vulnerable<high]`.
+The level applies to the reference carrying it, and every other reference in the run keeps the global one. It wins over `--vulnerability-level`, `--vulnerability-level none` included. As with the global level, Update-time warns about a vulnerability whose risk level it cannot read, whatever level is in force. To switch the warning off for one reference, write `ignore[vulnerable]`. `allow[vulnerable>=high]` sets the same level as `ignore[vulnerable<high]`.
 
 ### Adopting hash drift
 
 `# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting what it now points at (see [Hash drift](#hash-drift)). Update-time then pins a re-pushed image tag's new digest, or the commit a moved version tag points at, instead of only warning about it. The global `--allow-hash-drift` flag applies it to every reference at once.
 
-`ignore[hash-drift]` is the opposite and the default. A reference carrying it keeps its pin exactly as one carrying no marker at all, in a run passing `--allow-hash-drift` as well. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and Update-time leaves the reference untouched.
+`ignore[hash-drift]` is the opposite and the default. A reference carrying it keeps its pin exactly as one carrying no marker at all, in a run passing `--allow-hash-drift` as well.
 
 ### Keeping a tag floating
 
@@ -607,11 +609,11 @@ Update-time keeps a reference without a tag the same way. The `DEBUG` line then 
 
 Update-time still checks a reference kept floating for [hash drift](#hash-drift). Where it already records a digest and its tag now serves another, Update-time warns about the drift. A reference opted into drift adopts the new digest, while its tag stays as it is.
 
-The global `--allow-floating-pin` flag keeps every reference in the scan floating at once. `ignore[floating-pin]` is the opposite and the default, so Update-time pins a reference carrying it exactly as one carrying no marker at all. It pins that reference in a run passing `--allow-floating-pin` as well. Where an `ignore` (or `ignore[update]`) marker also applies, that wins and Update-time leaves the reference untouched, tag and all.
+The global `--allow-floating-pin` flag keeps every reference in the run floating at once. `ignore[floating-pin]` is the opposite and the default, so Update-time pins a reference carrying it exactly as one carrying no marker at all. It pins that reference in a run passing `--allow-floating-pin` as well.
 
 ### Bounding an update
 
-A bound lets a reference keep updating, while it blocks the jump you are not ready for. Name the versions the reference may move to, or the level of update it may not make.
+A bound lets a reference keep updating, while it blocks the jump you are not ready for. Name the versions the reference may move to, or the level of update it may not make. A bound narrows updates and nothing else: staleness is still measured against the project's newest overall release, and the hash pin is still added or refreshed for whichever version the bound selects.
 
 #### Bounding how far a reference may update
 
@@ -656,15 +658,6 @@ FROM python:3.12.1-bookworm-slim
 The levels are positional, not semantic: they refer to the component's position in the version, not to the project's compatibility promises. Projects may ship breaking changes in releases that bump the *second* component. So "stay on Python 3.12" is `ignore[minor-update]`, although Python 3.13 shipped breaking changes: it removed 19 legacy modules from the standard library. The same caution applies to projects using calendar versioning.
 
 And as with specifier bounds, the level applies to a Docker tag's main version. The bound does not affect a version embedded in the suffix, such as the `3.23` in `alpine3.23`. A component the current version doesn't have counts as zero, so `ignore[minor-update]` on `node:22` blocks `22.1`.
-
-#### How a bound interacts with the other markers
-
-A few rules govern how a bound — with a specifier or level-based — interacts with the other markers and checks:
-
-- A bare `# update-time: ignore` (or `# update-time: ignore[update]` with no specifier) holds back *all* updates and wins over any bound on the same reference.
-- A bound narrows updates only, not staleness. Staleness is always measured against the project's newest overall release, and the bound does not affect it.
-- The hash pin is still added or refreshed for whichever version the bound selects, exactly as without a bound.
-- To combine a bound with another directive of the same verb (say, `allow[hash-drift]`), list both as comma-separated items in one bracket: `# update-time: allow[update<3.13, hash-drift]` or `# update-time: allow[minor-update, hash-drift]`. To combine directives of different verbs, list them after the `# update-time:` prefix, separated by a space: `# update-time: ignore[stale] allow[update<3.13]`. A reason can still follow the last directive.
 
 ### Writing a marker
 
@@ -744,7 +737,7 @@ DEBUG Recognised update-time marker ignore[stale] for python in Dockerfile:2
 
 That line reports the marker itself, and says it was read and understood. No `Recognised` line at all means the marker was not read. The prefix and the verbs are case-sensitive, and a field marker is read by name. So a typo in any of them leaves the reference updated as usual. Update-time logs a typo inside the brackets at `WARNING` as an invalid item instead (see [Invalid markers](#invalid-markers)).
 
-Update-time reports what the marker suppressed separately, in lines about the update or the warning rather than about the marker. Each line names the directive it obeyed:
+Update-time reports what the marker held back or silenced separately, in lines about the update, the pin, or the warning rather than about the marker. Each line names the directive it obeyed:
 
 ```console
 DEBUG Ignoring the staleness warning for python in Dockerfile:2 (update-time: ignore[stale])
