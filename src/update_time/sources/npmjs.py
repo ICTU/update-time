@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
-from update_time.domain.dependency import Release, Yank
+from update_time.domain.dependency import NO_CHANGES, Changes, Release, Yank
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.primitives.timestamp import parse_timestamp
@@ -85,11 +85,11 @@ class _Repository:
 
 
 @cache
-def get_changes(package: str, version: str) -> str:
+def get_changes(package: str, version: str) -> Changes:
     """Return the changelog for the package and version, or empty string if it can't be fetched or found."""
     response = fetch(f"{_REGISTRY}/{package}/{version}", _LOG)
     if response is None:
-        return ""
+        return NO_CHANGES
     repository = _Repository.from_metadata(response.json())
     return changes_from_release(repository.owner, repository.name, package, version) or changes_from_changelog_file(
         repository.owner, repository.name, version, repository.directory

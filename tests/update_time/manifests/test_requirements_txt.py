@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import MagicMock, Mock
 
-from update_time.file_formats import requirements_txt
+from update_time.manifests import requirements_txt
 
 from tests.helpers import mock_path
 

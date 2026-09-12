@@ -14,9 +14,10 @@ from pathlib import Path
 from rich.console import Console
 
 from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
-from update_time.domain.dependency import DependencyVersion, Project, Release
+from update_time.domain.dependency import Changes, DependencyVersion, Project, Release
 from update_time.domain.staleness import STALE_AFTER
-from update_time.io.log import LOG_THEME, Logger, configure_logging
+from update_time.io.console import LOG_THEME
+from update_time.io.log import Logger, configure_logging
 from update_time.markers.marker import Marker
 from update_time.primitives.digest import SHA256_HEX_CHARS
 from update_time.primitives.location import Location
@@ -71,7 +72,12 @@ def generate() -> LogOutput:
 
     # A representative digest, padded to the exact length of a real one so `LogHighlighter` recognises and dims it.
     digest = "sha256:" + ("9f2c1e7b" + "d4" * SHA256_HEX_CHARS)[:SHA256_HEX_CHARS]
-    changelog = "Changed in 4.15.0\n- Fantastic new features\n- A few bugs squashed"
+    changelog = Changes(
+        "Changed in 4.15.0\n"
+        "- Fantastic new features\n"
+        "- A few bugs squashed ([#42](https://github.com/python-humanize/humanize/issues/42))",
+        markdown=True,
+    )
     requirements = Location(Path("docs/requirements.txt"), 12)
     log.new_version(reference("humanize", requirements), DependencyVersion("4.15.0", changelog))
     log.pinned(reference("python", Location(Path("Dockerfile"), 1)), DependencyVersion("3.14.6", sha=digest))

@@ -7,7 +7,7 @@ import unittest
 
 from tools.log_samples import _Capture
 
-from update_time.io.log import DEPENDENCY_DELIMITER, LOCATION_DELIMITER
+from update_time.io.console import DEPENDENCY_DELIMITER, LOCATION_DELIMITER
 
 from tests.helpers import log_record
 

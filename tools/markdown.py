@@ -3,6 +3,8 @@
 import re
 from typing import TYPE_CHECKING
 
+from update_time.formats import markdown as markdown_format
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -16,9 +18,10 @@ def lines_without_code_blocks(markdown: str) -> Iterator[tuple[int, str]]:
     """
     in_code_block = False
     for line_number, line in enumerate(markdown.splitlines(), start=1):
-        if line.startswith("```"):
+        fence = markdown_format.is_fence(line)
+        if fence:
             in_code_block = not in_code_block
-        yield line_number, "" if in_code_block or line.startswith("```") else line
+        yield line_number, "" if in_code_block or fence else line
 
 
 def without_code_blocks(markdown: str) -> str:
@@ -31,8 +34,8 @@ def headings(markdown: str, min_level: int = 1, max_level: int = 6) -> list[tupl
 
     Headings in fenced code blocks are left out, so a `#` line in a sample is read as the comment it is.
     """
-    found = re.findall(rf"(?m)^(#{{{min_level},{max_level}}}) (.+)$", without_code_blocks(markdown))
-    return [(len(hashes), title) for hashes, title in found]
+    marked = (markdown_format.heading(line) for line in without_code_blocks(markdown).splitlines())
+    return [(level, title) for level, title in filter(None, marked) if title and min_level <= level <= max_level]
 
 
 def anchor(heading: str) -> str:

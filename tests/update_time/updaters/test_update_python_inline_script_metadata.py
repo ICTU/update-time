@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
-from update_time.file_formats.dependency_file import InlineScript
+from update_time.manifests.dependency_file import InlineScript
 from update_time.primitives.location import Location
 from update_time.updaters.update_python_inline_script_metadata import update_python_inline_script_metadatas
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC
 from enum import StrEnum, auto
 from functools import total_ordering
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from packaging.version import InvalidVersion, Version
 
@@ -144,12 +144,30 @@ class Project:
     archival: Archival = Archival()
 
 
+class Changes(str):
+    """The changes a changelog records for one version, and whether the changelog writes them in Markdown."""
+
+    __slots__ = ("markdown",)
+
+    markdown: bool
+
+    def __new__(cls, changes: str, *, markdown: bool) -> Self:
+        """Create the changes, remembering whether the changelog writes them in Markdown."""
+        instance = super().__new__(cls, changes)
+        instance.markdown = markdown
+        return instance
+
+
+# The changes of a version no changelog records, which no markup is written in.
+NO_CHANGES = Changes("", markdown=False)
+
+
 @dataclass(frozen=True)
 class DependencyVersion:
     """A version of a dependency."""
 
     version: VersionString  # Arbitrary version string as returned by a source (PyPI, Docker Hub, GitHub releases, ...)
-    changes: str = ""  # Changelog for this version, empty when none could be found
+    changes: Changes = NO_CHANGES  # What the changelog records for this version, and the markup it writes it in
     sha: str = ""
     published: datetime | None = None  # Publication date of this (candidate) version, when known
     yank: Yank = Yank()  # The version's withdrawal state (yanked on PyPI, deprecated on npm)

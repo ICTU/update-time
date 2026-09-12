@@ -10,6 +10,7 @@ import requests
 
 from update_time.domain import dependency
 from update_time.domain.bound import NO_BOUND, Verb
+from update_time.domain.changelog import is_markdown
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Archival, ArchivedSubject, Release
 from update_time.io.log import Logger
@@ -146,9 +147,10 @@ class GetLatestVersionTest(LoggingTestCase):
 
     @patch_github(releases=[github_release_json("1.1", body="changelog")], tags=[], commit=github_commits_json())
     def test_newer(self):
-        """Test that a newer release is resolved, with its changelog and commit SHA."""
+        """Test that a newer release is resolved, with its changelog, its commit SHA, and the markup GitHub uses."""
         latest = get_latest_version("owner/repository", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
         self.assert_version(latest, "1.1", "changelog", COMMIT_SHA)
+        self.assertTrue(is_markdown(latest.changes))
 
     @patch_github(releases=[github_release_json("1.1", published_at=_OLD_ISO)], tags=[], commit=github_commits_json())
     def test_publication_date(self):
@@ -644,10 +646,20 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
         self.assertEqual(changes_from_release("", "", "any", "1.0"), "")
         mock_get.assert_not_called()
 
+    @kills(
+        Mutation(
+            github,
+            'body=Changes(release.get("body") or "", markdown=True),',
+            'body=Changes(release.get("body") or "", markdown=False),',
+            "a release body is read as text, so the Markdown GitHub renders it in is shown raw",
+        ),
+    )
     @patch_get([github_release_json("1.1", body="Changelog")])
-    def test_changelog(self):
-        """Test that the body of the matching release is returned."""
-        self.assertEqual(changes_from_release("owner", "repo with changes", "any", "1.1"), "Changelog")
+    def test_the_body_is_returned_as_markdown(self):
+        """Test that the body of the matching release is returned, as the Markdown a release body is written in."""
+        changes = changes_from_release("owner", "repo with changes", "any", "1.1")
+        self.assertEqual(changes, "Changelog")
+        self.assertTrue(is_markdown(changes))
 
     @patch_get([github_release_json("9.9")])
     def test_no_matching_release(self):
@@ -657,8 +669,8 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
     @kills(
         Mutation(
             github,
-            'body=release.get("body") or "",',
-            'body=release["body"] or "",',
+            'body=Changes(release.get("body") or "", markdown=True),',
+            'body=Changes(release["body"] or "", markdown=True),',
             "a release GitHub answers without a body ends the run with a traceback",
             raises="KeyError: 'body'",
         ),
@@ -711,6 +723,29 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         changes = changes_from_changelog_file("org", "monorepo", "1.1", "packages/package")
         self.assertEqual(changes, self.CHANGES)
         self.assertIn(contents_url(self.MONOREPO, "packages/package"), requested_urls(mock_get))
+
+    @kills(
+        Mutation(
+            github,
+            '            return Changes(changes, markdown=is_markdown_file(entry["name"]))',
+            "            return Changes(changes, markdown=False)",
+            "a Markdown changelog in a repository's root is read as text, so its markup is shown raw",
+        ),
+    )
+    @patch("requests.get")
+    def test_the_extension_says_whether_the_changes_are_markdown(self, mock_get: Mock):
+        """Test that a changelog file's extension says whether the changes it holds are written in Markdown."""
+        for name, markdown in {"CHANGELOG.md": True, "CHANGELOG.rst": False, "CHANGELOG": False}.items():
+            with self.subTest(changelog=name):
+                self.clear_caches()  # so each case fetches its own listing instead of the previous case's
+                responses = {
+                    contents_url(self.MONOREPO): mock_response(contents_json(name)),
+                    file_url(name): mock_response(text=self.CHANGELOG),
+                }
+                respond_per_url(mock_get, responses)
+                changes = changes_from_changelog_file("org", "monorepo", "1.1")
+                self.assertEqual(changes, self.CHANGES)
+                self.assertEqual(is_markdown(changes), markdown)
 
     @kills(
         Mutation(

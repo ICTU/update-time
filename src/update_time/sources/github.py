@@ -11,11 +11,13 @@ from urllib.parse import urlparse
 from packaging.version import Version
 
 from update_time.domain.archival import archival_reporting
-from update_time.domain.changelog import get_version_changes_from_changelog
+from update_time.domain.changelog import MARKDOWN_EXTENSION, get_version_changes_from_changelog, is_markdown_file
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.dependency import (
+    NO_CHANGES,
     Archival,
     ArchivedSubject,
+    Changes,
     DependencyName,
     DependencyVersion,
     Project,
@@ -45,7 +47,7 @@ _PER_PAGE = 100
 _RAW_GITHUB = "https://raw.githubusercontent.com"
 # The names a repository gives the changelog file, and the extensions it carries, compared in lower case.
 _CHANGELOG_FILE_NAMES = frozenset({"changes", "changelog", "history", "news", "releases"})
-_CHANGELOG_FILE_EXTENSIONS = frozenset({"", ".md", ".rst", ".txt"})
+_CHANGELOG_FILE_EXTENSIONS = frozenset({"", MARKDOWN_EXTENSION, ".rst", ".txt"})
 # The names a repository gives the directory it keeps its documentation in, compared in lower case.
 _DOCUMENTATION_DIRECTORY_NAMES = frozenset({"doc", "docs"})
 
@@ -128,7 +130,7 @@ class TaggedVersion:
     owner: str
     repository: str
     tag_name: str
-    body: str = ""
+    body: Changes = NO_CHANGES
     draft: bool = False
     prerelease: bool = False
     published_at: datetime | None = None
@@ -137,12 +139,15 @@ class TaggedVersion:
 
     @classmethod
     def from_release(cls, owner: str, repository: str, release: _ReleaseJSON) -> TaggedVersion:
-        """Create a TaggedVersion from a GitHub releases endpoint result."""
+        """Create a TaggedVersion from a GitHub releases endpoint result.
+
+        GitHub renders a release body as Markdown, whatever the repository's own changelog file is written in.
+        """
         return cls(
             owner=owner,
             repository=repository,
             tag_name=release["tag_name"],
-            body=release.get("body") or "",
+            body=Changes(release.get("body") or "", markdown=True),
             draft=release["draft"],
             prerelease=release["prerelease"],
             published_at=parse_timestamp(release["published_at"]),
@@ -278,7 +283,7 @@ def github_owner_and_repository(url: str) -> tuple[str, str]:
         path_parts = parsed.path.lstrip("/").split("/")
         if len(path_parts) > 1:
             return path_parts[0], path_parts[1].removesuffix(".git")
-    return "", ""
+    return NO_CHANGES, ""
 
 
 def _owner_and_repository(dependency: DependencyName) -> tuple[str, str]:
@@ -565,15 +570,15 @@ def _package_names(package: str) -> list[str]:
     return [package] if unscoped == package else [package, unscoped]
 
 
-def changes_from_release(owner: str, repository: str, package: str, version: str) -> str:
+def changes_from_release(owner: str, repository: str, package: str, version: str) -> Changes:
     """Return the body of the GitHub release matching the package and version, or empty string if absent."""
     if not (owner and repository):
-        return ""
+        return NO_CHANGES
     release = _get_release(owner, repository, package, version)
-    return release.body if release else ""
+    return release.body if release else NO_CHANGES
 
 
-def changes_from_changelog_file(owner: str, repository: str, version: str, directory: str = "") -> str:
+def changes_from_changelog_file(owner: str, repository: str, version: str, directory: str = "") -> Changes:
     """Return the version's changes from a changelog file in the repository, or nothing when there is none.
 
     A monorepo keeps a package's changelog in the directory it builds that package from. The root is read as well,
@@ -585,7 +590,7 @@ def changes_from_changelog_file(owner: str, repository: str, version: str, direc
     to that changelog.
     """
     if not (owner and repository):
-        return ""
+        return NO_CHANGES
     if directory:
         entries = _list_contents(owner, repository, directory) or ()
         if changes := _changes_from_files(entries, version):
@@ -594,13 +599,13 @@ def changes_from_changelog_file(owner: str, repository: str, version: str, direc
     return _changes_from_files(root, version) or _changes_from_documentation(owner, repository, root, version)
 
 
-def _changes_from_files(entries: tuple[_ContentJSON, ...], version: str) -> str:
+def _changes_from_files(entries: tuple[_ContentJSON, ...], version: str) -> Changes:
     """Return the version's changes from a changelog file among the entries, or nothing when none holds them."""
     for entry in entries:
         url = entry["download_url"]
         if _is_changelog_file(entry["name"]) and url and (changes := _changes_from_changelog_url(url, version)):
-            return changes
-    return ""
+            return Changes(changes, markdown=is_markdown_file(entry["name"]))
+    return NO_CHANGES
 
 
 def _changes_from_changelog_url(url: str, version: str) -> str:
@@ -615,25 +620,24 @@ def _changelog_file(url: str) -> str:
     return response.text if response is not None else ""
 
 
-def _changes_from_documentation(owner: str, repository: str, root: tuple[_ContentJSON, ...], version: str) -> str:
+def _changes_from_documentation(owner: str, repository: str, root: tuple[_ContentJSON, ...], version: str) -> Changes:
     """Return the version's changes from a changelog file below a documentation directory the root names."""
     for entry in root:
         if entry["name"].lower() in _DOCUMENTATION_DIRECTORY_NAMES and (
             changes := _changes_from_tree(owner, repository, entry, version)
         ):
             return changes
-    return ""
+    return NO_CHANGES
 
 
-def _changes_from_tree(owner: str, repository: str, directory: _ContentJSON, version: str) -> str:
+def _changes_from_tree(owner: str, repository: str, directory: _ContentJSON, version: str) -> Changes:
     """Return the version's changes from a changelog file below the directory, or nothing when none names them."""
     root_url = f"{_RAW_GITHUB}/{owner}/{repository}/HEAD/{directory['name']}"
     for path in _list_tree(directory["git_url"]):
-        if _is_changelog_file(path.rpartition("/")[2]) and (
-            changes := _changes_from_changelog_url(f"{root_url}/{path}", version)
-        ):
-            return changes
-    return ""
+        name = path.rpartition("/")[2]
+        if _is_changelog_file(name) and (changes := _changes_from_changelog_url(f"{root_url}/{path}", version)):
+            return Changes(changes, markdown=is_markdown_file(name))
+    return NO_CHANGES
 
 
 def _list_tree(git_url: str) -> tuple[str, ...]:

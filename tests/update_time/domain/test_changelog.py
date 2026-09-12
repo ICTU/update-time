@@ -3,7 +3,12 @@
 import unittest
 
 from update_time.domain import changelog
-from update_time.domain.changelog import get_version_changes_from_changelog
+from update_time.domain.changelog import (
+    get_version_changes_from_changelog,
+    is_markdown_content_type,
+    is_markdown_file,
+)
+from update_time.formats import markdown as markdown_format
 
 from tests.mutation import Mutation, kills
 
@@ -12,6 +17,42 @@ from tests.mutation import Mutation, kills
 _SPEC_ADORNMENT_CHARACTERS = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
 # More entry lines than the changelog module cuts a version's changes at.
 _MANY_ENTRIES = [f"- Fixed thing {number}." for number in range(40)]
+
+
+class MarkupTest(unittest.TestCase):
+    """Unit tests for what a changelog's name and content type say about the markup it is written in."""
+
+    @kills(
+        Mutation(
+            changelog,
+            "    return urlparse(name).path.lower().endswith(MARKDOWN_EXTENSION)",
+            "    return urlparse(name).path.endswith(MARKDOWN_EXTENSION)",
+            "a changelog file that shouts its extension is read as text, so its Markdown is shown raw",
+        )
+    )
+    def test_an_extension_is_read_whatever_its_case(self):
+        """Test that a changelog file shouting its extension is read as Markdown all the same."""
+        self.assertTrue(is_markdown_file("CHANGELOG.MD"))
+
+    @kills(
+        Mutation(
+            changelog,
+            '    return content_type.partition(";")[0].strip().lower() == _MARKDOWN_CONTENT_TYPE',
+            '    return content_type.partition(";")[0].lower() == _MARKDOWN_CONTENT_TYPE',
+            "a content type padded with spaces matches nothing, so its Markdown is shown raw",
+        ),
+        Mutation(
+            changelog,
+            '    return content_type.partition(";")[0].strip().lower() == _MARKDOWN_CONTENT_TYPE',
+            '    return content_type.partition(";")[0].strip() == _MARKDOWN_CONTENT_TYPE',
+            "a content type spelled in another case matches nothing, so its Markdown is shown raw",
+        ),
+    )
+    def test_a_content_type_is_read_past_its_case_and_spacing(self):
+        """Test that a content type is read past the case it is spelled in and the spaces around its parameters."""
+        for content_type in ("Text/Markdown", " text/markdown ; charset=UTF-8"):
+            with self.subTest(content_type=content_type):
+                self.assertTrue(is_markdown_content_type(content_type))
 
 
 class VersionAnchorTest(unittest.TestCase):
@@ -33,9 +74,9 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _LEVEL_TWO = Mutation(
-        changelog,
-        '    if hashes and after_hashes.startswith(" "):',
-        '    if hashes == "##" and after_hashes.startswith(" "):',
+        markdown_format,
+        '    if not level or not after_hashes.startswith(" "):',
+        '    if level != 2 or not after_hashes.startswith(" "):',
         "a changelog heading its versions at another level than two reports the changes from where a newer entry's "
         "prose names the version",
     )
@@ -258,14 +299,14 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.11.0"), v1_change)
 
     _ONLY_TILDE_FENCES = Mutation(
-        changelog,
+        markdown_format,
         '_FENCES = ("```", "~~~")',
         '_FENCES = ("~~~",)',
         "a changelog fencing a code block with backticks reports the fence as the end of the version's changes",
     )
 
     _ONLY_BACKTICK_FENCES = Mutation(
-        changelog,
+        markdown_format,
         '_FENCES = ("```", "~~~")',
         '_FENCES = ("```",)',
         "a changelog fencing a code block with tildes reports the fence as the end of the version's changes",

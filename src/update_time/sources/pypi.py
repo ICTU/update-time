@@ -10,10 +10,16 @@ from packaging.utils import parse_sdist_filename, parse_wheel_filename
 from packaging.version import Version
 
 from update_time.domain.archival import archival_reporting
-from update_time.domain.changelog import get_version_changes_from_changelog
+from update_time.domain.changelog import (
+    get_version_changes_from_changelog,
+    is_markdown_content_type,
+    is_markdown_file,
+)
 from update_time.domain.cooldown import within_cooldown
 from update_time.domain.dependency import (
+    NO_CHANGES,
     Archival,
+    Changes,
     DependencyName,
     DependencyVersion,
     Project,
@@ -102,6 +108,8 @@ class _Info(TypedDict):
     """PyPI release info."""
 
     description: str
+    # PyPI answers null for a package that posts a description without saying what markup it wrote it in.
+    description_content_type: NotRequired[str | None]
     # PyPI answers null for a package that declares no project URLs.
     project_urls: dict[str, str] | None
     yanked: NotRequired[bool]
@@ -271,7 +279,7 @@ def _eligible_release(package: str, version: Version, cooldown_days: int) -> Dep
     return DependencyVersion(latest, changes=get_changes(package, latest), published=published)
 
 
-def get_changes(package: str, version: str) -> str:
+def get_changes(package: str, version: str) -> Changes:
     """Return the changelog for the PyPI package and version.
 
     Since there's no standardized way that PyPI packages refer to a changelog, apply several heuristics to find it:
@@ -285,7 +293,7 @@ def get_changes(package: str, version: str) -> str:
     """
     metadata = release_metadata(package, version)
     if metadata is None:
-        return ""
+        return NO_CHANGES
     info = metadata["info"]
     urls = info.get("project_urls") or {}
     for label, url in urls.items():
@@ -295,12 +303,12 @@ def get_changes(package: str, version: str) -> str:
     for url in repository_urls:
         if changelog := _changelog_from_github_releases(url, package, version):
             return changelog
-    if changelog := _changelog_from_description(info["description"], package, version):
+    if changelog := _changelog_from_description(info, package, version):
         return changelog
     for url in repository_urls:
         if changelog := _changelog_from_repository_root(url, version):
             return changelog
-    return ""
+    return NO_CHANGES
 
 
 def get_publication_datetime(package: str, version: str) -> datetime | None:
@@ -309,31 +317,37 @@ def get_publication_datetime(package: str, version: str) -> datetime | None:
     return _release_datetime(metadata["urls"]) if metadata is not None else None
 
 
-def _changelog_from_url(url: str, version: str) -> str:
+def _changelog_from_url(url: str, version: str) -> Changes:
     """Get the changelog from the URL.
 
     Another project's metadata is not the reader's to fix, so a URL its source does not serve is reported at debug
-    level rather than warned about.
+    level rather than warned about. A raw file host labels every file it serves `text/plain`, so the URL's own
+    extension answers where the content type does not.
     """
     changelog_response = fetch(github_to_raw(url), _LOG, require_ok=False)
     if changelog_response is None:
-        return ""
+        return NO_CHANGES
     if not changelog_response.ok:
         _LOG.unserved_changelog(changelog_response)
-        return ""
-    if changelog_response.headers.get("Content-Type", "").startswith("text/html"):
-        return ""
-    return get_version_changes_from_changelog(changelog_response.text, version)
+        return NO_CHANGES
+    content_type = changelog_response.headers.get("Content-Type", "")
+    if content_type.startswith("text/html"):
+        return NO_CHANGES
+    changes = get_version_changes_from_changelog(changelog_response.text, version)
+    return Changes(changes, markdown=is_markdown_content_type(content_type) or is_markdown_file(url))
 
 
-def _changelog_from_description(description: str, package: str, version: str) -> str:
+def _changelog_from_description(info: _Info, package: str, version: str) -> Changes:
     """Get the changelog from the description posted to PyPI, or from the releases of the repository it links."""
-    return get_version_changes_from_changelog(description, version) or _changelog_from_github_url_in_description(
-        description, package, version
+    description = info["description"]
+    content_type = info.get("description_content_type") or ""
+    changes = Changes(
+        get_version_changes_from_changelog(description, version), markdown=is_markdown_content_type(content_type)
     )
+    return changes or _changelog_from_github_url_in_description(description, package, version)
 
 
-def _changelog_from_github_url_in_description(description: str, package: str, version: str) -> str:
+def _changelog_from_github_url_in_description(description: str, package: str, version: str) -> Changes:
     """Get the changelog from a GitHub URL in the description whose repository carries the package's name.
 
     A description links the repositories of other projects as well as the package's own, and another project's
@@ -342,7 +356,7 @@ def _changelog_from_github_url_in_description(description: str, package: str, ve
     for match in _GITHUB_URL_RE.finditer(description):
         if _names_the_package(match.group(), package):
             return _changelog_from_github_releases(match.group(), package, version)
-    return ""
+    return NO_CHANGES
 
 
 def _names_the_package(url: str, package: str) -> bool:
@@ -361,13 +375,13 @@ def _github_repository(url: str) -> tuple[str, str]:
     return ("", "") if owner == _GITHUB_SPONSORS_PATH else (owner, repository)
 
 
-def _changelog_from_github_releases(url: str, package: str, version: str) -> str:
+def _changelog_from_github_releases(url: str, package: str, version: str) -> Changes:
     """Get the changelog from the GitHub releases."""
     owner, repository = _github_repository(url)
     return changes_from_release(owner, repository, package, version)
 
 
-def _changelog_from_repository_root(url: str, version: str) -> str:
+def _changelog_from_repository_root(url: str, version: str) -> Changes:
     """Get the changelog from a changelog file in the root of the repository."""
     owner, repository = _github_repository(url)
     return changes_from_changelog_file(owner, repository, version)

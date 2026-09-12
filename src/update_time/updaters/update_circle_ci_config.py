@@ -7,7 +7,7 @@ Docker Hub and have no registry to query, so they are detected by parsing the YA
 from typing import TYPE_CHECKING
 
 from update_time.domain.file_type import CIRCLE_CI_CONFIGS
-from update_time.file_formats import yaml as yaml_format
+from update_time.formats import yaml as yaml_format
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.references.file import update_file

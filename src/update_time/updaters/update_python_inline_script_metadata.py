@@ -6,10 +6,10 @@ natively and the same rewrite applies.
 """
 
 from update_time.domain.file_type import INLINE_SCRIPT_METADATA
-from update_time.file_formats import inline_script_metadata
-from update_time.file_formats.dependency_file import InlineScript
+from update_time.formats import inline_script_metadata
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
+from update_time.manifests.dependency_file import InlineScript
 from update_time.package_managers import uv
 from update_time.updaters.uv_pins import warn_about_pins
 

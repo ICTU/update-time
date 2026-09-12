@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import is_valid
 from update_time.domain.file_type import DOCKERFILE_NAME, DOCKERFILES, PACKAGE_JSON
-from update_time.file_formats import json as json_format
-from update_time.file_formats import package_json as package_json_format
+from update_time.formats import json as json_format
 from update_time.io.filesystem import first_line_match, glob_for
 from update_time.io.log import get_logger
+from update_time.manifests import package_json as package_json_format
 from update_time.references.file import update_file
 from update_time.sources.base_image import following_image_version_getter
 from update_time.sources.oci import get_latest_tag
@@ -18,7 +18,7 @@ from update_time.sources.oci import get_latest_tag
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from update_time.file_formats.json import JsonFile
+    from update_time.formats.json import JsonFile
     from update_time.markers.marker import ReferenceMarker
 
 

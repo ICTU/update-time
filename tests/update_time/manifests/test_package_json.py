@@ -4,8 +4,8 @@ import json
 import unittest
 from typing import TYPE_CHECKING
 
-from update_time.file_formats import json as json_format
-from update_time.file_formats import package_json
+from update_time.formats import json as json_format
+from update_time.manifests import package_json
 from update_time.primitives.location import Location
 
 from tests.helpers import mock_path

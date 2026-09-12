@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from update_time.file_formats import inline_script_metadata
+from update_time.formats import inline_script_metadata
 
 if TYPE_CHECKING:
     from pathlib import Path

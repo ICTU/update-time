@@ -21,8 +21,9 @@ from update_time.domain.dependency import ArchivedSubject, DependencyVersion, Fl
 from update_time.domain.reference import Reference
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import Vulnerability
-from update_time.file_formats.pyproject_toml import Declaration
+from update_time.io.console import CHANGES
 from update_time.io.log import Logger, LogMessage, reset_changelog_suppression
+from update_time.manifests.pyproject_toml import Declaration
 from update_time.markers.bound import parse_bound
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker
@@ -177,8 +178,12 @@ class LoggingTestCase(CacheClearingTestCase):
         reset_changelog_suppression()
 
     def records(self, level: int) -> list[_Call]:
-        """Return the records logged at the level, as the arguments they were logged with, without the level itself."""
-        return [call(*args[1:], **kwargs) for args, kwargs in self.mock_log.call_args_list if args[0] == level]
+        """Return the records logged at the level, each as the message and the fields it carries, changes folded in."""
+        return [
+            call(args[1], args[2] | kwargs.get("extra", {}))
+            for args, kwargs in self.mock_log.call_args_list
+            if args[0] == level
+        ]
 
     @staticmethod
     def _expected_call(message: LogMessage, fields: dict[str, object]) -> _Call:
@@ -209,7 +214,7 @@ class LoggingTestCase(CacheClearingTestCase):
     @staticmethod
     def _new_version_fields(dependency: str, version: str, location: Location, changes: str) -> dict[str, object]:
         """Return the fields the logger logs an available new version with."""
-        return {"dependency": dependency, "location": location, "version": version, "changes": changes}
+        return {"dependency": dependency, "location": location, "version": version, CHANGES: changes}
 
     def assert_new_version_logged(
         self, dependency: str, version: str, location: Location, changes: str = Logger._NO_CHANGELOG

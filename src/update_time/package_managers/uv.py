@@ -14,10 +14,10 @@ from update_time.domain.archival import archival_is_checked, archival_reporting
 from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
 from update_time.domain.dependency import DependencyVersion, normalized_python_name
 from update_time.domain.reference import Reference
-from update_time.file_formats import pyproject_toml as pyproject_toml_format
-from update_time.file_formats import toml
+from update_time.formats import toml
 from update_time.io.log import get_logger
 from update_time.io.process import run
+from update_time.manifests import pyproject_toml as pyproject_toml_format
 from update_time.markers.directive import Reason
 from update_time.markers.reference import SteeredResolvedReference
 from update_time.primitives.command import Command
@@ -28,9 +28,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from update_time.domain.dependency import DependencyName, VersionString
-    from update_time.file_formats.dependency_file import DependencyTomlFile, InlineScript, PyprojectToml
-    from update_time.file_formats.pyproject_toml import Declaration
     from update_time.io.log import Logger
+    from update_time.manifests.dependency_file import DependencyTomlFile, InlineScript, PyprojectToml
+    from update_time.manifests.pyproject_toml import Declaration
     from update_time.markers.marker import Marker
 
 _LOG = get_logger("pyproject.toml")

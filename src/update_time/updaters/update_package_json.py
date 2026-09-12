@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import DependencyVersion, Project
 from update_time.domain.file_type import PACKAGE_JSON
-from update_time.file_formats import json as json_format
-from update_time.file_formats import package_json as package_json_format
+from update_time.formats import json as json_format
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
+from update_time.manifests import package_json as package_json_format
 from update_time.markers.reference import SteeredReference, SteeredResolvedReference
 from update_time.package_managers import node
 from update_time.references.delegated import warn_about_projects

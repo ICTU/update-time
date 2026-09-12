@@ -3,9 +3,9 @@
 import unittest
 from typing import TYPE_CHECKING
 
-from update_time.file_formats import pyproject_toml
-from update_time.file_formats.dependency_file import DependencyTomlFile, InlineScript, PyprojectToml
-from update_time.file_formats.pyproject_toml import Declaration
+from update_time.manifests import pyproject_toml
+from update_time.manifests.dependency_file import DependencyTomlFile, InlineScript, PyprojectToml
+from update_time.manifests.pyproject_toml import Declaration
 from update_time.markers.marker import Marker, Scope
 from update_time.primitives.location import Location
 
