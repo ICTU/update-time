@@ -3,6 +3,7 @@
 import inspect
 import logging
 import re
+from dataclasses import fields, is_dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import TestCase
@@ -20,7 +21,6 @@ from update_time.io.console import (
 from update_time.io.log import (
     Logger,
     LogMessage,
-    _Check,
     get_logger,
     reset_changelog_suppression,
 )
@@ -100,8 +100,8 @@ class RenderTests(TestCase):
     def test_render_wraps_the_relative_path_and_line_in_the_delimiter(self):
         """Test that a location renders as the delimiter-wrapped relative path, with the line appended when present."""
         path = Path.cwd() / "docs" / "requirements.txt"
-        self.assertEqual(Logger._render_location(Location(path, 42)), at("docs/requirements.txt:42"))
-        self.assertEqual(Logger._render_location(Location(path)), at("docs/requirements.txt"))
+        self.assertEqual(Logger._render_field("location", Location(path, 42)), at("docs/requirements.txt:42"))
+        self.assertEqual(Logger._render_field("location", Location(path)), at("docs/requirements.txt"))
 
     @patch("logging.Logger.log")
     def test_a_location_field_is_wrapped_and_a_plain_field_is_not(self, mock_log: Mock):
@@ -258,7 +258,7 @@ class LoggerTests(TestCase):
     def test_digest_drift(self, mock_log: Mock):
         """Test that a re-pushed tag whose digest changed under an unchanged pin is warned about at warning level."""
         location = create_location("Dockerfile", 2)
-        _new_logger().digest_drift(DriftedPin("dependency", "3.14", location, DIGEST1, new_sha=DIGEST2))
+        _new_logger().drift(Logger.DIGEST_DRIFT, DriftedPin("dependency", "3.14", location, DIGEST1, new_sha=DIGEST2))
         self.assert_message(
             mock_log,
             Logger._MESSAGE_DIGEST_DRIFT,
@@ -271,7 +271,9 @@ class LoggerTests(TestCase):
         """Test that adopting a re-pushed tag's new digest is logged at info level, naming the opt-in that caused it."""
         cause = "update-time: allow[hash-drift]"
         location = create_location("Dockerfile", 2)
-        _new_logger().adopted_drift(DriftedPin("dependency", "3.14", location, DIGEST1, new_sha=DIGEST2), cause)
+        _new_logger().adopted_drift(
+            Logger.DIGEST_DRIFT, DriftedPin("dependency", "3.14", location, DIGEST1, new_sha=DIGEST2), cause
+        )
         self.assert_message(
             mock_log,
             Logger._MESSAGE_ADOPTED_DIGEST_DRIFT,
@@ -705,10 +707,10 @@ class LoggerTests(TestCase):
 
 
 class LoggerMessageTest(TestCase):
-    """Test that Logger's message templates pair one-to-one with the log methods and checks that own them.
+    """Test that Logger's message templates pair one-to-one with the log methods and constants that own them.
 
     Each `MESSAGE_` template sits directly above its owner, which nothing but convention enforces. That owner is
-    the log method emitting it, or, for the pair of messages a check reports through, the check naming both.
+    the log method emitting it, or, for a pair of messages one dispatch reports through, the constant holding both.
     """
 
     @staticmethod
@@ -729,18 +731,20 @@ class LoggerMessageTest(TestCase):
         return references
 
     @classmethod
-    def checks_by_template(cls) -> dict[str, set[str]]:
-        """Return, for each message template on Logger, the names of the checks that name it.
+    def holders_by_template(cls) -> dict[str, set[str]]:
+        """Return, for each message template on Logger, the names of the constants that hold it.
 
-        A check names its warning and its hold-back, which the dispatch every check shares emits, so neither
-        message is named by a log method of its own. The templates are matched by identity, since a check holds
-        the message rather than its name.
+        A constant pairing messages — a check's warning and its hold-back, a drift's warning and its adoption —
+        has them emitted by the dispatch the pair shares, so neither is named by a log method of its own. The
+        templates are matched by identity, since the constant holds the message rather than its name.
         """
         template_of = {id(getattr(Logger, template)): template for template in cls._templates()}
         holders: dict[str, set[str]] = {template: set() for template in cls._templates()}
         for name, value in vars(Logger).items():
-            if isinstance(value, _Check):
-                for message in (value.warning, value.ignored):
+            if not is_dataclass(value) or isinstance(value, type):
+                continue
+            for field in fields(value):
+                if isinstance(message := getattr(value, field.name), LogMessage):
                     holders[template_of[id(message)]].add(name)
         return holders
 
@@ -750,13 +754,13 @@ class LoggerMessageTest(TestCase):
             '    _MESSAGE_NO_VERSION = LogMessage(ERROR, "No valid version found for %(dependency)s")',
             '    _MESSAGE_ORPHANED = LogMessage(ERROR, "Nothing emits this")\n\n'
             '    _MESSAGE_NO_VERSION = LogMessage(ERROR, "No valid version found for %(dependency)s")',
-            "a message template that neither a log method nor a check emits goes unnoticed",
+            "a message template that neither a log method nor a holder emits goes unnoticed",
         )
     )
     def test_each_template_belongs_to_exactly_one_owner(self):
-        """Test that each message template is owned by exactly one log method or check: no orphans, no sharing."""
-        methods, checks = self.methods_by_template(), self.checks_by_template()
-        owners = {template: names | checks[template] for template, names in methods.items()}
+        """Test that each message template is owned by exactly one log method or constant: no orphans, no sharing."""
+        methods, holders = self.methods_by_template(), self.holders_by_template()
+        owners = {template: names | holders[template] for template, names in methods.items()}
         self.assertEqual({template: names for template, names in owners.items() if len(names) != 1}, {})
 
     def test_each_method_references_at_most_one_template(self):

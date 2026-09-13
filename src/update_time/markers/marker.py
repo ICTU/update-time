@@ -244,7 +244,7 @@ class Marker:
         return self.version_bound_directive
 
     def scope_directive(self, scope: Scope) -> str:
-        """Return the directive holding the scope back, as the language spells it, or nothing when it holds it not.
+        """Return the directive steering the scope, as the language spells it, or nothing when it steers it not.
 
         Only an `ignore` names a scope on its own, so the directive is spelled out rather than read back from the
         text the user wrote. Spelling it out leaves out an `ignore` beside it that does hold something back, and
@@ -296,12 +296,12 @@ class Marker:
         forms = (self.scope_directive(Scope.VULNERABLE), self.advisory_directives, self.vulnerable.directive)
         return " ".join(form for form in forms if form)
 
-    def hold_back_directive(self, scope: Scope) -> str:
-        """Return the directive holding this scope back, as the user wrote it, or the bare `ignore` naming no scope.
+    def written_directive(self, scope: Scope) -> str:
+        """Return the directive steering this scope, as the user wrote it, or the bare `ignore` naming no scope.
 
-        Reading it off `as_written` leaves out a scope the user never typed, which a bare `ignore` holds back
-        without naming, so such a marker is echoed rather than spelled out as a directive nobody wrote. The
-        `vulnerable` scope is asked for every form it takes, since any of the three can be the one holding back.
+        Reading it off `as_written` leaves out a scope the user never typed, which a bare `ignore` steers without
+        naming, so such a marker is echoed rather than spelled out as a directive nobody wrote. The `vulnerable`
+        scope is asked for every form it takes, since any of the three can be the one steering it.
         """
         return self.as_written.directive_for(scope) or self.raw_directives(Verb.IGNORE)
 
