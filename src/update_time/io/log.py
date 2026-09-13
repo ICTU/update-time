@@ -9,7 +9,7 @@ from rich.console import Console
 
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.staleness import stale_release
-from update_time.io.console import CHANGES, DEPENDENCY_DELIMITER, LOCATION_DELIMITER, LOG_THEME, configure_logging
+from update_time.io.console import CHANGES, LOG_THEME, configure_logging, delimit_dependency, delimit_location
 from update_time.markers.bound import spell
 from update_time.markers.marker import Scope
 from update_time.primitives.environment import EnvVar
@@ -55,16 +55,29 @@ class LogMessage:
 
 @dataclass(frozen=True)
 class _Check:
-    """A check a reference's marker can silence: the scope silencing it, its warning, and the hold-back instead."""
+    """A check a reference's marker can silence: the scope silencing it, its warning, and what is logged instead."""
 
     scope: Scope
     warning: LogMessage
     ignored: LogMessage
 
 
+@dataclass(frozen=True)
+class _Drift:
+    """A kind of hash pin that can drift: the warning that it did, and the report that the new value was adopted."""
+
+    warning: LogMessage
+    adopted: LogMessage
+
+
 def _redundant_directive(reason: str) -> str:
-    """Return the warning that a marker has a redundant directive, for the given reason."""
+    """Return a message saying that a marker has a redundant directive, for the given reason."""
     return f"Redundant update-time directive %(directive)s for %(dependency)s in %(location)s: {reason}"
+
+
+def _ignoring(subject: str, cause: str = "update-time: %(directive)s") -> str:
+    """Return a message saying what is being ignored, and why."""
+    return f"Ignoring {subject} for %(dependency)s in %(location)s ({cause})"
 
 
 class Logger:
@@ -96,26 +109,14 @@ class Logger:
     def _render_field(cls, name: str, value: object) -> object:
         """Return the field's value, wrapped in its delimiter when the highlighter styles it as one token.
 
-        A location is recognised by its type; a dependency has no type of its own, and its name has no fixed shape to
-        match either, so the field's name identifies it instead. Which of the two a file arrives as is the message's
-        own choice: a file the scan found travels as a `Location`, reported relative to the working directory and
-        styled as one token, while a path the user named on the command line stays a plain `Path`, logged as written.
+        A location is recognised by its type; a dependency has no type of its own, and its name has no fixed shape
+        to match either, so the field's name identifies it instead.
         """
         if isinstance(value, Location):
-            return cls._render_location(value)
+            return delimit_location(value)
         if name == "dependency":
-            return cls._render_dependency(str(value))
+            return delimit_dependency(str(value))
         return value
-
-    @staticmethod
-    def _render_dependency(dependency: str) -> str:
-        """Bracket a dependency name in `DEPENDENCY_DELIMITER` so the highlighter styles it as one token."""
-        return f"{DEPENDENCY_DELIMITER}{dependency}{DEPENDENCY_DELIMITER}"
-
-    @staticmethod
-    def _render_location(location: Location) -> str:
-        """Bracket a location's text in `LOCATION_DELIMITER` so the highlighter styles the whole run as one token."""
-        return f"{LOCATION_DELIMITER}{location}{LOCATION_DELIMITER}"
 
     @staticmethod
     def _reference_fields(reference: Reference, **extra: object) -> dict[str, object]:
@@ -123,26 +124,23 @@ class Logger:
         return {"dependency": reference.dependency, "location": reference.location, **extra}
 
     def _log_ignored(self, message: LogMessage, dependency: str, directive: str, location: Location) -> None:
-        """Log that a marker held a reference's update or one of its warnings back, at the message's own level.
-
-        The caller names the directive that held this back, so a directive written beside it is left out.
-        """
+        """Log that a marker held a reference's update back or silenced one of its warnings."""
         self._log(message, dependency=dependency, location=location, directive=directive)
 
     def _report(
         self, check: _Check, marker: Marker, resolved: ResolvedReference, fields: dict[str, object] | None
     ) -> None:
-        """Report what a check found, as its warning or as the hold-back of the marker that silences it."""
+        """Report what a check found: its warning, or the marker that silenced it."""
         if fields is None:
             return
         if marker.ignores(check.scope):
-            directive = marker.hold_back_directive(check.scope)
+            directive = marker.written_directive(check.scope)
             self._log_ignored(check.ignored, resolved.dependency, directive, resolved.location)
         else:
             self._log(check.warning, **fields)
 
     def _log_file(self, message: LogMessage, path: Path, **fields: object) -> None:
-        """Log a message about a file the scan found, at the message's own level.
+        """Log a message about a file the scan found.
 
         Wrapping the path in a `Location` is what makes it one of those files, reported relative to the working
         directory and styled as a single token. A path the user named on the command line stays a plain `Path` instead
@@ -159,11 +157,7 @@ class Logger:
     )
 
     def forced_outside_git_repository(self, path: Path) -> None:
-        """Warn that Update-time is running outside the git repository at the path because --force overrode the refusal.
-
-        The path is the scan root, which is the working directory, so it is logged as its absolute self (making it
-        relative would collapse it to `.`).
-        """
+        """Warn that Update-time is running outside a git repository because --force overrode the refusal to run."""
         self._log(self._MESSAGE_FORCED_OUTSIDE_GIT_REPOSITORY, path=path)
 
     # --- Source results: resolving a dependency's latest version and digest ---
@@ -221,8 +215,8 @@ class Logger:
     def unpinned_floating_tag(self, reference: Reference, release: DependencyVersion, reason: FloatingPin) -> None:
         """Log that a floating tag was pinned to no version, naming which of the reasons left it as it is.
 
-        The tag named is the one the source looked up, which for a reference naming none is the `latest` it means,
-        and which the source reports back as the release it resolved, nothing having been pinned in its place.
+        The tag named is the one the source looked up. A reference naming none means `latest`, which the source
+        reports back as the release it resolved, nothing having been pinned in its place.
         """
         fields = self._floating_fields(reference, reference.current_version or release.version)
         self._log(self._MESSAGE_UNPINNED_FLOATING_TAG, **fields, reason=reason)
@@ -243,6 +237,29 @@ class Logger:
         "now serves %(new_sha)s; the pin was left unchanged, verify the change is expected before updating the pin",
     )
 
+    _MESSAGE_ADOPTED_DIGEST_DRIFT = LogMessage(
+        INFO,
+        "Adopted digest drift for %(dependency)s:%(version)s in %(location)s: "
+        "re-pinned from %(current_sha)s to %(new_sha)s (%(cause)s)",
+    )
+
+    DIGEST_DRIFT = _Drift(_MESSAGE_DIGEST_DRIFT, _MESSAGE_ADOPTED_DIGEST_DRIFT)
+
+    _MESSAGE_TAG_DRIFT = LogMessage(
+        WARNING,
+        "Tag drift for %(dependency)s@%(version)s in %(location)s: pinned to commit %(current_sha)s but the tag now "
+        "points at %(new_sha)s; the pin was left unchanged, verify the tag was moved deliberately before updating "
+        "the pin",
+    )
+
+    _MESSAGE_ADOPTED_TAG_DRIFT = LogMessage(
+        INFO,
+        "Adopted tag drift for %(dependency)s@%(version)s in %(location)s: "
+        "re-pinned from commit %(current_sha)s to %(new_sha)s (%(cause)s)",
+    )
+
+    TAG_DRIFT = _Drift(_MESSAGE_TAG_DRIFT, _MESSAGE_ADOPTED_TAG_DRIFT)
+
     @staticmethod
     def _drift_fields(drifted: DriftedPin, **extra: object) -> dict[str, object]:
         """Return the fields every drift message carries, plus the ones the message reporting it adds."""
@@ -255,48 +272,16 @@ class Logger:
             **extra,
         }
 
-    def digest_drift(self, drifted: DriftedPin) -> None:
-        """Warn that an already-pinned tag now resolves to a different digest at the registry."""
-        self._log(self._MESSAGE_DIGEST_DRIFT, **self._drift_fields(drifted))
+    def drift(self, kind: _Drift, drifted: DriftedPin) -> None:
+        """Warn that a hash pin no longer matches what it points at, and was left unchanged."""
+        self._log(kind.warning, **self._drift_fields(drifted))
 
-    _MESSAGE_ADOPTED_DIGEST_DRIFT = LogMessage(
-        INFO,
-        "Adopted digest drift for %(dependency)s:%(version)s in %(location)s: "
-        "re-pinned from %(current_sha)s to %(new_sha)s (%(cause)s)",
-    )
+    def adopted_drift(self, kind: _Drift, drifted: DriftedPin, cause: str) -> None:
+        """Log that what a hash pin now points at was adopted because the reference opted in.
 
-    def adopted_drift(self, drifted: DriftedPin, cause: str) -> None:
-        """Log that a re-pushed tag's new digest was adopted because the reference opted in.
-
-        `cause` names the opt-in that triggered the adoption (see `report_drift`). Unlike `digest_drift`, this is a
-        normal change the user asked for, so it is info, not a warning.
+        `cause` names the opt-in that triggered the adoption.
         """
-        self._log(self._MESSAGE_ADOPTED_DIGEST_DRIFT, **self._drift_fields(drifted, cause=cause))
-
-    _MESSAGE_TAG_DRIFT = LogMessage(
-        WARNING,
-        "Tag drift for %(dependency)s@%(version)s in %(location)s: pinned to commit %(current_sha)s but the tag now "
-        "points at %(new_sha)s; the pin was left unchanged, verify the tag was moved deliberately before updating "
-        "the pin",
-    )
-
-    def tag_drift(self, drifted: DriftedPin) -> None:
-        """Warn that a version tag now points at another commit than the one the reference is pinned to."""
-        self._log(self._MESSAGE_TAG_DRIFT, **self._drift_fields(drifted))
-
-    _MESSAGE_ADOPTED_TAG_DRIFT = LogMessage(
-        INFO,
-        "Adopted tag drift for %(dependency)s@%(version)s in %(location)s: "
-        "re-pinned from commit %(current_sha)s to %(new_sha)s (%(cause)s)",
-    )
-
-    def adopted_tag_drift(self, drifted: DriftedPin, cause: str) -> None:
-        """Log that a moved tag's new commit was adopted because the reference opted in.
-
-        `cause` names the opt-in that triggered the adoption. Like `adopted_drift`, this is a change the user asked
-        for, so it is logged at info rather than as a warning.
-        """
-        self._log(self._MESSAGE_ADOPTED_TAG_DRIFT, **self._drift_fields(drifted, cause=cause))
+        self._log(kind.adopted, **self._drift_fields(drifted, cause=cause))
 
     _MESSAGE_HASH_MISMATCH = LogMessage(
         WARNING,
@@ -324,9 +309,7 @@ class Logger:
         "%(days)d days ago (> %(threshold)d)",
     )
 
-    _MESSAGE_IGNORED_STALENESS = LogMessage(
-        DEBUG, "Ignoring the staleness warning for %(dependency)s in %(location)s (update-time: %(directive)s)"
-    )
+    _MESSAGE_IGNORED_STALENESS = LogMessage(DEBUG, _ignoring("the staleness warning"))
 
     _STALENESS = _Check(Scope.STALE, _MESSAGE_STALE, _MESSAGE_IGNORED_STALENESS)
 
@@ -340,16 +323,14 @@ class Logger:
         )
 
     def report_staleness(self, resolved: ResolvedReference, marker: Marker, threshold: int) -> None:
-        """Report the reference's staleness, as a warning or as the hold-back of the marker that silences it."""
+        """Report the reference's staleness: a warning, or the marker that silenced it."""
         self._report(self._STALENESS, marker, resolved, self._stale_fields(resolved, threshold))
 
     _MESSAGE_YANKED = LogMessage(
         WARNING, "Yanked dependency %(dependency)s in %(location)s: version %(version)s was yanked (%(reason)s)"
     )
 
-    _MESSAGE_IGNORED_YANK = LogMessage(
-        DEBUG, "Ignoring the yank warning for %(dependency)s in %(location)s (update-time: %(directive)s)"
-    )
+    _MESSAGE_IGNORED_YANK = LogMessage(DEBUG, _ignoring("the yank warning"))
 
     _YANK = _Check(Scope.YANKED, _MESSAGE_YANKED, _MESSAGE_IGNORED_YANK)
 
@@ -365,16 +346,14 @@ class Logger:
         return cls._reference_fields(resolved, version=release.version, reason=release.yank)
 
     def report_yank(self, resolved: ResolvedReference, marker: Marker) -> None:
-        """Report the version's yank, as a warning or as the hold-back of the marker that silences it."""
+        """Report the version's yank: a warning, or the marker that silenced it."""
         self._report(self._YANK, marker, resolved, self._yank_fields(resolved))
 
     _MESSAGE_ARCHIVED = LogMessage(
         WARNING, "Archived dependency %(dependency)s in %(location)s: the %(subject)s was archived%(reason)s"
     )
 
-    _MESSAGE_IGNORED_ARCHIVAL = LogMessage(
-        DEBUG, "Ignoring the archival warning for %(dependency)s in %(location)s (update-time: %(directive)s)"
-    )
+    _MESSAGE_IGNORED_ARCHIVAL = LogMessage(DEBUG, _ignoring("the archival warning"))
 
     _ARCHIVAL = _Check(Scope.ARCHIVED, _MESSAGE_ARCHIVED, _MESSAGE_IGNORED_ARCHIVAL)
 
@@ -388,7 +367,7 @@ class Logger:
         return cls._reference_fields(resolved, subject=archival.subject, reason=reason)
 
     def report_archival(self, resolved: ResolvedReference, marker: Marker) -> None:
-        """Report the reference's archival, as a warning or as the hold-back of the marker that silences it."""
+        """Report the reference's archival: a warning, or the marker that silenced it."""
         self._report(self._ARCHIVAL, marker, resolved, self._archival_fields(resolved))
 
     _MESSAGE_MALFORMED_CVSS_VECTOR = LogMessage(
@@ -421,52 +400,47 @@ class Logger:
         """Warn that the version the reference is pinned to has a known vulnerability, naming the advisory."""
         self._log(self._MESSAGE_VULNERABLE_DEPENDENCY, **self._vulnerability_fields(reference, vulnerability))
 
-    _MESSAGE_IGNORED_VULNERABILITY = LogMessage(
-        DEBUG, "Ignoring the vulnerability warning for %(dependency)s in %(location)s (update-time: %(directive)s)"
-    )
+    _MESSAGE_IGNORED_VULNERABILITY = LogMessage(DEBUG, _ignoring("the vulnerability warning"))
 
     def ignored_vulnerability(self, reference: Reference, marker: Marker) -> None:
-        """Log that the marker held back a vulnerability warning that would otherwise have been logged.
+        """Log that the marker silenced a vulnerability warning that would otherwise have been logged.
 
-        Called per vulnerability the risk level in force would have reported, so a marker suppressing nothing stays
-        silent, as the staleness and yank hold-backs do. This is what the reference is looked up for although its
-        warning is suppressed: without the lookup there is nothing to say the marker held anything back.
+        Update-time calls this once per silenced vulnerability, not once per reference.
         """
-        directive = marker.hold_back_directive(Scope.VULNERABLE)
+        directive = marker.written_directive(Scope.VULNERABLE)
         self._log_ignored(self._MESSAGE_IGNORED_VULNERABILITY, reference.dependency, directive, reference.location)
 
     _MESSAGE_GLOBALLY_IGNORED_VULNERABILITY = LogMessage(
-        DEBUG,
-        "Ignoring the vulnerability warning for %(dependency)s in %(location)s (--ignore-vulnerability %(advisory)s)",
+        DEBUG, _ignoring("the vulnerability warning", "--ignore-vulnerability %(advisory)s")
     )
 
     def globally_ignored_vulnerability(self, reference: Reference, advisory: str) -> None:
-        """Log that the run-wide option held back a vulnerability warning, naming the advisory it silenced.
+        """Log that the run-wide option silenced a vulnerability warning, naming the advisory.
 
         The advisory named is the one the warning would have reported, which the reader may have passed under
         another of its identifiers.
         """
         self._log(self._MESSAGE_GLOBALLY_IGNORED_VULNERABILITY, **self._reference_fields(reference, advisory=advisory))
 
-    @classmethod
-    def _redundant_suppression_fields(cls, reference: Reference, directive: str) -> dict[str, object]:
-        """Return the fields a vulnerability suppression that holds nothing back is reported with.
+    def _redundant_suppression(
+        self, message: LogMessage, reference: Reference, directive: str, **extra: object
+    ) -> None:
+        """Warn that a vulnerability suppression silences nothing for the version the reference pins.
 
         The directive is the caller's, since each of these messages judges one form of the `vulnerable` scope and
-        the forms beside it may hold plenty back.
+        the forms beside it may silence plenty.
         """
-        return cls._reference_fields(reference, directive=directive, version=reference.current_version)
+        fields = self._reference_fields(reference, directive=directive, version=reference.current_version)
+        self._log(message, **fields, **extra)
 
     _MESSAGE_REDUNDANT_VULNERABLE_SCOPE = LogMessage(
         WARNING, _redundant_directive("version %(version)s has no vulnerability")
     )
 
     def redundant_vulnerable_scope(self, reference: Reference, marker: Marker) -> None:
-        """Warn that the marker's vulnerability scope found no vulnerability to hold back for the pinned version."""
-        self._log(
-            self._MESSAGE_REDUNDANT_VULNERABLE_SCOPE,
-            **self._redundant_suppression_fields(reference, marker.scope_directive(Scope.VULNERABLE)),
-        )
+        """Warn that the marker's vulnerability scope found no vulnerability to silence for the pinned version."""
+        directive = marker.scope_directive(Scope.VULNERABLE)
+        self._redundant_suppression(self._MESSAGE_REDUNDANT_VULNERABLE_SCOPE, reference, directive)
 
     _MESSAGE_REDUNDANT_VULNERABLE_ADVISORY = LogMessage(
         WARNING, _redundant_directive("version %(version)s has no such vulnerability")
@@ -474,27 +448,22 @@ class Logger:
 
     def redundant_vulnerable_advisory(self, reference: Reference, marker: Marker) -> None:
         """Warn that the marker names an advisory none of the pinned version's vulnerabilities answers to."""
-        self._log(
-            self._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY,
-            **self._redundant_suppression_fields(reference, marker.advisory_directives),
-        )
+        directive = marker.advisory_directives
+        self._redundant_suppression(self._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY, reference, directive)
 
     _MESSAGE_REDUNDANT_VULNERABLE_LEVEL = LogMessage(
         WARNING, _redundant_directive("version %(version)s has no vulnerability below %(level)s")
     )
 
     def redundant_vulnerable_level(self, reference: Reference, marker: Marker, level: str) -> None:
-        """Warn that the marker's risk level left no vulnerability of the pinned version below it to hold back."""
-        self._log(
-            self._MESSAGE_REDUNDANT_VULNERABLE_LEVEL,
-            **self._redundant_suppression_fields(reference, marker.vulnerable.directive),
-            level=level,
-        )
+        """Warn that the marker's risk level left no vulnerability of the pinned version below it to silence."""
+        directive = marker.vulnerable.directive
+        self._redundant_suppression(self._MESSAGE_REDUNDANT_VULNERABLE_LEVEL, reference, directive, level=level)
 
     _MESSAGE_REDUNDANT_DIRECTIVE = LogMessage(WARNING, _redundant_directive("%(reason)s"))
 
     def redundant_directive(self, reference: Reference, directive: str, reason: Reason) -> None:
-        """Warn that a directive the marker carries holds nothing back, saying why it cannot."""
+        """Warn that a directive the marker carries decides nothing, saying why it cannot."""
         self._log(
             self._MESSAGE_REDUNDANT_DIRECTIVE, **self._reference_fields(reference, directive=directive, reason=reason)
         )
@@ -601,8 +570,6 @@ class Logger:
         """Warn when the marker's version bound is redundant for the current version.
 
         The bound is redundant when it never has an effect or blocks every update (see `VersionBound.redundancy`).
-        Does nothing when the reference has no bound or the bound is live, so callers can hand off every reference
-        unconditionally.
         """
         if (bound := marker.version_bound) == NO_BOUND:
             return
@@ -629,18 +596,14 @@ class Logger:
     def recognised_marker(self, dependency: str, marker: Marker, location: Location) -> None:
         """Log that a reference's marker was recognised, so users can confirm it was understood.
 
-        Reports that the marker was read and parsed, not that it had any effect. The marker's directives are echoed
-        verbatim (the `raw` text the user wrote), so a user comparing the log line against their file sees their own
-        marker. Does nothing when the line carries no marker (the `raw` text is empty), so the caller can hand off
-        every reference unconditionally.
+        The marker's directives are echoed verbatim, the `raw` text the user wrote, so a user comparing the log
+        line against their file sees their own marker.
         """
         if not marker.raw:
             return
         self._log(self._MESSAGE_RECOGNISED_MARKER, directives=marker, dependency=dependency, location=location)
 
-    _MESSAGE_IGNORED = LogMessage(
-        DEBUG, "Ignoring updates for %(dependency)s in %(location)s (update-time: %(directive)s)"
-    )
+    _MESSAGE_IGNORED = LogMessage(DEBUG, _ignoring("updates"))
 
     def ignored(self, dependency: str, marker: Marker, location: Location) -> None:
         """Log that a reference's update was held back, naming the `ignore` directive that held it back.
@@ -648,13 +611,13 @@ class Logger:
         A bare `ignore` names no scope, so it is echoed as the user wrote it rather than spelled out as
         `ignore[update]`, a directive they never typed.
         """
-        directive = marker.hold_back_directive(Scope.UPDATE)
+        directive = marker.written_directive(Scope.UPDATE)
         self._log_ignored(self._MESSAGE_IGNORED, dependency, directive, location)
 
     _MESSAGE_EXCLUDING_PATH = LogMessage(DEBUG, "Excluding %(path)s from the scan (--exclude-path)")
 
     def excluded_path(self, path: Path) -> None:
-        """Log that a directory passed to `--exclude-path` is held back from the scan."""
+        """Log that a directory passed to `--exclude-path` is excluded from the scan."""
         self._log(self._MESSAGE_EXCLUDING_PATH, path=path)
 
     _MESSAGE_PATH_TO_EXCLUDE_DOES_NOT_EXIST = LogMessage(
@@ -678,11 +641,7 @@ class Logger:
     )
 
     def configured_uv_cooldown(self, path: Path, cooldown: str) -> None:
-        """Log that Update-time wrote its cooldown into the project's uv configuration.
-
-        The path is a workspace root, which can sit above the current directory (when Update-time runs inside a
-        member), so fall back to the absolute path when it can't be made relative to the working directory.
-        """
+        """Log that Update-time wrote its cooldown into the project's uv configuration."""
         self._log_file(self._MESSAGE_UV_COOLDOWN, path, cooldown=cooldown)
 
     _MESSAGE_SKIP_UNSUPPORTED = LogMessage(
@@ -754,9 +713,7 @@ class Logger:
         """Log that a command wrote to stderr, including what it wrote.
 
         The message stays neutral about severity because the tool decides that: its stderr may be an `[ERROR]`, a
-        `[WARN]`, or just a notice (e.g. a pnpm deprecation). The warning level is Update-time's own view — this is
-        only logged when the command failed or produced nothing usable (see `run`), so it is worth
-        surfacing whatever the tool called it.
+        `[WARN]`, or just a notice (e.g. a pnpm deprecation).
         """
         self._log(self._MESSAGE_COMMAND_STDERR, command=command, stderr=stderr)
 
@@ -782,8 +739,6 @@ def get_logger(name: str) -> Logger:
     Update-time's real output is the files it rewrites in place; everything it logs — the new-version report as much
     as the warnings and errors — is diagnostics about the run, so it all goes to stderr. That keeps stdout clean for
     the argparse-handled `--version`/`--help` output, so e.g. `v=$(update-time -V)` isn't polluted with log lines.
-    `get_logger` is called once per module that owns a logger (an updater plus the sources it imports), so configure
-    the root logger only the first time — when it has no handlers yet — instead of building a handler on every call.
     """
     if not logging.getLogger().handlers:
         configure_logging(Console(stderr=True, theme=LOG_THEME), LOG_LEVEL.get())

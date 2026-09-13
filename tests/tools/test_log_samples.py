@@ -7,7 +7,7 @@ import unittest
 
 from tools.log_samples import _Capture
 
-from update_time.io.console import DEPENDENCY_DELIMITER, LOCATION_DELIMITER
+from update_time.io.console import delimit_dependency, delimit_location
 
 from tests.helpers import log_record
 
@@ -52,8 +52,8 @@ class CaptureTest(unittest.TestCase):
 
     def test_delimiters_are_dropped(self):
         """Test that a record renders as `LEVEL message`, without the delimiters only the highlighter reads."""
-        dependency = f"{DEPENDENCY_DELIMITER}humanize{DEPENDENCY_DELIMITER}"
-        location = f"{LOCATION_DELIMITER}docs/requirements.txt{LOCATION_DELIMITER}"
+        dependency = delimit_dependency("humanize")
+        location = delimit_location("docs/requirements.txt")
         collected = self.capture(f"Stale dependency {dependency} in {location}")
         self.assertEqual(collected.take(), "WARNING Stale dependency humanize in docs/requirements.txt")
 

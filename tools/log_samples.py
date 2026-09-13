@@ -24,7 +24,7 @@ from update_time.domain.dependency import (
 )
 from update_time.domain.reference import DriftedPin
 from update_time.domain.staleness import STALE_AFTER
-from update_time.io.console import DEPENDENCY_DELIMITER, LOCATION_DELIMITER
+from update_time.io.console import undelimited
 from update_time.io.log import Logger
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
@@ -45,8 +45,7 @@ class _Capture(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         """Format the record and keep it, dropping the delimiters that only the highlighter reads."""
-        delimiters = dict.fromkeys(ord(delimiter) for delimiter in (DEPENDENCY_DELIMITER, LOCATION_DELIMITER))
-        self._lines.append(f"{record.levelname} {record.getMessage().translate(delimiters)}")
+        self._lines.append(f"{record.levelname} {undelimited(record.getMessage())}")
 
     def take(self) -> str:
         """Return the lines collected since the previous call, as one block, and start a new one."""
@@ -169,11 +168,12 @@ def _inverted_items(log: Logger, capture: _Capture, requirements: Location, dock
 
 def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log each block's sample records and pair the lines they render as with the block's placeholder."""
-    log.digest_drift(
-        DriftedPin("python", "3.14", Location(Path("Dockerfile"), 1), _ELIDED_DIGEST, new_sha=_ELIDED_DIGEST)
+    log.drift(
+        Logger.DIGEST_DRIFT,
+        DriftedPin("python", "3.14", Location(Path("Dockerfile"), 1), _ELIDED_DIGEST, new_sha=_ELIDED_DIGEST),
     )
     workflow = Location(Path(".github/workflows/ci.yml"), 17)
-    log.tag_drift(DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, new_sha=_ELIDED))
+    log.drift(Logger.TAG_DRIFT, DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, new_sha=_ELIDED))
     location = Location(Path("docs/conf.py"), 4)
     log.hash_mismatch("clipboard", "2.0.11", _ELIDED_INTEGRITY_HASH, _ELIDED_INTEGRITY_HASH, location)
     drift = capture.take()

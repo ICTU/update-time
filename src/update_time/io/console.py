@@ -23,14 +23,31 @@ if TYPE_CHECKING:
 
 
 # A Private Use Area code point, which never occurs in real content and which Rich does not strip, so it survives
-# message formatting. `Logger` brackets a dependency name in it, because a name has no fixed shape a pattern could
+# message formatting. A dependency name is bracketed in it, because a name has no fixed shape a pattern could
 # match; `LogHighlighter` styles the bracketed run and strips the delimiters.
-DEPENDENCY_DELIMITER = ""
+_DEPENDENCY_DELIMITER = ""
 
 # The same for a file location, in a code point of its own so the two runs never collide. A location cannot be
 # matched by shape either: a regex over the finished message cannot tell `Dockerfile:1` from the versions and
 # digests around it.
-LOCATION_DELIMITER = ""
+_LOCATION_DELIMITER = ""
+
+_DELIMITERS = dict.fromkeys(ord(delimiter) for delimiter in (_DEPENDENCY_DELIMITER, _LOCATION_DELIMITER))
+
+
+def delimit_dependency(dependency: str) -> str:
+    """Bracket a dependency name so the highlighter styles it as one token."""
+    return f"{_DEPENDENCY_DELIMITER}{dependency}{_DEPENDENCY_DELIMITER}"
+
+
+def delimit_location(location: object) -> str:
+    """Bracket a location's text so the highlighter styles the whole run as one token."""
+    return f"{_LOCATION_DELIMITER}{location}{_LOCATION_DELIMITER}"
+
+
+def undelimited(message: str) -> str:
+    """Return the message without the delimiters, which nothing but the highlighter reads."""
+    return message.translate(_DELIMITERS)
 
 
 class LogHighlighter(ReprHighlighter):
@@ -42,8 +59,8 @@ class LogHighlighter(ReprHighlighter):
     """
 
     _DIGEST = re.compile(rf"\b{SHA256_DIGEST}\b")
-    _DEPENDENCY = re.compile(f"{DEPENDENCY_DELIMITER}[^{DEPENDENCY_DELIMITER}]*{DEPENDENCY_DELIMITER}")
-    _LOCATION = re.compile(f"{LOCATION_DELIMITER}[^{LOCATION_DELIMITER}]*{LOCATION_DELIMITER}")
+    _DEPENDENCY = re.compile(f"{_DEPENDENCY_DELIMITER}[^{_DEPENDENCY_DELIMITER}]*{_DEPENDENCY_DELIMITER}")
+    _LOCATION = re.compile(f"{_LOCATION_DELIMITER}[^{_LOCATION_DELIMITER}]*{_LOCATION_DELIMITER}")
 
     def highlight(self, text: Text) -> None:
         """Apply the default highlighting, restyle each digest, then style and unwrap dependency names and locations."""

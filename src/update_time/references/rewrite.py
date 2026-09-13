@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.dependency import FloatingPin
 from update_time.domain.line import located_lines
 from update_time.domain.reference import DriftedPin, hash_drifted
+from update_time.io.log import Logger
 from update_time.markers.drift import report_drift
 from update_time.markers.floating import floating_pin_cause
 from update_time.markers.marker import parse_marker
@@ -29,7 +30,6 @@ if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyVersion
     from update_time.domain.line import Line
     from update_time.domain.reference import Reference
-    from update_time.io.log import Logger
     from update_time.markers.marker import Marker, ReferenceMarker
     from update_time.primitives.location import Location
 
@@ -127,9 +127,9 @@ class _Rewriter:
         """
         dependency, version = matched_dependency(match, self.dependency), match.group("version")
         drifted = DriftedPin(dependency, version, reference.location, match.group("sha"), new_sha=latest.sha)
-        return report_drift(
-            marker, partial(self.logger.digest_drift, drifted), partial(self.logger.adopted_drift, drifted)
-        )
+        warn = partial(self.logger.drift, Logger.DIGEST_DRIFT, drifted)
+        adopt = partial(self.logger.adopted_drift, Logger.DIGEST_DRIFT, drifted)
+        return report_drift(marker, warn, adopt)
 
     def _apply_update(
         self, match: re.Match[str], latest: DependencyVersion, reference: Reference, *, pin_unpinned: bool

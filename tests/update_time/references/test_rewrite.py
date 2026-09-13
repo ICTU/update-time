@@ -9,6 +9,7 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, FloatingPin
 from update_time.domain.line import located_lines
 from update_time.domain.reference import DriftedPin, Reference
+from update_time.io.log import Logger
 from update_time.markers import marker as marker_module
 from update_time.markers.directive import Reason
 from update_time.markers.drift import ALLOW_HASH_DRIFT
@@ -110,13 +111,13 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assertEqual(new_lines, ["line1", f"image: python:3.14@{DIGEST}"])
         self.logger.pinned.assert_called_with(self.reference(line=2), DependencyVersion(version="3.14", sha=DIGEST))
         self.logger.new_version.assert_not_called()
-        self.logger.digest_drift.assert_not_called()  # An unpinned reference has no pinned digest to drift from.
+        self.logger.drift.assert_not_called()  # An unpinned reference has no pinned digest to drift from.
 
     def test_digest_drift_warns_without_rewriting(self):
         """Test that a pinned reference whose digest changed at the registry is warned about, not rewritten."""
         lines = [f"image: python:3.14@{OLD_DIGEST}"]
         self.assertEqual(self.rewrite(lines, _SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST)), lines)
-        self.logger.digest_drift.assert_called_once_with(self.drifted())
+        self.logger.drift.assert_called_once_with(Logger.DIGEST_DRIFT, self.drifted())
         self.logger.new_version.assert_not_called()
         self.logger.pinned.assert_not_called()
 
@@ -124,7 +125,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that a pinned reference whose digest is unchanged is left alone, without a drift warning."""
         lines = [f"image: python:3.14@{DIGEST}"]
         self.assertEqual(self.rewrite(lines, _SHA_REGEXP, new_version_getter("3.14", DIGEST)), lines)
-        self.logger.digest_drift.assert_not_called()
+        self.logger.drift.assert_not_called()
 
     def test_pin_unpinned_with_new_version(self):
         """Test that an unpinned reference is pinned and bumped to the latest version at the same time."""
@@ -317,15 +318,19 @@ class UpdateReferencesTest(unittest.TestCase):
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: allow[hash-drift]"]
         new_lines = self.rewrite(lines, _SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST))
         self.assertEqual(new_lines, [f"image: python:3.14@{NEW_DIGEST}  # update-time: allow[hash-drift]"])
-        self.logger.adopted_drift.assert_called_once_with(self.drifted(), "update-time: allow[hash-drift]")
-        self.logger.digest_drift.assert_not_called()
+        self.logger.adopted_drift.assert_called_once_with(
+            Logger.DIGEST_DRIFT, self.drifted(), "update-time: allow[hash-drift]"
+        )
+        self.logger.drift.assert_not_called()
 
     def test_allow_hash_drift_marker_above_line_adopts(self):
         """Test that a standalone `allow[hash-drift]` comment opts the reference on the line below it in."""
         lines = ["# update-time: allow[hash-drift]", f"image: python:3.14@{OLD_DIGEST}"]
         new_lines = self.rewrite(lines, _SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST))
         self.assertEqual(new_lines, ["# update-time: allow[hash-drift]", f"image: python:3.14@{NEW_DIGEST}"])
-        self.logger.adopted_drift.assert_called_once_with(self.drifted(2), "update-time: allow[hash-drift]")
+        self.logger.adopted_drift.assert_called_once_with(
+            Logger.DIGEST_DRIFT, self.drifted(2), "update-time: allow[hash-drift]"
+        )
 
     def test_allow_hash_drift_marker_is_noop_when_version_also_changed(self):
         """Test that when the version has moved too, the normal update path runs and the marker doesn't apply."""
@@ -340,7 +345,7 @@ class UpdateReferencesTest(unittest.TestCase):
         resolved = DependencyVersion(version="3.15", sha=NEW_DIGEST, floating=FloatingPin.RESOLVED)
         lines = [f"image: python:latest@{OLD_DIGEST}  # update-time: allow[floating-pin]"]
         self.assertEqual(self.rewrite(lines, _SHA_REGEXP, Mock(return_value=resolved)), lines)
-        self.logger.digest_drift.assert_called_once_with(self.drifted(version="latest"))
+        self.logger.drift.assert_called_once_with(Logger.DIGEST_DRIFT, self.drifted(version="latest"))
 
     def test_drift_adopted_for_a_tag_kept_floating(self):
         """Test that a reference kept floating adopts the digest its tag serves now, keeping the tag itself."""
@@ -351,7 +356,7 @@ class UpdateReferencesTest(unittest.TestCase):
         )
         self.assertEqual(new_lines, [f"image: python:latest@{NEW_DIGEST}  {marker}"])
         self.logger.adopted_drift.assert_called_once_with(
-            self.drifted(version="latest"), "update-time: allow[hash-drift]"
+            Logger.DIGEST_DRIFT, self.drifted(version="latest"), "update-time: allow[hash-drift]"
         )
         self.logger.keeping_floating_tag.assert_not_called()
 
@@ -379,7 +384,7 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assertEqual(self.rewrite(lines, _SHA_REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.adopted_drift.assert_not_called()
-        self.logger.digest_drift.assert_not_called()
+        self.logger.drift.assert_not_called()
 
     def test_flag_adopts_digest_drift_repo_wide(self):
         """Test that the --allow-hash-drift flag (via its env var) adopts drift without a per-line marker."""
@@ -387,8 +392,8 @@ class UpdateReferencesTest(unittest.TestCase):
         with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
             new_lines = self.rewrite(lines, _SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST))
         self.assertEqual(new_lines, [f"image: python:3.14@{NEW_DIGEST}"])
-        self.logger.adopted_drift.assert_called_once_with(self.drifted(), "--allow-hash-drift")
-        self.logger.digest_drift.assert_not_called()
+        self.logger.adopted_drift.assert_called_once_with(Logger.DIGEST_DRIFT, self.drifted(), "--allow-hash-drift")
+        self.logger.drift.assert_not_called()
 
     def test_ignore_wins_over_allow_hash_drift_flag(self):
         """Test that an `ignore` marker still wins over the global --allow-hash-drift flag."""
@@ -405,7 +410,7 @@ class UpdateReferencesTest(unittest.TestCase):
         with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
             self.assertEqual(self.rewrite(lines, _SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST)), lines)
         self.logger.adopted_drift.assert_not_called()
-        self.logger.digest_drift.assert_called_once_with(self.drifted())
+        self.logger.drift.assert_called_once_with(Logger.DIGEST_DRIFT, self.drifted())
         self.logger.invalid_bracket_item.assert_not_called()
 
     def test_ignore_floating_pin_wins_over_allow_floating_pin_flag(self):
@@ -529,7 +534,9 @@ class UpdateReferencesTest(unittest.TestCase):
             "python", "3.14", bound(Verb.ALLOW, "update<3.15"), COOLDOWN.default, check_archival=True
         )
         # The cause names the directive that opted the reference in, not the bound written beside it.
-        self.logger.adopted_drift.assert_called_once_with(self.drifted(), "update-time: allow[hash-drift]")
+        self.logger.adopted_drift.assert_called_once_with(
+            Logger.DIGEST_DRIFT, self.drifted(), "update-time: allow[hash-drift]"
+        )
 
     def test_directive_list_combines_ignore_stale_and_bound(self):
         """Test that an `ignore[stale]` and an `allow` bound directive listed after one prefix both apply."""
@@ -561,7 +568,7 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assertEqual(self.rewrite(lines, _SHA_REGEXP, get_new_version), lines)
         # The `ignore[stale]` before the typo is parsed, so it reaches the logger:
         self.logger.report_staleness.assert_called_once_with(ANY, Marker(ignored_scopes=Scope.STALE), ANY)
-        self.logger.digest_drift.assert_called_once()  # the mistyped drift opt-in is not, so the drift only warns
+        self.logger.drift.assert_called_once()  # the mistyped drift opt-in is not, so the drift only warns
 
     def assert_invalid_bracket_item(self, directive: str, bracket_item: str) -> None:
         """Assert that the bracket item is logged as invalid, leaving the reference unchanged but still checked."""
