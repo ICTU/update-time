@@ -16,7 +16,7 @@ Update-time rewrites the files in place and logs what it did:
                     ╭──────────────────────────────────────────────────────────────────────────────╮
                     │ Changed in 4.15.0                                                            │
                     │                                                                              │
-                    │  • Fantastic new features                                                    │
+                    │  • ⚡ Fantastic new features                                                 │
                     │  • A few bugs squashed (#42)                                                 │
                     ╰──────────────────────────────────────────────────────────────────────────────╯
            INFO     Pinned python in Dockerfile:1 to

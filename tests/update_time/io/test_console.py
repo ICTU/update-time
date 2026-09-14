@@ -145,7 +145,7 @@ class RecordRenderingTests(TestCase):
         ),
     )
     def test_raw_html_in_a_markdown_changelog_is_shown_as_written(self):
-        """Test that a Markdown changelog's raw HTML block reaches the reader as the source wrote it."""
+        """Test that a Markdown changelog's raw HTML block reaches the reader as the project wrote it."""
         html = "<details>\n<summary>Dependency updates</summary>\n"
         rendered = self.rendered_changes(Changes(f"## 1.2.0\n\n{html}\n- bump foo\n</details>\n", markdown=True))
         block = ["1.2.0", "", "<details>", "<summary>Dependency updates</summary>", "", "• bump foo", "", "</details>"]
@@ -180,6 +180,36 @@ class RecordRenderingTests(TestCase):
         self.assertIn("New version available for pkg in requirements.txt:3: 1.2.0", rendered)
         self.assertIn("PyPI page: coverage 7.16.0", rendered)
         self.assertNotIn("[coverage 7.16.0]", rendered)
+
+    @kills(
+        Mutation(
+            console_module,
+            '_READ_AS_TEXT = ("text", "html_block")',
+            '_READ_AS_TEXT = ("text",)',
+            "a shortcode in a <details> section's summary is shown as typed, beside prose that gets its emoji",
+        )
+    )
+    def test_a_shortcode_in_a_raw_html_block_renders_as_its_emoji(self):
+        """Test that a shortcode a raw HTML block holds reaches the reader as its emoji, as one in the prose does."""
+        html = "<details>\n<summary>:zap: Dependency updates</summary>\n"
+        rendered = self.rendered_changes(Changes(f"{html}\n- :zap: bump foo\n</details>\n", markdown=True))
+        self.assertIn("<summary>⚡ Dependency updates</summary>", rendered)
+        self.assertNotIn(":zap:", rendered)
+
+    @kills(
+        Mutation(
+            console_module,
+            "super().__init__(markup, hyperlinks=hyperlinks)",
+            "super().__init__(Emoji.replace(markup), hyperlinks=hyperlinks)",
+            "replacing before the parse eats the shortcodes a code span and a fenced block hold",
+        )
+    )
+    def test_a_shortcode_renders_as_its_emoji_except_inside_code(self):
+        """Test that a shortcode in the prose reaches the reader as its emoji, and one inside code as written."""
+        changes = Changes(":zap: fixed `:zap:` in\n\n```yaml\nlabel: ':zap:'\n```\n", markdown=True)
+        rendered = self.rendered_changes(changes)
+        self.assertIn("⚡ fixed :zap: in", rendered)  # the prose has its emoji, the code span keeps its shortcode
+        self.assertIn("label: ':zap:'", rendered)  # and so does the fenced block
 
     @kills(
         Mutation(

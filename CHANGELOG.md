@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Changed
 
 - Render a new version's changes as Markdown when their changelog is written in Markdown, and as the project wrote them when it is not. Closes [#340](https://github.com/ICTU/update-time/issues/340).
+- Render a shortcode such as `:zap:` in a new version's changes as the emoji it names, when the changelog is written in Markdown. Closes [#339](https://github.com/ICTU/update-time/issues/339).
 
 ## 0.0.35 - 2026-09-12
 
