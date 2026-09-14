@@ -74,7 +74,7 @@ def generate() -> LogOutput:
     digest = "sha256:" + ("9f2c1e7b" + "d4" * SHA256_HEX_CHARS)[:SHA256_HEX_CHARS]
     changelog = Changes(
         "Changed in 4.15.0\n"
-        "- Fantastic new features\n"
+        "- :zap: Fantastic new features\n"
         "- A few bugs squashed ([#42](https://github.com/python-humanize/humanize/issues/42))",
         markdown=True,
     )

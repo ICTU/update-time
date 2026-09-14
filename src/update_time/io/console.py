@@ -6,6 +6,7 @@ from logging import WARNING
 from typing import TYPE_CHECKING
 
 from rich.console import Console, Group
+from rich.emoji import Emoji
 from rich.highlighter import ReprHighlighter
 from rich.logging import RichHandler
 from rich.markdown import Markdown, MarkdownElement
@@ -111,7 +112,7 @@ _CHANGES_BORDER = "dim"
 
 
 class _RawHtml(MarkdownElement):
-    """A block of raw HTML in a changelog, shown as the source wrote it.
+    """A block of raw HTML in a changelog, shown as the project wrote it.
 
     Rich drops such a block, a terminal having nowhere to render it, and a `<details>` section holds changes.
     """
@@ -132,10 +133,23 @@ class _RawHtml(MarkdownElement):
             yield Text(self.html.rstrip("\n"))
 
 
+# The kinds of token a changelog writes for its reader: its prose and its raw HTML. A code span and a fenced block
+# hold their text in a token of their own, so the shortcodes the project wrote as code stay as written.
+_READ_AS_TEXT = ("text", "html_block")
+
+
 class _ChangelogMarkdown(Markdown):
-    """Markdown that shows a raw HTML block instead of dropping it."""
+    """Markdown that shows a raw HTML block instead of dropping it, and renders the emoji a shortcode names."""
 
     elements: ClassVar = {**Markdown.elements, "html_block": _RawHtml}
+
+    def __init__(self, markup: str, *, hyperlinks: bool) -> None:
+        """Parse the changes, replacing the shortcodes in every token the reader reads as text."""
+        super().__init__(markup, hyperlinks=hyperlinks)
+        for token in self.parsed:
+            for part in (token, *(token.children or ())):
+                if part.type in _READ_AS_TEXT:
+                    part.content = Emoji.replace(part.content)
 
 
 class _ChangelogHandler(RichHandler):
