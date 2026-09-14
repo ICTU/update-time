@@ -473,15 +473,11 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_no_redundant_suppression_logged(self) -> None:
         """Assert that no vulnerability suppression was reported as silencing nothing, whatever else was logged."""
-        suppressions: tuple[tuple[LogMessage, dict[str, object]], ...] = (
-            (Logger._MESSAGE_REDUNDANT_VULNERABLE_SCOPE, {}),
-            (Logger._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY, {}),
-            (Logger._MESSAGE_REDUNDANT_VULNERABLE_LEVEL, {}),
-            (Logger._MESSAGE_REDUNDANT_DIRECTIVE, {"reason": Reason.NO_VULNERABILITY_REPORTS}),
-        )
-        for message, fields in suppressions:
-            with self.subTest(message=message, **fields):
-                self.assert_none_logged(message, "redundant vulnerability suppression", **fields)
+        what = "redundant vulnerability suppression"
+        self.assert_none_logged(Logger._MESSAGE_REDUNDANT_VULNERABLE_SCOPE, what)
+        self.assert_none_logged(Logger._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY, what)
+        self.assert_none_logged(Logger._MESSAGE_REDUNDANT_VULNERABLE_LEVEL, what)
+        self.assert_none_logged(Logger._MESSAGE_REDUNDANT_DIRECTIVE, what, reason=Reason.NO_VULNERABILITY_REPORTS)
 
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged."""
@@ -525,10 +521,16 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that no vulnerability warning was reported as silenced, whatever else was logged at that level."""
         self.assert_none_logged(Logger._MESSAGE_IGNORED_VULNERABILITY, "vulnerability warning silenced by a marker")
 
-    def assert_ignored_vulnerability_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
+    def assert_ignored_vulnerability_logged(
+        self, dependency: str, location: Location, advisory: str, directive: str
+    ) -> None:
         """Assert that a vulnerability warning silenced by a marker was logged, among the other records."""
         self.assert_logged_among_others(
-            Logger._MESSAGE_IGNORED_VULNERABILITY, dependency=dependency, location=location, directive=directive
+            Logger._MESSAGE_IGNORED_VULNERABILITY,
+            dependency=dependency,
+            location=location,
+            advisory=advisory,
+            directive=directive,
         )
 
     def assert_no_globally_ignored_vulnerability_logged(self) -> None:
@@ -538,13 +540,14 @@ class LoggingTestCase(CacheClearingTestCase):
         )
 
     def assert_globally_ignored_vulnerability_logged(
-        self, dependency: str, location: Location, advisory: object = ANY
+        self, dependency: str, location: Location, advisory: str, identifiers: str
     ) -> None:
         """Assert that a vulnerability warning silenced run-wide was logged, among the other records at its level."""
         self.assert_logged_among_others(
             Logger._MESSAGE_GLOBALLY_IGNORED_VULNERABILITY,
             dependency=dependency,
             advisory=advisory,
+            identifiers=identifiers,
             location=location,
         )
 

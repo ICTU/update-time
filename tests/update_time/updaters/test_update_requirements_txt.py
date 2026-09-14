@@ -12,6 +12,7 @@ from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope
 from update_time.primitives.location import Location
 from update_time.references import resolve as resolve_module
+from update_time.references import vulnerability as vulnerability_module
 from update_time.sources import pypi as pypi_module
 from update_time.updaters import update_requirements_txt as update_requirements_txt_module
 from update_time.updaters.update_requirements_txt import (
@@ -61,8 +62,6 @@ _OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch"
 # The endpoint a package's versions and release dates are read from; `queried_packages` reads its name back off it.
 _PYPI_INDEX_URL = "https://pypi.org/simple/"
 
-# The globs the updater discovers requirements files with, spelled out here and pinned to the updater below.
-
 
 @no_vulnerabilities
 @patch("requests.get")
@@ -100,6 +99,13 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def stale_pypi(self, *versions: str, upload_time: str = PYPI_OLD_UPLOAD, archived: bool = False) -> list[Mock]:
         """Return a mock Index API response listing the versions and a distribution file with the given upload time."""
         return [dated_pypi_index(*versions, upload_time=upload_time, archived=archived)]
+
+    def django_pin(self, rglob: Mock, get: Mock, marker: str = "") -> Mock:
+        """Return the discovered file pinning `django==3.2.0` with the marker, PyPI listing that version as newest."""
+        comment = f"  # update-time: {marker}" if marker else ""
+        requirements_txt = self.discovered_requirements_txt(rglob, f"django==3.2.0{comment}\n")
+        get.side_effect = self.pypi("3.2.0")
+        return requirements_txt
 
     def test_no_change(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin already on the latest version is left unchanged."""
@@ -571,8 +577,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     def test_vulnerable_dependency_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin left on a version OSV reports an advisory for is warned about, without being changed."""
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, "django==3.2.0\n")
-        mock_get.side_effect = self.pypi("3.2.0")  # No newer version; the pin's own release is vulnerable.
+        requirements_txt = self.django_pin(mock_rglob, mock_get)  # No newer version; the pin's release is vulnerable.
         with osv(DJANGO_ADVISORY):
             update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
@@ -580,8 +585,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     def test_vulnerability_check_disabled(self, mock_rglob: Mock, mock_get: Mock):
         """Test that no vulnerability is reported, and OSV is not asked at all, when the check is switched off."""
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, "django==3.2.0\n")
-        mock_get.side_effect = self.pypi("3.2.0")
+        requirements_txt = self.django_pin(mock_rglob, mock_get)
         with osv(DJANGO_ADVISORY) as mock_post, vulnerability_check_disabled:
             update_requirements_txts()
         mock_post.assert_not_called()
@@ -590,8 +594,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     def test_vulnerability_below_the_risk_level_in_force(self, mock_rglob: Mock, mock_get: Mock):
         """Test that of the advisories affecting a pin, only those at or above the level in force are warned about."""
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, "django==3.2.0\n")
-        mock_get.side_effect = self.pypi("3.2.0")
+        requirements_txt = self.django_pin(mock_rglob, mock_get)
         with osv(DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY), patch_environ({VULNERABILITY_LEVEL.name: "high"}):
             update_requirements_txts()
         self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(requirements_txt, 1))
@@ -612,9 +615,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that a marker setting a risk level no vulnerability falls below is reported, whichever verb set it."""
         for directive in ("ignore[vulnerable<high]", "allow[vulnerable>=high]"):
             with self.subTest(directive=directive):
-                contents = f"django==3.2.0  # update-time: {directive}\n"
-                requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
-                mock_get.side_effect = self.pypi("3.2.0")
+                requirements_txt = self.django_pin(mock_rglob, mock_get, directive)
                 with osv(DJANGO_ADVISORY):
                     update_requirements_txts()
                 self.assert_redundant_vulnerable_level_logged(
@@ -627,9 +628,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_an_inverted_comparison_leaves_the_global_risk_level_in_force(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a `vulnerable` item comparing the wrong way is reported and sets no level for the pin."""
         item = "vulnerable>=high"
-        contents = f"django==3.2.0  # update-time: ignore[{item}]\n"
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
-        mock_get.side_effect = self.pypi("3.2.0")
+        requirements_txt = self.django_pin(mock_rglob, mock_get, f"ignore[{item}]")
         with osv(OTHER_DJANGO_ADVISORY):
             update_requirements_txts()
         self.assert_inverted_vulnerable_item_logged("django", item, Location(requirements_txt, 1))
@@ -690,8 +689,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     def test_ignore_vulnerable_marker_reports_nothing_when_it_silences_nothing(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a marker whose only advisory is below the level in force is reported neither way."""
-        self.discovered_requirements_txt(mock_rglob, "django==3.2.0  # update-time: ignore[stale] ignore[vulnerable]\n")
-        mock_get.side_effect = self.pypi("3.2.0")
+        self.django_pin(mock_rglob, mock_get, "ignore[stale] ignore[vulnerable]")
         with osv(OTHER_DJANGO_ADVISORY), patch_environ({VULNERABILITY_LEVEL.name: "high"}):
             update_requirements_txts()
         self.assert_no_warnings_logged()
@@ -702,8 +700,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     ):
         """Test that an `ignore[vulnerable]` marker on a pin OSV reports no advisory for is reported as redundant."""
         directive = "ignore[vulnerable]"
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directive}\n")
-        mock_get.side_effect = self.pypi("3.2.0")
+        requirements_txt = self.django_pin(mock_rglob, mock_get, directive)
         with osv():
             update_requirements_txts()
         self.assert_redundant_vulnerable_scope_logged("django", "3.2.0", Location(requirements_txt, 1), directive)
@@ -717,10 +714,10 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             "a risk level": "ignore[vulnerable<high]",
         }.items():
             with self.subTest(case=case):
-                self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directive}\n")
-                mock_get.side_effect = self.pypi("3.2.0")
-                with unreachable_osv():
+                self.django_pin(mock_rglob, mock_get, directive)
+                with unreachable_osv() as mock_post:
                     update_requirements_txts()
+                mock_post.assert_called()  # Without this, a run that never asked OSV would pass the assertion below.
                 self.assert_no_redundant_suppression_logged()
 
     def test_ignore_vulnerable_marker_silences_the_warning(self, mock_rglob: Mock, mock_get: Mock):
@@ -735,23 +732,38 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         )
         mock_post.assert_called()
         self.assert_no_warnings_logged()
-        self.assert_ignored_vulnerability_logged("django", Location(requirements_txt, 1), "ignore[vulnerable]")
+        self.assert_ignored_vulnerability_logged(
+            "django", Location(requirements_txt, 1), DJANGO_VULNERABILITY.advisory, "ignore[vulnerable]"
+        )
 
     def test_ignore_vulnerable_advisory_marker_silences_that_advisory(self, mock_rglob: Mock, mock_get: Mock):
         """Test that an `ignore[vulnerable=ID]` marker silences the warning about the advisory it names."""
-        directive = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
+        advisory = DJANGO_VULNERABILITY.advisory
+        directive = f"ignore[vulnerable={advisory}]"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directive}\n")
         mock_get.side_effect = self.pypi("3.2.0", "3.3.0", bump=True)
         with osv(DJANGO_ADVISORY):
             update_requirements_txts()
         requirements_txt.write_text.assert_called_once_with(f"django==3.3.0  # update-time: {directive}\n")
         self.assert_no_warnings_logged()
-        self.assert_ignored_vulnerability_logged("django", Location(requirements_txt, 1), directive)
+        self.assert_ignored_vulnerability_logged("django", Location(requirements_txt, 1), advisory, directive)
 
+    @kills(
+        Mutation(
+            log_module,
+            "            reference.location,\n            advisory=vulnerability.advisory,",
+            "            reference.location,\n"
+            "            advisory=next(iter(marker.ignored_advisories), vulnerability.advisory),",
+            "the line names the identifier the marker spelled rather than the one OSV answered under",
+        )
+    )
     def test_ignore_vulnerable_advisory_marker_accepts_any_identifier_of_the_vulnerability(
         self, mock_rglob: Mock, mock_get: Mock
     ):
-        """Test that the marker silences the warning when it names any identifier the vulnerability is known by."""
+        """Test that the marker silences the warning when it names any identifier the vulnerability is known by.
+
+        The line names the identifier OSV answered under, whichever identifier the marker spelled.
+        """
         cve, pysec, bit = "CVE-2021-1111", "PYSEC-2021-109", "BIT-django-2021-1111"
         far_cve = "CVE-2021-4444"  # Named by the tied-in advisory alone, so the merge brings it to the vulnerability
         reported = DJANGO_ADVISORY | {"aliases": [cve]}
@@ -766,35 +778,49 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         for case, (identifier, records) in cases.items():
             with self.subTest(case=case):
                 directive = f"ignore[vulnerable={identifier}]"
-                requirements_txt = self.discovered_requirements_txt(
-                    mock_rglob, f"django==3.2.0  # update-time: {directive}\n"
-                )
-                mock_get.side_effect = self.pypi("3.2.0")
+                requirements_txt = self.django_pin(mock_rglob, mock_get, directive)
+                location = Location(requirements_txt, 1)
                 with osv(*records):
                     update_requirements_txts()
                 self.assert_no_warnings_logged()
-                self.assert_ignored_vulnerability_logged("django", Location(requirements_txt, 1), directive)
+                self.assert_ignored_vulnerability_logged("django", location, DJANGO_VULNERABILITY.advisory, directive)
 
     def test_ignore_vulnerable_advisory_marker_still_warns_about_another_advisory(
         self, mock_rglob: Mock, mock_get: Mock
     ):
         """Test that a marker naming one advisory leaves the pin's other advisories warned about."""
         directive = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directive}\n")
-        mock_get.side_effect = self.pypi("3.2.0")
+        requirements_txt = self.django_pin(mock_rglob, mock_get, directive)
         with osv(DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY):
             update_requirements_txts()
-        self.assert_vulnerable_dependency_logged(
-            "django", "3.2.0", OTHER_DJANGO_VULNERABILITY, Location(requirements_txt, 1)
+        location = Location(requirements_txt, 1)
+        self.assert_vulnerable_dependency_logged("django", "3.2.0", OTHER_DJANGO_VULNERABILITY, location)
+        self.assert_ignored_vulnerability_logged("django", location, DJANGO_VULNERABILITY.advisory, directive)
+
+    @kills(
+        Mutation(
+            vulnerability_module,
+            "        for vulnerability in vulnerabilities:",
+            "        for vulnerability in (vulnerabilities[:1] "
+            "if reference.marker.ignores(Scope.VULNERABLE) else vulnerabilities):",
+            "a reference's silenced vulnerabilities are reported as one line rather than one line per advisory",
         )
-        self.assert_ignored_vulnerability_logged("django", Location(requirements_txt, 1), directive)
+    )
+    def test_two_silenced_vulnerabilities_are_reported_one_line_per_advisory(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a pin whose marker silences two vulnerabilities gets a line naming each of their advisories."""
+        directive = "ignore[vulnerable]"
+        requirements_txt = self.django_pin(mock_rglob, mock_get, directive)
+        with osv(DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY):
+            update_requirements_txts()
+        location = Location(requirements_txt, 1)
+        self.assert_no_warnings_logged()
+        self.assert_ignored_vulnerability_logged("django", location, DJANGO_VULNERABILITY.advisory, directive)
+        self.assert_ignored_vulnerability_logged("django", location, OTHER_DJANGO_VULNERABILITY.advisory, directive)
 
     def test_a_redundant_advisory_names_its_own_item_alone(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a dead advisory item is reported without naming a risk level beside it that is still live."""
         advisory = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
-        contents = f"django==3.2.0  # update-time: {advisory} allow[vulnerable>=high]\n"
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
-        mock_get.side_effect = self.pypi("3.2.0")
+        requirements_txt = self.django_pin(mock_rglob, mock_get, f"{advisory} allow[vulnerable>=high]")
         with osv(OTHER_DJANGO_ADVISORY):  # A moderate vulnerability the advisory item does not name.
             update_requirements_txts()
         self.assert_redundant_vulnerable_advisory_logged("django", "3.2.0", Location(requirements_txt, 1), advisory)
@@ -805,8 +831,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that a version with no vulnerability at all reports each `vulnerable` form under its own directive."""
         advisory = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
         directives = f"ignore[vulnerable] {advisory} ignore[vulnerable<high]"
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directives}\n")
-        mock_get.side_effect = self.pypi("3.2.0")
+        requirements_txt = self.django_pin(mock_rglob, mock_get, directives)
         with osv():  # No vulnerability, so all three forms silence nothing.
             update_requirements_txts()
         location = Location(requirements_txt, 1)
@@ -819,9 +844,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_a_redundant_level_names_its_own_item_alone(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a dead risk level is reported without naming an advisory beside it that is still live."""
         advisory = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
-        contents = f"django==3.2.0  # update-time: {advisory} ignore[vulnerable<high]\n"
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
-        mock_get.side_effect = self.pypi("3.2.0")
+        requirements_txt = self.django_pin(mock_rglob, mock_get, f"{advisory} ignore[vulnerable<high]")
         with osv(DJANGO_ADVISORY):  # A critical vulnerability, so nothing falls below the level.
             update_requirements_txts()
         self.assert_redundant_vulnerable_level_logged(
@@ -835,35 +858,55 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     ):
         """Test that a marker naming an advisory none of the version's vulnerabilities answers to is redundant."""
         directive = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directive}\n")
-        mock_get.side_effect = self.pypi("3.2.0")
+        requirements_txt = self.django_pin(mock_rglob, mock_get, directive)
         with osv(OTHER_DJANGO_ADVISORY):
             update_requirements_txts()
-        self.assert_redundant_vulnerable_advisory_logged("django", "3.2.0", Location(requirements_txt, 1), directive)
+        location = Location(requirements_txt, 1)
+        self.assert_redundant_vulnerable_advisory_logged("django", "3.2.0", location, directive)
         self.assert_vulnerable_dependency_logged(
-            "django", "3.2.0", OTHER_DJANGO_VULNERABILITY, Location(requirements_txt, 1), among_others=True
+            "django", "3.2.0", OTHER_DJANGO_VULNERABILITY, location, among_others=True
         )
 
     def test_globally_ignored_advisory_silences_the_warning(self, mock_rglob: Mock, mock_get: Mock):
         """Test that an advisory ignored run-wide is not warned about, and that the silencing names the option."""
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, "django==3.2.0\n")
-        mock_get.side_effect = self.pypi("3.2.0")
+        requirements_txt = self.django_pin(mock_rglob, mock_get)
         with osv(DJANGO_ADVISORY), patch_environ({IGNORE_VULNERABILITIES.name: DJANGO_VULNERABILITY.advisory}):
             update_requirements_txts()
         self.assert_no_warnings_logged()
+        location = Location(requirements_txt, 1)
         self.assert_globally_ignored_vulnerability_logged(
-            "django", Location(requirements_txt, 1), DJANGO_VULNERABILITY.advisory
+            "django", location, DJANGO_VULNERABILITY.advisory, DJANGO_VULNERABILITY.advisory
+        )
+
+    @kills(
+        Mutation(
+            vulnerability_module,
+            "        logger.globally_ignored_vulnerability(reference, vulnerability, silenced_by)",
+            "        logger.globally_ignored_vulnerability(reference, vulnerability, "
+            "frozenset({vulnerability.advisory}))",
+            "the option's line names the identifier OSV answered under rather than the one the reader passed",
+        )
+    )
+    def test_the_option_line_names_the_advisory_and_what_was_passed(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that the option's line names the advisory OSV answered under, and quotes the identifier passed."""
+        cve = "CVE-2021-1111"
+        requirements_txt = self.django_pin(mock_rglob, mock_get)
+        with osv(DJANGO_ADVISORY | {"aliases": [cve]}), patch_environ({IGNORE_VULNERABILITIES.name: cve}):
+            update_requirements_txts()
+        self.assert_no_warnings_logged()
+        self.assert_globally_ignored_vulnerability_logged(
+            "django", Location(requirements_txt, 1), DJANGO_VULNERABILITY.advisory, cve
         )
 
     def test_a_marker_is_reported_where_the_option_names_the_same_advisory(self, mock_rglob: Mock, mock_get: Mock):
         """Test that where the marker and the option both name the advisory, the marker's silencing is reported."""
         directive = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directive}\n")
-        mock_get.side_effect = self.pypi("3.2.0")
+        requirements_txt = self.django_pin(mock_rglob, mock_get, directive)
         with osv(DJANGO_ADVISORY), patch_environ({IGNORE_VULNERABILITIES.name: DJANGO_VULNERABILITY.advisory}):
             update_requirements_txts()
         self.assert_no_warnings_logged()
-        self.assert_ignored_vulnerability_logged("django", Location(requirements_txt, 1), directive)
+        location = Location(requirements_txt, 1)
+        self.assert_ignored_vulnerability_logged("django", location, DJANGO_VULNERABILITY.advisory, directive)
         self.assert_no_globally_ignored_vulnerability_logged()
 
     def test_recent_dependency_not_warned(self, mock_rglob: Mock, mock_get: Mock):

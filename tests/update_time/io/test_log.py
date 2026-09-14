@@ -32,7 +32,7 @@ from update_time.primitives.location import Location
 
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE, DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import bound, reference, resolved_reference
+from tests.update_time.helpers import bound, reference, resolved_reference, vulnerability
 from tests.update_time.io.helpers import at, create_location, dependency
 
 
@@ -578,6 +578,52 @@ class LoggerTests(TestCase):
         _new_logger().report_yank(resolved, Marker())
         _new_logger().report_yank(resolved, Marker(ignored_scopes=Scope.YANKED, raw="ignore[yanked]"))
         mock_log.assert_not_called()
+
+    @kills(
+        Mutation(
+            log_module,
+            '    _MESSAGE_IGNORED_VULNERABILITY = LogMessage(DEBUG, _ignoring("the %(advisory)s '
+            'vulnerability warning"))',
+            '    _MESSAGE_IGNORED_VULNERABILITY = LogMessage(DEBUG, _ignoring("the %(advisories)s '
+            'vulnerability warning"))',
+            "the silenced line names a field the log call does not supply, so the line is lost at render time",
+        )
+    )
+    def test_ignored_vulnerability(self, mock_log: Mock):
+        """Test that a vulnerability warning a marker silenced reads with the advisory it silenced."""
+        marker = Marker(ignored_scopes=Scope.VULNERABLE, written_scopes=Scope.VULNERABLE, raw="ignore[vulnerable]")
+        pin = reference("django", create_location("requirements.txt", 9), "3.2.0")
+        reported = vulnerability("GHSA-2gwj-7jmv-h26r", "SQL Injection in Django", "critical")
+        _new_logger().ignored_vulnerability(pin, reported, marker)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_IGNORED_VULNERABILITY,
+            f"Ignoring the GHSA-2gwj-7jmv-h26r vulnerability warning for {dependency('django')} "
+            f"in {at('requirements.txt:9')} (update-time: ignore[vulnerable])",
+        )
+
+    @kills(
+        Mutation(
+            log_module,
+            '        DEBUG, _ignoring("the %(advisory)s vulnerability warning", '
+            '"--ignore-vulnerability %(identifiers)s")',
+            '        DEBUG, _ignoring("the %(identifiers)s vulnerability warning", '
+            '"--ignore-vulnerability %(advisory)s")',
+            "the run-wide line names what was passed in its subject and the advisory in its cause, swapping the two",
+        )
+    )
+    def test_globally_ignored_vulnerability(self, mock_log: Mock):
+        """Test that the run-wide option's line reads with the advisory, and quotes the identifiers it was passed."""
+        pin = reference("django", create_location("requirements.txt", 9), "3.2.0")
+        reported = vulnerability("GHSA-2gwj-7jmv-h26r", "SQL Injection in Django", "critical")
+        passed = frozenset({"CVE-2022-28346", "CVE-2021-31542"})
+        _new_logger().globally_ignored_vulnerability(pin, reported, passed)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_GLOBALLY_IGNORED_VULNERABILITY,
+            f"Ignoring the GHSA-2gwj-7jmv-h26r vulnerability warning for {dependency('django')} "
+            f"in {at('requirements.txt:9')} (--ignore-vulnerability CVE-2021-31542,CVE-2022-28346)",
+        )
 
     def test_redundant_directive(self, mock_log: Mock):
         """Test that a directive holding nothing back is reported with the directive and the reason, as given."""

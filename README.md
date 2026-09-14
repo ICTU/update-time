@@ -425,7 +425,7 @@ Update-time checks the version the run leaves the reference on. So it warns abou
 
 A single reference can carry a risk level of its own, silence one advisory, or leave the check out altogether (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
 
-To silence one advisory across the whole run, rather than on the one reference that carries a marker, pass `--ignore-vulnerability`. The option takes a comma-separated list: `--ignore-vulnerability GHSA-2gwj-7jmv-h26r,CVE-2021-31542`. It names an advisory the way a marker does, so any identifier the vulnerability is known by will do. Update-time logs what the option silenced at `DEBUG`. Where a reference's own marker silences the same advisory, the marker is the one reported.
+To silence one advisory across the whole run, rather than on the one reference that carries a marker, pass `--ignore-vulnerability`. The option takes a comma-separated list: `--ignore-vulnerability GHSA-2gwj-7jmv-h26r,CVE-2021-31542`. It names an advisory the way a marker does, so any identifier the vulnerability is known by will do. Update-time logs what the option silenced at `DEBUG`. That line names the advisory OSV answered under, and quotes back the identifiers you passed for it. Where a reference's own marker silences the same advisory, the marker is the one reported.
 
 Update-time warns about every risk level by default. To hear only about the more severe ones, raise the threshold with `--vulnerability-level`, for example `--vulnerability-level high`. Update-time warns about a vulnerability whose risk level it cannot read, whatever the threshold is. Pass `--vulnerability-level none` to switch the check off.
 
@@ -499,7 +499,7 @@ ignore[yanked, stale<90]
        └─┬──┘  └─┬─┘└┬┘
          │       │   └─ threshold: what the item sets for this reference, here 90 days
          │       └─ scope: what the item steers, here the staleness warning
-         └─ item: a scope named alone holds it back outright, here to not warn about yanked versions
+         └─ item: a scope named alone applies outright, here silencing the yank warning
 ```
 
 A bracket holds one or more items, separated by commas. The `ignore` bracket above holds the two items `yanked` and `stale<90`, and the `allow` bracket holds the single item `update<5`. An item names the scope it steers. The two items above name `yanked` and `stale`. An item may also set a value for a scope, as `stale<90` sets 90 days for the staleness warning.
@@ -576,7 +576,7 @@ The override reaches the dependencies whose cooldown Update-time enforces itself
 django==3.2.0  # update-time: ignore[vulnerable=GHSA-2gwj-7jmv-h26r] (assessed, we don't use the affected query API)
 ```
 
-Any identifier the vulnerability is known by will do. OSV holds an advisory per database, each under an id of its own. So a marker naming the `CVE-…` silences a warning reported under the `GHSA-…`.
+Any identifier the vulnerability is known by will do. OSV holds an advisory per database, each under an id of its own. So a marker naming the `CVE-…` silences a warning reported under the `GHSA-…`. The `DEBUG` line reporting the silenced warning names that `GHSA-…`. Your own marker is quoted beside it, so you can tell which of the two you wrote.
 
 To silence a second advisory, add a second item: `# update-time: ignore[vulnerable=GHSA-2gwj-7jmv-h26r, vulnerable=CVE-2021-31542]`. The comma separates the bracket's items, so each identifier needs a `vulnerable=` of its own.
 

@@ -314,7 +314,7 @@ class Marker:
         """Return this marker combined with another one.
 
         The scopes held back and the opt-ins combine as unions, so `ignore[update]` and `ignore[stale]` together hold
-        back as much as a bare `ignore`, and so do the advisories named, so two `vulnerable=ID` items hold back the
+        back as much as a bare `ignore`, and so do the advisories named, so two `vulnerable=ID` items silence the
         warnings about both advisories. A value that cannot combine — a version bound, an invalid item, and the
         thresholds `Threshold.merge` folds — is taken from the other marker only where this one leaves it unset, so
         this marker's wins; the `raw` texts concatenate in order, this marker's first. A default `Marker()` leaves

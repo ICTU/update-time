@@ -294,4 +294,6 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", self.written(mock_conf))
         mock_post.assert_called()
         self.assert_no_warnings_logged()
-        self.assert_ignored_vulnerability_logged("clipboard", Location(mock_conf, 3), "ignore[vulnerable]")
+        self.assert_ignored_vulnerability_logged(
+            "clipboard", Location(mock_conf, 3), _VULNERABILITY.advisory, "ignore[vulnerable]"
+        )
