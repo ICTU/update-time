@@ -9,7 +9,7 @@ from rich.console import Console
 
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.staleness import stale_release
-from update_time.io.console import CHANGES, LOG_THEME, configure_logging, delimit_dependency, delimit_location
+from update_time.io.console import CHANGES, LOG_THEME, NOTE, configure_logging, delimit_dependency, delimit_location
 from update_time.markers.bound import spell
 from update_time.markers.marker import Scope
 from update_time.primitives.environment import EnvVar
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     from requests import Response
 
-    from update_time.domain.dependency import DependencyVersion, FloatingPin, VersionString
+    from update_time.domain.dependency import Changes, DependencyVersion, FloatingPin, VersionString
     from update_time.domain.reference import DriftedPin, Reference, ResolvedReference
     from update_time.domain.vulnerability import Vulnerability
     from update_time.markers.directive import Reason
@@ -96,9 +96,13 @@ class Logger:
         """Emit a log record at the message's own level."""
         self.log.log(message.level, message, self._rendered(fields))
 
-    def _log_changes(self, message: LogMessage, changes: str, **fields: object) -> None:
-        """Emit a log record at the message's own level, carrying the changes beside its fields."""
+    def _log_changes(self, message: LogMessage, changes: Changes, **fields: object) -> None:
+        """Emit a log record at the message's own level, carrying a changelog's changes beside its fields."""
         self.log.log(message.level, message, self._rendered(fields), extra={CHANGES: changes})
+
+    def _log_note(self, message: LogMessage, note: str, **fields: object) -> None:
+        """Emit a log record at the message's own level, carrying Update-time's own note beside its fields."""
+        self.log.log(message.level, message, self._rendered(fields), extra={NOTE: note})
 
     @classmethod
     def _rendered(cls, fields: dict[str, object]) -> dict[str, object]:
@@ -169,13 +173,15 @@ class Logger:
     def new_version(self, reference: Reference, version: DependencyVersion) -> None:
         """Log the availability of a new version for a dependency in a file, with its UTC publication date if known."""
         dependency = reference.dependency
-        if (dependency, version) in self._logged_changes:
-            changes = self._SUPPRESSING_CHANGELOG
-        else:
-            changes = version.changes or self._NO_CHANGELOG
+        shown_before = (dependency, version) in self._logged_changes
         self._logged_changes.add((dependency, version))
         fields = self._reference_fields(reference, version=str(version))
-        self._log_changes(self._MESSAGE_NEW_VERSION, changes, **fields)
+        if shown_before:
+            self._log_note(self._MESSAGE_NEW_VERSION, self._SUPPRESSING_CHANGELOG, **fields)
+        elif version.changes:
+            self._log_changes(self._MESSAGE_NEW_VERSION, version.changes, **fields)
+        else:
+            self._log_note(self._MESSAGE_NEW_VERSION, self._NO_CHANGELOG, **fields)
 
     _MESSAGE_PINNED = LogMessage(INFO, "Pinned %(dependency)s in %(location)s to %(version)s@%(sha)s")
 

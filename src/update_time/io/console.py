@@ -9,6 +9,7 @@ from rich.console import Console, Group
 from rich.highlighter import ReprHighlighter
 from rich.logging import RichHandler
 from rich.markdown import Markdown, MarkdownElement
+from rich.panel import Panel
 from rich.text import Text
 from rich.theme import Theme
 
@@ -100,8 +101,13 @@ class LogHighlighter(ReprHighlighter):
 LOG_THEME = Theme({"repr.digest": "dim", "repr.dependency": "bold white"})
 
 
-# The name of the record attribute that carries a new version's changes.
+# The name of the record attribute that carries a changelog's changes, which the log shows in a box.
 CHANGES = "changes"
+
+# The name of the record attribute that carries Update-time's own note about the changes, which it shows as a line.
+NOTE = "note"
+
+_CHANGES_BORDER = "dim"
 
 
 class _RawHtml(MarkdownElement):
@@ -133,15 +139,22 @@ class _ChangelogMarkdown(Markdown):
 
 
 class _ChangelogHandler(RichHandler):
-    """Rich log handler that renders the changes a record carries as Markdown."""
+    """Rich log handler that boxes a changelog's changes below the message, and renders a note about one as a line."""
 
     def render_message(self, record: logging.LogRecord, message: str) -> ConsoleRenderable:
-        """Return the message Rich renders, with the changes the record carries below it."""
+        """Return the message Rich renders, with the changes or the note the record carries below it."""
         rendered = super().render_message(record, message)
-        changes = getattr(record, CHANGES, "")
-        return Group(rendered, self._rendered_changes(changes)) if changes else rendered
+        if changes := getattr(record, CHANGES, ""):
+            return Group(rendered, self._rendered_changes(changes))
+        if note := getattr(record, NOTE, ""):
+            return Group(rendered, Text(note))
+        return rendered
 
     def _rendered_changes(self, changes: str) -> ConsoleRenderable:
+        """Return the changes in a box, so the blank lines a changelog holds do not read as breaks in the log."""
+        return Panel(self._changes_markup(changes), border_style=_CHANGES_BORDER)
+
+    def _changes_markup(self, changes: str) -> ConsoleRenderable:
         """Return the changes as Markdown when the changelog writes them in it, and as text otherwise.
 
         A terminal makes a link clickable, so Rich hides its URL there and prints it everywhere else.

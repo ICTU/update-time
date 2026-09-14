@@ -12,3 +12,5 @@
 - 2026-09-13 `tests.update_time.io.test_log.RecordRenderingTests.test_changes_that_are_not_markdown_render_as_written` — every record without changes gets a blank line below it
 - 2026-09-13 `tests.update_time.io.test_log.RecordRenderingTests.test_raw_html_in_a_markdown_changelog_is_shown_as_written` — every record without changes gets a blank line below it
 - 2026-09-13 `tests.update_time.io.test_log.RecordRenderingTests.test_the_markdown_parser_logs_nothing_at_debug_level` — every record without changes gets a blank line below it
+- 2026-09-14 `tests.update_time.io.test_console.RecordRenderingTests.test_a_record_without_changes_gets_no_empty_block` — every record without changes gets a blank line below it
+- 2026-09-14 `tests.update_time.io.test_console.RecordRenderingTests.test_a_note_about_the_changelog_is_not_boxed` — Update-time's own note about a changelog is boxed as if it were a changelog's changes

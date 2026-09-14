@@ -169,6 +169,21 @@ py-help:
     @echo "    EOF"
     @echo "\nARGS goes to the interpreter untouched, so a script path and its arguments work too."
 
+# Report where a name is called, and how many places call it. See `just help callers`.
+callers name:
+    {{ python_m }} tools.callers "$@"
+
+[private]
+callers-help:
+    @echo "\nReport every call this repository makes to NAME, one per line, and the number of them, so the size of"
+    @echo "a change to the name is counted rather than guessed:"
+    @echo "\n    just callers assert_new_version_logged"
+    @echo "\nThe calls are read off the syntax rather than matched as text, so a call whose arguments sit on their"
+    @echo "own lines counts once, at the line it starts on, and the line defining the name counts not at all."
+    @echo "\nA name nothing defines fails the run, so a report of no call sites says the name exists and nothing"
+    @echo "calls it, rather than leaving a misspelling to read the same way. A file whose Python does not parse"
+    @echo "fails the run by name, so a count is never quietly short."
+
 # === Run checks ===
 
 # Run a Python check.

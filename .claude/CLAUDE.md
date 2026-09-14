@@ -102,7 +102,7 @@ A few rules that keep the cycle honest:
    - Never read a count off output you piped through `head`.
    - Run `just mutate` and `just test-mutations` unpiped. Which tests failed is the evidence you are after, and only the bare form runs without an approval prompt.
 8. Settle a "could we do X?" question by trying X, not by reasoning about it. Settle a "there is no X" the same way: a search you stopped is not a proof.
-   - Report the errors the tools name, and what the alternative costs. Bring me numbers, whether the question is one you mean to put to me or one about your own first draft. Count the call sites before you put the size of a change to me; a guess at what it touches is not a number.
+   - Report the errors the tools name, and what the alternative costs. Bring me numbers, whether the question is one you mean to put to me or one about your own first draft. Count the call sites with `just callers` before you put the size of a change to me; a guess at what it touches is not a number.
    - Try a library the project already depends on before you hand-roll one. Before you design or price a change, find where the code already solves the same shape of problem and follow it.
    - Try the simplest option that could work before you measure an elaborate one. Where both work, put the simpler one to me first.
    - When something blocks the change you meant to make, price removing it before you design around it. An idiom, a helper, or a signature in the way is a candidate to change, not a constraint to obey.

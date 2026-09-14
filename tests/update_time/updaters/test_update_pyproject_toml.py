@@ -359,7 +359,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         update_pyproject_tomls()
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_changelog==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
-        self.assert_new_version_logged(
+        self.assert_new_version_logged_with_changes(
             "package_with_changelog",
             "1.1, published: 2026-05-30 12:07",
             Location(mock_pyproject_toml, 2),
@@ -399,7 +399,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         update_pyproject_tomls()
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_github_releases==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
-        self.assert_new_version_logged(
+        self.assert_new_version_logged_with_changes(
             "package_with_github_releases",
             "1.1, published: 2026-05-30 12:07",
             Location(mock_pyproject_toml, 2),

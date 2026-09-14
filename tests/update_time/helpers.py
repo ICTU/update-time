@@ -21,7 +21,7 @@ from update_time.domain.dependency import ArchivedSubject, DependencyVersion, Fl
 from update_time.domain.reference import Reference
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import Vulnerability
-from update_time.io.console import CHANGES
+from update_time.io.console import CHANGES, NOTE
 from update_time.io.log import Logger, LogMessage, reset_changelog_suppression
 from update_time.manifests.pyproject_toml import Declaration
 from update_time.markers.bound import parse_bound
@@ -212,29 +212,45 @@ class LoggingTestCase(CacheClearingTestCase):
         self.assert_logged(message, **fields)
 
     @staticmethod
-    def _new_version_fields(dependency: str, version: str, location: Location, changes: str) -> dict[str, object]:
-        """Return the fields the logger logs an available new version with."""
-        return {"dependency": dependency, "location": location, "version": version, CHANGES: changes}
+    def _new_version_fields(
+        dependency: str, version: str, location: Location, below: dict[str, object]
+    ) -> dict[str, object]:
+        """Return the fields the logger logs an available new version with, and what it carries below the message."""
+        return {"dependency": dependency, "location": location, "version": version, **below}
 
     def assert_new_version_logged(
-        self, dependency: str, version: str, location: Location, changes: str = Logger._NO_CHANGELOG
+        self, dependency: str, version: str, location: Location, note: str = Logger._NO_CHANGELOG
     ) -> None:
         """Assert that a new version was the only record logged for the dependency in the file."""
-        fields = self._new_version_fields(dependency, version, location, changes)
+        fields = self._new_version_fields(dependency, version, location, {NOTE: note})
+        self.assert_logged(Logger._MESSAGE_NEW_VERSION, **fields)
+
+    def assert_new_version_logged_with_changes(
+        self, dependency: str, version: str, location: Location, changes: str
+    ) -> None:
+        """Assert that a new version, with the changes its changelog records, was the only record logged."""
+        fields = self._new_version_fields(dependency, version, location, {CHANGES: changes})
         self.assert_logged(Logger._MESSAGE_NEW_VERSION, **fields)
 
     def assert_last_new_version_logged(
-        self, dependency: str, version: str, location: Location, changes: str = Logger._NO_CHANGELOG
+        self, dependency: str, version: str, location: Location, note: str = Logger._NO_CHANGELOG
     ) -> None:
         """Assert that a new version was the most recent record, for a run that logs several."""
-        fields = self._new_version_fields(dependency, version, location, changes)
+        fields = self._new_version_fields(dependency, version, location, {NOTE: note})
         self.assert_last_logged(Logger._MESSAGE_NEW_VERSION, **fields)
 
     def assert_new_version_logged_among_others(
-        self, dependency: str, version: str, location: Location, changes: str = Logger._NO_CHANGELOG
+        self, dependency: str, version: str, location: Location, note: str = Logger._NO_CHANGELOG
     ) -> None:
         """Assert that a new version was logged, among the other records of a run that logs several."""
-        fields = self._new_version_fields(dependency, version, location, changes)
+        fields = self._new_version_fields(dependency, version, location, {NOTE: note})
+        self.assert_logged_among_others(Logger._MESSAGE_NEW_VERSION, **fields)
+
+    def assert_new_version_logged_among_others_with_changes(
+        self, dependency: str, version: str, location: Location, changes: str
+    ) -> None:
+        """Assert that a new version, with the changes its changelog records, was logged among the other records."""
+        fields = self._new_version_fields(dependency, version, location, {CHANGES: changes})
         self.assert_logged_among_others(Logger._MESSAGE_NEW_VERSION, **fields)
 
     def records_of(self, message: LogMessage, **fields: object) -> list[_Call]:
