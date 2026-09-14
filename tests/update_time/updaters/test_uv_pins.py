@@ -122,7 +122,7 @@ class StaleDependencyTest(DependencyTomlFileTestCase):
         self.assert_no_warnings_logged()
 
     def test_stale_pin_a_marker_silences_not_warned(self, get: Mock):
-        """Test that an `ignore[stale]` marker silences the staleness warning, and is reported as holding it back."""
+        """Test that an `ignore[stale]` marker silences the staleness warning, and is reported as silencing it."""
         get.return_value = dated_pypi_index("1.0")
         file = self.dependency_toml_file("package==1.0", marker="ignore[stale]")
         warn_about_pins([file], _LOG)
@@ -252,11 +252,7 @@ class YankedPinTest(DependencyTomlFileTestCase):
         self.assert_yanked_dependency_logged("package", "1.0", Location(file.path, 2))
 
     def test_a_marker_silences_the_yank_warning(self, get: Mock):
-        """Test that an `ignore[yanked]` silences the warning, and is reported as holding it back.
-
-        A bare `ignore` holds every check PyPI answers back, so it reaches this one not (see
-        `test_a_bare_ignore_asks_pypi_nothing`).
-        """
+        """Test that an `ignore[yanked]` silences the warning, and is reported as silencing it."""
         file = self.check_a_yanked_pin(get, "ignore[yanked]")
         self.assert_no_warnings_logged()
         self.assert_ignored_yank_logged("package", Location(file.path, 2), "ignore[yanked]")
@@ -326,19 +322,22 @@ class VulnerablePinTest(DependencyTomlFileTestCase):
         )
 
     def test_a_marker_silences_the_vulnerability_warning(self):
-        """Test that an `ignore[vulnerable]` marker silences the warning, and is reported as holding it back."""
+        """Test that an `ignore[vulnerable]` marker silences the warning, and is reported as silencing it."""
         file = self.dependency_toml_file("django==3.2.0", marker="ignore[vulnerable]")
         self.check_pins(file, DJANGO_ADVISORY)
         self.assert_no_warnings_logged()
-        self.assert_ignored_vulnerability_logged("django", Location(file.path, 2), "ignore[vulnerable]")
+        self.assert_ignored_vulnerability_logged(
+            "django", Location(file.path, 2), DJANGO_VULNERABILITY.advisory, "ignore[vulnerable]"
+        )
 
     def test_a_marker_naming_an_advisory_silences_that_one_alone(self):
         """Test that an `ignore[vulnerable=ID]` marker leaves the pin's other advisories warned about."""
-        directive = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
+        advisory = DJANGO_VULNERABILITY.advisory
+        directive = f"ignore[vulnerable={advisory}]"
         file = self.dependency_toml_file("django==3.2.0", marker=directive)
         self.check_pins(file, DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY)
         self.assert_vulnerable_dependency_logged("django", "3.2.0", OTHER_DJANGO_VULNERABILITY, Location(file.path, 2))
-        self.assert_ignored_vulnerability_logged("django", Location(file.path, 2), directive)
+        self.assert_ignored_vulnerability_logged("django", Location(file.path, 2), advisory, directive)
 
     @kills(
         Mutation(
@@ -354,7 +353,7 @@ class VulnerablePinTest(DependencyTomlFileTestCase):
         file = self.file_holding(pyproject_per_line("package==1.0", "other==1.0", marker=directive))
         self.check_pins(file, ADVISORY)
         self.assert_vulnerable_dependency_logged("other", "1.0", VULNERABILITY, Location(file.path, 4))
-        self.assert_ignored_vulnerability_logged("package", Location(file.path, 3), directive)
+        self.assert_ignored_vulnerability_logged("package", Location(file.path, 3), VULNERABILITY.advisory, directive)
 
     def test_the_markers_risk_level_is_used(self):
         """Test that a pin's own risk level decides what it is warned about, whatever level the run is set to."""
@@ -384,12 +383,12 @@ class VulnerablePinTest(DependencyTomlFileTestCase):
         mock_post.assert_any_call(ANY, timeout=ANY, json=osv_queries(("django", "3.2.0")))
 
     def test_every_redundant_suppression_is_reported(self):
-        """Test that each of a marker's three vulnerability suppressions is reported when it holds nothing back."""
+        """Test that each of a marker's three vulnerability suppressions is reported when it silences nothing."""
         advisory = f"ignore[vulnerable={VULNERABILITY.advisory}]"
         file = self.dependency_toml_file(
             "package==1.0", marker=f"ignore[vulnerable] {advisory} ignore[vulnerable<high]"
         )
-        self.check_pins(file)  # OSV answers with no vulnerability, so all three forms hold nothing back.
+        self.check_pins(file)  # OSV answers with no vulnerability, so all three forms silence nothing.
         location = Location(file.path, 2)
         self.assert_redundant_vulnerable_scope_logged(
             "package", "1.0", location, "ignore[vulnerable]", among_others=True
@@ -425,7 +424,7 @@ class ArchivedDependencyTest(DependencyTomlFileTestCase):
         self.assert_archived_dependency_logged("package", Location(file.path, 2))
 
     def test_archived_dependency_a_marker_silences_not_warned(self, get: Mock):
-        """Test that an `ignore[archived]` marker silences the archival warning, and is reported as holding it back."""
+        """Test that an `ignore[archived]` marker silences the archival warning, and is reported as silencing it."""
         get.return_value = dated_pypi_index("1.0", upload_time=PYPI_RECENT_UPLOAD, archived=True)
         file = self.dependency_toml_file("package==1.0", marker="ignore[archived]")
         warn_about_pins([file], _LOG)
@@ -538,7 +537,7 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
             "        if directive.without_a_version is not None and (written := as_written.directive_for",
             "        if directive.scope is Scope.YANKED and (written := as_written.directive_for",
             "only the yank scope is reported as needing a version, so a `vulnerable` scope on a dependency that "
-            "pins none reads as holding its warning back",
+            "pins none reads as silencing its warning",
         ),
     )
     def test_a_scope_needing_a_version_is_redundant_without_an_exact_pin(self, get: Mock):

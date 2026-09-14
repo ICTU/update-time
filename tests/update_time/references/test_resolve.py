@@ -172,7 +172,7 @@ class LatestVersionTest(unittest.TestCase):
         self.log.warn_if_redundant_bound.assert_called_once_with(self.reference(), marker)
 
     def test_the_resolved_version_reaches_every_check(self):
-        """Test that the version the run resolves is handed to each check, which warns or reports its hold-back."""
+        """Test that the version the run resolves is handed to each check, which warns or reports what silenced it."""
         for name, check in _CHECKS.items():
             with self.subTest(check=name):
                 self.log.reset_mock()  # Judge each case on the calls of its own run.

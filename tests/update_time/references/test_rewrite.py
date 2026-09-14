@@ -275,13 +275,13 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_ignore_update_and_stale_still_checks_for_a_yank(self):
         """Test that a scope the marker leaves live keeps the reference queried, so its check still runs.
 
-        `ignore[update]` and `ignore[stale]` leave the scopes beside them live; the yank check is not held back, so
+        `ignore[update]` and `ignore[stale]` leave the scopes beside them live; the yank check is not silenced, so
         the source is still queried for it rather than the reference being skipped outright.
         """
         lines = ["image: python:3.14  # update-time: ignore[update] ignore[stale]"]
         self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, new_version_getter("3.15")), lines)  # version left as-is
         marker = Marker(ignored_scopes=Scope.UPDATE | Scope.STALE)
-        # The source is queried for the yank, and both reports are handed the marker that holds the staleness back.
+        # The source is queried for the yank, and both reports are handed the marker that silences the staleness.
         self.logger.report_yank.assert_called_once_with(ANY, marker)
         self.logger.report_staleness.assert_called_once_with(ANY, marker, ANY)
 

@@ -7,11 +7,21 @@ from unittest.mock import patch
 
 import update_time
 from update_time.domain.bound import Verb
+from update_time.io.log import Logger
+from update_time.markers.marker import Marker, Scope
 from update_time.sources import pypi
 from update_time.sources.pypi import release_metadata
 
 from tests.helpers import patch_get
-from tests.update_time.helpers import CacheClearingTestCase, _all_cached_functions, _cached_functions, bound
+from tests.update_time.helpers import (
+    CacheClearingTestCase,
+    LoggingTestCase,
+    _all_cached_functions,
+    _cached_functions,
+    bound,
+    reference,
+)
+from tests.update_time.io.helpers import create_location
 
 
 class CacheClearingTest(unittest.TestCase):
@@ -69,3 +79,16 @@ class BoundTest(unittest.TestCase):
     def test_item_that_is_no_bound(self):
         """Test that the helper fails on an item that is not a bound, so a typo can't silently weaken a test."""
         self.assertRaises(ValueError, bound, Verb.ALLOW, "not-a-bound")
+
+
+class AssertNoRedundantSuppressionLoggedTest(unittest.TestCase):
+    """Unit tests for the assertion that no vulnerability suppression was reported as silencing nothing."""
+
+    def test_a_reported_suppression_fails_the_assertion(self):
+        """Test that the assertion fails on a suppression that was reported, so it cannot pass on records of none."""
+        case = LoggingTestCase()
+        case.setUp()
+        self.addCleanup(case.doCleanups)
+        pin = reference("django", create_location("requirements.txt", 1), "3.2.0")
+        Logger("test").redundant_vulnerable_scope(pin, Marker(ignored_scopes=Scope.VULNERABLE))
+        self.assertRaises(AssertionError, case.assert_no_redundant_suppression_logged)

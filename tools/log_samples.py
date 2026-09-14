@@ -250,5 +250,5 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **invalid,
         **inverted,
         "@@RECOGNISED_MARKER@@": recognised,
-        "@@HELD_BACK_MARKER@@": capture.take(),
+        "@@SILENCED_WARNING@@": capture.take(),
     }

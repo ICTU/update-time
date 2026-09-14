@@ -269,7 +269,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_ignored_logged("clipboard", location, "ignore[update]")
 
     def test_ignore_stale_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
-        """Test that an `ignore[stale]` marker on the URL's line holds the warning back, but not the update."""
+        """Test that an `ignore[stale]` marker on the URL's line silences the warning, but not the update."""
         old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
         self.offer_versions(mock_get, "2.0.12", "2.0.11", published=old)
         mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: ignore[stale]", _INTEGRITY)), mock_glob)
@@ -278,7 +278,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_ignored_staleness_logged("clipboard", Location(mock_conf, 3), "ignore[stale]")
 
     def test_ignore_yanked_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
-        """Test that an `ignore[yanked]` marker on the URL's line holds back the deprecation warning."""
+        """Test that an `ignore[yanked]` marker on the URL's line silences the deprecation warning."""
         self.offer_versions(mock_get, "2.0.11", deprecated={"2.0.11": _DEPRECATION_REASON}, served_hash=HASH1)
         mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: ignore[yanked]", _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
@@ -286,7 +286,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_ignored_yank_logged("clipboard", Location(mock_conf, 3), "ignore[yanked]")
 
     def test_ignore_vulnerable_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
-        """Test that an `ignore[vulnerable]` marker holds back the vulnerability warning and nothing else."""
+        """Test that an `ignore[vulnerable]` marker silences the vulnerability warning and nothing else."""
         self.offer_versions(mock_get, "2.0.12", "2.0.11")
         marked_url = f"{_URL}  # update-time: ignore[vulnerable]"
         with osv(_ADVISORY) as mock_post:
@@ -294,4 +294,6 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", self.written(mock_conf))
         mock_post.assert_called()
         self.assert_no_warnings_logged()
-        self.assert_ignored_vulnerability_logged("clipboard", Location(mock_conf, 3), "ignore[vulnerable]")
+        self.assert_ignored_vulnerability_logged(
+            "clipboard", Location(mock_conf, 3), _VULNERABILITY.advisory, "ignore[vulnerable]"
+        )

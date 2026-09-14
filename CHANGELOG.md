@@ -6,7 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Changed
+
+- Name the advisory in the log line reporting a vulnerability warning silenced by a marker. Closes [#350](https://github.com/ICTU/update-time/issues/350).
+- Name the advisory in the log line reporting a vulnerability warning silenced by `--ignore-vulnerability`, and quote the identifier you passed rather than the one the advisory database answered under.
 
 ## 0.0.36 - 2026-09-14
 

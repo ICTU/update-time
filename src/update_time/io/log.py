@@ -127,9 +127,11 @@ class Logger:
         """Return the fields every message about a reference carries, plus the ones the message reporting it adds."""
         return {"dependency": reference.dependency, "location": reference.location, **extra}
 
-    def _log_ignored(self, message: LogMessage, dependency: str, directive: str, location: Location) -> None:
+    def _log_ignored(
+        self, message: LogMessage, dependency: str, directive: str, location: Location, **extra: object
+    ) -> None:
         """Log that a marker held a reference's update back or silenced one of its warnings."""
-        self._log(message, dependency=dependency, location=location, directive=directive)
+        self._log(message, dependency=dependency, location=location, directive=directive, **extra)
 
     def _report(
         self, check: _Check, marker: Marker, resolved: ResolvedReference, fields: dict[str, object] | None
@@ -406,27 +408,33 @@ class Logger:
         """Warn that the version the reference is pinned to has a known vulnerability, naming the advisory."""
         self._log(self._MESSAGE_VULNERABLE_DEPENDENCY, **self._vulnerability_fields(reference, vulnerability))
 
-    _MESSAGE_IGNORED_VULNERABILITY = LogMessage(DEBUG, _ignoring("the vulnerability warning"))
+    _MESSAGE_IGNORED_VULNERABILITY = LogMessage(DEBUG, _ignoring("the %(advisory)s vulnerability warning"))
 
-    def ignored_vulnerability(self, reference: Reference, marker: Marker) -> None:
-        """Log that the marker silenced a vulnerability warning that would otherwise have been logged.
-
-        Update-time calls this once per silenced vulnerability, not once per reference.
-        """
+    def ignored_vulnerability(self, reference: Reference, vulnerability: Vulnerability, marker: Marker) -> None:
+        """Log that the marker silenced a vulnerability warning, naming the advisory."""
         directive = marker.written_directive(Scope.VULNERABLE)
-        self._log_ignored(self._MESSAGE_IGNORED_VULNERABILITY, reference.dependency, directive, reference.location)
+        self._log_ignored(
+            self._MESSAGE_IGNORED_VULNERABILITY,
+            reference.dependency,
+            directive,
+            reference.location,
+            advisory=vulnerability.advisory,
+        )
 
     _MESSAGE_GLOBALLY_IGNORED_VULNERABILITY = LogMessage(
-        DEBUG, _ignoring("the vulnerability warning", "--ignore-vulnerability %(advisory)s")
+        DEBUG, _ignoring("the %(advisory)s vulnerability warning", "--ignore-vulnerability %(identifiers)s")
     )
 
-    def globally_ignored_vulnerability(self, reference: Reference, advisory: str) -> None:
-        """Log that the run-wide option silenced a vulnerability warning, naming the advisory.
+    def globally_ignored_vulnerability(
+        self, reference: Reference, vulnerability: Vulnerability, passed: frozenset[str]
+    ) -> None:
+        """Log that the run-wide option silenced a vulnerability warning, naming the advisory and what was passed.
 
-        The advisory named is the one the warning would have reported, which the reader may have passed under
-        another of its identifiers.
+        The option takes its identifiers comma-separated, so several of them read back as a value it accepts.
         """
-        self._log(self._MESSAGE_GLOBALLY_IGNORED_VULNERABILITY, **self._reference_fields(reference, advisory=advisory))
+        identifiers = ",".join(sorted(passed))
+        fields = self._reference_fields(reference, advisory=vulnerability.advisory, identifiers=identifiers)
+        self._log(self._MESSAGE_GLOBALLY_IGNORED_VULNERABILITY, **fields)
 
     def _redundant_suppression(
         self, message: LogMessage, reference: Reference, directive: str, **extra: object
