@@ -107,7 +107,7 @@ class Marker:
     `ignored_scopes` are the scopes an `ignore` directive holds back — the reference's update and its warnings,
     which `_IGNORABLE_SCOPES` names. A bare `ignore` holds every one of them back, while a directive naming a
     scope, such as `ignore[stale]`, holds back that one alone.
-    `ignored_advisories` are the advisories an `ignore[vulnerable=ID]` directive holds the warning back for, each as
+    `ignored_advisories` are the advisories an `ignore[vulnerable=ID]` directive silences the warning for, each as
     the identifier the user spelled it by; empty when the reference names none.
     `allowed_scopes` are the scopes an `allow` directive opts the reference into, each off by default:
     `allow[hash-drift]` adopts a drifted hash pin, and `allow[floating-pin]` keeps a tag naming no version as it is

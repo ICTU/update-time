@@ -265,7 +265,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_stale_dependency_logged("actions/checkout", "1.0", Location(workflow_yml, 1))
 
     @patch_github(releases=[github_release_json("v1.0", published_at=_STALE_ISO)], tags=[])
-    def test_an_ignore_stale_marker_on_a_branch_reference_holds_the_warning_back(
+    def test_an_ignore_stale_marker_on_a_branch_reference_silences_the_warning(
         self, mock_glob: Mock, mock_get_latest_version: Mock
     ):
         """Test that `ignore[stale]` on a branch reference silences the warning its old repository would get."""
@@ -327,7 +327,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
     def test_a_bare_ignore_on_a_branch_reference_asks_github_nothing(
         self, mock_project: Mock, mock_glob: Mock, mock_get_latest_version: Mock
     ):
-        """Test that a bare `ignore` on a branch reference holds the staleness check back, GitHub unasked."""
+        """Test that a bare `ignore` on a branch reference silences the staleness check, GitHub unasked."""
         workflow_yml = mock_path("uses: actions/checkout@main  # update-time: ignore\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()

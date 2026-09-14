@@ -305,7 +305,7 @@ class LoggerTests(TestCase):
         )
 
     def test_report_staleness(self, mock_log: Mock):
-        """Test that staleness is reported as a warning, or as the hold-back of a marker that silences it.
+        """Test that staleness is reported as a warning, or as the marker that silences it.
 
         The release is 100 days old, which is stale against the 90 passed in and not against the global default, so
         either line is logged only when the given threshold is the one applied.
@@ -551,7 +551,7 @@ class LoggerTests(TestCase):
                 mock_log.assert_not_called()
 
     def test_report_yank(self, mock_log: Mock):
-        """Test that a yank is reported as a warning, or as the hold-back of a marker that silences it."""
+        """Test that a yank is reported as a warning, or as the marker that silences it."""
         version = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="broke Python 3.10 support"))
         resolved = resolved_reference("humanize", create_location("requirements.txt", 9), version)
         _new_logger().report_yank(resolved, Marker())
@@ -739,7 +739,7 @@ class LoggerMessageTest(TestCase):
     def holders_by_template(cls) -> dict[str, set[str]]:
         """Return, for each message template on Logger, the names of the constants that hold it.
 
-        A constant pairing messages — a check's warning and its hold-back, a drift's warning and its adoption —
+        A constant pairing messages — a check's warning and its silencing, a drift's warning and its adoption —
         has them emitted by the dispatch the pair shares, so neither is named by a log method of its own. The
         templates are matched by identity, since the constant holds the message rather than its name.
         """

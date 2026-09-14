@@ -292,7 +292,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         )
 
     def test_vulnerable_scope_is_reported_as_redundant(self):
-        """Test that each `vulnerable` marker is reported when an image has no vulnerability to hold back."""
+        """Test that each `vulnerable` marker is reported when an image has no vulnerability to silence."""
         directives = (
             "ignore[vulnerable]",
             "ignore[vulnerable=GHSA-2gwj-7jmv-h26r]",

@@ -417,7 +417,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_stale_dependency_logged("humanize", "5.0.0rc1", Location(requirements_txt, 1))
 
     def test_ignore_stale_marker_silences_a_loose_requirement(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that an `ignore[stale]` marker on a loose requirement's line holds its staleness warning back."""
+        """Test that an `ignore[stale]` marker on a loose requirement's line silences its staleness warning."""
         contents = "humanize>=4  # update-time: ignore[stale]\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         mock_get.side_effect = self.stale_pypi("4.15.0")  # The package's newest release is old.
@@ -435,7 +435,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         )
     )
     def test_ignore_archived_marker_silences_a_loose_requirement(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that an `ignore[archived]` marker on a loose requirement's line holds its archival warning back."""
+        """Test that an `ignore[archived]` marker on a loose requirement's line silences its archival warning."""
         contents = "humanize>=4  # update-time: ignore[archived]\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         mock_get.side_effect = [pypi_index("4.15.0", archived=True)]
@@ -494,12 +494,12 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1), among_others=True)
 
     def test_a_readable_item_beside_an_unreadable_one_still_acts(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that an `ignore[stale]` sharing a bracket with an unreadable item still holds the warning back."""
+        """Test that an `ignore[stale]` sharing a bracket with an unreadable item still silences the warning."""
         contents = "humanize>=4  # update-time: ignore[stale, stlae]\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         mock_get.side_effect = self.stale_pypi("4.15.0")
         update_requirements_txts()
-        # The unreadable item is the run's only warning, so the staleness warning was held back:
+        # The unreadable item is the run's only warning, so the staleness warning was silenced:
         self.assert_invalid_bracket_item_logged("humanize", Location(requirements_txt, 1), "stlae")
         self.assert_ignored_staleness_logged("humanize", Location(requirements_txt, 1))
 
@@ -534,7 +534,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_archived_dependency_logged("humanize", Location(requirements_txt, 1))
 
     def test_ignore_yanked_marker_silences_the_warning(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that an `ignore[yanked]` marker on the pin's line holds back the yank warning."""
+        """Test that an `ignore[yanked]` marker on the pin's line silences the yank warning."""
         contents = "humanize==4.15.0  # update-time: ignore[yanked]\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         yanked = [yanked_file("humanize-4.15.0.tar.gz", reason="broke Python 3.10")]
@@ -552,7 +552,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         )
     )
     def test_ignore_archived_marker_silences_the_warning(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that an `ignore[archived]` marker on the pin's line holds back the archival warning."""
+        """Test that an `ignore[archived]` marker on the pin's line silences the archival warning."""
         contents = "humanize==4.15.0  # update-time: ignore[archived]\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         mock_get.side_effect = [pypi_index("4.15.0", archived=True)]
@@ -724,7 +724,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 self.assert_no_redundant_suppression_logged()
 
     def test_ignore_vulnerable_marker_silences_the_warning(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that an `ignore[vulnerable]` marker holds back the vulnerability warning and nothing else."""
+        """Test that an `ignore[vulnerable]` marker silences the vulnerability warning and nothing else."""
         contents = "django==3.2.0  # update-time: ignore[stale] ignore[vulnerable]\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         mock_get.side_effect = self.pypi("3.2.0", "3.3.0", bump=True)
@@ -738,7 +738,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_ignored_vulnerability_logged("django", Location(requirements_txt, 1), "ignore[vulnerable]")
 
     def test_ignore_vulnerable_advisory_marker_silences_that_advisory(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that an `ignore[vulnerable=ID]` marker holds back the warning about the advisory it names."""
+        """Test that an `ignore[vulnerable=ID]` marker silences the warning about the advisory it names."""
         directive = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directive}\n")
         mock_get.side_effect = self.pypi("3.2.0", "3.3.0", bump=True)
@@ -798,7 +798,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         with osv(OTHER_DJANGO_ADVISORY):  # A moderate vulnerability the advisory item does not name.
             update_requirements_txts()
         self.assert_redundant_vulnerable_advisory_logged("django", "3.2.0", Location(requirements_txt, 1), advisory)
-        # The level silences the moderate vulnerability, so it is not reported as holding nothing back itself.
+        # The level silences the moderate vulnerability, so it is not reported as silencing nothing itself.
         self.assert_none_logged(Logger._MESSAGE_REDUNDANT_VULNERABLE_LEVEL, "a redundant risk level")
 
     def test_every_dead_vulnerable_form_names_itself(self, mock_rglob: Mock, mock_get: Mock):
@@ -807,7 +807,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         directives = f"ignore[vulnerable] {advisory} ignore[vulnerable<high]"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directives}\n")
         mock_get.side_effect = self.pypi("3.2.0")
-        with osv():  # No vulnerability, so all three forms hold nothing back.
+        with osv():  # No vulnerability, so all three forms silence nothing.
             update_requirements_txts()
         location = Location(requirements_txt, 1)
         self.assert_redundant_vulnerable_scope_logged(
@@ -827,7 +827,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_redundant_vulnerable_level_logged(
             "django", "3.2.0", "high", Location(requirements_txt, 1), "ignore[vulnerable<high]"
         )
-        # The advisory silences that vulnerability, so it is not reported as holding nothing back itself.
+        # The advisory silences that vulnerability, so it is not reported as silencing nothing itself.
         self.assert_none_logged(Logger._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY, "a redundant advisory")
 
     def test_ignore_vulnerable_advisory_marker_is_redundant_when_no_vulnerability_answers_to_it(
@@ -845,7 +845,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         )
 
     def test_globally_ignored_advisory_silences_the_warning(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that an advisory ignored run-wide is not warned about, and that the hold-back names the option."""
+        """Test that an advisory ignored run-wide is not warned about, and that the silencing names the option."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "django==3.2.0\n")
         mock_get.side_effect = self.pypi("3.2.0")
         with osv(DJANGO_ADVISORY), patch_environ({IGNORE_VULNERABILITIES.name: DJANGO_VULNERABILITY.advisory}):
@@ -856,7 +856,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         )
 
     def test_a_marker_is_reported_where_the_option_names_the_same_advisory(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that where the marker and the option both name the advisory, the marker's hold-back is reported."""
+        """Test that where the marker and the option both name the advisory, the marker's silencing is reported."""
         directive = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, f"django==3.2.0  # update-time: {directive}\n")
         mock_get.side_effect = self.pypi("3.2.0")

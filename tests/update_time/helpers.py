@@ -472,7 +472,7 @@ class LoggingTestCase(CacheClearingTestCase):
         )
 
     def assert_no_redundant_suppression_logged(self) -> None:
-        """Assert that no vulnerability suppression was reported as holding nothing back, whatever else was logged."""
+        """Assert that no vulnerability suppression was reported as silencing nothing, whatever else was logged."""
         suppressions: tuple[tuple[LogMessage, dict[str, object]], ...] = (
             (Logger._MESSAGE_REDUNDANT_VULNERABLE_SCOPE, {}),
             (Logger._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY, {}),
@@ -516,31 +516,31 @@ class LoggingTestCase(CacheClearingTestCase):
         assert_logged(Logger._MESSAGE_IGNORED, dependency=dependency, location=location, directive=directive)
 
     def assert_ignored_staleness_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
-        """Assert that a staleness warning held back by a marker was logged, among the other records."""
+        """Assert that a staleness warning silenced by a marker was logged, among the other records."""
         self.assert_logged_among_others(
             Logger._MESSAGE_IGNORED_STALENESS, dependency=dependency, location=location, directive=directive
         )
 
     def assert_no_ignored_vulnerability_logged(self) -> None:
-        """Assert that no vulnerability warning was reported as held back, whatever else was logged at that level."""
-        self.assert_none_logged(Logger._MESSAGE_IGNORED_VULNERABILITY, "vulnerability warning held back by a marker")
+        """Assert that no vulnerability warning was reported as silenced, whatever else was logged at that level."""
+        self.assert_none_logged(Logger._MESSAGE_IGNORED_VULNERABILITY, "vulnerability warning silenced by a marker")
 
     def assert_ignored_vulnerability_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
-        """Assert that a vulnerability warning held back by a marker was logged, among the other records."""
+        """Assert that a vulnerability warning silenced by a marker was logged, among the other records."""
         self.assert_logged_among_others(
             Logger._MESSAGE_IGNORED_VULNERABILITY, dependency=dependency, location=location, directive=directive
         )
 
     def assert_no_globally_ignored_vulnerability_logged(self) -> None:
-        """Assert that no vulnerability warning was reported as held back run-wide, whatever else was logged."""
+        """Assert that no vulnerability warning was reported as silenced run-wide, whatever else was logged."""
         self.assert_none_logged(
-            Logger._MESSAGE_GLOBALLY_IGNORED_VULNERABILITY, "vulnerability warning held back run-wide"
+            Logger._MESSAGE_GLOBALLY_IGNORED_VULNERABILITY, "vulnerability warning silenced run-wide"
         )
 
     def assert_globally_ignored_vulnerability_logged(
         self, dependency: str, location: Location, advisory: object = ANY
     ) -> None:
-        """Assert that a vulnerability warning held back run-wide was logged, among the other records at its level."""
+        """Assert that a vulnerability warning silenced run-wide was logged, among the other records at its level."""
         self.assert_logged_among_others(
             Logger._MESSAGE_GLOBALLY_IGNORED_VULNERABILITY,
             dependency=dependency,
@@ -549,13 +549,13 @@ class LoggingTestCase(CacheClearingTestCase):
         )
 
     def assert_ignored_yank_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
-        """Assert that a yank warning held back by a marker was logged, among the other records."""
+        """Assert that a yank warning silenced by a marker was logged, among the other records."""
         self.assert_logged_among_others(
             Logger._MESSAGE_IGNORED_YANK, dependency=dependency, location=location, directive=directive
         )
 
     def assert_ignored_archival_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
-        """Assert that an archival warning held back by a marker was logged, among the other records."""
+        """Assert that an archival warning silenced by a marker was logged, among the other records."""
         self.assert_logged_among_others(
             Logger._MESSAGE_IGNORED_ARCHIVAL, dependency=dependency, location=location, directive=directive
         )
