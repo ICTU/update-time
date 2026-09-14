@@ -104,7 +104,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         update_package_jsons()
         self.assert_npm_called(mock_run)
         self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged(
+        self.assert_new_version_logged_with_changes(
             "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json), "Changelog"
         )
         self.assert_no_warnings_logged()
@@ -120,7 +120,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
             Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
         )
         update_package_jsons()
-        self.assert_new_version_logged(
+        self.assert_new_version_logged_with_changes(
             "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json, 3), "Changelog"
         )
 
@@ -142,7 +142,9 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         )
         update_package_jsons()
         published = "1.1, published: 2026-05-30 10:26"
-        self.assert_new_version_logged_among_others("package", published, Location(mock_package_json, 3), ANY)
+        self.assert_new_version_logged_among_others_with_changes(
+            "package", published, Location(mock_package_json, 3), ANY
+        )
         self.assert_new_version_logged_among_others("package", published, Location(mock_package_json, 6), ANY)
 
     @patch("requests.get", _package_lookup_responses())
@@ -159,7 +161,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
             Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
         )
         update_package_jsons()
-        self.assert_new_version_logged(
+        self.assert_new_version_logged_with_changes(
             "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json), "Changelog"
         )
 
@@ -205,7 +207,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         mock_package_json.write_text.assert_not_called()
         self.assert_npm_called(mock_run)
         self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged(
+        self.assert_new_version_logged_with_changes(
             "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json), "Changelog"
         )
         self.assert_no_warnings_logged()
@@ -321,7 +323,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         update_package_jsons()
         self.assert_pnpm_called(mock_run)
         self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged(
+        self.assert_new_version_logged_with_changes(
             "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json), "Changelog"
         )
         self.assert_no_warnings_logged()

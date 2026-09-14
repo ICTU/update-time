@@ -17,6 +17,7 @@ from update_time.domain.reference import DriftedPin
 from update_time.io import log as log_module
 from update_time.io.console import (
     CHANGES,
+    NOTE,
 )
 from update_time.io.log import (
     Logger,
@@ -137,8 +138,12 @@ class LoggerTests(TestCase):
         self.assertEqual(str(template) % fields, rendered)
 
     def assert_changes(self, mock_log: Mock, changes: str) -> None:
-        """Assert the most recent record carries the changes beside its fields."""
+        """Assert the most recent record carries a changelog's changes beside its fields."""
         self.assertEqual(mock_log.call_args.kwargs, {"extra": {CHANGES: changes}})
+
+    def assert_note(self, mock_log: Mock, note: str) -> None:
+        """Assert the most recent record carries Update-time's own note about the changes beside its fields."""
+        self.assertEqual(mock_log.call_args.kwargs, {"extra": {NOTE: note}})
 
     def test_suppress_repeated_changelog(self, mock_log: Mock):
         """Test that a repeated changelog is suppressed."""
@@ -155,7 +160,7 @@ class LoggerTests(TestCase):
             reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False))
         )
         self.assert_last_message(mock_log, message, available)
-        self.assert_changes(mock_log, "Suppressing changelog already shown, see above")
+        self.assert_note(mock_log, "Suppressing changelog already shown, see above")
 
     def test_reset_changelog_suppression(self, mock_log: Mock):
         """Test that resetting the suppression makes a logger show a changelog it has already shown."""
@@ -170,7 +175,7 @@ class LoggerTests(TestCase):
             reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False))
         )
         self.assert_last_message(mock_log, message, available)
-        self.assert_changes(mock_log, "Suppressing changelog already shown, see above")
+        self.assert_note(mock_log, "Suppressing changelog already shown, see above")
         reset_changelog_suppression()
         logger.new_version(
             reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False))
@@ -703,7 +708,7 @@ class LoggerTests(TestCase):
             f"New version available for {dependency('dependency')} in {at('a.txt:3')}: "
             "1.0, published: 2026-05-29 13:54",
         )
-        self.assert_changes(mock_log, "No changelog available!")
+        self.assert_note(mock_log, "No changelog available!")
 
 
 class LoggerMessageTest(TestCase):

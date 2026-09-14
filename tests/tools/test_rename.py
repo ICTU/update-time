@@ -55,9 +55,7 @@ class StaleMentionsTest(unittest.TestCase):
 
     def mentions(self, name: str, *texts: str) -> list[str]:
         """Return where files holding the given texts mention the name."""
-        return stale_mentions(
-            name, [Mock(read_text=Mock(return_value=text), __str__=lambda _: "f.py") for text in texts]
-        )
+        return stale_mentions(name, [mock_path(text) for text in texts])
 
     def test_a_name_in_backticks(self):
         """Test that a mention is found wherever backticks quote the name, bare or qualified."""

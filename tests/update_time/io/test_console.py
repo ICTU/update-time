@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.text import Text
 
-from update_time.domain.dependency import Changes, DependencyVersion
+from update_time.domain.dependency import NO_CHANGES, Changes, DependencyVersion
 from update_time.io import console as console_module
 from update_time.io.console import (
     _MARKDOWN_PARSER,
@@ -33,6 +33,12 @@ if TYPE_CHECKING:
     from rich.style import Style
 
 
+# The corners and sides Rich draws a rounded box with.
+_BOX_TOP_LEFT = "╭"
+_BOX_BOTTOM_LEFT = "╰"
+_BOX_SIDE = "│"
+
+
 class RecordRenderingTests(TestCase):
     """Unit tests for what the console shows for a record."""
 
@@ -52,11 +58,30 @@ class RecordRenderingTests(TestCase):
             report(Logger("rendering"))
         return console.export_text()
 
+    @staticmethod
+    def report_new_version(log: Logger, changes: Changes = NO_CHANGES) -> None:
+        """Report a new version of `pkg`, with the changes a changelog records for it."""
+        version = DependencyVersion("1.2.0", changes)
+        log.new_version(reference("pkg", create_location("requirements.txt", 3)), version)
+
+    @classmethod
+    def report_new_version_twice(cls, log: Logger) -> None:
+        """Report the same new version of `pkg` twice, so the second report suppresses the changelog."""
+        cls.report_new_version(log)
+        cls.report_new_version(log)
+
     def rendered_changes(self, changes: Changes, level: str = "INFO") -> str:
         """Return what the console shows at the level when a new version of `pkg` reports the changes."""
-        version = DependencyVersion("1.2.0", changes)
-        location = create_location("requirements.txt", 3)
-        return self.rendered(lambda log: log.new_version(reference("pkg", location), version), level)
+        return self.rendered(lambda log: self.report_new_version(log, changes), level)
+
+    def assert_boxed(self, rendered: str, contents: list[str]) -> None:
+        """Assert that the lines below the message sit in a box, and that the box holds these lines and no others."""
+        lines = [line.strip() for line in rendered.splitlines()][1:]
+        corners = [line[:1] for line in lines[:1] + lines[-1:]]
+        self.assertEqual(corners, [_BOX_TOP_LEFT, _BOX_BOTTOM_LEFT], rendered)
+        sides = {(line[0], line[-1]) for line in lines[1:-1]}
+        self.assertEqual(sides, {(_BOX_SIDE, _BOX_SIDE)}, rendered)
+        self.assertEqual([line.strip(_BOX_SIDE).strip() for line in lines[1:-1]], contents, rendered)
 
     @kills(
         Mutation(
@@ -75,8 +100,10 @@ class RecordRenderingTests(TestCase):
     @kills(
         Mutation(
             console_module,
-            "        return Group(rendered, self._rendered_changes(changes)) if changes else rendered",
-            "        return Group(rendered, self._rendered_changes(changes))",
+            '        if note := getattr(record, NOTE, ""):\n'
+            "            return Group(rendered, Text(note))\n"
+            "        return rendered",
+            '        return Group(rendered, Text(getattr(record, NOTE, "")))',
             "every record without changes gets a blank line below it",
         )
     )
@@ -84,7 +111,7 @@ class RecordRenderingTests(TestCase):
         """Test that a record carrying no changes renders as its message alone."""
         rendered = self.rendered(lambda log: log.skipped(Path("a.txt"), "it is compiled"))
         self.assertIn("Skipping a.txt: it is compiled", rendered)
-        self.assertEqual([line for line in rendered.splitlines() if not line.strip()], [])
+        self.assertEqual(rendered.splitlines()[1:], [])
 
     @kills(
         Mutation(
@@ -122,7 +149,7 @@ class RecordRenderingTests(TestCase):
         html = "<details>\n<summary>Dependency updates</summary>\n"
         rendered = self.rendered_changes(Changes(f"## 1.2.0\n\n{html}\n- bump foo\n</details>\n", markdown=True))
         block = ["1.2.0", "", "<details>", "<summary>Dependency updates</summary>", "", "• bump foo", "", "</details>"]
-        self.assertEqual([line.strip() for line in rendered.splitlines()][1:], block)
+        self.assert_boxed(rendered, block)
 
     @kills(
         Mutation(
@@ -154,11 +181,31 @@ class RecordRenderingTests(TestCase):
         self.assertIn("PyPI page: coverage 7.16.0", rendered)
         self.assertNotIn("[coverage 7.16.0]", rendered)
 
+    @kills(
+        Mutation(
+            console_module,
+            "            return Group(rendered, Text(note))",
+            "            return Group(rendered, self._rendered_changes(note))",
+            "Update-time's own note about a changelog is boxed as if it were a changelog's changes",
+        )
+    )
+    def test_a_note_about_the_changelog_is_not_boxed(self):
+        """Test that Update-time's own note about a changelog renders as a bare line, the box holding changes alone."""
+        notes = [
+            (Logger._NO_CHANGELOG, self.report_new_version),
+            (Logger._SUPPRESSING_CHANGELOG, self.report_new_version_twice),
+        ]
+        for note, report in notes:
+            with self.subTest(note=note):
+                rendered = self.rendered(report)
+                self.assertEqual([line.strip() for line in rendered.splitlines()][-1], note)
+                self.assertNotIn(_BOX_TOP_LEFT, rendered)
+
     def test_changes_that_are_not_markdown_render_as_written(self):
-        """Test that a changelog that is not Markdown keeps its lines and shows its markup as written."""
+        """Test that a changelog that is not Markdown is boxed too, keeping its lines and its markup as written."""
         changes = Changes("Fixed bug A\nFixed bug B\n- and a dash that is no bullet", markdown=False)
         rendered = self.rendered_changes(changes)
-        self.assertEqual([line.strip() for line in rendered.splitlines()][-3:], changes.splitlines())
+        self.assert_boxed(rendered, changes.splitlines())
 
     @kills(
         Mutation(
