@@ -4,17 +4,19 @@ import unittest
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
-from update_time.domain.dependency import DependencyVersion
 from update_time.domain.file_type import FileType
-from update_time.domain.reference import Reference
-from update_time.primitives.location import Location
-from update_time.references.file import rewrite_file, update_file, update_files
+from update_time.references import file as file_module
+from update_time.references.file import rewrite_file, update_file, update_yaml_files
 
 from tests.helpers import mock_path
+from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import IMAGE_REGEXP
 from tests.update_time.references.helpers import new_version_getter
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from update_time.domain.bound import NewVersionGetter
     from update_time.domain.line import Line
 
 
@@ -52,38 +54,57 @@ class UpdateFileTest(unittest.TestCase):
 
 
 @patch("pathlib.Path.glob")
-class UpdateFilesTest(unittest.TestCase):
-    """Unit tests for the update file function."""
+class UpdateYamlFilesTest(unittest.TestCase):
+    """Unit tests for the update YAML files function."""
 
-    def test_no_changes(self, mock_glob: Mock):
-        """Test that files are unchanged if there is no new version."""
-        mock_file = mock_path("line1\nline2\n")
-        mock_glob.return_value = [mock_file]
-        mock_logger = Mock()
-        file_type = FileType("Dockerfiles", ("Dockerfile",))
-        update_files(file_type, regexp=IMAGE_REGEXP, get_new_version=new_version_getter("1.1"), logger=mock_logger)
-        mock_file.write_text.assert_not_called()
-        mock_logger.new_version.assert_not_called()
+    FILE_TYPE = FileType("YAML files", ("*.yml",))
+    # A reference the regexp matches, so skipping is what leaves it alone, followed by an unclosed flow sequence.
+    UNPARSABLE = "image: python:3.14\nbroken: [\n"
 
-    def test_new_version(self, mock_glob: Mock):
-        """Test that files are updated with the new version."""
-        mock_file = mock_path("line1\nimage: python:3.14\n")
-        mock_glob.return_value = [mock_file]
-        mock_logger = Mock()
-        file_type = FileType("configs", ("config.yml",))
-        update_files(file_type, regexp=IMAGE_REGEXP, get_new_version=new_version_getter("3.15"), logger=mock_logger)
-        mock_file.write_text.assert_called_with("line1\nimage: python:3.15\n")
-        # "line1" then the reference, so the reference is on line 2.
-        reference = Reference("python", "3.14", Location(mock_file, 2))
-        mock_logger.new_version.assert_called_with(reference, DependencyVersion(version="3.15"))
+    def update(self, mock_logger: Mock, get_new_version_for: Callable[[object], NewVersionGetter]) -> None:
+        """Update the discovered files, building each file's getter with the given factory."""
+        update_yaml_files(
+            self.FILE_TYPE, regexp=IMAGE_REGEXP, get_new_version_for=get_new_version_for, logger=mock_logger
+        )
 
-    def test_multiple_patterns(self, mock_glob: Mock):
-        """Test that files matching any of multiple glob patterns are updated."""
-        yml_file = mock_path("image: python:3.14\n")
-        yaml_file = mock_path("image: python:3.14\n")
-        mock_glob.side_effect = [[yml_file], [yaml_file]]
+    @kills(
+        Mutation(
+            file_module,
+            "        else:\n",
+            "        if True:\n",
+            "a file that does not parse is rewritten anyway, having been reported",
+        ),
+        Mutation(
+            file_module,
+            "            logger.invalid_yaml(path)\n",
+            "            logger.invalid_yaml(path)\n            return\n",
+            "a file that does not parse ends the walk, so the files after it are never updated",
+        ),
+    )
+    def test_file_that_does_not_parse_is_reported_and_skipped(self, mock_glob: Mock):
+        """Test that a file whose YAML does not parse is reported and left as it is, and the walk goes on."""
+        unparsable_file = mock_path(self.UNPARSABLE)
+        next_file = mock_path("image: python:3.14\n")
+        mock_glob.return_value = [unparsable_file, next_file]
         mock_logger = Mock()
-        file_type = FileType("YAML files", ("*.yml", "*.yaml"))
-        update_files(file_type, regexp=IMAGE_REGEXP, get_new_version=new_version_getter("3.15"), logger=mock_logger)
-        yml_file.write_text.assert_called_with("image: python:3.15\n")
-        yaml_file.write_text.assert_called_with("image: python:3.15\n")
+        self.update(mock_logger, lambda _document: new_version_getter("3.15"))
+        unparsable_file.write_text.assert_not_called()
+        next_file.write_text.assert_called_once_with("image: python:3.15\n")
+        mock_logger.invalid_yaml.assert_called_once_with(unparsable_file)
+
+    @kills(
+        Mutation(
+            file_module,
+            "        if document is yaml_format.UNPARSABLE:\n",
+            "        if document is yaml_format.UNPARSABLE or document is None:\n",
+            "a file that parses to nothing is reported as invalid, the empty document reading as unparsable",
+        )
+    )
+    def test_file_that_parses_to_nothing_is_not_reported(self, mock_glob: Mock):
+        """Test that a file holding only comments is taken through the update rather than reported as invalid."""
+        mock_glob.return_value = [mock_path("# image: python:3.14\n")]
+        mock_logger = Mock()
+        get_new_version_for = Mock(return_value=new_version_getter("3.15"))
+        self.update(mock_logger, get_new_version_for)
+        get_new_version_for.assert_called_once_with(None)
+        mock_logger.invalid_yaml.assert_not_called()

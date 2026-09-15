@@ -3,21 +3,23 @@
 import unittest
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
+from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
 import requests
 
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import FloatingPin, Release
+from update_time.domain.dependency import DependencyVersion, FloatingPin, PinnedDependency, Release, Unserved
+from update_time.domain.publication import reports_publication_dates
 from update_time.sources import docker_hub, oci
 from update_time.sources.docker_hub import _MAX_TAG_LISTING_PAGES, _TAG_LISTING_PAGE_SIZE
 from update_time.sources.oci import (
     _MAX_FLOATING_TAG_PROBES,
     Tag,
     _registry_token,
-    get_latest_tag,
     is_docker_hub_image,
+    tag_getter_excluding,
 )
 
 from tests.helpers import mock_response, patch_environ
@@ -25,6 +27,17 @@ from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
 from tests.update_time.helpers import LoggingTestCase, bound, docker_tag
 from tests.update_time.registry import Endpoint, RegistryRequestsMixin, mock_docker_registry
+
+if TYPE_CHECKING:
+    from update_time.domain.bound import NewVersionGetter, VersionBound
+
+
+def get_latest_tag(
+    image: str, current_tag: str, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
+) -> DependencyVersion:
+    """Return what the source resolves for the image and tag, as a test writes them."""
+    pinned = PinnedDependency(image, current_tag)
+    return oci.get_latest_tag(pinned, version_bound, cooldown_days, check_archival=check_archival)
 
 
 class IsDockerHubImageTest(unittest.TestCase):
@@ -65,6 +78,61 @@ class TagTest(unittest.TestCase):
 
 
 @patch_environ()
+class TagGetterExcludingTest(RegistryRequestsMixin, unittest.TestCase):
+    """Unit tests for the getter that leaves the references a file accounts for itself as they are."""
+
+    # The references a file accounts for itself, as it writes them: one naming a tag and one naming none.
+    EXCLUDED = ("ubuntu-2204:2024.01.1", "default")
+    REASON = Unserved.MACHINE_EXECUTOR_IMAGE
+
+    def getter(self) -> NewVersionGetter:
+        """Return a getter excluding those references, as an updater builds it from what its file declares."""
+        return tag_getter_excluding(set(self.EXCLUDED), self.REASON)
+
+    def resolve(self, image: str, tag: str) -> DependencyVersion:
+        """Return what the getter resolves for the reference, with the registry offering a newer tag."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("9.9", DIGEST))
+        return self.getter()(PinnedDependency(image, tag), NO_BOUND, COOLDOWN.default, check_archival=True)
+
+    def test_an_excluded_reference_keeps_its_version_and_carries_its_reason(self):
+        """Test that an excluded reference is left as it is, saying why, and is looked up nowhere."""
+        resolved = self.resolve("ubuntu-2204", "2024.01.1")
+        self.assertEqual(resolved, DependencyVersion(version="2024.01.1", unserved=self.REASON))
+        self.requests.assert_not_called()
+
+    @kills(
+        Mutation(
+            oci,
+            '        as_written = f"{pinned.name}{tag_of(pinned.version)}"\n',
+            '        as_written = f"{pinned.name}:{pinned.version}"\n',
+            "a reference naming no tag is matched with an empty tag, so it is looked up on a registry",
+        )
+    )
+    def test_an_excluded_reference_naming_no_tag_is_left_as_it_is(self):
+        """Test that an entry listed without a tag matches the reference that names none."""
+        resolved = self.resolve("default", "")
+        self.assertEqual(resolved, DependencyVersion(version="", unserved=self.REASON))
+        self.requests.assert_not_called()
+
+    def test_another_tag_of_an_excluded_repository_is_resolved(self):
+        """Test that the exclusion holds for the tag it names, so another tag of that repository resolves."""
+        self.assertEqual(self.resolve("ubuntu-2204", "1.0").version, "9.9")
+
+    def test_a_reference_that_is_not_excluded_is_resolved(self):
+        """Test that a reference the file accounts for in no way resolves against its registry."""
+        self.assertEqual(self.resolve("python", "3.14").version, "9.9")
+
+    def test_an_excluded_reference_is_dated_by_nothing(self):
+        """Test that an excluded reference's versions carry no publication date, so a cooldown measures against none."""
+        excluded = PinnedDependency("ubuntu-2204", "2024.01.1")
+        self.assertFalse(reports_publication_dates(self.getter(), excluded))
+
+    def test_a_reference_that_is_not_excluded_is_dated_by_docker_hub(self):
+        """Test that a reference the getter resolves on Docker Hub is dated, since Docker Hub dates its tags."""
+        served = PinnedDependency("python", "3.14")
+        self.assertTrue(reports_publication_dates(self.getter(), served))
+
+
 class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
     """Unit tests for getting the latest tag."""
 

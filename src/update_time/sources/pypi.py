@@ -22,9 +22,9 @@ from update_time.domain.dependency import (
     Changes,
     DependencyName,
     DependencyVersion,
+    PinnedDependency,
     Project,
     Release,
-    VersionString,
     Yank,
     first_eligible,
     is_valid,
@@ -215,17 +215,13 @@ def _release_datetime(urls: list[_Distribution]) -> datetime | None:
 @vulnerability_reporting
 @yank_reporting
 def get_latest_version(
-    package: DependencyName,
-    current_version: VersionString,
-    version_bound: VersionBound,
-    cooldown_days: int,
-    *,
-    check_archival: bool,
+    pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
 ) -> DependencyVersion:
     """Return the latest stable release of the package that is available outside the cooldown window.
 
     Returns the current version unchanged when it is invalid or already the latest eligible version.
     """
+    package, current_version = pinned.name, pinned.version
     if not is_valid(current_version):
         return DependencyVersion(version=current_version)
     current = Version(current_version)

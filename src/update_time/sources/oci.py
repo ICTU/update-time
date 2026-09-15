@@ -23,10 +23,13 @@ from update_time.domain.dependency import (
     DependencyName,
     DependencyVersion,
     FloatingPin,
+    PinnedDependency,
     Project,
     Release,
+    Unserved,
     VersionString,
     first_eligible,
+    tag_of,
 )
 from update_time.domain.publication import publication_date_reporting, reports_publication_dates
 from update_time.io.fetch import fetch, next_page_url
@@ -321,14 +324,14 @@ def is_docker_hub_image(image: str) -> bool:
     return _is_docker_hub_host(host)
 
 
-@partial(publication_date_reporting, when=is_docker_hub_image)
+def _is_on_docker_hub(pinned: PinnedDependency) -> bool:
+    """Return whether the pinned image is on Docker Hub, the one registry that dates the tags it serves."""
+    return is_docker_hub_image(pinned.name)
+
+
+@partial(publication_date_reporting, when=_is_on_docker_hub)
 def get_latest_tag(
-    image: DependencyName,
-    current_tag: VersionString,
-    version_bound: VersionBound,
-    cooldown_days: int,
-    *,
-    check_archival: bool,
+    pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
 ) -> DependencyVersion:
     """Return the tag to pin the reference to, carrying the image's newest release where one dates it.
 
@@ -338,7 +341,8 @@ def get_latest_tag(
     the image's newest release does not date the reference.
     """
     del check_archival
-    resolved = _resolved_tag(image, current_tag, version_bound, cooldown_days)
+    image = pinned.name
+    resolved = _resolved_tag(image, pinned.version, version_bound, cooldown_days)
     if not resolved.served:
         return resolved
     return replace(resolved, project=Project(newest=_newest_release(image)))
@@ -373,33 +377,44 @@ def _resolved_tag(
     )
 
 
-def tag_getter(registry_serves: Callable[[DependencyName], bool]) -> NewVersionGetter:
-    """Return a getter that resolves an image tag, leaving the references no registry serves as they are.
+def tag_getter(unserved: Callable[[PinnedDependency], Unserved | None]) -> NewVersionGetter:
+    """Return a getter that resolves an image tag, leaving the references no registry serves unchanged.
 
     A file format can name a reference that looks like an image but is none: a Dockerfile's `FROM scratch` or one
-    of its own build stages, a CircleCI machine-executor image. `registry_serves` tells those from the images
-    `get_latest_tag` resolves. Such a reference keeps its version and dates none of them, so a `cooldown` or
-    `stale` directive on it is reported as redundant rather than silently deciding nothing.
+    of its own build stages, a CircleCI machine-executor image, an image a Compose file builds. `unserved` tells
+    those from the images `get_latest_tag` resolves, reading the reference's name and tag, and explains each one it
+    answers for. Such a reference keeps the version the file wrote. No source gives its versions a publication date,
+    so a `cooldown` or `stale` directive on it is reported as redundant rather than silently deciding nothing.
     """
 
-    def dates_the_versions_of(image: DependencyName) -> bool:
-        """Return whether the image's versions carry a publication date, which one no registry serves does not."""
-        return registry_serves(image) and reports_publication_dates(get_latest_tag, image)
+    def dates_the_versions_of(pinned: PinnedDependency) -> bool:
+        """Return whether the pinned image's versions carry a date, which they do not when no registry serves it."""
+        return unserved(pinned) is None and reports_publication_dates(get_latest_tag, pinned)
 
     @partial(publication_date_reporting, when=dates_the_versions_of)
     def get_new_version(
-        image: DependencyName,
-        tag: VersionString,
-        version_bound: VersionBound,
-        cooldown_days: int,
-        *,
-        check_archival: bool,
+        pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
     ) -> DependencyVersion:
-        if not registry_serves(image):
-            return DependencyVersion(version=tag)
-        return get_latest_tag(image, tag, version_bound, cooldown_days, check_archival=check_archival)
+        if (reason := unserved(pinned)) is not None:
+            return DependencyVersion(version=pinned.version, unserved=reason)
+        return get_latest_tag(pinned, version_bound, cooldown_days, check_archival=check_archival)
 
     return get_new_version
+
+
+def tag_getter_excluding(images: set[str], reason: Unserved) -> NewVersionGetter:
+    """Return a getter resolving every image but the ones given, which it leaves unchanged.
+
+    The images come in as the file writes them, tag and all, and are matched that way, so another tag of the same
+    repository resolves as any other reference does. `reason` explains why the reference is left unchanged.
+    """
+
+    def unserved(pinned: PinnedDependency) -> Unserved | None:
+        """Return the one reason when the reference is among the ones given, or None when a registry serves it."""
+        as_written = f"{pinned.name}{tag_of(pinned.version)}"
+        return reason if as_written in images else None
+
+    return tag_getter(unserved)
 
 
 def _is_floating(tag: Tag) -> bool:

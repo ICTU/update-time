@@ -8,10 +8,10 @@ from unittest.mock import Mock, patch
 import requests
 
 from update_time.domain import changelog
-from update_time.domain.bound import NO_BOUND, Verb
+from update_time.domain.bound import NO_BOUND, Verb, VersionBound
 from update_time.domain.changelog import is_markdown
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import Archival, Release, Yank
+from update_time.domain.dependency import Archival, DependencyVersion, PinnedDependency, Release, Yank
 from update_time.io.log import Logger
 from update_time.sources import github, pypi
 from update_time.sources.pypi import (
@@ -19,7 +19,6 @@ from update_time.sources.pypi import (
     _changelog_from_url,
     _newest_release,
     get_changes,
-    get_latest_version,
     get_publication_datetime,
 )
 
@@ -52,6 +51,15 @@ from tests.update_time.sources.helpers import (
 # directory's recursive tree listing as an entry per path below it. A path maps to its text, or to None for a
 # path that is itself a directory.
 type RootEntry = str | Mapping[str, str | None] | None
+
+
+def get_latest_version(
+    package: str, current_version: str, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
+) -> DependencyVersion:
+    """Return what the source resolves for the package and version, as a test writes them."""
+    pinned = PinnedDependency(package, current_version)
+    return pypi.get_latest_version(pinned, version_bound, cooldown_days, check_archival=check_archival)
+
 
 # The mutations of how a null the PyPI metadata reports for the project URLs is read. The tests of the updater that
 # rewrites the pins kill them too, so they are named here rather than spelled out in each registration.

@@ -1,13 +1,13 @@
 """Rewrite the references in files: read a file, transform its lines, and write it back when they changed.
 
-The orchestration around the line-rewrite engine in `rewrite`: `rewrite_file` owns the read/compare/write cycle for
-one file, `update_file` runs the engine over one file's lines, and `update_files` does so for every file of a
-kind (discovered through `io.filesystem`).
+The orchestration around the line-rewrite engine `rewrite.update_references_in_lines`, over a single file or over
+every file of a kind, which `io.filesystem` discovers.
 """
 
 from typing import TYPE_CHECKING
 
 from update_time.domain.line import located_lines
+from update_time.formats import yaml as yaml_format
 from update_time.io.filesystem import glob_for
 from update_time.references.rewrite import update_references_in_lines
 
@@ -71,7 +71,13 @@ def update_file(
     )
 
 
-def update_files(file_type: FileType, *, regexp: str, get_new_version: NewVersionGetter, logger: Logger) -> None:
-    """Update the files of this kind, using the regexp to find the current version and get_new_version the new one."""
+def update_yaml_files(
+    file_type: FileType, *, regexp: str, get_new_version_for: Callable[[object], NewVersionGetter], logger: Logger
+) -> None:
+    """Update the files of this kind, parsing each of them to build the getter that resolves its references."""
     for path in glob_for(file_type):
-        update_file(path, regexp, get_new_version=get_new_version, logger=logger)
+        document = yaml_format.read(path)
+        if document is yaml_format.UNPARSABLE:
+            logger.invalid_yaml(path)
+        else:
+            update_file(path, regexp, get_new_version=get_new_version_for(document), logger=logger)

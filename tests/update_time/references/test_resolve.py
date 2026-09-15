@@ -8,7 +8,7 @@ from unittest.mock import Mock, call
 from update_time.domain.archival import archival_reporting
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import Archival, DependencyVersion, FloatingPin, Project
+from update_time.domain.dependency import Archival, DependencyVersion, FloatingPin, PinnedDependency, Project
 from update_time.domain.publication import publication_date_reporting
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import vulnerability_reporting
@@ -141,7 +141,7 @@ class LatestVersionTest(unittest.TestCase):
         get_new_version = Mock(return_value=DependencyVersion(version="3.14.1"))
         self.latest_version(Marker(version_bound=bound(Verb.ALLOW, "update<3.15")), get_new_version)
         get_new_version.assert_called_once_with(
-            "python", "3.14", bound(Verb.ALLOW, "update<3.15"), COOLDOWN.default, check_archival=True
+            PinnedDependency("python", "3.14"), bound(Verb.ALLOW, "update<3.15"), COOLDOWN.default, check_archival=True
         )
 
     def test_ignore_update_passes_a_block_all_bound_to_the_getter(self):
@@ -149,7 +149,7 @@ class LatestVersionTest(unittest.TestCase):
         get_new_version = Mock(return_value=DependencyVersion(version="3.14"))
         self.latest_version(Marker(ignored_scopes=Scope.UPDATE), get_new_version)
         get_new_version.assert_called_once_with(
-            "python", "3.14", BLOCK_ALL_UPDATES, COOLDOWN.default, check_archival=True
+            PinnedDependency("python", "3.14"), BLOCK_ALL_UPDATES, COOLDOWN.default, check_archival=True
         )
 
     @patch_environ({COOLDOWN.name: "30"})
@@ -157,13 +157,13 @@ class LatestVersionTest(unittest.TestCase):
         """Test that the cooldown the run was configured with reaches the getter, rather than the built-in default."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.15"))
         self.latest_version(get_new_version=get_new_version)
-        get_new_version.assert_called_once_with("python", "3.14", NO_BOUND, 30, check_archival=True)
+        get_new_version.assert_called_once_with(PinnedDependency("python", "3.14"), NO_BOUND, 30, check_archival=True)
 
     def test_the_markers_cooldown_is_passed_to_the_getter(self):
         """Test that a reference carrying its own cooldown is resolved with that one, not the global one."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.15"))
         self.latest_version(Marker(cooldown=Threshold(value=30)), get_new_version)
-        get_new_version.assert_called_once_with("python", "3.14", NO_BOUND, 30, check_archival=True)
+        get_new_version.assert_called_once_with(PinnedDependency("python", "3.14"), NO_BOUND, 30, check_archival=True)
 
     def test_warns_about_a_redundant_bound(self):
         """Test that the reference's bound is checked for redundancy against its current version."""
@@ -204,7 +204,9 @@ class LatestVersionTest(unittest.TestCase):
         marker = Marker(cooldown=Threshold(inverted_item="cooldown>=30"), raw="ignore[cooldown>=30]")
         self.latest_version(marker, get_new_version)
         self.log.report_inverted_items.assert_called_once_with(self.reference(), marker)
-        get_new_version.assert_called_once_with("python", "3.14", NO_BOUND, COOLDOWN.default, check_archival=True)
+        get_new_version.assert_called_once_with(
+            PinnedDependency("python", "3.14"), NO_BOUND, COOLDOWN.default, check_archival=True
+        )
 
     def test_warns_about_an_inverted_vulnerability_item(self):
         """Test that a `vulnerable` item comparing the wrong way is reported."""
@@ -248,9 +250,9 @@ class LatestVersionTest(unittest.TestCase):
         One case per warning the publication date decides: the `cooldown` item's and the `stale` directive's.
         """
 
-        def dates_the_releases_of(dependency: str) -> bool:
-            """Return whether the source dates the dependency's releases, which it does for `node` alone."""
-            return dependency == "node"
+        def dates_the_releases_of(pinned: PinnedDependency) -> bool:
+            """Return whether the source dates the pinned dependency's releases, which it does for `node` alone."""
+            return pinned.name == "node"
 
         get_new_version = publication_date_reporting(new_version_getter("3.15"), when=dates_the_releases_of)
         for directive in ("ignore[cooldown<30]", "ignore[stale<90]"):
@@ -385,7 +387,7 @@ class ReportProjectChecksTest(unittest.TestCase):
     @kills(
         Mutation(
             resolve,
-            "    if not project_is_checked(get_project, reference.dependency, threshold):\n        return\n",
+            "    if not project_is_checked(get_project, reference.pinned, threshold):\n        return\n",
             "",
             "a source is asked about a reference no check needs an answer for, so the run pays for the request",
         )

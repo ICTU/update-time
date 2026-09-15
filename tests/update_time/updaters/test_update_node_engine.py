@@ -398,7 +398,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             resolve,
-            "    if not downgrades(get_new_version, dependency):\n"
+            "    if not downgrades(get_new_version, reference.pinned):\n"
             "        log.warn_if_redundant_bound(reference, marker)",
             "    log.warn_if_redundant_bound(reference, marker)",
             "a bound is judged by sampling the versions above the current one, for a reference that can move below it",
