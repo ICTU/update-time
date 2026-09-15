@@ -20,6 +20,7 @@ from update_time.domain.dependency import (
     FloatingPin,
     Project,
     Release,
+    Unserved,
     Yank,
 )
 from update_time.domain.reference import DriftedPin
@@ -166,6 +167,17 @@ def _inverted_items(log: Logger, capture: _Capture, requirements: Location, dock
     }
 
 
+def _unserved_references(log: Logger, capture: _Capture, dockerfile: Location) -> str:
+    """Log one reference of each kind no registry serves, and return the lines they render as."""
+    compose = reference("acme/api", Location(Path("docker-compose.yml"), 4), "1.2.3")
+    log.unserved_reference(compose, Unserved.BUILT_IMAGE)
+    machine = reference("ubuntu-2204", Location(Path(".circleci/config.yml"), 4), "2024.01.1")
+    log.unserved_reference(machine, Unserved.MACHINE_EXECUTOR_IMAGE)
+    log.unserved_reference(reference("scratch", Location(Path("Dockerfile"), 1)), Unserved.EMPTY_BASE_IMAGE)
+    log.unserved_reference(reference("deps", dockerfile), Unserved.BUILD_STAGE)
+    return capture.take()
+
+
 def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log each block's sample records and pair the lines they render as with the block's placeholder."""
     log.drift(
@@ -232,6 +244,8 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.keeping_floating_tag(reference("python", dockerfile, "latest"), pinned_tag, "update-time: allow[floating-pin]")
     kept_floating_tag = capture.take()
 
+    unserved = _unserved_references(log, capture, dockerfile)
+
     marker = Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")
     log.recognised_marker("python", marker, dockerfile)
     recognised = capture.take()
@@ -242,6 +256,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@PINNED_FLOATING_TAG@@": pinned_floating_tag,
         "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
+        "@@UNSERVED_REFERENCES@@": unserved,
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@VULNERABILITY_WARNING@@": vulnerable,

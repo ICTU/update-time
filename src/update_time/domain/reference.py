@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
+from update_time.domain.dependency import PinnedDependency
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
@@ -27,6 +29,11 @@ class Reference:
     current_version: VersionString
     location: Location
     current_sha: str = ""
+
+    @property
+    def pinned(self) -> PinnedDependency:
+        """Return what a source is asked about: the dependency and the version this reference pins it to."""
+        return PinnedDependency(self.dependency, self.current_version)
 
     @classmethod
     def from_reference(cls, reference: Reference, **resolved: object) -> Self:

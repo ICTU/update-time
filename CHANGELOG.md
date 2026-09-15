@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Changed
 
+- Leave the images a Docker Compose file builds alone, instead of asking a registry about them. Closes [#356](https://github.com/ICTU/update-time/issues/356).
+- Report each reference no registry serves at log level DEBUG, naming what accounts for it.
+- Skip a Docker Compose file or CircleCI config whose YAML does not parse, with a warning, instead of ending the run.
 - Name the advisory in the log line reporting a vulnerability warning silenced by a marker. Closes [#350](https://github.com/ICTU/update-time/issues/350).
 - Name the advisory in the log line reporting a vulnerability warning silenced by `--ignore-vulnerability`, and quote the identifier you passed rather than the one the advisory database answered under.
 

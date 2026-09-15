@@ -52,7 +52,7 @@ Update-time logs at four levels. `--log-level` sets the lowest one shown, which 
 | :-: | :---- | :------------- |
 | 🔍 | `DEBUG` | what Update-time is doing: files it checks, [markers](#-controlling-updates-and-warnings-per-reference) it recognises, updates held back, warnings silenced, and more |
 | ℹ️ | `INFO` | what Update-time changed: a version updated, a [hash pinned](#-pinning) |
-| ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a source it could not reach, a marker that is [invalid](#invalid-markers), [incorrect](#incorrect-markers), or [redundant](#redundant-markers) |
+| ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a source it could not reach, a file it could not parse, a marker that is [invalid](#invalid-markers), [incorrect](#incorrect-markers), or [redundant](#redundant-markers) |
 | ❌ | `ERROR` | failures that stop an update, such as a package manager that is not installed |
 
 ### Workflow
@@ -1035,11 +1035,19 @@ Update-time looks for these files, each with its own globs and in its own folder
 | Dockerfiles | Base images (`FROM` references) |
 | CircleCI configs | Docker images (machine-executor images are left unchanged) |
 | .gitlab-ci.yml | Docker images (`image:` references) |
-| Docker Compose files | Service images (`image:` references) |
+| Docker Compose files | Service images (`image:` references; an image the file builds is left unchanged) |
 | Helm charts | Container images (`image:` references) |
 | devcontainer configs | The base image and each feature |
 
 Update-time reads a Dockerfile's `FROM` the way Docker reads it: in upper or lower case, and only where it opens its line. Neither `FROM scratch` nor a `FROM` naming one of the file's own build stages names an image a registry serves, so Update-time leaves both alone.
+
+A Compose service that declares a `build:` beside its `image:` names the image the file builds. That image is the file's output rather than a dependency to update, so Update-time leaves it alone. It leaves the other services naming that image alone as well, including the ones that build nothing themselves. The reference is matched as the file writes it, name and tag, so another tag of the same repository is a registry image like any other and is updated as one. The rule reads one file at a time, since the name a file builds is declared in the file that names it.
+
+Update-time reports each reference it leaves alone this way at `DEBUG`, naming what accounts for it:
+
+```console
+@@UNSERVED_REFERENCES@@
+```
 
 #### What versions are updated?
 

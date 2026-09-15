@@ -6,17 +6,14 @@ Docker Hub and have no registry to query, so they are detected by parsing the YA
 
 from typing import TYPE_CHECKING
 
+from update_time.domain.dependency import Unserved
 from update_time.domain.file_type import CIRCLE_CI_CONFIGS
-from update_time.formats import yaml as yaml_format
-from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
-from update_time.references.file import update_file
-from update_time.sources.oci import YAML_IMAGE_REFERENCE, tag_getter
+from update_time.references.file import update_yaml_files
+from update_time.sources.oci import YAML_IMAGE_REFERENCE, tag_getter_excluding
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
-    from update_time.domain.dependency import DependencyName
+    from update_time.domain.bound import NewVersionGetter
 
 _LOG = get_logger("circleci")
 
@@ -36,26 +33,14 @@ def _machine_images(config: object) -> set[str]:
     return images
 
 
-def _update_circle_ci_yaml(config_file: Path) -> None:
-    """Update the Docker images in a single CircleCI YAML file, leaving machine-executor images unchanged."""
-    machine = _machine_images(yaml_format.read(config_file))
-    machine_names = {image.split(":", maxsplit=1)[0] for image in machine}
-
-    def registry_serves(image: DependencyName) -> bool:
-        """Return whether a registry serves the image, which it does for every image but a machine-executor one.
-
-        A machine image is recognised by name rather than by name and version, a capability being asked about the
-        dependency alone.
-        """
-        return image not in machine_names
-
-    update_file(config_file, YAML_IMAGE_REFERENCE, get_new_version=tag_getter(registry_serves), logger=_LOG)
+def _tag_getter_for(config: object) -> NewVersionGetter:
+    """Return the getter resolving one config's images, which leaves its machine-executor images unchanged."""
+    return tag_getter_excluding(_machine_images(config), Unserved.MACHINE_EXECUTOR_IMAGE)
 
 
 def update_circle_ci_config() -> None:
     """Update the images in all YAML files under the CircleCI directory."""
-    for config_file in glob_for(CIRCLE_CI_CONFIGS):
-        _update_circle_ci_yaml(config_file)
+    update_yaml_files(CIRCLE_CI_CONFIGS, regexp=YAML_IMAGE_REFERENCE, get_new_version_for=_tag_getter_for, logger=_LOG)
 
 
 def main() -> None:  # pragma: no cover

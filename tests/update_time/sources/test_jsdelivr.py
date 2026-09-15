@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion, Release, Yank
+from update_time.domain.dependency import DependencyVersion, PinnedDependency, Release, Yank
 from update_time.io.log import Logger
 from update_time.sources import jsdelivr
 from update_time.sources.jsdelivr import version_getter
@@ -24,7 +24,8 @@ def _get_latest_version(
     dependency: str, current_version: str, filename: str, cooldown_days: int = COOLDOWN.default
 ) -> DependencyVersion:
     """Return the version the source resolves for the file the URL references, unbounded."""
-    return version_getter(filename)(dependency, current_version, NO_BOUND, cooldown_days, check_archival=True)
+    pinned = PinnedDependency(dependency, current_version)
+    return version_getter(filename)(pinned, NO_BOUND, cooldown_days, check_archival=True)
 
 
 # npm publication dates, relative to now so the cooldown decision is independent of the wall clock.
@@ -168,8 +169,8 @@ class GetLatestVersionTest(LoggingTestCase):
     @kills(
         Mutation(
             jsdelivr,
-            "        return replace(latest, project=Project(newest=newest_release(dependency)))",
-            "        _n = newest_release(dependency)\n"
+            "        return replace(latest, project=Project(newest=newest_release(pinned.name)))",
+            "        _n = newest_release(pinned.name)\n"
             "        return replace(latest, project=Project("
             "newest=None if _n is None else type(_n)(latest.version, _n.published)))",
             "the release attached names the version the run leaves the URL on, not the package's newest",

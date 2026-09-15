@@ -20,6 +20,7 @@ from update_time.domain.dependency import (
     Changes,
     DependencyName,
     DependencyVersion,
+    PinnedDependency,
     Project,
     Release,
     VersionString,
@@ -418,12 +419,7 @@ def _tagged_versions(owner: str, repository: str) -> list[TaggedVersion] | None:
 @publication_date_reporting
 @cache
 def get_latest_version(
-    action: DependencyName,
-    current_version: VersionString,
-    version_bound: VersionBound,
-    cooldown_days: int,
-    *,
-    check_archival: bool,
+    pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
 ) -> DependencyVersion:
     """Return the latest eligible version for the GitHub action, or the current version unchanged.
 
@@ -437,6 +433,7 @@ def get_latest_version(
     network problem isn't reported twice. What GitHub reports about the repository is always attached, even when
     the version is unchanged, so a reference that is already up to date is still checked for staleness and archival.
     """
+    action, current_version = pinned.name, pinned.version
     if not is_valid(current_version):
         return DependencyVersion(version=current_version)
     owner, repository = _owner_and_repository(action)

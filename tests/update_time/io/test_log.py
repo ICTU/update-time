@@ -11,6 +11,7 @@ from unittest.mock import ANY, Mock, patch
 
 from rich.logging import RichHandler
 
+from update_time.domain import dependency as dependency_module
 from update_time.domain.bound import Redundancy, Verb
 from update_time.domain.dependency import Archival, Changes, DependencyVersion, FloatingPin, Project, Release, Yank
 from update_time.domain.reference import DriftedPin
@@ -241,9 +242,9 @@ class LoggerTests(TestCase):
 
     @kills(
         Mutation(
-            log_module,
-            '        return f":{version}" if version else ""',
-            '        return f":{version}"',
+            dependency_module,
+            '    return f":{version}" if version else ""',
+            '    return f":{version}"',
             "a reference naming no tag is reported with a colon that names nothing after it",
         )
     )
@@ -682,6 +683,16 @@ class LoggerTests(TestCase):
             mock_log,
             Logger._MESSAGE_INVALID_TOML,
             f"Skipping {at('pyproject.toml')}: it is not valid TOML",
+        )
+
+    def test_invalid_yaml(self, mock_log: Mock):
+        """Test that an unparsable YAML file is logged as a warning."""
+        path = Path.cwd() / "docker-compose.yml"
+        _new_logger().invalid_yaml(path)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_INVALID_YAML,
+            f"Skipping {at('docker-compose.yml')}: it is not valid YAML",
         )
 
     def test_excluded_path_logged_at_debug(self, mock_log: Mock):

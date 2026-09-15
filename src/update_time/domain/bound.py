@@ -10,8 +10,8 @@ from packaging.version import InvalidVersion, Version
 
 from update_time.domain.dependency import (
     MAIN_VERSION,
-    DependencyName,
     DependencyVersion,
+    PinnedDependency,
     VersionString,
     is_valid,
 )
@@ -24,15 +24,14 @@ if TYPE_CHECKING:
 
         def __call__(
             self,
-            dependency: DependencyName,
-            current_version: VersionString,
+            pinned: PinnedDependency,
             version_bound: VersionBound,
             cooldown_days: int,
             /,
             *,
             check_archival: bool,
         ) -> DependencyVersion:
-            """Return the version to update the dependency to.
+            """Return the version to update the pinned dependency to.
 
             The bound and the cooldown are the two constraints on the candidates, by version and by age.
             `check_archival` is the run's archival setting, so a source that pays a request to answer it can skip

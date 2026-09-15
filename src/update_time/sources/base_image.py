@@ -16,7 +16,7 @@ from update_time.domain.downgrade import downgrading
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter, VersionBound
-    from update_time.domain.dependency import DependencyName, VersionString
+    from update_time.domain.dependency import PinnedDependency, VersionString
 
 
 def advancing_image_version_getter(image_version: VersionString) -> NewVersionGetter:
@@ -26,14 +26,10 @@ def advancing_image_version_getter(image_version: VersionString) -> NewVersionGe
     """
 
     def get_new_version(
-        _dependency: DependencyName,
-        current_version: VersionString,
-        version_bound: VersionBound,
-        _cooldown_days: int,
-        *,
-        check_archival: bool,
+        pinned: PinnedDependency, version_bound: VersionBound, _cooldown_days: int, *, check_archival: bool
     ) -> DependencyVersion:
         del check_archival
+        current_version = pinned.version
         if is_valid(current_version) and Version(image_version) > Version(current_version):
             return _admitted_version(image_version, current_version, version_bound)
         return DependencyVersion(version=current_version)
@@ -48,14 +44,10 @@ def following_image_version_getter(image_version: VersionString) -> NewVersionGe
     """
 
     def get_new_version(
-        _dependency: DependencyName,
-        current_version: VersionString,
-        version_bound: VersionBound,
-        _cooldown_days: int,
-        *,
-        check_archival: bool,
+        pinned: PinnedDependency, version_bound: VersionBound, _cooldown_days: int, *, check_archival: bool
     ) -> DependencyVersion:
         del check_archival
+        current_version = pinned.version
         return _admitted_version(image_version, current_version, version_bound)
 
     return downgrading(get_new_version)
