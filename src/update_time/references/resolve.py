@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.archival import archival_is_checked, reports_archival
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion
+from update_time.domain.dependency import DependencyName, DependencyVersion
 from update_time.domain.downgrade import downgrades
 from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
 from update_time.markers.directive import DIRECTIVES, Reason
@@ -35,20 +35,24 @@ def warn_about_directives_the_source_cannot_apply(
     as_written = marker.as_written
     for directive in DIRECTIVES:
         if (written := as_written.directive_for(directive.scope)) and not directive.is_applied_by(
-            get_new_version, reference.dependency
+            get_new_version, reference.pinned
         ):
             log.redundant_directive(reference, written, directive.reason)
 
 
-def floating_pin_redundancy(marker: Marker, *, floats: bool | None) -> Reason | None:
+def floating_pin_redundancy(marker: Marker, *, floats: bool | None, asked: bool = True) -> Reason | None:
     """Return why the marker's directive to keep the pin floating is redundant, or None when it keeps it floating.
 
     `floats` says whether the reference's pin floats, and is None where the run resolved no version to tell from.
+    `asked` says whether Update-time asked a registry about the reference. A reference it did not ask about is
+    never pinned, whatever its tag does.
     """
     if not marker.allows(Scope.FLOATING_PIN):
         return None
     if marker.ignores(Scope.UPDATE):
         return Reason.UPDATE_HELD_BACK
+    if not asked:
+        return Reason.NO_REGISTRY_ASKED
     if floats is False:
         return Reason.PIN_NOT_FLOATING
     return None
@@ -59,7 +63,8 @@ def _warn_if_the_floating_pin_is_redundant(
 ) -> None:
     """Warn when the marker's directive to keep the pin floating is redundant, saying why."""
     floats = None if latest is None else latest.floating is not None
-    if (reason := floating_pin_redundancy(marker, floats=floats)) is not None:
+    asked = latest is None or latest.accounted_for is None
+    if (reason := floating_pin_redundancy(marker, floats=floats, asked=asked)) is not None:
         log.redundant_directive(reference, marker.allow_directive(Scope.FLOATING_PIN), reason)
 
 
@@ -75,8 +80,7 @@ def latest_version(
     log: Logger,
 ) -> DependencyVersion | None:
     """Return the latest version to update the reference to, or None when the marker holds the update back."""
-    dependency, current_version = reference.dependency, reference.current_version
-    if not downgrades(get_new_version, dependency):
+    if not downgrades(get_new_version, reference.pinned):
         log.warn_if_redundant_bound(reference, marker)
     log.report_inverted_items(reference, marker)
     warn_about_directives_the_source_cannot_apply(marker, get_new_version, reference, log)
@@ -85,7 +89,7 @@ def latest_version(
         return None
     version_bound = BLOCK_ALL_UPDATES if marker.ignores(Scope.UPDATE) else marker.version_bound
     cooldown = marker.cooldown.value_or(COOLDOWN.get())
-    latest = get_new_version(dependency, current_version, version_bound, cooldown, check_archival=archival_is_checked())
+    latest = get_new_version(reference.pinned, version_bound, cooldown, check_archival=archival_is_checked())
     resolved = SteeredResolvedReference.from_reference(reference, release=latest, marker=marker)
     report_project(resolved, log)
     log.report_yank(resolved, marker)
@@ -93,12 +97,12 @@ def latest_version(
     return None if marker.ignores(Scope.UPDATE) else latest
 
 
-def project_is_checked(source: object, subject: object, threshold: int) -> bool:
+def project_is_checked(source: object, dependency: DependencyName, threshold: int) -> bool:
     """Return whether a project check runs: the staleness check at this threshold, or the archival check.
 
     The archival check has no threshold of its own, so `--ignore-archived` is what switches it off.
     """
-    return threshold != NO_STALENESS_CHECK or (archival_is_checked() and reports_archival(source, subject))
+    return threshold != NO_STALENESS_CHECK or (archival_is_checked() and reports_archival(source, dependency))
 
 
 def report_project(resolved: SteeredResolvedReference, log: Logger) -> None:

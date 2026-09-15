@@ -8,7 +8,7 @@ from unittest.mock import Mock, call
 from update_time.domain.archival import archival_reporting
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import Archival, DependencyVersion, FloatingPin, Project
+from update_time.domain.dependency import Archival, DependencyVersion, FloatingPin, PinnedDependency, Project
 from update_time.domain.publication import publication_date_reporting
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import vulnerability_reporting
@@ -33,7 +33,7 @@ from tests.update_time.references.helpers import mock_project_getter, new_versio
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from update_time.domain.bound import NewVersionGetter
+    from update_time.domain.bound import NewVersionGetter, VersionBound
     from update_time.domain.reference import Reference
     from update_time.markers.reference import SteeredResolvedReference
 
@@ -127,6 +127,12 @@ class LatestVersionTest(unittest.TestCase):
         marker = Marker() if marker is None else marker
         return latest_version(self.reference(dependency), get_new_version, marker, self.log)
 
+    def assert_resolved(
+        self, get_new_version: Mock, version_bound: VersionBound = NO_BOUND, cooldown: int = COOLDOWN.default
+    ) -> None:
+        """Assert the source was asked once about the reference's pin, under the bound and cooldown given."""
+        get_new_version.assert_called_once_with(self.reference().pinned, version_bound, cooldown, check_archival=True)
+
     def test_returns_the_resolved_version(self):
         """Test that the version the getter resolves is returned."""
         self.assertEqual(self.latest_version(), DependencyVersion(version="3.15"))
@@ -140,30 +146,26 @@ class LatestVersionTest(unittest.TestCase):
         """Test that the marker's version bound reaches the getter, so the source only picks admitted versions."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.14.1"))
         self.latest_version(Marker(version_bound=bound(Verb.ALLOW, "update<3.15")), get_new_version)
-        get_new_version.assert_called_once_with(
-            "python", "3.14", bound(Verb.ALLOW, "update<3.15"), COOLDOWN.default, check_archival=True
-        )
+        self.assert_resolved(get_new_version, bound(Verb.ALLOW, "update<3.15"))
 
     def test_ignore_update_passes_a_block_all_bound_to_the_getter(self):
         """Test that a held-back update asks the source to keep the current version rather than resolve an update."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.14"))
         self.latest_version(Marker(ignored_scopes=Scope.UPDATE), get_new_version)
-        get_new_version.assert_called_once_with(
-            "python", "3.14", BLOCK_ALL_UPDATES, COOLDOWN.default, check_archival=True
-        )
+        self.assert_resolved(get_new_version, BLOCK_ALL_UPDATES)
 
     @patch_environ({COOLDOWN.name: "30"})
     def test_passes_the_configured_cooldown_to_the_getter(self):
         """Test that the cooldown the run was configured with reaches the getter, rather than the built-in default."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.15"))
         self.latest_version(get_new_version=get_new_version)
-        get_new_version.assert_called_once_with("python", "3.14", NO_BOUND, 30, check_archival=True)
+        self.assert_resolved(get_new_version, cooldown=30)
 
     def test_the_markers_cooldown_is_passed_to_the_getter(self):
         """Test that a reference carrying its own cooldown is resolved with that one, not the global one."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.15"))
         self.latest_version(Marker(cooldown=Threshold(value=30)), get_new_version)
-        get_new_version.assert_called_once_with("python", "3.14", NO_BOUND, 30, check_archival=True)
+        self.assert_resolved(get_new_version, cooldown=30)
 
     def test_warns_about_a_redundant_bound(self):
         """Test that the reference's bound is checked for redundancy against its current version."""
@@ -204,7 +206,7 @@ class LatestVersionTest(unittest.TestCase):
         marker = Marker(cooldown=Threshold(inverted_item="cooldown>=30"), raw="ignore[cooldown>=30]")
         self.latest_version(marker, get_new_version)
         self.log.report_inverted_items.assert_called_once_with(self.reference(), marker)
-        get_new_version.assert_called_once_with("python", "3.14", NO_BOUND, COOLDOWN.default, check_archival=True)
+        self.assert_resolved(get_new_version)
 
     def test_warns_about_an_inverted_vulnerability_item(self):
         """Test that a `vulnerable` item comparing the wrong way is reported."""
@@ -248,9 +250,9 @@ class LatestVersionTest(unittest.TestCase):
         One case per warning the publication date decides: the `cooldown` item's and the `stale` directive's.
         """
 
-        def dates_the_releases_of(dependency: str) -> bool:
-            """Return whether the source dates the dependency's releases, which it does for `node` alone."""
-            return dependency == "node"
+        def dates_the_releases_of(pinned: PinnedDependency) -> bool:
+            """Return whether the source dates the pinned dependency's releases, which it does for `node` alone."""
+            return pinned.name == "node"
 
         get_new_version = publication_date_reporting(new_version_getter("3.15"), when=dates_the_releases_of)
         for directive in ("ignore[cooldown<30]", "ignore[stale<90]"):
@@ -403,8 +405,8 @@ class ReportProjectChecksTest(unittest.TestCase):
         Mutation(
             resolve,
             "    return threshold != NO_STALENESS_CHECK or "
-            "(archival_is_checked() and reports_archival(source, subject))",
-            "    return threshold != NO_STALENESS_CHECK or reports_archival(source, subject)",
+            "(archival_is_checked() and reports_archival(source, dependency))",
+            "    return threshold != NO_STALENESS_CHECK or reports_archival(source, dependency)",
             "a source is asked about a reference with both checks off, so the run pays for an answer nothing reads",
         )
     )

@@ -12,7 +12,7 @@ from update_time.domain import dependency
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.changelog import is_markdown
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import Archival, ArchivedSubject, Release
+from update_time.domain.dependency import Archival, ArchivedSubject, PinnedDependency, Release
 from update_time.io.log import Logger
 from update_time.sources import github
 from update_time.sources.github import (
@@ -22,7 +22,6 @@ from update_time.sources.github import (
     _newest_release,
     changes_from_changelog_file,
     changes_from_release,
-    get_latest_version,
     github_owner_and_repository,
     github_to_raw,
 )
@@ -50,7 +49,17 @@ from tests.update_time.sources.helpers import (
 )
 
 if TYPE_CHECKING:
+    from update_time.domain.bound import VersionBound
     from update_time.domain.dependency import DependencyVersion, VersionString
+
+
+def get_latest_version(
+    action: str, current_version: str, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
+) -> DependencyVersion:
+    """Return what the source resolves for the action and version, as a test writes them."""
+    pinned = PinnedDependency(action, current_version)
+    return github.get_latest_version(pinned, version_bound, cooldown_days, check_archival=check_archival)
+
 
 _OLD_DATE = datetime.now(UTC) - timedelta(days=10)  # A publication date outside the cooldown window
 _OLD_ISO = _OLD_DATE.isoformat()

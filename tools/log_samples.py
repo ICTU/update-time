@@ -14,6 +14,7 @@ from pathlib import Path
 
 from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
 from update_time.domain.dependency import (
+    AccountedFor,
     Archival,
     ArchivedSubject,
     DependencyVersion,
@@ -122,6 +123,10 @@ def _redundant_directives(
     redundant_floating_pin = capture.take()
 
     log.redundant_directive(reference("python", dockerfile), "allow[floating-pin]", Reason.UPDATE_HELD_BACK)
+    redundant_frozen_floating_pin = capture.take()
+
+    built = reference("acme/api", Location(Path("docker-compose.yml"), 4), "dev")
+    log.redundant_directive(built, "allow[floating-pin]", Reason.NO_REGISTRY_ASKED)
     return {
         "@@REDUNDANT_VULNERABLE_SCOPE_WARNING@@": redundant_vulnerable_scope,
         "@@REDUNDANT_VULNERABLE_ADVISORY_WARNING@@": redundant_vulnerable_advisory,
@@ -134,7 +139,8 @@ def _redundant_directives(
         "@@REDUNDANT_COOLDOWN_ITEM_WARNING@@": redundant_cooldown_item,
         "@@REDUNDANT_STALE_SOURCE_WARNING@@": redundant_stale_source,
         "@@REDUNDANT_FLOATING_PIN_WARNING@@": redundant_floating_pin,
-        "@@REDUNDANT_FROZEN_FLOATING_PIN_WARNING@@": capture.take(),
+        "@@REDUNDANT_FROZEN_FLOATING_PIN_WARNING@@": redundant_frozen_floating_pin,
+        "@@REDUNDANT_UNASKED_FLOATING_PIN_WARNING@@": capture.take(),
     }
 
 
@@ -164,6 +170,17 @@ def _inverted_items(log: Logger, capture: _Capture, requirements: Location, dock
         "@@INVERTED_COOLDOWN_WARNING@@": cooldown,
         "@@INVERTED_VULNERABLE_WARNING@@": capture.take(),
     }
+
+
+def _accounted_for_references(log: Logger, capture: _Capture, dockerfile: Location) -> str:
+    """Log one reference of each kind the file itself accounts for, and return the lines they render as."""
+    compose = reference("acme/api", Location(Path("docker-compose.yml"), 4), "1.2.3")
+    log.accounted_for_reference(compose, AccountedFor.BUILT_IMAGE)
+    machine = reference("ubuntu-2204", Location(Path(".circleci/config.yml"), 4), "2024.01.1")
+    log.accounted_for_reference(machine, AccountedFor.MACHINE_EXECUTOR_IMAGE)
+    log.accounted_for_reference(reference("scratch", Location(Path("Dockerfile"), 1)), AccountedFor.EMPTY_BASE_IMAGE)
+    log.accounted_for_reference(reference("deps", dockerfile), AccountedFor.BUILD_STAGE)
+    return capture.take()
 
 
 def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
@@ -232,6 +249,11 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.keeping_floating_tag(reference("python", dockerfile, "latest"), pinned_tag, "update-time: allow[floating-pin]")
     kept_floating_tag = capture.take()
 
+    accounted_for = _accounted_for_references(log, capture, dockerfile)
+
+    log.invalid_yaml(Path("docker-compose.yml"))
+    invalid_yaml = capture.take()
+
     marker = Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")
     log.recognised_marker("python", marker, dockerfile)
     recognised = capture.take()
@@ -242,6 +264,8 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@PINNED_FLOATING_TAG@@": pinned_floating_tag,
         "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
+        "@@ACCOUNTED_FOR_REFERENCES@@": accounted_for,
+        "@@INVALID_YAML_WARNING@@": invalid_yaml,
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@VULNERABILITY_WARNING@@": vulnerable,

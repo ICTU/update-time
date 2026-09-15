@@ -57,6 +57,9 @@ class _Rewriter:
         latest = latest_version(reference, self.get_new_version, marker, self.logger)
         if latest is None:
             return match.string
+        if latest.accounted_for is not None:
+            self.logger.accounted_for_reference(reference, latest.accounted_for)
+            return match.string
         if latest.floating is not None and latest.floating is not FloatingPin.RESOLVED:
             self.logger.unpinned_floating_tag(reference, latest, latest.floating)
             return match.string

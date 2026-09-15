@@ -2,9 +2,8 @@
 
 from unittest.mock import Mock, patch
 
-from update_time.domain.dependency import FloatingPin
+from update_time.domain.dependency import AccountedFor, FloatingPin
 from update_time.io.log import Logger
-from update_time.markers.directive import Reason
 from update_time.primitives.location import Location
 from update_time.updaters import update_circle_ci_config as circle_ci
 from update_time.updaters.update_circle_ci_config import update_circle_ci_config
@@ -68,9 +67,9 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
     @kills(
         Mutation(
             circle_ci,
-            '    machine_names = {image.split(":", maxsplit=1)[0] for image in machine}',
-            '    machine_names = {image for image in machine if ":" in image}',
-            "a machine-executor image is recognised by its name and tag, so one naming no tag is looked up",
+            "            images.add(image)\n",
+            '            if ":" in image:\n                images.add(image)\n',
+            "a machine-executor image naming no tag is not collected, so it is looked up on a registry",
         )
     )
     def test_machine_image_without_a_tag_is_skipped(self):
@@ -82,35 +81,28 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         self.requests.assert_not_called()
         self.assert_no_warnings_logged()
 
+    @kills(
+        Mutation(
+            circle_ci,
+            "        get_new_version_for=tag_getter_excluding_each("
+            "_machine_images, AccountedFor.MACHINE_EXECUTOR_IMAGE),\n",
+            "        get_new_version_for=tag_getter_excluding_each(_machine_images, AccountedFor.BUILT_IMAGE),\n",
+            "a machine-executor image is reported as one a Compose file builds",
+        )
+    )
     def test_machine_image_skipped(self):
-        """Test that a machine-executor image is left unchanged and not looked up on Docker Hub (no warning)."""
+        """Test that a machine-executor image is left unchanged, not looked up on Docker Hub, and reported."""
         config_yml = mock_path("jobs:\n  build:\n    machine:\n      image: ubuntu-2204:2024.01.1\n")
         self.run_updater(config_yml)
         config_yml.write_text.assert_not_called()
         # The machine image is recognised by parsing the YAML, so no registry is queried for it.
         self.requests.assert_not_called()
+        location = Location(config_yml, 4)
+        self.assert_accounted_for_reference_logged(
+            "ubuntu-2204", "2024.01.1", location, AccountedFor.MACHINE_EXECUTOR_IMAGE
+        )
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
-
-    def test_cooldown_marker_on_a_machine_image_is_reported_as_redundant(self):
-        """Test that a `cooldown` marker on a machine-executor image is reported, since no registry dates it."""
-        marker = "      # update-time: ignore[cooldown<30]\n"
-        config_yml = mock_path(f"jobs:\n  build:\n    machine:\n{marker}      image: ubuntu-2204:2024.01.1\n")
-        self.run_updater(config_yml)
-        config_yml.write_text.assert_not_called()
-        self.assert_redundant_directive_logged(
-            Reason.NO_COOLDOWN_DATES, "ubuntu-2204", Location(config_yml, 5), "ignore[cooldown<30]"
-        )
-
-    def test_stale_marker_on_a_machine_image_is_reported_as_redundant(self):
-        """Test that a `stale` marker on a machine-executor image is reported, since no registry dates it."""
-        marker = "      # update-time: ignore[stale<90]\n"
-        config_yml = mock_path(f"jobs:\n  build:\n    machine:\n{marker}      image: ubuntu-2204:2024.01.1\n")
-        self.run_updater(config_yml)
-        config_yml.write_text.assert_not_called()
-        self.assert_redundant_directive_logged(
-            Reason.NO_STALENESS_DATES, "ubuntu-2204", Location(config_yml, 5), "ignore[stale<90]"
-        )
 
     def test_docker_image_with_auth_before_image(self):
         """Test that a Docker image is updated even when its list item lists `auth:` before `image:`."""

@@ -4,10 +4,11 @@ import io
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest.mock import Mock, call, patch
 
 from tools import rename as rename_module
-from tools.rename import _PROSE_FILES, _PROSE_ROOTS, _prose_files, main, stale_mentions, surviving_occurrences
+from tools.rename import _PROSE_ROOTS, _prose_files, main, stale_mentions, surviving_occurrences
 
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
@@ -78,13 +79,13 @@ class StaleMentionsTest(unittest.TestCase):
 class ProseFilesTest(unittest.TestCase):
     """Unit tests for the files searched for prose mentioning a name."""
 
-    def test_the_roots_and_patterns_searched(self):
-        """Test that every pattern is searched under every root, so the files a rename was given are not the limit."""
-        root = Mock(rglob=Mock(return_value=[Mock()]))
-        with patch("tools.rename.Path", Mock(return_value=root)):
+    def test_only_the_tracked_prose_files_are_searched(self):
+        """Test that git lists the files, so an untracked virtualenv below a root is searched not at all."""
+        listed = "src/update_time/oci.py\0docs/README.md.in\0src/update_time/oci.pyc\0"
+        with patch("tools.rename.subprocess.run", Mock(return_value=Mock(stdout=listed))) as run:
             found = _prose_files()
-        self.assertEqual(len(found), len(_PROSE_ROOTS) * len(_PROSE_FILES))
-        self.assertEqual(root.rglob.call_args_list[:2], [call(_PROSE_FILES[0]), call(_PROSE_FILES[1])])
+        self.assertEqual(found, [Path("src/update_time/oci.py"), Path("docs/README.md.in")])
+        self.assertEqual(run.call_args.args[0], ["git", "ls-files", "-z", *_PROSE_ROOTS])
 
 
 class MainTest(unittest.TestCase):

@@ -3,6 +3,7 @@
 import re
 from typing import TYPE_CHECKING
 
+from update_time.domain.dependency import AccountedFor
 from update_time.domain.file_type import DOCKERFILES
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
@@ -12,7 +13,7 @@ from update_time.sources.oci import OPTIONALLY_TAGGED_IMAGE_REFERENCE, tag_gette
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from update_time.domain.dependency import DependencyName
+    from update_time.domain.dependency import PinnedDependency
 
 
 _LOG = get_logger("dockerfile")
@@ -33,14 +34,19 @@ def _stage_names(dockerfile: Path) -> frozenset[str]:
 
 
 def _update_dockerfile(dockerfile: Path) -> None:
-    """Update the base images in one Dockerfile, leaving the references no registry serves unchanged."""
+    """Update the base images in one Dockerfile, leaving the references the file accounts for unchanged."""
     stages = _stage_names(dockerfile)
 
-    def registry_serves(image: DependencyName) -> bool:
-        """Return whether a registry serves the image, which it does for neither `scratch` nor a build stage."""
-        return image != _SCRATCH and image.lower() not in stages
+    def accounted_for(pinned: PinnedDependency) -> AccountedFor | None:
+        """Return why the Dockerfile itself accounts for the reference, or None when it does not.
 
-    update_file(dockerfile, _IMAGE_RE, get_new_version=tag_getter(registry_serves), logger=_LOG)
+        Neither `scratch` nor a build stage carries a tag to tell one from another, so the version decides nothing.
+        """
+        if pinned.name == _SCRATCH:
+            return AccountedFor.EMPTY_BASE_IMAGE
+        return AccountedFor.BUILD_STAGE if pinned.name.lower() in stages else None
+
+    update_file(dockerfile, _IMAGE_RE, get_new_version=tag_getter(accounted_for), logger=_LOG)
 
 
 def update_dockerfiles() -> None:

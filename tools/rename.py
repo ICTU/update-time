@@ -20,7 +20,9 @@ Usage: `uv run python tools/rename.py OLD NEW FILE ...`, with OLD qualified for 
 
 import ast
 import re
+import subprocess  # nosec
 import sys
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -89,8 +91,11 @@ def _mentioned_lines(name: str, text: str) -> list[int]:
 
 
 def _prose_files() -> list[Path]:
-    """Return every file whose prose can mention a name, which is far more than the rename was given."""
-    return [path for root in _PROSE_ROOTS for pattern in _PROSE_FILES for path in Path(root).rglob(pattern)]
+    """Return every version-controlled file whose prose can mention a name."""
+    command = ["git", "ls-files", "-z", *_PROSE_ROOTS]
+    listed = subprocess.run(command, check=False, capture_output=True, text=True).stdout  # noqa: S603 # nosec
+    tracked = (Path(entry) for entry in listed.split("\0") if entry)
+    return [path for path in tracked if any(fnmatch(path.name, pattern) for pattern in _PROSE_FILES)]
 
 
 def _sources(paths: list[str]) -> dict[str, str]:

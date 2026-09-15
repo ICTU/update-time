@@ -11,8 +11,18 @@ from unittest.mock import ANY, Mock, patch
 
 from rich.logging import RichHandler
 
+from update_time.domain import dependency as dependency_module
 from update_time.domain.bound import Redundancy, Verb
-from update_time.domain.dependency import Archival, Changes, DependencyVersion, FloatingPin, Project, Release, Yank
+from update_time.domain.dependency import (
+    AccountedFor,
+    Archival,
+    Changes,
+    DependencyVersion,
+    FloatingPin,
+    Project,
+    Release,
+    Yank,
+)
 from update_time.domain.reference import DriftedPin
 from update_time.io import log as log_module
 from update_time.io.console import (
@@ -226,6 +236,25 @@ class LoggerTests(TestCase):
             "no tag naming a version serves the same image",
         )
 
+    @kills(
+        Mutation(
+            log_module,
+            '        "Reference %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s",\n',
+            '        "Reference %(dependency)s%(tag)s in %(location)s was left as it is",\n',
+            "the line reports that a reference was left as it is without naming what accounts for it",
+        )
+    )
+    def test_accounted_for_reference(self, mock_log: Mock):
+        """Test that a reference the file itself accounts for is reported with what accounts for it."""
+        location = create_location("docker-compose.yml", 4)
+        _new_logger().accounted_for_reference(reference("acme/api", location, "1.2.3"), AccountedFor.BUILT_IMAGE)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_ACCOUNTED_FOR_REFERENCE,
+            f"Reference {dependency('acme/api')}:1.2.3 in {at('docker-compose.yml:4')} was left as it is: "
+            "the Compose file builds this image",
+        )
+
     def test_keeping_a_floating_tag(self, mock_log: Mock):
         """Test that a floating tag left as it is is reported with the tag it names and what it resolves to."""
         location = create_location("Dockerfile", 1)
@@ -241,9 +270,9 @@ class LoggerTests(TestCase):
 
     @kills(
         Mutation(
-            log_module,
-            '        return f":{version}" if version else ""',
-            '        return f":{version}"',
+            dependency_module,
+            '    return f":{version}" if version else ""',
+            '    return f":{version}"',
             "a reference naming no tag is reported with a colon that names nothing after it",
         )
     )
@@ -682,6 +711,16 @@ class LoggerTests(TestCase):
             mock_log,
             Logger._MESSAGE_INVALID_TOML,
             f"Skipping {at('pyproject.toml')}: it is not valid TOML",
+        )
+
+    def test_invalid_yaml(self, mock_log: Mock):
+        """Test that an unparsable YAML file is logged as a warning."""
+        path = Path.cwd() / "docker-compose.yml"
+        _new_logger().invalid_yaml(path)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_INVALID_YAML,
+            f"Skipping {at('docker-compose.yml')}: it is not valid YAML",
         )
 
     def test_excluded_path_logged_at_debug(self, mock_log: Mock):

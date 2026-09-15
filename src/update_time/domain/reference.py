@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
+from update_time.domain.dependency import PinnedDependency
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
@@ -15,7 +17,7 @@ class Reference:
     """A pinned reference as a file records it: a dependency, the version it is pinned to, and the line it sits on.
 
     The line is part of the reference because every report about one names where to edit it, so the two are never
-    apart for long. A source asked about a reference reads its dependency and version alone.
+    apart for long.
 
     `current_sha` is the commit SHA the reference is pinned to when it carries one in a `<sha> # <version>` form (a
     GitHub Action `uses:` or pre-commit hook `rev:`); it is empty for a reference that is still an unpinned version
@@ -27,6 +29,11 @@ class Reference:
     current_version: VersionString
     location: Location
     current_sha: str = ""
+
+    @property
+    def pinned(self) -> PinnedDependency:
+        """Return the dependency and the version this reference pins it to."""
+        return PinnedDependency(self.dependency, self.current_version)
 
     @classmethod
     def from_reference(cls, reference: Reference, **resolved: object) -> Self:

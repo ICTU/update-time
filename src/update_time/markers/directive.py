@@ -34,6 +34,7 @@ class Reason(StrEnum):
     NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY = "this requirement pins no version to check for a vulnerability"
     PIN_NOT_FLOATING = "this reference's pin does not float"
     UPDATE_HELD_BACK = "this reference's update is held back, so its tag is never pinned"
+    NO_REGISTRY_ASKED = "Update-time asks no registry about this reference, so its tag is never pinned"
 
 
 @dataclass(frozen=True)
