@@ -186,7 +186,7 @@ Update-time logs at four levels. `--log-level` sets the lowest one shown, which 
 | :-: | :---- | :------------- |
 | 🔍 | `DEBUG` | what Update-time is doing: files it checks, [markers](#-controlling-updates-and-warnings-per-reference) it recognises, updates held back, warnings silenced, and more |
 | ℹ️ | `INFO` | what Update-time changed: a version updated, a [hash pinned](#-pinning) |
-| ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a source it could not reach, a marker that is [invalid](#invalid-markers), [incorrect](#incorrect-markers), or [redundant](#redundant-markers) |
+| ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a source it could not reach, a file it could not parse, a marker that is [invalid](#invalid-markers), [incorrect](#incorrect-markers), or [redundant](#redundant-markers) |
 | ❌ | `ERROR` | failures that stop an update, such as a package manager that is not installed |
 
 ### Workflow
@@ -764,7 +764,7 @@ Staleness is measured against the publication date of a dependency's newest rele
 WARNING Redundant update-time directive ignore[stale<90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source reports no publication date to measure staleness against
 ```
 
-Three kinds of reference get that warning. An image on a registry other than Docker Hub does, since only Docker Hub reports a push date. So Update-time does not report the same marker on a Docker Hub image. A CircleCI machine-executor image gets the warning too, since no registry serves it. And so does a runtime version that follows the project's Dockerfile, whether it is a `.python-version` entry or a Node engine. The staleness reported for it is the base image's, not its own.
+Three kinds of reference get that warning. An image on a registry other than Docker Hub does, since only Docker Hub reports a push date. So Update-time does not report the same marker on a Docker Hub image. A reference a file accounts for itself gets the warning too — Update-time asks no registry about it. A CircleCI machine-executor image and an image a Docker Compose file builds are such references. And a runtime version that follows the project's Dockerfile gets the warning as well, whether it is a `.python-version` entry or a Node engine. The staleness reported for it is the base image's, not its own.
 
 #### The `cooldown` scope
 
@@ -774,7 +774,7 @@ Update-time reports the `cooldown` scope as redundant for a reference whose sour
 WARNING Redundant update-time directive ignore[cooldown<30] for python in .python-version:2: this dependency's source reports no publication date to measure a cooldown against
 ```
 
-Three kinds of reference get that warning. A runtime version that follows the project's Dockerfile gets it, whether it is a `.python-version` entry or a Node engine. Update-time already applied its cooldown when it updated the base image. An image on a registry other than Docker Hub gets the warning too. Only Docker Hub reports a push date to measure a cooldown against, so Update-time does not report the same marker on a Docker Hub image. A CircleCI machine-executor image gets the warning as well, since no registry serves it.
+Three kinds of reference get that warning. A runtime version that follows the project's Dockerfile gets it, whether it is a `.python-version` entry or a Node engine. Update-time already applied its cooldown when it updated the base image. An image on a registry other than Docker Hub gets the warning too. Only Docker Hub reports a push date to measure a cooldown against, so Update-time does not report the same marker on a Docker Hub image. A reference a file accounts for itself gets the warning as well — Update-time asks no registry about it. A CircleCI machine-executor image and an image a Docker Compose file builds are such references.
 
 Update-time reports a `cooldown` on a `pyproject.toml` or inline script metadata dependency as redundant, since uv takes a cooldown per run rather than per dependency (see [Setting a cooldown period](#setting-a-cooldown-period)). It reports one on a `requirements.txt` requirement that pins no exact version too. PyPI dates its releases, but Update-time resolves no update for such a requirement, so a cooldown holds no release back.
 
@@ -846,6 +846,12 @@ An `ignore` or an `ignore[update]` keeps nothing floating either, since Update-t
 
 ```console
 WARNING Redundant update-time directive allow[floating-pin] for python in Dockerfile:2: this reference's update is held back, so its tag is never pinned
+```
+
+Update-time never pins a reference a file accounts for itself, so an `allow[floating-pin]` on one is redundant as well:
+
+```console
+WARNING Redundant update-time directive allow[floating-pin] for acme/api in docker-compose.yml:4: Update-time asks no registry about this reference, so its tag is never pinned
 ```
 
 Update-time does not report a floating tag it could not pin, since that tag does float. It logs the reason at `DEBUG` instead (see [Floating image tags](#floating-image-tags)).
@@ -1183,11 +1189,30 @@ Update-time looks for these files, each with its own globs and in its own folder
 | Dockerfiles | Base images (`FROM` references) |
 | CircleCI configs | Docker images (machine-executor images are left unchanged) |
 | .gitlab-ci.yml | Docker images (`image:` references) |
-| Docker Compose files | Service images (`image:` references) |
+| Docker Compose files | Service images (`image:` references; an image the file builds is left unchanged) |
 | Helm charts | Container images (`image:` references) |
 | devcontainer configs | The base image and each feature |
 
 Update-time reads a Dockerfile's `FROM` the way Docker reads it: in upper or lower case, and only where it opens its line. Neither `FROM scratch` nor a `FROM` naming one of the file's own build stages names an image a registry serves, so Update-time leaves both alone.
+
+A Docker Compose service that declares a `build:` beside its `image:` names the image the file builds. That image is the file's output rather than a dependency to update, so Update-time leaves it alone. It leaves the other services naming that image alone as well, including the ones that build nothing themselves. The reference is matched by name and tag, so another tag of the same repository is a registry image like any other and is updated as one. Update-time reads one file at a time, so an image one Docker Compose file builds is updated in another file that pulls it.
+
+Update-time reports every reference a file accounts for itself at `DEBUG`, naming what accounts for it:
+
+```console
+DEBUG Reference acme/api:1.2.3 in docker-compose.yml:4 was left as it is: the Compose file builds this image
+DEBUG Reference ubuntu-2204:2024.01.1 in .circleci/config.yml:4 was left as it is: it names a CircleCI machine executor rather than an image a registry serves
+DEBUG Reference scratch in Dockerfile:1 was left as it is: it names the empty base image Docker builds from, which no registry serves
+DEBUG Reference deps in Dockerfile:2 was left as it is: it names one of the Dockerfile's own build stages
+```
+
+Update-time parses a Docker Compose file and a CircleCI config, so it warns about one whose YAML does not parse and skips it:
+
+```console
+WARNING Skipping docker-compose.yml: it is not valid YAML
+```
+
+It reads every other format line by line, so a Helm chart is updated as usual even when its Go templating leaves it invalid YAML.
 
 #### What versions are updated?
 
@@ -1203,7 +1228,7 @@ Update-time appends the `@sha256:digest` of the (latest) tag to an image referen
 
 A floating tag is pinned to both at once: the version tag serving the image it currently resolves to, and that image's digest.
 
-Two kinds of reference get no digest. Update-time ignores an image whose tag it cannot read: a reference through a `{{ ... }}` template or `${VAR}` variable substitution. A CircleCI machine-executor image (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) gets none either, since it is not a registry image.
+Update-time ignores an image whose tag it cannot read, so a reference through a `{{ ... }}` template or `${VAR}` variable substitution gets no digest. A reference a file accounts for itself gets none either — Update-time asks no registry about it. A CircleCI machine-executor image (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) and an image a Docker Compose file builds are such references.
 
 #### Cooldown
 

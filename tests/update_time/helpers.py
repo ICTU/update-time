@@ -17,7 +17,7 @@ from packaging.version import Version
 
 import update_time
 from update_time.domain.archival import IGNORE_ARCHIVED
-from update_time.domain.dependency import ArchivedSubject, DependencyVersion, FloatingPin
+from update_time.domain.dependency import AccountedFor, ArchivedSubject, DependencyVersion, FloatingPin, tag_of
 from update_time.domain.reference import Reference
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import Vulnerability
@@ -294,7 +294,7 @@ class LoggingTestCase(CacheClearingTestCase):
         self.assert_logged_among_others(
             Logger._MESSAGE_UNPINNED_FLOATING_TAG,
             dependency=dependency,
-            tag=Logger._tag_of(version),
+            tag=tag_of(version),
             location=location,
             reason=reason,
         )
@@ -306,11 +306,23 @@ class LoggingTestCase(CacheClearingTestCase):
         self.assert_logged_among_others(
             Logger._MESSAGE_KEEPING_FLOATING_TAG,
             dependency=dependency,
-            tag=Logger._tag_of(version),
+            tag=tag_of(version),
             resolved=release.version,
             sha=release.sha,
             location=location,
             cause=cause,
+        )
+
+    def assert_accounted_for_reference_logged(
+        self, dependency: str, tag: str, location: Location, reason: AccountedFor
+    ) -> None:
+        """Assert that a reference the file itself accounts for was reported, with its reason, among the others."""
+        self.assert_logged_among_others(
+            Logger._MESSAGE_ACCOUNTED_FOR_REFERENCE,
+            dependency=dependency,
+            tag=tag_of(tag),
+            location=location,
+            reason=reason,
         )
 
     def assert_cannot_pin_logged(self, dependency: str, location: Location) -> None:

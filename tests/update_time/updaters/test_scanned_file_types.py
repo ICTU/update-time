@@ -1,6 +1,7 @@
 """Unit tests for the file type each updater script scans."""
 
 import unittest
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from update_time.domain import file_type
@@ -22,8 +23,11 @@ from update_time.updaters import (
 
 from tests.mutation import Mutation, kills
 
-# The file type each updater walks, and the function that walks it. Only `update_manifest_images` is left out: it
-# hands its file type to `update_files` rather than walking one itself.
+if TYPE_CHECKING:
+    from types import ModuleType
+
+# The file type each updater scans, and the function that scans it. Only `update_manifest_images` is left out: it
+# scans two file types, so `ScannedManifestsTest` pins both of them.
 _SCANS = (
     (update_circle_ci_config, "update_circle_ci_config", file_type.CIRCLE_CI_CONFIGS),
     (update_devcontainer, "update_devcontainers", file_type.DEVCONTAINER_CONFIGS),
@@ -39,6 +43,16 @@ _SCANS = (
     (update_python_version_file, "update_python_version_files", file_type.PYTHON_VERSION_FILE),
     (update_requirements_txt, "update_requirements_txts", file_type.REQUIREMENTS_TXT),
 )
+
+
+# The names an updater hands its file type to: `glob_for` where it walks the files itself, `update_yaml_files`
+# where the walk is done for it because each file is parsed before its references are rewritten.
+_WALKERS = ("glob_for", "update_yaml_files")
+
+
+def _walker(module: ModuleType) -> str:
+    """Return the name the module hands its file type to, so the test patches the one that module uses."""
+    return next(name for name in _WALKERS if hasattr(module, name))
 
 
 class ScannedFileTypesTest(unittest.TestCase):
@@ -58,6 +72,7 @@ class ScannedFileTypesTest(unittest.TestCase):
         self.assertNotEqual(_SCANS, ())  # An empty table would pass the assertion below without examining anything
         for module, function, expected in _SCANS:
             with self.subTest(script=module.__name__.rpartition(".")[2]):
-                with patch(f"{module.__name__}.glob_for", return_value=[]) as glob_for:
+                with patch(f"{module.__name__}.{_walker(module)}", return_value=[]) as walk:
                     getattr(module, function)()
-                glob_for.assert_called_once_with(expected)
+                walk.assert_called_once()
+                self.assertEqual(walk.call_args.args, (expected,))

@@ -33,6 +33,15 @@ if TYPE_CHECKING:
 type DependencyName = str
 type VersionString = str
 
+
+@dataclass(frozen=True)
+class PinnedDependency:
+    """A dependency and the version a file pins it to, which is what a source is asked about."""
+
+    name: DependencyName
+    version: VersionString
+
+
 # The characters a Python distribution's name treats as one and the same separator (see `normalized_python_name`).
 _NAME_SEPARATORS = re.compile(r"[-_.]+")
 
@@ -75,6 +84,20 @@ class FloatingPin(StrEnum):
     NO_MANIFEST = "the registry serves no manifest for its tag, so what that tag serves is unknown"
     NO_VERSION_TAG = "no tag naming a version serves the same image"
     NO_VERSION_TAG_EXAMINED = "no tag naming a version among the newest examined serves the same image"
+
+
+def tag_of(version: VersionString) -> str:
+    """Return the version with the colon attaching it to a dependency's name, or nothing when it names none."""
+    return f":{version}" if version else ""
+
+
+class AccountedFor(StrEnum):
+    """Why Update-time asks no registry about a reference and leaves it as it is."""
+
+    BUILT_IMAGE = "the Compose file builds this image"
+    MACHINE_EXECUTOR_IMAGE = "it names a CircleCI machine executor rather than an image a registry serves"
+    EMPTY_BASE_IMAGE = "it names the empty base image Docker builds from, which no registry serves"
+    BUILD_STAGE = "it names one of the Dockerfile's own build stages"
 
 
 @dataclass(frozen=True)
@@ -174,6 +197,7 @@ class DependencyVersion:
     project: Project = Project()  # What the source reports about the project behind the dependency
     floating: FloatingPin | None = None  # What happened to the floating pin if the reference had one
     served: bool = True  # Whether the source serves the version the reference names
+    accounted_for: AccountedFor | None = None  # Why the file accounts for the reference, so no registry was asked
 
     @classmethod
     def unpinned(cls, project: Project) -> DependencyVersion:

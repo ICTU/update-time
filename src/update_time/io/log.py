@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from rich.console import Console
 
 from update_time.domain.bound import NO_BOUND
+from update_time.domain.dependency import tag_of
 from update_time.domain.staleness import stale_release
 from update_time.io.console import CHANGES, LOG_THEME, NOTE, configure_logging, delimit_dependency, delimit_location
 from update_time.markers.bound import spell
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 
     from requests import Response
 
-    from update_time.domain.dependency import Changes, DependencyVersion, FloatingPin, VersionString
+    from update_time.domain.dependency import AccountedFor, Changes, DependencyVersion, FloatingPin, VersionString
     from update_time.domain.reference import DriftedPin, Reference, ResolvedReference
     from update_time.domain.vulnerability import Vulnerability
     from update_time.markers.directive import Reason
@@ -191,11 +192,6 @@ class Logger:
         """Log that a previously unpinned reference in a file was pinned to a digest, without changing its version."""
         self._log(self._MESSAGE_PINNED, **self._reference_fields(reference, version=version.version, sha=version.sha))
 
-    @staticmethod
-    def _tag_of(version: VersionString) -> str:
-        """Return the tag with the colon attaching it to the image's name, or nothing when the reference names none."""
-        return f":{version}" if version else ""
-
     _MESSAGE_KEEPING_FLOATING_TAG = LogMessage(
         DEBUG,
         "Keeping the floating tag %(dependency)s%(tag)s in %(location)s: it resolves to %(resolved)s@%(sha)s "
@@ -203,16 +199,16 @@ class Logger:
     )
 
     @classmethod
-    def _floating_fields(cls, reference: Reference, tag: VersionString) -> dict[str, object]:
-        """Return the fields a report about a floating tag names it by: the reference, and the tag attached to it."""
-        return cls._reference_fields(reference, tag=cls._tag_of(tag))
+    def _tagged_fields(cls, reference: Reference, tag: VersionString) -> dict[str, object]:
+        """Return the fields a report names a reference by when it names the tag attached to it as well."""
+        return cls._reference_fields(reference, tag=tag_of(tag))
 
     def keeping_floating_tag(self, reference: Reference, release: DependencyVersion, cause: str) -> None:
         """Log that a floating tag was left as it is, naming the release it resolves to.
 
         A reference naming no tag is named by its image alone, the release naming what it resolves to already.
         """
-        fields = self._floating_fields(reference, reference.current_version)
+        fields = self._tagged_fields(reference, reference.current_version)
         self._log(self._MESSAGE_KEEPING_FLOATING_TAG, **fields, resolved=release.version, sha=release.sha, cause=cause)
 
     _MESSAGE_UNPINNED_FLOATING_TAG = LogMessage(
@@ -226,8 +222,18 @@ class Logger:
         The tag named is the one the source looked up. A reference naming none means `latest`, which the source
         reports back as the release it resolved, nothing having been pinned in its place.
         """
-        fields = self._floating_fields(reference, reference.current_version or release.version)
+        fields = self._tagged_fields(reference, reference.current_version or release.version)
         self._log(self._MESSAGE_UNPINNED_FLOATING_TAG, **fields, reason=reason)
+
+    _MESSAGE_ACCOUNTED_FOR_REFERENCE = LogMessage(
+        DEBUG,
+        "Reference %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s",
+    )
+
+    def accounted_for_reference(self, reference: Reference, reason: AccountedFor) -> None:
+        """Log that a reference the file itself accounts for was left as it is, explaining why."""
+        fields = self._tagged_fields(reference, reference.current_version)
+        self._log(self._MESSAGE_ACCOUNTED_FOR_REFERENCE, **fields, reason=reason)
 
     _MESSAGE_CANNOT_PIN = LogMessage(
         INFO,
@@ -383,7 +389,7 @@ class Logger:
         "Could not score the CVSS vector of advisory %(advisory)s (%(error)s), so it is reported at unknown severity",
     )
 
-    def malformed_cvss_vector(self, advisory: str, error: object) -> None:
+    def malformed_cvss_vector(self, advisory: str, error: Exception) -> None:
         """Warn that an advisory's CVSS vector could not be scored, so its risk level could not be derived."""
         self._log(self._MESSAGE_MALFORMED_CVSS_VECTOR, advisory=advisory, error=error)
 
@@ -672,6 +678,12 @@ class Logger:
         """Warn that a pyproject.toml can't be parsed as TOML, so it is skipped rather than crashing the run."""
         self._log_file(self._MESSAGE_INVALID_TOML, path)
 
+    _MESSAGE_INVALID_YAML = LogMessage(WARNING, "Skipping %(location)s: it is not valid YAML")
+
+    def invalid_yaml(self, path: Path) -> None:
+        """Warn that a YAML file can't be parsed, so it is skipped rather than crashing the run."""
+        self._log_file(self._MESSAGE_INVALID_YAML, path)
+
     _MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG = LogMessage(
         WARNING,
         "Cannot derive the Node engine version from the non-numeric base image tag 'node:%(tag)s' in %(location)s",
@@ -709,7 +721,7 @@ class Logger:
 
     _MESSAGE_REQUEST_ERROR = LogMessage(WARNING, "Could not fetch %(url)s: %(error)s")
 
-    def request_error(self, url: str, error: object) -> None:
+    def request_error(self, url: str, error: Exception) -> None:
         """Log a network error (connection failure, too many redirects, ...) while fetching a URL."""
         self._log(self._MESSAGE_REQUEST_ERROR, url=url, error=error)
 

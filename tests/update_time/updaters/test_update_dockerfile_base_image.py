@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock, patch
 
-from update_time.domain.dependency import DependencyVersion
+from update_time.domain.dependency import AccountedFor, DependencyVersion
 from update_time.domain.file_type import DOCKERFILES
 from update_time.io import log
 from update_time.markers.directive import Reason
@@ -58,8 +58,8 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
     @kills(
         Mutation(
             update_dockerfile_base_image,
-            "        return image != _SCRATCH and image.lower() not in stages",
-            "        return image != _SCRATCH.upper() and image.lower() not in stages",
+            "        if pinned.name == _SCRATCH:\n",
+            "        if pinned.name == _SCRATCH.upper():\n",
             "a `FROM scratch` is resolved as though a registry served the empty base",
         )
     )
@@ -70,14 +70,16 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_not_called()
         self.requests.assert_not_called()
+        location = Location(mock_dockerfile, 1)
+        self.assert_accounted_for_reference_logged("scratch", "", location, AccountedFor.EMPTY_BASE_IMAGE)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
     @kills(
         Mutation(
             update_dockerfile_base_image,
-            "        return image != _SCRATCH and image.lower() not in stages",
-            "        return image != _SCRATCH and image.lower() not in frozenset()",
+            "        return AccountedFor.BUILD_STAGE if pinned.name.lower() in stages else None\n",
+            "        return AccountedFor.BUILD_STAGE if pinned.name.lower() in frozenset() else None\n",
             "a `FROM` naming a build stage is resolved as though a registry served an image of that name",
         )
     )
@@ -89,6 +91,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile.write_text.assert_called_once_with(f"FROM python:3.14.7@{DIGEST} AS deps\nFROM deps\n")
         requested = "".join(call.args[0] for call in self.requests.call_args_list)
         self.assertNotIn("deps", requested)
+        self.assert_accounted_for_reference_logged("deps", "", Location(mock_dockerfile, 2), AccountedFor.BUILD_STAGE)
         self.assert_new_version_logged("python", "3.14.7", Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
@@ -119,8 +122,12 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
     @kills(
         Mutation(
             log,
-            "        fields = self._floating_fields(reference, reference.current_version)",
-            "        fields = self._floating_fields(reference, reference.current_version or release.version)",
+            "        fields = self._tagged_fields(reference, reference.current_version)\n"
+            "        self._log(self._MESSAGE_KEEPING_FLOATING_TAG, **fields, resolved=release.version, "
+            "sha=release.sha, cause=cause)\n",
+            "        fields = self._tagged_fields(reference, reference.current_version or release.version)\n"
+            "        self._log(self._MESSAGE_KEEPING_FLOATING_TAG, **fields, resolved=release.version, "
+            "sha=release.sha, cause=cause)\n",
             "a reference naming no tag is reported with the version it resolves to, as if it had named it",
         )
     )

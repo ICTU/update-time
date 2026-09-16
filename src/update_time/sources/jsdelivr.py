@@ -15,6 +15,7 @@ from update_time.domain.cooldown import within_cooldown
 from update_time.domain.dependency import (
     DependencyName,
     DependencyVersion,
+    PinnedDependency,
     Project,
     VersionString,
     first_eligible,
@@ -46,12 +47,7 @@ def version_getter(filename: str) -> NewVersionGetter:
     """
 
     def get_latest_version(
-        dependency: DependencyName,
-        current_version_string: VersionString,
-        version_bound: VersionBound,
-        cooldown_days: int,
-        *,
-        check_archival: bool,
+        pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
     ) -> DependencyVersion:
         """Return the latest jsDelivr version published outside the cooldown, with the file's integrity hash.
 
@@ -63,22 +59,22 @@ def version_getter(filename: str) -> NewVersionGetter:
         the Subresource Integrity check).
         """
         del check_archival
-        if not is_valid(current_version_string):
-            return DependencyVersion(version=current_version_string)
-        candidates = _candidate_versions(dependency, current_version_string, version_bound)
+        if not is_valid(pinned.version):
+            return DependencyVersion(version=pinned.version)
+        candidates = _candidate_versions(pinned, version_bound)
         latest = first_eligible(
             candidates,
-            lambda version: _eligible_version(dependency, version, filename, current_version_string, cooldown_days),
-            current_version_string,
+            lambda version: _eligible_version(pinned, version, filename, cooldown_days),
+            pinned.version,
         )
-        latest = with_yank_state(latest, current_version_string, partial(deprecation, dependency))
-        return replace(latest, project=Project(newest=newest_release(dependency)))
+        latest = with_yank_state(latest, pinned.version, partial(deprecation, pinned.name))
+        return replace(latest, project=Project(newest=newest_release(pinned.name)))
 
     return publication_date_reporting(vulnerability_reporting(yank_reporting(get_latest_version)))
 
 
 def _eligible_version(
-    dependency: str, version: Version, filename: str, current_version_string: VersionString, cooldown_days: int
+    pinned: PinnedDependency, version: Version, filename: str, cooldown_days: int
 ) -> DependencyVersion | None:
     """Return the version with its integrity hash when it's eligible, or None when it's too fresh or deprecated.
 
@@ -87,35 +83,31 @@ def _eligible_version(
     Subresource Integrity check. A version the npm registry dates nowhere counts as too fresh, since a version it
     has yet to date is one it has just received.
     """
-    published = get_publication_datetime(dependency, str(version))
+    published = get_publication_datetime(pinned.name, str(version))
     if published is None or within_cooldown(published, cooldown_days):
         return None
     version_string = str(version)
-    if deprecation(dependency, version_string).yanked:
+    if deprecation(pinned.name, version_string).yanked:
         return None
-    if integrity := integrity_hash(dependency, version_string, filename):
+    if integrity := integrity_hash(pinned.name, version_string, filename):
         return DependencyVersion(version_string, sha=integrity, published=published)
-    _LOG.no_integrity_hash(dependency, version_string, filename)
-    return DependencyVersion(version=current_version_string)
+    _LOG.no_integrity_hash(pinned.name, version_string, filename)
+    return DependencyVersion(version=pinned.version)
 
 
-def _candidate_versions(
-    dependency: str, current_version_string: VersionString, version_bound: VersionBound
-) -> list[Version]:
-    """Return the stable versions newer than the current one that the bound admits (`first_eligible` orders them)."""
-    response = fetch(f"{_JSDELIVR_PACKAGE_API}/{dependency}", _LOG, headers=_HEADERS)
+def _candidate_versions(pinned: PinnedDependency, version_bound: VersionBound) -> list[Version]:
+    """Return the stable versions newer than the pinned one that the bound admits (`first_eligible` orders them)."""
+    response = fetch(f"{_JSDELIVR_PACKAGE_API}/{pinned.name}", _LOG, headers=_HEADERS)
     if response is None:
         return []
-    current_version = Version(current_version_string)
+    current_version = Version(pinned.version)
     versions = [
         Version(entry["version"]) for entry in response.json().get("versions", []) if is_valid(entry["version"])
     ]
     return [
         version
         for version in versions
-        if version > current_version
-        and not version.is_prerelease
-        and version_bound.keeps(version, current_version_string)
+        if version > current_version and not version.is_prerelease and version_bound.keeps(version, pinned.version)
     ]
 
 
