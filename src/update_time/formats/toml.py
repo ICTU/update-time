@@ -11,6 +11,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+# What this format is called in a message about a file that does not parse.
+FORMAT = "TOML"
+
+
 def parse(text: str) -> dict | None:
     """Return the TOML parsed into a dict, or None when the text isn't valid TOML."""
     try:

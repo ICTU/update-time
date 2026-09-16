@@ -70,7 +70,13 @@ class GlobForTest(unittest.TestCase):
 
     def test_ignore_folders(self, mock_glob: Mock):
         """Test that some folders are ignored, while a file beside them is still returned."""
-        folders_that_should_be_ignored = ["/project/build", "/example/node_modules", "/src/__pycache__", "/.git"]
+        folders_that_should_be_ignored = [
+            "/project/build",
+            "/project/target",
+            "/example/node_modules",
+            "/src/__pycache__",
+            "/.git",
+        ]
         ignored = [Path(folder) / "file.txt" for folder in folders_that_should_be_ignored]
         mock_glob.return_value = [*ignored, Path("/src/file.txt")]
         self.assertEqual(list(glob_for(_TEXT_FILES)), [Path("/src/file.txt")])

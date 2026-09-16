@@ -1,11 +1,17 @@
 """Unit tests for making a test kill the mutations it is meant to kill."""
 
+import contextlib
 import importlib
+import importlib.machinery
 import os
+import pathlib
 import sys
+import tempfile
+import types
 import unittest
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, Mock, call, patch
+from typing import TYPE_CHECKING
+from unittest.mock import Mock, call, patch
 
 from update_time.primitives import timestamp
 
@@ -14,6 +20,9 @@ from tests import mutation as checker
 from tests.helpers import patch_environ
 from tests.mutation import CHECKED_TEST, CHECKS_OFF, Mutation, Outcome, Result, _record_survival, kills
 from tests.mutation_subject import is_even
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _EVEN = "number % 2 == 0"
 _ODD = "number % 2 != 0"
@@ -317,24 +326,58 @@ class KillersTest(unittest.TestCase):
         self.assertEqual(sys.modules, before)
 
 
+class CapturedMethodsTest(unittest.TestCase):
+    """Unit tests for the `Path` methods the module holds when it is imported."""
+
+    @staticmethod
+    def import_copy() -> None:
+        """Import a copy of the mutation module under a name of its own, leaving the one the suite runs on alone."""
+        loader = importlib.machinery.SourceFileLoader("mutation_imported_afresh", checker.__file__)
+        loader.exec_module(types.ModuleType(loader.name))
+
+    def test_importing_while_a_path_method_is_patched_fails(self):
+        """Test that importing fails while a `Path` method is patched, since the module would hold the patch."""
+        for method in ("exists", "read_text", "write_text"):
+            with self.subTest(patched=method), patch(f"pathlib.Path.{method}", Mock()):
+                self.assertRaises(TypeError, self.import_copy)
+
+    def test_importing_succeeds_while_nothing_is_patched(self):
+        """Test that importing a copy succeeds while nothing is patched, so a refusal names the patch, not the copy."""
+        self.import_copy()
+
+    def test_importing_succeeds_inside_a_mutation_check(self):
+        """Test that importing succeeds inside a mutation check, whose test may have patched a `Path` method."""
+        with patch("pathlib.Path.exists", Mock()), patch_environ({CHECKED_TEST: _SUBJECT_TEST_NAME}):
+            self.import_copy()
+
+
 class RecordSurvivalTest(unittest.TestCase):
     """Unit tests for the record kept of registrations that survived."""
 
     _HEADING = "# Registrations that survived\n\n"
 
-    def record(self, mutation: Mutation, recorded: str | None = None) -> MagicMock:
-        """Return the mocked file after recording, standing in for one holding `recorded`, or for none at all."""
-        survivals = MagicMock(
-            exists=Mock(return_value=recorded is not None), read_text=Mock(return_value=recorded or "")
-        )
-        with patch.object(checker, "_SURVIVALS", survivals):
+    @contextlib.contextmanager
+    def survivals(self, recorded: str | None = None) -> Iterator[pathlib.Path]:
+        """Yield the file `_record_survival` writes to, holding `recorded`, or standing for one that is not there.
+
+        A real file, since a stand-in answers with its own methods rather than the patched ones to get past.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            survivals = pathlib.Path(directory) / "mutation-survivals.md"
+            if recorded is not None:
+                survivals.write_text(recorded)
+            with patch.object(checker, "_SURVIVALS", survivals):
+                yield survivals
+
+    def record(self, mutation: Mutation, recorded: str | None = None) -> str:
+        """Return what the file holds after recording the mutation's survival."""
+        with self.survivals(recorded) as survivals:
             _record_survival("tests.test_module.Case.test_name", mutation)
-        return survivals
+            return survivals.read_text()
 
     def written(self, recorded: str | None = None) -> str:
         """Return what recording a survived registration of a production module leaves the file holding."""
-        survivals = self.record(Mutation(timestamp, "old", "new", _REGRESSION), recorded)
-        return survivals.write_text.call_args.args[0]
+        return self.record(Mutation(timestamp, "old", "new", _REGRESSION), recorded)
 
     def test_the_entry_names_the_day_the_test_and_the_regression(self):
         """Test that the entry dates the survival and names the test that stopped guarding, and against what."""
@@ -352,11 +395,28 @@ class RecordSurvivalTest(unittest.TestCase):
     def test_an_entry_the_file_already_holds_is_not_repeated(self):
         """Test that re-running the suite while the test is fixed adds no second entry for the same day."""
         already = self._HEADING + self.written(self._HEADING).removeprefix(self._HEADING)
-        self.record(Mutation(timestamp, "old", "new", _REGRESSION), already).write_text.assert_not_called()
+        self.assertEqual(self.record(Mutation(timestamp, "old", "new", _REGRESSION), already), already)
+
+    def test_the_entries_survive_a_test_that_patches_pathlib(self):
+        """Test that recording keeps what the file holds, though the test being checked patches a `Path` method."""
+        earlier = f"{self._HEADING}- an earlier entry\n"
+        fixture = "a fixture the test being checked reads"
+        for target, replacement in (
+            ("pathlib.Path.exists", Mock(return_value=False)),
+            ("pathlib.Path.read_text", Mock(return_value=fixture)),
+            ("pathlib.Path.write_text", Mock()),
+        ):
+            with self.subTest(patched=target), self.survivals(earlier) as survivals:
+                mutation = Mutation(timestamp, "old", "new", _REGRESSION)
+                with patch(target, replacement):
+                    _record_survival("tests.test_module.Case.test_name", mutation)
+                recorded = survivals.read_text()
+                self.assertTrue(recorded.startswith(earlier))  # What the file held is still there ...
+                self.assertIn(_REGRESSION, recorded)  # ... and the entry reached the file rather than the patch.
 
     def test_a_mutation_of_a_test_module_is_passed_over(self):
         """Test that the framework's own targets, which survive by design, are recorded not at all."""
-        self.record(_ODD_REPORTED_AS_EVEN, self._HEADING).write_text.assert_not_called()
+        self.assertEqual(self.record(_ODD_REPORTED_AS_EVEN, self._HEADING), self._HEADING)
 
 
 class KillsTest(unittest.TestCase):

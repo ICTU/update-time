@@ -703,25 +703,17 @@ class LoggerTests(TestCase):
             f"Set uv exclude-newer to '7 days' in {at('/elsewhere/pyproject.toml')} to apply the cooldown",
         )
 
-    def test_invalid_pyproject_toml(self, mock_log: Mock):
-        """Test that an unparsable pyproject.toml is logged as a warning."""
-        path = Path.cwd() / "pyproject.toml"
-        _new_logger().invalid_pyproject_toml(path)
-        self.assert_message(
-            mock_log,
-            Logger._MESSAGE_INVALID_TOML,
-            f"Skipping {at('pyproject.toml')}: it is not valid TOML",
-        )
-
-    def test_invalid_yaml(self, mock_log: Mock):
-        """Test that an unparsable YAML file is logged as a warning."""
-        path = Path.cwd() / "docker-compose.yml"
-        _new_logger().invalid_yaml(path)
-        self.assert_message(
-            mock_log,
-            Logger._MESSAGE_INVALID_YAML,
-            f"Skipping {at('docker-compose.yml')}: it is not valid YAML",
-        )
+    def test_invalid_file(self, mock_log: Mock):
+        """Test that a file that does not parse is warned about, naming the format given rather than its suffix."""
+        for file_name, file_format in (("pom.xml", "XML"), ("compose.yml", "YAML")):
+            with self.subTest(format=file_format):
+                mock_log.reset_mock()
+                _new_logger().invalid_file(Path.cwd() / file_name, file_format)
+                self.assert_message(
+                    mock_log,
+                    Logger._MESSAGE_INVALID_FILE,
+                    f"Skipping {at(file_name)}: it is not valid {file_format}",
+                )
 
     def test_excluded_path_logged_at_debug(self, mock_log: Mock):
         """Test that a directory held back by --exclude-path is logged at debug level, with its path undelimited."""

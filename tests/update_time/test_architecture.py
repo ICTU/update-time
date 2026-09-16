@@ -16,7 +16,7 @@ from tests.update_time.helpers import module_level_assignments, project
 if TYPE_CHECKING:
     from archunitpython.files.assertion import CustomFileCondition, FileInfo
 
-_MANIFEST_PARSERS = ("tomllib", "tomlkit", "yaml")
+_MANIFEST_PARSERS = ("tomllib", "tomlkit", "xml", "yaml")
 # The layer that may read a manifest parser; every other layer reads a file through it.
 _FORMAT_LAYER = "formats"
 

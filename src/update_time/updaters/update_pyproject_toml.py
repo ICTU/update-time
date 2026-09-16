@@ -17,7 +17,7 @@ def update_pyproject_tomls() -> None:
     for path in glob_for(PYPROJECT_TOML):
         config = toml.read(path)
         if config is None:
-            _LOG.invalid_pyproject_toml(path)  # Exists but isn't valid TOML: skip rather than crash on it.
+            _LOG.invalid_file(path, toml.FORMAT)  # Exists but isn't valid TOML: skip rather than crash on it.
         elif (manager := uv.python_manager(path, config)) == "uv":
             paths.append(path)
         else:

@@ -27,6 +27,9 @@ def run(command: Command, cwd: Path | None = None) -> Result:
     except FileNotFoundError:
         _LOG.command_not_found(command)
         return Result("", "", succeeded=False)
+    except OSError as error:
+        _LOG.command_error(command, error)
+        return Result("", "", succeeded=False)
     except subprocess.CalledProcessError as error:
         result = Result(error.stdout, error.stderr, succeeded=False)
     else:

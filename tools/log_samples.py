@@ -251,9 +251,6 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     accounted_for = _accounted_for_references(log, capture, dockerfile)
 
-    log.invalid_yaml(Path("docker-compose.yml"))
-    invalid_yaml = capture.take()
-
     marker = Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")
     log.recognised_marker("python", marker, dockerfile)
     recognised = capture.take()
@@ -265,7 +262,6 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
         "@@ACCOUNTED_FOR_REFERENCES@@": accounted_for,
-        "@@INVALID_YAML_WARNING@@": invalid_yaml,
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@VULNERABILITY_WARNING@@": vulnerable,
