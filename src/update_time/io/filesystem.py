@@ -22,7 +22,7 @@ EXCLUDE_PATHS: EnvVar[list[Path]] = EnvVar(
 
 # Directories whose contents `glob_for` always skips, on top of hidden (dot-prefixed) folders and the directories
 # passed to --exclude-path. The --exclude-path help in `io.cli` lists them, so it stays in step with this tuple.
-ALWAYS_IGNORED_DIRECTORIES = ("build", "node_modules", "__pycache__")
+ALWAYS_IGNORED_DIRECTORIES = ("build", "target", "node_modules", "__pycache__")
 
 
 def _named_hidden_parts(glob_pattern: str) -> set[str]:

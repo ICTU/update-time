@@ -672,17 +672,29 @@ class Logger:
         """Warn that a file is managed by an unsupported package manager, so its dependencies are left unchanged."""
         self._log_file(self._MESSAGE_SKIP_UNSUPPORTED, path, manager=manager, supported=supported)
 
-    _MESSAGE_INVALID_TOML = LogMessage(WARNING, "Skipping %(location)s: it is not valid TOML")
+    _MESSAGE_INVALID_FILE = LogMessage(WARNING, "Skipping %(location)s: it is not valid %(format)s")
 
-    def invalid_pyproject_toml(self, path: Path) -> None:
-        """Warn that a pyproject.toml can't be parsed as TOML, so it is skipped rather than crashing the run."""
-        self._log_file(self._MESSAGE_INVALID_TOML, path)
+    def invalid_file(self, path: Path, file_format: str) -> None:
+        """Warn that a file can't be parsed, so it is skipped rather than crashing the run."""
+        self._log_file(self._MESSAGE_INVALID_FILE, path, format=file_format)
 
-    _MESSAGE_INVALID_YAML = LogMessage(WARNING, "Skipping %(location)s: it is not valid YAML")
+    _MESSAGE_INVALID_XML_AFTER_UPDATE = LogMessage(
+        ERROR, "Could not read %(location)s after updating it: it is not valid XML"
+    )
 
-    def invalid_yaml(self, path: Path) -> None:
-        """Warn that a YAML file can't be parsed, so it is skipped rather than crashing the run."""
-        self._log_file(self._MESSAGE_INVALID_YAML, path)
+    def invalid_xml_after_update(self, path: Path) -> None:
+        """Report that the file an updater rewrote cannot be parsed, so its update failed rather than being skipped."""
+        self._log_file(self._MESSAGE_INVALID_XML_AFTER_UPDATE, path)
+
+    _MESSAGE_DECLARATIONS_CHANGED = LogMessage(
+        ERROR,
+        "Could not tell what changed in %(location)s: it declared %(before)s dependencies before the update and "
+        "%(after)s after it",
+    )
+
+    def declarations_changed(self, path: Path, before: int, after: int) -> None:
+        """Report that the file an updater rewrote declares more or fewer dependencies than before the update."""
+        self._log_file(self._MESSAGE_DECLARATIONS_CHANGED, path, before=before, after=after)
 
     _MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG = LogMessage(
         WARNING,
@@ -732,6 +744,18 @@ class Logger:
     def command_not_found(self, command: Command) -> None:
         """Log that a command could not be run because its executable is not installed."""
         self._log(self._MESSAGE_COMMAND_NOT_FOUND, command=command, executable=command.executable)
+
+    _MESSAGE_COMMAND_ERROR = LogMessage(ERROR, "Could not run %(command)s: %(error)s")
+
+    def command_error(self, command: Command, error: OSError) -> None:
+        """Log that the system refused to run a command."""
+        self._log(self._MESSAGE_COMMAND_ERROR, command=command, error=error)
+
+    _MESSAGE_COMMAND_FAILED = LogMessage(ERROR, "%(command)s failed:\n%(output)s")
+
+    def command_failed(self, command: Command, output: str) -> None:
+        """Log that a command exited non-zero, including the output it produced."""
+        self._log(self._MESSAGE_COMMAND_FAILED, command=command, output=output)
 
     _MESSAGE_COMMAND_STDERR = LogMessage(WARNING, "%(command)s wrote to stderr:\n%(stderr)s")
 

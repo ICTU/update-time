@@ -12,6 +12,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+# What this format is called in a message about a file that does not parse.
+FORMAT = "YAML"
+
 # A parsed YAML document: a mapping, a sequence, a scalar, or None for an empty file. Nothing narrower than `object`
 # covers those, so this names the concept rather than narrowing it.
 type Document = object

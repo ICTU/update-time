@@ -31,6 +31,7 @@ REQUIREMENTS_TXT = FileType(
 )
 INLINE_SCRIPT_METADATA = FileType("PEP 723 inline script metadata", ("*.py",))
 PACKAGE_JSON = FileType("package.json", ("package.json",))
+POM_XML = FileType("pom.xml", ("pom.xml",))
 PYTHON_VERSION_FILE = FileType(".python-version", (".python-version",))
 DOCKERFILES = FileType("Dockerfiles", _DOCKERFILE_GLOB_PATTERNS, case_sensitive=False)  # A `dockerfile` counts
 CIRCLE_CI_CONFIGS = FileType("CircleCI configs", _YAML_PATTERNS, start=".circleci")

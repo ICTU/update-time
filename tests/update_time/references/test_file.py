@@ -76,8 +76,8 @@ class UpdateYamlFilesTest(unittest.TestCase):
         ),
         Mutation(
             file_module,
-            "            logger.invalid_yaml(path)\n",
-            "            logger.invalid_yaml(path)\n            return\n",
+            "            logger.invalid_file(path, yaml_format.FORMAT)\n",
+            "            logger.invalid_file(path, yaml_format.FORMAT)\n            return\n",
             "a file that does not parse ends the walk, so the files after it are never updated",
         ),
     )
@@ -90,7 +90,7 @@ class UpdateYamlFilesTest(unittest.TestCase):
         self.update(mock_logger, lambda _document: new_version_getter("3.15"))
         unparsable_file.write_text.assert_not_called()
         next_file.write_text.assert_called_once_with("image: python:3.15\n")
-        mock_logger.invalid_yaml.assert_called_once_with(unparsable_file)
+        mock_logger.invalid_file.assert_called_once_with(unparsable_file, "YAML")
 
     @kills(
         Mutation(
@@ -107,4 +107,4 @@ class UpdateYamlFilesTest(unittest.TestCase):
         get_new_version_for = Mock(return_value=new_version_getter("3.15"))
         self.update(mock_logger, get_new_version_for)
         get_new_version_for.assert_called_once_with(None)
-        mock_logger.invalid_yaml.assert_not_called()
+        mock_logger.invalid_file.assert_not_called()

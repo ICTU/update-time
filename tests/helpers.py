@@ -72,10 +72,11 @@ def log_record(message: str, level: int = INFO) -> logging.LogRecord:
 
 
 def mock_path(content: str, parent: Path | None = None, name: str = "f.py") -> Mock:
-    """Return a mock Path with the given text content and name, an optional parent, and a no-op relative_to()."""
+    """Return a mock Path with the given content and name, an optional parent, and a no-op relative_to()."""
     path = Mock(
         relative_to=Mock(return_value=Mock(parts=[])),
         read_text=Mock(return_value=content),
+        read_bytes=Mock(return_value=content.encode()),
         __str__=lambda _: name,
     )
     if parent is not None:

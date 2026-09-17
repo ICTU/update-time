@@ -80,6 +80,7 @@ _SCRIPTS = _Scripts(
             _Script("python_inline_script_metadata"),
         ),
         DEPENDENCY_TYPES.npm_dependencies: (_Script("package_json", parallel=False),),
+        DEPENDENCY_TYPES.maven_dependencies: (_Script("pom_xml"),),
         DEPENDENCY_TYPES.node_engine_version: (_Script("node_engine", parallel=False),),
         DEPENDENCY_TYPES.python_version: (_Script("python_version_file", parallel=False),),
         DEPENDENCY_TYPES.docker_images: (

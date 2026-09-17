@@ -79,6 +79,6 @@ def update_yaml_files(
     for path in glob_for(file_type):
         document = yaml_format.read(path)
         if document is yaml_format.UNPARSABLE:
-            logger.invalid_yaml(path)
+            logger.invalid_file(path, yaml_format.FORMAT)
         else:
             update_file(path, regexp, get_new_version=get_new_version_for(document), logger=logger)

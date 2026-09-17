@@ -585,13 +585,17 @@ class LoggingTestCase(CacheClearingTestCase):
             Logger._MESSAGE_SKIP_UNSUPPORTED, location=Location(path), manager=manager, supported=supported
         )
 
-    def assert_invalid_pyproject_toml_logged(self, path: Path) -> None:
-        """Assert that an unparsable pyproject.toml was logged for the file."""
-        self.assert_logged(Logger._MESSAGE_INVALID_TOML, location=Location(path))
+    def assert_invalid_file_logged(self, path: Path, file_format: str) -> None:
+        """Assert that a file that does not parse was logged for the file, naming its format."""
+        self.assert_logged(Logger._MESSAGE_INVALID_FILE, location=Location(path), format=file_format)
 
     def assert_could_not_fetch_logged(self, url: object = ANY, status: object = ANY, reason: object = ANY) -> None:
         """Assert that a single 'could not fetch' warning was logged, optionally for a given URL and status/reason."""
         self.assert_logged(Logger._MESSAGE_NOT_OK_RESPONSE, url=url, status=status, reason=reason)
+
+    def assert_command_failed_logged(self, command: object, output: object) -> None:
+        """Assert that a single 'command failed' error was logged, for the given command and output."""
+        self.assert_error_logged(Logger._MESSAGE_COMMAND_FAILED, command=command, output=output)
 
     def assert_command_stderr_logged(self, command: object = ANY, stderr: object = ANY) -> None:
         """Assert that a single 'command wrote to stderr' warning was logged, optionally for a given command/stderr."""

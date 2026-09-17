@@ -476,7 +476,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         run.assert_not_called()
         get.assert_not_called()
         mock_pyproject_toml.write_text.assert_not_called()
-        self.assert_invalid_pyproject_toml_logged(mock_pyproject_toml)
+        self.assert_invalid_file_logged(mock_pyproject_toml, "TOML")
         self.assert_no_new_version_logged()
 
 

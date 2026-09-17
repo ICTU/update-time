@@ -250,6 +250,25 @@ def _failure(mutation: Mutation, result: Result) -> str:
 _SURVIVALS = Path("tests/mutation-survivals.md")
 
 
+def _captured[Method](method: Method, name: str) -> Method:
+    """Return the `Path` method, raising when a patch has already replaced it.
+
+    A patch made with `autospec` reads as a function all the same, so the plain form is what this catches. The copy
+    a mutation check imports inside the test it checks is left alone, since it never writes to `_SURVIVALS`.
+    """
+    if not isinstance(method, types.FunctionType) and not os.environ.get(CHECKED_TEST):
+        message = f"tests/mutation.py was imported while Path.{name} was patched, so the record it keeps is not safe"
+        raise TypeError(message)
+    return method
+
+
+# The methods that look up, read, and write `_SURVIVALS`. They are taken from `Path` here, at import, because
+# recording runs inside the test whose registration survived, and that test may have patched them.
+_EXISTS = _captured(Path.exists, "exists")
+_READ_TEXT = _captured(Path.read_text, "read_text")
+_WRITE_TEXT = _captured(Path.write_text, "write_text")
+
+
 def _record_survival(test_name: str, mutation: Mutation) -> None:
     """Record the survived registration in `_SURVIVALS`, creating the file when it holds nothing yet.
 
@@ -260,10 +279,10 @@ def _record_survival(test_name: str, mutation: Mutation) -> None:
     """
     if mutation.module.__name__.startswith("tests."):
         return
-    recorded = _SURVIVALS.read_text() if _SURVIVALS.exists() else "# Registrations that survived\n\n"
+    recorded = _READ_TEXT(_SURVIVALS) if _EXISTS(_SURVIVALS) else "# Registrations that survived\n\n"
     entry = f"- {datetime.now(UTC):%Y-%m-%d} `{test_name}` — {mutation.regression}\n"
     if entry not in recorded:
-        _SURVIVALS.write_text(recorded + entry)
+        _WRITE_TEXT(_SURVIVALS, recorded + entry)
 
 
 def _fail_unless_killed(test_case: unittest.TestCase, mutations: tuple[Mutation, ...]) -> None:

@@ -89,6 +89,7 @@ Update-time updates the following types of dependencies, found in the listed fil
 | :-------------- | :---- | :----- | :--------- |
 | [Python dependencies](#python-dependencies) | `pyproject.toml`, `requirements.txt`, and PEP 723 inline script metadata (`# /// script` blocks in `*.py` files) | [PyPI](https://pypi.org) | Update-time for `requirements.txt`. For the other two, uv resolves the versions and Update-time writes the pins |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | `package.json` (and their lock files) | [npm registry](https://registry.npmjs.org) | delegated to npm or pnpm, whichever manages the `package.json` |
+| [Maven dependencies](#maven-dependencies) | `pom.xml` | the repositories the project's Maven build resolves from | delegated to Maven's [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/) |
 | [Node engine version](#node-engine-version-and-python-version) | `package.json` | the Node base image in the project's Dockerfile, or the latest [Node](https://hub.docker.com/_/node) release on Docker Hub | Update-time |
 | [Python version](#node-engine-version-and-python-version) | `.python-version` | the Python base image in the project's Dockerfile, or the latest [Python](https://hub.docker.com/_/python) release on Docker Hub | Update-time |
 | [Docker images](#docker-images) | Dockerfiles, CircleCI configs, `.gitlab-ci.yml`, Docker Compose files, Helm charts, and devcontainer configs | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) | Update-time |
@@ -162,6 +163,7 @@ What Update-time adds depends on what the reference can hold:
 | :-------------- | :-------------------- |
 | [Python dependencies](#python-dependencies) | nothing: a pin names a version, and Update-time writes no hash beside it |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | nothing: the integrity hashes live in the package manager's lock file |
+| [Maven dependencies](#maven-dependencies) | nothing: a pom names a version, and Maven records an artefact's checksum beside the artefact |
 | [Node engine version](#node-engine-version-and-python-version) | nothing: it names a Node version, not an artefact that could be hashed |
 | [Python version](#node-engine-version-and-python-version) | nothing: it names a Python version, not an artefact that could be hashed |
 | [Docker images](#docker-images) | the `@sha256:digest` of the tag, appended to the reference |
@@ -197,6 +199,7 @@ To avoid adopting releases that are too fresh to trust, Update-time honours a co
 | :-------------- | :--------- | :--------------- |
 | [Python dependencies](#python-dependencies) | Update-time for `requirements.txt`, uv for the rest | the release's publication date on PyPI |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | npm and pnpm | the release's age on the npm registry |
+| [Maven dependencies](#maven-dependencies) | none: Maven has no release-age filter to hand a cooldown to | nothing |
 | [Node engine version](#node-engine-version-and-python-version) | Update-time, or already applied via the Dockerfile | the Node image tag's push date |
 | [Python version](#node-engine-version-and-python-version) | Update-time, or already applied via the Dockerfile | the Python image tag's push date |
 | [Docker images](#docker-images) | Update-time, on Docker Hub only | the image tag's push date |
@@ -229,12 +232,13 @@ Update-time warns when a dependency's newest release is older than a threshold. 
 
 The date compared against the threshold is the publication date of the dependency's *newest* release. So Update-time never reports a project that just published a release as stale, not even when that release is still within the [cooldown](#-cooldown) window.
 
-Update-time checks every kind of dependency it updates for staleness, against the date its own source reports:
+Update-time checks the dependencies it asks a source about for staleness, against the date that source reports:
 
 | Dependency type | Measured against |
 | :-------------- | :--------------- |
 | [Python dependencies](#python-dependencies) | the newest release of the package on PyPI |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | the newest release on the npm registry, for the dependencies that resolve to one |
+| [Maven dependencies](#maven-dependencies) | nothing: no source is asked about a Maven artefact |
 | [Node engine version](#node-engine-version-and-python-version) | the base image it follows, or the newest Node release on Docker Hub when no Dockerfile declares one |
 | [Python version](#node-engine-version-and-python-version) | the base image it follows, or the newest Python release on Docker Hub when no Dockerfile declares one |
 | [Docker images](#docker-images) | the image's newest release, and on Docker Hub only, since other registries expose no publication date |
@@ -260,6 +264,7 @@ Which dependencies are checked follows from where a yank can be observed. PyPI r
 | :-------------- | :--------- |
 | [Python dependencies](#python-dependencies) | `requirements.txt`, `pyproject.toml`, and inline script metadata pins, against PyPI's yank metadata |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: npm and pnpm handle deprecated versions themselves |
+| [Maven dependencies](#maven-dependencies) | none: no source is asked about a Maven artefact |
 | [Node engine version](#node-engine-version-and-python-version) | none: its source has no yank concept |
 | [Python version](#node-engine-version-and-python-version) | none: its source has no yank concept |
 | [Docker images](#docker-images) | none: its source has no yank concept |
@@ -295,6 +300,7 @@ Which dependencies are checked follows from what OSV can match a pinned version 
 | :-------------- | :------------------ |
 | [Python dependencies](#python-dependencies) | `requirements.txt`, `pyproject.toml`, and inline script metadata pins, against OSV's PyPI advisories |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: those dependencies are declared as ranges and resolved in the lock file, which Update-time does not read |
+| [Maven dependencies](#maven-dependencies) | none: no source is asked about a Maven artefact |
 | [Node engine version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
 | [Python version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
 | [Docker images](#docker-images) | none: OSV has no ecosystem for container images |
@@ -320,6 +326,7 @@ Which dependencies are checked follows from where an archival declaration can be
 | :-------------- | :------------- |
 | [Python dependencies](#python-dependencies) | the project status PyPI publishes for the package a Python file declares |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: the npm registry publishes no archival signal |
+| [Maven dependencies](#maven-dependencies) | none: no source is asked about a Maven artefact |
 | [Node engine version](#node-engine-version-and-python-version) | none: it follows a Docker image, and no registry publishes an archival signal |
 | [Python version](#node-engine-version-and-python-version) | none: it follows a Docker image, and no registry publishes an archival signal |
 | [Docker images](#docker-images) | none: no OCI registry publishes an archival signal |
@@ -571,7 +578,7 @@ A marker is written in one of three places, and the file's format decides which:
   "update-time": { "engines": { "node": "ignore" } }
   ```
 
-Every reference but the Node engine takes its marker in a comment. Those files are Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, and GitHub Actions workflows. They also include `.pre-commit-config.yaml` files, `devcontainer.json` files, `requirements.txt` files, `pyproject.toml` files, the `# /// script` blocks in `*.py` files, `.python-version` files, and the jsDelivr URLs in a Sphinx `conf.py`. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it.
+The field is the Node engine's alone: every other reference that takes a marker takes it in a comment. Those files are Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, and GitHub Actions workflows. They also include `.pre-commit-config.yaml` files, `devcontainer.json` files, `requirements.txt` files, `pyproject.toml` files, the `# /// script` blocks in `*.py` files, `.python-version` files, and the jsDelivr URLs in a Sphinx `conf.py`. Use a `#` comment everywhere except `devcontainer.json` (which is JSONC), where the marker goes in a `//` comment. An inline marker pins only its own line, so it never accidentally pins the reference on the line below it.
 
 Inside a `# /// script` block, every line of the TOML is already commented out, so the marker needs a `#` of its own:
 
@@ -587,7 +594,7 @@ A marker written with the block's own `#` alone uncomments to `update-time: igno
 
 A dependency array can put several declarations on one line, or each on a line of its own, so two rules decide which declaration a marker steers. An inline marker steers every dependency declared on its line, so a marker beside `dependencies = ["a==1", "b==2"]` steers both. A marker on the line above steers whatever the line below it declares, wherever in the array that declaration sits. So a marker above the `dependencies = [` line steers nothing, since that line declares no dependency.
 
-A `package.json` dependency takes no marker. Opt one out by declaring an upper bound or an exact version instead (see [npm and pnpm dependencies](#npm-and-pnpm-dependencies)).
+A `package.json` dependency takes no marker. Opt one out by declaring an upper bound or an exact version instead (see [npm and pnpm dependencies](#npm-and-pnpm-dependencies)). A `pom.xml` dependency takes none either, because Maven updates it (see [Maven dependencies](#maven-dependencies)).
 
 #### Confirming a marker was understood
 
@@ -892,6 +899,52 @@ The npm registry publishes no archival signal, so Update-time does not check a `
 
 A `package.json` dependency takes no marker, because npm and pnpm update it rather than Update-time rewriting its lines. Opt one out by declaring an upper bound or an exact version instead.
 
+### Maven dependencies
+
+#### What files are updated?
+
+Update-time looks for `pom.xml` files recursively from the starting path.
+
+#### What dependencies are updated?
+
+Update-time reads every `<dependency>` element the pom declares, wherever it sits: under `<dependencies>`, under `<dependencyManagement>`, and in a `<profile>`. A dependency that declares no `<version>` of its own, such as one a parent pom manages, is left out, since this pom holds no version to advance.
+
+Update-time delegates updating Maven dependencies to Maven. The Maven it runs is the project's own `./mvnw` wrapper when one sits beside the pom, and the `mvn` on your path where the project ships none. In each pom's own directory, it runs two goals of the [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/). Update-time names the plugin's version in each goal it runs, so which version of the plugin runs is Update-time's decision rather than the scanned project's. Both goals run in one invocation. The `use-latest-releases` goal advances a dependency whose `<version>` element holds a version. The `update-properties` goal advances a dependency whose `<version>` element names one of the pom's properties, by advancing that property. Update-time reports such a dependency at the property's line, which is where the change landed. Two dependencies that name the same property therefore get a report each, both pointing at that line.
+
+The `update-properties` goal advances a property whatever it versions, so a property that versions a plugin is advanced as well. Update-time reads the pom's `<dependency>` elements to see what changed. A plugin sits in a `<plugin>` element, so no log line names that change: it shows in the diff alone.
+
+#### What versions are updated?
+
+The versions plugin picks the newest release of each dependency, and adopts no snapshot. Update-time excludes the pre-releases, which the plugin would otherwise adopt, since Maven reads a release candidate as a release.
+
+#### Pinning
+
+Update-time adds no hash pin to a Maven dependency, since a pom has nowhere to hold one: a `<version>` element names a version. The checksum of an artefact lives beside that artefact, in the repository Maven downloads it from.
+
+#### Cooldown
+
+There is no cooldown. Maven has no release-age filter to hand one to.
+
+#### Stale dependencies
+
+Update-time asks no source about a Maven artefact, so it warns about none as stale.
+
+#### Yanked dependencies
+
+Update-time asks no source about a Maven artefact, so it warns about none as yanked.
+
+#### Vulnerable dependencies
+
+Update-time asks no source about a Maven artefact, so it warns about none as vulnerable.
+
+#### Archived dependencies
+
+Update-time asks no source about a Maven artefact, so it warns about none as archived.
+
+#### Markers
+
+A `pom.xml` dependency takes no marker, because Maven updates it rather than Update-time rewriting its lines.
+
 ### GitHub Actions and pre-commit hooks
 
 Both resolve their versions from the same source: a GitHub repository's releases and tags. So they behave the same way, except where the file format differs.
@@ -1054,14 +1107,6 @@ Update-time reports every reference a file accounts for itself at `DEBUG`, namin
 ```console
 @@ACCOUNTED_FOR_REFERENCES@@
 ```
-
-Update-time parses a Docker Compose file and a CircleCI config, so it warns about one whose YAML does not parse and skips it:
-
-```console
-@@INVALID_YAML_WARNING@@
-```
-
-It reads every other format line by line, so a Helm chart is updated as usual even when its Go templating leaves it invalid YAML.
 
 #### What versions are updated?
 

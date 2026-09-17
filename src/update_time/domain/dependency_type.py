@@ -26,6 +26,7 @@ class _DependencyTypes:
 
     python_dependencies: DependencyType
     npm_dependencies: DependencyType
+    maven_dependencies: DependencyType
     node_engine_version: DependencyType
     python_version: DependencyType
     docker_images: DependencyType
@@ -44,6 +45,7 @@ DEPENDENCY_TYPES = _DependencyTypes(
         (file_type.PYPROJECT_TOML, file_type.REQUIREMENTS_TXT, file_type.INLINE_SCRIPT_METADATA),
     ),
     npm_dependencies=DependencyType("npm and pnpm dependencies", (file_type.PACKAGE_JSON,)),
+    maven_dependencies=DependencyType("Maven dependencies", (file_type.POM_XML,)),
     node_engine_version=DependencyType("Node engine version", (file_type.PACKAGE_JSON,)),
     python_version=DependencyType("Python version", (file_type.PYTHON_VERSION_FILE,)),
     docker_images=DependencyType(

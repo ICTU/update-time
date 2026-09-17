@@ -76,6 +76,15 @@ class RunTests(LoggingTestCase):
         run(Command("uv", "lock"))
         self.mock_log.assert_not_called()
 
+    def test_an_executable_that_cannot_be_run_is_logged(self, mock_run: Mock):
+        """Test that an executable the system refuses to run is logged, rather than ending the run."""
+        refused = PermissionError(13, "Permission denied")
+        mock_run.side_effect = refused
+        result = run(Command("./mvnw", "--version"))
+        self.assertEqual(result.stdout, "")
+        self.assertFalse(result.ok)
+        self.assert_error_logged(Logger._MESSAGE_COMMAND_ERROR, command=Command("./mvnw", "--version"), error=refused)
+
     def test_missing_executable_is_logged(self, mock_run: Mock):
         """Test that a missing executable is logged and a failed, empty result returned rather than crashing."""
         mock_run.side_effect = FileNotFoundError
