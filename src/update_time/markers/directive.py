@@ -20,21 +20,21 @@ class Reason(StrEnum):
     `Redundancy` names the two further ways a bound can be redundant, once there is a version to judge it against.
     """
 
-    NO_VULNERABILITY_REPORTS = "this dependency's source reports no vulnerabilities"
-    NO_COOLDOWN_DATES = "this dependency's source reports no publication date to measure a cooldown against"
-    NO_STALENESS_DATES = "this dependency's source reports no publication date to measure staleness against"
-    NO_YANK_CONCEPT = "this dependency's source has no yank concept"
-    NO_ARCHIVAL_SIGNAL = "this dependency's source publishes no archival signal"
-    NO_VERSION_TO_UPDATE = "this requirement pins no version to update"
+    NO_VULNERABILITY_REPORTS = "this dependency's source does not report vulnerability information"
+    NO_COOLDOWN_DATES = "this dependency's source does not report a publication date to measure a cooldown against"
+    NO_STALENESS_DATES = "this dependency's source does not report a publication date to measure staleness against"
+    NO_YANK_CONCEPT = "this dependency's source does not record a yank"
+    NO_ARCHIVAL_SIGNAL = "this dependency's source does not publish an archival signal"
+    NO_VERSION_TO_UPDATE = "this requirement does not pin a version to update"
     BOUND_DECIDES_NOTHING = "the package manager resolves this dependency's version, so a bound decides nothing"
     MANAGER_RESOLVES_THE_VERSION = "the package manager resolves this dependency's version"
     COOLDOWN_PER_RUN = "the package manager applies the cooldown per run rather than per dependency"
-    NO_PYPI_RELEASE = "PyPI serves no release for this dependency"
-    NO_VERSION_TO_CHECK_FOR_A_YANK = "this requirement pins no version to check for a yank"
-    NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY = "this requirement pins no version to check for a vulnerability"
+    NO_PYPI_RELEASE = "PyPI does not serve a release for this dependency"
+    NO_VERSION_TO_CHECK_FOR_A_YANK = "this requirement does not pin a version to check for a yank"
+    NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY = "this requirement does not pin a version to check for a vulnerability"
     PIN_NOT_FLOATING = "this reference's pin does not float"
     UPDATE_HELD_BACK = "this reference's update is held back, so its tag is never pinned"
-    NO_REGISTRY_ASKED = "Update-time asks no registry about this reference, so its tag is never pinned"
+    NO_REGISTRY_ASKED = "Update-time does not ask a registry about this reference, so its tag is never pinned"
 
 
 @dataclass(frozen=True)

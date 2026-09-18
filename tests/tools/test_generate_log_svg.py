@@ -27,7 +27,7 @@ class FixedTimeTest(unittest.TestCase):
 class PortableSvgTest(unittest.TestCase):
     """Unit tests for the tweaks that make Rich's SVG render where the README embeds it."""
 
-    # Markup rather than prose, so it is written raw and the sentence complexity check leaves it alone.
+    # Markup rather than prose, so it is written raw and the readability check leaves it alone.
     RICH_SVG = (
         r'<svg class="rich-terminal" viewBox="0 0 994 670">'
         r"<style>@font-face { font-family: 'Fira Code'; src: local('FiraCode-Regular'),"

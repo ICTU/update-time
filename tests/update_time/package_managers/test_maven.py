@@ -19,3 +19,17 @@ class PluginVersionTest(unittest.TestCase):
         with patched, self.assertRaises(RuntimeError) as error:
             maven._declared_plugin_version()
         self.assertIn("pom.xml", str(error.exception))
+
+
+class RuleSetFileTest(unittest.TestCase):
+    """Unit tests for the file Update-time writes the rule set to.
+
+    This is the one part of the run that reaches the file system, so it is exercised against a real file.
+    """
+
+    def test_the_rule_set_is_readable_until_the_file_is_removed(self):
+        """Test that the file holds the rule set while the context is open, and is removed once it closes."""
+        rule_set = "<ruleset/>"
+        with maven._rule_set_file(rule_set) as path:
+            self.assertEqual(path.read_text(), rule_set)
+        self.assertFalse(path.exists())

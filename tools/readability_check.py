@@ -18,9 +18,13 @@ from nltk.tokenize import PunktTokenizer  # type: ignore[import-untyped]
 from tools.markdown import lines_without_code_blocks
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 _INLINE_CODE = re.compile(r"`[^`]*`")
+
+# What a Markdown line opens with rather than with its prose: a heading's hashes, or a list item's marker. A heading
+# is a sentence of its own, and an item is one line of prose like any other. The space keeps a rule (`---`) whole.
+_MARKUP_PREFIX = re.compile(r"^\s*(?:#+|[-*])\s+")
 
 # A printf-style interpolation, such as a log message's `%(location)s`: a value rather than prose.
 _INTERPOLATION = re.compile(r"%\(\w+\)[a-z]")
@@ -32,11 +36,45 @@ _STRING_PREFIX = re.compile(r"(?P<prefix>[A-Za-z]*)['\"]")
 # Abbreviations the splitter would otherwise take for the end of a sentence, spelled without their trailing period.
 _ABBREVIATIONS = frozenset({"e.g", "i.e", "etc"})
 
+# The directory holding this check's nltk data, and the datasets fetched into it. The tagger reads a word's part
+# of speech, and the splitter reads where a sentence ends.
+_NLTK_DATA = ".nltk"
+_TAGGER = "averaged_perceptron_tagger_eng"
+_SPLITTER = "punkt_tab"
+
+# A subject reaching its own verb opens one noun phrase; a second one before that verb is a clause wedged between.
+_SPLIT_SUBJECT_DETERMINERS = 2
+
+# The nltk tags this check reads. A determiner opens a noun phrase. A verb carries a tag starting with the verb
+# prefix, whatever its tense. A preposition introduces a noun phrase belonging to the subject, and a conjunction or
+# a comma another subject standing beside it, so neither introduces a noun phrase that interrupts the subject. The
+# tagger gives `to` a tag of its own rather than the preposition's, so the set names both.
+_DETERMINER = "DT"
+_VERB_PREFIX = "VB"
+_BESIDE_THE_SUBJECT = frozenset({"IN", "TO", "CC", ","})
+
+# The `there` of `there is no new version`, which sits two words before the negation it introduces: itself, and the
+# `is` or `are` between them.
+_EXISTENTIAL = "EX"
+_EXISTENTIAL_REACH = 2
+
+# A parenthesised aside without an aside of its own, so repeating the substitution reaches the nested ones too.
+_ASIDE = re.compile(r"\([^()]*\)")
+
+# The file listing the sentences this check passes over, and the argument that writes them out to regenerate it.
+_WHITELIST = Path("tools/prose-whitelist.txt")
+_MAKE_WHITELIST = "--make-whitelist"
+_CHECK_WHITELIST = "--check-whitelist"
+_INSTALL_DATA = "--install-data"
+
 # Below this many words a ratio says more about a sentence's length than about its density.
 _RATIO_WORDS = 15
 
 # Above this many backslashes a string reads as a regular expression rather than as prose.
 _REGEXP_BACKSLASHES = 5
+
+# A traceback's last line: the exception's name, then its message.
+_EXCEPTION_MESSAGE = re.compile(r"\w+(Error|Exception): ")
 
 
 class Prose:
@@ -75,8 +113,7 @@ def extract_prose_from_markdown(markdown_file: Path) -> Iterator[Prose]:
     for line_number, line in lines_without_code_blocks(markdown_file.read_text()):
         if line.startswith("|"):  # A table row: not prose.
             continue
-        heading = re.match(r"#+ (.+)", line)  # A heading is a sentence of its own.
-        if text := (heading[1] if heading else line).strip():
+        if text := _MARKUP_PREFIX.sub("", line, count=1).strip():
             yield Prose(markdown_file, text, line_number)
 
 
@@ -107,24 +144,14 @@ def _literal_text(node: ast.JoinedStr) -> str:
 
 
 def _own_prose(node: ast.Constant, source_code: str, interpolated: set[int]) -> str | None:
-    """Return the prose the constant holds as a literal in its own right, or None when it holds none.
-
-    A part of an f-string is left to the f-string holding it, which measures the parts together: on its own a part
-    opening with an apostrophe reads as a literal, and its text would be measured a second time.
-    """
+    """Return the prose the constant holds as a literal in its own right, or None when it holds none."""
     if not isinstance(node.value, str) or id(node) in interpolated or not _is_prose_string(node, source_code):
         return None
     return inspect.cleandoc(node.value)
 
 
 def _is_prose_string(node: ast.expr, source_code: str) -> bool:
-    """Return whether the node is a string literal holding prose rather than a regexp.
-
-    A raw string holds a pattern rather than a sentence, whether or not it interpolates: with the interpolations
-    dropped, what is left is punctuation, which this check would score as an impossibly dense sentence. The literal
-    is recognised by the letters before its opening quote, so `rf"..."` is as raw as `r"..."` and `R"..."` as raw
-    as either. An implicitly concatenated literal opens once, so one that starts raw is raw throughout.
-    """
+    """Return whether the node is a string literal holding prose rather than a regexp."""
     prefix = _STRING_PREFIX.match(ast.get_source_segment(source_code, node) or "")
     return prefix is not None and "r" not in prefix.group("prefix").lower()
 
@@ -134,12 +161,13 @@ def _is_regexp(text: str) -> bool:
     return text.count("\\") > _REGEXP_BACKSLASHES
 
 
-def _is_code(text: str) -> bool:
-    """Return whether the text reads as Python source rather than as prose.
+def _is_exception_message(text: str) -> bool:
+    """Return whether the text reads as a traceback's last line rather than as a sentence."""
+    return _EXCEPTION_MESSAGE.match(text) is not None
 
-    A lint rule's test cases hold the code they lint as string literals, which parse as Python where prose does not.
-    A call is required as well, since a bare word parses as a name and is more likely prose than code.
-    """
+
+def _is_code(text: str) -> bool:
+    """Return whether the text reads as Python source rather than as prose."""
     try:
         tree = ast.parse(textwrap.dedent(text).strip())
     except SyntaxError:
@@ -149,10 +177,7 @@ def _is_code(text: str) -> bool:
 
 @dataclass(order=True)
 class _Fragment:
-    """A comment or string from a Python file, and the line it starts on.
-
-    Ordered, since the comments and the strings are collected in separate passes and sorted back into file order.
-    """
+    """A comment or string from a Python file, and the line it starts on."""
 
     line_number: int
     text: str
@@ -178,7 +203,7 @@ def extract_prose_from_python(python_file: Path) -> Iterator[Prose]:
     fragments.extend(_string_fragments(source_code))
     for fragment in sorted(fragments):
         if (text := _INTERPOLATION.sub("", fragment.text).strip()) and not (
-            _is_regexp(fragment.text) or _is_code(fragment.text)
+            _is_regexp(fragment.text) or _is_code(fragment.text) or _is_exception_message(fragment.text)
         ):
             yield Prose(python_file, text, fragment.line_number)
 
@@ -193,11 +218,7 @@ def _matching_files(path: Path, glob: str) -> Iterator[Path]:
 
 
 def extract_prose(*paths: Path) -> Iterator[Prose]:
-    """Yield the prose in the files under the paths, each of which may be a file or a directory.
-
-    `README.md.in` is read as Markdown, so a sentence is reported at the template's line, where editing it survives
-    regeneration.
-    """
+    """Yield the prose in the files under the paths, each of which may be a file or a directory."""
     extractors = {
         "*.py": extract_prose_from_python,
         "*.md": extract_prose_from_markdown,
@@ -245,23 +266,96 @@ def _sentence_words(sentence: str) -> int:
 
 
 def _sentence_density(complexity: int, words: int) -> float:
-    """Return the asides and clause joins per word, or zero for a sentence too short to read a ratio off.
-
-    Complexity starts at one, so it is the count above that which the ratio measures.
-    """
+    """Return the asides and clause joins per word, or zero for a sentence too short to read a ratio off."""
     return (complexity - 1) / words if words >= _RATIO_WORDS else 0.0
 
 
-def _faults(sentence: str, max_complexity: int, max_words: int, max_density: float) -> str:
+def _with_nltk_data[T](dataset: str, build: Callable[[], T]) -> T:
+    """Return what `build` makes, fetching the nltk dataset into this check's own directory where it is missing."""
+    if _NLTK_DATA not in nltk.data.path:
+        nltk.data.path.append(_NLTK_DATA)
+    try:
+        return build()
+    except LookupError:
+        nltk.download(dataset, quiet=True, download_dir=_NLTK_DATA)
+        return build()
+
+
+def _tagged(sentence: str) -> list[tuple[str, str]]:
+    """Return the sentence's words, each with the part of speech nltk reads for it.
+
+    Reading the words needs the splitter, and tagging them the tagger, so each fetches the dataset it needs.
+    """
+    text = _drop_markup(sentence, "code")
+    words = _with_nltk_data(_SPLITTER, lambda: nltk.word_tokenize(text))
+    return _with_nltk_data(_TAGGER, lambda: nltk.pos_tag(words))
+
+
+def _without_asides(text: str) -> str:
+    """Return the text with its parenthesised asides dropped, however deeply they nest."""
+    while _ASIDE.search(text):
+        text = _ASIDE.sub("", text)
+    return text
+
+
+def _subject_is_split(tagged: list[tuple[str, str]]) -> bool:
+    """Return whether a second noun phrase starts before the sentence's subject reaches its verb."""
+    determiners = 0
+    previous = ""
+    for _word, tag in tagged:
+        if tag.startswith(_VERB_PREFIX):
+            return determiners >= _SPLIT_SUBJECT_DETERMINERS
+        if tag == _DETERMINER and previous not in _BESIDE_THE_SUBJECT:
+            determiners += 1
+        previous = tag
+    return False
+
+
+def _negates_a_noun_phrase(tagged: list[tuple[str, str]]) -> bool:
+    """Return whether the sentence hangs a negation on a noun phrase rather than on the verb it belongs to.
+
+    Reported: `reports no publication date`, `asked about no artefact whose coordinates name a property`.
+    Left alone: `does not report a publication date`, `no artefact is asked about`, `there is no new version`.
+    """
+    seen_verb = False
+    for index, (word, tag) in enumerate(tagged):
+        if tag.startswith(_VERB_PREFIX):
+            seen_verb = True
+        elif seen_verb and tag == _DETERMINER and word.lower() == "no" and not _denies_existence(tagged, index):
+            return True
+    return False
+
+
+def _denies_existence(tagged: list[tuple[str, str]], index: int) -> bool:
+    """Return whether the negation at the index denies that anything exists, as `there is no new version` does."""
+    return any(tag == _EXISTENTIAL for _word, tag in tagged[max(0, index - _EXISTENTIAL_REACH) : index])
+
+
+@dataclass(frozen=True)
+class _Limits:
+    """What a sentence may reach before this check reports it."""
+
+    complexity: int = 3
+    words: int = 50
+    density: float = 0.13
+
+
+def _faults(sentence: str, limits: _Limits) -> str:
     """Return what makes the sentence hard to read, or empty when nothing does."""
     complexity, words = sentence_complexity(sentence), _sentence_words(sentence)
     faults = []
-    if complexity > max_complexity:
+    if complexity > limits.complexity:
         faults.append(f"complexity {complexity}")
-    if words > max_words:
+    if words > limits.words:
         faults.append(f"{words} words")
-    if (density := _sentence_density(complexity, words)) > max_density:
+    if (density := _sentence_density(complexity, words)) > limits.density:
         faults.append(f"{density:.2f} complexity-density")
+    # Both rules read the same tagging, so the tagger runs once a sentence rather than once a rule.
+    tagged = _tagged(_without_asides(sentence))
+    if _subject_is_split(tagged):
+        faults.append("subject split from its verb")
+    if _negates_a_noun_phrase(tagged):
+        faults.append("negation in a noun phrase")
     return " and ".join(faults)
 
 
@@ -277,28 +371,92 @@ def _sentences(tokenizer: PunktTokenizer, text: str) -> list[str]:
 
 
 def _sentence_tokenizer() -> PunktTokenizer:
-    """Return the sentence splitter, taught the abbreviations that would otherwise end a sentence for it."""
-    nltk.data.path.append(".nltk")
-    try:
-        tokenizer = PunktTokenizer()
-    except LookupError:
-        nltk.download("punkt_tab", quiet=True, download_dir=".nltk")
-        tokenizer = PunktTokenizer()
+    """Return the sentence splitter."""
+    tokenizer = _with_nltk_data(_SPLITTER, PunktTokenizer)
     tokenizer._params.abbrev_types.update(_ABBREVIATIONS)  # noqa: SLF001
     return tokenizer
 
 
-def main(max_complexity: int = 3, max_words: int = 50, max_density: float = 0.13) -> int:
-    """Report the sentences over any limit, in the files under the paths given or the current directory."""
-    exit_code = 0
+def _normalized(sentence: str) -> str:
+    """Return the sentence with its whitespace collapsed, so rewrapping the prose leaves it the same sentence."""
+    return " ".join(sentence.split())
+
+
+def _whitelisted_sentences() -> set[str]:
+    """Return the sentences the whitelist holds, which this check passes over."""
+    return set(_WHITELIST.read_text().splitlines()) if _WHITELIST.exists() else set()
+
+
+type _Flagged = Iterator[tuple[Prose, str, str]]
+
+
+def _flagged(paths: list[Path], limits: _Limits) -> _Flagged:
+    """Yield each sentence over a limit, with the prose holding it and what makes it hard to read."""
     tokenizer = _sentence_tokenizer()
-    paths = [Path(start) for start in sys.argv[1:] or ["."]]
     for prose in extract_prose(*paths):
         for sentence in _sentences(tokenizer, prose.text):
-            if faults := _faults(sentence, max_complexity, max_words, max_density):
-                sys.stdout.write(f"{prose.location}: {faults}:\n{textwrap.fill(sentence, width=100)}\n\n")
-                exit_code = 1
-    return exit_code
+            if faults := _faults(sentence, limits):
+                yield prose, sentence, faults
+
+
+def main() -> int:
+    """Report the sentences that are hard to read, in the files under the paths given or the current directory.
+
+    Passing `--make-whitelist` writes the sentences out for the whitelist file to hold, rather than reporting them.
+    Passing `--check-whitelist` reports the entries the whitelist no longer needs, which only a run over every file
+    can tell.
+    """
+    arguments = sys.argv[1:]
+    if _INSTALL_DATA in arguments:
+        return _install_data()
+    options = {_MAKE_WHITELIST, _CHECK_WHITELIST}
+    paths = [Path(start) for start in arguments if start not in options] or [Path()]
+    flagged = _flagged(paths, _Limits())
+    if _MAKE_WHITELIST in arguments:
+        return _write_whitelist(flagged)
+    return _report(flagged, checking_whitelist=_CHECK_WHITELIST in arguments)
+
+
+def _install_data() -> int:
+    """Fetch the nltk datasets this check reads, by splitting and tagging a sentence of its own.
+
+    The unit tests read prose through the same datasets, and refuse the network, so theirs have to arrive first.
+    """
+    _sentence_tokenizer()
+    _tagged("A sentence.")
+    return 0
+
+
+def _write_whitelist(flagged: _Flagged) -> int:
+    """Write the flagged sentences to standard output, sorted and one per line.
+
+    A sentence several files hold is written once, so regenerating the file rewrites the lines that changed
+    rather than reshuffling all of them.
+    """
+    sentences = {_normalized(sentence) for _prose, sentence, _faults in flagged}
+    sys.stdout.writelines(f"{sentence}\n" for sentence in sorted(sentences))
+    return 0
+
+
+def _report(flagged: _Flagged, *, checking_whitelist: bool) -> int:
+    """Report each flagged sentence the whitelist does not hold, and return 1 where any was reported."""
+    whitelisted = _whitelisted_sentences()
+    exit_code = 0
+    reported = set()
+    for prose, sentence, faults in flagged:
+        reported.add(_normalized(sentence))
+        if _normalized(sentence) not in whitelisted:
+            sys.stdout.write(f"{prose.location}: {faults}:\n{textwrap.fill(sentence, width=100)}\n\n")
+            exit_code = 1
+    return max(exit_code, _report_stale(whitelisted - reported)) if checking_whitelist else exit_code
+
+
+def _report_stale(stale: set[str]) -> int:
+    """Report the whitelist entries the run did not match, and return 1 where any was reported."""
+    for sentence in sorted(stale):
+        message = f"{_WHITELIST} holds a sentence the prose no longer has, run `just update-whitelists`:"
+        sys.stdout.write(f"{message}\n{sentence}\n\n")
+    return 1 if stale else 0
 
 
 if __name__ == "__main__":  # pragma: no cover
