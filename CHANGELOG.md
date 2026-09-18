@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.38 - 2026-09-18
+
 ### Added
 
 - Update the Maven dependencies a `pom.xml` declares. Closes [#354](https://github.com/ICTU/update-time/issues/354).
