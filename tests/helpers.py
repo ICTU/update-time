@@ -42,8 +42,8 @@ def patch_environ(environment_variables: dict[str, str] | None = None, *, clear:
     """
     clear = not environment_variables if clear is None else clear
     in_dict = environment_variables or {}
-    if checks_off := os.environ.get(CHECKS_OFF):
-        in_dict[CHECKS_OFF] = checks_off  # Keep the checks-off flag; it's used by tools/mutate.py to turn off @kills
+    # Carry the checks-off flag through, off by default; `tools/mutate.py` sets it to switch the `@kills` checks off.
+    in_dict.setdefault(CHECKS_OFF, os.environ.get(CHECKS_OFF, "0"))
     return patch.dict("os.environ", in_dict, clear=clear)
 
 

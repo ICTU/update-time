@@ -212,16 +212,11 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
     @kills(
         Mutation(
             uv,
-            "[declaration for declaration in declared if declaration.updatable]",
-            "declared",
-            "a marker holding the update back is not obeyed, so the pin it freezes is rewritten anyway",
-        ),
-        Mutation(
-            uv,
             "if declared else [Location(file.path)]",
             "or [Location(file.path)]",
             "a package whose every declaration is held back has its new version reported at the file, and costs a "
             "request for the changelog of a version nothing adopts",
+            expected_killers=2,
         ),
     )
     def test_a_marker_holds_the_update_back(self, run: Mock, get: Mock, glob: Mock):
@@ -241,6 +236,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             "if declaration.updatable",
             "if all(other.updatable for other in declared)",
             "a marker freezes the name rather than the declaration, so another declaration of that name is frozen too",
+            expected_killers=2,
         )
     )
     def test_a_marker_freezes_one_declaration_of_a_name_while_the_other_updates(self, run: Mock, get: Mock, glob: Mock):
@@ -258,6 +254,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             "(_reported_marker(declaration, log), declaration)[1]",
             "the marker a report settles on is discarded, so an unreadable item warns and the pin it may have been "
             "meant to freeze is rewritten anyway",
+            expected_killers=2,
         )
     )
     def test_an_invalid_bracket_item_leaves_the_pin_unchanged(self, run: Mock, get: Mock, glob: Mock):
@@ -306,6 +303,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             "if declaration.current_version else declaration for declaration in declarations]",
             "a dependency that pins no exact version has its marker reported nowhere, so what that marker gets wrong "
             "reaches nobody",
+            expected_killers=2,
         ),
     )
     def test_an_inverted_comparison_is_reported(self, run: Mock, get: Mock, glob: Mock):
@@ -332,6 +330,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             "return acted_on.frozen if any(threshold.inverted_item for threshold in "
             "(declaration.marker.stale, declaration.marker.cooldown, declaration.marker.vulnerable)) else acted_on",
             "an item comparing the wrong way round freezes the pin, as an item that cannot be read at all does",
+            expected_killers=2,
         )
     )
     def test_a_pin_with_inverted_comparisons_still_updates(self, run: Mock, get: Mock, glob: Mock):

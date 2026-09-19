@@ -34,11 +34,21 @@ _RELAXED = _Limits(complexity=10, words=50, density=1.0)
 class IsCodeTest(unittest.TestCase):
     """Unit tests for telling Python source from prose, so a lint rule's test cases are not measured as sentences."""
 
+    @kills(
+        Mutation(
+            readability_check._is_code,
+            "for candidate in (source, block):",
+            "for candidate in (source,):",
+            "the check measures a snippet as prose when it does not parse on its own, so code reads as a sentence",
+        )
+    )
     def test_code_and_prose(self):
         """Test that source with a call is code, while prose and a bare word are not."""
         classifications = {
             'self.assertEqual([Path("/file.txt")], list(glob("*.txt")))': True,  # A lint rule's test case.
             "def test_changes(self):\n    self.assertTrue(matches(name))\n": True,  # ...and one across lines.
+            'for name in filter(None, parts.split(".")):': True,  # ...and a header a mutation snippet quotes alone.
+            "if found:\nanchor = getattr(anchor, name)": True,  # ...and a block a docstring's cleaning flattened.
             "Return whether the text reads as prose.": False,  # Prose does not parse as Python.
             "code": False,  # A bare word parses as a name, with no call in it.
         }

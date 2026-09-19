@@ -111,7 +111,9 @@ test *tests: install-py-dependencies install-nltk-data
 
 # Check that a test guards a behaviour: break the code it names, run the tests, and restore the file. See `just help mutate`.
 mutate file *command:
-    {{ python_m }} tools.mutate "$@"
+    # FORCE_COLOR is unset rather than emptied: a tool reads it as set whatever its value, and the probe pipes
+    # what the command writes, so colour there would only stand between the words the probe reads back.
+    env -u FORCE_COLOR {{ python_m }} tools.mutate "$@"
 
 [private]
 mutate-help:
@@ -122,10 +124,17 @@ mutate-help:
     @echo "    @@"
     @echo "    a broken version of it"
     @echo "    EOF"
+    @echo "\nName a definition after the file to look for the snippet inside that definition alone, so a snippet the"
+    @echo "file repeats needs no padding to tell one occurrence from another:"
+    @echo "\n    just mutate tests/mutation.py:Mutation.killers <<'EOF'"
+    @echo "    ..."
+    @echo "    EOF"
     @echo "\nExits 0 when the mutation was killed (a test failed, so it is guarded), 1 when it survived (nothing"
     @echo "guards it), 2 when the probe never ran (the snippet is not in FILE exactly once), 3 when the run was"
     @echo "killed but reported errors, which a stub that broke the file does as much as a guard that raised, and 4"
-    @echo "when COMMAND failed with every test passing, so a gate such as coverage failed rather than a guard."
+    @echo "when COMMAND failed although its tests passed, so a gate it applies beyond them failed rather than a guard."
+    @echo "\nTelling 3 from a kill needs the test count of a clean run, so reaching it runs COMMAND a second time"
+    @echo "on the restored file. That costs as long again as the first run, and the probe says so before it starts."
     @echo "\nThe run has the @kills checks switched off, so a test whose own mutation names a line this probe"
     @echo "rewrote is not reported: the kill list holds the tests that failed on the mutation you gave it."
     @echo "\nA killed run ends by naming each test that killed it, a subTest case with its parameters. Read that"
@@ -149,9 +158,12 @@ test-mutations-help:
     @echo "drop. A mutation registered on several tests is measured once and read against all of them."
     @echo "\nThe sweep refuses to start while any test fails without a mutation, since such a test fails against"
     @echo "every mutation and would be counted among the killers of each."
+    @echo "\nThe run fails when any registration no longer holds: its snippet went stale, or a different number of"
+    @echo "tests than expected killed it. Declare that number with expected_killers where a mutation is meant to be"
+    @echo "killed by more tests than are registered on it."
     @echo "\nEach mutation runs in memory and in a process of its own, so the working tree is never written to"
-    @echo "and other work can carry on meanwhile. The run costs a suite run per mutation, so it is a periodic"
-    @echo "measurement rather than a check, and just check does not run it."
+    @echo "and other work can carry on meanwhile. The run costs a suite run per mutation, so just check leaves it"
+    @echo "out. CI runs it after the tests and the checks, so a registration that stopped holding fails the build."
 
 # Run Python with the package importable, to probe how it behaves. See `just help py`.
 [env("PYTHONPATH", "src")]
@@ -378,8 +390,9 @@ _sonarcloud: test
     {{ coverage }} xml # SonarCloud needs a Cobertura compatible XML coverage report
     {{ python_m }} xmlrunner discover --output-file build/xunit.xml  # SonarCloud needs a JUnit compatible XML report
 
-# Run everything in CI.
-_ci: _sonarcloud check
+# Run everything in CI, the sweep last: it costs a suite run per registration, so a failure of the tests or the
+# checks is worth reaching first.
+_ci: _sonarcloud check test-mutations
 
 # === Folders ===
 
@@ -395,10 +408,10 @@ prose := "docs *.md .claude/CLAUDE.md"
 # Pick a tool-flag value based on `$_color` set by `start_capture`. Useful for tools whose color flag values aren't `auto`/`always`/`never` (e.g. bandit's `screen`/`txt`, yamllint's `colored`/`auto`).
 when_color(yes, no) := f'$([ "$_color" = always ] && echo {{ yes }} || echo {{ no }})'
 
-# Prefix and suffix that wrap a command (such as a check): `{{ start_capture() }} <cmd> {{ end_capture(name) }}` captures stdout+stderr, prints `<recipe-name> PASS` or `FAIL`, and replays the captured output on failure. Neither token contains the other, so a run's outcome cannot be misread by matching on a substring.
-start_capture() := f'_color=auto; [ -t 1 ] && { _color=always; export FORCE_COLOR=1; }; output=$({'
-end_capture(name) := f'; } 2>&1) || { printf "%s {{ RED }}FAIL{{ NORMAL }}\n%s\n" {{ name }} "$output"; exit 1; }; printf "%s {{ GREEN }}PASS{{ NORMAL }}\n" {{ name }}'
+# Prefix and suffix that wrap a command (such as a check): `{{ start_capture() }} <cmd> {{ end_capture(name) }}` captures stdout+stderr, prints `<recipe-name> PASS` or `FAIL`, and replays the captured output on failure. Neither token contains the other, so a run's outcome cannot be misread by matching on a substring. The word is coloured only on a terminal, so a run whose output is piped or captured is plain throughout and a reader of it needs no escape codes stripped.
+start_capture() := f'_color=auto; _green=; _red=; _normal=; [ -t 1 ] && { _color=always; _green="{{ GREEN }}"; _red="{{ RED }}"; _normal="{{ NORMAL }}"; export FORCE_COLOR=1; }; output=$({'
+end_capture(name) := f'; } 2>&1) || { status=$?; printf "%s ${_red}FAIL${_normal}\n%s\n" {{ name }} "$output"; exit "$status"; }; printf "%s ${_green}PASS${_normal}\n" {{ name }}'
 
 # Like start_capture/end_capture, but for slow commands (e.g. tests): run them in the background and animate a spinner while they run. The spinner only shows on a terminal (a direct, interactive `just test`); a parallel `ci` run isn't one, so it never smears into those atomic PASS/FAIL lines.
-start_progress() := f'if [ -t 1 ]; then spin=1; else spin=; fi; tmp=$(mktemp); trap "rm -f $tmp" EXIT; { '
-end_progress(name) := f'; } > "$tmp" 2>&1 & pid=$!; sp="|/-\\"; while kill -0 "$pid" 2>/dev/null; do [ -n "$spin" ] && printf "\r%c" "$sp"; sp="${sp#?}${sp%???}"; sleep 0.1; done; [ -n "$spin" ] && printf "\r"; wait "$pid" && { count=$(grep -m1 "^Ran " "$tmp" | cut -d" " -f2); printf "%s {{ GREEN }}PASS{{ NORMAL }} (%s tests)\n" {{ name }} "${count:-?}"; } || { printf "%s {{ RED }}FAIL{{ NORMAL }}\n%s\n" {{ name }} "$(cat "$tmp")"; exit 1; }'
+start_progress() := f'if [ -t 1 ]; then spin=1; _green="{{ GREEN }}"; _red="{{ RED }}"; _normal="{{ NORMAL }}"; else spin=; _green=; _red=; _normal=; fi; tmp=$(mktemp); trap "rm -f $tmp" EXIT; { '
+end_progress(name) := f'; } > "$tmp" 2>&1 & pid=$!; sp="|/-\\"; while kill -0 "$pid" 2>/dev/null; do [ -n "$spin" ] && printf "\r%c" "$sp"; sp="${sp#?}${sp%???}"; sleep 0.1; done; [ -n "$spin" ] && printf "\r"; wait "$pid"; status=$?; if [ "$status" -eq 0 ]; then count=$(grep -m1 "^Ran " "$tmp" | cut -d" " -f2); printf "%s ${_green}PASS${_normal} (%s tests)\n" {{ name }} "${count:-?}"; else printf "%s ${_red}FAIL${_normal}\n%s\n" {{ name }} "$(cat "$tmp")"; exit "$status"; fi'

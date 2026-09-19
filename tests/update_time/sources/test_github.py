@@ -54,11 +54,11 @@ if TYPE_CHECKING:
 
 
 def get_latest_version(
-    action: str, current_version: str, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
+    action: str, current_version: str, version_bound: VersionBound = NO_BOUND, cooldown_days: int = COOLDOWN.default
 ) -> DependencyVersion:
     """Return what the source resolves for the action and version, as a test writes them."""
     pinned = PinnedDependency(action, current_version)
-    return github.get_latest_version(pinned, version_bound, cooldown_days, check_archival=check_archival)
+    return github.get_latest_version(pinned, version_bound, cooldown_days, check_archival=True)
 
 
 _OLD_DATE = datetime.now(UTC) - timedelta(days=10)  # A publication date outside the cooldown window
@@ -137,34 +137,34 @@ class GetLatestVersionTest(LoggingTestCase):
 
     def assert_tag_skipped(self, dependency: str, reason: str) -> None:
         """Assert that the dependency's v1.1 tag was skipped for the reason, leaving it on version 1.0."""
-        latest = get_latest_version(dependency, "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version(dependency, "1.0")
         self.assert_version(latest, "1.0", "", "")
         self.assert_error_logged(Logger._MESSAGE_NO_TAG_DATE, dependency=dependency, tag="v1.1", reason=reason)
 
     @patch("requests.get")
     def test_invalid_current_version(self, mock_get: Mock):
         """Test that an unparsable current version is returned unchanged, without querying GitHub."""
-        latest = get_latest_version("owner/repository", "invalid", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/repository", "invalid")
         self.assertEqual(latest.version, "invalid")
         mock_get.assert_not_called()
 
     @patch_github(releases=[github_release_json("1.0", body="changelog")], tags=[], commit=github_commits_json())
     def test_unchanged(self):
         """Test that a release matching the current version resolves to that version and its commit SHA."""
-        latest = get_latest_version("owner/repository", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/repository", "1.0")
         self.assert_version(latest, "1.0", "changelog", COMMIT_SHA)
 
     @patch_github(releases=[github_release_json("1.1", body="changelog")], tags=[], commit=github_commits_json())
     def test_newer(self):
         """Test that a newer release is resolved, with its changelog, its commit SHA, and the markup GitHub uses."""
-        latest = get_latest_version("owner/repository", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/repository", "1.0")
         self.assert_version(latest, "1.1", "changelog", COMMIT_SHA)
         self.assertTrue(is_markdown(latest.changes))
 
     @patch_github(releases=[github_release_json("1.1", published_at=_OLD_ISO)], tags=[], commit=github_commits_json())
     def test_publication_date(self):
         """Test that the resolved release's publication date is captured."""
-        latest = get_latest_version("owner/repository", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/repository", "1.0")
         self.assertEqual(latest.published, _OLD_DATE)
 
     @patch_github(
@@ -173,54 +173,44 @@ class GetLatestVersionTest(LoggingTestCase):
     def test_bound_narrows_candidates(self):
         """Test that a version bound drops out-of-bound releases so a bounded release wins over a higher one."""
         version_bound = bound(Verb.ALLOW, "update<2")
-        latest = get_latest_version("owner/bounded", "1.0", version_bound, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/bounded", "1.0", version_bound)
         self.assert_version(latest, "1.1", "", COMMIT_SHA)
 
     @patch_github(releases=[github_release_json("0.9")], tags=[])
     def test_older_release_kept(self):
         """Test that the current version is kept, without an error, when every release is older than it."""
-        latest = get_latest_version("owner/older", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/older", "1.0")
         self.assert_version(latest, "1.0", "", "")
 
     @patch_github()
     def test_no_error_when_github_cannot_be_reached(self):
         """Test that an unreachable repo logs only the fetch warnings, not a redundant 'no valid version' error."""
-        latest = get_latest_version("owner/unreachable", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/unreachable", "1.0")
         self.assertEqual(latest.version, "1.0")
         self.assertEqual(len(self.records(WARNING)), 2)  # One could-not-fetch warning per endpoint
 
-    @patch_github(releases=[], tags=[])
-    def test_no_version_error_when_repo_has_no_versions(self):
-        """Test that a repo without releases and tags keeps the current version, logging a 'no valid version' error."""
-        latest = get_latest_version("owner/no versions", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
-        self.assertEqual(latest.version, "1.0")
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, dependency="owner/no versions")
+    def test_a_repository_offering_no_valid_version_keeps_the_current_one(self):
+        """Test which repositories leave the reference on its current version, reporting an error for each.
 
-    @patch_github(releases=[github_release_json("1.1", draft=True)], tags=[])
-    def test_skip_draft_releases(self):
-        """Test that draft releases are not candidates, logging a 'no valid version' error for the reachable repo."""
-        latest = get_latest_version("owner/only a draft", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
-        self.assertEqual(latest.version, "1.0")
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, dependency="owner/only a draft")
-
-    @patch_github(releases=[github_release_json("1.1", prerelease=True)], tags=[])
-    def test_skip_prerelease_releases(self):
-        """Test that prerelease releases are not candidates, logging a 'no valid version' error for the repo."""
-        latest = get_latest_version("owner/only a prerelease", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
-        self.assertEqual(latest.version, "1.0")
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, dependency="owner/only a prerelease")
-
-    @patch_github(releases=[github_release_json("invalid-1.1")], tags=[])
-    def test_invalid_versions(self):
-        """Test that invalid versions are not candidates, logging a 'no valid version' error for the reachable repo."""
-        latest = get_latest_version("owner/invalid version", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
-        self.assertEqual(latest.version, "1.0")
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, dependency="owner/invalid version")
+        Each case names a repository of its own, since the releases and tags are cached per repository.
+        """
+        cases = {
+            "no releases and no tags": ([], []),
+            "only a draft release": ([github_release_json("1.1", draft=True)], []),
+            "only a prerelease": ([github_release_json("1.1", prerelease=True)], []),
+            "a release tagged invalid-1.1": ([github_release_json("invalid-1.1")], []),
+            "only a prerelease tag": ([], [github_tag_json("v2.0.0-alpha.8")]),
+        }
+        for case, (releases, tags) in cases.items():
+            with self.subTest(case=case), patch_github(releases=releases, tags=tags):
+                action = f"owner/{case}"
+                self.assertEqual(get_latest_version(action, "1.0").version, "1.0")
+                self.assert_error_logged(Logger._MESSAGE_NO_VERSION, dependency=action)
 
     @patch_github(releases=[github_release_json("1.1")], tags=[])
     def test_no_commit_sha(self):
         """Test that the current version is kept when the commit SHA can't be fetched for the eligible release."""
-        latest = get_latest_version("owner/no sha", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/no sha", "1.0")
         self.assert_version(latest, "1.0", "", "")
         url = "https://github.com/owner/no sha/releases/tag/1.1"
         message = Logger._MESSAGE_NO_COMMIT_SHA
@@ -233,6 +223,7 @@ class GetLatestVersionTest(LoggingTestCase):
             "    return replace(latest, project=Project(newest=replace(repository_project.newest, "
             "version=latest.version) if repository_project.newest else None))",
             "the release attached names the version the run leaves the reference on, not the repository's newest",
+            expected_killers=3,
         )
     )
     @patch_github(
@@ -245,7 +236,7 @@ class GetLatestVersionTest(LoggingTestCase):
     )
     def test_skip_releases_within_cooldown(self):
         """Test that a release published within the cooldown is skipped in favor of an older, eligible release."""
-        latest = get_latest_version("owner/with cooldown", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/with cooldown", "1.0")
         self.assert_version(latest, "1.1", "", COMMIT_SHA)
         self.assertEqual(_OLD_DATE, latest.published)
         newest = latest.project.newest
@@ -260,13 +251,13 @@ class GetLatestVersionTest(LoggingTestCase):
         """
         for cooldown_days, expected in ((30, "1.0"), (5, "1.1")):
             with self.subTest(cooldown_days=cooldown_days):
-                latest = get_latest_version("owner/cooldown", "1.0", NO_BOUND, cooldown_days, check_archival=True)
+                latest = get_latest_version("owner/cooldown", "1.0", cooldown_days=cooldown_days)
                 self.assertEqual(latest.version, expected)
 
     @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=github_commits_json(date=_OLD_ISO))
     def test_tag_without_release(self):
         """Test that a version that is tagged but not released is resolved, with its SHA from the tags list."""
-        latest = get_latest_version("owner/tags only", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/tags only", "1.0")
         self.assert_version(latest, "1.1", "", COMMIT_SHA)
         self.assertEqual(latest.published, _OLD_DATE)  # The tagged commit's committer date
         newest = Release("1.1", _OLD_DATE)
@@ -278,7 +269,7 @@ class GetLatestVersionTest(LoggingTestCase):
     )
     def test_tag_with_release(self):
         """Test that a tag with a release keeps the release's metadata, and its SHA from the tags list."""
-        latest = get_latest_version("owner/tag with release", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/tag with release", "1.0")
         self.assert_version(latest, "1.1", "changelog", COMMIT_SHA)
         self.assertEqual(latest.published, _OLD_DATE)
 
@@ -289,20 +280,13 @@ class GetLatestVersionTest(LoggingTestCase):
     )
     def test_tags_running_ahead_of_releases(self):
         """Test that a repo whose releases (v1.0) fell behind its tags (v2.0) is updated to the newest tag."""
-        latest = get_latest_version("owner/mixed", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/mixed", "1.0")
         self.assert_version(latest, "2.0", "", COMMIT_SHA2)
-
-    @patch_github(releases=[], tags=[github_tag_json("v2.0.0-alpha.8")])
-    def test_skip_prerelease_tags(self):
-        """Test that a tag without a release is recognised as a pre-release by its version and is not a candidate."""
-        latest = get_latest_version("owner/prerelease tag", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
-        self.assertEqual(latest.version, "1.0")
-        self.assert_error_logged(Logger._MESSAGE_NO_VERSION, dependency="owner/prerelease tag")
 
     @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=github_commits_json(date=_RECENT_ISO))
     def test_skip_tags_within_cooldown(self):
         """Test that a tag whose commit falls within the cooldown is skipped."""
-        latest = get_latest_version("owner/fresh tag", "1.0", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/fresh tag", "1.0")
         self.assert_version(latest, "1.0", "", "")
 
     @patch_github(releases=[], tags=[github_tag_json("v1.1")])
@@ -351,7 +335,7 @@ class GetLatestVersionTest(LoggingTestCase):
     )
     def test_release_wins_over_bare_tag_of_the_same_version(self):
         """Test that a moving major tag (v5) does not shadow the release of the same version (v5.0.0)."""
-        latest = get_latest_version("owner/moving tag", "5.0.0", NO_BOUND, COOLDOWN.default, check_archival=True)
+        latest = get_latest_version("owner/moving tag", "5.0.0")
         self.assert_version(latest, "5.0.0", "changelog", COMMIT_SHA)
 
 
@@ -364,6 +348,7 @@ class NewestReleaseTest(LoggingTestCase):
             "        return (self.published, self._sortable_version) < (other.published, other._sortable_version)",
             "        return (self._sortable_version, self.published) < (other._sortable_version, other.published)",
             "the release named is the highest version rather than the one whose date was measured",
+            expected_killers=3,
         )
     )
     @patch_github(
@@ -519,6 +504,7 @@ class GetReleaseTest(LoggingTestCase):
             "[package]",
             "a scoped npm package tagged without its scope has no changelog reported",
             raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
+            expected_killers=2,
         ),
         Mutation(
             github,
@@ -661,6 +647,7 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
             'body=Changes(release.get("body") or "", markdown=True),',
             'body=Changes(release.get("body") or "", markdown=False),',
             "a release body is read as text, so the Markdown GitHub renders it in is shown raw",
+            expected_killers=2,
         ),
     )
     @patch_get([github_release_json("1.1", body="Changelog")])

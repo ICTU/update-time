@@ -393,7 +393,6 @@ Test that a changelog URL that times out yields no changes, and is reported as a
 Test that a changelog URL the source does not serve yields no changes, and is reported at debug level.
 Test that a changelog that does not name the version yields no changes.
 Test that a command that exits cleanly is ok, even with no output.
-Test that a cooldown on a requirement that pins no version is reported, whichever verb set it.
 Test that a dated snapshot the registry lists no newer one of keeps its tag and is pinned to its digest.
 Test that a declaration pinning no exact version is left alone.
 Test that a declaration pinning no exact version is left out, since it names no version to check.
@@ -402,7 +401,6 @@ Test that a declared dependency the registry has no release for is skipped witho
 Test that a delimited path:line is one `repr.filename` span, delimiters stripped and no stray number span.
 Test that a dependency given as a URL is left out, since it resolves to no release on PyPI.
 Test that a dependency whose package the index lists no release for is not warned about.
-Test that a directive bounding the update is reported for a requirement that pins no version.
 Test that a directory naming no changelog file leaves the repository's root to supply the changes.
 Test that a docstring mentioning the name is no occurrence, where a grep would report one.
 Test that a document declaring no such entry has no offset to report.
@@ -448,7 +446,6 @@ Test that a release that is recent or undated is reported by nothing, marker or 
 Test that a repo whose newest release is tagged with no version is reported by that tag.
 Test that a repo whose releases cover its newest version needs no commits fetch for the newest release.
 Test that a repo with no releases has no newest release.
-Test that a repo without releases and tags keeps the current version, logging a 'no valid version' error.
 Test that a repository publishing a release for the version has no changelog file read.
 Test that a request carries no authorization header when GITHUB_TOKEN is not set.
 Test that a requirement declaring no version at all is warned about when its newest release is old.
@@ -486,7 +483,6 @@ Test that an `allow[floating-pin]` is reported, since a Python dependency carrie
 Test that an `ignore[update]` on a dependency that pins no version is not reported as holding it back.
 Test that an `ignore[update]` on a dependency that pins no version is reported, since uv resolves it.
 Test that an `ignore[update]` on a dependency that pins no version leaves its new version reported.
-Test that an `ignore[vulnerable]` marker on a pin OSV reports no advisory for is reported as redundant.
 Test that an `image:` naming no tag is pinned to the version and digest `latest` serves.
 Test that an action in the repository itself names no GitHub repository, so none is asked about.
 Test that an advisory giving no summary is rendered without a quotation, rather than with an empty one.
@@ -508,7 +504,6 @@ Test that an unpinned tag is not changed when no commit SHA is available to pin 
 Test that an unreachable registry yields no changelog instead of crashing.
 Test that an unreachable registry yields no publication date instead of crashing.
 Test that an unreachable registry yields no release instead of crashing.
-Test that draft releases are not candidates, logging a 'no valid version' error for the reachable repo.
 Test that each `vulnerable` marker is reported when an image has no vulnerability to silence.
 Test that each message template is owned by exactly one log method or constant: no orphans, no sharing.
 Test that each scope named alone holds that scope back and no other.
@@ -517,7 +512,6 @@ Test that every scope a marker can hold back has a row, so a scope added later i
 Test that every scope the reference's own source answers must be held back.
 Test that fixtures.py defines no function or class, so behaviour is only ever added to helpers.py.
 Test that input holding no separator line is reported, rather than read as one snippet.
-Test that invalid versions are not candidates, logging a 'no valid version' error for the reachable repo.
 Test that metadata naming no GitHub URL yields no changelog, without raising and without asking GitHub.
 Test that no authorization header is built when no credentials are configured.
 Test that no header is built, and no token requested, when only one of the two credentials is set.
@@ -526,7 +520,6 @@ Test that no newest release is reported for non-Docker-Hub registries, which exp
 Test that no newest release is set when the registry lists no tags at all.
 Test that no release is returned when the Index API lists no distribution files.
 Test that nothing is logged for a version that was not yanked, marker or no marker.
-Test that prerelease releases are not candidates, logging a 'no valid version' error for the repo.
 Test that prose naming the name without backticks is no mention, since it may be an English word.
 Test that re-running the suite while the test is fixed adds no second entry for the same day.
 Test that rendering a Markdown changelog at debug level adds no record of its own to the output.
@@ -604,7 +597,6 @@ The deprecation npm reports for clipboard 2.0.11: the reason the registry states
 The directory a monorepo builds the package from.
 The endpoint a package's versions and release dates are read from; `queried_packages` reads its name back off it.
 The endpoint the pins of one file are looked up at, spelled out here and pinned to the source below.
-The environment the command runs in, with the `@kills` checks switched off.
 The extension a changelog file carries, and the media type a source reports for it, when it is written in Markdown.
 The file is part of the reference rather than of the dependency, and the `NewVersionGetter` contract leaves no room for it, so each reference closes over its own.
 The file type each updater scans, and the function that scans it.
@@ -870,8 +862,6 @@ an unknown tag reaches no constructor, so a Compose override file reads as unpar
 each table is compared with itself, so no table is held to the declared dependency types.
 every line the pattern matches is read, not the one the file names.
 every mutation the test did not kill is reported with the first one's regression.
-failed with every test passing, so no test killed the mutation.
-ignore[yanked] on a loose requirement is not reported redundant, though the requirement pins no version to check for a yank.
 it names the empty base image Docker builds from, which no registry serves.
 nltk ships no `py.typed` marker, so mypy has no types to resolve for it.
 noqa: FBT003 # `isfinal` is positional: pyexpat takes no keyword.
@@ -885,7 +875,6 @@ scripts have no lockfile.
 standard input holds no line separating the snippet from its replacement.
 switch the archival check off, so no dependency is warned about as archived.
 the Markdown parser traces every block rule it tries, burying the run's own debug output.
-the archival check names another scope, so the marker written to silence it no longer reaches it.
 the changelog file of a package a monorepo builds from a directory is looked for in the root.
 the checks are handed every declaration, so PyPI is asked about one it serves no release for.
 the commit has no committer date.

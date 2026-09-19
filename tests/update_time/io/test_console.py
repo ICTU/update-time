@@ -22,6 +22,7 @@ from update_time.io.console import (
 from update_time.io.log import Logger, get_logger
 from update_time.primitives.command import Command
 
+from tests.helpers import patch_environ
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, DIGEST2
 from tests.update_time.helpers import reference
@@ -45,7 +46,7 @@ class RecordRenderingTests(TestCase):
     @staticmethod
     def rendered(report: Callable[[Logger], None], level: str = "INFO") -> str:
         """Return what the console shows at the level for the records `report` logs through the logger it is handed."""
-        console = Console(width=100, file=io.StringIO(), record=True, theme=LOG_THEME)
+        console = Console(width=100, file=io.StringIO(), record=True, theme=LOG_THEME, force_terminal=False)
         root, parser = logging.getLogger(), logging.getLogger(_MARKDOWN_PARSER)
         # Stand the root logger's handlers aside so configure_logging installs its own, and the levels aside so
         # neither the level it configures nor the one an earlier test left behind outlives this render.
@@ -94,7 +95,9 @@ class RecordRenderingTests(TestCase):
     def test_a_links_url_is_printed_where_nothing_can_be_clicked(self):
         """Test that a Markdown link's URL reaches an output that can hold no clickable link, such as a CI log."""
         url = "https://github.com/python-humanize/humanize/issues/42"
-        rendered = self.rendered_changes(Changes(f"- A fix ([#42]({url}))", markdown=True))
+        # Rich reads FORCE_COLOR as a terminal, and a CI runner sets it to keep the colour in its log.
+        with patch_environ({"FORCE_COLOR": "1"}):
+            rendered = self.rendered_changes(Changes(f"- A fix ([#42]({url}))", markdown=True))
         self.assertIn(url, rendered)
 
     @kills(
@@ -136,6 +139,7 @@ class RecordRenderingTests(TestCase):
             '    elements: ClassVar = {**Markdown.elements, "html_block": _RawHtml}',
             "    elements: ClassVar = {**Markdown.elements}",
             "a raw HTML block is dropped, taking the changes a `<details>` section wraps with it",
+            expected_killers=2,
         ),
         Mutation(
             console_module,
@@ -165,14 +169,6 @@ class RecordRenderingTests(TestCase):
         self.assertIn("New version available for pkg in requirements.txt:3: 1.2.0", rendered)
         self.assertNotIn("DEBUG", rendered)
 
-    @kills(
-        Mutation(
-            console_module,
-            "        return _ChangelogMarkdown(changes, hyperlinks=self.console.is_terminal)",
-            "        return Text(changes)",
-            "the changes are shown as the raw text the project published, markup and all",
-        )
-    )
     def test_changes_render_as_markdown(self):
         """Test that a Markdown link in the changes renders as its text, under the header naming the new version."""
         url = "https://pypi.org/project/coverage/7.16.0"

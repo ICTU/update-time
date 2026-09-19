@@ -7,6 +7,8 @@ mutation names the regression it stands in for, so a test that does not kill a m
 mutation is applied in memory, so no file on disk is touched and an interrupted run cannot leave a source file broken.
 """
 
+import ast
+import contextlib
 import functools
 import os
 import sys
@@ -16,10 +18,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar, cast
+from typing import TYPE_CHECKING, Protocol, TypeVar, cast
+from unittest.mock import patch
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 # Holds the id of the test being re-run against its own mutation. That test must run its body and stop there:
 # checking its mutations again would check them against themselves, without end. Only the test it names stands
@@ -46,12 +49,20 @@ _STACKED = "registers mutations in more than one kills decorator; give them all 
 _Method = TypeVar("_Method", bound="Callable[..., object]")
 
 
+class _Function(Protocol):
+    """A function or a method, carrying the module and the qualified name it was defined under."""
+
+    __module__: str
+    __qualname__: str
+
+
 class Outcome(StrEnum):
     """What checking a mutation showed.
 
     KILLED and SURVIVED judge the test: it failed against the mutation, or it did not. STALE and BROKEN judge the
     mutation instead, and call for rewriting the mutation rather than the test. Stale means it was never applied:
-    the file could not be read, the snippet was not there exactly once, or the replacement was the snippet itself.
+    reading or parsing the file failed, the source lacks the anchor, the anchor holds the snippet other than once,
+    or the replacement equals the snippet.
     Broken means the mutated source did not import, or the test errored with an error other than the one the
     mutation declares.
     """
@@ -84,36 +95,74 @@ class Mutation:
     A regression that crashes makes the test raise rather than fail, and so does a mutation that broke the test's
     scaffolding. Naming the error in `raises` tells the two apart: the test kills the mutation by raising that
     error, while any other error is reported as broken.
+
+    Some mutations are killed by tests beyond the ones registered on them. `expected_killers` records how many
+    tests kill such a mutation, the registered ones included, so the sweep reports it only once that number moves.
+
+    The anchor names the code to change: a module, or a function, method or property the module holds. The
+    qualified name reaches a member through its class, and only the source of the definition is changed.
     """
 
-    module: types.ModuleType
+    anchor: types.ModuleType | _Function | property
     old: str
     new: str
     regression: str = ""
     raises: str = ""
+    expected_killers: int | None = None
+
+    @property
+    def _unwrapped(self) -> types.ModuleType | _Function:
+        """Return the anchor in the form that carries its names, which for a property is the getter behind it."""
+        return cast("_Function", self.anchor.fget) if isinstance(self.anchor, property) else self.anchor
+
+    @property
+    def module(self) -> types.ModuleType:
+        """Return the module whose source the mutation changes.
+
+        A function anchor is resolved through `sys.modules`, so read this before a purge rather than after one.
+        """
+        anchor = self._unwrapped
+        if isinstance(anchor, types.ModuleType):
+            return anchor
+        return sys.modules[anchor.__module__]
+
+    @property
+    def qualified_name(self) -> str:
+        """Return the qualified name of the definition the anchor names, or the empty string for a module anchor."""
+        anchor = self._unwrapped
+        return "" if isinstance(anchor, types.ModuleType) else anchor.__qualname__
+
+    @property
+    def _anchor_name(self) -> str:
+        """Return the name a report calls the anchor by: the module's name, with the qualified name after it."""
+        return ".".join(filter(None, (self.module.__name__, self.qualified_name)))
 
     @property
     def _path(self) -> str:
         """Return the file the module was loaded from."""
         return self.module.__file__ or ""
 
-    def check(self, test_name: str) -> Result:
-        """Return what checking the mutation showed: whether the test fails against it, or the file has moved on.
-
-        The file must hold the snippet exactly once, so that a mutation cannot break a line it was not aimed at.
-        Whatever the mutation is at fault for comes back as an outcome to report: a file that cannot be read, a source
-        that will not import. Anything else raises, since a defect in the checking is not the mutation's to answer for.
-        """
-        if self.new == self.old:
-            return Result(Outcome.STALE, "the snippet and its replacement are the same, so nothing changes")
+    def _mutated(self) -> str:
+        """Return the file's source with the snippet replaced inside the anchor's span."""
         try:
             source = Path(self._path).read_text()
         except OSError as error:
-            return Result(Outcome.STALE, _reason(error))
-        if (occurrences := source.count(self.old)) != 1:
-            return Result(Outcome.STALE, f"the snippet occurs {occurrences} times rather than once")
+            raise StaleError(_reason(error)) from error
+        return mutated_source(source, self.qualified_name, self.old, self.new)
+
+    def check(self, test_name: str) -> Result:
+        """Return what checking the mutation showed: whether the test fails against it, or the file has moved on.
+
+        Whatever the mutation is at fault for comes back as an outcome to report: a source it cannot be applied to,
+        one that will not import. Anything else raises, since a defect in the checking is not the mutation's to
+        answer for.
+        """
         try:
-            test_result = self._run_test(test_name, source)
+            mutated = self._mutated()
+        except StaleError as error:
+            return Result(Outcome.STALE, str(error))
+        try:
+            test_result = self._run_test(test_name, mutated)
         except _SourceError as error:
             return Result(Outcome.BROKEN, str(error))
         if test_result.errors:
@@ -126,38 +175,41 @@ class Mutation:
 
         Where `check` runs the one test the mutation is registered on, this runs the whole suite. The mutated
         source is executed in memory and installed under the module's name, so the working tree is never written
-        to. It cannot be applied when the snippet is not in the file exactly once, or when the mutated source will
-        not import.
+        to. It cannot be applied when the anchor does not hold the snippet exactly once, or when the mutated source
+        will not import.
         """
-        source = Path(self._path).read_text()
-        if source.count(self.old) != 1:
-            return None
-        imported = dict(sys.modules)
         try:
-            self._purge(_SUITE)
-            sys.modules[self.module.__name__] = _executed_module(source.replace(self.old, self.new, 1), self.module)
-            return suite_failures()
+            mutated = self._mutated()
+        except StaleError:
+            return None
+        try:
+            with self._installed(mutated, _SUITE):
+                return suite_failures()
         except _SourceError:
             return None
-        finally:
-            sys.modules.clear()
-            sys.modules.update(imported)
 
-    def _run_test(self, test_name: str, source: str) -> unittest.TestResult:
-        """Run the test with the mutated source installed under the module's name.
+    @contextlib.contextmanager
+    def _installed(self, mutated: str, test_name: str) -> Iterator[None]:
+        """Install the mutated source under the module's name, and put `sys.modules` back as it was afterwards.
 
-        What the run imported is dropped afterwards, so the caller keeps the modules it had.
+        The module is read before the purge drops it, and the restore runs however the body ends, so a mutated
+        module never outlives the block that installed it.
         """
-        mutated_source = source.replace(self.old, self.new)
+        module = self.module
         imported = dict(sys.modules)
         try:
             self._purge(test_name)
-            sys.modules[self.module.__name__] = _executed_module(mutated_source, self.module)
-            result = unittest.TestResult()
-            _loaded_test(test_name).run(result)
+            sys.modules[module.__name__] = _executed_module(mutated, module)
+            yield
         finally:
             sys.modules.clear()
             sys.modules.update(imported)
+
+    def _run_test(self, test_name: str, mutated: str) -> unittest.TestResult:
+        """Run the test with the mutated source installed under the module's name."""
+        with self._installed(mutated, test_name):
+            result = unittest.TestResult()
+            _loaded_test(test_name).run(result)
         return result
 
     def _purge(self, test_name: str) -> None:
@@ -174,6 +226,66 @@ class Mutation:
 def _root(name: str) -> str:
     """Return the top-level package of the dotted module or test name."""
     return name.split(".", maxsplit=1)[0]
+
+
+def mutated_source(source: str, qualified_name: str, old: str, new: str) -> str:
+    """Return the source with the snippet replaced inside the definition the qualified name points at.
+
+    An empty qualified name stands for the whole source. The anchor must hold the snippet exactly once, so that a
+    mutation cannot break a line it was not aimed at. Whatever stops it from being applied raises `StaleError`.
+    """
+    if new == old:
+        message = "the snippet and its replacement are the same, so nothing changes"
+        raise StaleError(message)
+    start, end = _span(source, qualified_name)
+    if (occurrences := source[start:end].count(old)) != 1:
+        message = f"the snippet occurs {occurrences} times rather than once"
+        raise StaleError(message)
+    return source[:start] + source[start:end].replace(old, new) + source[end:]
+
+
+def _span(source: str, qualified_name: str) -> tuple[int, int]:
+    """Return the offsets of the part of the source a mutation may change, which is all of it for an empty name."""
+    if not qualified_name:
+        return 0, len(source)
+    try:
+        body = ast.parse(source).body
+    except SyntaxError as error:
+        raise StaleError(_reason(error)) from error
+    definition = _definition(body, qualified_name.split("."))
+    if definition is None:
+        message = f"the source does not define {qualified_name}"
+        raise StaleError(message)
+    start = _offset(source, definition.lineno, definition.col_offset)
+    return start, _offset(source, definition.end_lineno or 0, definition.end_col_offset or 0)
+
+
+def _definition(body: list[ast.stmt], qualified_name: list[str]) -> ast.stmt | None:
+    """Return the definition the qualified name points at, or None where the source does not define it."""
+    name, *rest = qualified_name
+    found = next(
+        (
+            node
+            for node in body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name
+        ),
+        None,
+    )
+    if found is None:
+        return None
+    return _definition(found.body, rest) if rest else found
+
+
+def _offset(source: str, line: int, column: int) -> int:
+    """Return the offset that the one-based line and the column point at in the source."""
+    return sum(len(text) for text in source.splitlines(keepends=True)[: line - 1]) + column
+
+
+class StaleError(Exception):
+    """Raised where the mutation cannot be applied to the source at all, carrying the reason to report.
+
+    That is the mutation's fault rather than the test's.
+    """
 
 
 class _SourceError(Exception):
@@ -220,16 +332,9 @@ def suite_failures() -> list[str]:
 
     A test is named once however many of its subTest cases failed, since a subTest carries its parameters in its id.
     """
-    checked = os.environ.get(CHECKS_OFF)
-    os.environ[CHECKS_OFF] = "1"
-    try:
-        result = unittest.TestResult()
+    result = unittest.TestResult()
+    with patch.dict(os.environ, {CHECKS_OFF: "1"}):
         unittest.defaultTestLoader.discover(_SUITE, top_level_dir=".").run(result)
-    finally:
-        if checked is None:
-            del os.environ[CHECKS_OFF]
-        else:
-            os.environ[CHECKS_OFF] = checked
     return sorted({test.id().partition(" (")[0] for test, _traceback in result.failures + result.errors})
 
 
@@ -240,8 +345,8 @@ def _failure(mutation: Mutation, result: Result) -> str:
     and its message carries why, which says whether the mutation needs rewriting or the code moved.
     """
     if result.outcome == Outcome.SURVIVED:
-        return f"{mutation.regression} — the test did not kill this mutation of {mutation.module.__name__}"
-    return f"{mutation.regression} — this mutation of {mutation.module.__name__} is {result.outcome}: {result.reason}"
+        return f"{mutation.regression} — the test did not kill this mutation of {mutation._anchor_name}"
+    return f"{mutation.regression} — this mutation of {mutation._anchor_name} is {result.outcome}: {result.reason}"
 
 
 # Where a survived registration is recorded, so how often the mechanism catches a test that stopped guarding can
@@ -293,20 +398,13 @@ def _fail_unless_killed(test_case: unittest.TestCase, mutations: tuple[Mutation,
     belongs to a class the unmutated module was imported into.
     """
     test_name = test_case.id()
-    checked = os.environ.get(CHECKED_TEST)
-    os.environ[CHECKED_TEST] = test_name
-    try:
+    with patch.dict(os.environ, {CHECKED_TEST: test_name}):
         for mutation in mutations:
             with test_case.subTest(regression=mutation.regression):
                 result = mutation.check(test_name)
                 if result.outcome is Outcome.SURVIVED:
                     _record_survival(test_name, mutation)
                 test_case.assertEqual(result.outcome, Outcome.KILLED, _failure(mutation, result))
-    finally:
-        if checked is None:
-            del os.environ[CHECKED_TEST]
-        else:
-            os.environ[CHECKED_TEST] = checked
 
 
 def _failing(method: Callable[..., object], complaint: str) -> Callable[..., object]:
@@ -336,7 +434,7 @@ def kills(*mutations: Mutation) -> Callable[[_Method], _Method]:
         @functools.wraps(method)
         def wrapper(self: unittest.TestCase, *args: object, **kwargs: object) -> object:
             result = method(self, *args, **kwargs)
-            if os.environ.get(CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF):
+            if os.environ.get(CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":
                 return result
             _fail_unless_killed(self, mutations)
             return result
@@ -345,3 +443,8 @@ def kills(*mutations: Mutation) -> Callable[[_Method], _Method]:
         return cast("_Method", wrapper)
 
     return decorate
+
+
+def registered_mutations(method: object) -> tuple[Mutation, ...]:
+    """Return the mutations `kills` registered on the method, and none where it registers none."""
+    return getattr(method, _REGISTERED, ())

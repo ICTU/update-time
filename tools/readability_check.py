@@ -166,13 +166,26 @@ def _is_exception_message(text: str) -> bool:
     return _EXCEPTION_MESSAGE.match(text) is not None
 
 
+# A block's body is indented by this when a snippet is tried as one. Any consistent width would do.
+_INDENT = "    "
+
+
 def _is_code(text: str) -> bool:
-    """Return whether the text reads as Python source rather than as prose."""
-    try:
-        tree = ast.parse(textwrap.dedent(text).strip())
-    except SyntaxError:
-        return False
-    return any(isinstance(node, ast.Call) for node in ast.walk(tree))
+    """Return whether the text reads as Python source rather than as prose.
+
+    A snippet quoted from a file need not parse on its own. It may hold a compound statement's header without the
+    body below it, or a body whose indentation a docstring's cleaning stripped, so it is tried as a block as well.
+    """
+    source = textwrap.dedent(text).strip()
+    header, _, body = source.partition("\n")
+    block = f"{header}\n{textwrap.indent(body, _INDENT)}\n{_INDENT}pass"
+    for candidate in (source, block):
+        try:
+            tree = ast.parse(candidate)
+        except SyntaxError:
+            continue
+        return any(isinstance(node, ast.Call) for node in ast.walk(tree))
+    return False
 
 
 @dataclass(order=True)

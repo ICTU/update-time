@@ -59,6 +59,7 @@ class CallSitesTest(unittest.TestCase):
             '    return [node for node in ast.walk(_parsed(path)) if getattr(node, "name", None) == name '
             "or (isinstance(node, ast.Call) and _calls_name(node, name))]",
             "the line defining the name counts as a call site, which is the miscount a grep makes",
+            expected_killers=2,
         ),
         Mutation(
             callers_module,

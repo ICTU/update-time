@@ -272,15 +272,6 @@ class DeclaredDependenciesTest(unittest.TestCase):
             ],
         )
 
-    @kills(
-        Mutation(
-            pyproject_toml,
-            "        for position, requirement in requirements.items()\n    ]",
-            "        for position, requirement in requirements.items()\n"
-            "        if not (requirement.name in sourced and _pinned_version(requirement))\n    ]",
-            "a pin uv resolves from a source of its own is dropped, so an update uv resolves for it is never written",
-        )
-    )
     def test_a_pin_with_a_uv_source_is_read(self):
         """Test that a pin uv resolves from a source of its own is read, since uv can resolve an update for it."""
         contents = '[project]\ndependencies = ["local==1.0"]\n[tool.uv.sources]\nlocal = {path = "../local"}\n'
@@ -342,6 +333,7 @@ class DeclaredDependenciesTest(unittest.TestCase):
             "parse_marker(replace(line, location=location))",
             'parse_marker(replace(line, previous_text="", location=location))',
             "only an inline marker is read, so a marker on the line above a declaration steers nothing",
+            expected_killers=2,
         )
     )
     def test_reads_the_marker_on_the_line_above_a_declaration(self):

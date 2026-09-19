@@ -17,6 +17,7 @@ class DependencyTypesTest(unittest.TestCase):
             'jsdelivr_npm_urls=DependencyType("jsDelivr npm URLs", (file_type.SPHINX_CONFIG,)),',
             'jsdelivr_npm_urls=DependencyType("jsDelivr npm URLs", ()),',
             "a dependency type that declares no file goes unnoticed, and the help stops naming its files",
+            expected_killers=2,
         )
     )
     def test_every_dependency_type_declares_a_file(self):

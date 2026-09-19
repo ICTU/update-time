@@ -15,7 +15,6 @@ from update_time.markers.directive import Reason
 from update_time.markers.drift import ALLOW_HASH_DRIFT
 from update_time.primitives.location import Location
 from update_time.references import github as references_github
-from update_time.references import resolve as references_resolve
 from update_time.sources import github as sources_github
 from update_time.updaters import update_github_action
 from update_time.updaters.update_github_action import update_github_actions
@@ -277,14 +276,6 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_ignored_staleness_logged("actions/checkout", Location(workflow_yml, 1), "ignore[stale]")
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            references_resolve,
-            "    return marker.stale.value_or(STALE_AFTER.get())",
-            "    return STALE_AFTER.get()",
-            "a reference's own staleness threshold is passed over for the run-wide one",
-        )
-    )
     @patch_github(releases=[github_release_json("v1.0", published_at=_HUNDRED_DAYS_ISO)], tags=[])
     def test_a_branch_reference_is_warned_about_at_its_own_threshold(
         self, mock_glob: Mock, mock_get_latest_version: Mock

@@ -60,6 +60,7 @@ class NpmjsPublicationDatetimeTest(LoggingTestCase):
             'return parse_timestamp(_package_metadata(package).get("time", {})[version])',
             "a version the registry dates nowhere in its time map ends the run with a traceback",
             raises="KeyError: '9.9'",
+            expected_killers=3,
         ),
     )
     @patch_get({"time": {}})
@@ -199,6 +200,7 @@ class GetChangesFallbackTest(LoggingTestCase):
             "        repository.owner, repository.name, version, repository.directory\n    )",
             "    return changes_from_release(repository.owner, repository.name, package, version)",
             "a package whose repository publishes no matching release reports no changelog",
+            expected_killers=2,
         ),
     )
     @patch("requests.get")
