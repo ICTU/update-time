@@ -13,10 +13,14 @@ from update_time.primitives.location import Location
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from update_time.domain.dependency import DependencyName
     from update_time.formats.xml import XmlElement
 
 # A `<version>` that names one of the pom's properties rather than a version, such as `${spring.version}`.
 _PROPERTY_REFERENCE = re.compile(r"\$\{(?P<name>[^}]+)\}")
+
+# The group Maven gives a plugin that declares none. A dependency names its own group.
+_PLUGIN_GROUP = "org.apache.maven.plugins"
 
 
 def dependencies(path: Path) -> list[Reference] | None:
@@ -29,8 +33,27 @@ def dependencies(path: Path) -> list[Reference] | None:
     if project is None:
         return None
     property_elements = _property_elements(project) | _own_coordinates(project)
-    declared = (_dependency(path, element, property_elements) for element in project.descendants("dependency"))
+    declared = (_reference(path, element, property_elements) for element in project.descendants("dependency"))
     return [dependency for dependency in declared if dependency is not None]
+
+
+def artefacts(path: Path) -> list[DependencyName]:
+    """Return the coordinates of each dependency and plugin the pom declares a version for.
+
+    A pom can name a group or an artifact with a property, such as `${spring.group}`. Update-time reads only the
+    pom's own properties, so a parent's property stays unresolved.
+    """
+    project = xml.read(path)
+    if project is None:
+        return []
+    property_elements = _property_elements(project) | _own_coordinates(project)
+    declared = (
+        _reference(path, element, property_elements, default_group)
+        for tag, default_group in (("dependency", ""), ("plugin", _PLUGIN_GROUP))
+        for element in project.descendants(tag)
+    )
+    named = (reference.dependency for reference in declared if reference is not None)
+    return [artefact for artefact in named if not _PROPERTY_REFERENCE.search(artefact)]
 
 
 def _own_coordinates(project: XmlElement) -> dict[str, XmlElement]:
@@ -56,20 +79,23 @@ def _property_elements(project: XmlElement) -> dict[str, XmlElement]:
     return anywhere | ({element.tag: element for element in own.children} if own else {})
 
 
-def _dependency(path: Path, element: XmlElement, property_elements: dict[str, XmlElement]) -> Reference | None:
-    """Return the reference the `<dependency>` element declares, or None where it leaves out a part Maven needs.
+def _reference(
+    path: Path, element: XmlElement, property_elements: dict[str, XmlElement], default_group: str = ""
+) -> Reference | None:
+    """Return the reference the element declares, or None where it leaves out a part Maven needs.
 
-    Maven names a dependency `groupId:artifactId`.
+    A `<dependency>` and a `<plugin>` name their artefact alike, as `groupId:artifactId`, and version it alike. The
+    caller passes the group to fall back on for an element whose group Maven defaults.
     """
     group = element.child("groupId")
     artifact = element.child("artifactId")
     version = element.child("version")
-    if group is None or artifact is None or version is None:
+    group_name = default_group if group is None else _resolved(group, property_elements).text
+    if not group_name or artifact is None or version is None:
         return None
     versioned_by = _resolved(version, property_elements)
     location = Location(path, versioned_by.line, versioned_by.column)
-    name = f"{_resolved(group, property_elements).text}:{_resolved(artifact, property_elements).text}"
-    return Reference(name, versioned_by.text, location)
+    return Reference(f"{group_name}:{_resolved(artifact, property_elements).text}", versioned_by.text, location)
 
 
 def _resolved(element: XmlElement, property_elements: dict[str, XmlElement]) -> XmlElement:

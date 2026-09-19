@@ -26,6 +26,7 @@ troml := uv_run + " troml"
 ty := uv_run + ' ty check --no-progress --error-on-warning --color=${_color:-auto}'
 vulture := uv_run + " vulture --exclude .venv --min-confidence 0"
 vulture_whitelist := "tools/vulture-whitelist.py"
+prose_whitelist := "tools/prose-whitelist.txt"
 coverage := uv_run + " coverage"
 
 # === Build and publish ===
@@ -61,8 +62,7 @@ check-repo:
     git fetch --quiet
     [ "$(git rev-parse @)" = "$(git rev-parse '@{u}')" ] || { echo "Error: the main branch is not in sync with origin; push or pull first" >&2; exit 1; }
 
-# Release a new version. Pass -c/--check after the version (e.g. `just publish 1.2.3 --check`) for a dry run that
-# rehearses the build and upload without committing, tagging, or pushing, and restores the working tree afterwards.
+# Release a new version. Pass -c/--check after the version (e.g. `just publish 1.2.3 --check`) for a dry run that leaves the working tree as it was.
 publish version *flags: (check-version version) check-repo test check
     #!/usr/bin/env bash
     set -euo pipefail
@@ -105,7 +105,7 @@ test_command(tests) := if tests == "" { coverage + " run -m unittest --quiet && 
 # Run the unit tests, all of them or only the ones named, e.g. `just test tests.update_time.io.test_log`.
 [env("PYTHONDEVMODE", "1")]
 [env("PYTHONPATH", "src")]
-test *tests: install-py-dependencies
+test *tests: install-py-dependencies install-nltk-data
     # Show a spinner while running and suppress the output unless the run fails.
     {{ start_progress() }} {{ test_command(tests) }} {{ end_progress("test") }}
 
@@ -274,14 +274,14 @@ check-readme-is-up-to-date: (py-check "check-readme-is-up-to-date" f"{{ python_m
 check-readme-structure:
     {{ start_capture() }} {{ python_m }} tools.readme_structure_check docs/README.md.in {{ end_capture("check-readme-structure") }}
 
-# Check prose for too complex sentences, in the code and documentation.
+# Check the readability of the prose in the code and the documentation.
 [private]
-check-sentence-complexity:
-    {{ start_capture() }} {{ python_m }} tools.sentence_complexity_check {{ code }} {{ prose }} {{ end_capture("check-sentence-complexity") }}
+check-readability: install-nltk-data
+    {{ start_capture() }} {{ python_m }} tools.readability_check --check-whitelist {{ code }} {{ prose }} {{ end_capture("check-readability") }}
 
 # Run the quality checks. Run one by name for a quicker loop, e.g. `just ruff` or `just mypy`.
 [parallel]
-check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-readme-is-up-to-date check-readme-structure check-sentence-complexity vale yamllint zizmor
+check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-readme-is-up-to-date check-readme-structure check-readability vale yamllint zizmor
 
 # Run the tests and the checks at the same time, neither of which reads what the other writes.
 [parallel]
@@ -324,7 +324,7 @@ format-after-edit: install-py-dependencies
     {{ ruff }} format {{ code }}
     {{ ruff }} check {{ code }}
 
-# Fix quality issues that can be fixed automatically
+# Fix the quality issues that can be fixed automatically.
 fix: install-py-dependencies
     {{ ty }} --fix {{ code }}
     {{ ruff }} format {{ code }}
@@ -333,11 +333,24 @@ fix: install-py-dependencies
     # Pyproject-fmt returns exit code 1 when pyproject.toml needs formatting, ignore it when formatting:
     {{ pyproject_fmt }} --no-print-diff pyproject.toml || true
     {{ troml }} suggest --fix
-    # Vulture returns exit code 3 when there is dead code, ignore it when writing the whitelist:
-    {{ vulture }} --make-whitelist {{ code }} > {{ vulture_whitelist }} || true
     {{ just_fmt }}
 
+# === Whitelists ===
+
+# Regenerate the whitelists the checks read: the dead code vulture passes over, and the sentences the prose check passes over.
+update-whitelists: install-py-dependencies
+    # Every finding the checks report is written out, the ones this run introduced included, so read the diff.
+    # Vulture returns exit code 3 when there is dead code, ignore it when writing the whitelist:
+    {{ vulture }} --make-whitelist {{ code }} > {{ vulture_whitelist }} || true
+    {{ python_m }} tools.readability_check --make-whitelist {{ code }} {{ prose }} > {{ prose_whitelist }}
+
 # === Install dependencies ===
+
+# Fetch the nltk datasets the readability check reads. The unit tests read prose through them and refuse the
+# network, so a fresh checkout has to have them before the tests run.
+[private]
+install-nltk-data: install-py-dependencies
+    {{ start_capture() }} {{ python_m }} tools.readability_check --install-data {{ end_capture("install-nltk-data") }}
 
 # Install Python dependencies from the lock file.
 [private]

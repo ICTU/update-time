@@ -721,6 +721,14 @@ class Logger:
         """Log that a changelog URL a project publishes is not served."""
         self._log_response(self._MESSAGE_UNSERVED_CHANGELOG, response)
 
+    _MESSAGE_UNSERVED_LISTING = LogMessage(
+        DEBUG, "Could not fetch the version listing at %(url)s: HTTP %(status)s %(reason)s"
+    )
+
+    def unserved_listing(self, response: Response) -> None:
+        """Log that a repository does not serve a version listing for an artefact."""
+        self._log_response(self._MESSAGE_UNSERVED_LISTING, response)
+
     def _log_response(self, message: LogMessage, response: Response) -> None:
         """Log the message with the response's URL, status code, and reason phrase."""
         self._log(message, url=response.url, status=response.status_code, reason=response.reason)

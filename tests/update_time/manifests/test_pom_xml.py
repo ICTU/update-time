@@ -93,7 +93,7 @@ class DependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml,
-            "    if group is None or artifact is None or version is None:\n        return None\n",
+            "    if not group_name or artifact is None or version is None:\n        return None\n",
             "",
             "an element missing a part takes the whole pom's reading down with it",
             raises="AttributeError: 'NoneType' object has no attribute 'text'",

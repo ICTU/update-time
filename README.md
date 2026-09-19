@@ -248,7 +248,7 @@ Update-time works on both version pins and hash pins. It moves a version pin for
 
 #### Floating image tags
 
-A floating image tag pins no version: what the project pulls is whatever the registry serves under that tag at that moment. Update-time replaces it with the version and digest it serves at the time of the run, which is the image the project pulls today:
+A floating image tag does not pin a version: what the project pulls is whatever the registry serves under that tag at that moment. Update-time replaces it with the version and digest it serves at the time of the run, which is the image the project pulls today:
 
 ```console
 INFO Pinned python in Dockerfile:1 to 3.14.7@sha256:…
@@ -334,13 +334,13 @@ Update-time never adopts an integrity hash mismatch, whatever you opt in to. The
 
 ### ⏳ Cooldown
 
-To avoid adopting releases that are too fresh to trust, Update-time honours a cooldown period. It does not yet adopt a version published inside that period. The cooldown defaults to **7 days**. Change it with the `--cooldown` option, for example `update-time --cooldown 14`. A single reference can carry a cooldown of its own, which wins over whatever `--cooldown` says (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). Who applies it depends on the dependency type:
+To avoid adopting releases that are too fresh to trust, Update-time honours a cooldown period. It does not yet adopt a version published inside that period. The cooldown defaults to **7 days**. Change it with the `--cooldown` option, for example `update-time --cooldown 14`. A reference that takes a marker can set a cooldown of its own, which wins over whatever `--cooldown` says (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). Who applies it depends on the dependency type:
 
 | Dependency type | Applied by | Measured against |
 | :-------------- | :--------- | :--------------- |
 | [Python dependencies](#python-dependencies) | Update-time for `requirements.txt`, uv for the rest | the release's publication date on PyPI |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | npm and pnpm | the release's age on the npm registry |
-| [Maven dependencies](#maven-dependencies) | none: Maven has no release-age filter to hand a cooldown to | nothing |
+| [Maven dependencies](#maven-dependencies) | Update-time, for the artefacts Maven Central serves | the version's publication date in the repository |
 | [Node engine version](#node-engine-version-and-python-version) | Update-time, or already applied via the Dockerfile | the Node image tag's push date |
 | [Python version](#node-engine-version-and-python-version) | Update-time, or already applied via the Dockerfile | the Python image tag's push date |
 | [Docker images](#docker-images) | Update-time, on Docker Hub only | the image tag's push date |
@@ -365,7 +365,7 @@ These warnings are informational, so they change no file and do not affect the e
 
 ### 🕸️ Stale dependencies
 
-Update-time warns when a dependency's newest release is older than a threshold. That may mean the project was abandoned or superseded. The threshold defaults to **365 days**, and `--stale-after DAYS` sets it. Pass `--stale-after 0` to disable the check. A single reference can carry a threshold of its own, or leave the check out altogether, and either wins over whatever `--stale-after` says (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). For example, Update-time reports a pin whose newest release is well over a year old as:
+Update-time warns when a dependency's newest release is older than a threshold. That may mean the project was abandoned or superseded. The threshold defaults to **365 days**, and `--stale-after DAYS` sets it. Pass `--stale-after 0` to disable the check. A reference that takes a marker can set a threshold of its own, or leave the check out altogether, and either wins over whatever `--stale-after` says (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). For example, Update-time reports a pin whose newest release is well over a year old as:
 
 ```console
 WARNING Stale dependency humanize in docs/requirements.txt:12: newest release 4.15.0 was published 512 days ago (> 365)
@@ -379,7 +379,7 @@ Update-time checks the dependencies it asks a source about for staleness, agains
 | :-------------- | :--------------- |
 | [Python dependencies](#python-dependencies) | the newest release of the package on PyPI |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | the newest release on the npm registry, for the dependencies that resolve to one |
-| [Maven dependencies](#maven-dependencies) | nothing: no source is asked about a Maven artefact |
+| [Maven dependencies](#maven-dependencies) | nothing: the publication dates Update-time reads serve the cooldown alone |
 | [Node engine version](#node-engine-version-and-python-version) | the base image it follows, or the newest Node release on Docker Hub when no Dockerfile declares one |
 | [Python version](#node-engine-version-and-python-version) | the base image it follows, or the newest Python release on Docker Hub when no Dockerfile declares one |
 | [Docker images](#docker-images) | the image's newest release, and on Docker Hub only, since other registries expose no publication date |
@@ -405,12 +405,12 @@ Which dependencies are checked follows from where a yank can be observed. PyPI r
 | :-------------- | :--------- |
 | [Python dependencies](#python-dependencies) | `requirements.txt`, `pyproject.toml`, and inline script metadata pins, against PyPI's yank metadata |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: npm and pnpm handle deprecated versions themselves |
-| [Maven dependencies](#maven-dependencies) | none: no source is asked about a Maven artefact |
-| [Node engine version](#node-engine-version-and-python-version) | none: its source has no yank concept |
-| [Python version](#node-engine-version-and-python-version) | none: its source has no yank concept |
-| [Docker images](#docker-images) | none: its source has no yank concept |
-| [GitHub Actions](#github-actions-and-pre-commit-hooks) | none: its source has no yank concept |
-| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | none: its source has no yank concept |
+| [Maven dependencies](#maven-dependencies) | none: Maven Central does not report a withdrawal |
+| [Node engine version](#node-engine-version-and-python-version) | none: its source does not record a yank |
+| [Python version](#node-engine-version-and-python-version) | none: its source does not record a yank |
+| [Docker images](#docker-images) | none: its source does not record a yank |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | none: its source does not record a yank |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | none: its source does not record a yank |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | against the npm registry's deprecation of the pinned version |
 
 ### 🛡️ Vulnerable dependencies
@@ -429,7 +429,7 @@ Update-time reads an advisory carrying both a CVSS v3 and a v4 vector at its v4 
 
 Update-time checks the version the run leaves the reference on. So it warns about a vulnerability the run updated into, and not about one the run updated away from. It does not check transitive dependencies. Auditing the transitive dependencies in a lock file is what `uv audit`, `pip-audit`, `npm audit`, and `pnpm audit` are for.
 
-A single reference can carry a risk level of its own, silence one advisory, or leave the check out altogether (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
+A reference that takes a marker can set a risk level of its own, silence one advisory, or leave the check out altogether (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
 
 To silence one advisory across the whole run, rather than on the one reference that carries a marker, pass `--ignore-vulnerability`. The option takes a comma-separated list: `--ignore-vulnerability GHSA-2gwj-7jmv-h26r,CVE-2021-31542`. It names an advisory the way a marker does, so any identifier the vulnerability is known by will do. Update-time logs what the option silenced at `DEBUG`. That line names the advisory OSV answered under, and quotes back the identifiers you passed for it. Where a reference's own marker silences the same advisory, the marker is the one reported.
 
@@ -441,7 +441,7 @@ Which dependencies are checked follows from what OSV can match a pinned version 
 | :-------------- | :------------------ |
 | [Python dependencies](#python-dependencies) | `requirements.txt`, `pyproject.toml`, and inline script metadata pins, against OSV's PyPI advisories |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: those dependencies are declared as ranges and resolved in the lock file, which Update-time does not read |
-| [Maven dependencies](#maven-dependencies) | none: no source is asked about a Maven artefact |
+| [Maven dependencies](#maven-dependencies) | none: OSV is asked about no Maven artefact |
 | [Node engine version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
 | [Python version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
 | [Docker images](#docker-images) | none: OSV has no ecosystem for container images |
@@ -467,14 +467,14 @@ Which dependencies are checked follows from where an archival declaration can be
 | Dependency type | Archival check |
 | :-------------- | :------------- |
 | [Python dependencies](#python-dependencies) | the project status PyPI publishes for the package a Python file declares |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: the npm registry publishes no archival signal |
-| [Maven dependencies](#maven-dependencies) | none: no source is asked about a Maven artefact |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: the npm registry does not publish an archival signal |
+| [Maven dependencies](#maven-dependencies) | none: Maven Central does not publish an archival signal |
 | [Node engine version](#node-engine-version-and-python-version) | none: it follows a Docker image, and no registry publishes an archival signal |
 | [Python version](#node-engine-version-and-python-version) | none: it follows a Docker image, and no registry publishes an archival signal |
 | [Docker images](#docker-images) | none: no OCI registry publishes an archival signal |
 | [GitHub Actions](#github-actions-and-pre-commit-hooks) | whether GitHub reports the action's repository as archived |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | whether GitHub reports the hook's repository as archived |
-| [jsDelivr npm URLs](#jsdelivr-npm-urls) | none: the npm registry publishes no archival signal |
+| [jsDelivr npm URLs](#jsdelivr-npm-urls) | none: the npm registry does not publish an archival signal |
 
 ## 🎛️ Controlling updates and warnings per reference
 
@@ -574,7 +574,7 @@ FROM python:3.12
 
 The cooldown applies to the reference carrying it, and every other reference in the run keeps the global one. It wins over `--cooldown`. `allow[cooldown>=30]` sets the same 30-day window as `ignore[cooldown<30]`. To adopt new releases for one reference as soon as they ship, write `allow[cooldown>=0]` or `ignore[cooldown<0]`. A zero-day window holds nothing back, which is what `--cooldown 0` means globally.
 
-The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)).
+The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)). Maven updates a `pom.xml` dependency, so the override does not reach one either (see [Maven dependencies](#maven-dependencies)).
 
 #### Silencing specific vulnerabilities
 
@@ -760,7 +760,7 @@ A line about a warning appears only when the marker actually silenced one, so an
 
 A directive is redundant when it decides nothing for the reference it sits on: a scope silencing a warning that reference never gets, or a bound narrowing nothing. Update-time reports each one at `WARNING`.
 
-Update-time reports every warning scope as redundant for a Python dependency PyPI serves no release for. That is a dependency pointing at a URL or a git repository, and one uv resolves through a `[tool.uv] sources` entry. Update-time asks PyPI about neither, so none of those warnings is ever given there.
+Update-time reports every warning scope as redundant for a Python dependency PyPI does not serve a release for. That is a dependency pointing at a URL or a git repository, and one uv resolves through a `[tool.uv] sources` entry. Update-time asks PyPI about neither, so none of those warnings is ever given there.
 
 Update-time never reports a bare `# update-time: ignore` as redundant. It names no scope, so a warning would have no directive to name. Update-time does report a scope or item written beside it, so `# update-time: ignore ignore[yanked]` on a Docker image reports the `ignore[yanked]` as redundant.
 
@@ -769,35 +769,35 @@ Update-time never reports a bare `# update-time: ignore` as redundant. It names 
 Staleness is measured against the publication date of a dependency's newest release. In all its forms, Update-time reports the `stale` scope as redundant for a reference whose source reports no such date. It updates the reference as usual:
 
 ```console
-WARNING Redundant update-time directive ignore[stale<90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source reports no publication date to measure staleness against
+WARNING Redundant update-time directive ignore[stale<90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure staleness against
 ```
 
-Three kinds of reference get that warning. An image on a registry other than Docker Hub does, since only Docker Hub reports a push date. So Update-time does not report the same marker on a Docker Hub image. A reference a file accounts for itself gets the warning too — Update-time asks no registry about it. A CircleCI machine-executor image and an image a Docker Compose file builds are such references. And a runtime version that follows the project's Dockerfile gets the warning as well, whether it is a `.python-version` entry or a Node engine. The staleness reported for it is the base image's, not its own.
+Three kinds of reference get that warning. An image on a registry other than Docker Hub does, since only Docker Hub reports a push date. So Update-time does not report the same marker on a Docker Hub image. Update-time does not ask a registry about a reference a file accounts for itself, so that reference gets the warning too. A CircleCI machine-executor image and an image a Docker Compose file builds are such references. And a runtime version that follows the project's Dockerfile gets the warning as well, whether it is a `.python-version` entry or a Node engine. The staleness reported for it is the base image's, not its own.
 
 #### The `cooldown` scope
 
-Update-time reports the `cooldown` scope as redundant for a reference whose source reports no publication date to measure a cooldown against:
+Update-time reports the `cooldown` scope as redundant for a reference whose source does not report a publication date to measure a cooldown against:
 
 ```console
-WARNING Redundant update-time directive ignore[cooldown<30] for python in .python-version:2: this dependency's source reports no publication date to measure a cooldown against
+WARNING Redundant update-time directive ignore[cooldown<30] for python in .python-version:2: this dependency's source does not report a publication date to measure a cooldown against
 ```
 
-Three kinds of reference get that warning. A runtime version that follows the project's Dockerfile gets it, whether it is a `.python-version` entry or a Node engine. Update-time already applied its cooldown when it updated the base image. An image on a registry other than Docker Hub gets the warning too. Only Docker Hub reports a push date to measure a cooldown against, so Update-time does not report the same marker on a Docker Hub image. A reference a file accounts for itself gets the warning as well — Update-time asks no registry about it. A CircleCI machine-executor image and an image a Docker Compose file builds are such references.
+Three kinds of reference get that warning. A runtime version that follows the project's Dockerfile gets it, whether it is a `.python-version` entry or a Node engine. Update-time already applied its cooldown when it updated the base image. An image on a registry other than Docker Hub gets the warning too. Only Docker Hub reports a push date to measure a cooldown against, so Update-time does not report the same marker on a Docker Hub image. Update-time does not ask a registry about a reference a file accounts for itself, so that reference gets the warning as well. A CircleCI machine-executor image and an image a Docker Compose file builds are such references.
 
-Update-time reports a `cooldown` on a `pyproject.toml` or inline script metadata dependency as redundant, since uv takes a cooldown per run rather than per dependency (see [Setting a cooldown period](#setting-a-cooldown-period)). It reports one on a `requirements.txt` requirement that pins no exact version too. PyPI dates its releases, but Update-time resolves no update for such a requirement, so a cooldown holds no release back.
+Update-time reports a `cooldown` on a `pyproject.toml` or inline script metadata dependency as redundant, since uv takes a cooldown per run rather than per dependency (see [Setting a cooldown period](#setting-a-cooldown-period)). It reports one on a `requirements.txt` requirement that pins no exact version too. PyPI dates its releases, but Update-time does not resolve an update for such a requirement, so the cooldown holds nothing back.
 
 #### The `yanked` scope
 
 A yank can only be observed where the dependency's source reports one. Of the references that accept a marker, that means `requirements.txt` pins, `pyproject.toml` and inline script metadata pins, and jsDelivr URLs (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, a `.python-version` entry, or a Node engine, the scope can never suppress anything. So Update-time reports it as redundant:
 
 ```console
-WARNING Redundant update-time directive ignore[yanked] for python in Dockerfile:2: this dependency's source has no yank concept
+WARNING Redundant update-time directive ignore[yanked] for python in Dockerfile:2: this dependency's source does not record a yank
 ```
 
 Update-time reports a Python dependency that pins no exact version too. PyPI does report yanks, but a yank is about the version a reference is left on, and such a dependency pins none.
 
 ```console
-WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a yank
+WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: this requirement does not pin a version to check for a yank
 ```
 
 #### The `vulnerable` scope
@@ -805,13 +805,13 @@ WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requ
 A vulnerability can only be reported where OSV holds advisories for the dependency. Of the references that accept a marker, that means `requirements.txt` pins, `pyproject.toml` and inline script metadata pins, and jsDelivr URLs (see [Vulnerable dependencies](#-vulnerable-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, a `.python-version` entry, or a Node engine, the scope can never suppress anything. So Update-time reports it as redundant in all its forms:
 
 ```console
-WARNING Redundant update-time directive ignore[vulnerable] for python in Dockerfile:2: this dependency's source reports no vulnerabilities
+WARNING Redundant update-time directive ignore[vulnerable] for python in Dockerfile:2: this dependency's source does not report vulnerability information
 ```
 
 Update-time reports a Python dependency that pins no exact version here too. An advisory is matched against a version, and such a dependency pins none.
 
 ```console
-WARNING Redundant update-time directive ignore[vulnerable] for humanize in docs/requirements.txt:12: this requirement pins no version to check for a vulnerability
+WARNING Redundant update-time directive ignore[vulnerable] for humanize in docs/requirements.txt:12: this requirement does not pin a version to check for a vulnerability
 ```
 
 Update-time reports an `ignore[vulnerable=…]` as redundant when none of the version's vulnerabilities answers to the identifier. An update fixed the vulnerability, or the identifier was mistyped:
@@ -822,7 +822,7 @@ WARNING Redundant update-time directive ignore[vulnerable=CVE-2022-28346] for dj
 
 Update-time judges a marker naming several advisories together. It warns only when none of them matches a vulnerability the version has.
 
-Update-time still checks a reference marked `ignore[vulnerable]`, and silences what it finds rather than warning about it. So it reports the marker as redundant for a version that has no vulnerability at all. A suppression can outlive the vulnerability it was written for, and the check is what tells you it did:
+Update-time still checks a reference marked `ignore[vulnerable]`, and silences what it finds rather than warning about it. So it reports the marker as redundant for a version that the check clears. A suppression can outlive the vulnerability it was written for, and the check is what tells you it did:
 
 ```console
 WARNING Redundant update-time directive ignore[vulnerable] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability
@@ -839,7 +839,7 @@ WARNING Redundant update-time directive ignore[vulnerable<high] for django in do
 Archival can only be observed where the dependency's source publishes an archival signal. Of the references that accept a marker, that means `requirements.txt` requirements, `pyproject.toml` and inline script metadata dependencies, GitHub Actions, and pre-commit hooks (see [Archived dependencies](#-archived-dependencies)). On a Docker image, a jsDelivr URL, a `.python-version` entry, or a Node engine, the scope can never suppress anything. So Update-time reports it as redundant:
 
 ```console
-WARNING Redundant update-time directive ignore[archived] for python in Dockerfile:2: this dependency's source publishes no archival signal
+WARNING Redundant update-time directive ignore[archived] for python in Dockerfile:2: this dependency's source does not publish an archival signal
 ```
 
 #### The `floating-pin` scope
@@ -859,7 +859,7 @@ WARNING Redundant update-time directive allow[floating-pin] for python in Docker
 Update-time never pins a reference a file accounts for itself, so an `allow[floating-pin]` on one is redundant as well:
 
 ```console
-WARNING Redundant update-time directive allow[floating-pin] for acme/api in docker-compose.yml:4: Update-time asks no registry about this reference, so its tag is never pinned
+WARNING Redundant update-time directive allow[floating-pin] for acme/api in docker-compose.yml:4: Update-time does not ask a registry about this reference, so its tag is never pinned
 ```
 
 Update-time does not report a floating tag it could not pin, since that tag does float. It logs the reason at `DEBUG` instead (see [Floating image tags](#floating-image-tags)).
@@ -939,7 +939,7 @@ Update-time reads the dependency arrays a `pyproject.toml` declares. Those are t
 
 Update-time cannot update individual git, VCS, and URL dependencies, in a `requirements.txt` or a `pyproject.toml`. Examples are `git+https://github.com/org/repo.git@v8.0.3.0`, direct URLs, and `-e`/editable installs. Update them manually.
 
-Update-time updates a dependency uv resolves through a `[tool.uv] sources` entry like any dependency in the file. Such an entry names a path, a workspace member, or another index. Here too uv resolves the dependency, and Update-time only writes the version uv reports. PyPI serves no release for such a dependency, nor for one pointing at a URL or a git repository. So none of the warnings below applies to either.
+Update-time updates a dependency uv resolves through a `[tool.uv] sources` entry like any dependency in the file. Such an entry names a path, a workspace member, or another index. Here too uv resolves the dependency, and Update-time only writes the version uv reports. PyPI does not serve a release for such a dependency, nor for one pointing at a URL or a git repository. So none of the warnings below applies to either.
 
 In a PEP 723 inline script metadata block, Update-time updates only the pins in the `dependencies` array. It leaves the `requires-python` value and any other inline-metadata field untouched.
 
@@ -1035,7 +1035,7 @@ Update-time does not check a `package.json` dependency. It declares a range rath
 
 #### Archived dependencies
 
-The npm registry publishes no archival signal, so Update-time does not check a `package.json` dependency. What npmjs.com shows as a deprecated package is a deprecation on the release its `latest` tag points at. That says something about the release rather than about the project.
+The npm registry does not publish an archival signal, so Update-time does not check a `package.json` dependency. What npmjs.com shows as a deprecated package is a deprecation on the release its `latest` tag points at. That says something about the release rather than about the project.
 
 #### Markers
 
@@ -1065,23 +1065,25 @@ Update-time adds no hash pin to a Maven dependency, since a pom has nowhere to h
 
 #### Cooldown
 
-There is no cooldown. Maven has no release-age filter to hand one to.
+The versions plugin does not filter releases by age, so Update-time names the versions the plugin may not adopt instead. It reads each artefact's publication dates from [Maven Central](https://repo1.maven.org/maven2/), and writes every version published inside the cooldown into a rule set the plugin reads. The plugin then picks the newest version left. Both goals honour the rule set, so it reaches both kinds of dependency: the one whose `<version>` holds a version, and the one whose `<version>` names a property. The rule set names the pom's plugins too, so a property that versions a plugin is held back like any other.
+
+Update-time holds nothing back for two kinds of dependency. Maven Central does not serve an artefact that a project resolves from a mirror or a private repository, so Update-time cannot read its publication date. A pom can also spell a dependency's group or artifact as a property its parent declares. Update-time cannot resolve those coordinates, so it does not ask any repository about that dependency.
 
 #### Stale dependencies
 
-Update-time asks no source about a Maven artefact, so it warns about none as stale.
+Update-time reads publication dates for the cooldown alone, so it never warns that a Maven dependency is stale.
 
 #### Yanked dependencies
 
-Update-time asks no source about a Maven artefact, so it warns about none as yanked.
+Maven Central does not report a withdrawal, so Update-time never warns that a Maven dependency is yanked.
 
 #### Vulnerable dependencies
 
-Update-time asks no source about a Maven artefact, so it warns about none as vulnerable.
+Update-time does not ask OSV about a Maven dependency, so it never warns that one is vulnerable.
 
 #### Archived dependencies
 
-Update-time asks no source about a Maven artefact, so it warns about none as archived.
+Maven Central does not publish an archival signal, so Update-time never warns that a Maven dependency is archived.
 
 #### Markers
 
@@ -1127,7 +1129,7 @@ Staleness is measured against the repository's newest release, whatever the refe
 
 #### Yanked dependencies
 
-GitHub has no yank concept, so Update-time checks neither an action nor a hook `rev:` for one.
+GitHub does not record a yank, so Update-time checks neither an action nor a hook `rev:` for one.
 
 #### Vulnerable dependencies
 
@@ -1274,15 +1276,15 @@ Update-time appends the `@sha256:digest` of the (latest) tag to an image referen
 
 A floating tag is pinned to both at once: the version tag serving the image it currently resolves to, and that image's digest.
 
-Update-time ignores an image whose tag it cannot read, so a reference through a `{{ ... }}` template or `${VAR}` variable substitution gets no digest. A reference a file accounts for itself gets none either — Update-time asks no registry about it. A CircleCI machine-executor image (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) and an image a Docker Compose file builds are such references.
+Update-time ignores an image whose tag it cannot read, so a reference through a `{{ ... }}` template or `${VAR}` variable substitution gets no digest. Update-time does not ask a registry about a reference a file accounts for itself, so that reference gets none either. A CircleCI machine-executor image (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) and an image a Docker Compose file builds are such references.
 
 #### Cooldown
 
-Update-time adopts a newer tag only once it is past the cooldown, provided Docker Hub hosts the image. Other registries (`ghcr.io`, `mcr.microsoft.com`, …) expose no publication date, so Update-time updates images there without a cooldown. Pinning a floating tag adopts no newer image, so the cooldown holds nothing back there (see [Floating image tags](#floating-image-tags)).
+Update-time adopts a newer tag only once it is past the cooldown, provided Docker Hub hosts the image. Other registries (`ghcr.io`, `mcr.microsoft.com`, …) do not expose a publication date, so Update-time updates images there without a cooldown. Pinning a floating tag adopts no newer image, so the cooldown holds nothing back there (see [Floating image tags](#floating-image-tags)).
 
 #### Stale dependencies
 
-Staleness is measured against the image's newest release, on Docker Hub only, since other registries expose no publication date.
+Staleness is measured against the image's newest release, on Docker Hub only, since other registries do not expose a publication date.
 
 Update-time reports no staleness for a reference whose tag the registry does not serve. That tag names no image in the repository, so the image's newest release says nothing about the reference. An image a pipeline builds without pushing it is the common case, and a deleted or mistyped tag reads the same way.
 
@@ -1290,7 +1292,7 @@ Two kinds of tags are dated all the same. A tag naming a version is, whether or 
 
 #### Yanked dependencies
 
-An OCI registry has no yank concept, so Update-time does not check an image for one.
+An OCI registry does not record a yank, so Update-time does not check an image for one.
 
 #### Vulnerable dependencies
 
@@ -1342,7 +1344,7 @@ Update-time checks the version in the URL against OSV's npm advisories. It warns
 
 #### Archived dependencies
 
-Update-time does not check a jsDelivr URL, since the npm registry publishes no archival signal.
+Update-time does not check a jsDelivr URL, since the npm registry does not publish an archival signal.
 
 #### Markers
 
