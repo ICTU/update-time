@@ -124,7 +124,6 @@ class AsWrittenTest(unittest.TestCase):
             "Marker(ignored_scopes=scope, written_scopes=scope)",
             "Marker(ignored_scopes=scope)",
             "a scope the reader spelled out is discarded, instead of being kept",
-            expected_killers=2,
         )
     )
     def test_only_the_scopes_the_marker_spelled_out_survive(self):
@@ -359,7 +358,6 @@ class ParseMarkerCooldownTest(unittest.TestCase):
             "for scope in Scope",
             "a bare cooldown is accepted as a scope rather than rejected, because the check ranges over every "
             "scope instead of only the ignorable ones",
-            expected_killers=2,
         )
     )
     def test_a_bare_cooldown_item_is_rejected(self):

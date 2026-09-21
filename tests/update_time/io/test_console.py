@@ -139,7 +139,6 @@ class RecordRenderingTests(TestCase):
             '    elements: ClassVar = {**Markdown.elements, "html_block": _RawHtml}',
             "    elements: ClassVar = {**Markdown.elements}",
             "a raw HTML block is dropped, taking the changes a `<details>` section wraps with it",
-            expected_killers=2,
         ),
         Mutation(
             console_module,

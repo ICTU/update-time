@@ -44,5 +44,4 @@ GITHUB_UNCACHED = Mutation(
     "@cache\ndef _fetch_github(",
     "def _fetch_github(",
     "a GitHub API URL is fetched again for every caller that asks for it",
-    expected_killers=3,
 )

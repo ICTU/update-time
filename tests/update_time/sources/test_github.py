@@ -223,7 +223,6 @@ class GetLatestVersionTest(LoggingTestCase):
             "    return replace(latest, project=Project(newest=replace(repository_project.newest, "
             "version=latest.version) if repository_project.newest else None))",
             "the release attached names the version the run leaves the reference on, not the repository's newest",
-            expected_killers=3,
         )
     )
     @patch_github(
@@ -348,7 +347,6 @@ class NewestReleaseTest(LoggingTestCase):
             "        return (self.published, self._sortable_version) < (other.published, other._sortable_version)",
             "        return (self._sortable_version, self.published) < (other._sortable_version, other.published)",
             "the release named is the highest version rather than the one whose date was measured",
-            expected_killers=3,
         )
     )
     @patch_github(
@@ -504,7 +502,6 @@ class GetReleaseTest(LoggingTestCase):
             "[package]",
             "a scoped npm package tagged without its scope has no changelog reported",
             raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
-            expected_killers=2,
         ),
         Mutation(
             github,
@@ -647,7 +644,6 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
             'body=Changes(release.get("body") or "", markdown=True),',
             'body=Changes(release.get("body") or "", markdown=False),',
             "a release body is read as text, so the Markdown GitHub renders it in is shown raw",
-            expected_killers=2,
         ),
     )
     @patch_get([github_release_json("1.1", body="Changelog")])

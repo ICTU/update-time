@@ -94,7 +94,6 @@ class VersionAnchorTest(unittest.TestCase):
         "    return _underline_character(lines, index)",
         '    return ""',
         "a reStructuredText changelog reports the changes from where a newer entry's prose names the version",
-        expected_killers=2,
     )
 
     _FEW_ADORNMENTS = Mutation(
@@ -134,7 +133,6 @@ class VersionAnchorTest(unittest.TestCase):
         '    return re.search(rf"{_VERSION_START}{re.escape(version)}(?!\\.?\\w)", line) is not None',
         '    return re.search(rf"{_VERSION_START}{re.escape(version)}", line) is not None',
         "a changelog naming a longer version that starts with this one reports the longer version's changes",
-        expected_killers=3,
     )
 
     _NO_LOOKBEHIND = Mutation(
@@ -161,7 +159,6 @@ class VersionAnchorTest(unittest.TestCase):
         "        start = _find_version_index(all_lines, version)",
         "",
         "a changelog heading a release one component shorter than the version reports no changes for it",
-        expected_killers=3,
     )
 
     _SHORTEN_ANY_VERSION = Mutation(
@@ -186,7 +183,6 @@ class VersionAnchorTest(unittest.TestCase):
         '        start = _find_version_index(all_lines, version.removesuffix(".0"))',
         "a changelog without heading markup naming a shorter version raises instead of reporting its changes",
         raises="ValueError: substring not found",
-        expected_killers=2,
     )
 
     @kills(_SHORTER_VERSION_NOT_REBOUND)
@@ -316,7 +312,6 @@ class SectionEndTest(unittest.TestCase):
         "and len(heading_level) < len(section_level))",
         "    return heading_level == section_level",
         "a changelog whose last version is followed by a shallower heading reports that heading as its changes",
-        expected_killers=2,
     )
 
     @kills(_EQUAL_LEVEL_ONLY)
@@ -337,7 +332,6 @@ class SectionEndTest(unittest.TestCase):
         "    return heading_level == section_level or (",
         "    return bool(heading_level) or (",
         "a reStructuredText section ends at its first subsection, reporting the version's heading alone",
-        expected_killers=2,
     )
 
     @kills(_ANY_LEVEL)
@@ -416,7 +410,6 @@ class SectionEndTest(unittest.TestCase):
         "    return None if _heading_level(lines, index) else line[: line.index(version)]",
         '    return None if _heading_level(lines, index) else ""',
         "a changelog naming its versions with text around them runs on into the previous version",
-        expected_killers=3,
     )
 
     @kills(_NO_PREFIX)
@@ -482,7 +475,6 @@ class SectionEndTest(unittest.TestCase):
         "        if index in fenced or _names_version(line, version):",
         "        if index in fenced or version in line:",
         "a changelog heading a release candidate below its release reports the candidate's entry as the release's",
-        expected_killers=2,
     )
 
     @kills(_BOUNDARY_CONTAINMENT)

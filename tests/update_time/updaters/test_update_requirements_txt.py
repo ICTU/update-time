@@ -219,7 +219,6 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             "    log.report_archival(resolved, resolved.marker)",
             "    if staleness_threshold(resolved.marker):\n        log.report_archival(resolved, resolved.marker)",
             "the archival check sits behind the staleness gate, so switching staleness off silences archival too",
-            expected_killers=3,
         )
     )
     def test_staleness_disabled_still_looks_up_a_loose_requirement(self, mock_rglob: Mock, mock_get: Mock):
@@ -398,7 +397,6 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             "        Reason.NO_ARCHIVAL_SIGNAL,\n        Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,",
             "ignore[archived] on a loose requirement is reported as redundant, though archival needs the package's "
             "name alone",
-            expected_killers=2,
         )
     )
     def test_ignore_archived_marker_silences_a_loose_requirement(self, mock_rglob: Mock, mock_get: Mock):

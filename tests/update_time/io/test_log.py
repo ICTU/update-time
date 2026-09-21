@@ -256,7 +256,6 @@ class LoggerTests(TestCase):
             '    return f":{version}" if version else ""',
             '    return f":{version}"',
             "a reference naming no tag is reported with a colon that names nothing after it",
-            expected_killers=3,
         )
     )
     def test_keeping_a_reference_that_names_no_tag(self, mock_log: Mock):
@@ -368,7 +367,6 @@ class LoggerTests(TestCase):
             '        reason = f\' ("{archival.reason}")\' if archival.reason else ""',
             '        reason = ""',
             "the reason the source published is left out of the warning",
-            expected_killers=2,
         )
     )
     def test_archived_dependency_warning(self, mock_log: Mock):

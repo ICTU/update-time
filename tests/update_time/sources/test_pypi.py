@@ -74,7 +74,6 @@ NULL_PROJECT_URLS_READ_AS_A_DICT = Mutation(
     'urls = info.get("project_urls", {})',
     "the project URLs PyPI reports as null are read as a dictionary, which ends the run with a traceback",
     raises="AttributeError: 'NoneType' object has no attribute 'items'",
-    expected_killers=3,
 )
 A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED = Mutation(
     pypi,
@@ -382,7 +381,6 @@ class GetChangesTest(LoggingTestCase):
             '    return content_type.partition(";")[0].strip().lower() == _MARKDOWN_CONTENT_TYPE',
             "    return content_type.strip().lower() == _MARKDOWN_CONTENT_TYPE",
             "a content type carrying parameters matches nothing, so a Markdown description is read as text",
-            expected_killers=2,
         ),
     )
     def test_the_content_type_says_whether_the_description_is_markdown(self, mock_get: Mock):
@@ -411,7 +409,6 @@ class GetChangesTest(LoggingTestCase):
         "    for match in _GITHUB_URL_RE.finditer(description):",
         "    for match in list(_GITHUB_URL_RE.finditer(description))[:1]:",
         "a package whose description links another project above its own repository reports no changes",
-        expected_killers=2,
     )
 
     @kills(_FIRST_URL_ONLY)
@@ -673,7 +670,6 @@ class GetChangesTest(LoggingTestCase):
         '_CHANGELOG_FILE_NAMES = frozenset({"changes", "changelog", "history", "news", "releases"})',
         '_CHANGELOG_FILE_NAMES = frozenset({"changes", "changelog"})',
         "a repository naming its changelog file `history`, `news`, or `releases` reports no changes",
-        expected_killers=2,
     )
 
     @kills(_FEWER_NAMES)
@@ -850,7 +846,6 @@ class ArchivalTest(LoggingTestCase):
             '    return Archival(archived=archived, reason=project_status.get("reason") or "")',
             "    return Archival(archived=archived)",
             "the reason published beside the status is dropped, so an archived project reports none",
-            expected_killers=2,
         ),
         Mutation(
             pypi,

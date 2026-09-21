@@ -95,7 +95,6 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     return pattern.search(line.text, reference_marker.reference_location.column)""",
             "    return pattern.search(line.text, reference_marker.reference_location.column)",
             "every line the pattern matches is read, not the one the file names",
-            expected_killers=2,
         )
     )
     @patch_pathlib_path(exists=True, read_text="FROM node:19")
@@ -386,7 +385,6 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
             "from update_time.sources.base_image import "
             "advancing_image_version_getter as following_image_version_getter",
             "an engine ahead of its base image keeps its version, as a `.python-version` entry does",
-            expected_killers=2,
         )
     )
     @patch_pathlib_path(exists=True, read_text="FROM node:18")
