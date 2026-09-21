@@ -333,7 +333,6 @@ class DeclaredDependenciesTest(unittest.TestCase):
             "parse_marker(replace(line, location=location))",
             'parse_marker(replace(line, previous_text="", location=location))',
             "only an inline marker is read, so a marker on the line above a declaration steers nothing",
-            expected_killers=2,
         )
     )
     def test_reads_the_marker_on_the_line_above_a_declaration(self):

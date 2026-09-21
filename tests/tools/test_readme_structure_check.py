@@ -101,7 +101,6 @@ class ProblemsTest(unittest.TestCase):
             "        + _type_section_problems(markdown)\n",
             "",
             "a declared dependency type the details chapter has no section for goes unreported",
-            expected_killers=3,
         )
     )
     def test_declared_type_without_a_section_is_reported(self):
@@ -201,7 +200,6 @@ class TableTest(unittest.TestCase):
             'for problem in _list_problems(_row_labels(rows), list(_TYPE_NAMES), f"the \'{header}\' table", "row")',
             'for problem in _list_problems(_row_labels(rows), _row_labels(rows), f"the \'{header}\' table", "row")',
             "each table is compared with itself, so no table is held to the declared dependency types",
-            expected_killers=3,
         )
     )
     def test_table_missing_a_declared_type_is_reported(self):

@@ -98,7 +98,6 @@ class CommandLineInterfaceTest(unittest.TestCase):
             "            file_type.name for dependency_type in list(DEPENDENCY_TYPES)[:-1] "
             "for file_type in dependency_type.file_types",
             "a file type the dependency types declare goes unnamed in the help",
-            expected_killers=2,
         )
     )
     def test_help_names_the_file_types_of_every_dependency_type(self):

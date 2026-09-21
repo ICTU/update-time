@@ -92,7 +92,7 @@ A few rules that keep the cycle honest:
    - Pick the mutation from the regression the guard defends against, not from the nearest line to mutate. One that leaves the guard green says nothing about it. One that fails a dozen other tests says little more: it shows the suite reacting, not that guard.
    - When a stub quotes more than a handful of lines, look for a shorter form that isolates the same regression.
 4. A test that pins existing behaviour drives no code. Predict that it passes and say so: it closes a gap in intent, not in behaviour. A step that only removes behaviour drives no test either, so don't offer one asserting that the removed thing is gone. Delete the tests that guarded it, and predict what the deletion leaves behind: the suite green, the count down by exactly the tests you deleted, and any name those tests were the last outside caller of now private.
-5. Coverage stays at 100%, and `just test` enforces it, so you need no separate coverage command. A gap after implementing points at a test case worth adding, not at a line worth excluding. Never end a step with the new code uncovered: when the test you chose mocks the collaborator the new code lives on, add a second test in the same step that reaches it. Coverage omits one file, `tools/fixit_rules.py`. Pin each of its branches with the VALID and INVALID cases that `just fixit` runs.
+5. Coverage stays at 100%, and `just test` enforces it, so you need no separate coverage command. A gap after implementing points at a test case worth adding, not at a line worth excluding. Never end a step with the new code uncovered: when the test you chose mocks the collaborator the new code lives on, add a second test in the same step that reaches it. Coverage omits `tools/fixit_rules.py`. Pin each of its branches with the VALID and INVALID cases that `just fixit` runs.
 6. Treat a failing existing test as a signal. Work out whether its premise legitimately changed and say why. Don't patch the assertion to match the new output.
 7. A green run proves nothing by itself, so check that it ran what you think it ran.
    - Read the tail of `just test` and `just check` yourself. Don't grep or count their output: a filter that matches nothing exits non-zero and silently skips the rest of an `&&` chain.
@@ -100,7 +100,7 @@ A few rules that keep the cycle honest:
    - One run prints all of its output, so read that run rather than starting another for a different slice of it.
    - Compare the test count whenever imports move or test methods are renamed. A module that fails to import, or a method whose new name collides with an existing one, drops tests without a word.
    - Never read a count off output you piped through `head`.
-   - Run `just mutate` and `just test-mutations` unpiped. Which tests failed is the evidence you are after, and only the bare form runs without an approval prompt.
+   - Run `just mutate`. Which tests failed is the evidence you are after, and only the bare form runs without an approval prompt.
 8. Settle a "could we do X?" question by trying X, not by reasoning about it. Settle a "there is no X" the same way: a search you stopped is not a proof.
    - Report the errors the tools name, and what the alternative costs. Bring me numbers, whether the question is one you mean to put to me or one about your own first draft. Count the call sites with `just callers` before you put the size of a change to me; a guess at what it touches is not a number.
    - Try a library the project already depends on before you hand-roll one. Before you design or price a change, find where the code already solves the same shape of problem and follow it.
@@ -122,7 +122,7 @@ A few rules that keep the cycle honest:
 
 When every candidate test passes, propose an increment review before you propose the self-improvement session. The increment is the one an issue lists, or the whole session where no issue lists one.
 
-Review everything the increment changed, against the same criteria, and report it as its own numbered list. Read the files it touched end to end rather than its diff: a finding can span cycles and show up in no single one, such as a helper the second cycle duplicated, a module head grown long with constants, or a name that restates the line beside it. Run `just test-mutations` as part of the review.
+Review everything the increment changed, against the same criteria, and report it as its own numbered list. Read the files it touched end to end rather than its diff: a finding can span cycles and show up in no single one, such as a helper the second cycle duplicated, a module head grown long with constants, or a name that restates the line beside it.
 
 A bug fix or a small diff gets that one review. An increment of several cycles gets a second review with fresh context, from subagents you give the criteria and the diff but not the reasoning that produced the code, because a review in the context that wrote the code misses what a fresh one catches. Run each in a git worktree of its own, so the mutations they run rewrite neither your tree nor each other's. Tell the subagents to check each finding against the code before reporting it, and judge what they report against the criteria yourself before it reaches my list.
 

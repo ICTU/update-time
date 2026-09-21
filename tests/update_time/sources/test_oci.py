@@ -107,7 +107,6 @@ class TagGetterExcludingTest(RegistryRequestsMixin, unittest.TestCase):
             '        as_written = f"{pinned.name}{tag_of(pinned.version)}"\n',
             '        as_written = f"{pinned.name}:{pinned.version}"\n',
             "a reference naming no tag is matched with an empty tag, so it is looked up on a registry",
-            expected_killers=2,
         )
     )
     def test_an_excluded_reference_naming_no_tag_is_left_as_it_is(self):
@@ -409,7 +408,6 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
             '_DATED_SNAPSHOT = re.compile(r"(?P<prefix>.+-)(?P<version>\\d{8})(?P<suffix>)$")',
             '_DATED_SNAPSHOT = re.compile(r"(?P<prefix>).+-(?P<version>\\d{8})(?P<suffix>)$")',
             "a snapshot's label is read as no part of its tag, so the pin loses it and crosses to another line",
-            expected_killers=2,
         )
     )
     def test_dated_snapshot_stays_on_its_own_line(self):
@@ -597,7 +595,6 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
             "    return digests, not url",
             "    return digests, True",
             "a tag the listing was cut short before reaching is reported as one the registry does not list",
-            expected_killers=2,
         )
     )
     def test_tag_listed_below_the_page_cap(self):
@@ -757,7 +754,6 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
             "    served = reason not in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)",
             "    served = reason is not FloatingPin.NO_MANIFEST",
             "a floating tag the registry does not list is dated by the image's newest release",
-            expected_killers=2,
         )
     )
     def test_tag_not_listed(self):
@@ -809,7 +805,6 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
             "    carried = sum(_carries(alias, label) for label in labels)",
             "    carried = 0",
             "the walk ignores the floating tag's words, so it lands on the shorter alias it ties with",
-            expected_killers=3,
         )
     )
     def test_walk_keeps_the_words_of_the_floating_tag(self):

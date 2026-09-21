@@ -126,7 +126,7 @@ mutate-help:
     @echo "    EOF"
     @echo "\nName a definition after the file to look for the snippet inside that definition alone, so a snippet the"
     @echo "file repeats needs no padding to tell one occurrence from another:"
-    @echo "\n    just mutate tests/mutation.py:Mutation.killers <<'EOF'"
+    @echo "\n    just mutate tests/mutation.py:Mutation._mutated <<'EOF'"
     @echo "    ..."
     @echo "    EOF"
     @echo "\nExits 0 when the mutation was killed (a test failed, so it is guarded), 1 when it survived (nothing"
@@ -143,27 +143,7 @@ mutate-help:
     @echo "\nThat list judges the registration as much as the suite, so register a mutation with @kills only"
     @echo "where the tests it is registered on are the ones that kill it. One the rest of the suite kills as well"
     @echo "shows the suite reacting rather than that guard, so re-aim it at what the test's own name claims, or"
-    @echo "leave it unregistered and keep the probe. Registering it changes nothing about what is guarded: it"
-    @echo "claims the test is what guards it, and just test-mutations reads that claim across every registration."
-
-# Measure what each registered `@kills` mutation is worth. Slow: it runs the suite once per registration.
-test-mutations:
-    {{ python_m }} tools.mutation_yield
-
-[private]
-test-mutations-help:
-    @echo "\nRun the whole suite against every distinct mutation the suite registers, and report which tests kill"
-    @echo "each one. A mutation only its registered tests kill guards something no other test does; one a dozen"
-    @echo "tests kill as well shows the suite reacting rather than that guard, so it is a candidate to re-aim or"
-    @echo "drop. A mutation registered on several tests is measured once and read against all of them."
-    @echo "\nThe sweep refuses to start while any test fails without a mutation, since such a test fails against"
-    @echo "every mutation and would be counted among the killers of each."
-    @echo "\nThe run fails when any registration no longer holds: its snippet went stale, or a different number of"
-    @echo "tests than expected killed it. Declare that number with expected_killers where a mutation is meant to be"
-    @echo "killed by more tests than are registered on it."
-    @echo "\nEach mutation runs in memory and in a process of its own, so the working tree is never written to"
-    @echo "and other work can carry on meanwhile. The run costs a suite run per mutation, so just check leaves it"
-    @echo "out. CI runs it after the tests and the checks, so a registration that stopped holding fails the build."
+    @echo "leave it unregistered."
 
 # Run Python with the package importable, to probe how it behaves. See `just help py`.
 [env("PYTHONPATH", "src")]
@@ -390,9 +370,8 @@ _sonarcloud: test
     {{ coverage }} xml # SonarCloud needs a Cobertura compatible XML coverage report
     {{ python_m }} xmlrunner discover --output-file build/xunit.xml  # SonarCloud needs a JUnit compatible XML report
 
-# Run everything in CI, the sweep last: it costs a suite run per registration, so a failure of the tests or the
-# checks is worth reaching first.
-_ci: _sonarcloud check test-mutations
+# Run everything in CI
+_ci: _sonarcloud check
 
 # === Folders ===
 

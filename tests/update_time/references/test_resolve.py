@@ -390,7 +390,6 @@ class ReportProjectChecksTest(unittest.TestCase):
             "    if not project_is_checked(get_project, reference.dependency, threshold):\n        return\n",
             "",
             "a source is asked about a reference no check needs an answer for, so the run pays for the request",
-            expected_killers=2,
         )
     )
     def test_a_source_reporting_no_archival_is_not_asked_with_the_staleness_check_switched_off(self):
@@ -409,7 +408,6 @@ class ReportProjectChecksTest(unittest.TestCase):
             "(archival_is_checked() and reports_archival(source, dependency))",
             "    return threshold != NO_STALENESS_CHECK or reports_archival(source, dependency)",
             "a source is asked about a reference with both checks off, so the run pays for an answer nothing reads",
-            expected_killers=2,
         )
     )
     def test_a_source_reporting_archival_is_not_asked_with_both_checks_switched_off(self):

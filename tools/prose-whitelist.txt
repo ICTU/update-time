@@ -73,7 +73,6 @@ A missing Dockerfile, or one without a numeric `FROM python:<version>` base imag
 A mock records every argument it was called with, and Update-time passes its credentials to `requests` as arguments, so a failing assertion about a mocked request would print them.
 A moderate vulnerability the advisory item does not name.
 A mutation is applied in memory, so no file on disk is touched and an interrupted run cannot leave a source file broken.
-A mutation whose snippet no longer matches names no killers, so it is counted apart: it guards nothing until its snippet is repointed at the line it means.
 A name a file declares twice is steered per declaration, so a marker steers the line it sits on and leaves the other line alone.
 A name mapped to None is an entry with no file to fetch, as a directory is.
 A name of its own per case: the source caches what it resolved, so a repeated name would let the second case pass on the first one's cache rather than on its own run.
@@ -425,7 +424,6 @@ Test that a marker is reported as recognised and as holding the update back, wit
 Test that a marker setting a risk level no vulnerability falls below is reported, whichever verb set it.
 Test that a marker whose `raw` holds no directive of the verb yields an empty text.
 Test that a marker-wrapped dependency name is styled as `repr.dependency` and the markers leave no trace.
-Test that a mutation leaving the source unparsable names no killers rather than raising.
 Test that a name no file defines fails the run, where a name nothing calls reports no call site.
 Test that a network error probing the registry yields no token (anonymous) instead of crashing.
 Test that a new version for a dependency that resolves to no registry release is logged at the file.
@@ -638,7 +636,6 @@ The number of lines a version's changes are cut at where no later version ends t
 The number of positional arguments an equality assertion compares, and so the fewest it can be reported on.
 The operator each verb names a threshold with.
 The other ids this vulnerability is known by.
-The package the suite is discovered under, whose modules a mutation makes stale.
 The package.json a test is given unless it needs another: an engine to update, and nothing else.
 The parallel ones need no list of their own, since which scripts exist at all is pinned against the files on disk.
 The patch is never stopped: no test may put a credential back.
@@ -756,14 +753,12 @@ What to ask for to be warned about no vulnerability at all, which switches the c
 When the versions were fetched but none is valid, that's logged as "no valid version"; a fetch failure is left to `fetch`'s own warning, so a network problem isn't reported twice.
 Where possible, it [pins](#-pinning) references — no more `latest` — and adds hashes.
 Where the file declares no such entry, it is located at the file rather than at a line guessed from elsewhere.
-Whether it earns its place depends on what else kills the same mutation: where only the tests registered on it kill it, it guards something no other test does, and where a dozen tests kill it as well, the suite would notice that regression anyway.
 Which those are is read off the pom before and after the run, rather than from Maven's own report, which names no line to report a change at.
 Why Update-time asks no registry about a reference and leaves it as it is.
 Yield each dependency type, in the order this class declares them.
 Yield each line with its number, empty where the line is a code fence or sits inside a fenced code block.
 Yield each of the references the npm registry has a newest release for, carrying that release.
 Yield each warning scope the reference's marker writes, with the reason no source answers any of them.
-Yield every mutation the suite registers, with the id of the test it is registered on.
 `=` is no PEP 440 operator.
 `_TAG` reads no version in one, its prefix admitting no dash, so the label is read as the prefix here and the date as the version, which puts such a snapshot on the line its label names.
 `allow` naming one would keep that warning and drop the warning about every other advisory, which is a rule the language does not offer, so `allow[vulnerable=ID]` names no advisory.

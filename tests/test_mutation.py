@@ -48,12 +48,8 @@ _ERRORING = "nonexistent"
 _NAME_ERROR = "NameError: name 'nonexistent' is not defined"
 _UNPARSABLE = "number %"  # A replacement that leaves the subject unparsable, so it does not import at all.
 _SURVIVING = "number == 2"  # A replacement the test passes against, so nothing it asserts breaks.
-# A mutation of the subject fails every test that exercises it, so the sweep is told how many do.
-_SUBJECT_KILLERS = 11
-_ODD_REPORTED_AS_EVEN = Mutation(mutation_subject, _EVEN, _ODD, _REGRESSION, expected_killers=_SUBJECT_KILLERS)
-_ONLY_THREE_REPORTED_AS_EVEN = Mutation(
-    mutation_subject, _EVEN, _ONLY_THREE, _ONLY_THREE_REGRESSION, expected_killers=_SUBJECT_KILLERS
-)
+_ODD_REPORTED_AS_EVEN = Mutation(mutation_subject, _EVEN, _ODD, _REGRESSION)
+_ONLY_THREE_REPORTED_AS_EVEN = Mutation(mutation_subject, _EVEN, _ONLY_THREE, _ONLY_THREE_REGRESSION)
 
 
 class IsEvenTest(unittest.TestCase):
@@ -102,16 +98,7 @@ class IsEvenTest(unittest.TestCase):
         """Test that an odd number is not even, killing each of the mutations its registration holds."""
         self.assertFalse(is_even(3))
 
-    @kills(
-        Mutation(
-            mutation_subject,
-            _EVEN,
-            _ERRORING,
-            _RAISING_REGRESSION,
-            raises=_NAME_ERROR,
-            expected_killers=_SUBJECT_KILLERS,
-        )
-    )
+    @kills(Mutation(mutation_subject, _EVEN, _ERRORING, _RAISING_REGRESSION, raises=_NAME_ERROR))
     def test_an_odd_number_against_a_mutation_that_raises(self):
         """Test that an odd number is not even, killing a mutation by raising the error the mutation declares."""
         self.assertFalse(is_even(3))
@@ -164,7 +151,6 @@ class CheckTest(unittest.TestCase):
             'qualified_name.split(".")',
             'qualified_name.split(".")[-1:]',
             "the lookup uses the bare name, so a method is searched for at the top of the module and never found",
-            expected_killers=2,
         ),
     )
     def test_a_mutation_anchored_to_a_method_is_applied_inside_it(self):
@@ -298,7 +284,6 @@ class CheckTest(unittest.TestCase):
             "Result(Outcome.BROKEN, raised)",
             "Result(Outcome.BROKEN)",
             "a mutation reported as broken does not name the error the test raised, which is the line to declare",
-            expected_killers=2,
         )
     )
     def test_a_test_that_raises_an_undeclared_error(self):
@@ -428,73 +413,6 @@ def _stand_in(_test_case: unittest.TestCase, *_args: object) -> None:
     """Stand in for the test that a registration under test decorates."""
 
 
-class KillersTest(unittest.TestCase):
-    """Unit tests for the tests across the whole suite that fail against a mutation."""
-
-    def failing(self, *ids: str) -> Mock:
-        """Return a stand-in for the suite whose run reports the tests with the given ids as failing."""
-
-        def run(result: unittest.TestResult) -> None:
-            result.failures.extend((Mock(id=Mock(return_value=test)), "traceback") for test in ids)
-
-        return Mock(run=Mock(side_effect=run))
-
-    def killers(self, mutation: Mutation, suite: Mock) -> list[str] | None:
-        """Return what the mutation names as its killers, against the given suite rather than the real one."""
-        with patch("unittest.defaultTestLoader.discover", Mock(return_value=suite)):
-            return mutation.killers()
-
-    def test_each_failing_test_is_named_once(self):
-        """Test that a test failing in several subTest cases is named once, by its method rather than by its cases."""
-        cases = ("case.test_one (case='x')", "case.test_one (case='y')", "case.test_two")
-        self.assertEqual(self.killers(_ODD_REPORTED_AS_EVEN, self.failing(*cases)), ["case.test_one", "case.test_two"])
-
-    @kills(
-        Mutation(
-            checker.Mutation.killers,
-            "mutated = self._mutated()",
-            "mutated = Path(self._path).read_text().replace(self.old, self.new, 1)",
-            "the sweep reads the whole file rather than the anchor, so it changes a function it was not aimed at",
-            expected_killers=2,
-        )
-    )
-    def test_the_sweep_applies_an_anchored_mutation_inside_its_function(self):
-        """Test that the sweep changes the anchored function alone, though the file holds the snippet twice."""
-        subject = {}
-
-        def observe(_result: unittest.TestResult) -> None:
-            """Read the mutated module the sweep installed, which is what the suite would have run against."""
-            mutated = sys.modules[mutation_subject.__name__]
-            subject.update(multiple=mutated.is_multiple_of_three(3), even=mutated.is_even(2))
-
-        anchored = Mutation(is_multiple_of_three, _NO_REMAINDER, _A_REMAINDER, _REGRESSION)
-        self.assertEqual(self.killers(anchored, Mock(run=Mock(side_effect=observe))), [])
-        self.assertEqual(subject, {"multiple": False, "even": True})
-
-    def test_a_snippet_the_file_does_not_hold_once_names_no_killers(self):
-        """Test that a mutation whose snippet is not in the file exactly once names none, and runs nothing."""
-        suite = self.failing()
-        self.assertIsNone(self.killers(Mutation(mutation_subject, "absent", "other", _REGRESSION), suite))
-        suite.run.assert_not_called()
-
-    def test_a_source_that_will_not_import_names_no_killers(self):
-        """Test that a mutation leaving the source unparsable names no killers rather than raising."""
-        unparsable = Mutation(mutation_subject, _EVEN, _UNPARSABLE, _REGRESSION)
-        self.assertIsNone(self.killers(unparsable, self.failing()))
-
-    def test_the_checks_off_switch_is_put_back(self):
-        """Test that a sweep run from inside a check leaves that switch set, rather than removing it."""
-        with patch_environ({CHECKS_OFF: "1"}):
-            self.killers(_ODD_REPORTED_AS_EVEN, self.failing())
-            self.assertEqual(os.environ[CHECKS_OFF], "1")
-
-    def test_the_caller_keeps_the_modules_it_had(self):
-        """Test that the run leaves the interpreter as it found it, so a sweep of registrations does not drift."""
-        before = dict(sys.modules)
-        self.killers(_ODD_REPORTED_AS_EVEN, self.failing())
-        self.assertEqual(sys.modules, before)
-
-
 class CapturedMethodsTest(unittest.TestCase):
     """Unit tests for the `Path` methods the module holds when it is imported."""
 
@@ -594,16 +512,15 @@ class FailureMessageTest(unittest.TestCase):
     @kills(
         Mutation(
             checker,
-            '".".join(filter(None, (self.module.__name__, self.qualified_name)))',
-            "self.module.__name__",
+            '".".join(filter(None, (self._module.__name__, self._qualified_name)))',
+            "self._module.__name__",
             "a report names the module alone, so it does not say which of its anchors went stale",
         ),
         Mutation(
             checker,
-            "filter(None, (self.module.__name__, self.qualified_name))",
-            "(self.module.__name__, self.qualified_name)",
+            "filter(None, (self._module.__name__, self._qualified_name))",
+            "(self._module.__name__, self._qualified_name)",
             "a module anchor is reported with a trailing dot, as though a definition were missing from the name",
-            expected_killers=2,
         ),
     )
     def test_the_message_names_the_anchor(self):
@@ -652,7 +569,6 @@ class KillsTest(unittest.TestCase):
             "        for mutation in mutations:",
             "        for mutation in mutations[:1]:",
             "only the first of the mutations a registration holds is checked",
-            expected_killers=2,
         ),
         Mutation(
             checker,
@@ -679,7 +595,6 @@ class KillsTest(unittest.TestCase):
             "{mutation.regression} — the test did not kill",
             "the test did not kill",
             "the survivor message drops the regression, so it no longer says what went wrong",
-            expected_killers=3,
         )
     )
     def test_a_surviving_mutation_fails_the_test(self):
@@ -727,7 +642,6 @@ class KillsTest(unittest.TestCase):
             "{mutation.regression} — this mutation of",
             "this mutation of",
             "the stale-or-broken message drops the regression, so it no longer says what went wrong",
-            expected_killers=2,
         )
     )
     def test_a_mutation_the_test_could_not_judge_fails_it_with_the_reason(self):
@@ -852,7 +766,6 @@ class KillsTest(unittest.TestCase):
             "        @functools.wraps(method)",
             "",
             "a decorated test reports under the wrapper's name, so a failing run names no test",
-            expected_killers=2,
         )
     )
     def test_the_decorated_test_reports_as_the_test_it_decorates(self):

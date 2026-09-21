@@ -345,7 +345,6 @@ class VulnerablePinTest(DependencyTomlFileTestCase):
             "_reference_to_check(pin, pin.marker, run_wide_level)",
             "_reference_to_check(pin, list(pinned_versions(references))[0].marker, run_wide_level)",
             "one pin's marker steers every pin in the batch, rather than the one carrying it",
-            expected_killers=2,
         )
     )
     def test_a_marker_silences_its_own_pin_in_the_batch(self):
@@ -439,7 +438,6 @@ class ArchivedDependencyTest(DependencyTomlFileTestCase):
             '            resolved.setdefault("marker", reference.marker if reference.current_version '
             "else type(reference.marker)())",
             "a declaration that pins no version loses its marker, so the warnings it silences are reported anyway",
-            expected_killers=2,
         )
     )
     def test_a_marker_silences_a_dependency_that_pins_no_version(self, get: Mock):
@@ -562,7 +560,6 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
             "    yield from _redundant_cooldown_directive(reference)\n",
             "",
             "a cooldown of a dependency's own reads as applying to it, though uv takes one per run",
-            expected_killers=2,
         ),
     )
     def test_a_cooldown_is_reported_as_applying_per_run(self, get: Mock):
@@ -749,7 +746,6 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
             "    for reference in references:\n"
             "        for written, reason in _redundant_directives(references[0], no_source_for(references[0])):",
             "one declaration's marker steers every dependency the file declares, rather than the one carrying it",
-            expected_killers=3,
         )
     )
     def test_a_marker_reports_for_the_declaration_it_steers_and_no_other(self, get: Mock):
@@ -771,7 +767,6 @@ class UvSourcedDependencyTest(DependencyTomlFileTestCase):
             "    served = [uv.pypi_served(declarations) for declarations in declared]",
             "    served = [list(declarations) for declarations in declared]",
             "the checks are handed every declaration, so PyPI is asked about one it serves no release for",
-            expected_killers=2,
         )
     )
     def test_a_pin_with_a_uv_source_is_asked_about_nowhere(self, get: Mock):

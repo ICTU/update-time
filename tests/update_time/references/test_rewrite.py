@@ -375,7 +375,6 @@ class UpdateReferencesTest(unittest.TestCase):
             '        return _directive(Verb.ALLOW, str(scope)) if self.allows(scope) else ""',
             '        return self.raw_directives(Verb.ALLOW) if self.allows(scope) else ""',
             "the cause names every allow directive again, not the one that kept the tag floating",
-            expected_killers=3,
         )
     )
     def test_kept_floating_tag_names_the_directive_that_kept_it(self):
