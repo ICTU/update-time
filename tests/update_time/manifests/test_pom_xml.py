@@ -87,6 +87,23 @@ class PropertiesTest(unittest.TestCase):
         self.assertEqual(pom_xml.properties(mock_path("<project><broken>")), {})
 
 
+class ArtefactsTest(unittest.TestCase):
+    """Unit tests for the coordinates a pom declares a version for."""
+
+    @kills(
+        Mutation(
+            pom_xml.artefacts,
+            "if project is None:",
+            "if False:",
+            "an unparsable pom takes the reading of its artefacts down with it",
+            raises="AttributeError: 'NoneType' object has no attribute 'descendants'",
+        )
+    )
+    def test_a_pom_that_does_not_parse(self):
+        """Test that an unparsable pom yields an empty list of artefacts, rather than ending the run."""
+        self.assertEqual(pom_xml.artefacts(mock_path("<project><broken>")), [])
+
+
 class DependenciesTest(unittest.TestCase):
     """Unit tests for the dependencies a pom declares."""
 

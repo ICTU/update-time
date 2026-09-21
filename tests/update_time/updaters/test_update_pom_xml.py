@@ -210,6 +210,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             '        f\'    <rule groupId="{group_id}" artifactId="{artifact_id}">\\n\'\n',
             '        \'    <rule groupId="*" artifactId="*">\\n\'\n',
             "a version held back for one artefact is held back for every artefact, since each rule matches them all",
+            expected_killers=3,
         )
     )
     def test_each_artefact_gets_a_rule_naming_its_own_held_back_versions(self, mock_run: Mock, mock_glob: Mock):
@@ -250,6 +251,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             "    cooldown_days = COOLDOWN.get()\n",
             "    cooldown_days = 7\n",
             "every run asks about the default window, so --cooldown never reaches a Maven dependency",
+            expected_killers=2,
         )
     )
     @patch_environ({COOLDOWN.name: "30"})
@@ -331,6 +333,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             "        _LOG.new_version(updated, DependencyVersion(new.current_version))\n",
             "        _LOG.new_version(updated, DependencyVersion(new.current_version))\n        return\n",
             "only the first dependency Maven moved is reported, and the rest of the pom's are lost",
+            expected_killers=2,
         )
     )
     def test_each_rewritten_version_is_reported_at_its_own_line(self, mock_run: Mock, mock_glob: Mock):
@@ -394,6 +397,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             "        if old.current_version == new.current_version:\n            continue\n",
             "",
             "every dependency is reported as moved, whether or not Maven changed its version",
+            expected_killers=2,
         )
     )
     def test_a_dependency_maven_left_alone_is_not_reported(self, mock_run: Mock, mock_glob: Mock):
@@ -465,6 +469,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             "        _update_pom_xml(pom_xml)\n",
             "        _update_pom_xml(pom_xml)\n        return\n",
             "the walk ends at the first pom, so the poms after it are never updated",
+            expected_killers=2,
         ),
     )
     def test_a_missing_maven_is_reported_and_the_next_pom_is_still_checked(self, mock_run: Mock, mock_glob: Mock):

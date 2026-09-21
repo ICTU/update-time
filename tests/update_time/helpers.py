@@ -10,7 +10,7 @@ import unittest
 from functools import cache
 from logging import DEBUG, ERROR, WARNING
 from typing import TYPE_CHECKING, Protocol, cast
-from unittest.mock import ANY, Mock, call, patch
+from unittest.mock import ANY, MagicMock, Mock, call, patch
 from urllib.parse import urlparse
 
 from packaging.version import Version
@@ -30,7 +30,7 @@ from update_time.markers.marker import Marker
 from update_time.markers.reference import SteeredResolvedReference
 from update_time.primitives.location import Location
 
-from tests.helpers import mock_response, patch_environ
+from tests.helpers import mock_path, mock_response, patch_environ
 from tests.update_time.fixtures import COMMIT_SHA
 
 if TYPE_CHECKING:
@@ -138,8 +138,7 @@ class LoggingTestCase(CacheClearingTestCase):
     """Base test case for any test of code that logs.
 
     It mocks the logger's log method, exposed as the mock_log attribute, and offers the assert_*_logged helpers below.
-    The mock lives for the whole test, so a `subTest` table whose cases each run the tool starts each case with
-    `start_new_run`.
+    The mock lives for the whole test, so `subTest` starts each case of a table against the records of its own run.
     """
 
     def setUp(self) -> None:
@@ -163,11 +162,11 @@ class LoggingTestCase(CacheClearingTestCase):
         A case therefore sees nothing an earlier case logged. Write out the assertions about a single run rather
         than looping them, and keep `subTest` for the cases that each run the tool.
         """
-        self.start_new_run()
+        self._start_new_run()
         with super().subTest(*args, **kwargs):
             yield
 
-    def start_new_run(self) -> None:
+    def _start_new_run(self) -> None:
         """Forget what the previous run logged and reported, so the next case reads the records of its own run.
 
         `setUp` does this for each test and `subTest` for each case, so a table needs no call of its own. The
@@ -198,7 +197,7 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert the message was the only record logged at its level, with the given fields."""
         self.assertEqual(self.records(message.level), [self._expected_call(message, fields)])
 
-    def assert_last_logged(self, message: LogMessage, **fields: object) -> None:
+    def _assert_last_logged(self, message: LogMessage, **fields: object) -> None:
         """Assert the message was the most recent record at its level, with the given fields."""
         self.assertEqual(self.records(message.level)[-1:], [self._expected_call(message, fields)])
 
@@ -237,7 +236,7 @@ class LoggingTestCase(CacheClearingTestCase):
     ) -> None:
         """Assert that a new version was the most recent record, for a run that logs several."""
         fields = self._new_version_fields(dependency, version, location, {NOTE: note})
-        self.assert_last_logged(Logger._MESSAGE_NEW_VERSION, **fields)
+        self._assert_last_logged(Logger._MESSAGE_NEW_VERSION, **fields)
 
     def assert_new_version_logged_among_others(
         self, dependency: str, version: str, location: Location, note: str = Logger._NO_CHANGELOG
@@ -280,7 +279,7 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_pinned_logged(self, dependency: str, version: str, sha: str, location: Location) -> None:
         """Assert that pinning a previously unpinned reference to a digest was logged for the file."""
-        self.assert_last_logged(
+        self._assert_last_logged(
             Logger._MESSAGE_PINNED, dependency=dependency, location=location, version=version, sha=sha
         )
 
@@ -493,7 +492,7 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged."""
-        self.assert_last_logged(Logger._MESSAGE_CHECKING_PATH, location=Location(path))
+        self._assert_last_logged(Logger._MESSAGE_CHECKING_PATH, location=Location(path))
 
     def assert_no_path_logged(self) -> None:
         """Assert that no path being checked for updates was logged (nothing logged at debug level)."""
@@ -520,7 +519,7 @@ class LoggingTestCase(CacheClearingTestCase):
         self, dependency: str, location: Location, directive: object = ANY, *, among_others: bool = False
     ) -> None:
         """Assert that ignoring a reference's update was logged, by default as the last record."""
-        assert_logged = self.assert_logged_among_others if among_others else self.assert_last_logged
+        assert_logged = self.assert_logged_among_others if among_others else self._assert_last_logged
         assert_logged(Logger._MESSAGE_IGNORED, dependency=dependency, location=location, directive=directive)
 
     def assert_ignored_staleness_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
@@ -677,6 +676,15 @@ def script(*specs: str, requires_python: str = ">=3.11") -> str:
         "# ///\n"
         'print("hi")\n'
     )
+
+
+def requirements_file(contents: str, *, sibling_in: bool = False) -> Mock:
+    """Return a mock requirements file holding the contents, with a sibling `.in` source file where asked for."""
+    requirements_txt = mock_path(contents)
+    requirements_txt.stem = "requirements"  # so the sibling checked for is `requirements.in`
+    requirements_txt.parent = MagicMock()
+    requirements_txt.parent.__truediv__.return_value = Mock(exists=Mock(return_value=sibling_in))
+    return requirements_txt
 
 
 def github_release_json(tag_name: str, **extra: object) -> dict[str, object]:

@@ -81,6 +81,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
             "        return AccountedFor.BUILD_STAGE if pinned.name.lower() in stages else None\n",
             "        return AccountedFor.BUILD_STAGE if pinned.name.lower() in frozenset() else None\n",
             "a `FROM` naming a build stage is resolved as though a registry served an image of that name",
+            expected_killers=3,
         )
     )
     def test_build_stage_reference_is_left_alone_and_not_queried(self):
@@ -129,6 +130,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
             "        self._log(self._MESSAGE_KEEPING_FLOATING_TAG, **fields, resolved=release.version, "
             "sha=release.sha, cause=cause)\n",
             "a reference naming no tag is reported with the version it resolves to, as if it had named it",
+            expected_killers=2,
         )
     )
     def test_marker_keeps_a_tagless_base_image_as_it_is(self):
@@ -147,6 +149,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
             r'    rf"{_IMAGE_NAME}(?::(?=[\d\w\.\-]))?(?P<version>[\d\w\.\-]*){_IMAGE_DIGEST}(?![\w\d\./:@-])"',
             r'    rf"{_IMAGE_NAME}:?(?P<version>[\d\w\.\-]*){_IMAGE_DIGEST}"',
             "a tag written as a variable substitution is read as no tag at all, so the reference is rewritten",
+            expected_killers=2,
         )
     )
     def test_variable_substitution_in_the_tag_is_left_alone(self):

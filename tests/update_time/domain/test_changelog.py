@@ -73,15 +73,6 @@ class VersionAnchorTest(unittest.TestCase):
         text = f"Changelog\n\n{v1_change}"
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
-    _LEVEL_TWO = Mutation(
-        markdown_format,
-        '    if not level or not after_hashes.startswith(" "):',
-        '    if level != 2 or not after_hashes.startswith(" "):',
-        "a changelog heading its versions at another level than two reports the changes from where a newer entry's "
-        "prose names the version",
-    )
-
-    @kills(_LEVEL_TWO)
     def test_prose_mention_of_version_does_not_anchor_parsing(self):
         """Test that a prose mention in a newer section doesn't anchor parsing there, at any heading level."""
         for level in ("#", "##", "###"):
@@ -103,6 +94,7 @@ class VersionAnchorTest(unittest.TestCase):
         "    return _underline_character(lines, index)",
         '    return ""',
         "a reStructuredText changelog reports the changes from where a newer entry's prose names the version",
+        expected_killers=2,
     )
 
     _FEW_ADORNMENTS = Mutation(
@@ -142,6 +134,7 @@ class VersionAnchorTest(unittest.TestCase):
         '    return re.search(rf"{_VERSION_START}{re.escape(version)}(?!\\.?\\w)", line) is not None',
         '    return re.search(rf"{_VERSION_START}{re.escape(version)}", line) is not None',
         "a changelog naming a longer version that starts with this one reports the longer version's changes",
+        expected_killers=3,
     )
 
     _NO_LOOKBEHIND = Mutation(
@@ -168,6 +161,7 @@ class VersionAnchorTest(unittest.TestCase):
         "        start = _find_version_index(all_lines, version)",
         "",
         "a changelog heading a release one component shorter than the version reports no changes for it",
+        expected_killers=3,
     )
 
     _SHORTEN_ANY_VERSION = Mutation(
@@ -192,6 +186,7 @@ class VersionAnchorTest(unittest.TestCase):
         '        start = _find_version_index(all_lines, version.removesuffix(".0"))',
         "a changelog without heading markup naming a shorter version raises instead of reporting its changes",
         raises="ValueError: substring not found",
+        expected_killers=2,
     )
 
     @kills(_SHORTER_VERSION_NOT_REBOUND)
@@ -298,13 +293,6 @@ class SectionEndTest(unittest.TestCase):
         text = f"# Changelog\n\n{v1_change}\n\n### 1.11.1\n\n- Fixed a regression.\n\n## 1.10\n\n- Changed ...\n"
         self.assertEqual(get_version_changes_from_changelog(text, "1.11.0"), v1_change)
 
-    _ONLY_TILDE_FENCES = Mutation(
-        markdown_format,
-        '_FENCES = ("```", "~~~")',
-        '_FENCES = ("~~~",)',
-        "a changelog fencing a code block with backticks reports the fence as the end of the version's changes",
-    )
-
     _ONLY_BACKTICK_FENCES = Mutation(
         markdown_format,
         '_FENCES = ("```", "~~~")',
@@ -312,7 +300,7 @@ class SectionEndTest(unittest.TestCase):
         "a changelog fencing a code block with tildes reports the fence as the end of the version's changes",
     )
 
-    @kills(_ONLY_TILDE_FENCES, _ONLY_BACKTICK_FENCES)
+    @kills(_ONLY_BACKTICK_FENCES)
     def test_heading_inside_a_fenced_code_block_does_not_end_the_section(self):
         """Test that a heading marker inside a fenced code block, which is code rather than a heading, ends none."""
         for fence in ("```", "~~~"):
@@ -328,6 +316,7 @@ class SectionEndTest(unittest.TestCase):
         "and len(heading_level) < len(section_level))",
         "    return heading_level == section_level",
         "a changelog whose last version is followed by a shallower heading reports that heading as its changes",
+        expected_killers=2,
     )
 
     @kills(_EQUAL_LEVEL_ONLY)
@@ -348,6 +337,7 @@ class SectionEndTest(unittest.TestCase):
         "    return heading_level == section_level or (",
         "    return bool(heading_level) or (",
         "a reStructuredText section ends at its first subsection, reporting the version's heading alone",
+        expected_killers=2,
     )
 
     @kills(_ANY_LEVEL)
@@ -426,6 +416,7 @@ class SectionEndTest(unittest.TestCase):
         "    return None if _heading_level(lines, index) else line[: line.index(version)]",
         '    return None if _heading_level(lines, index) else ""',
         "a changelog naming its versions with text around them runs on into the previous version",
+        expected_killers=3,
     )
 
     @kills(_NO_PREFIX)
@@ -491,6 +482,7 @@ class SectionEndTest(unittest.TestCase):
         "        if index in fenced or _names_version(line, version):",
         "        if index in fenced or version in line:",
         "a changelog heading a release candidate below its release reports the candidate's entry as the release's",
+        expected_killers=2,
     )
 
     @kills(_BOUNDARY_CONTAINMENT)

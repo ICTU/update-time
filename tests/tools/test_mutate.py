@@ -9,10 +9,12 @@ from unittest.mock import Mock, call, patch
 from tools.mutate import _ENVIRONMENT, _NOT_RUN, _SEPARATOR, main, snippets
 
 from tests.helpers import mock_path
-from tests.mutation import CHECKS_OFF
+from tests.mutation import CHECKS_OFF, Mutation, kills
 
 _ORIGINAL = "before\nold\nafter\n"
 _INPUT = f"old\n{_SEPARATOR}\nnew\n"
+# A file whose two functions end on the same line, so the file holds the snippet twice and each function holds it once.
+_ANCHORED = "def one():\n    return 0\n\n\ndef two():\n    return 0\n"
 
 
 class SnippetsTest(unittest.TestCase):
@@ -43,10 +45,11 @@ class MainTest(unittest.TestCase):
         baselines = [Mock(returncode=0, stdout=output, stderr="") for output in outputs[1:]]
         run = Mock(side_effect=[mutated, *baselines])
         self.reported = io.StringIO()
+        self.path_class = Mock(return_value=path)
         with (
             patch.object(sys, "argv", argv or ["mutate.py", "file.py"]),
             patch("sys.stdin", io.StringIO(text)),
-            patch("tools.mutate.Path", Mock(return_value=path)),
+            patch("tools.mutate.Path", self.path_class),
             patch("tools.mutate.subprocess.run", run),
             redirect_stdout(self.reported),
             redirect_stderr(io.StringIO()),
@@ -68,16 +71,29 @@ class MainTest(unittest.TestCase):
         self.probe(mock_path(_ORIGINAL))
         self.assertEqual(self.run_command.call_args.kwargs.get("env", {}).get(CHECKS_OFF), "1")
 
+    @kills(
+        Mutation(
+            main,
+            "file_name, _, anchor = sys.argv[1].partition(_ANCHOR)",
+            'file_name, anchor = sys.argv[1], ""',
+            "the whole argument is read as a file name, so the probe looks for the snippet in the whole file",
+        )
+    )
+    def test_an_anchor_named_after_the_file(self):
+        """Test that a snippet the file holds twice is replaced inside the definition the anchor names."""
+        path = mock_path(_ANCHORED)
+        text = f"return 0\n{_SEPARATOR}\nreturn 1\n"
+        self.assertEqual(self.probe(path, argv=["mutate.py", "file.py:two"], text=text), 0)
+        self.path_class.assert_called_once_with("file.py")
+        mutated = "def one():\n    return 0\n\n\ndef two():\n    return 1\n"
+        self.assertEqual(path.write_text.call_args_list, [call(mutated), call(_ANCHORED)])
+
     def test_a_command_of_its_own(self):
         """Test that a command given after the file is run instead of the default."""
         self.probe(mock_path(_ORIGINAL), argv=["mutate.py", "file.py", "just", "check"])
         self.run_command.assert_called_once_with(
             ["just", "check"], check=False, capture_output=True, text=True, env=_ENVIRONMENT
         )
-
-    def test_a_failing_command_killed_the_mutation(self):
-        """Test that a command that fails means the mutation was killed, which is what a guarding test does."""
-        self.assertEqual(self.probe(mock_path(_ORIGINAL), returncode=1), 0)
 
     def test_the_tests_that_killed_the_mutation_are_named(self):
         """Test that each failing test is named, a `subTest` case with its parameters."""
@@ -104,8 +120,9 @@ class MainTest(unittest.TestCase):
 
     def test_a_stub_that_kept_tests_from_running(self):
         """Test that a run reporting errors and fewer tests than the restored file runs is reported as broken."""
-        outputs = ("Ran 260 tests\nFAILED (errors=38)\n", "test \x1b[32mPASS\x1b[0m (935 tests)\n")
+        outputs = ("Ran 260 tests\nFAILED (errors=38)\n", "test PASS (935 tests)\n")
         self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=outputs), 3)
+        self.assertIn("The command runs again on the restored file", self.reported.getvalue())
         self.assertIn("675 of 935 tests never ran", self.reported.getvalue())
 
     def test_a_stub_that_left_every_test_running(self):
@@ -119,11 +136,18 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=("FAILED (failures=1)\n",)), 0)
         self.assertNotIn("errors", self.reported.getvalue())
 
+    @kills(
+        Mutation(
+            main,
+            "if killed and result.returncode != _TESTS_FAILED:",
+            "if killed and False:",
+            "the probe reports a gate failure as a kill, crediting a guard that never fired",
+        )
+    )
     def test_a_run_that_only_the_coverage_gate_failed(self):
-        """Test that a run whose tests all passed is reported as unguarded, whatever the coverage gate did."""
-        outputs = ("Ran 997 tests\n\nOK\nCoverage failure: total of 99 is less than fail-under=100\n",)
-        self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=outputs), 4)
-        self.assertIn("no test killed the mutation", self.reported.getvalue())
+        """Test that a gate failing beyond the tests is reported as unguarded rather than as a kill."""
+        self.assertEqual(self.probe(mock_path(_ORIGINAL), returncode=2), 4)
+        self.assertIn("exited 2 rather than 1: a gate failed, not a test", self.reported.getvalue())
         self.assertNotIn("The mutation was killed", self.reported.getvalue())
 
     def test_a_run_that_failed_a_test_and_the_coverage_gate(self):
@@ -140,6 +164,22 @@ class MainTest(unittest.TestCase):
     def test_a_passing_command_means_the_mutation_survived(self):
         """Test that a command that passes means nothing guards the mutated code."""
         self.assertEqual(self.probe(mock_path(_ORIGINAL), returncode=0), 1)
+
+    @kills(
+        Mutation(
+            main,
+            "except (OSError, StaleError) as reason:",
+            "except StaleError as reason:",
+            "the run ends with a traceback where the probe cannot read the file, which its scale reads as survival",
+            raises="FileNotFoundError: [Errno 2] No such file or directory",
+        )
+    )
+    def test_a_file_that_cannot_be_read(self):
+        """Test that a file the probe cannot read is reported, rather than ending the run with a traceback."""
+        unreadable = Mock(read_text=Mock(side_effect=FileNotFoundError(2, "No such file or directory")))
+        self.assertEqual(self.probe(unreadable), _NOT_RUN)
+        unreadable.write_text.assert_not_called()
+        self.run_command.assert_not_called()
 
     def test_a_snippet_that_is_not_there(self):
         """Test that a snippet the file doesn't hold leaves the file alone and runs no command."""

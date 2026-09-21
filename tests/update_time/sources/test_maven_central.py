@@ -70,14 +70,6 @@ def _listing(*rows: str) -> str:
 class VersionsWithinCooldownTest(LoggingTestCase):
     """Unit tests for reading the versions the repository published inside the cooldown window."""
 
-    @kills(
-        Mutation(
-            maven_central,
-            '        if within_cooldown(_published(match["published"]), cooldown_days)\n',
-            '        if not within_cooldown(_published(match["published"]), cooldown_days)\n',
-            "the fresh versions are the ones adopted and the settled ones the ones held back",
-        )
-    )
     def test_only_a_version_published_inside_the_window_is_held_back(self):
         """Test that the version dated inside the window is held back, and the one dated before it is not."""
         settled = _version_row("33.7.0-jre", _days_ago(COOLDOWN.default + 1))

@@ -35,7 +35,6 @@ from update_time.io.log import (
     get_logger,
     reset_changelog_suppression,
 )
-from update_time.markers import marker as marker_module
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.primitives.location import Location
@@ -155,23 +154,6 @@ class LoggerTests(TestCase):
         """Assert the most recent record carries Update-time's own note about the changes beside its fields."""
         self.assertEqual(mock_log.call_args.kwargs, {"extra": {NOTE: note}})
 
-    def test_suppress_repeated_changelog(self, mock_log: Mock):
-        """Test that a repeated changelog is suppressed."""
-        logger = _new_logger()
-        message = Logger._MESSAGE_NEW_VERSION
-        location = create_location("pyproject.toml", 5)
-        available = f"New version available for {dependency('dependency')} in {at('pyproject.toml:5')}: 1.0"
-        logger.new_version(
-            reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False))
-        )
-        self.assert_message(mock_log, message, available)
-        self.assert_changes(mock_log, "Changelog")
-        logger.new_version(
-            reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False))
-        )
-        self.assert_last_message(mock_log, message, available)
-        self.assert_note(mock_log, "Suppressing changelog already shown, see above")
-
     def test_reset_changelog_suppression(self, mock_log: Mock):
         """Test that resetting the suppression makes a logger show a changelog it has already shown."""
         message = Logger._MESSAGE_NEW_VERSION
@@ -274,6 +256,7 @@ class LoggerTests(TestCase):
             '    return f":{version}" if version else ""',
             '    return f":{version}"',
             "a reference naming no tag is reported with a colon that names nothing after it",
+            expected_killers=3,
         )
     )
     def test_keeping_a_reference_that_names_no_tag(self, mock_log: Mock):
@@ -385,6 +368,7 @@ class LoggerTests(TestCase):
             '        reason = f\' ("{archival.reason}")\' if archival.reason else ""',
             '        reason = ""',
             "the reason the source published is left out of the warning",
+            expected_killers=2,
         )
     )
     def test_archived_dependency_warning(self, mock_log: Mock):
@@ -456,43 +440,25 @@ class LoggerTests(TestCase):
         )
 
     def test_warn_if_redundant_bound(self, mock_log: Mock):
-        """Test that a redundant bound is warned about at warning level, showing the bound and how it is redundant."""
-        version_bound = bound(Verb.ALLOW, "update>=3.12")  # never has an effect on a 3.12 pin
-        marker = Marker(version_bound=version_bound)
+        """Test that a bound deciding nothing for a 3.12 pin is warned about, naming it and how it is redundant."""
         location = create_location("Dockerfile", 6)
-        _new_logger().warn_if_redundant_bound(reference("python", location, "3.12"), marker)
-        self.assert_message(
-            mock_log,
-            Logger._MESSAGE_REDUNDANT_BOUND,
-            f"Redundant update bound allow[update>=3.12] on {dependency('python')} 3.12 in {at('Dockerfile:6')}: "
-            "it never has an effect",
+        cases = (
+            (Verb.ALLOW, "update>=3.12", "it never has an effect"),  # a 3.12 pin already satisfies it
+            (Verb.ALLOW, "major-update", "it never has an effect"),
+            (Verb.IGNORE, "patch-update", "it blocks every update"),
         )
-
-    def test_warn_if_redundant_level_bound(self, mock_log: Mock):
-        """Test that a level bound that blocks every update is warned about, rendered in its level form."""
-        version_bound = bound(Verb.IGNORE, "patch-update")  # ignore[patch-update] blocks every update
-        marker = Marker(version_bound=version_bound)
-        location = create_location("Dockerfile", 6)
-        _new_logger().warn_if_redundant_bound(reference("python", location, "3.12"), marker)
-        self.assert_message(
-            mock_log,
-            Logger._MESSAGE_REDUNDANT_BOUND,
-            f"Redundant update bound ignore[patch-update] on {dependency('python')} 3.12 in {at('Dockerfile:6')}: "
-            "it blocks every update",
-        )
-
-    def test_warn_if_redundant_keep_all_level_bound(self, mock_log: Mock):
-        """Test that a level bound that allows every update is warned about, unlike the implicit NO_BOUND default."""
-        version_bound = bound(Verb.ALLOW, "major-update")  # allow[major-update] allows every update
-        marker = Marker(version_bound=version_bound)
-        location = create_location("Dockerfile", 6)
-        _new_logger().warn_if_redundant_bound(reference("python", location, "3.12"), marker)
-        self.assert_message(
-            mock_log,
-            Logger._MESSAGE_REDUNDANT_BOUND,
-            f"Redundant update bound allow[major-update] on {dependency('python')} 3.12 in {at('Dockerfile:6')}: "
-            "it never has an effect",
-        )
+        for verb, item, clause in cases:
+            directive = f"{verb.value}[{item}]"
+            with self.subTest(bound=directive):
+                mock_log.reset_mock()
+                marker = Marker(version_bound=bound(verb, item))
+                _new_logger().warn_if_redundant_bound(reference("python", location, "3.12"), marker)
+                self.assert_message(
+                    mock_log,
+                    Logger._MESSAGE_REDUNDANT_BOUND,
+                    f"Redundant update bound {directive} on {dependency('python')} 3.12 in {at('Dockerfile:6')}: "
+                    f"{clause}",
+                )
 
     def test_warn_if_redundant_bound_does_nothing_for_a_bound_that_decides(self, mock_log: Mock):
         """Test that nothing is logged for a live bound, at either level, nor for the unmarked default."""
@@ -546,14 +512,6 @@ class LoggerTests(TestCase):
             f"Ignoring updates for {dependency('python')} in {at('Dockerfile:6')} (update-time: ignore[update])",
         )
 
-    @kills(
-        Mutation(
-            marker_module,
-            "        return self.as_written.directive_for(scope) or self.raw_directives(Verb.IGNORE)",
-            "        return self.as_written.directive_for(scope)",
-            "a bare `ignore` names nothing at all, instead of echoing itself",
-        )
-    )
     def test_ignored_by_a_bare_marker(self, mock_log: Mock):
         """Test that a bare `ignore` names itself, rather than a scoped directive the user never wrote."""
         marker = Marker(ignored_scopes=BARE_IGNORE.ignored_scopes, raw="ignore")
