@@ -99,15 +99,36 @@ publish version *flags: (check-version version) check-repo test check
 
 # === Run tests ===
 
-# A full run goes through coverage and must reach 100%: the text and HTML reports are written first, then `xml` applies the gate. A named subset cannot reach 100%, so it runs without coverage and leaves the reports from the last full run in place.
-test_command(tests) := if tests == "" { coverage + " run -m unittest --quiet && " + coverage + " report --show-missing --fail-under=0 && " + coverage + " html --quiet --fail-under=0 && " + coverage + " xml --quiet" } else { python_m + " unittest --quiet " + tests }
+# The variable `tests/mutation.py` reads to make the registered checks stand aside. A test compares this spelling with the name that file gives it, so the two cannot drift apart.
+checks_off := "_UPDATE_TIME_MUTATION_CHECKS_OFF"
 
-# Run the unit tests, all of them or only the ones named, e.g. `just test tests.update_time.io.test_log`.
+# Wrap a command in the spinner and the PASS or FAIL line. A recipe that chooses between commands cannot keep the pair in its body, so it builds the wrapped command instead.
+progress(name, command) := start_progress() + " " + command + " " + end_progress(name)
+
+# The registered checks stand aside while coverage runs, so coverage is measured over the tests alone and a line that only a mutated re-run reaches shows up as a gap.
+measured_run := "env " + checks_off + "=1 " + coverage + " run -m unittest --quiet"
+
+# A measured run must reach 100%: the text and HTML reports are written first, then `xml` applies the gate. A named subset is skipped rather than measured, since it reaches too little of the tree to meet the gate and its report names every file it never imports.
+coverage_command(tests) := if tests == "" { progress("test-coverage", measured_run + " && " + coverage + " report --show-missing --fail-under=0 && " + coverage + " html --quiet --fail-under=0 && " + coverage + " xml --quiet") } else { 'echo "test-coverage SKIP (a named subset is not measured)"' }
+
+# The tests run again, unmeasured, against the mutations they register. A caller that switched the registered checks off already, as `just mutate` does, leaves this pass nothing to run, so it says so rather than reporting a run of no tests.
+mutations_command(tests) := 'if [ -n "${' + checks_off + ':-}" ]; then echo "test-mutations SKIP (the registered checks are switched off)"; else ' + progress("test-mutations", python_m + " unittest --quiet " + tests) + "; fi"
+
+# Run the unit tests under coverage, with the registered checks standing aside, so coverage is measured over the tests alone. A named subset is skipped rather than measured.
 [env("PYTHONDEVMODE", "1")]
 [env("PYTHONPATH", "src")]
-test *tests: install-py-dependencies install-nltk-data
-    # Show a spinner while running and suppress the output unless the run fails.
-    {{ start_progress() }} {{ test_command(tests) }} {{ end_progress("test") }}
+test-coverage *tests: install-py-dependencies install-nltk-data
+    {{ coverage_command(tests) }}
+
+# Run the unit tests against the mutations they register, all of them or only the ones named, e.g. `just test-mutations tests.update_time.io.test_log`.
+[env("PYTHONDEVMODE", "1")]
+[env("PYTHONPATH", "src")]
+test-mutations *tests: install-py-dependencies install-nltk-data
+    {{ mutations_command(tests) }}
+
+# Run the unit tests, all of them or only the ones named, e.g. `just test tests.update_time.io.test_log`. The two passes run at the same time, neither reading what the other writes.
+[parallel]
+test *tests: (test-coverage tests) (test-mutations tests)
 
 # Check that a test guards a behaviour: break the code it names, run the tests, and restore the file. See `just help mutate`.
 mutate file *command:
@@ -368,7 +389,8 @@ readme:
 # Run SonarCloud prerequisites
 _sonarcloud: test
     {{ coverage }} xml # SonarCloud needs a Cobertura compatible XML coverage report
-    {{ python_m }} xmlrunner discover --output-file build/xunit.xml  # SonarCloud needs a JUnit compatible XML report
+    # SonarCloud needs a JUnit compatible XML report. The registered checks are not run, because `test-mutations` ran them already and this run is here for the report alone.
+    env {{ checks_off }}=1 {{ python_m }} xmlrunner discover --output-file build/xunit.xml
 
 # Run everything in CI
 _ci: _sonarcloud check
