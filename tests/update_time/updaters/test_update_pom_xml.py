@@ -2,17 +2,20 @@
 
 import contextlib
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from subprocess import CalledProcessError  # nosec
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.dependency import Release
 from update_time.io.log import Logger
 from update_time.manifests import pom_xml as pom_xml_module
 from update_time.package_managers import maven as maven_module
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
+from update_time.sources import maven_central as maven_central_module
 from update_time.updaters import update_pom_xml as update_pom_xml_module
 from update_time.updaters.update_pom_xml import update_pom_xmls
 
@@ -39,6 +42,11 @@ def _dependency(group: str, artifact: str, version: str) -> str:
 def _guava(version: str) -> str:
     """Return the `<dependency>` element declaring guava, at the given version."""
     return _dependency("com.google.guava", "guava", version)
+
+
+def _released(version: str, days_ago: int) -> Release:
+    """Return a release of the version, published the given number of days ago."""
+    return Release(version, datetime.now(UTC) - timedelta(days=days_ago))
 
 
 def _properties(values: dict[str, str]) -> str:
@@ -127,6 +135,7 @@ def _maven_command(executable: str = "mvn", rules: Path | None = None) -> Comman
 
 
 @no_vulnerabilities
+@patch.object(maven_central_module, "newest_release", Mock(return_value=None))
 @patch.object(maven_module, "versions_within_cooldown", Mock(return_value=()))
 @patch_pathlib_path("rglob", cwd=Path("/"), exists=False)
 @patch("subprocess.run")
@@ -163,7 +172,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @contextlib.contextmanager
     def asked_about(self) -> Iterator[list[str]]:
-        """Collect the artefacts the run asks the repository about, and do not hold any version back."""
+        """Collect the artefacts the cooldown asks the repository about, and do not hold any version back."""
         artefacts: list[str] = []
 
         def versions_within_cooldown(artefact: str, _days: int) -> tuple[str, ...]:
@@ -241,20 +250,64 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             pom_xml_module.fully_resolved,
-            " and not _names_a_property(reference.current_version)",
+            " and _is_resolved(reference.current_version)",
             "",
             "OSV is asked about a version holding an unresolved property, which it matches nothing to",
-        )
+        ),
+        Mutation(
+            pom_xml_module.artefact_references,
+            "_is_resolved(reference.dependency)",
+            "fully_resolved(reference)",
+            "staleness judges the version too, so a dependency its parent versions goes unchecked for years",
+        ),
     )
-    def test_a_version_naming_a_property_is_not_asked_about_at_osv(self, mock_run: Mock, mock_glob: Mock):
-        """Test that OSV is not asked about a dependency whose `<version>` names a property the pom does not declare."""
+    def test_a_version_naming_a_property_is_asked_about_for_staleness_alone(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a dependency whose `<version>` names a property the pom lacks reaches Maven Central, not OSV."""
         # A pom can spell a dependency's version as a property its parent declares, which this pom does not hold.
         inherited = _dependency("org.springframework", "spring-core", "${spring.version}")
         self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre"), inherited))
-        with osv() as mock_post:
+        newest_release = Mock(return_value=None)
+        with osv() as mock_post, patch.object(maven_central_module, "newest_release", newest_release):
             update_pom_xmls()
         # Guava is asked about, so the dependency beside it going unasked says something about its version.
         assert_osv_asked_about(mock_post, ("com.google.guava:guava", "33.0.0-jre"), ecosystem="Maven")
+        # Staleness judges the coordinates alone, so the dependency OSV skips still reaches Maven Central.
+        asked = ["com.google.guava:guava", "org.springframework:spring-core"]
+        self.assertEqual([call.args[0] for call in newest_release.call_args_list], asked)
+
+    @kills(
+        Mutation(
+            update_pom_xml_module._update_pom_xml,
+            "_warn_about_staleness(pom_xml_format.artefact_references(pom_xml))",
+            "",
+            "a pom's dependencies reach Maven Central never, so one that stopped releasing goes unreported",
+        )
+    )
+    def test_a_stale_dependency_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a dependency whose newest release is old is warned about, at its `<version>` element's line."""
+        pom = self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre")))
+        newest_release = Mock(return_value=_released("33.0.0-jre", 500))
+        with patch.object(maven_central_module, "newest_release", newest_release):
+            update_pom_xmls()
+        self.assert_stale_dependency_logged("com.google.guava:guava", "33.0.0-jre", Location(pom, 6))
+
+    @kills(
+        Mutation(
+            update_pom_xml_module._update_pom_xml,
+            "_warn_about_staleness(pom_xml_format.artefact_references(pom_xml))",
+            "_warn_about_staleness(after)",
+            "staleness reads the pom's dependencies alone, so a plugin that stopped releasing goes unreported",
+        )
+    )
+    def test_a_stale_plugin_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a plugin whose newest release is old is warned about, at its `<version>` element's line."""
+        surefire = _plugin("maven-surefire-plugin", "3.5.0")
+        pom = self.find_pom(mock_run, mock_glob, _pom(build=_build(surefire)))
+        newest_release = Mock(return_value=_released("3.5.0", 500))
+        with patch.object(maven_central_module, "newest_release", newest_release):
+            update_pom_xmls()
+        surefire_plugin = "org.apache.maven.plugins:maven-surefire-plugin"
+        self.assert_stale_dependency_logged(surefire_plugin, "3.5.0", Location(pom, 9))
 
     def test_maven_runs_in_the_poms_own_directory(self, mock_run: Mock, mock_glob: Mock):
         """Test that Maven runs both goals of the versions plugin Update-time names, in the pom's own directory."""
@@ -287,28 +340,34 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pom_xml_module.artefacts,
-            "[artefact for artefact in named if not _names_a_property(artefact)]",
-            "list(named)",
-            "a pom inheriting a group from its parent is asked about coordinates the repository does not serve",
+            pom_xml_module.artefact_references,
+            " if _is_resolved(reference.dependency)",
+            "",
+            "a pom inheriting a group from its parent is asked about coordinates that resolve to nothing",
         ),
         Mutation(
             pom_xml_module.fully_resolved,
-            "not _names_a_property(reference.dependency) and ",
+            "_is_resolved(reference.dependency) and ",
             "",
             "OSV is asked about coordinates holding an unresolved property, which it matches nothing to",
         ),
     )
     def test_coordinates_naming_a_property_are_not_asked_about(self, mock_run: Mock, mock_glob: Mock):
-        """Test that neither source is asked about a dependency whose coordinates name a property the pom lacks."""
+        """Test that every check passes over a dependency whose coordinates name a property the pom lacks."""
         # A pom can spell a dependency's group as a property its parent declares, which this pom does not hold.
         inherited = _dependency("${spring.group}", "spring-core", "6.1.0")
         self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre"), inherited))
-        with self.asked_about() as artefacts, osv() as mock_post:
+        newest_release = Mock(return_value=None)
+        with (
+            self.asked_about() as artefacts,
+            osv() as mock_post,
+            patch.object(maven_central_module, "newest_release", newest_release),
+        ):
             update_pom_xmls()
-        # Guava reaches both sources, so the dependency beside it reaching neither says something about its coordinates.
+        # Guava reaches every check, so the dependency beside it reaching none says something about its coordinates.
         self.assertEqual(artefacts, ["com.google.guava:guava"])
         assert_osv_asked_about(mock_post, ("com.google.guava:guava", "33.0.0-jre"), ecosystem="Maven")
+        self.assertEqual([call.args[0] for call in newest_release.call_args_list], ["com.google.guava:guava"])
 
     @kills(
         Mutation(
@@ -328,13 +387,13 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pom_xml_module.artefacts,
-            '("plugin", _PLUGIN_GROUP))',
-            ")",
+            pom_xml_module.artefact_references,
+            ', "plugin": _PLUGIN_GROUP',
+            "",
             "the rule set leaves out the pom's plugins, so a property versioning one is advanced without a cooldown",
         ),
         Mutation(
-            pom_xml_module.artefacts,
+            pom_xml_module.artefact_references,
             "_PLUGIN_GROUP",
             '""',
             "a plugin that leaves its group to Maven is dropped, so the property versioning it escapes the cooldown",
@@ -363,14 +422,14 @@ class UpdatePomXmlTest(LoggingTestCase):
         )
     )
     @patch_environ({COOLDOWN.name: "0"})
-    def test_the_repository_is_not_asked_when_the_cooldown_is_switched_off(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a run with the cooldown switched off does not ask the repository, and updates the pom."""
+    def test_the_cooldown_skips_the_repository_when_it_is_switched_off(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a switched-off cooldown skips the repository, and leaves the pom updated."""
         self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre")))
         with self.asked_about() as artefacts:
             update_pom_xmls()
         self.assertEqual(artefacts, [])
-        # Asserting Maven ran, so the repository going unasked says something about the window rather than about a
-        # pom that was never read.
+        # Asserting Maven ran, so the window rather than a pom that was never read is what left the artefacts alone.
+        # The staleness check asks the repository whatever the window is, so this says nothing about that request.
         self.assert_maven_ran(mock_run)
 
     @kills(
@@ -517,15 +576,25 @@ class UpdatePomXmlTest(LoggingTestCase):
             "!= len(before)",
             "a reading of another length than its own pairs up all the same, taking the whole run down with it",
             raises="ValueError: zip() argument 2 is shorter than argument 1",
-        )
+        ),
+        Mutation(
+            update_pom_xml_module._update_pom_xml,
+            "_LOG.declarations_changed(pom_xml, len(before), len(after))",
+            "_LOG.declarations_changed(pom_xml, len(before), len(after))"
+            "\n        _warn_about_staleness(pom_xml_format.artefact_references(pom_xml))",
+            "a pom Update-time gave up on is checked for staleness all the same, beside the error saying it was not",
+        ),
     )
     def test_a_pom_declaring_fewer_dependencies_after_the_run_is_an_error(self, mock_run: Mock, mock_glob: Mock):
         """Test that a pom Maven added a declaration to or removed one from is reported as a failed update."""
         before = _pom(_guava("33.0.0-jre"), _dependency("org.springframework", "spring-core", "6.1.0"))
         pom = self.find_rewritten_pom(mock_run, mock_glob, before, _pom(_guava("33.7.1-jre")))
-        update_pom_xmls()
+        newest_release = Mock(return_value=None)
+        with patch.object(maven_central_module, "newest_release", newest_release):
+            update_pom_xmls()
         self.assert_error_logged(Logger._MESSAGE_DECLARATIONS_CHANGED, location=Location(pom), before=2, after=1)
         self.assert_no_new_version_logged()
+        newest_release.assert_not_called()  # The pom is reported, not checked on a reading it cannot pair up.
 
     @kills(
         Mutation(

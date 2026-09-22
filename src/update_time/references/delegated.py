@@ -3,10 +3,11 @@
 from itertools import chain
 from typing import TYPE_CHECKING
 
+from update_time.domain.dependency import DependencyVersion, Project
 from update_time.domain.reference import resolved_references
 from update_time.markers.directive import WARNING_DIRECTIVES, Reason
 from update_time.markers.marker import Scope
-from update_time.markers.reference import SteeredReference
+from update_time.markers.reference import SteeredReference, SteeredResolvedReference
 from update_time.references.resolve import (
     floating_pin_redundancy,
     project_is_checked,
@@ -17,9 +18,30 @@ from update_time.references.resolve import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
+    from update_time.domain.dependency import DependencyName, Release
     from update_time.domain.reference import ReferenceResolver
     from update_time.io.log import Logger
-    from update_time.markers.reference import SteeredResolvedReference
+
+
+# What a project check asks a source: a function answering the release a dependency published most recently.
+type _NewestReleaseGetter = Callable[[DependencyName], Release | None]
+
+
+def project_resolver(
+    newest_release: _NewestReleaseGetter,
+) -> ReferenceResolver[SteeredReference, SteeredResolvedReference]:
+    """Return a resolver yielding each reference the source reports a newest release for, carrying that release."""
+
+    def resolve(references: Iterable[SteeredReference]) -> Iterable[SteeredResolvedReference]:
+        return (
+            SteeredResolvedReference.from_reference(
+                reference, release=DependencyVersion.unpinned(Project(newest=newest))
+            )
+            for reference in references
+            if (newest := newest_release(reference.dependency)) is not None
+        )
+
+    return resolve
 
 
 def warn_about_projects[ReferenceT: SteeredReference](

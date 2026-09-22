@@ -8,9 +8,10 @@ from unittest.mock import Mock, patch
 import requests
 
 from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.dependency import Release
 from update_time.io.log import Logger
 from update_time.sources import maven_central
-from update_time.sources.maven_central import _published, versions_within_cooldown
+from update_time.sources.maven_central import _published, newest_release, versions_within_cooldown
 
 from tests.helpers import mock_response, patch_environ, patch_get
 from tests.mutation import Mutation, kills
@@ -201,3 +202,45 @@ class PublishedTest(unittest.TestCase):
         time.tzset()
         self.addCleanup(time.tzset)
         self.assertEqual(_published("2026-09-12 23:30"), datetime(2026, 9, 12, 23, 30, tzinfo=UTC))
+
+
+class NewestReleaseTest(LoggingTestCase):
+    """Unit tests for reading the release an artefact published most recently."""
+
+    def test_the_newest_release_is_the_one_published_last(self):
+        """Test that the release read is the one published most recently, rather than the one listed last."""
+        newest = datetime(2026, 5, 1, 12, 30, tzinfo=UTC)
+        rows = (_version_row("33.7.0-jre", newest), _version_row("33.8.0-jre", datetime(2020, 1, 2, 3, 4, tzinfo=UTC)))
+        with patch_get(text=_listing(*rows)):
+            self.assertEqual(newest_release(_GUAVA), Release("33.7.0-jre", newest))
+
+    def test_a_listing_the_repository_does_not_serve_dates_no_release(self):
+        """Test that an artefact whose listing the repository withholds leaves staleness nothing to measure."""
+        answer = mock_response(ok=False, status_code=404, reason="Not Found", url=_GUAVA_LISTING, text="")
+        mock_get = Mock(return_value=answer)
+        with patch("requests.get", mock_get):
+            self.assertIsNone(newest_release(_GUAVA))
+        # Asserting the request was made, so the missing release says something about the answer rather than
+        # about a request that was never sent.
+        self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
+
+    @kills(
+        Mutation(
+            maven_central.newest_release,
+            "_listing(artefact)",
+            "_listing.__wrapped__(artefact)",
+            "staleness fetches a listing of its own, so an artefact the cooldown read costs a second request",
+        )
+    )
+    def test_the_cooldown_has_already_paid_for_the_listing(self):
+        """Test that the newest release is free once the cooldown has read the same artefact's listing."""
+        # The listing dates a row to the minute, so the expected release is dated to the minute too.
+        dated = _days_ago(1).replace(second=0, microsecond=0)
+        mock_get = Mock(return_value=mock_response(text=_listing(_version_row("33.7.1-jre", dated))))
+        with patch("requests.get", mock_get):
+            held_back = versions_within_cooldown(_GUAVA, COOLDOWN.default)
+            newest = newest_release(_GUAVA)
+        self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
+        # Asserting what each read, so the single request says the listing was shared rather than never read.
+        self.assertEqual(held_back, ("33.7.1-jre",))
+        self.assertEqual(newest, Release("33.7.1-jre", dated))

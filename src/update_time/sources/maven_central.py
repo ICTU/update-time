@@ -11,6 +11,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from update_time.domain.cooldown import within_cooldown
+from update_time.domain.dependency import Release
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 
@@ -27,6 +28,15 @@ _VERSION_ROW = re.compile(
     r'<a href="(?P<version>[\w.+-]+)/"[^>]*>[^<]*</a>\s+(?P<published>\d{4}-\d{2}-\d{2} \d{2}:\d{2})'
 )
 _PUBLISHED_FORMAT = "%Y-%m-%d %H:%M"
+
+
+def newest_release(artefact: DependencyName) -> Release | None:
+    """Return the version the repository published most recently with its date, or None where it dates none."""
+    return Release.newest(
+        Release(match["version"], published)
+        for match in _VERSION_ROW.finditer(_listing(artefact))
+        if (published := _published(match["published"])) is not None
+    )
 
 
 def versions_within_cooldown(artefact: DependencyName, cooldown_days: int) -> tuple[str, ...]:

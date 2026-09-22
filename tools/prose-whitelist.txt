@@ -319,7 +319,7 @@ Return the marker a risk level bracket item expresses, or None when the item nam
 Return the marker an advisory bracket item expresses, or None when the item names no advisory.
 Return the owner and repository the URL points at, or empty strings when it points at no repository.
 Return the public module-level constants that no module other than the one assigning them refers to.
-Return the public module-level functions and classes that no module other than the defining one refers to.
+Return the public module-level definitions that no module other than the defining one refers to.
 Return the public names each module yields that no module other than the one defining them refers to.
 Return the record's risk level, or no level at all when it reports none Update-time can read.
 Return the reference to look up at OSV, at the level in force for it, or None when no check runs for it.
@@ -754,7 +754,6 @@ Which those are is read off the pom before and after the run, rather than from M
 Why Update-time asks no registry about a reference and leaves it as it is.
 Yield each dependency type, in the order this class declares them.
 Yield each line with its number, empty where the line is a code fence or sits inside a fenced code block.
-Yield each of the references the npm registry has a newest release for, carrying that release.
 Yield each warning scope the reference's marker writes, with the reason no source answers any of them.
 `=` is no PEP 440 operator.
 `_TAG` reads no version in one, its prefix admitting no dash, so the label is read as the prefix here and the date as the version, which puts such a snapshot on the line its label names.

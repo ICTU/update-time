@@ -379,7 +379,7 @@ Update-time checks the dependencies it asks a source about for staleness, agains
 | :-------------- | :--------------- |
 | [Python dependencies](#python-dependencies) | the newest release of the package on PyPI |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | the newest release on the npm registry, for the dependencies that resolve to one |
-| [Maven dependencies](#maven-dependencies) | nothing: the publication dates Update-time reads serve the cooldown alone |
+| [Maven dependencies](#maven-dependencies) | the newest release on Maven Central, of each dependency and of each plugin |
 | [Node engine version](#node-engine-version-and-python-version) | the base image it follows, or the newest Node release on Docker Hub when no Dockerfile declares one |
 | [Python version](#node-engine-version-and-python-version) | the base image it follows, or the newest Python release on Docker Hub when no Dockerfile declares one |
 | [Docker images](#docker-images) | the image's newest release, and on Docker Hub only, since other registries expose no publication date |
@@ -1071,7 +1071,11 @@ Update-time holds nothing back for two kinds of dependency. Maven Central does n
 
 #### Stale dependencies
 
-Update-time reads publication dates for the cooldown alone, so it never warns that a Maven dependency is stale.
+Update-time checks each dependency against the newest release Maven Central lists for it. The pom's plugins are checked too.
+
+Update-time checks a dependency or plugin that the pom declares a `<version>` for. It asks Maven Central about an artefact by that artefact's `groupId:artifactId` coordinates alone, so it still checks a dependency whose `<version>` names a property its parent declares. Update-time reads each pom on its own, however, so it does not check a dependency whose group or artifact names a property its parent declares.
+
+Maven Central lists nothing for an artefact a project resolves from a mirror or a private repository. Update-time then has nothing to measure staleness against.
 
 #### Yanked dependencies
 
@@ -1081,7 +1085,7 @@ Maven Central does not report a withdrawal, so Update-time never warns that a Ma
 
 Update-time checks the pom's dependencies against OSV's Maven advisories. The version checked is the one the pom holds once Maven has run, so a vulnerability the run updated away from is never reported.
 
-Update-time leaves a dependency unchecked when its group, artifact, or version names a property its parent declares. Update-time only reads the pom's own properties, so such a value stays as written. OSV matches an advisory to `groupId:artifactId` coordinates and a version, and a property name is neither of those.
+Update-time does not check a dependency when its group, artifact, or version names a property its parent declares. Update-time reads each pom on its own, so it leaves a property a parent declares as the pom wrote it. OSV matches an advisory to `groupId:artifactId` coordinates and a version, and a property name is neither of those.
 
 Silencing this warning for a single dependency would need a marker, and Update-time does not yet support markers for Maven dependencies. Pass `--ignore-vulnerability` to silence an advisory across the run instead, or `--vulnerability-level` to only hear about the more severe ones.
 

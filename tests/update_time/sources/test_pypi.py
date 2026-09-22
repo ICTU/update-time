@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 # What a name in a repository's root listing maps to: a file's text, a directory with no tree to list, or a
 # directory's recursive tree listing as an entry per path below it. A path maps to its text, or to None for a
 # path that is itself a directory.
-type RootEntry = str | Mapping[str, str | None] | None
+type _RootEntry = str | Mapping[str, str | None] | None
 
 
 def get_latest_version(
@@ -139,7 +139,7 @@ class GetChangesTest(LoggingTestCase):
         return {"path": path, "type": "blob" if text is not None else "tree"}
 
     @staticmethod
-    def root_entry(name: str, entry: RootEntry) -> dict[str, object]:
+    def root_entry(name: str, entry: _RootEntry) -> dict[str, object]:
         """Return the root listing entry for the name, one with no file to fetch when the name maps to no text."""
         is_file = isinstance(entry, str)
         return {"type": "file" if is_file else "dir", **contents_entry(name, is_file=is_file)}
@@ -154,7 +154,7 @@ class GetChangesTest(LoggingTestCase):
         self,
         mock_get: Mock,
         *packages: str,
-        files: Mapping[str, RootEntry] | None = None,
+        files: Mapping[str, _RootEntry] | None = None,
         repository: str,
         description: str = "Package description",
         extra: Mapping[str | None, Mock] | None = None,
@@ -482,7 +482,7 @@ class GetChangesTest(LoggingTestCase):
     def test_changelog_file_in_the_repository_root(self, mock_get: Mock):
         """Test that a changelog file in the root supplies the changes, leaving the documentation directory unread."""
         changelog = "Changelog\n=========\n\n1.1\n===\n\n- Fixed foo\n\n1.0\n===\n\n- Fixed bar\n"
-        files: dict[str, RootEntry] = {
+        files: dict[str, _RootEntry] = {
             "README.md": "Not a changelog",
             "CHANGES.rst": changelog,
             "doc": {"source/changes.rst": changelog},
@@ -500,7 +500,7 @@ class GetChangesTest(LoggingTestCase):
             ("docs", "changelog.rst", "celery", "celery/celery"),
         ):
             with self.subTest(directory=directory):
-                files: dict[str, RootEntry] = {"CHANGES": stub, directory: {path: changelog}}
+                files: dict[str, _RootEntry] = {"CHANGES": stub, directory: {path: changelog}}
                 self.create_discovery_responses(mock_get, package, files=files, repository=repository)
                 changes = get_changes(package, "1.1")
                 self.assertEqual(changes, "1.1\n===\n\n- Fixed foo")
@@ -516,7 +516,7 @@ class GetChangesTest(LoggingTestCase):
     )
     def test_markdown_changelog_in_a_documentation_directory(self, mock_get: Mock):
         """Test that a changelog file below a documentation directory is read by its own extension."""
-        files: dict[str, RootEntry] = {"docs": {"changelog.md": markdown_changelog("1.1")}}
+        files: dict[str, _RootEntry] = {"docs": {"changelog.md": markdown_changelog("1.1")}}
         self.create_discovery_responses(mock_get, "flask", files=files, repository="pallets/flask")
         changes = get_changes("flask", "1.1")
         self.assertEqual(changes, markdown_changes("1.1"))
@@ -535,7 +535,7 @@ class GetChangesTest(LoggingTestCase):
 
     def test_root_directory_other_than_documentation(self, mock_get: Mock):
         """Test that a root directory other than the documentation directory is not listed."""
-        files: dict[str, RootEntry] = {
+        files: dict[str, _RootEntry] = {
             "tests": {"test_app.py": "import flask\n"},
             "docs": {"changelog.rst": "1.1\n===\n\n- Fixed foo\n"},
         }
