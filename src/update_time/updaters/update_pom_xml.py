@@ -49,14 +49,14 @@ def _update_pom_xml(pom_xml: Path) -> None:
         _LOG.declarations_changed(pom_xml, len(before), len(after))
         return
     _report_new_versions(before, after)
-    _warn_about_staleness(pom_xml_format.artefact_references(pom_xml))
+    _check_projects(pom_xml_format.artefact_references(pom_xml))
     _warn_about_vulnerabilities(after)
 
 
-def _warn_about_staleness(declared: list[Reference]) -> None:
-    """Warn about each dependency and plugin whose newest release is older than the staleness threshold."""
+def _check_projects(declared: list[Reference]) -> None:
+    """Warn about each dependency and plugin whose newest release is old, or whose source repository is archived."""
     steered = [SteeredReference.from_reference(declaration) for declaration in declared]
-    warn_about_projects([steered], project_resolver(maven_central.newest_release), _LOG)
+    warn_about_projects([steered], project_resolver(maven_central.project), _LOG)
 
 
 def _warn_about_vulnerabilities(declared: list[Reference]) -> None:

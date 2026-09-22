@@ -16,7 +16,6 @@ from update_time.domain.dependency import (
     DependencyName,
     DependencyVersion,
     PinnedDependency,
-    Project,
     VersionString,
     first_eligible,
     is_valid,
@@ -26,7 +25,8 @@ from update_time.domain.vulnerability import vulnerability_reporting
 from update_time.domain.yank import with_yank_state, yank_reporting
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
-from update_time.sources.npmjs import deprecation, get_publication_datetime, newest_release
+from update_time.sources.npmjs import deprecation, get_publication_datetime
+from update_time.sources.npmjs import project as npm_project
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter, VersionBound
@@ -58,7 +58,6 @@ def version_getter(filename: str) -> NewVersionGetter:
         referenced file's integrity hash can't be resolved (updating the version without a matching hash would break
         the Subresource Integrity check).
         """
-        del check_archival
         if not is_valid(pinned.version):
             return DependencyVersion(version=pinned.version)
         candidates = _candidate_versions(pinned, version_bound)
@@ -68,7 +67,7 @@ def version_getter(filename: str) -> NewVersionGetter:
             pinned.version,
         )
         latest = with_yank_state(latest, pinned.version, partial(deprecation, pinned.name))
-        return replace(latest, project=Project(newest=newest_release(pinned.name)))
+        return replace(latest, project=npm_project(pinned.name, check_archival=check_archival))
 
     return publication_date_reporting(vulnerability_reporting(yank_reporting(get_latest_version)))
 

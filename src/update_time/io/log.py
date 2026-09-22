@@ -678,6 +678,12 @@ class Logger:
         """Warn that a file can't be parsed, so it is skipped rather than crashing the run."""
         self._log_file(self._MESSAGE_INVALID_FILE, path, format=file_format)
 
+    _MESSAGE_INVALID_POM = LogMessage(WARNING, "Could not read the pom at %(url)s: it is not valid XML")
+
+    def invalid_pom(self, url: str) -> None:
+        """Warn that a pom a repository served cannot be parsed, so what it declares goes unread."""
+        self._log(self._MESSAGE_INVALID_POM, url=url)
+
     _MESSAGE_INVALID_XML_AFTER_UPDATE = LogMessage(
         ERROR, "Could not read %(location)s after updating it: it is not valid XML"
     )

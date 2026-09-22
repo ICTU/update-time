@@ -30,7 +30,8 @@ _RANKS = (
     ("domain",),
     ("markers",),
     ("io",),
-    ("manifests", "sources"),
+    ("manifests",),
+    ("sources",),
     ("package_managers", "references"),
     ("updaters",),
 )
@@ -201,7 +202,8 @@ class LayeringTest(unittest.TestCase):
     - `domain` is the pure, I/O-free core.
     - `markers` parse the `# update-time:` language and decide what each directive steers.
     - `io` wraps file, process, log, network, and command-line I/O.
-    - `manifests` read, write, and parse the files that declare dependencies.
+    - `manifests` read, write, and parse the files that declare dependencies. They rank before `sources` because a
+      registry serves such a file too: Maven Central serves the pom an artefact was published with.
     - `sources` are the backends the outer layers ask about a dependency.
     - `package_managers` drive the external managers, uv, npm, and pnpm, using manifests and sources.
     - `references` decide which version a pinned reference should update to, and rewrite the reference accordingly.

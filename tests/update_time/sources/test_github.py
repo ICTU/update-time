@@ -17,9 +17,9 @@ from update_time.io.log import Logger
 from update_time.sources import github
 from update_time.sources.github import (
     TaggedVersion,
-    _archival,
     _get_release,
     _newest_release,
+    archival,
     changes_from_changelog_file,
     changes_from_release,
     github_owner_and_repository,
@@ -438,19 +438,16 @@ class ArchivalTest(LoggingTestCase):
         for repository, (response, expected) in cases.items():
             with self.subTest(repository=repository):
                 mock_get.return_value = response
-                self.assertEqual(_archival("owner", repository, check_archival=True), expected)
+                self.assertEqual(archival("owner", repository, check_archival=True), expected)
         requested = [call.args[0] for call in mock_get.call_args_list]
         self.assertEqual(requested, [f"https://api.github.com/repos/owner/{name}" for name in cases])
         self.assert_could_not_fetch_logged()
 
     @kills(
         Mutation(
-            github,
-            "    if not check_archival:\n        return Archival()\n"
-            '    if not _repository_metadata(owner, repository).get("archived", False):',
-            "    metadata = _repository_metadata(owner, repository)\n"
-            "    if not check_archival:\n        return Archival()\n"
-            '    if not metadata.get("archived", False):',
+            github.archival,
+            "    if check_archival and",
+            "    _repository_metadata(owner, repository)\n    if check_archival and",
             "the source is told not to check for archival but fetches the repository anyway, so the run pays for a "
             "check it does not make",
         )
@@ -459,7 +456,7 @@ class ArchivalTest(LoggingTestCase):
     def test_a_source_told_not_to_check_asks_github_nothing(self, mock_get: Mock):
         """Test that a source told not to check asks GitHub nothing and reads the repository as active."""
         mock_get.return_value = mock_response({"archived": True})
-        self.assertEqual(_archival("owner", "not checked", check_archival=False), Archival())
+        self.assertEqual(archival("owner", "not checked", check_archival=False), Archival())
         mock_get.assert_not_called()
 
 
@@ -813,7 +810,7 @@ class GitHubHeadersTest(CacheClearingTestCase):
         The archival check is the shortest path to a single request, so that is the request the headers are read off.
         """
         mock_get.return_value = mock_response({})
-        _archival("owner", "repository", check_archival=True)
+        archival("owner", "repository", check_archival=True)
         self.assertEqual(mock_get.call_args.kwargs["headers"], expected)
 
     @kills(

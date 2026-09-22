@@ -500,21 +500,15 @@ def _newest_tag_beyond_releases(owner: str, repository: str) -> _TagJSON | None:
 def project(dependency: DependencyName, *, check_archival: bool) -> Project:
     """Return what GitHub reports about the repository the dependency names: its newest release, and its archival."""
     owner, repository = _owner_and_repository(dependency)
-    archival = _archival(owner, repository, check_archival=check_archival)
-    return Project(newest=_newest_release(owner, repository), archival=archival)
+    newest = _newest_release(owner, repository)
+    return Project(newest=newest, archival=archival(owner, repository, check_archival=check_archival))
 
 
-def _archival(owner: str, repository: str, *, check_archival: bool) -> Archival:
-    """Return what GitHub declares about the repository: whether it is archived.
-
-    GitHub publishes no reason beside the flag, so an archived repository carries none. Nothing else reads the
-    repository metadata, so a run that checks no dependency for archival leaves it unfetched.
-    """
-    if not check_archival:
-        return Archival()
-    if not _repository_metadata(owner, repository).get("archived", False):
-        return Archival()
-    return Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
+def archival(owner: str, repository: str, *, check_archival: bool) -> Archival:
+    """Return what GitHub declares about the repository: whether it is archived."""
+    if check_archival and _repository_metadata(owner, repository).get("archived", False):
+        return Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
+    return Archival()
 
 
 def _newest_release(owner: str, repository: str) -> Release | None:

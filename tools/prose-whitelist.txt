@@ -178,6 +178,7 @@ Assert that a floating tag pinned to no version was reported, with its reason, a
 Assert that a repository GitHub declares archived was warned about, GitHub publishing no reason.
 Assert that of the two constants a module assigns, only the one the reader leaves alone is reported.
 Assert that the lines below the message sit in a box, and that the box holds these lines and no others.
+Assert that the run reported no archival, having asked the given URLs and GitHub nothing.
 Assert the engine is updated to the latest Node release on Docker Hub, with no local version to derive.
 Assert uv tree/lock carry no `--exclude-newer` flag (the cooldown lives in config), nor `--frozen`.
 Both name a version of a runtime rather than a release of a package, which is not something OSV matches an advisory against.
@@ -200,6 +201,7 @@ Each case: the directive list, the marker it expresses, and the verbatim text th
 Each check the decision reports on, keyed by the scope silencing it.
 Each directive a source may be unable to apply, keyed by the text the warning names it with.
 Each pass locates the lines afresh, so the text a marker is read from is the text the pass before it left; the file they belong to is the one they already record, so no path has to be passed alongside them.
+Each request is answered by the URL it names, so a test needs no expectation about the order they are made in.
 Each request is answered by the endpoint it names, so a test needs no expectation about the order the source asks in.
 Either way a marker wins over a version derived from the Dockerfile.
 Empty when the reference sets no value, and left out of comparisons, so thresholds that set the same value compare as equal however they were spelled.
@@ -211,7 +213,6 @@ Find requirements files, bump the exact pins in them, and check the requirements
 Fixed bug A Fixed bug B - and a dash that is no bullet.
 Floating tag :dev in was left as it is: no tag naming a version serves the same image.
 For example, if `python:3.12.1` is the current version pin and `python:3.13` is available, but no `python:3.13.0`, the version pin moves to `python:3.13`.
-GitHub publishes no reason beside the flag, so an archived repository carries none.
 GitHub publishes no reason beside the flag, so the warning gives none.
 GitHub serves its sponsorship pages under this path, which it reserves, so no owner can go by this name.
 Given no titles, the chapter documents every declared dependency type, so `_problems` reports nothing.
@@ -254,7 +255,6 @@ Name the versions the reference may move to, or the level of update it may not m
 Neither patch is ever stopped: no test may lift the refusal.
 No newer version; the pin's own release is yanked.
 No newer version; the pin's release is vulnerable.
-Nothing else reads the repository metadata, so a run that checks no dependency for archival leaves it unfetched.
 Null for an entry that is no file to fetch, such as a directory: pip's root keeps its `news` fragments in one.
 OSV does hold advisories for actions, but their affected entries enumerate no versions.
 On a `pyproject.toml` or inline script metadata dependency, Update-time reports every bound as redundant, since uv answers with one version rather than the candidates a bound would narrow.
@@ -451,6 +451,7 @@ Test that a requirement whose package the index lists no version for is not warn
 Test that a response without a Link header has no next page.
 Test that a root holding a changelog file naming no version is searched on for one that names it.
 Test that a root listing that can't be fetched yields no changes, and is reported as unreachable.
+Test that a run checking no dependency for archival reads no pom, so the listing is all it asks for.
 Test that a run updating away from a yanked pin reports no yank, since the pin no longer sits on one.
 Test that a run with the check switched off looks up the pin setting a level of its own, and no other.
 Test that a scope GitHub can never apply is reported for a branch reference, which resolves no update.
@@ -487,6 +488,8 @@ Test that an advisory reporting no risk level is read as a vulnerability of no l
 Test that an advisory whose CVSS vector cannot be scored is read at no level, and warned about.
 Test that an anonymous registry token is requested (no basic auth) when no credentials are set.
 Test that an archived project is warned about although the index lists no release for it.
+Test that an artefact whose listing dates no version has no pom to read, so nothing follows the listing.
+Test that an artefact whose pom declares no `<scm>` element leaves GitHub unasked.
 Test that an entry named like a changelog with no file to fetch is passed over without a request.
 Test that an excluded reference's versions carry no publication date, so a cooldown measures against none.
 Test that an inline `# update-time: ignore` comment leaves the action untouched, looking up no version.
@@ -645,6 +648,7 @@ The reference names no tag, so the report names the `latest` that was looked up 
 The reference names no version: a `package.json` declares a range, and which version it resolves to is recorded in the lock file.
 The references a file accounts for itself, as it writes them: one naming a tag and one naming none.
 The registry dates the versions it lists, so one it does not list — a version published moments ago, or one it no longer serves — has no date to read.
+The registry publishes no archival signal, so no request answers it.
 The registry serves no manifest, so there is no digest to pin.
 The release the cooldown held back dates it.
 The reported item being the run's only warning shows that item set no threshold.
@@ -674,7 +678,6 @@ The three commands share the same shape across managers (detect outdated → upd
 The threshold to ask for to hear about no stale dependency at all, which switches the check off rather than setting a day count.
 The title documents the type when it holds the type's name.
 The token endpoint the credentials are exchanged at; note that it lives on the user-facing hub.docker.com host, not on the _REGISTRY host above.
-The token only needs to read public release and commit data, so it needs no specific scope.
 The two ways a version bound can be redundant for the current version (see `VersionBound.redundancy`).
 The upload after it names no version, and the file without an upload time names no date.
 The verb's other operator names the fresh ages rather than the old ones, which neither item can express, so an inverted item of either keyword is returned for the caller to report.
@@ -825,6 +828,7 @@ a registration naming no mutation is accepted, so the test it decorates checks n
 a release tagged with something that is no version ends the run with a traceback.
 a repository naming its changelog file `history`, `news`, or `releases` reports no changes.
 a repository whose root answers costs a documentation tree listing it has no need of.
+a resolver reports no archival though its source does, so the same switched-off check skips it.
 a root whose first changelog file names no version reports no changes, though another file names it.
 a run given no token sends an empty bearer header instead of asking anonymously.
 a scope the reader spelled out is discarded, instead of being kept.
@@ -878,6 +882,7 @@ the marker a report settles on is discarded, so an unreadable item warns and the
 the reason the source published is left out of the warning.
 the registry serves no manifest for its tag, so what that tag serves is unknown.
 the repository is asked for at a URL GitHub answers 404, so no repository ever reads as archived.
+the repository reports no archival, so a switched-off staleness check skips the pom it reads.
 the resolver reports no archival, so a switched-off staleness check skips the file it reads.
 the rule for a dependency no source reports on sweeps the cooldown in with the warnings, so one item is reported twice.
 the second URL's version list; the npm registry document is cached.

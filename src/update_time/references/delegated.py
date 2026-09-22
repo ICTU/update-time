@@ -1,9 +1,11 @@
 """The checks a dependency gets when a package manager updates it rather than Update-time rewriting its line."""
 
+from functools import partial
 from itertools import chain
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import DependencyVersion, Project
+from update_time.domain.archival import archival_is_checked, archival_reporting, reports_archival
+from update_time.domain.dependency import DependencyVersion
 from update_time.domain.reference import resolved_references
 from update_time.markers.directive import WARNING_DIRECTIVES, Reason
 from update_time.markers.marker import Scope
@@ -18,30 +20,28 @@ from update_time.references.resolve import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
-    from update_time.domain.dependency import DependencyName, Release
+    from update_time.domain.dependency import ProjectGetter
     from update_time.domain.reference import ReferenceResolver
     from update_time.io.log import Logger
 
 
-# What a project check asks a source: a function answering the release a dependency published most recently.
-type _NewestReleaseGetter = Callable[[DependencyName], Release | None]
+def project_resolver(get_project: ProjectGetter) -> ReferenceResolver[SteeredReference, SteeredResolvedReference]:
+    """Return a resolver carrying what the source reports about the project behind each reference.
 
-
-def project_resolver(
-    newest_release: _NewestReleaseGetter,
-) -> ReferenceResolver[SteeredReference, SteeredResolvedReference]:
-    """Return a resolver yielding each reference the source reports a newest release for, carrying that release."""
+    The resolver is registered as reporting archival wherever its source is, so the checks can read that off it.
+    """
 
     def resolve(references: Iterable[SteeredReference]) -> Iterable[SteeredResolvedReference]:
+        check_archival = archival_is_checked()
         return (
             SteeredResolvedReference.from_reference(
-                reference, release=DependencyVersion.unpinned(Project(newest=newest))
+                reference,
+                release=DependencyVersion.unpinned(get_project(reference.dependency, check_archival=check_archival)),
             )
             for reference in references
-            if (newest := newest_release(reference.dependency)) is not None
         )
 
-    return resolve
+    return archival_reporting(resolve, when=partial(reports_archival, get_project))
 
 
 def warn_about_projects[ReferenceT: SteeredReference](

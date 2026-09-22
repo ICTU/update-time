@@ -1,6 +1,7 @@
-"""Read the dependencies and properties a pom.xml declares.
+"""Read the dependencies, properties, and source repository a pom.xml declares.
 
-This module owns what a pom's elements mean. Reading the XML itself is the formats layer's concern.
+This module owns what a pom's elements mean, whether Update-time scans the pom or a registry serves it. Reading the
+XML itself is the formats layer's concern.
 """
 
 import re
@@ -21,6 +22,27 @@ _PROPERTY_REFERENCE = re.compile(r"\$\{(?P<name>[^}]+)\}")
 
 # The group Maven gives a plugin that declares none. A dependency names its own group.
 _PLUGIN_GROUP = "org.apache.maven.plugins"
+
+# Maven's own prefix on an `<scm>` value: `scm:<provider>:` in front of the URL that provider reads.
+_SCM_PREFIX = re.compile(r"^scm:[^:]+:")
+
+# Update-time reads these children of `<scm>`, in this order, to find where the project's source lives.
+_SCM_URL_TAGS = ("url", "connection", "developerConnection")
+
+
+def scm_urls(document: bytes) -> list[str] | None:
+    """Return the URLs the pom's `<scm>` element names, `<url>` first, or None when the pom's XML does not parse.
+
+    Each is stripped of the `scm:<provider>:` prefix Maven writes in front of it, leaving the URL that provider reads.
+    """
+    project = xml.parse(document)
+    if project is None:
+        return None
+    scm = project.child("scm")
+    if scm is None:
+        return []
+    named = (scm.child(tag) for tag in _SCM_URL_TAGS)
+    return [_SCM_PREFIX.sub("", url.text) for url in named if url is not None]
 
 
 def dependencies(path: Path) -> list[Reference] | None:
