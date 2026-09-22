@@ -28,6 +28,7 @@ class Ecosystem(StrEnum):
 
     PYPI = "PyPI"
     NPM = "npm"
+    MAVEN = "Maven"
 
 
 class _Severity(TypedDict):
