@@ -70,8 +70,15 @@ def _entry_points(tree: ast.Module) -> Iterator[str]:
                     yield called.func.id
 
 
+def _defined_name(node: ast.stmt) -> str | None:
+    """Return the name a function, class, or type alias statement defines, or None for any other statement."""
+    if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef | ast.ClassDef):
+        return node.name
+    return node.name.id if isinstance(node, ast.TypeAlias) else None
+
+
 def _public_definitions(trees: dict[pathlib.Path, ast.Module]) -> Iterator[tuple[pathlib.Path, str]]:
-    """Yield the public module-level functions and classes each module defines, bar those reached without a call.
+    """Yield the public module-level definitions each module makes, bar those reached without a call.
 
     A class a framework discovers is found by scanning the module rather than by importing it, and an entry point
     is reached by running its file, so neither has a caller to find and reporting it would buy nothing.
@@ -80,10 +87,9 @@ def _public_definitions(trees: dict[pathlib.Path, ast.Module]) -> Iterator[tuple
     for path, tree in trees.items():
         reached = discovered.union(_entry_points(tree))
         for node in tree.body:
-            if not isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef | ast.ClassDef):
-                continue
-            if not node.name.startswith("_") and node.name not in reached:
-                yield path, node.name
+            name = _defined_name(node)
+            if name is not None and not name.startswith("_") and name not in reached:
+                yield path, name
 
 
 def _module_local_constants(files: list[pathlib.Path]) -> list[str]:
@@ -92,7 +98,7 @@ def _module_local_constants(files: list[pathlib.Path]) -> list[str]:
 
 
 def _module_local_definitions(files: list[pathlib.Path]) -> list[str]:
-    """Return the public module-level functions and classes that no module other than the defining one refers to."""
+    """Return the public module-level definitions that no module other than the defining one refers to."""
     return _module_local_names(files, _public_definitions)
 
 

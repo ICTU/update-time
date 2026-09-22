@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyName
     from update_time.formats.xml import XmlElement
 
-# A `<version>` that names one of the pom's properties rather than a version, such as `${spring.version}`.
+# An element naming one of the pom's properties rather than holding its own value, such as `${spring.version}`.
 _PROPERTY_REFERENCE = re.compile(r"\$\{(?P<name>[^}]+)\}")
 
 # The group Maven gives a plugin that declares none. A dependency names its own group.
@@ -30,39 +30,48 @@ def dependencies(path: Path) -> list[Reference] | None:
     reading the element wherever it sits reaches the dependencies of either.
     """
     project = xml.read(path)
-    if project is None:
-        return None
-    property_elements = _property_elements(project) | _own_coordinates(project)
-    declared = (_reference(path, element, property_elements) for element in project.descendants("dependency"))
-    return [dependency for dependency in declared if dependency is not None]
+    return None if project is None else _references(path, project, {"dependency": ""})
 
 
-def artefacts(path: Path) -> list[DependencyName]:
-    """Return the coordinates of each dependency and plugin the pom declares a version for.
+def artefact_references(path: Path) -> list[Reference]:
+    """Return a reference to each dependency and plugin the pom declares a version for.
 
     Coordinates holding an unresolved property are left out, since a repository serves nothing under them.
     """
     project = xml.read(path)
     if project is None:
         return []
+    declared = _references(path, project, {"dependency": "", "plugin": _PLUGIN_GROUP})
+    return [reference for reference in declared if _is_resolved(reference.dependency)]
+
+
+def _references(path: Path, project: XmlElement, default_groups: dict[str, str]) -> list[Reference]:
+    """Return the reference each named element declares, dropping the ones that leave out a part Maven needs.
+
+    `default_groups` maps the tag of each element to read to the group Maven gives it when it declares none.
+    """
     property_elements = _property_elements(project) | _own_coordinates(project)
     declared = (
         _reference(path, element, property_elements, default_group)
-        for tag, default_group in (("dependency", ""), ("plugin", _PLUGIN_GROUP))
+        for tag, default_group in default_groups.items()
         for element in project.descendants(tag)
     )
-    named = (reference.dependency for reference in declared if reference is not None)
-    return [artefact for artefact in named if not _names_a_property(artefact)]
+    return [reference for reference in declared if reference is not None]
 
 
-def _names_a_property(value: str) -> bool:
-    """Return whether the value holds a property left unresolved, such as one the pom's parent declares."""
-    return bool(_PROPERTY_REFERENCE.search(value))
+def artefacts(path: Path) -> list[DependencyName]:
+    """Return the coordinates of each dependency and plugin the pom declares a version for."""
+    return [reference.dependency for reference in artefact_references(path)]
+
+
+def _is_resolved(value: str) -> bool:
+    """Return whether the pom resolved the value, rather than leaving a property its parent declares."""
+    return not _PROPERTY_REFERENCE.search(value)
 
 
 def fully_resolved(reference: Reference) -> bool:
     """Return whether the pom resolved the reference whole: its coordinates and the version it pins."""
-    return not _names_a_property(reference.dependency) and not _names_a_property(reference.current_version)
+    return _is_resolved(reference.dependency) and _is_resolved(reference.current_version)
 
 
 def _own_coordinates(project: XmlElement) -> dict[str, XmlElement]:

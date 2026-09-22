@@ -11,7 +11,9 @@ from update_time.io.log import get_logger
 from update_time.manifests import pom_xml as pom_xml_format
 from update_time.markers.reference import SteeredReference
 from update_time.package_managers import maven
+from update_time.references.delegated import project_resolver, warn_about_projects
 from update_time.references.vulnerability import warn_about_vulnerable_dependencies
+from update_time.sources import maven_central
 from update_time.sources.osv import Ecosystem
 
 if TYPE_CHECKING:
@@ -47,7 +49,14 @@ def _update_pom_xml(pom_xml: Path) -> None:
         _LOG.declarations_changed(pom_xml, len(before), len(after))
         return
     _report_new_versions(before, after)
+    _warn_about_staleness(pom_xml_format.artefact_references(pom_xml))
     _warn_about_vulnerabilities(after)
+
+
+def _warn_about_staleness(declared: list[Reference]) -> None:
+    """Warn about each dependency and plugin whose newest release is older than the staleness threshold."""
+    steered = [SteeredReference.from_reference(declaration) for declaration in declared]
+    warn_about_projects([steered], project_resolver(maven_central.newest_release), _LOG)
 
 
 def _warn_about_vulnerabilities(declared: list[Reference]) -> None:

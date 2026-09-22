@@ -92,7 +92,7 @@ class ArtefactsTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            pom_xml.artefacts,
+            pom_xml.artefact_references,
             "if project is None:",
             "if False:",
             "an unparsable pom takes the reading of its artefacts down with it",
