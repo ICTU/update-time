@@ -46,6 +46,8 @@ from tests.update_time.updaters.fixtures import (
     OTHER_DJANGO_VULNERABILITY,
 )
 from tests.update_time.updaters.helpers import (
+    OSV_BATCH_URL,
+    assert_osv_asked_about,
     dated_pypi_index,
     days_ago,
     no_vulnerabilities,
@@ -56,9 +58,6 @@ from tests.update_time.updaters.helpers import (
 )
 
 _PUBLISHED = "1.1, published: 2020-01-01 00:00"  # How PYPI_OLD_UPLOAD is rendered in the log.
-
-# The endpoint the pins of one file are looked up at, spelled out here and pinned to the source below.
-_OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch"
 
 # The endpoint a package's versions and release dates are read from; `queried_packages` reads its name back off it.
 _PYPI_INDEX_URL = "https://pypi.org/simple/"
@@ -588,7 +587,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = [pypi_index("3.2.0"), pypi_index("1.0")]
         with osv(DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY) as mock_post, vulnerability_check_disabled:
             update_requirements_txts()
-        mock_post.assert_any_call(_OSV_BATCH_URL, timeout=ANY, json=osv_queries(("django", "3.2.0")))
+        mock_post.assert_any_call(OSV_BATCH_URL, timeout=ANY, json=osv_queries(("django", "3.2.0")))
         self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(requirements_txt, 1))
 
     def test_clean_pins_cost_one_osv_request(self, mock_rglob: Mock, mock_get: Mock):
@@ -597,8 +596,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = [pypi_index("3.2.0"), pypi_index("1.0")]
         with osv() as mock_post:
             update_requirements_txts()
-        queries = osv_queries(("django", "3.2.0"), ("flask", "1.0"))
-        mock_post.assert_called_once_with(_OSV_BATCH_URL, timeout=ANY, json=queries)
+        assert_osv_asked_about(mock_post, ("django", "3.2.0"), ("flask", "1.0"))
         self.assert_no_warnings_logged()
 
     def test_a_requirement_pinning_a_range_queries_no_vulnerabilities(self, mock_rglob: Mock, mock_get: Mock):

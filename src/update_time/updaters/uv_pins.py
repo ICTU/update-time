@@ -31,4 +31,4 @@ def warn_about_pins(files: Iterable[DependencyTomlFile], log: Logger) -> None:
     warn_about_redundant_directives(declared, log, uv.no_pypi_release)
     warn_about_projects(served, uv.pypi_projects, log)
     warn_about_yanked_dependencies(served, uv.pinned_pypi_releases, log)
-    warn_about_vulnerable_dependencies(served, uv.pinned_versions, Ecosystem.PYPI, log)
+    warn_about_vulnerable_dependencies([uv.pinned_versions(pins) for pins in served], Ecosystem.PYPI, log)

@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Apply the cooldown to the Maven dependencies a `pom.xml` declares. Closes [#361](https://github.com/ICTU/update-time/issues/361).
+- Warn about the vulnerable Maven dependencies a `pom.xml` declares. Part of [#363](https://github.com/ICTU/update-time/issues/363).
 
 ## 0.0.38 - 2026-09-18
 

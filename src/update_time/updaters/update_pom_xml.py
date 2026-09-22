@@ -9,7 +9,10 @@ from update_time.formats import xml
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.manifests import pom_xml as pom_xml_format
+from update_time.markers.reference import SteeredReference
 from update_time.package_managers import maven
+from update_time.references.vulnerability import warn_about_vulnerable_dependencies
+from update_time.sources.osv import Ecosystem
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -44,6 +47,17 @@ def _update_pom_xml(pom_xml: Path) -> None:
         _LOG.declarations_changed(pom_xml, len(before), len(after))
         return
     _report_new_versions(before, after)
+    _warn_about_vulnerabilities(after)
+
+
+def _warn_about_vulnerabilities(declared: list[Reference]) -> None:
+    """Warn about each dependency the run leaves on a version an advisory names."""
+    steered = [
+        SteeredReference.from_reference(declaration)
+        for declaration in declared
+        if pom_xml_format.fully_resolved(declaration)
+    ]
+    warn_about_vulnerable_dependencies([steered], Ecosystem.MAVEN, _LOG)
 
 
 def _report_new_versions(before: list[Reference], after: list[Reference]) -> None:

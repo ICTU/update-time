@@ -3,7 +3,7 @@
 import datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.vulnerability import NO_RISK_LEVEL, VULNERABILITY_LEVEL
 
@@ -40,10 +40,19 @@ def osv_vulnerability(advisory: str, summary: str, level: str) -> tuple[dict[str
     return osv_advisory(advisory, summary, level.upper()), vulnerability(advisory, summary, level)
 
 
-def osv_queries(*pins: tuple[str, str]) -> dict[str, object]:
+# The OSV endpoint that answers which of a batch of pins are affected. A file's references are asked there together.
+OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch"
+
+
+def osv_queries(*pins: tuple[str, str], ecosystem: str = "PyPI") -> dict[str, object]:
     """Return the payload OSV's batch endpoint is asked with for the pins, each a package name and its version."""
-    queries = [{"package": {"name": name, "ecosystem": "PyPI"}, "version": version} for name, version in pins]
+    queries = [{"package": {"name": name, "ecosystem": ecosystem}, "version": version} for name, version in pins]
     return {"queries": queries}
+
+
+def assert_osv_asked_about(mock_post: Mock, *pins: tuple[str, str], ecosystem: str = "PyPI") -> None:
+    """Assert that OSV was asked about these pins alone, in the one batch request a file costs."""
+    mock_post.assert_called_once_with(OSV_BATCH_URL, timeout=ANY, json=osv_queries(*pins, ecosystem=ecosystem))
 
 
 def osv(*advisories: dict[str, object]) -> _patch:

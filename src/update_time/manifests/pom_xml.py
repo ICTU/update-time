@@ -40,8 +40,7 @@ def dependencies(path: Path) -> list[Reference] | None:
 def artefacts(path: Path) -> list[DependencyName]:
     """Return the coordinates of each dependency and plugin the pom declares a version for.
 
-    A pom can name a group or an artifact with a property, such as `${spring.group}`. Update-time reads only the
-    pom's own properties, so a parent's property stays unresolved.
+    Coordinates holding an unresolved property are left out, since a repository serves nothing under them.
     """
     project = xml.read(path)
     if project is None:
@@ -53,7 +52,17 @@ def artefacts(path: Path) -> list[DependencyName]:
         for element in project.descendants(tag)
     )
     named = (reference.dependency for reference in declared if reference is not None)
-    return [artefact for artefact in named if not _PROPERTY_REFERENCE.search(artefact)]
+    return [artefact for artefact in named if not _names_a_property(artefact)]
+
+
+def _names_a_property(value: str) -> bool:
+    """Return whether the value holds a property left unresolved, such as one the pom's parent declares."""
+    return bool(_PROPERTY_REFERENCE.search(value))
+
+
+def fully_resolved(reference: Reference) -> bool:
+    """Return whether the pom resolved the reference whole: its coordinates and the version it pins."""
+    return not _names_a_property(reference.dependency) and not _names_a_property(reference.current_version)
 
 
 def _own_coordinates(project: XmlElement) -> dict[str, XmlElement]:

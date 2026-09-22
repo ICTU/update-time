@@ -300,7 +300,7 @@ Which dependencies are checked follows from what OSV can match a pinned version 
 | :-------------- | :------------------ |
 | [Python dependencies](#python-dependencies) | `requirements.txt`, `pyproject.toml`, and inline script metadata pins, against OSV's PyPI advisories |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: those dependencies are declared as ranges and resolved in the lock file, which Update-time does not read |
-| [Maven dependencies](#maven-dependencies) | none: OSV is asked about no Maven artefact |
+| [Maven dependencies](#maven-dependencies) | the version each `pom.xml` dependency is left on, against OSV's Maven advisories |
 | [Node engine version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
 | [Python version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
 | [Docker images](#docker-images) | none: OSV has no ecosystem for container images |
@@ -937,7 +937,11 @@ Maven Central does not report a withdrawal, so Update-time never warns that a Ma
 
 #### Vulnerable dependencies
 
-Update-time does not ask OSV about a Maven dependency, so it never warns that one is vulnerable.
+Update-time checks the pom's dependencies against OSV's Maven advisories. The version checked is the one the pom holds once Maven has run, so a vulnerability the run updated away from is never reported.
+
+Update-time leaves a dependency unchecked when its group, artifact, or version names a property its parent declares. Update-time only reads the pom's own properties, so such a value stays as written. OSV matches an advisory to `groupId:artifactId` coordinates and a version, and a property name is neither of those.
+
+Silencing this warning for a single dependency would need a marker, and Update-time does not yet support markers for Maven dependencies. Pass `--ignore-vulnerability` to silence an advisory across the run instead, or `--vulnerability-level` to only hear about the more severe ones.
 
 #### Archived dependencies
 

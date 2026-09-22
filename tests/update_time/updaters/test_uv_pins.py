@@ -14,7 +14,6 @@ from update_time.markers.directive import Reason
 from update_time.package_managers import uv as uv_module
 from update_time.primitives.location import Location
 from update_time.references import delegated as delegated_module
-from update_time.references import vulnerability as vulnerability_module
 from update_time.updaters import uv_pins as uv_pins_module
 from update_time.updaters.uv_pins import warn_about_pins
 
@@ -339,14 +338,6 @@ class VulnerablePinTest(DependencyTomlFileTestCase):
         self.assert_vulnerable_dependency_logged("django", "3.2.0", OTHER_DJANGO_VULNERABILITY, Location(file.path, 2))
         self.assert_ignored_vulnerability_logged("django", Location(file.path, 2), advisory, directive)
 
-    @kills(
-        Mutation(
-            vulnerability_module,
-            "_reference_to_check(pin, pin.marker, run_wide_level)",
-            "_reference_to_check(pin, list(pinned_versions(references))[0].marker, run_wide_level)",
-            "one pin's marker steers every pin in the batch, rather than the one carrying it",
-        )
-    )
     def test_a_marker_silences_its_own_pin_in_the_batch(self):
         """Test that a marker on one pin's line leaves the pin declared below it in the batch warned about."""
         directive = "ignore[vulnerable]"

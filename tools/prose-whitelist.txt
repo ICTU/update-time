@@ -432,7 +432,6 @@ Test that a package whose description holds the changes costs no root listing, a
 Test that a package whose release answers costs no root listing, and reports the release's changes.
 Test that a package.json whose `engines` section declares no Node version is skipped.
 Test that a pom Maven changed nothing in gets no new version reported, though Maven ran over it.
-Test that a pom Maven left unparsable is reported as a failed update, with no new version reported.
 Test that a pom declaring no release raises an error naming the file, rather than one about a lookup.
 Test that a pom whose XML does not parse declares no property, rather than ending the run.
 Test that a property Maven advanced is reported for no dependency when no `<version>` names it.
@@ -594,7 +593,6 @@ The dependency types every table has to answer for, in the order the tables have
 The deprecation npm reports for clipboard 2.0.11: the reason the registry states, and the yank it becomes.
 The directory a monorepo builds the package from.
 The endpoint a package's versions and release dates are read from; `queried_packages` reads its name back off it.
-The endpoint the pins of one file are looked up at, spelled out here and pinned to the source below.
 The extension a changelog file carries, and the media type a source reports for it, when it is written in Markdown.
 The file is part of the reference rather than of the dependency, and the `NewVersionGetter` contract leaves no room for it, so each reference closes over its own.
 The file type each updater scans, and the function that scans it.
@@ -646,7 +644,6 @@ The reason the source published, empty when it published none.
 The reference names no tag, so the report names the `latest` that was looked up for it.
 The reference names no version: a `package.json` declares a range, and which version it resolves to is recorded in the lock file.
 The references a file accounts for itself, as it writes them: one naming a tag and one naming none.
-The references of one file are looked up in a single batch, so a file with no vulnerable reference costs one request.
 The registry dates the versions it lists, so one it does not list — a version published moments ago, or one it no longer serves — has no date to read.
 The registry serves no manifest, so there is no digest to pin.
 The release the cooldown held back dates it.

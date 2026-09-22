@@ -19,6 +19,8 @@ from update_time.updaters.update_pom_xml import update_pom_xmls
 from tests.helpers import mock_path, patch_environ, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase
+from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
+from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulnerabilities, osv
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -124,8 +126,7 @@ def _maven_command(executable: str = "mvn", rules: Path | None = None) -> Comman
     )
 
 
-# No file sits beside the pom unless a test puts one there, so the wrapper is absent except where it is the case.
-# The repository answers with an empty tuple unless a test says otherwise. Stubbing it keeps the run off the network.
+@no_vulnerabilities
 @patch.object(maven_module, "versions_within_cooldown", Mock(return_value=()))
 @patch_pathlib_path("rglob", cwd=Path("/"), exists=False)
 @patch("subprocess.run")
@@ -198,6 +199,63 @@ class UpdatePomXmlTest(LoggingTestCase):
         ):
             yield written
 
+    @kills(
+        Mutation(
+            update_pom_xml_module._update_pom_xml,
+            "_warn_about_vulnerabilities(after)",
+            "",
+            "a pom's dependencies reach OSV never, so an advisory naming the version a run lands on goes unreported",
+        )
+    )
+    def test_a_vulnerable_dependency_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a dependency an advisory names is warned about, at the line its `<version>` element sits on."""
+        pom = self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre")))
+        with osv(ADVISORY):
+            update_pom_xmls()
+        self.assert_vulnerable_dependency_logged(
+            "com.google.guava:guava", "33.0.0-jre", VULNERABILITY, Location(pom, 6)
+        )
+
+    @kills(
+        Mutation(
+            update_pom_xml_module._warn_about_vulnerabilities,
+            "Ecosystem.MAVEN",
+            "Ecosystem.PYPI",
+            "a pom's coordinates are matched against the advisories of another ecosystem, which holds none of them",
+        ),
+        Mutation(
+            update_pom_xml_module._update_pom_xml,
+            "_warn_about_vulnerabilities(after)",
+            "_warn_about_vulnerabilities(before)",
+            "the version asked about is the one Maven updated away from rather than the one the run lands on",
+        ),
+    )
+    def test_osv_is_asked_about_the_version_the_run_lands_on(self, mock_run: Mock, mock_glob: Mock):
+        """Test that OSV is asked in the Maven ecosystem, about the version the pom holds once Maven has run."""
+        before, after = _pom(_guava("33.0.0-jre")), _pom(_guava("33.7.1-jre"))
+        self.find_rewritten_pom(mock_run, mock_glob, before, after)
+        with osv() as mock_post:
+            update_pom_xmls()
+        assert_osv_asked_about(mock_post, ("com.google.guava:guava", "33.7.1-jre"), ecosystem="Maven")
+
+    @kills(
+        Mutation(
+            pom_xml_module.fully_resolved,
+            " and not _names_a_property(reference.current_version)",
+            "",
+            "OSV is asked about a version holding an unresolved property, which it matches nothing to",
+        )
+    )
+    def test_a_version_naming_a_property_is_not_asked_about_at_osv(self, mock_run: Mock, mock_glob: Mock):
+        """Test that OSV is not asked about a dependency whose `<version>` names a property the pom does not declare."""
+        # A pom can spell a dependency's version as a property its parent declares, which this pom does not hold.
+        inherited = _dependency("org.springframework", "spring-core", "${spring.version}")
+        self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre"), inherited))
+        with osv() as mock_post:
+            update_pom_xmls()
+        # Guava is asked about, so the dependency beside it going unasked says something about its version.
+        assert_osv_asked_about(mock_post, ("com.google.guava:guava", "33.0.0-jre"), ecosystem="Maven")
+
     def test_maven_runs_in_the_poms_own_directory(self, mock_run: Mock, mock_glob: Mock):
         """Test that Maven runs both goals of the versions plugin Update-time names, in the pom's own directory."""
         self.find_pom(mock_run, mock_glob)
@@ -206,9 +264,9 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module,
-            '        f\'    <rule groupId="{group_id}" artifactId="{artifact_id}">\\n\'\n',
-            '        \'    <rule groupId="*" artifactId="*">\\n\'\n',
+            maven_module._rule,
+            'groupId="{group_id}" artifactId="{artifact_id}"',
+            'groupId="*" artifactId="*"',
             "a version held back for one artefact is held back for every artefact, since each rule matches them all",
         )
     )
@@ -229,26 +287,34 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pom_xml_module,
-            "    return [artefact for artefact in named if not _PROPERTY_REFERENCE.search(artefact)]\n",
-            "    return list(named)\n",
+            pom_xml_module.artefacts,
+            "[artefact for artefact in named if not _names_a_property(artefact)]",
+            "list(named)",
             "a pom inheriting a group from its parent is asked about coordinates the repository does not serve",
-        )
+        ),
+        Mutation(
+            pom_xml_module.fully_resolved,
+            "not _names_a_property(reference.dependency) and ",
+            "",
+            "OSV is asked about coordinates holding an unresolved property, which it matches nothing to",
+        ),
     )
     def test_coordinates_naming_a_property_are_not_asked_about(self, mock_run: Mock, mock_glob: Mock):
-        """Test that the repository is not asked about an artefact whose coordinates name a property the pom lacks."""
+        """Test that neither source is asked about a dependency whose coordinates name a property the pom lacks."""
         # A pom can spell a dependency's group as a property its parent declares, which this pom does not hold.
         inherited = _dependency("${spring.group}", "spring-core", "6.1.0")
         self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre"), inherited))
-        with self.asked_about() as artefacts:
+        with self.asked_about() as artefacts, osv() as mock_post:
             update_pom_xmls()
+        # Guava reaches both sources, so the dependency beside it reaching neither says something about its coordinates.
         self.assertEqual(artefacts, ["com.google.guava:guava"])
+        assert_osv_asked_about(mock_post, ("com.google.guava:guava", "33.0.0-jre"), ecosystem="Maven")
 
     @kills(
         Mutation(
-            maven_module,
-            "    cooldown_days = COOLDOWN.get()\n",
-            "    cooldown_days = 7\n",
+            maven_module._rules,
+            "COOLDOWN.get()",
+            "7",
             "every run asks about the default window, so --cooldown never reaches a Maven dependency",
         )
     )
@@ -262,15 +328,15 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pom_xml_module,
-            ' ("plugin", _PLUGIN_GROUP))',
+            pom_xml_module.artefacts,
+            '("plugin", _PLUGIN_GROUP))',
             ")",
             "the rule set leaves out the pom's plugins, so a property versioning one is advanced without a cooldown",
         ),
         Mutation(
-            pom_xml_module,
-            '("plugin", _PLUGIN_GROUP)',
-            '("plugin", "")',
+            pom_xml_module.artefacts,
+            "_PLUGIN_GROUP",
+            '""',
             "a plugin that leaves its group to Maven is dropped, so the property versioning it escapes the cooldown",
         ),
     )
@@ -290,9 +356,9 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module,
-            '    if cooldown_days <= 0:\n        return ""\n',
-            "",
+            maven_module._rules,
+            "cooldown_days <= 0",
+            "cooldown_days < 0",
             "a run with the cooldown switched off asks the repository about every artefact and ignores every answer",
         )
     )
@@ -309,9 +375,9 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module,
-            "    if not result.succeeded and result.stdout:\n",
-            "    if result.succeeded and result.stdout:\n",
+            maven_module.update_pom_xml,
+            "not result.succeeded",
+            "result.succeeded",
             "a Maven run that failed passes silently, since Maven writes its errors to stdout rather than stderr",
         )
     )
@@ -327,9 +393,9 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module,
-            "        _LOG.new_version(updated, DependencyVersion(new.current_version))\n",
-            "        _LOG.new_version(updated, DependencyVersion(new.current_version))\n        return\n",
+            update_pom_xml_module._report_new_versions,
+            "_LOG.new_version(updated, DependencyVersion(new.current_version))",
+            "_LOG.new_version(updated, DependencyVersion(new.current_version))\n        return",
             "only the first dependency Maven moved is reported, and the rest of the pom's are lost",
         )
     )
@@ -345,9 +411,9 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module,
-            "    for old, new in zip(before, after, strict=True):\n",
-            "    for old, new in {n.location: (o, n) for o, n in zip(before, after, strict=True)}.values():\n",
+            update_pom_xml_module._report_new_versions,
+            "zip(before, after, strict=True)",
+            "{n.location: (o, n) for o, n in zip(before, after, strict=True)}.values()",
             "one dependency per line is reported, so of two naming the same property only one is",
         )
     )
@@ -374,9 +440,9 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module,
-            "    for old, new in zip(before, after, strict=True):\n",
-            "    for old, new in zip(reversed(before), after, strict=True):\n",
+            update_pom_xml_module._report_new_versions,
+            "zip(before, after",
+            "zip(reversed(before), after",
             "a declaration pairs with another of the same name, so the one that moved is reported at the wrong line",
         )
     )
@@ -390,9 +456,9 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module,
-            "        if old.current_version == new.current_version:\n            continue\n",
-            "",
+            update_pom_xml_module._report_new_versions,
+            "old.current_version == new.current_version",
+            "False",
             "every dependency is reported as moved, whether or not Maven changed its version",
         )
     )
@@ -406,9 +472,9 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module,
-            "        return\n    maven.update_pom_xml(pom_xml)\n",
-            "    maven.update_pom_xml(pom_xml)\n",
+            update_pom_xml_module._update_pom_xml,
+            "        return\n    maven",
+            "    maven",
             "Maven runs on a pom Update-time cannot read, rewriting a file it could not parse",
         )
     )
@@ -422,25 +488,33 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module,
-            "        _LOG.invalid_xml_after_update(pom_xml)",
-            '        _LOG.invalid_file(pom_xml, "XML")',
+            update_pom_xml_module._update_pom_xml,
+            "invalid_xml_after_update(pom_xml)",
+            'invalid_file(pom_xml, "XML")',
             "a failed update reads as a skipped pom, though Maven ran and left what it wrote unreadable",
-        )
+        ),
+        Mutation(
+            update_pom_xml_module._update_pom_xml,
+            "_LOG.invalid_xml_after_update(pom_xml)",
+            "_warn_about_vulnerabilities(before)\n        _LOG.invalid_xml_after_update(pom_xml)",
+            "a pom left unreadable is checked on its pre-run reading, against versions the file may no longer hold",
+        ),
     )
     def test_a_pom_that_no_longer_parses_after_the_run_is_an_error(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a pom Maven left unparsable is reported as a failed update, with no new version reported."""
+        """Test that a pom Maven left unparsable is reported as a failed update, and then left alone."""
         pom = self.find_rewritten_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre")), "<project><broken>")
-        update_pom_xmls()
+        with osv() as mock_post:
+            update_pom_xmls()
         self.assert_error_logged(Logger._MESSAGE_INVALID_XML_AFTER_UPDATE, location=Location(pom))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()  # The pom was not skipped: Maven ran and rewrote it.
+        mock_post.assert_not_called()  # There is no reading to check, so OSV is asked about nothing.
 
     @kills(
         Mutation(
-            update_pom_xml_module,
-            "    if len(before) != len(after):\n",
-            "    if len(before) != len(before):\n",
+            update_pom_xml_module._update_pom_xml,
+            "!= len(after)",
+            "!= len(before)",
             "a reading of another length than its own pairs up all the same, taking the whole run down with it",
             raises="ValueError: zip() argument 2 is shorter than argument 1",
         )
@@ -455,15 +529,15 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module,
-            "    if not result.succeeded and result.stdout:\n",
-            "    if not result.succeeded:\n",
+            maven_module.update_pom_xml,
+            " and result.stdout:",
+            ":",
             "a missing Maven is reported twice: once by `run`, and again as a failed run that wrote nothing",
         ),
         Mutation(
-            update_pom_xml_module,
-            "        _update_pom_xml(pom_xml)\n",
-            "        _update_pom_xml(pom_xml)\n        return\n",
+            update_pom_xml_module.update_pom_xmls,
+            "_update_pom_xml(pom_xml)",
+            "_update_pom_xml(pom_xml)\n        return",
             "the walk ends at the first pom, so the poms after it are never updated",
         ),
     )
@@ -478,9 +552,9 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module,
-            '    return f"./{_WRAPPER}" if (pom_xml.parent / _WRAPPER).exists() else "mvn"\n',
-            '    return "mvn"\n',
+            maven_module._maven,
+            'f"./{_WRAPPER}" if (pom_xml.parent / _WRAPPER).exists() else "mvn"',
+            '"mvn"',
             "a project's own Maven wrapper is passed over, so another Maven than it builds with updates it",
         )
     )
