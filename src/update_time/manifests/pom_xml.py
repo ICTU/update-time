@@ -1,4 +1,4 @@
-"""Read the dependencies, properties, and source repository a pom.xml declares.
+"""Read the dependencies, properties, parent, and source repository a pom.xml declares.
 
 This module owns what a pom's elements mean, whether Update-time scans the pom or a registry serves it. Reading the
 XML itself is the formats layer's concern.
@@ -7,6 +7,7 @@ XML itself is the formats layer's concern.
 import re
 from typing import TYPE_CHECKING
 
+from update_time.domain.dependency import PinnedDependency
 from update_time.domain.reference import Reference
 from update_time.formats import xml
 from update_time.primitives.location import Location
@@ -29,20 +30,40 @@ _SCM_PREFIX = re.compile(r"^scm:[^:]+:")
 # Update-time reads these children of `<scm>`, in this order, to find where the project's source lives.
 _SCM_URL_TAGS = ("url", "connection", "developerConnection")
 
+# The children that name an artefact and its version, in the order `groupId:artifactId` names them.
+_COORDINATE_TAGS = ("groupId", "artifactId", "version")
 
-def scm_urls(document: bytes) -> list[str] | None:
-    """Return the URLs the pom's `<scm>` element names, `<url>` first, or None when the pom's XML does not parse.
+
+def source_urls(project: XmlElement) -> list[str]:
+    """Return the URLs that may name where the project's source lives, the `<scm>` URLs first.
+
+    The project's own `<url>` comes after them, because a module's `<url>` may name its umbrella project.
+    """
+    urls = scm_urls(project)
+    project_url = project.child("url")
+    return urls if project_url is None else [*urls, project_url.text]
+
+
+def scm_urls(project: XmlElement) -> list[str]:
+    """Return the URLs the pom's `<scm>` element names.
 
     Each is stripped of the `scm:<provider>:` prefix Maven writes in front of it, leaving the URL that provider reads.
     """
-    project = xml.parse(document)
-    if project is None:
-        return None
     scm = project.child("scm")
-    if scm is None:
-        return []
-    named = (scm.child(tag) for tag in _SCM_URL_TAGS)
+    named = [] if scm is None else [scm.child(tag) for tag in _SCM_URL_TAGS]
     return [_SCM_PREFIX.sub("", url.text) for url in named if url is not None]
+
+
+def parent(project: XmlElement) -> PinnedDependency | None:
+    """Return the artefact and version the pom's `<parent>` element names in full, or None where it does not."""
+    element = project.child("parent")
+    if element is None:
+        return None
+    group_id, artifact_id, version = (
+        "" if (child := element.child(tag)) is None else child.text for tag in _COORDINATE_TAGS
+    )
+    pinned = PinnedDependency(_artefact(group_id, artifact_id), version)
+    return pinned if fully_resolved(pinned) else None
 
 
 def dependencies(path: Path) -> list[Reference] | None:
@@ -91,15 +112,18 @@ def _is_resolved(value: str) -> bool:
     return not _PROPERTY_REFERENCE.search(value)
 
 
-def fully_resolved(reference: Reference) -> bool:
-    """Return whether the pom resolved the reference whole: its coordinates and the version it pins."""
-    return _is_resolved(reference.dependency) and _is_resolved(reference.current_version)
+def fully_resolved(pinned: PinnedDependency) -> bool:
+    """Return whether the pom named the pinned dependency whole: its group, its artifact, and its version.
+
+    A part naming a property counts as unnamed, since this does not resolve the pom's properties.
+    """
+    group_id, artifact_id = coordinates(pinned.name)
+    return all(part and _is_resolved(part) for part in (group_id, artifact_id, pinned.version))
 
 
 def _own_coordinates(project: XmlElement) -> dict[str, XmlElement]:
     """Return the project's own coordinates, which a dependency on a sibling module names as `${project.groupId}`."""
-    named = ("groupId", "artifactId", "version")
-    return {f"project.{tag}": element for tag in named if (element := project.child(tag)) is not None}
+    return {f"project.{tag}": element for tag in _COORDINATE_TAGS if (element := project.child(tag)) is not None}
 
 
 def properties(path: Path) -> dict[str, str]:
@@ -119,6 +143,17 @@ def _property_elements(project: XmlElement) -> dict[str, XmlElement]:
     return anywhere | ({element.tag: element for element in own.children} if own else {})
 
 
+def coordinates(artefact: DependencyName) -> tuple[str, str]:
+    """Split an artefact's `groupId:artifactId` name into its group and its artifact."""
+    group_id, _, artifact_id = artefact.partition(":")
+    return group_id, artifact_id
+
+
+def _artefact(group_id: str, artifact_id: str) -> DependencyName:
+    """Join a group and an artifact into the artefact's `groupId:artifactId` name."""
+    return f"{group_id}:{artifact_id}"
+
+
 def _reference(
     path: Path, element: XmlElement, property_elements: dict[str, XmlElement], default_group: str = ""
 ) -> Reference | None:
@@ -131,11 +166,12 @@ def _reference(
     artifact = element.child("artifactId")
     version = element.child("version")
     group_name = default_group if group is None else _resolved(group, property_elements).text
-    if not group_name or artifact is None or version is None:
+    artifact_name = "" if artifact is None else _resolved(artifact, property_elements).text
+    if not group_name or not artifact_name or version is None:
         return None
     versioned_by = _resolved(version, property_elements)
     location = Location(path, versioned_by.line, versioned_by.column)
-    return Reference(f"{group_name}:{_resolved(artifact, property_elements).text}", versioned_by.text, location)
+    return Reference(_artefact(group_name, artifact_name), versioned_by.text, location)
 
 
 def _resolved(element: XmlElement, property_elements: dict[str, XmlElement]) -> XmlElement:

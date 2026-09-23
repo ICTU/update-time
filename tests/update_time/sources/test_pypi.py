@@ -346,18 +346,6 @@ class GetChangesTest(LoggingTestCase):
         self.assertEqual(get_changes("typing-extensions", "1.1"), changelog)
         self.assert_releases_requested(mock_get, "python/typing_extensions")
 
-    def test_sponsors_project_url_is_not_a_repository(self, mock_get: Mock):
-        """Test that a GitHub sponsors URL is not asked for releases, and that the later heuristics still run."""
-        changelog = "1.1\n- Fixed ...\n- Added ..."
-        project_urls = {"Funding": "https://github.com/sponsors/webknjaz"}
-        self.create_mock_response(
-            mock_get,
-            {"info": {"description": f"Package description\n{changelog}\n", "project_urls": project_urls}},
-            [],
-        )
-        self.assertEqual(get_changes("frozenlist", "1.1"), changelog)
-        self.assert_releases_requested(mock_get)
-
     @kills(NULL_PROJECT_URLS_READ_AS_A_DICT)
     def test_changelog_in_description(self, mock_get: Mock):
         """Test that the description's changelog is returned when PyPI omits the project URLs or reports them null."""
@@ -452,22 +440,6 @@ class GetChangesTest(LoggingTestCase):
                 asked = [repository] if matches else []
                 self.assertEqual(get_changes(package, "1.1"), changelog if matches else "")
                 self.assert_releases_requested(mock_get, *asked)
-
-    _SPONSORS_URL_IS_A_REPOSITORY = Mutation(
-        pypi,
-        "    _owner, repository = _github_repository(url)",
-        "    _owner, repository = github_owner_and_repository(url)",
-        "a sponsors page carrying the package's name is read as its repository, so the package reports no changes",
-    )
-
-    @kills(_SPONSORS_URL_IS_A_REPOSITORY)
-    def test_sponsors_url_in_description_is_not_a_repository(self, mock_get: Mock):
-        """Test that a sponsors URL naming the package is passed over for the repository linked below it."""
-        changelog = "1.1\n- Fixed ...\n- Added ..."
-        description = "Sponsor https://github.com/sponsors/tqdm\nSource https://github.com/tqdm/tqdm\n"
-        self.create_description_responses(mock_get, description, changelog)
-        self.assertEqual(get_changes("tqdm", "1.1"), changelog)
-        self.assert_releases_requested(mock_get, "tqdm/tqdm")
 
     _DOCUMENTATION_READ_FIRST = Mutation(
         github,

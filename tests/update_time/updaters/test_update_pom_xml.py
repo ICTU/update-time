@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import Archival, ArchivedSubject, Project, Release
+from update_time.domain.dependency import NO_CHANGES, Archival, ArchivedSubject, Changes, Project, Release
 from update_time.io.log import Logger
 from update_time.manifests import pom_xml as pom_xml_module
 from update_time.package_managers import maven as maven_module
@@ -159,6 +159,7 @@ def _maven_command(executable: str = "mvn", rules: Path | None = None) -> Comman
 
 @no_vulnerabilities
 @patch.object(maven_central_module, "project", Mock(return_value=Project()))
+@patch.object(maven_central_module, "get_changes", Mock(return_value=NO_CHANGES))
 @patch.object(maven_module, "versions_within_cooldown", Mock(return_value=()))
 @patch_pathlib_path("rglob", cwd=Path("/"), exists=False)
 @patch("subprocess.run")
@@ -273,30 +274,41 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             pom_xml_module.fully_resolved,
-            " and _is_resolved(reference.current_version)",
-            "",
+            "(group_id, artifact_id, pinned.version)",
+            "(group_id, artifact_id)",
             "OSV is asked about a version holding an unresolved property, which it matches nothing to",
         ),
         Mutation(
             pom_xml_module.artefact_references,
             "_is_resolved(reference.dependency)",
-            "fully_resolved(reference)",
+            "fully_resolved(reference.pinned)",
             "staleness judges the version too, so a dependency its parent versions goes unchecked for years",
         ),
+        Mutation(
+            pom_xml_module.fully_resolved,
+            "part and _is_resolved(part)",
+            "_is_resolved(part)",
+            "OSV is asked about a dependency at an empty version, which it matches nothing to",
+        ),
     )
-    def test_a_version_naming_a_property_is_asked_about_for_staleness_alone(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a dependency whose `<version>` names a property the pom lacks reaches Maven Central, not OSV."""
+    def test_a_version_naming_a_property_or_left_empty_is_asked_about_for_staleness_alone(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a dependency whose `<version>` names a property or nothing reaches Maven Central, not OSV."""
         # A pom can spell a dependency's version as a property its parent declares, which this pom does not hold.
-        inherited = _dependency("org.springframework", "spring-core", "${spring.version}")
-        self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre"), inherited))
-        mock_project = Mock(return_value=Project())
-        with osv() as mock_post, patch.object(maven_central_module, "project", mock_project):
-            update_pom_xmls()
-        # Guava is asked about, so the dependency beside it going unasked says something about its version.
-        assert_osv_asked_about(mock_post, ("com.google.guava:guava", "33.0.0-jre"), ecosystem="Maven")
-        # Staleness judges the coordinates alone, so the dependency OSV skips still reaches Maven Central.
-        asked = ["com.google.guava:guava", "org.springframework:spring-core"]
-        self.assertEqual([call.args[0] for call in mock_project.call_args_list], asked)
+        for case, version in {"property": "${spring.version}", "empty": ""}.items():
+            with self.subTest(case=case):
+                self.clear_caches()
+                unversioned = _dependency("org.springframework", "spring-core", version)
+                self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre"), unversioned))
+                mock_project = Mock(return_value=Project())
+                with osv() as mock_post, patch.object(maven_central_module, "project", mock_project):
+                    update_pom_xmls()
+                # Guava is asked about, so the dependency beside it going unasked says something about its version.
+                assert_osv_asked_about(mock_post, ("com.google.guava:guava", "33.0.0-jre"), ecosystem="Maven")
+                # Staleness judges the coordinates alone, so the dependency OSV skips still reaches Maven Central.
+                asked = ["com.google.guava:guava", "org.springframework:spring-core"]
+                self.assertEqual([call.args[0] for call in mock_project.call_args_list], asked)
 
     @kills(
         Mutation(
@@ -430,27 +442,37 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             pom_xml_module.fully_resolved,
-            "_is_resolved(reference.dependency) and ",
-            "",
+            "(group_id, artifact_id, pinned.version)",
+            "(pinned.version,)",
             "OSV is asked about coordinates holding an unresolved property, which it matches nothing to",
+        ),
+        Mutation(
+            update_pom_xml_module._report_new_versions,
+            "        resolved = pom_xml_format.fully_resolved(new.pinned)",
+            "        resolved = True",
+            "Maven Central is asked for the changes of coordinates holding an unresolved property",
         ),
     )
     def test_coordinates_naming_a_property_are_not_asked_about(self, mock_run: Mock, mock_glob: Mock):
         """Test that every check passes over a dependency whose coordinates name a property the pom lacks."""
         # A pom can spell a dependency's group as a property its parent declares, which this pom does not hold.
-        inherited = _dependency("${spring.group}", "spring-core", "6.1.0")
-        self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre"), inherited))
+        inherited = _dependency("${spring.group}", "spring-core", "${spring.version}")
+        before = _pom(_guava("33.0.0-jre"), inherited, properties=_properties({"spring.version": "6.1.0"}))
+        after = _pom(_guava("33.7.1-jre"), inherited, properties=_properties({"spring.version": "7.1.0"}))
+        self.find_rewritten_pom(mock_run, mock_glob, before, after)
         mock_project = Mock(return_value=Project())
         with (
             self.asked_about() as artefacts,
             osv() as mock_post,
             patch.object(maven_central_module, "project", mock_project),
+            patch.object(maven_central_module, "get_changes", Mock(return_value=NO_CHANGES)) as mock_changes,
         ):
             update_pom_xmls()
         # Guava reaches every check, so the dependency beside it reaching none says something about its coordinates.
         self.assertEqual(artefacts, ["com.google.guava:guava"])
-        assert_osv_asked_about(mock_post, ("com.google.guava:guava", "33.0.0-jre"), ecosystem="Maven")
+        assert_osv_asked_about(mock_post, ("com.google.guava:guava", "33.7.1-jre"), ecosystem="Maven")
         self.assertEqual([call.args[0] for call in mock_project.call_args_list], ["com.google.guava:guava"])
+        self.assertEqual([call.args[0] for call in mock_changes.call_args_list], ["com.google.guava:guava"])
 
     @kills(
         Mutation(
@@ -536,19 +558,37 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._report_new_versions,
-            "_LOG.new_version(updated, DependencyVersion(new.current_version))",
-            "_LOG.new_version(updated, DependencyVersion(new.current_version))\n        return",
+            "_LOG.new_version(updated, DependencyVersion(new.current_version, changes))",
+            "_LOG.new_version(updated, DependencyVersion(new.current_version, changes))\n        return",
             "only the first dependency Maven moved is reported, and the rest of the pom's are lost",
-        )
+        ),
+        Mutation(
+            update_pom_xml_module._report_new_versions,
+            "get_changes(new.dependency, new.current_version)",
+            "get_changes(new.dependency, old.current_version)",
+            "a dependency Maven moved is reported with the changes of the version it moved away from",
+        ),
     )
-    def test_each_rewritten_version_is_reported_at_its_own_line(self, mock_run: Mock, mock_glob: Mock):
-        """Test that two dependencies Maven rewrote are both reported, each at its own version's line."""
+    def test_each_rewritten_version_is_reported_at_its_own_line_with_its_changes(self, mock_run: Mock, mock_glob: Mock):
+        """Test that two dependencies Maven rewrote are both reported, each at its own line with its new changes."""
         before = _pom(_guava("33.0.0-jre"), _dependency("org.springframework", "spring-core", "6.1.0"))
         after = _pom(_guava("33.7.1-jre"), _dependency("org.springframework", "spring-core", "7.1.0"))
         pom = self.find_rewritten_pom(mock_run, mock_glob, before, after)
-        update_pom_xmls()
-        self.assert_new_version_logged_among_others("com.google.guava:guava", "33.7.1-jre", Location(pom, 6))
-        self.assert_new_version_logged_among_others("org.springframework:spring-core", "7.1.0", Location(pom, 11))
+
+        def changes(artefact: str, version: str) -> Changes:
+            return Changes(f"Changes in {artefact} {version}", markdown=False)
+
+        with patch.object(maven_central_module, "get_changes", changes):
+            update_pom_xmls()
+        self.assert_new_version_logged_among_others_with_changes(
+            "com.google.guava:guava", "33.7.1-jre", Location(pom, 6), "Changes in com.google.guava:guava 33.7.1-jre"
+        )
+        self.assert_new_version_logged_among_others_with_changes(
+            "org.springframework:spring-core",
+            "7.1.0",
+            Location(pom, 11),
+            "Changes in org.springframework:spring-core 7.1.0",
+        )
         self.assertEqual(len(self.new_version_records()), 2)
 
     @kills(
@@ -602,15 +642,24 @@ class UpdatePomXmlTest(LoggingTestCase):
             "old.current_version == new.current_version",
             "False",
             "every dependency is reported as moved, whether or not Maven changed its version",
-        )
+        ),
+        Mutation(
+            update_pom_xml_module._report_new_versions,
+            "        if old.current_version == new.current_version:\n",
+            "        maven_central.get_changes(new.dependency, new.current_version)\n"
+            "        if old.current_version == new.current_version:\n",
+            "Update-time asks for the changes of every dependency the pom declares, whether or not Maven moved it",
+        ),
     )
-    def test_a_dependency_maven_left_alone_is_not_reported(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a pom Maven changed nothing in gets no new version reported, though Maven ran over it."""
+    def test_a_dependency_maven_left_alone_is_neither_reported_nor_asked_about(self, mock_run: Mock, mock_glob: Mock):
+        """Test that Update-time neither reports a new version nor asks for changes when Maven leaves the pom alone."""
         unchanged = _pom(_guava("33.7.1-jre"))
         self.find_rewritten_pom(mock_run, mock_glob, unchanged, unchanged)
-        update_pom_xmls()
+        with patch.object(maven_central_module, "get_changes") as get_changes:
+            update_pom_xmls()
         self.assert_maven_ran(mock_run)  # The pom was examined, so reporting nothing says something.
         self.assert_no_new_version_logged()
+        get_changes.assert_not_called()
 
     @kills(
         Mutation(

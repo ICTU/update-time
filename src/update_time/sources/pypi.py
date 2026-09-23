@@ -60,8 +60,6 @@ _CHANGELOG_URL_LABELS = {"changelog", "changes", "whatsnew", "history"}
 # with its aliases, then its `homepage` label. All spelled as `_normalized_label` returns them.
 _REPOSITORY_URL_LABELS_BY_RANK = ({"source", "repository", "sourcecode", "github"}, {"homepage"})
 _LABEL_NORMALIZATION = str.maketrans("", "", string.punctuation + string.whitespace)
-# GitHub serves its sponsorship pages under this path, which it reserves, so no owner can go by this name.
-_GITHUB_SPONSORS_PATH = "sponsors"
 # Matches a GitHub repository URL wherever it sits in prose, such as the description a project posts to PyPI.
 _GITHUB_URL_RE = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+")
 
@@ -357,27 +355,17 @@ def _changelog_from_github_url_in_description(description: str, package: str, ve
 
 def _names_the_package(url: str, package: str) -> bool:
     """Return whether the URL points at a repository carrying the package's name."""
-    _owner, repository = _github_repository(url)
+    _owner, repository = github_owner_and_repository(url)
     return normalized_python_name(repository) == normalized_python_name(package)
-
-
-def _github_repository(url: str) -> tuple[str, str]:
-    """Return the owner and repository the URL points at, or empty strings when it points at no repository.
-
-    A `github.com/sponsors/…` URL parses as the repository `sponsors/<owner>`, which does not exist, so it is
-    reported as no repository rather than queried.
-    """
-    owner, repository = github_owner_and_repository(url)
-    return ("", "") if owner == _GITHUB_SPONSORS_PATH else (owner, repository)
 
 
 def _changelog_from_github_releases(url: str, package: str, version: str) -> Changes:
     """Get the changelog from the GitHub releases."""
-    owner, repository = _github_repository(url)
+    owner, repository = github_owner_and_repository(url)
     return changes_from_release(owner, repository, package, version)
 
 
 def _changelog_from_repository_root(url: str, version: str) -> Changes:
     """Get the changelog from a changelog file in the root of the repository."""
-    owner, repository = _github_repository(url)
+    owner, repository = github_owner_and_repository(url)
     return changes_from_changelog_file(owner, repository, version)

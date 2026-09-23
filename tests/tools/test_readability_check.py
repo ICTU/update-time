@@ -3,7 +3,7 @@
 import io
 import sys
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -286,7 +286,10 @@ class FaultsTest(unittest.TestCase):
     def test_a_negation_in_a_noun_phrase_is_reported(self):
         """Test that a negation the sentence hangs on a noun phrase is reported, and one on its verb is not."""
         cases = {
-            "a negation hung on an object": (self.NEGATED_NOUN, "negation in a noun phrase"),
+            "a negation hung on an object": (
+                self.NEGATED_NOUN,
+                "negation in a noun phrase (put the negation on the verb, as in 'does not have a release')",
+            ),
             "a negation on the verb": (self.NEGATED_VERB, ""),
             "a negation opening the subject": (self.NEGATED_SUBJECT, ""),
             "a negation denying that anything exists": (self.NEGATED_EXISTENCE, ""),
@@ -373,20 +376,14 @@ class SentenceTokenizerTest(unittest.TestCase):
 class WhitelistedSentencesTest(unittest.TestCase):
     """Unit tests for reading the sentences the check passes over."""
 
-    def whitelisted(self, whitelist: Mock) -> set[str]:
-        """Return the sentences read from the given whitelist file."""
-        with patch("tools.readability_check._WHITELIST", whitelist):
-            return _whitelisted_sentences()
-
     def test_a_sentence_per_line(self):
         """Test that the file holds one sentence per line, and that every line is read as one."""
-        self.assertEqual(
-            self.whitelisted(mock_path("One sentence.\nAnother sentence.\n")), {"One sentence.", "Another sentence."}
-        )
+        whitelist = mock_path("One sentence.\nAnother sentence.\n")
+        self.assertEqual(_whitelisted_sentences(whitelist), {"One sentence.", "Another sentence."})
 
     def test_no_whitelist_file(self):
-        """Test that a tree without a whitelist file passes over nothing."""
-        self.assertEqual(self.whitelisted(Mock(exists=Mock(return_value=False))), set())
+        """Test that a whitelist file that does not exist passes over nothing."""
+        self.assertEqual(_whitelisted_sentences(Mock(exists=Mock(return_value=False))), set())
 
 
 @patch("tools.readability_check.extract_prose")
@@ -406,29 +403,38 @@ class MainTest(unittest.TestCase):
         extract: Mock,
         *texts: str,
         arguments: tuple[str, ...] = ("src",),
-        whitelist: tuple[str, ...] = (),
+        whitelist: tuple[str, ...] | None = (),
+        option: str = "--whitelist",
     ) -> tuple[int, str]:
-        """Run the check over the given runs of prose, and return its exit code and what it wrote."""
+        """Run the check over the runs of prose, and return its exit code and output."""
         extract.return_value = [Prose(Path("conf.py"), text, 1) for text in texts]
         tokenizer.return_value.span_tokenize.side_effect = lambda masked: [(0, len(masked))]
         written = io.StringIO()
-        held = patch(f"{main.__module__}._whitelisted_sentences", Mock(return_value=set(whitelist)))
-        with redirect_stdout(written), patch.object(sys, "argv", ["check", *arguments]), held:
+        files = {} if whitelist is None else {Path("prose.txt"): "".join(f"{sentence}\n" for sentence in whitelist)}
+        read = patch.object(Path, "read_text", autospec=True, side_effect=lambda path: files[path])
+        found = patch.object(Path, "exists", autospec=True, side_effect=lambda path: path in files)
+        argv = ["check", *(() if whitelist is None else (option, "prose.txt")), *arguments]
+        with redirect_stdout(written), patch.object(sys, "argv", argv), read, found:
             return main(), written.getvalue()
 
     def test_a_stale_whitelist_entry_is_reported(self, tokenizer: Mock, extract: Mock):
-        """Test that a whitelist entry the run does not match is reported, and fails the run."""
+        """Test that an entry of the file `--check-whitelist` names that the run does not match is reported."""
         stale = r"A sentence the prose no longer holds."
-        arguments = ("--check-whitelist", "src")
         whitelist = (self.NESTED, stale)  # The flagged sentence is held, so the stale entry is the only report.
-        exit_code, written = self.check(tokenizer, extract, self.NESTED, arguments=arguments, whitelist=whitelist)
+        exit_code, written = self.check(
+            tokenizer, extract, self.NESTED, whitelist=whitelist, option="--check-whitelist"
+        )
         self.assertEqual(exit_code, 1)
-        self.assertIn(stale, written)
+        self.assertIn(
+            f"prose.txt holds a sentence the prose no longer has, run `just update-whitelists`:\n{stale}", written
+        )
 
     def test_a_whitelist_entry_that_is_still_needed(self, tokenizer: Mock, extract: Mock):
         """Test that an entry matching a sentence the run flags is left unreported, and leaves the run passing."""
-        arguments = ("--check-whitelist", "src")
-        exit_code, written = self.check(tokenizer, extract, self.NESTED, arguments=arguments, whitelist=(self.NESTED,))
+        whitelist = (self.NESTED,)
+        exit_code, written = self.check(
+            tokenizer, extract, self.NESTED, whitelist=whitelist, option="--check-whitelist"
+        )
         self.assertEqual(exit_code, 0)
         self.assertEqual(written, "")
 
@@ -437,6 +443,33 @@ class MainTest(unittest.TestCase):
         exit_code, written = self.check(tokenizer, extract, self.NESTED)
         self.assertEqual(exit_code, 1)
         self.assertIn("conf.py:1: complexity 6:", written)
+
+    def test_a_run_naming_no_whitelist(self, tokenizer: Mock, extract: Mock):
+        """Test that a run without `--whitelist` reports every flagged sentence, without reading a file."""
+        exit_code, written = self.check(tokenizer, extract, self.NESTED, whitelist=None)
+        self.assertEqual(exit_code, 1)
+        self.assertIn("conf.py:1: complexity 6:", written)
+
+    def test_naming_the_whitelist_twice_is_an_error(self, _tokenizer: Mock, _extract: Mock):
+        """Test that a run naming the whitelist in two options at once ends with a usage error."""
+        cases = {
+            "plain and check": ("--whitelist", "--check-whitelist"),
+            "check and make": ("--check-whitelist", "--make-whitelist"),
+        }
+        for case, (first, second) in cases.items():
+            with self.subTest(case=case):
+                argv = ["check", first, "one.txt", second, "two.txt", "src"]
+                with (
+                    patch.object(sys, "argv", argv),
+                    patch.object(Path, "exists", autospec=True, return_value=False),
+                    patch.object(Path, "write_text", autospec=True) as write_text,
+                    redirect_stdout(io.StringIO()),
+                    redirect_stderr(io.StringIO()),
+                    self.assertRaises(SystemExit) as raised,
+                ):
+                    main()
+                self.assertEqual(raised.exception.code, 2)
+                write_text.assert_not_called()
 
     def test_readable_sentence(self, tokenizer: Mock, extract: Mock):
         """Test that a sentence under every threshold is not written out, and leaves the run passing."""
@@ -456,20 +489,27 @@ class MainTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(written, "")
 
+    def make_whitelist(
+        self, tokenizer: Mock, extract: Mock, *texts: str, whitelist: tuple[str, ...]
+    ) -> tuple[Path, str]:
+        """Make the whitelist from the given runs of prose, and return the file the run wrote and its text."""
+        with patch.object(Path, "write_text", autospec=True) as write_text:
+            exit_code, written = self.check(tokenizer, extract, *texts, whitelist=whitelist, option="--make-whitelist")
+        self.assertEqual((exit_code, written), (0, ""))
+        path, text = write_text.call_args.args
+        return path, text
+
     def test_making_the_whitelist(self, tokenizer: Mock, extract: Mock):
-        """Test that the flagged sentence is written out on one line to be whitelisted, rather than reported."""
-        arguments = ("--make-whitelist", "src")
-        exit_code, written = self.check(tokenizer, extract, self.WRAPPED, arguments=arguments)
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(written, f"{self.NESTED}\n")
+        """Test that the file `--make-whitelist` names keeps a flagged sentence on one line only where it holds it."""
+        path, text = self.make_whitelist(tokenizer, extract, self.WRAPPED, self.ASIDE, whitelist=(self.NESTED,))
+        self.assertEqual(path, Path("prose.txt"))
+        self.assertEqual(text, f"{self.NESTED}\n")
 
     def test_the_whitelist_holds_each_sentence_once(self, tokenizer: Mock, extract: Mock):
-        """Test that a sentence two files hold is written out once, and that the sentences come out sorted.
+        """Test that a sentence two files hold is written once, and that the sentences come out sorted.
 
         Regenerating the whitelist then rewrites the lines that changed rather than reshuffling the whole file.
         """
-        arguments = ("--make-whitelist", "src")
         texts = (self.ASIDE, self.NESTED, self.ASIDE)
-        exit_code, written = self.check(tokenizer, extract, *texts, arguments=arguments)
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(written, f"{self.NESTED}\n{self.ASIDE}\n")
+        _path, text = self.make_whitelist(tokenizer, extract, *texts, whitelist=(self.ASIDE, self.NESTED))
+        self.assertEqual(text, f"{self.NESTED}\n{self.ASIDE}\n")
