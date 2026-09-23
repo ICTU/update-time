@@ -91,14 +91,14 @@ class GetVulnerabilitiesTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            osv,
+            osv._vulnerability,
             'frozenset(record.get("aliases") or []),',
             'frozenset(record.get("aliases", [])),',
             "an advisory whose aliases OSV reports as null ends the run with a traceback",
             raises="TypeError: 'NoneType' object is not iterable",
         ),
         Mutation(
-            osv,
+            osv._banded_risk_level,
             'for severity in record.get("severity") or []}',
             'for severity in record.get("severity", [])}',
             "an advisory whose severity OSV reports as null ends the run with a traceback",

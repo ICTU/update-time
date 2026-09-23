@@ -133,7 +133,7 @@ class MainTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            rename_module,
+            rename_module.main,
             "        return _FAILED\n    for path, source in changed.items():",
             "        for path, source in changed.items():\n            Path(path).write_text(source)\n"
             "        return _FAILED\n    for path, source in changed.items():",
@@ -147,7 +147,7 @@ class MainTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            rename_module,
+            rename_module._renamed_sources,
             '            _report(f"{path} could not be renamed: {reason}")',
             '            _report(f"{path} could not be renamed: {reason}")\n'
             "            for written, renamed_source in renamed.items():\n"
@@ -173,7 +173,7 @@ class MainTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            rename_module,
+            rename_module._survivors_message,
             "', '.join(left)",
             "' '.join(left)",
             "the surviving occurrences are run together without the comma between them",

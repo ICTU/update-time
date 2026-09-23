@@ -58,13 +58,18 @@ class MainTest(unittest.TestCase):
             return main()
 
     def test_the_file_is_mutated_and_restored(self):
-        """Test that the snippet is replaced, the command run, and the file put back as it was."""
-        path = mock_path(_ORIGINAL)
-        self.probe(path)
-        self.assertEqual(path.write_text.call_args_list, [call("before\nnew\nafter\n"), call(_ORIGINAL)])
-        self.run_command.assert_called_once_with(
-            ["just", "test"], check=False, capture_output=True, text=True, env=_ENVIRONMENT
-        )
+        """Test that the snippet is replaced, inside a function too, the command run, and the file put back."""
+        for case, original, mutated in (
+            ("at module level", _ORIGINAL, "before\nnew\nafter\n"),
+            ("inside a function", "def one():\n    old\n", "def one():\n    new\n"),
+        ):
+            with self.subTest(case=case):
+                path = mock_path(original)
+                self.probe(path)
+                self.assertEqual(path.write_text.call_args_list, [call(mutated), call(original)])
+                self.run_command.assert_called_once_with(
+                    ["just", "test"], check=False, capture_output=True, text=True, env=_ENVIRONMENT
+                )
 
     def test_the_kills_checks_are_skipped(self):
         """Test that the command runs with the mutation checks off, so its kill list names the tests that failed."""

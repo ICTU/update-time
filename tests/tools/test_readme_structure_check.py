@@ -97,7 +97,7 @@ class ProblemsTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            structure_check,
+            structure_check._problems,
             "        + _type_section_problems(markdown)\n",
             "",
             "a declared dependency type the details chapter has no section for goes unreported",
@@ -111,7 +111,7 @@ class ProblemsTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            structure_check,
+            structure_check._type_section_problems,
             """    problems += [
         f"the details chapter's section '{title}' documents no dependency type"
         for title in titles
@@ -130,7 +130,7 @@ class ProblemsTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            structure_check,
+            structure_check._problems,
             "        + _files_problems(markdown)\n",
             "",
             "a file a dependency type declares that the README's Files table leaves out goes unreported",
@@ -196,7 +196,7 @@ class TableTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            structure_check,
+            structure_check._table_problems,
             'for problem in _list_problems(_row_labels(rows), list(_TYPE_NAMES), f"the \'{header}\' table", "row")',
             'for problem in _list_problems(_row_labels(rows), _row_labels(rows), f"the \'{header}\' table", "row")',
             "each table is compared with itself, so no table is held to the declared dependency types",

@@ -6,7 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Show what changed in the new version of each Maven dependency that Maven updated. Closes [#374](https://github.com/ICTU/update-time/issues/374).
+
+### Changed
+
+- Check a Maven dependency for archival when its pom names its GitHub repository in the project's own `<url>` rather than in `<scm>`, or leaves it to the parent pom. Closes [#374](https://github.com/ICTU/update-time/issues/374).
 
 ## 0.0.39 - 2026-09-23
 

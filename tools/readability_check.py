@@ -1,5 +1,6 @@
 """Report hard-to-read sentences in the prose of the Python and Markdown files under a directory."""
 
+import argparse
 import ast
 import inspect
 import io
@@ -18,7 +19,7 @@ from nltk.tokenize import PunktTokenizer  # type: ignore[import-untyped]
 from tools.markdown import lines_without_code_blocks
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
 _INLINE_CODE = re.compile(r"`[^`]*`")
 
@@ -60,12 +61,6 @@ _EXISTENTIAL_REACH = 2
 
 # A parenthesised aside without an aside of its own, so repeating the substitution reaches the nested ones too.
 _ASIDE = re.compile(r"\([^()]*\)")
-
-# The file listing the sentences this check passes over, and the argument that writes them out to regenerate it.
-_WHITELIST = Path("tools/prose-whitelist.txt")
-_MAKE_WHITELIST = "--make-whitelist"
-_CHECK_WHITELIST = "--check-whitelist"
-_INSTALL_DATA = "--install-data"
 
 # Below this many words a ratio says more about a sentence's length than about its density.
 _RATIO_WORDS = 15
@@ -368,7 +363,7 @@ def _faults(sentence: str, limits: _Limits) -> str:
     if _subject_is_split(tagged):
         faults.append("subject split from its verb")
     if _negates_a_noun_phrase(tagged):
-        faults.append("negation in a noun phrase")
+        faults.append("negation in a noun phrase (put the negation on the verb, as in 'does not have a release')")
     return " and ".join(faults)
 
 
@@ -395,12 +390,14 @@ def _normalized(sentence: str) -> str:
     return " ".join(sentence.split())
 
 
-def _whitelisted_sentences() -> set[str]:
-    """Return the sentences the whitelist holds, which this check passes over."""
-    return set(_WHITELIST.read_text().splitlines()) if _WHITELIST.exists() else set()
+def _whitelisted_sentences(whitelist: Path | None) -> set[str]:
+    """Return the sentences the whitelist file holds, which this check passes over."""
+    if whitelist is None or not whitelist.exists():
+        return set()
+    return set(whitelist.read_text().splitlines())
 
 
-type _Flagged = Iterator[tuple[Prose, str, str]]
+type _Flagged = Iterable[tuple[Prose, str, str]]
 
 
 def _flagged(paths: list[Path], limits: _Limits) -> _Flagged:
@@ -415,19 +412,26 @@ def _flagged(paths: list[Path], limits: _Limits) -> _Flagged:
 def main() -> int:
     """Report the sentences that are hard to read, in the files under the paths given or the current directory.
 
-    Passing `--make-whitelist` writes the sentences out for the whitelist file to hold, rather than reporting them.
-    Passing `--check-whitelist` reports the entries the whitelist no longer needs, which only a run over every file
-    can tell.
+    Passing `--make-whitelist FILE` rewrites FILE to hold the sentences it holds that the prose still has.
+    Passing `--whitelist FILE` passes over the sentences FILE holds. Passing `--check-whitelist FILE` does so too, and
+    also reports the entries FILE no longer needs, which only a run over every file can tell.
     """
-    arguments = sys.argv[1:]
-    if _INSTALL_DATA in arguments:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("paths", nargs="*", type=Path, default=[Path()])
+    parser.add_argument("--install-data", action="store_true")
+    whitelist = parser.add_mutually_exclusive_group()
+    whitelist.add_argument("--whitelist", type=Path)
+    whitelist.add_argument("--check-whitelist", type=Path)
+    whitelist.add_argument("--make-whitelist", type=Path)
+    arguments = parser.parse_args()
+    if arguments.install_data:
         return _install_data()
-    options = {_MAKE_WHITELIST, _CHECK_WHITELIST}
-    paths = [Path(start) for start in arguments if start not in options] or [Path()]
-    flagged = _flagged(paths, _Limits())
-    if _MAKE_WHITELIST in arguments:
-        return _write_whitelist(flagged)
-    return _report(flagged, checking_whitelist=_CHECK_WHITELIST in arguments)
+    flagged = _flagged(arguments.paths, _Limits())
+    if arguments.make_whitelist:
+        return _write_whitelist(flagged, arguments.make_whitelist)
+    if arguments.check_whitelist:
+        return _check_whitelist(flagged, arguments.check_whitelist)
+    return _report(flagged, arguments.whitelist)
 
 
 def _install_data() -> int:
@@ -440,34 +444,40 @@ def _install_data() -> int:
     return 0
 
 
-def _write_whitelist(flagged: _Flagged) -> int:
-    """Write the flagged sentences to standard output, sorted and one per line.
+def _write_whitelist(flagged: _Flagged, whitelist: Path) -> int:
+    """Write the flagged sentences the whitelist holds back to the given whitelist file, sorted and one per line.
 
     A sentence several files hold is written once, so regenerating the file rewrites the lines that changed
-    rather than reshuffling all of them.
+    rather than reshuffling all of them. It leaves out a sentence the whitelist does not hold yet, so that sentence
+    has to be rewritten to pass the check.
     """
-    sentences = {_normalized(sentence) for _prose, sentence, _faults in flagged}
-    sys.stdout.writelines(f"{sentence}\n" for sentence in sorted(sentences))
+    sentences = {_normalized(sentence) for _prose, sentence, _faults in flagged} & _whitelisted_sentences(whitelist)
+    whitelist.write_text("".join(f"{sentence}\n" for sentence in sorted(sentences)))
     return 0
 
 
-def _report(flagged: _Flagged, *, checking_whitelist: bool) -> int:
+def _check_whitelist(flagged: _Flagged, whitelist: Path) -> int:
+    """Report each flagged sentence the whitelist does not hold, then each entry the prose does not hold anymore."""
+    sentences = list(flagged)
+    stale = _whitelisted_sentences(whitelist) - {_normalized(sentence) for _prose, sentence, _faults in sentences}
+    return max(_report(sentences, whitelist), _report_stale(stale, whitelist))
+
+
+def _report(flagged: _Flagged, whitelist: Path | None) -> int:
     """Report each flagged sentence the whitelist does not hold, and return 1 where any was reported."""
-    whitelisted = _whitelisted_sentences()
+    whitelisted = _whitelisted_sentences(whitelist)
     exit_code = 0
-    reported = set()
     for prose, sentence, faults in flagged:
-        reported.add(_normalized(sentence))
         if _normalized(sentence) not in whitelisted:
             sys.stdout.write(f"{prose.location}: {faults}:\n{textwrap.fill(sentence, width=100)}\n\n")
             exit_code = 1
-    return max(exit_code, _report_stale(whitelisted - reported)) if checking_whitelist else exit_code
+    return exit_code
 
 
-def _report_stale(stale: set[str]) -> int:
+def _report_stale(stale: set[str], whitelist: Path) -> int:
     """Report the whitelist entries the run did not match, and return 1 where any was reported."""
     for sentence in sorted(stale):
-        message = f"{_WHITELIST} holds a sentence the prose no longer has, run `just update-whitelists`:"
+        message = f"{whitelist} holds a sentence the prose no longer has, run `just update-whitelists`:"
         sys.stdout.write(f"{message}\n{sentence}\n\n")
     return 1 if stale else 0
 

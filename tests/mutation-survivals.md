@@ -14,3 +14,6 @@
 - 2026-09-13 `tests.update_time.io.test_log.RecordRenderingTests.test_the_markdown_parser_logs_nothing_at_debug_level` — every record without changes gets a blank line below it
 - 2026-09-14 `tests.update_time.io.test_console.RecordRenderingTests.test_a_record_without_changes_gets_no_empty_block` — every record without changes gets a blank line below it
 - 2026-09-14 `tests.update_time.io.test_console.RecordRenderingTests.test_a_note_about_the_changelog_is_not_boxed` — Update-time's own note about a changelog is boxed as if it were a changelog's changes
+- 2026-09-24 `tests.update_time.sources.test_maven_central.ProjectTest.test_an_artefact_is_asked_for_its_pom_once_per_run` — every pom declaring an artefact costs a pom request of its own
+- 2026-09-25 `tests.update_time.sources.test_maven_central.GetChangesTest.test_a_release_tagged_with_the_artifact_id_matches` — a release tagged by the artifact's name goes unmatched, since the tag names never carry the group
+- 2026-09-26 `tests.update_time.sources.test_maven_central.ProjectTest.test_a_parent_pom_naming_no_repository_leaves_its_own_parent_unread` — an artefact's grandparent pom is read too, which may name a generic parent project's repository

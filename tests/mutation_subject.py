@@ -6,6 +6,15 @@ def is_even(number: int) -> bool:
     return number % 2 == 0
 
 
+def is_positive_even(count: int) -> bool:
+    """Return whether the count is positive and even, where a nested function decides whether it is positive."""
+
+    def positive() -> bool:
+        return count > 0
+
+    return positive() and is_even(count)
+
+
 def is_multiple_of_three(value: int) -> bool:
     """Return whether the value is a multiple of three."""
     return value % 3 == 0
@@ -14,7 +23,7 @@ def is_multiple_of_three(value: int) -> bool:
 class Doubler:
     """A value doubler whose two methods end on the same snippet, so an anchor has to reach the method itself.
 
-    Its property is here for an anchor to name, a property being neither a plain function nor a module.
+    Its property and its classmethod are here for an anchor to name, neither being a plain function nor a module.
     """
 
     def doubled(self, value: int) -> int:
@@ -29,3 +38,8 @@ class Doubler:
     def one_doubled(self) -> int:
         """Return one doubled."""
         return self.doubled(1)
+
+    @classmethod
+    def two_doubled(cls) -> int:
+        """Return two doubled."""
+        return cls().doubled(2)
