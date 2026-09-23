@@ -2,6 +2,7 @@
 
 import logging
 import re
+from itertools import pairwise
 from logging import WARNING
 from typing import TYPE_CHECKING
 
@@ -140,17 +141,30 @@ _READ_AS_TEXT = ("text", "html_block")
 
 
 class _ChangelogMarkdown(Markdown):
-    """Markdown that shows raw HTML, renders shortcodes as emoji, and drops Rich's line break above its first block."""
+    """Markdown that shows raw HTML, renders shortcodes as emoji, unindents headings, and drops a leading line break."""
 
     elements: ClassVar = {**Markdown.elements, "html_block": _RawHtml}
 
     def __init__(self, markup: str, *, hyperlinks: bool) -> None:
-        """Parse the changes, replacing the shortcodes in every token the reader reads as text."""
+        """Parse the changes, then replace their shortcodes and unindent their headings."""
         super().__init__(markup, hyperlinks=hyperlinks)
-        for token in self.parsed:
+        self._replace_shortcodes(self.parsed)
+        self._unindent_headings(self.parsed)
+
+    @staticmethod
+    def _replace_shortcodes(tokens: list[Token]) -> None:
+        """Replace the shortcodes written in prose or raw HTML with their emoji."""
+        for token in tokens:
             for part in (token, *(token.children or ())):
                 if part.type in _READ_AS_TEXT:
                     part.content = Emoji.replace(part.content)
+
+    @staticmethod
+    def _unindent_headings(tokens: list[Token]) -> None:
+        """Strip the non-breaking spaces opening a heading's title, since Markdown strips only the ordinary ones."""
+        for opening, title in pairwise(tokens):
+            if opening.type == "heading_open" and title.children and title.children[0].type == "text":
+                title.children[0].content = title.children[0].content.lstrip()
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         """Render the changes, without the line break Rich writes above the list, quote, or table that opens them."""

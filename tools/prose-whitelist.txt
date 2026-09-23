@@ -1,5 +1,7 @@
 "held" stayed at 1.0 (e.g. min-release-age held back every newer release), "untracked" has no version:.
 "held" stayed at 1.0 (e.g. minimumReleaseAge held back every newer release), "untracked" has no version:.
+### &nbsp;&nbsp;&nbsp;🚀 Features.
+##### &nbsp;&nbsp;&nbsp;&nbsp;[View changes on GitHub](https://github.com).
 **In an `update-time` field**, for a reference in a file that can hold no comment.
 - the sample log lines the sections below quote, from `log_samples`, each filling the placeholder it names.
 A CVSS vector the `cvss` package refuses, since `AV:X` is not a value the metric can take.

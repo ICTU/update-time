@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Fixed
 
 - Show a changelog that opens with a list, a quote, or a table without a blank line above it. Closes [#368](https://github.com/ICTU/update-time/issues/368).
+- Show a changelog heading that opens with non-breaking spaces without indenting it. Closes [#369](https://github.com/ICTU/update-time/issues/369).
 
 ## 0.0.38 - 2026-09-18
 
