@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.39 - 2026-09-23
+
 ### Added
 
 - Apply the cooldown to the Maven dependencies a `pom.xml` declares. Closes [#361](https://github.com/ICTU/update-time/issues/361).
