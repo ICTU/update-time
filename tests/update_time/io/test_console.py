@@ -198,6 +198,39 @@ class RecordRenderingTests(TestCase):
 
     @kills(
         Mutation(
+            console_module._ChangelogMarkdown._unindent_headings,
+            "title.children[0].content.lstrip()",
+            "title.children[0].content",
+            "a heading opening with non-breaking spaces is indented by them",
+        ),
+        Mutation(
+            console_module._ChangelogMarkdown._unindent_headings,
+            ' and title.children[0].type == "text":',
+            ":",
+            "a code span opening a heading loses the spaces the project wrote in it",
+        ),
+        Mutation(
+            console_module._ChangelogMarkdown._unindent_headings,
+            "title.children[0].content.lstrip()",
+            'title.children[0].content.replace("\\xa0", "")',
+            "a heading loses the non-breaking spaces inside its title, running its words together",
+        ),
+    )
+    def test_a_heading_drops_only_the_non_breaking_spaces_opening_its_text(self):
+        """Test that a heading keeps its spaces, in code or out, except the non-breaking ones opening its title."""
+        cases = {
+            "text": ("### &nbsp;&nbsp;&nbsp;🚀 Features", "🚀 Features"),
+            "link": ("##### &nbsp;&nbsp;&nbsp;&nbsp;[View changes on GitHub](https://github.com)", "View changes"),
+            "code": ("### `  indented()`", "  indented()"),
+            "inside": ("### &nbsp;A&nbsp;B", "A\xa0B"),
+        }
+        for case, (markup, title) in cases.items():
+            with self.subTest(case=case):
+                rendered = self.rendered_changes(Changes(markup, markdown=True))
+                self.assertIn(f"{_BOX_SIDE} {title}", rendered)
+
+    @kills(
+        Mutation(
             console_module,
             '_READ_AS_TEXT = ("text", "html_block")',
             '_READ_AS_TEXT = ("text",)',
