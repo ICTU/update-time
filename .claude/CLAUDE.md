@@ -54,9 +54,9 @@ Where the issue specifies little, offer to write a specification first. If accep
 
 Some work changes no behaviour, so no test drives it. Prepare that as a numbered list of refactorings instead, each of which ends green, and let me choose where to start.
 
-Some increments are made of many items I want to steer, such as authored sentences or a list of findings. Prepare those the same way and review them in small batches. Never land them in one green.
-
 A cleanup that follows from a tool's findings (SonarCloud, a linter) or from a review is a task like any other. Group the findings, say which of them change behaviour, and let me choose which ones a test has to drive. The list of findings is the increment, however many cycles it takes, so propose the increment review once the list is done, not after each finding.
+
+Before starting an increment, warn me if the branch needs rebasing.
 
 Each cycle has three steps:
 

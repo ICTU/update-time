@@ -272,7 +272,6 @@ Pin a jsDelivr URL that declares no Subresource Integrity hash, by inserting one
 Pin an image reference that names no tag, such as a Dockerfile's `FROM python` or a Docker Compose `image: redis`, to the version and digest its `latest` tag serves, instead of passing it over in silence.
 Pinning a floating tag adopts no newer image, so the cooldown holds nothing back there (see [Floating image tags](#floating-image-tags)).
 Pre-releases, invalid versions, versions the bound rules out, and versions the npm registry has no publication date for (e.g. present on jsDelivr but not yet mirrored) are skipped.
-Prepare those the same way and review them in small batches.
 PyPI answers null for a package that declares no project URLs.
 PyPI answers with metadata naming no changelog, so the log renders an available new version as `_NEW_VERSION`.
 PyPI serves the status under `status`, where PEP 792's text spells it `state`, so a response spelling it the PEP's way declares no status to read.
