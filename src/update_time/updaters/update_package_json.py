@@ -48,7 +48,7 @@ def update_package_jsons() -> None:
             manager.update_package_json(package_json)
             supported.append(package_json)
     declared = [_declared_dependencies(package_json) for package_json in supported]
-    warn_about_projects(declared, project_resolver(npmjs.newest_release), _LOG)
+    warn_about_projects(declared, project_resolver(npmjs.project), _LOG)
 
 
 def _declared_dependencies(package_json: Path) -> Iterator[SteeredReference]:

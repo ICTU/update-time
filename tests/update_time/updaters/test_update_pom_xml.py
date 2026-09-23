@@ -9,19 +9,29 @@ from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import Release
+from update_time.domain.dependency import Archival, ArchivedSubject, Project, Release
 from update_time.io.log import Logger
 from update_time.manifests import pom_xml as pom_xml_module
 from update_time.package_managers import maven as maven_module
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
+from update_time.references import delegated as delegated_module
 from update_time.sources import maven_central as maven_central_module
+from update_time.sources.maven_central import project as maven_central_project
 from update_time.updaters import update_pom_xml as update_pom_xml_module
 from update_time.updaters.update_pom_xml import update_pom_xmls
 
 from tests.helpers import mock_path, patch_environ, patch_pathlib_path
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import LoggingTestCase
+from tests.update_time.helpers import (
+    LoggingTestCase,
+    archival_check_disabled,
+    maven_central_listing,
+    maven_central_pom,
+    maven_central_version_row,
+    patch_maven_central,
+    staleness_disabled,
+)
 from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
 from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulnerabilities, osv
 
@@ -30,6 +40,9 @@ if TYPE_CHECKING:
 
 # The rule set file these tests hand Update-time, standing in for the temporary file a real run writes.
 _RULES = Path("/rules.xml")
+
+# The listing the repository serves where a test lets it answer for itself: guava's version, dated yesterday.
+_LISTING = maven_central_listing(maven_central_version_row("33.0.0-jre", datetime.now(UTC) - timedelta(days=1)))
 
 
 def _dependency(group: str, artifact: str, version: str) -> str:
@@ -44,9 +57,19 @@ def _guava(version: str) -> str:
     return _dependency("com.google.guava", "guava", version)
 
 
-def _released(version: str, days_ago: int) -> Release:
-    """Return a release of the version, published the given number of days ago."""
-    return Release(version, datetime.now(UTC) - timedelta(days=days_ago))
+def _stale(version: str, days_ago: int) -> Project:
+    """Return what the repository reports about an artefact whose newest release is that many days old."""
+    return Project(newest=Release(version, datetime.now(UTC) - timedelta(days=days_ago)))
+
+
+def _archived(_artefact: str, *, check_archival: bool) -> Project:
+    """Return what Maven Central reports about an artefact whose GitHub repository is archived.
+
+    The archival is read only when the run asks for it, so a run that does not is told nothing.
+    """
+    return Project(
+        archival=Archival(archived=True, subject=ArchivedSubject.REPOSITORY) if check_archival else Archival()
+    )
 
 
 def _properties(values: dict[str, str]) -> str:
@@ -135,7 +158,7 @@ def _maven_command(executable: str = "mvn", rules: Path | None = None) -> Comman
 
 
 @no_vulnerabilities
-@patch.object(maven_central_module, "newest_release", Mock(return_value=None))
+@patch.object(maven_central_module, "project", Mock(return_value=Project()))
 @patch.object(maven_module, "versions_within_cooldown", Mock(return_value=()))
 @patch_pathlib_path("rglob", cwd=Path("/"), exists=False)
 @patch("subprocess.run")
@@ -266,36 +289,35 @@ class UpdatePomXmlTest(LoggingTestCase):
         # A pom can spell a dependency's version as a property its parent declares, which this pom does not hold.
         inherited = _dependency("org.springframework", "spring-core", "${spring.version}")
         self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre"), inherited))
-        newest_release = Mock(return_value=None)
-        with osv() as mock_post, patch.object(maven_central_module, "newest_release", newest_release):
+        mock_project = Mock(return_value=Project())
+        with osv() as mock_post, patch.object(maven_central_module, "project", mock_project):
             update_pom_xmls()
         # Guava is asked about, so the dependency beside it going unasked says something about its version.
         assert_osv_asked_about(mock_post, ("com.google.guava:guava", "33.0.0-jre"), ecosystem="Maven")
         # Staleness judges the coordinates alone, so the dependency OSV skips still reaches Maven Central.
         asked = ["com.google.guava:guava", "org.springframework:spring-core"]
-        self.assertEqual([call.args[0] for call in newest_release.call_args_list], asked)
+        self.assertEqual([call.args[0] for call in mock_project.call_args_list], asked)
 
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "_warn_about_staleness(pom_xml_format.artefact_references(pom_xml))",
-            "",
+            "pom_xml_format.artefact_references(pom_xml)",
+            "[]",
             "a pom's dependencies reach Maven Central never, so one that stopped releasing goes unreported",
         )
     )
     def test_a_stale_dependency_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
         """Test that a dependency whose newest release is old is warned about, at its `<version>` element's line."""
         pom = self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre")))
-        newest_release = Mock(return_value=_released("33.0.0-jre", 500))
-        with patch.object(maven_central_module, "newest_release", newest_release):
+        with patch.object(maven_central_module, "project", Mock(return_value=_stale("33.0.0-jre", 500))):
             update_pom_xmls()
         self.assert_stale_dependency_logged("com.google.guava:guava", "33.0.0-jre", Location(pom, 6))
 
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "_warn_about_staleness(pom_xml_format.artefact_references(pom_xml))",
-            "_warn_about_staleness(after)",
+            "pom_xml_format.artefact_references(pom_xml)",
+            "after",
             "staleness reads the pom's dependencies alone, so a plugin that stopped releasing goes unreported",
         )
     )
@@ -303,11 +325,72 @@ class UpdatePomXmlTest(LoggingTestCase):
         """Test that a plugin whose newest release is old is warned about, at its `<version>` element's line."""
         surefire = _plugin("maven-surefire-plugin", "3.5.0")
         pom = self.find_pom(mock_run, mock_glob, _pom(build=_build(surefire)))
-        newest_release = Mock(return_value=_released("3.5.0", 500))
-        with patch.object(maven_central_module, "newest_release", newest_release):
+        with patch.object(maven_central_module, "project", Mock(return_value=_stale("3.5.0", 500))):
             update_pom_xmls()
         surefire_plugin = "org.apache.maven.plugins:maven-surefire-plugin"
         self.assert_stale_dependency_logged(surefire_plugin, "3.5.0", Location(pom, 9))
+
+    @kills(
+        Mutation(
+            delegated_module.project_resolver,
+            "check_archival=check_archival",
+            "check_archival=False",
+            "a delegated source is told the run checks nothing for archival, so it reads none and reports none",
+        )
+    )
+    def test_an_archived_dependency_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a dependency whose repository is archived is warned about, at its `<version>` element's line."""
+        pom = self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre")))
+        with patch.object(maven_central_module, "project", Mock(side_effect=_archived)):
+            update_pom_xmls()
+        self.assert_archived_repository_logged("com.google.guava:guava", Location(pom, 6))
+
+    @kills(
+        Mutation(
+            maven_central_module,
+            "@archival_reporting\ndef project",
+            "def project",
+            "the repository reports no archival, so a switched-off staleness check skips the pom it reads",
+        ),
+        Mutation(
+            delegated_module.project_resolver,
+            "archival_reporting(resolve, when=partial(reports_archival, get_project))",
+            "resolve",
+            "a resolver reports no archival though its source does, so the same switched-off check skips it",
+        ),
+    )
+    @staleness_disabled
+    def test_staleness_disabled_still_warns_about_an_archived_dependency(self, mock_run: Mock, mock_glob: Mock):
+        """Test that an archived dependency is warned about when the staleness check is switched off.
+
+        Maven Central answers here, so the archival comes from the source itself rather than from a stub.
+        """
+        pom = self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre")))
+        served = maven_central_pom("scm:git:https://github.com/google/guava.git")
+        with (
+            patch.object(maven_central_module, "project", maven_central_project),
+            patch_maven_central(_LISTING, served, archived=True),
+        ):
+            update_pom_xmls()
+        self.assert_archived_repository_logged("com.google.guava:guava", Location(pom, 6))
+
+    @kills(
+        Mutation(
+            delegated_module.project_resolver,
+            "archival_is_checked()",
+            "True",
+            "every delegated source reads archival, so --ignore-archived costs the requests it exists to save",
+        )
+    )
+    @archival_check_disabled
+    def test_a_run_that_checks_nothing_for_archival(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a run with the archival check switched off tells the repository so, and warns about nothing."""
+        self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre")))
+        mock_project = Mock(side_effect=_archived)
+        with patch.object(maven_central_module, "project", mock_project):
+            update_pom_xmls()
+        mock_project.assert_called_once_with("com.google.guava:guava", check_archival=False)
+        self.assert_no_warnings_logged()
 
     def test_maven_runs_in_the_poms_own_directory(self, mock_run: Mock, mock_glob: Mock):
         """Test that Maven runs both goals of the versions plugin Update-time names, in the pom's own directory."""
@@ -357,17 +440,17 @@ class UpdatePomXmlTest(LoggingTestCase):
         # A pom can spell a dependency's group as a property its parent declares, which this pom does not hold.
         inherited = _dependency("${spring.group}", "spring-core", "6.1.0")
         self.find_pom(mock_run, mock_glob, _pom(_guava("33.0.0-jre"), inherited))
-        newest_release = Mock(return_value=None)
+        mock_project = Mock(return_value=Project())
         with (
             self.asked_about() as artefacts,
             osv() as mock_post,
-            patch.object(maven_central_module, "newest_release", newest_release),
+            patch.object(maven_central_module, "project", mock_project),
         ):
             update_pom_xmls()
         # Guava reaches every check, so the dependency beside it reaching none says something about its coordinates.
         self.assertEqual(artefacts, ["com.google.guava:guava"])
         assert_osv_asked_about(mock_post, ("com.google.guava:guava", "33.0.0-jre"), ecosystem="Maven")
-        self.assertEqual([call.args[0] for call in newest_release.call_args_list], ["com.google.guava:guava"])
+        self.assertEqual([call.args[0] for call in mock_project.call_args_list], ["com.google.guava:guava"])
 
     @kills(
         Mutation(
@@ -581,7 +664,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             update_pom_xml_module._update_pom_xml,
             "_LOG.declarations_changed(pom_xml, len(before), len(after))",
             "_LOG.declarations_changed(pom_xml, len(before), len(after))"
-            "\n        _warn_about_staleness(pom_xml_format.artefact_references(pom_xml))",
+            "\n        _check_projects(pom_xml_format.artefact_references(pom_xml))",
             "a pom Update-time gave up on is checked for staleness all the same, beside the error saying it was not",
         ),
     )
@@ -589,12 +672,12 @@ class UpdatePomXmlTest(LoggingTestCase):
         """Test that a pom Maven added a declaration to or removed one from is reported as a failed update."""
         before = _pom(_guava("33.0.0-jre"), _dependency("org.springframework", "spring-core", "6.1.0"))
         pom = self.find_rewritten_pom(mock_run, mock_glob, before, _pom(_guava("33.7.1-jre")))
-        newest_release = Mock(return_value=None)
-        with patch.object(maven_central_module, "newest_release", newest_release):
+        mock_project = Mock(return_value=Project())
+        with patch.object(maven_central_module, "project", mock_project):
             update_pom_xmls()
         self.assert_error_logged(Logger._MESSAGE_DECLARATIONS_CHANGED, location=Location(pom), before=2, after=1)
         self.assert_no_new_version_logged()
-        newest_release.assert_not_called()  # The pom is reported, not checked on a reading it cannot pair up.
+        mock_project.assert_not_called()  # The pom is reported, not checked on a reading it cannot pair up.
 
     @kills(
         Mutation(

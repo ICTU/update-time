@@ -209,7 +209,7 @@ Update-time rewrites files in place, so it expects to run inside a git repositor
 
 To raise API rate limits while updating, set the following environment variables before running Update-time:
 
-- `GITHUB_TOKEN` — increases the GitHub API rate limit when updating GitHub Actions. The token only needs to read public release and commit data, so it needs no specific scope. A classic token with no scopes selected works. So does a fine-grained token with default read-only access to public repositories.
+- `GITHUB_TOKEN` — increases the GitHub API rate limit when updating GitHub Actions and pre-commit hooks, and when checking whether a repository is archived. The token only needs to read public data about a repository, its releases, and its commits, so it does not need a specific scope. A classic token with no scopes selected works. So does a fine-grained token with default read-only access to public repositories.
 - `DOCKER_HUB_USERNAME` and `DOCKER_HUB_TOKEN` — authenticate to the Docker Hub API (both must be set) to increase its rate limit when updating Docker images.
 
 ## 🔄 Updating
@@ -468,7 +468,7 @@ Which dependencies are checked follows from where an archival declaration can be
 | :-------------- | :------------- |
 | [Python dependencies](#python-dependencies) | the project status PyPI publishes for the package a Python file declares |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: the npm registry does not publish an archival signal |
-| [Maven dependencies](#maven-dependencies) | none: Maven Central does not publish an archival signal |
+| [Maven dependencies](#maven-dependencies) | whether GitHub reports the artefact's source repository as archived |
 | [Node engine version](#node-engine-version-and-python-version) | none: it follows a Docker image, and no registry publishes an archival signal |
 | [Python version](#node-engine-version-and-python-version) | none: it follows a Docker image, and no registry publishes an archival signal |
 | [Docker images](#docker-images) | none: no OCI registry publishes an archival signal |
@@ -1091,7 +1091,13 @@ Silencing this warning for a single dependency would need a marker, and Update-t
 
 #### Archived dependencies
 
-Maven Central does not publish an archival signal, so Update-time never warns that a Maven dependency is archived.
+Maven Central does not publish an archival signal of its own. It does serve the pom each version was published with. A pom's `<scm>` element may name the repository the project's source lives in. So Update-time reads that element. Where it names a GitHub repository, Update-time warns when GitHub reports that repository as archived. The pom's plugins are checked too.
+
+The pom read is the one beside the artefact's newest release, since archival is a fact about the project rather than about the version a reference pins. The repository is taken from the `<scm>` element's `<url>`, `<connection>`, or `<developerConnection>`, whichever of them names a GitHub repository first.
+
+Update-time warns only where it finds a GitHub repository to ask about. The pom it reads may not declare an `<scm>` element, as `com.google.guava:guava`'s does not. A project whose parent pom holds the `<scm>` reads the same way, since Update-time reads the artefact's own pom alone. An `<scm>` may name a host other than GitHub, as `org.apache.commons:commons-lang3` names `gitbox.apache.org`. And Maven Central may not serve a pom at all, for an artefact a project resolves from a mirror or a private repository. Update-time warns about a pom it cannot fetch or cannot parse, and does not take a repository from either.
+
+Silencing this warning for a single dependency would need a marker, and Update-time does not yet support markers for Maven dependencies. Pass `--ignore-archived` to switch the check off for the whole run instead.
 
 #### Markers
 

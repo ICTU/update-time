@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
-from update_time.domain.dependency import NO_CHANGES, Changes, Release, Yank
+from update_time.domain.dependency import NO_CHANGES, Changes, Project, Release, Yank
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.primitives.timestamp import parse_timestamp
@@ -120,6 +120,12 @@ def deprecation(package: str, version: str) -> Yank:
     """
     deprecated = _package_metadata(package).get("versions", {}).get(version, {}).get("deprecated")
     return Yank(yanked=bool(deprecated), reason=deprecated if isinstance(deprecated, str) else "")
+
+
+def project(package: str, *, check_archival: bool) -> Project:
+    """Return what the registry reports about the package: its newest release."""
+    del check_archival  # The registry publishes no archival signal, so no request answers it.
+    return Project(newest=newest_release(package))
 
 
 def newest_release(package: str) -> Release | None:

@@ -59,6 +59,14 @@ class _OpenElement:
 
 def read(path: Path) -> XmlElement | None:
     """Return the root element of the XML file at the path, or None when it cannot be read or does not parse."""
+    try:
+        return parse(path.read_bytes())
+    except OSError:
+        return None
+
+
+def parse(document: bytes) -> XmlElement | None:
+    """Return the root element of the XML document, or None when it does not parse."""
     open_elements: list[_OpenElement] = []
     roots: list[XmlElement] = []
     parser = expat.ParserCreate()
@@ -78,7 +86,7 @@ def read(path: Path) -> XmlElement | None:
     parser.CharacterDataHandler = data
     parser.EndElementHandler = end
     try:
-        parser.Parse(path.read_bytes(), True)  # noqa: FBT003 # `isfinal` is positional: pyexpat takes no keyword
-    except OSError, expat.ExpatError:
+        parser.Parse(document, True)  # noqa: FBT003 # `isfinal` is positional: pyexpat takes no keyword
+    except expat.ExpatError:
         return None
     return roots[0]
