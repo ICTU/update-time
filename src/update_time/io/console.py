@@ -11,6 +11,7 @@ from rich.highlighter import ReprHighlighter
 from rich.logging import RichHandler
 from rich.markdown import Markdown, MarkdownElement
 from rich.panel import Panel
+from rich.segment import Segment
 from rich.text import Text
 from rich.theme import Theme
 
@@ -139,7 +140,7 @@ _READ_AS_TEXT = ("text", "html_block")
 
 
 class _ChangelogMarkdown(Markdown):
-    """Markdown that shows a raw HTML block instead of dropping it, and renders the emoji a shortcode names."""
+    """Markdown that shows raw HTML, renders shortcodes as emoji, and drops Rich's line break above its first block."""
 
     elements: ClassVar = {**Markdown.elements, "html_block": _RawHtml}
 
@@ -150,6 +151,12 @@ class _ChangelogMarkdown(Markdown):
             for part in (token, *(token.children or ())):
                 if part.type in _READ_AS_TEXT:
                     part.content = Emoji.replace(part.content)
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        """Render the changes, without the line break Rich writes above the list, quote, or table that opens them."""
+        for index, segment in enumerate(super().__rich_console__(console, options)):
+            if index or segment != Segment.line():
+                yield segment
 
 
 class _ChangelogHandler(RichHandler):

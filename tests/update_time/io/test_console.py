@@ -156,6 +156,26 @@ class RecordRenderingTests(TestCase):
 
     @kills(
         Mutation(
+            console_module._ChangelogMarkdown.__rich_console__,
+            "if index or segment != Segment.line():",
+            "if True:",
+            "the list, quote, or table that opens a changelog gets a line break above it",
+        )
+    )
+    def test_changes_opening_with_a_list_a_quote_or_a_table_get_no_leading_line_break(self):
+        """Test that the box starts with the list, quote, or table that opens the changes."""
+        cases = {
+            "bullet list": ("- A fix\n", ["• A fix"]),
+            "ordered list": ("1. A fix\n", ["1 A fix"]),
+            "blockquote": ("> A fix\n", ["▌ A fix"]),
+            "table": ("| Fix |\n|---|\n| A |\n", ["", "Fix", "───", "A", ""]),  # the blank lines are the table's edges
+        }
+        for case, (markup, contents) in cases.items():
+            with self.subTest(case=case):
+                self.assert_boxed(self.rendered_changes(Changes(markup, markdown=True)), contents)
+
+    @kills(
+        Mutation(
             console_module,
             "    logging.getLogger(_MARKDOWN_PARSER).setLevel(WARNING)\n    return handler",
             "    return handler",
