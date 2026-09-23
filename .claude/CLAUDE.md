@@ -56,7 +56,7 @@ Some work changes no behaviour, so no test drives it. Prepare that as a numbered
 
 A cleanup that follows from a tool's findings (SonarCloud, a linter) or from a review is a task like any other. Group the findings, say which of them change behaviour, and let me choose which ones a test has to drive. The list of findings is the increment, however many cycles it takes, so propose the increment review once the list is done, not after each finding.
 
-Before starting an increment, warn me if the branch needs rebasing.
+Before starting an increment, warn me if the branch needs rebasing or is dirty. Don't mention an up-to-date branch.
 
 Each cycle has three steps:
 

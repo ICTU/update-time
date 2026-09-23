@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Apply the cooldown to the Maven dependencies a `pom.xml` declares. Closes [#361](https://github.com/ICTU/update-time/issues/361).
 - Warn about the vulnerable, stale, and archived Maven dependencies and plugins a `pom.xml` declares. Closes [#363](https://github.com/ICTU/update-time/issues/363).
 
+### Fixed
+
+- Show a changelog that opens with a list, a quote, or a table without a blank line above it. Closes [#368](https://github.com/ICTU/update-time/issues/368).
+
 ## 0.0.38 - 2026-09-18
 
 ### Added
