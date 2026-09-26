@@ -222,20 +222,20 @@ class FaultsTest(unittest.TestCase):
     @kills(
         Mutation(
             readability_check._subject_is_split,
-            "            return determiners >= _SPLIT_SUBJECT_DETERMINERS\n",
-            "            return False\n",
+            "return determiners >= _SPLIT_SUBJECT_DETERMINERS\n",
+            "return False\n",
             "no sentence is reported for splitting its subject from its verb, so the fault goes unreported",
         ),
         Mutation(
             readability_check._faults,
-            "    tagged = _tagged(_without_asides(sentence))\n",
-            "    tagged = _tagged(sentence)\n",
+            "tagged = _tagged(_without_asides(sentence))\n",
+            "tagged = _tagged(sentence)\n",
             "an aside's noun phrase reads as a clause wedged into the subject, so plain prose is reported",
         ),
         Mutation(
             readability_check._subject_is_split,
-            "        if tag == _DETERMINER and previous not in _BESIDE_THE_SUBJECT:\n",
-            "        if tag == _DETERMINER:\n",
+            "if tag == _DETERMINER and previous not in _BESIDE_THE_SUBJECT:\n",
+            "if tag == _DETERMINER:\n",
             "a noun phrase standing beside the subject reads as a clause wedged into it, so plain prose is reported",
         ),
     )
@@ -266,14 +266,14 @@ class FaultsTest(unittest.TestCase):
     @kills(
         Mutation(
             readability_check._faults,
-            "    if _negates_a_noun_phrase(tagged):\n",
-            "    if False:\n",
+            "if _negates_a_noun_phrase(tagged):\n",
+            "if False:\n",
             "no sentence is reported for hanging its negation on a noun phrase, so the fault goes unreported",
         ),
         Mutation(
             readability_check._negates_a_noun_phrase,
-            "        elif seen_verb and tag == _DETERMINER",
-            "        elif tag == _DETERMINER",
+            "elif seen_verb and tag == _DETERMINER",
+            "elif tag == _DETERMINER",
             "a subject opening with the negation is reported, though it carries the negation to the verb",
         ),
         Mutation(

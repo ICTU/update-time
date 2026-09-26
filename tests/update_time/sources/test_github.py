@@ -107,8 +107,8 @@ class GitHubOwnerAndRepositoryTest(unittest.TestCase):
     @kills(
         Mutation(
             github.github_owner_and_repository,
-            "        if len(path_parts) > 1 and path_parts[0] != _GITHUB_SPONSORS_PATH:",
-            "        if len(path_parts) > 1:",
+            "if len(path_parts) > 1 and path_parts[0] != _GITHUB_SPONSORS_PATH:",
+            "if len(path_parts) > 1:",
             "a GitHub sponsors page is read as the repository `sponsors/<owner>`, which GitHub is then asked about",
         )
     )
@@ -232,8 +232,8 @@ class GetLatestVersionTest(LoggingTestCase):
     @kills(
         Mutation(
             github.get_latest_version,
-            "    return replace(latest, project=repository_project)",
-            "    return replace(latest, project=Project(newest=replace(repository_project.newest, "
+            "return replace(latest, project=repository_project)",
+            "return replace(latest, project=Project(newest=replace(repository_project.newest, "
             "version=latest.version) if repository_project.newest else None))",
             "the release attached names the version the run leaves the reference on, not the repository's newest",
         )
@@ -357,8 +357,8 @@ class NewestReleaseTest(LoggingTestCase):
     @kills(
         Mutation(
             dependency.Release.__lt__,
-            "        return (self.published, self._sortable_version) < (other.published, other._sortable_version)",
-            "        return (self._sortable_version, self.published) < (other._sortable_version, other.published)",
+            "return (self.published, self._sortable_version) < (other.published, other._sortable_version)",
+            "return (self._sortable_version, self.published) < (other._sortable_version, other.published)",
             "the release named is the highest version rather than the one whose date was measured",
         )
     )
@@ -405,8 +405,8 @@ class NewestReleaseTest(LoggingTestCase):
     @kills(
         Mutation(
             github.TaggedVersion.version_string,
-            "        return str(self.version) if self.has_valid_version else self.tag_name",
-            "        return str(self.version)",
+            "return str(self.version) if self.has_valid_version else self.tag_name",
+            "return str(self.version)",
             "a release tagged with something that is no version ends the run with a traceback",
             raises="packaging.version.InvalidVersion: Invalid version: 'nightly'",
         ),
@@ -429,8 +429,8 @@ class ArchivalTest(LoggingTestCase):
     @kills(
         Mutation(
             github._repository_metadata,
-            '    response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}")',
-            '    response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}/")',
+            'response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}")',
+            'response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}/")',
             "the repository is asked for at a URL GitHub answers 404, so no repository ever reads as archived",
         )
     )
@@ -459,8 +459,8 @@ class ArchivalTest(LoggingTestCase):
     @kills(
         Mutation(
             github.archival,
-            "    if check_archival and",
-            "    _repository_metadata(owner, repository)\n    if check_archival and",
+            "if check_archival and",
+            "_repository_metadata(owner, repository)\n    if check_archival and",
             "the source is told not to check for archival but fetches the repository anyway, so the run pays for a "
             "check it does not make",
         )
@@ -705,8 +705,8 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
     @kills(
         Mutation(
             github.changes_from_changelog_file,
-            "    if directory:",
-            "    _list_contents(owner, repository)\n    if directory:",
+            "if directory:",
+            "_list_contents(owner, repository)\n    if directory:",
             "a package whose own directory holds its changelog costs a listing of the repository's root as well",
         ),
     )
@@ -729,8 +729,8 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
     @kills(
         Mutation(
             github._changes_from_files,
-            '            return Changes(changes, markdown=is_markdown_file(entry["name"]))',
-            "            return Changes(changes, markdown=False)",
+            'return Changes(changes, markdown=is_markdown_file(entry["name"]))',
+            "return Changes(changes, markdown=False)",
             "a Markdown changelog in a repository's root is read as text, so its markup is shown raw",
         ),
     )
@@ -768,8 +768,8 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
     @kills(
         Mutation(
             github._list_contents,
-            '    return _list(owner, repository, f"contents/{directory}", require_ok=not directory)',
-            '    return _list(owner, repository, f"contents/{directory}")',
+            'return _list(owner, repository, f"contents/{directory}", require_ok=not directory)',
+            'return _list(owner, repository, f"contents/{directory}")',
             "a package whose registry metadata names a directory that moved warns on every run",
         ),
     )
@@ -792,8 +792,8 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
     @kills(
         Mutation(
             github._list,
-            "    listing = response.json()\n    return tuple(listing) if isinstance(listing, list) else ()",
-            "    return tuple(response.json())",
+            "listing = response.json()\n    return tuple(listing) if isinstance(listing, list) else ()",
+            "return tuple(response.json())",
             "a directory the contents endpoint answers with a file ends the run with a traceback",
             raises="TypeError: string indices must be integers, not 'str'",
         ),

@@ -2,9 +2,9 @@
 
 A test's name is not evidence of what it guards, and neither is a green run. Breaking the code the test names is:
 a command that then fails a test has killed the mutation, one that still passes has not, so nothing guards that
-code. A command that fails some other way has killed nothing either, since a gate it applies beyond the tests is
-what failed. The file is restored whether the command passes, fails, or raises, so a probe never leaves the tree
-changed.
+code. A command that fails some other way has killed nothing either: its tests passed, and another gate failed,
+such as the coverage gate of `just test`. The file is restored whether the command passes, fails, or raises, so a
+probe never leaves the tree changed.
 
 Usage: `just mutate FILE[:ANCHOR] [COMMAND ...]`, with the snippet to replace and its replacement read from standard
 input, separated by a line holding only the separator. COMMAND defaults to `just test`. Naming a definition after
@@ -42,7 +42,8 @@ _TESTS_RUN = re.compile(r"(?:^Ran |PASS \()(?P<tests>\d+) tests?\b", re.MULTILIN
 _KILLED_BY = re.compile(r"^(?:FAIL|ERROR): (?P<test>.+)$", re.MULTILINE)
 
 # The exit code for a probe that never ran: the file could not be read, the anchor did not hold the snippet exactly
-# once, the file does not define the anchor, or the input could not be read.
+# once, the file does not define the anchor, the snippet and its replacement open on the same indentation, or the
+# input could not be read.
 _NOT_RUN = 2
 
 # The exit code for a run that was killed and reported errors: the stub may have broken the file rather than the
@@ -50,12 +51,12 @@ _NOT_RUN = 2
 # this is neither a plain kill nor a probe that told nothing.
 _UNCERTAIN = 3
 
-# The exit code for a run that failed although its tests passed: a gate the command applies beyond the tests is
-# what failed. So this says as little about the guard as a survival does.
+# The exit code for a run that failed although its tests passed, because another gate failed, such as the coverage
+# gate of `just test`. So this says as little about the guard as a survival does.
 _UNGUARDED = 4
 
-# unittest and pytest exit with this status when a test failed. A command failing with any other status failed a
-# gate it applies beyond the tests, so its tests passed.
+# unittest and pytest exit with this status when a test failed. A command failing with any other status passed its
+# tests and failed another gate.
 _TESTS_FAILED = 1
 
 _DEFAULT_COMMAND = ("just", "test")

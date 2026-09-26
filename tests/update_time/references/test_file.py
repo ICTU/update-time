@@ -70,14 +70,14 @@ class UpdateYamlFilesTest(unittest.TestCase):
     @kills(
         Mutation(
             file_module.update_yaml_files,
-            "        else:\n",
-            "        if True:\n",
+            "else:\n",
+            "if True:\n",
             "a file that does not parse is rewritten anyway, having been reported",
         ),
         Mutation(
             file_module.update_yaml_files,
-            "            logger.invalid_file(path, yaml_format.FORMAT)\n",
-            "            logger.invalid_file(path, yaml_format.FORMAT)\n            return\n",
+            "logger.invalid_file(path, yaml_format.FORMAT)\n",
+            "logger.invalid_file(path, yaml_format.FORMAT)\n            return\n",
             "a file that does not parse ends the walk, so the files after it are never updated",
         ),
     )
@@ -95,8 +95,8 @@ class UpdateYamlFilesTest(unittest.TestCase):
     @kills(
         Mutation(
             file_module.update_yaml_files,
-            "        if document is yaml_format.UNPARSABLE:\n",
-            "        if document is yaml_format.UNPARSABLE or document is None:\n",
+            "if document is yaml_format.UNPARSABLE:\n",
+            "if document is yaml_format.UNPARSABLE or document is None:\n",
             "a file that parses to nothing is reported as invalid, the empty document reading as unparsable",
         )
     )

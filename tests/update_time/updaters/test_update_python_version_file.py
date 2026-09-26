@@ -64,8 +64,8 @@ class UpdatePythonVersionFilesTest(_VersionFileTestCase):
     @kills(
         Mutation(
             update_python_version_file._find_python_base_image_version,
-            "    for dockerfile in (local_dockerfile, *glob_for(DOCKERFILES)):",
-            "    for dockerfile in (local_dockerfile,):",
+            "for dockerfile in (local_dockerfile, *glob_for(DOCKERFILES)):",
+            "for dockerfile in (local_dockerfile,):",
             "the base image is looked for beside the version file alone, not anywhere in the repository",
         )
     )

@@ -58,7 +58,8 @@ class Outcome(StrEnum):
     KILLED and SURVIVED judge the test: it failed against the mutation, or it did not. STALE and BROKEN judge the
     mutation instead, and call for rewriting the mutation rather than the test. Stale means it was never applied:
     reading or parsing the file failed, the source lacks the anchor, the anchor holds the snippet other than once,
-    the replacement equals the snippet, or the anchor is a module while one function holds the snippet.
+    the replacement equals the snippet, the two open on the same indentation, or the anchor is a module while one
+    function holds the snippet.
     Broken means the mutated source did not import, or the test errored with an error other than the one the
     mutation declares.
     """
@@ -210,6 +211,9 @@ def mutated_source(source: str, qualified_name: str, old: str, new: str) -> str:
     """
     if new == old:
         message = "the snippet and its replacement are the same, so nothing changes"
+        raise StaleError(message)
+    if old[:1] in (" ", "\t") and new[:1] == old[:1]:
+        message = "the snippet and its replacement open on the same indentation, so drop that indentation from both"
         raise StaleError(message)
     start, end = _span(source, qualified_name)
     if (occurrences := source[start:end].count(old)) != 1:
