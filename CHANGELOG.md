@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.40 - 2026-09-26
+
 ### Added
 
 - Show what changed in the new version of each Maven dependency that Maven updated. Closes [#374](https://github.com/ICTU/update-time/issues/374).
