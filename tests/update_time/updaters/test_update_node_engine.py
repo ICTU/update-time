@@ -89,7 +89,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            rewrite,
+            rewrite._reference_match,
             """    if not reference_marker.reference_location.is_on_the_same_line_as(line.location):
         return None
     return pattern.search(line.text, reference_marker.reference_location.column)""",
@@ -107,7 +107,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            rewrite,
+            rewrite._reference_match,
             "    return pattern.search(line.text, reference_marker.reference_location.column)",
             "    return pattern.search(line.text)",
             "the named line is read from its start, so the entry declared before the engine is taken for it",
@@ -134,7 +134,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            update_node_engine,
+            update_node_engine._node_base_image_version,
             '    return version if is_valid(version) else ""',
             "    return version",
             "a tag's digits are adopted as a version even when they do not form one, ending the run",
@@ -155,7 +155,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            update_node_engine,
+            update_node_engine._has_node_engine,
             "    return isinstance(engines, dict) and _NODE in engines",
             "    return engines is not None and _NODE in engines",
             "a section that is a string or a list is read as one naming the engine, so the file is opened for it",
@@ -178,7 +178,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            update_node_engine,
+            update_node_engine._update_node_engine,
             """    if engine_marker.reference_location.line_number is None:
         _LOG.no_entry(_NODE, package_json.path)
         return
@@ -274,7 +274,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            update_node_engine,
+            update_node_engine._update_node_engine,
             "logger=_LOG, reference_marker=engine_marker",
             "logger=_LOG",
             "the engine's entry and marker are read but never handed to the gate, where it follows Docker Hub",
@@ -337,7 +337,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            package_json,
+            package_json._marker,
             """    if not isinstance(field, dict):
         return _unreadable_field(section, name)""",
             """    if not isinstance(field, dict):
@@ -345,7 +345,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
             "a field that is not the object it should be reads as naming no marker",
         ),
         Mutation(
-            package_json,
+            package_json._marker,
             """    if not isinstance(references, dict):
         return _unreadable_field(section, name)""",
             """    if not isinstance(references, dict):
@@ -353,7 +353,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
             "a section that is not the object it should be reads as naming no marker",
         ),
         Mutation(
-            package_json,
+            package_json._marker,
             "    return parse_directives(directives) if isinstance(directives, str)"
             " else _unreadable_field(section, name)",
             "    return parse_directives(directives)",
@@ -397,7 +397,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            resolve,
+            resolve.latest_version,
             "    if not downgrades(get_new_version, reference.pinned):\n"
             "        log.warn_if_redundant_bound(reference, marker)",
             "    log.warn_if_redundant_bound(reference, marker)",

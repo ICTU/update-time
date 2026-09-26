@@ -270,21 +270,24 @@ def github_to_raw(url: str) -> str:
 
 # Matches `git@github.com:` in `git@github.com:owner/repo.git`, capturing the user and host.
 _SCP_LIKE_RE = re.compile(r"^([^/@]+@[^/:]+):")
+# GitHub serves its sponsorship pages under this path, which it reserves, so no owner can go by this name.
+_GITHUB_SPONSORS_PATH = "sponsors"
 
 
 def github_owner_and_repository(url: str) -> tuple[str, str]:
     """Parse the GitHub owner and repository from a URL.
 
     Accepts npm-style `git+https`, `git+ssh`, and `.git` URLs, plus git's scp-like `git@github.com:owner/repo` form,
-    which is rewritten to an ssh URL so its host is read the same way as every other form's.
+    which is rewritten to an ssh URL so its host is read the same way as every other form's. A `github.com/sponsors/…`
+    URL names a sponsorship page rather than a repository, so it parses as none.
     """
     normalized_url = _SCP_LIKE_RE.sub(r"ssh://\1/", url.removeprefix("git+"))
     parsed = urlparse(normalized_url)
     if parsed.hostname == "github.com":
         path_parts = parsed.path.lstrip("/").split("/")
-        if len(path_parts) > 1:
+        if len(path_parts) > 1 and path_parts[0] != _GITHUB_SPONSORS_PATH:
             return path_parts[0], path_parts[1].removesuffix(".git")
-    return NO_CHANGES, ""
+    return "", ""
 
 
 def _owner_and_repository(dependency: DependencyName) -> tuple[str, str]:
@@ -530,10 +533,19 @@ def _newest_release(owner: str, repository: str) -> Release | None:
     )
 
 
-def _get_release(owner: str, repository: str, package: str, version: str) -> TaggedVersion | None:
-    """Get the release matching the package and version from the GitHub releases API.
+def _get_release(owner: str, repository: str, tags: list[str]) -> TaggedVersion | None:
+    """Get the release carrying the first of the tags that the repository released under."""
+    releases_by_tag = {release["tag_name"]: release for release in (_list_releases(owner, repository) or ())}
+    for tag in tags:
+        if tag in releases_by_tag:
+            return TaggedVersion.from_release(owner, repository, releases_by_tag[tag])
+    return None
 
-    Tries tag names in order of preference, repeating the first four for each name `_package_names` returns:
+
+def release_tags(package: str, version: str, *aliases: str) -> list[str]:
+    """Return the tags a repository may release the package's version under, in order of preference.
+
+    The first four repeat for each name `_package_names` returns, and then for each alias:
     1. `<name>-v<version>` (monorepo, e.g. `puppeteer-core-v25.0.4`).
     2. `<name>-<version>` (monorepo without the `v`, e.g. `selenium-4.47.0`).
     3. `<name>@<version>` (monorepo joining the two with an `@`, e.g. `astro@7.1.4`).
@@ -541,12 +553,9 @@ def _get_release(owner: str, repository: str, package: str, version: str) -> Tag
     5. `v<version>` (e.g. `v25.0.4`).
     6. `<version>` (e.g. `25.0.4`).
     """
-    releases_by_tag = {release["tag_name"]: release for release in (_list_releases(owner, repository) or ())}
-    package_tags = [f"{name}{joiner}{version}" for name in _package_names(package) for joiner in ("-v", "-", "@", "/")]
-    for tag in [*package_tags, f"v{version}", version]:
-        if tag in releases_by_tag:
-            return TaggedVersion.from_release(owner, repository, releases_by_tag[tag])
-    return None
+    names = [*_package_names(package), *aliases]
+    package_tags = [f"{name}{joiner}{version}" for name in names for joiner in ("-v", "-", "@", "/")]
+    return [*package_tags, f"v{version}", version]
 
 
 def _package_names(package: str) -> list[str]:
@@ -562,10 +571,15 @@ def _package_names(package: str) -> list[str]:
 
 
 def changes_from_release(owner: str, repository: str, package: str, version: str) -> Changes:
-    """Return the body of the GitHub release matching the package and version, or empty string if absent."""
+    """Return the body of the GitHub release matching the package and version."""
+    return changes_from_tagged_release(owner, repository, release_tags(package, version))
+
+
+def changes_from_tagged_release(owner: str, repository: str, tags: list[str]) -> Changes:
+    """Return the body of the GitHub release carrying the first of the tags."""
     if not (owner and repository):
         return NO_CHANGES
-    release = _get_release(owner, repository, package, version)
+    release = _get_release(owner, repository, tags)
     return release.body if release else NO_CHANGES
 
 

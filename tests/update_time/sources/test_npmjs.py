@@ -55,7 +55,7 @@ class NpmjsPublicationDatetimeTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            npmjs,
+            npmjs.get_publication_datetime,
             'return parse_timestamp(_package_metadata(package).get("time", {}).get(version))',
             'return parse_timestamp(_package_metadata(package).get("time", {})[version])',
             "a version the registry dates nowhere in its time map ends the run with a traceback",
@@ -193,7 +193,7 @@ class GetChangesFallbackTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            npmjs,
+            npmjs.get_changes,
             "    return changes_from_release(repository.owner, repository.name, package, version) "
             "or changes_from_changelog_file(\n"
             "        repository.owner, repository.name, version, repository.directory\n    )",
@@ -217,7 +217,7 @@ class GetChangesFallbackTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            npmjs,
+            npmjs.get_changes,
             "        repository.owner, repository.name, version, repository.directory",
             '        repository.owner, repository.name, version, ""',
             "the changelog file of a package a monorepo builds from a directory is looked for in the root",

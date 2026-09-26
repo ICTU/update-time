@@ -57,7 +57,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            update_dockerfile_base_image,
+            update_dockerfile_base_image._update_dockerfile,
             "        if pinned.name == _SCRATCH:\n",
             "        if pinned.name == _SCRATCH.upper():\n",
             "a `FROM scratch` is resolved as though a registry served the empty base",
@@ -77,7 +77,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            update_dockerfile_base_image,
+            update_dockerfile_base_image._update_dockerfile,
             "        return AccountedFor.BUILD_STAGE if pinned.name.lower() in stages else None\n",
             "        return AccountedFor.BUILD_STAGE if pinned.name.lower() in frozenset() else None\n",
             "a `FROM` naming a build stage is resolved as though a registry served an image of that name",
@@ -121,7 +121,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            log,
+            log.Logger.keeping_floating_tag,
             "        fields = self._tagged_fields(reference, reference.current_version)\n"
             "        self._log(self._MESSAGE_KEEPING_FLOATING_TAG, **fields, resolved=release.version, "
             "sha=release.sha, cause=cause)\n",
@@ -210,7 +210,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            update_dockerfile_base_image,
+            update_dockerfile_base_image._stage_names,
             '    return frozenset(match.group("stage").lower() for match in _STAGE_NAME_RE.finditer'
             "(dockerfile.read_text()))",
             '    return frozenset(match.group("stage") for match in _STAGE_NAME_RE.finditer(dockerfile.read_text()))',

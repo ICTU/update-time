@@ -24,6 +24,7 @@ from update_time.sources.github import (
     changes_from_release,
     github_owner_and_repository,
     github_to_raw,
+    release_tags,
 )
 
 from tests.helpers import mock_response, patch_environ, patch_get
@@ -102,6 +103,18 @@ class GitHubOwnerAndRepositoryTest(unittest.TestCase):
     def test_github_url(self):
         """Test that a GitHub URL returns an owner and repository."""
         self.assert_owner_and_repository(("ICTU", "quality-time"), "https://github.com/ICTU/quality-time")
+
+    @kills(
+        Mutation(
+            github.github_owner_and_repository,
+            "        if len(path_parts) > 1 and path_parts[0] != _GITHUB_SPONSORS_PATH:",
+            "        if len(path_parts) > 1:",
+            "a GitHub sponsors page is read as the repository `sponsors/<owner>`, which GitHub is then asked about",
+        )
+    )
+    def test_github_sponsors_url(self):
+        """Test that a GitHub sponsors URL returns an empty owner and repository."""
+        self.assert_owner_and_repository(("", ""), "https://github.com/sponsors/ICTU")
 
     def test_github_url_without_repo(self):
         """Test that a GitHub URL returns an empty owner and repository if the repository is missing."""
@@ -218,7 +231,7 @@ class GetLatestVersionTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github.get_latest_version,
             "    return replace(latest, project=repository_project)",
             "    return replace(latest, project=Project(newest=replace(repository_project.newest, "
             "version=latest.version) if repository_project.newest else None))",
@@ -300,7 +313,7 @@ class GetLatestVersionTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github._commit_datetime,
             'return parse_timestamp(committer.get("date")) if committer else None',
             'return parse_timestamp(committer.get("date"))',
             "a commit whose committer GitHub reports as null ends the run with a traceback",
@@ -343,7 +356,7 @@ class NewestReleaseTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            dependency,
+            dependency.Release.__lt__,
             "        return (self.published, self._sortable_version) < (other.published, other._sortable_version)",
             "        return (self._sortable_version, self.published) < (other._sortable_version, other.published)",
             "the release named is the highest version rather than the one whose date was measured",
@@ -391,7 +404,7 @@ class NewestReleaseTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github.TaggedVersion.version_string,
             "        return str(self.version) if self.has_valid_version else self.tag_name",
             "        return str(self.version)",
             "a release tagged with something that is no version ends the run with a traceback",
@@ -415,7 +428,7 @@ class ArchivalTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github._repository_metadata,
             '    response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}")',
             '    response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}/")',
             "the repository is asked for at a URL GitHub answers 404, so no repository ever reads as archived",
@@ -472,7 +485,7 @@ class GetReleaseTest(LoggingTestCase):
         """Assert that each case's package and version resolve, in the repository, to the release its tag names."""
         for package, version, tag in cases:
             with self.subTest(tag=tag):
-                self.assert_release(_get_release("owner", repository, package, version), tag, "Changelog")
+                self.assert_release(_get_release("owner", repository, release_tags(package, version)), tag, "Changelog")
 
     @patch_get(
         [
@@ -494,25 +507,23 @@ class GetReleaseTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github._package_names,
             "[package] if unscoped == package else [package, unscoped]",
             "[package]",
             "a scoped npm package tagged without its scope has no changelog reported",
             raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
         ),
         Mutation(
-            github,
-            'for name in _package_names(package) for joiner in ("-v", "-", "@", "/")',
-            'for name in _package_names(package) for joiner in ("-v", "-", "@", "/") '
-            'if name == package or joiner == "@"',
+            github.release_tags,
+            'for name in names for joiner in ("-v", "-", "@", "/")',
+            'for name in names for joiner in ("-v", "-", "@", "/") if name == package or joiner == "@"',
             "a monorepo prefixing the unscoped name with a dash has no changelog reported",
             raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
         ),
         Mutation(
-            github,
-            'for name in _package_names(package) for joiner in ("-v", "-", "@", "/")',
-            'for name in _package_names(package) for joiner in ("-v", "-", "@", "/") '
-            'if name == package or joiner != "/"',
+            github.release_tags,
+            'for name in names for joiner in ("-v", "-", "@", "/")',
+            'for name in names for joiner in ("-v", "-", "@", "/") if name == package or joiner != "/"',
             "a monorepo joining the unscoped name and the version with a slash has no changelog reported",
             raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
         ),
@@ -538,7 +549,7 @@ class GetReleaseTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github._package_names,
             "[package] if unscoped == package else [package, unscoped]",
             "[package] if unscoped == package else [unscoped, package]",
             "a repository tagging one version both with and without the scope has the wrong release reported for it",
@@ -552,14 +563,14 @@ class GetReleaseTest(LoggingTestCase):
     )
     def test_scoped_tag_takes_precedence(self):
         """Test that the tag carrying the scope wins over the one spelling the same version without it."""
-        release = _get_release("emotion-js", "emotion", "@emotion/react", "11.14.0")
+        release = _get_release("emotion-js", "emotion", release_tags("@emotion/react", "11.14.0"))
         self.assert_release(release, "@emotion/react@11.14.0", "Scoped")
 
     @kills(
         Mutation(
-            github,
-            'for tag in [*package_tags, f"v{version}", version]:',
-            'for tag in [*package_tags[:1], f"v{version}", version, *package_tags[1:]]:',
+            github.release_tags,
+            'return [*package_tags, f"v{version}", version]',
+            'return [*package_tags[:1], f"v{version}", version, *package_tags[1:]]',
             "a package whose repository also tags the version alone has the wrong release reported for it",
         ),
     )
@@ -581,7 +592,7 @@ class GetReleaseTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github.release_tags,
             '("-v", "-", "@", "/")',
             '("-", "-v", "@", "/")',
             "a repository spelling one version's tag both ways has the wrong release reported for it",
@@ -597,7 +608,9 @@ class GetReleaseTest(LoggingTestCase):
     )
     def test_monorepo_tag_takes_precedence(self):
         """Test that the package-prefixed tag with a v wins over the other spellings of the same version."""
-        self.assert_release(_get_release("puppeteer", "monorepo", "puppeteer-core", "25.0.4"), "puppeteer-core-v25.0.4")
+        self.assert_release(
+            _get_release("puppeteer", "monorepo", release_tags("puppeteer-core", "25.0.4")), "puppeteer-core-v25.0.4"
+        )
 
     @patch_get([github_release_json("v1.2.3", body="Changelog"), github_release_json("4.5.6", body="Changelog")])
     def test_version_tag_match(self):
@@ -608,20 +621,20 @@ class GetReleaseTest(LoggingTestCase):
     @patch_get([github_release_json("v1.0")])
     def test_no_matching_tag(self):
         """Test that None is returned when no tag matches the requested version."""
-        self.assertIsNone(_get_release("owner", "repo with non matching tag", "any", "1.1"))
+        self.assertIsNone(_get_release("owner", "repo with non matching tag", release_tags("any", "1.1")))
 
     @patch("requests.get")
     def test_repo_without_releases(self, mock_get: Mock):
         """Test that a non-OK response yields no release, and is reported as a failed fetch."""
         mock_get.return_value = mock_response([], ok=False)
-        self.assertIsNone(_get_release("owner", "repo without releases for get_release", "any", "1.0"))
+        self.assertIsNone(_get_release("owner", "repo without releases for get_release", release_tags("any", "1.0")))
         self.assert_could_not_fetch_logged(mock_get().url, mock_get().status_code)
 
     @patch("requests.get")
     def test_timeout(self, mock_get: Mock):
         """Test that a timed-out request yields no release, and is reported as a timeout."""
         mock_get.side_effect = requests.exceptions.Timeout
-        self.assertIsNone(_get_release("owner", "repo without releases for get_release", "any", "1.0"))
+        self.assertIsNone(_get_release("owner", "repo without releases for get_release", release_tags("any", "1.0")))
         url = "https://api.github.com/repos/owner/repo without releases for get_release/releases?per_page=100"
         self.assert_logged(Logger._MESSAGE_TIMEOUT, url=url)
 
@@ -637,7 +650,7 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github.TaggedVersion.from_release,
             'body=Changes(release.get("body") or "", markdown=True),',
             'body=Changes(release.get("body") or "", markdown=False),',
             "a release body is read as text, so the Markdown GitHub renders it in is shown raw",
@@ -657,7 +670,7 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github.TaggedVersion.from_release,
             'body=Changes(release.get("body") or "", markdown=True),',
             'body=Changes(release["body"] or "", markdown=True),',
             "a release GitHub answers without a body ends the run with a traceback",
@@ -691,7 +704,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github.changes_from_changelog_file,
             "    if directory:",
             "    _list_contents(owner, repository)\n    if directory:",
             "a package whose own directory holds its changelog costs a listing of the repository's root as well",
@@ -715,7 +728,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github._changes_from_files,
             '            return Changes(changes, markdown=is_markdown_file(entry["name"]))',
             "            return Changes(changes, markdown=False)",
             "a Markdown changelog in a repository's root is read as text, so its markup is shown raw",
@@ -754,7 +767,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github._list_contents,
             '    return _list(owner, repository, f"contents/{directory}", require_ok=not directory)',
             '    return _list(owner, repository, f"contents/{directory}")',
             "a package whose registry metadata names a directory that moved warns on every run",
@@ -778,7 +791,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github._list,
             "    listing = response.json()\n    return tuple(listing) if isinstance(listing, list) else ()",
             "    return tuple(response.json())",
             "a directory the contents endpoint answers with a file ends the run with a traceback",
@@ -815,7 +828,7 @@ class GitHubHeadersTest(CacheClearingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github._github_headers,
             '{"Authorization": f"Bearer {github_token}"}',
             "{}",
             "every GitHub API request goes out unauthenticated, so a run spends an anonymous caller's rate limit",
@@ -829,7 +842,7 @@ class GitHubHeadersTest(CacheClearingTestCase):
 
     @kills(
         Mutation(
-            github,
+            github._github_headers,
             '("GITHUB_TOKEN")) else {}',
             '("GITHUB_TOKEN")) else {"Authorization": "Bearer"}',
             "a run given no token sends an empty bearer header instead of asking anonymously",

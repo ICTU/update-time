@@ -64,10 +64,15 @@ _POM_NAMING_ITS_OWN_GROUP = """<project xmlns="http://maven.apache.org/POM/4.0.0
 """
 
 
-_POM_WITH_AN_INCOMPLETE_DEPENDENCY = """<project xmlns="http://maven.apache.org/POM/4.0.0">
+_POM_WITH_INCOMPLETE_DEPENDENCIES = """<project xmlns="http://maven.apache.org/POM/4.0.0">
   <dependencies>
     <dependency>
       <artifactId>spring-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId></artifactId>
+      <version>6.1.0</version>
     </dependency>
     <dependency>
       <groupId>com.google.guava</groupId>
@@ -109,16 +114,22 @@ class DependenciesTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            pom_xml,
-            "    if not group_name or artifact is None or version is None:\n        return None\n",
+            pom_xml._reference,
+            "    if not group_name or not artifact_name or version is None:\n        return None\n",
             "",
             "an element missing a part takes the whole pom's reading down with it",
             raises="AttributeError: 'NoneType' object has no attribute 'text'",
-        )
+        ),
+        Mutation(
+            pom_xml._reference,
+            "not artifact_name or",
+            "artifact is None or",
+            "an empty artifact is read as the artefact `groupId:`, which Maven Central is then asked about",
+        ),
     )
     def test_a_dependency_missing_a_part_maven_names_it_by(self):
         """Test that a dependency element missing a part is left out, and the pom is read all the same."""
-        declared = pom_xml.dependencies(mock_path(_POM_WITH_AN_INCOMPLETE_DEPENDENCY)) or []
+        declared = pom_xml.dependencies(mock_path(_POM_WITH_INCOMPLETE_DEPENDENCIES)) or []
         self.assertEqual([reference.dependency for reference in declared], ["com.google.guava:guava"])
 
     def test_a_dependency_naming_the_projects_own_group(self):

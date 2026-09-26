@@ -415,7 +415,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            references_github,
+            references_github._latest_pin,
             "        warn_about_directives_the_source_cannot_apply(marker, get_latest_version, reference, log)",
             "",
             "a reference naming no version has its marker passed over, so a directive holding nothing back is "

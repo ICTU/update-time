@@ -78,7 +78,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            manifest_images,
+            manifest_images._built_images,
             "        for service in services.values()\n",
             "        for service in list(services.values())[:1]\n",
             "only the first service is read, so an image a later service builds is looked up on a registry",
@@ -111,7 +111,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            oci,
+            oci.tag_getter_excluding,
             '    without_digests = {image.partition("@")[0] for image in images}\n',
             "    without_digests = set(images)\n",
             "a digest the file records beside a built image's tag survives into the match, so the image is looked up",
@@ -131,7 +131,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            manifest_images,
+            manifest_images._built_images,
             '        if isinstance(service, dict) and "build" in service and isinstance(service.get("image"), str)\n',
             '        if isinstance(service, dict) and "build" in service\n',
             "a service that builds an image without tagging one aborts the run",
@@ -158,21 +158,21 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            manifest_images,
+            manifest_images._built_images,
             '    services = document.get("services") if isinstance(document, dict) else None\n',
             '    services = document.get("services")\n',
             "a Compose file that is not a mapping is read as one, ending the run",
             raises="AttributeError: 'list' object has no attribute 'get'",
         ),
         Mutation(
-            manifest_images,
+            manifest_images._built_images,
             "    if not isinstance(services, dict):\n",
             "    if services is None:\n",
             "a `services:` that is not a mapping is read as one, ending the run",
             raises="AttributeError: 'list' object has no attribute 'values'",
         ),
         Mutation(
-            manifest_images,
+            manifest_images._built_images,
             '        if isinstance(service, dict) and "build" in service and isinstance(service.get("image"), str)\n',
             '        if "build" in service and isinstance(service.get("image"), str)\n',
             "a service declared with no body is read as a mapping, ending the run",
@@ -197,7 +197,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            oci,
+            oci.tag_getter_excluding,
             '        as_written = f"{pinned.name}{tag_of(pinned.version)}"\n'
             "        return reason if as_written in without_digests else None\n",
             '        return reason if pinned.name in {name.split(":", maxsplit=1)[0] for name in without_digests}'
@@ -217,7 +217,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            references_file,
+            references_file.update_yaml_files,
             "            update_file(path, regexp, get_new_version=get_new_version_for(document), logger=logger)\n",
             '            getter = getter if "getter" in dir() else get_new_version_for(document)\n'
             "            update_file(path, regexp, get_new_version=getter, logger=logger)\n",
@@ -237,7 +237,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            references_resolve,
+            references_resolve.floating_pin_redundancy,
             "    if not asked:\n        return Reason.NO_REGISTRY_ASKED\n    if floats is False:\n",
             "    if floats is False:\n",
             "a reference no registry is asked about is reported as one whose pin does not float, which it may do",

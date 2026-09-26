@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Protocol, TypeVar, cast
 from unittest.mock import patch
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 # Holds the id of the test being re-run against its own mutation. That test must run its body and stop there:
 # checking its mutations again would check them against themselves, without end. Only the test it names stands
@@ -58,7 +58,7 @@ class Outcome(StrEnum):
     KILLED and SURVIVED judge the test: it failed against the mutation, or it did not. STALE and BROKEN judge the
     mutation instead, and call for rewriting the mutation rather than the test. Stale means it was never applied:
     reading or parsing the file failed, the source lacks the anchor, the anchor holds the snippet other than once,
-    or the replacement equals the snippet.
+    the replacement equals the snippet, or the anchor is a module while one function holds the snippet.
     Broken means the mutated source did not import, or the test errored with an error other than the one the
     mutation declares.
     """
@@ -92,18 +92,20 @@ class Mutation:
     scaffolding. Naming the error in `raises` tells the two apart: the test kills the mutation by raising that
     error, while any other error is reported as broken.
 
-    The anchor names the code to change: a module, or a function, method or property the module holds. The
-    qualified name reaches a member through its class, and only the source of the definition is changed.
+    The anchor names the code to change: a module, or a class, function, method, classmethod or property the module
+    holds. The qualified name reaches a member through its class, and only the source of the definition is changed.
+    A module anchor is for a snippet that spans several definitions or lies outside them. A module anchor is stale
+    when one function or method holds the snippet.
     """
 
-    anchor: types.ModuleType | _Function | property
+    anchor: types.ModuleType | _Function | types.MethodType | property
     old: str
     new: str
     regression: str = ""
     raises: str = ""
 
     @property
-    def _unwrapped(self) -> types.ModuleType | _Function:
+    def _unwrapped(self) -> types.ModuleType | _Function | types.MethodType:
         """Return the anchor in the form that carries its names, which for a property is the getter behind it."""
         return cast("_Function", self.anchor.fget) if isinstance(self.anchor, property) else self.anchor
 
@@ -140,7 +142,11 @@ class Mutation:
             source = Path(self._path).read_text()
         except OSError as error:
             raise StaleError(_reason(error)) from error
-        return mutated_source(source, self._qualified_name, self.old, self.new)
+        mutated = mutated_source(source, self._qualified_name, self.old, self.new)
+        if not self._qualified_name and (function := _function_holding(source, self.old)):
+            message = f"the snippet lies inside {function}, so anchor the mutation on {function}"
+            raise StaleError(message)
+        return mutated
 
     def check(self, test_name: str) -> Result:
         """Return what checking the mutation showed: whether the test fails against it, or the file has moved on.
@@ -216,32 +222,53 @@ def _span(source: str, qualified_name: str) -> tuple[int, int]:
     """Return the offsets of the part of the source a mutation may change, which is all of it for an empty name."""
     if not qualified_name:
         return 0, len(source)
+    definition = _definitions(source).get(qualified_name)
+    if definition is None:
+        message = f"the source does not define {qualified_name}"
+        raise StaleError(message)
+    return _node_span(source, definition)
+
+
+def _function_holding(source: str, snippet: str) -> str:
+    """Return the qualified name of the function or method whose span holds the snippet, or the empty string."""
+    start = source.index(snippet)
+    end = start + len(snippet)
+    functions = {name: node for name, node in _definitions(source).items() if not isinstance(node, ast.ClassDef)}
+    spans = {name: _node_span(source, node) for name, node in functions.items()}
+    return next((name for name, (first, last) in spans.items() if first <= start and end <= last), "")
+
+
+def _definitions(source: str) -> dict[str, ast.stmt]:
+    """Return each class, function and method the source defines, under the qualified name an anchor reaches it by.
+
+    A name defined twice, as a property's getter and setter are, names its first definition, which is the getter.
+    """
     try:
         body = ast.parse(source).body
     except SyntaxError as error:
         raise StaleError(_reason(error)) from error
-    definition = _definition(body, qualified_name.split("."))
-    if definition is None:
-        message = f"the source does not define {qualified_name}"
-        raise StaleError(message)
-    start = _offset(source, definition.lineno, definition.col_offset)
-    return start, _offset(source, definition.end_lineno or 0, definition.end_col_offset or 0)
+    definitions: dict[str, ast.stmt] = {}
+    for name, node in _named(body):
+        definitions.setdefault(name, node)
+    return definitions
 
 
-def _definition(body: list[ast.stmt], qualified_name: list[str]) -> ast.stmt | None:
-    """Return the definition the qualified name points at, or None where the source does not define it."""
-    name, *rest = qualified_name
-    found = next(
-        (
-            node
-            for node in body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name
-        ),
-        None,
-    )
-    if found is None:
-        return None
-    return _definition(found.body, rest) if rest else found
+def _named(body: list[ast.stmt], prefix: str = "") -> Iterator[tuple[str, ast.stmt]]:
+    """Yield each class, function and method the body defines, recursing into classes but not into functions."""
+    for node in body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield f"{prefix}{node.name}", node
+        if isinstance(node, ast.ClassDef):
+            yield from _named(node.body, f"{prefix}{node.name}.")
+
+
+def _node_span(source: str, node: ast.stmt) -> tuple[int, int]:
+    """Return the offsets in the source where the node starts and ends, the newline ending its last line included."""
+    start = _offset(source, node.lineno, node.col_offset)
+    end = _offset(source, node.end_lineno or 0, node.end_col_offset or 0)
+    if source.startswith("\n", end):
+        end += 1
+    return start, end
 
 
 def _offset(source: str, line: int, column: int) -> int:

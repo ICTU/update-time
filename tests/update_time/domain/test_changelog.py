@@ -24,7 +24,7 @@ class MarkupTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            changelog,
+            changelog.is_markdown_file,
             "    return urlparse(name).path.lower().endswith(MARKDOWN_EXTENSION)",
             "    return urlparse(name).path.endswith(MARKDOWN_EXTENSION)",
             "a changelog file that shouts its extension is read as text, so its Markdown is shown raw",
@@ -36,13 +36,13 @@ class MarkupTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            changelog,
+            changelog.is_markdown_content_type,
             '    return content_type.partition(";")[0].strip().lower() == _MARKDOWN_CONTENT_TYPE',
             '    return content_type.partition(";")[0].lower() == _MARKDOWN_CONTENT_TYPE',
             "a content type padded with spaces matches nothing, so its Markdown is shown raw",
         ),
         Mutation(
-            changelog,
+            changelog.is_markdown_content_type,
             '    return content_type.partition(";")[0].strip().lower() == _MARKDOWN_CONTENT_TYPE',
             '    return content_type.partition(";")[0].strip() == _MARKDOWN_CONTENT_TYPE',
             "a content type spelled in another case matches nothing, so its Markdown is shown raw",
@@ -83,14 +83,14 @@ class VersionAnchorTest(unittest.TestCase):
                 self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), v1_change)
 
     _HASH_ANCHOR = Mutation(
-        changelog,
+        changelog._find_version_index,
         "            if _heading_level(lines, index):",
         '            if line.startswith("#"):',
         "a version named in a newer entry's prose anchors the changes reported for it",
     )
 
     _NO_UNDERLINE = Mutation(
-        changelog,
+        changelog._heading_level,
         "    return _underline_character(lines, index)",
         '    return ""',
         "a reStructuredText changelog reports the changes from where a newer entry's prose names the version",
@@ -105,7 +105,7 @@ class VersionAnchorTest(unittest.TestCase):
     )
 
     _FENCE_OVER_UNDERLINE = Mutation(
-        changelog,
+        changelog._underlines_the_line_above,
         "    return index > 0 and _heading_level(lines, index - 1) == lines[index][:1]",
         "    return False",
         "a changelog underlining its headings with backticks or tildes reports no changes at all, its file read "
@@ -129,14 +129,14 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), text)
 
     _NO_LOOKAHEAD = Mutation(
-        changelog,
+        changelog._names_version,
         '    return re.search(rf"{_VERSION_START}{re.escape(version)}(?!\\.?\\w)", line) is not None',
         '    return re.search(rf"{_VERSION_START}{re.escape(version)}", line) is not None',
         "a changelog naming a longer version that starts with this one reports the longer version's changes",
     )
 
     _NO_LOOKBEHIND = Mutation(
-        changelog,
+        changelog._names_version,
         '    return re.search(rf"{_VERSION_START}{re.escape(version)}(?!\\.?\\w)", line) is not None',
         '    return re.search(rf"{re.escape(version)}(?!\\.?\\w)", line) is not None',
         "a changelog naming a longer version that ends with this one reports the longer version's changes",
@@ -153,7 +153,7 @@ class VersionAnchorTest(unittest.TestCase):
                 self.assertEqual(get_version_changes_from_changelog(text, version), v1_change)
 
     _NO_SHORTER_HEADING = Mutation(
-        changelog,
+        changelog.get_version_changes_from_changelog,
         '    if start is None and version.endswith(".0") and version.count(".") > 1:\n'
         '        version = version.removesuffix(".0")\n'
         "        start = _find_version_index(all_lines, version)",
@@ -162,7 +162,7 @@ class VersionAnchorTest(unittest.TestCase):
     )
 
     _SHORTEN_ANY_VERSION = Mutation(
-        changelog,
+        changelog.get_version_changes_from_changelog,
         '    if start is None and version.endswith(".0") and version.count(".") > 1:\n'
         '        version = version.removesuffix(".0")',
         '    if start is None and version.count(".") > 1:\n        version = version.rsplit(".", 1)[0]',
@@ -178,7 +178,7 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.11.2"), "")
 
     _SHORTER_VERSION_NOT_REBOUND = Mutation(
-        changelog,
+        changelog.get_version_changes_from_changelog,
         '        version = version.removesuffix(".0")\n        start = _find_version_index(all_lines, version)',
         '        start = _find_version_index(all_lines, version.removesuffix(".0"))',
         "a changelog without heading markup naming a shorter version raises instead of reporting its changes",
@@ -193,7 +193,7 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.11.0"), v1_change)
 
     _SHORTER_HEADING_TRIED_FIRST = Mutation(
-        changelog,
+        changelog.get_version_changes_from_changelog,
         "    if start is None and",
         '    if _find_version_index(all_lines, version.removesuffix(".0")) is not None and',
         "a changelog heading both a version and the release one component shorter reports the shorter one's changes",
@@ -207,7 +207,7 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.11.0"), v1_change)
 
     _SHORTEN_TO_A_BARE_COMPONENT = Mutation(
-        changelog,
+        changelog.get_version_changes_from_changelog,
         '    if start is None and version.endswith(".0") and version.count(".") > 1:',
         '    if start is None and version.endswith(".0"):',
         "a changelog naming a two-component version nowhere reports the entry a stray digit sits in",
@@ -221,7 +221,7 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), "")
 
     _FENCED_ANCHOR = Mutation(
-        changelog,
+        changelog._find_version_index,
         "        if index not in fenced and _names_version(line, version):",
         "        if _names_version(line, version):",
         "a version heading inside a fenced code block anchors the changes reported for that version",
@@ -262,7 +262,7 @@ class SectionEndTest(unittest.TestCase):
                 self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _DEEPER_LEVEL = Mutation(
-        changelog,
+        changelog._ends_section,
         "    return heading_level == section_level or (",
         "    return heading_level.startswith(section_level) or (",
         "a Markdown entry ends at its first subsection, reporting the version's heading alone",
@@ -276,7 +276,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _NO_LONGER_VERSION_END = Mutation(
-        changelog,
+        changelog._next_version_index,
         "            or _heads_a_longer_version(heading_level, line, version)",
         "",
         "a changelog heading a longer version inside a version's section reports that longer version's entry as well",
@@ -307,7 +307,7 @@ class SectionEndTest(unittest.TestCase):
                 self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _EQUAL_LEVEL_ONLY = Mutation(
-        changelog,
+        changelog._ends_section,
         '    return heading_level == section_level or (heading_level.startswith("#") '
         "and len(heading_level) < len(section_level))",
         "    return heading_level == section_level",
@@ -328,7 +328,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _ANY_LEVEL = Mutation(
-        changelog,
+        changelog._ends_section,
         "    return heading_level == section_level or (",
         "    return bool(heading_level) or (",
         "a reStructuredText section ends at its first subsection, reporting the version's heading alone",
@@ -342,7 +342,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _NO_BLANK_GUARD = Mutation(
-        changelog,
+        changelog._heading_level,
         "    if not line.strip():",
         "    if False:",
         "a run of punctuation that underlines nothing cuts the entry short where it stands",
@@ -356,7 +356,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _STRIPPED_UNDERLINE = Mutation(
-        changelog,
+        changelog._underline_character,
         '    below = lines[index + 1].rstrip() if index + 1 < len(lines) else ""',
         '    below = lines[index + 1].strip() if index + 1 < len(lines) else ""',
         "a run of punctuation indented inside a literal block cuts the entry short above it",
@@ -370,14 +370,14 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _HEADING_PREFIX = Mutation(
-        changelog,
+        changelog._version_line_prefix,
         "    return None if _heading_level(lines, index) else line[: line.index(version)]",
         "    return line[: line.index(version)]",
         "a heading-anchored entry ends where it names another version in prose",
     )
 
     _PROSE_NAMING_A_LONGER_VERSION = Mutation(
-        changelog,
+        changelog._heads_a_longer_version,
         "    return bool(heading_level) and re.search",
         "    return re.search",
         "an entry ends where its prose names a longer version, reporting the lines above that alone",
@@ -391,7 +391,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _ANY_VERSION_LINE = Mutation(
-        changelog,
+        changelog._heads_another_version,
         "    if not line.startswith(prefix):\n        return False\n"
         "    other_version = _VERSION.match(line, len(prefix))",
         "    other_version = _VERSION.search(line)",
@@ -406,7 +406,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _NO_PREFIX = Mutation(
-        changelog,
+        changelog._version_line_prefix,
         "    return None if _heading_level(lines, index) else line[: line.index(version)]",
         '    return None if _heading_level(lines, index) else ""',
         "a changelog naming its versions with text around them runs on into the previous version",
@@ -423,7 +423,7 @@ class SectionEndTest(unittest.TestCase):
                 self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _NO_HEADING_BOUND = Mutation(
-        changelog,
+        changelog._ends_section,
         "        return bool(heading_level)",
         "        return False",
         "a version named in prose rather than in a heading reports the rest of the changelog as its changes",
@@ -457,7 +457,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _NO_SAME_VERSION_SKIP = Mutation(
-        changelog,
+        changelog._next_version_index,
         "        if index in fenced or _names_version(line, version):",
         "        if index in fenced:",
         "a changelog naming a version in two headings reports the first of them's entry alone",
@@ -471,7 +471,7 @@ class SectionEndTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), v1_change)
 
     _BOUNDARY_CONTAINMENT = Mutation(
-        changelog,
+        changelog._next_version_index,
         "        if index in fenced or _names_version(line, version):",
         "        if index in fenced or version in line:",
         "a changelog heading a release candidate below its release reports the candidate's entry as the release's",

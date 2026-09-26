@@ -42,7 +42,7 @@ class ReleaseTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            dependency,
+            dependency.Release._sortable_version,
             "        return Version(self.version) if is_valid(self.version) else LOWEST_VERSION",
             "        return LOWEST_VERSION",
             "releases published at one moment order by the order the source listed them in",

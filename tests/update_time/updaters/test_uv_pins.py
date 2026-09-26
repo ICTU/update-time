@@ -93,7 +93,7 @@ class StaleDependencyTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            toml_module,
+            toml_module.parse_document,
             "    except tomlkit.exceptions.TOMLKitError:",
             "    except tomlkit.exceptions.ParseError:",
             "TOML that tomlkit rejects with the base error aborts the run instead of leaving the file out",
@@ -130,14 +130,10 @@ class StaleDependencyTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            uv_module,
-            "    for declaration in declarations:\n"
-            "        release = DependencyVersion.unpinned("
-            "project(declaration.dependency, check_archival=archival_is_checked()))",
+            uv_module.pypi_projects,
+            "    for declaration in declarations:",
             "    steered = list(declarations)\n"
-            "    for declaration in [replace(one, marker=steered[0].marker) for one in steered]:\n"
-            "        release = DependencyVersion.unpinned("
-            "project(declaration.dependency, check_archival=archival_is_checked()))",
+            "    for declaration in [replace(one, marker=steered[0].marker) for one in steered]:",
             "one declaration's marker steers every dependency the file declares, rather than the one carrying it",
         )
     )
@@ -174,7 +170,7 @@ class StaleDependencyTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            delegated_module,
+            delegated_module._checked_references,
             "project_is_checked(projects, reference.dependency, staleness_threshold(reference.marker))",
             "project_is_checked(projects, reference.dependency, staleness_threshold(type(reference.marker)()))",
             "a reference's own threshold does not reach the gate, so a run with both checks off looks it up for none",
@@ -258,7 +254,7 @@ class YankedPinTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            uv_module,
+            uv_module.pinned_pypi_releases,
             "SteeredResolvedReference.from_reference(pin, release=DependencyVersion(pin.current_version, yank=yank))",
             "SteeredResolvedReference.from_reference("
             "pin, release=DependencyVersion(pin.current_version, yank=yank), "
@@ -424,7 +420,7 @@ class ArchivedDependencyTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            marker_reference_module,
+            marker_reference_module.SteeredReference.from_reference,
             '            resolved.setdefault("marker", reference.marker)',
             '            resolved.setdefault("marker", reference.marker if reference.current_version '
             "else type(reference.marker)())",
@@ -446,7 +442,7 @@ class ArchivedDependencyTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            delegated_module,
+            delegated_module._asks_its_source,
             "    return not reference.marker.holds_back_source_checks",
             "    return True",
             "a marker holding back every check PyPI answers still costs a request for the dependency it steers",
@@ -497,7 +493,7 @@ class ArchivedDependencyTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            uv_module,
+            uv_module.pypi_projects,
             "        yield SteeredResolvedReference.from_reference(declaration, release=release)",
             "        if release.project.newest is not None:\n"
             "            yield SteeredResolvedReference.from_reference(declaration, release=release)",
@@ -524,7 +520,7 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            delegated_module,
+            delegated_module._scopes_that_need_a_version,
             "        if directive.without_a_version is not None and (written := as_written.directive_for",
             "        if directive.scope is Scope.YANKED and (written := as_written.directive_for",
             "only the yank scope is reported as needing a version, so a `vulnerable` scope on a dependency that "
@@ -547,7 +543,7 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            delegated_module,
+            delegated_module._redundant_directives,
             "    yield from _redundant_cooldown_directive(reference)\n",
             "",
             "a cooldown of a dependency's own reads as applying to it, though uv takes one per run",
@@ -565,9 +561,9 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            delegated_module,
-            "        if written := as_written.directive_for(directive.scope):\n            yield written, reason",
-            "        if written := as_written.directive_for(directive.scope):\n            yield written, reason\n"
+            delegated_module._warning_scopes,
+            "            yield written, reason",
+            "            yield written, reason\n"
             "    if cooldown := as_written.cooldown_directive:\n        yield cooldown, reason",
             "the rule for a dependency no source reports on sweeps the cooldown in with the warnings, so one item "
             "is reported twice",
@@ -599,16 +595,16 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            delegated_module,
-            "    as_written = reference.marker.as_written\n    if as_written.ignores(Scope.UPDATE)",
-            "    as_written = reference.marker\n    if as_written.ignores(Scope.UPDATE)",
+            delegated_module._redundant_update_directives,
+            "    as_written = reference.marker.as_written",
+            "    as_written = reference.marker",
             "the update rules read the scopes a bare `ignore` holds back without naming, so they report an "
             "`ignore[update]` the reader never wrote",
         ),
         Mutation(
-            delegated_module,
-            "    if reference.current_version:\n        return\n    as_written = reference.marker.as_written",
-            "    if reference.current_version:\n        return\n    as_written = reference.marker",
+            delegated_module._scopes_that_need_a_version,
+            "    as_written = reference.marker.as_written",
+            "    as_written = reference.marker",
             "the scopes rule reads the scopes a bare `ignore` holds back without naming, so it reports scopes the "
             "reader never wrote",
         ),
@@ -639,7 +635,7 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            uv_module,
+            uv_module.no_pypi_release,
             "    return Reason.NO_PYPI_RELEASE if declaration.names_no_release else None",
             "    return None",
             "a dependency PyPI serves no release for is judged as if it did, so a warning scope on it is reported "
@@ -659,7 +655,7 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            delegated_module,
+            delegated_module._redundant_update_directives,
             "    if bound := as_written.version_bound_directive:",
             "    if as_written.ignores(Scope.UPDATE) and (bound := as_written.version_bound_directive):",
             "a bound goes on deciding nothing without a word, as it did before uv-resolved dependencies took a marker",
@@ -678,7 +674,7 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            delegated_module,
+            delegated_module._redundant_update_directives,
             "    if bound := as_written.version_bound_directive:",
             "    if not as_written.ignores(Scope.UPDATE) and (bound := as_written.version_bound_directive):",
             "the `ignore[update]` beside a bound hides it, so the directive that decides nothing goes unreported",
@@ -694,7 +690,7 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            delegated_module,
+            delegated_module._redundant_floating_pin_directive,
             "floating_pin_redundancy(reference.marker, floats=False)",
             "floating_pin_redundancy(reference.marker, floats=None)",
             "a Python dependency's pin reads as one that might float, so an `allow[floating-pin]` keeping nothing "
@@ -711,7 +707,7 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            delegated_module,
+            delegated_module._redundant_floating_pin_directive,
             "floating_pin_redundancy(reference.marker, floats=False)",
             "floating_pin_redundancy(reference.marker.as_written, floats=False)",
             "the rule reads the marker as written, so a bare `ignore` reads as holding the update back not, and its "
@@ -730,7 +726,7 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            delegated_module,
+            delegated_module.warn_about_redundant_directives,
             "    for reference in chain.from_iterable(declared):\n"
             "        for written, reason in _redundant_directives(reference, no_source_for(reference)):",
             "    references = list(chain.from_iterable(declared))\n"
@@ -754,7 +750,7 @@ class UvSourcedDependencyTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            uv_pins_module,
+            uv_pins_module.warn_about_pins,
             "    served = [uv.pypi_served(declarations) for declarations in declared]",
             "    served = [list(declarations) for declarations in declared]",
             "the checks are handed every declaration, so PyPI is asked about one it serves no release for",

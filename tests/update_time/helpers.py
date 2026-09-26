@@ -789,22 +789,39 @@ def maven_central_listing(*rows: str) -> str:
     return f'<html><body><pre>\n<a href="../">../</a>\n{"".join(rows)}</pre></body></html>'
 
 
-def maven_central_pom(scm: str = "", tag: str = "url") -> str:
+def maven_central_pom(scm: str = "", tag: str = "url", project_url: str = "", parent: str = "") -> str:
     """Return the pom beside a version, naming the source repository in the given child of its `<scm>` element.
 
     An scm given as nothing is a pom that does not declare an `<scm>` element at all, as guava's own pom does not.
+    A project URL is the project's own `<url>` element, where guava's pom names its repository instead. A parent,
+    given as `groupId:artifactId:version`, is the pom's `<parent>` element.
     """
+    url = f"  <url>{project_url}</url>\n" if project_url else ""
     declared = f"  <scm>\n    <{tag}>{scm}</{tag}>\n  </scm>\n" if scm else ""
-    return f'<project xmlns="http://maven.apache.org/POM/4.0.0">\n{declared}</project>\n'
+    return f'<project xmlns="http://maven.apache.org/POM/4.0.0">\n{_pom_parent(parent)}{url}{declared}</project>\n'
 
 
-def _maven_central_api(listing: str, pom: str | None, *, archived: bool) -> Mock:
+def _pom_parent(parent: str) -> str:
+    """Return the `<parent>` element naming the `groupId:artifactId:version` coordinates, or nothing for none.
+
+    A coordinate given as nothing is left out of the element.
+    """
+    if not parent:
+        return ""
+    values = dict(zip(("groupId", "artifactId", "version"), parent.split(":"), strict=True))
+    coordinates = "".join(f"<{tag}>{value}</{tag}>" for tag, value in values.items() if value)
+    return f"  <parent>{coordinates}</parent>\n"
+
+
+def _maven_central_api(listing: str, pom: str | None, *, archived: bool, releases: list | None) -> Mock:
     """Return a requests.get mock serving an artefact's listing, a version's pom, and the GitHub repository it names.
+
+    GitHub serves the given releases for every repository, and answers the releases request non-OK where none are given.
 
     Each request is answered by the URL it names, so a test needs no expectation about the order they are made in.
     A pom given as None is one the repository does not serve.
     """
-    github = _github_api(archived=archived)
+    github = _github_api(releases, archived=archived)
 
     def serve(url: str, **kwargs: object) -> Mock:
         if urlparse(url).hostname == "api.github.com":
@@ -818,9 +835,11 @@ def _maven_central_api(listing: str, pom: str | None, *, archived: bool) -> Mock
     return Mock(side_effect=serve)
 
 
-def patch_maven_central(listing: str, pom: str | None, *, archived: bool) -> _patch:
+def patch_maven_central(
+    listing: str, pom: str | None, *, archived: bool = False, releases: list | None = None
+) -> _patch:
     """Patch requests.get to serve a Maven artefact's listing and pom (see `_maven_central_api`)."""
-    return patch("requests.get", _maven_central_api(listing, pom, archived=archived))
+    return patch("requests.get", _maven_central_api(listing, pom, archived=archived, releases=releases))
 
 
 def jsdelivr_versions(*version_strings: str) -> Mock:

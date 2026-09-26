@@ -103,7 +103,7 @@ class TagGetterExcludingTest(RegistryRequestsMixin, unittest.TestCase):
 
     @kills(
         Mutation(
-            oci,
+            oci.tag_getter_excluding,
             '        as_written = f"{pinned.name}{tag_of(pinned.version)}"\n',
             '        as_written = f"{pinned.name}:{pinned.version}"\n',
             "a reference naming no tag is matched with an empty tag, so it is looked up on a registry",
@@ -182,7 +182,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            oci,
+            oci.Tag.suffix_label,
             "        return (self._suffix_tag.prefix, self._suffix_tag.suffix)",
             '        return (self._suffix_tag.prefix, "")',
             "a suffix's remainder is dropped from its label, so a slim reference drifts onto the fat image",
@@ -302,7 +302,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            oci,
+            oci.Tag._is_dated_snapshot,
             "        try:\n            date.fromisoformat(str(release[0]))\n        except ValueError:\n"
             "            return False\n        return True",
             "        return True",
@@ -382,7 +382,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            oci,
+            oci._eligible_tag,
             "    if latest is None or not latest.is_eligible(cooldown_days):",
             "    if latest is None or not (latest.is_eligible(cooldown_days) or latest._is_dated_snapshot):",
             "a dated snapshot is adopted however freshly it was pushed",
@@ -591,7 +591,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            docker_hub,
+            docker_hub.tag_digests,
             "    return digests, not url",
             "    return digests, True",
             "a tag the listing was cut short before reaching is reported as one the registry does not list",
@@ -608,7 +608,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            oci,
+            oci._unpinned_floating_tag,
             "    served = reason not in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)",
             "    served = reason not in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST, "
             "FloatingPin.NOT_AMONG_EXAMINED)",
@@ -685,13 +685,13 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            oci,
+            oci._resolved_tag,
             "        return DependencyVersion(version=current.name, sha=digest, served=bool(digest))",
             "        return DependencyVersion(version=current.name, served=bool(digest))",
             "a tag naming neither a version nor a channel is left without the digest that would pin it",
         ),
         Mutation(
-            oci,
+            oci._resolved_tag,
             "        return DependencyVersion(version=current.name, sha=digest, served=bool(digest))",
             "        return DependencyVersion(version=current.name, sha=digest, served=False)",
             "a tag naming neither a version nor a channel is dated by no release, whatever the registry serves",
@@ -712,7 +712,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            oci,
+            oci._resolved_tag,
             "        return DependencyVersion(version=current.name, sha=digest, served=bool(digest))",
             "        return DependencyVersion(version=current.name, sha=digest)",
             "a tag the registry serves no manifest for is dated by the image's newest release",
@@ -750,7 +750,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            oci,
+            oci._unpinned_floating_tag,
             "    served = reason not in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)",
             "    served = reason is not FloatingPin.NO_MANIFEST",
             "a floating tag the registry does not list is dated by the image's newest release",
@@ -775,7 +775,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            oci,
+            oci._walked_floating_tag,
             """    for candidate in ordered[:_MAX_FLOATING_TAG_PROBES]:
         if _manifest_digest(image, candidate.name) == digest:
             return DependencyVersion(version=candidate.name, sha=digest, floating=FloatingPin.RESOLVED)""",
@@ -801,7 +801,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            oci,
+            oci._alias_rank,
             "    carried = sum(_carries(alias, label) for label in labels)",
             "    carried = 0",
             "the walk ignores the floating tag's words, so it lands on the shorter alias it ties with",

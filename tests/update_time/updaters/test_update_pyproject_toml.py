@@ -155,7 +155,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            uv,
+            uv._update_dependencies,
             "_with_reported_markers(pyproject_toml_format.declared_dependencies(file), log)",
             "_with_reported_markers("
             "pyproject_toml_format.declared_dependencies(file) if lines_with_updates else [], log)",
@@ -173,7 +173,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pyproject_toml,
+            pyproject_toml.Declaration.updatable,
             "        return not (self.pins_a_version and self.marker.ignores(Scope.UPDATE))",
             "        return not self.marker.ignores(Scope.UPDATE)",
             "an `ignore[update]` holds back a dependency that pins no version, whose version uv resolves whatever "
@@ -192,7 +192,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            uv,
+            uv._reported_marker,
             "        lambda: log.ignored(*reported) if declaration.pins_a_version else None,",
             "        lambda: log.ignored(*reported),",
             "a dependency that pins no version reads as one whose update was held back, though the marker froze no "
@@ -211,7 +211,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            uv,
+            uv._update_dependencies,
             "if declared else [Location(file.path)]",
             "or [Location(file.path)]",
             "a package whose every declaration is held back has its new version reported at the file, and costs a "
@@ -231,7 +231,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            uv,
+            uv._update_dependencies,
             "if declaration.updatable",
             "if all(other.updatable for other in declared)",
             "a marker freezes the name rather than the declaration, so another declaration of that name is frozen too",
@@ -247,7 +247,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            uv,
+            uv._with_reported_markers,
             "replace(declaration, marker=_reported_marker(declaration, log))",
             "(_reported_marker(declaration, log), declaration)[1]",
             "the marker a report settles on is discarded, so an unreadable item warns and the pin it may have been "
@@ -269,7 +269,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            uv,
+            uv._update_dependencies,
             "if declaration.updatable",
             "if declaration.updatable and not any(one.marker.invalid_item for one in declared)",
             "an unreadable item freezes every declaration of its name rather than the one carrying it",
@@ -287,14 +287,14 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            uv,
+            uv._reported_marker,
             "log.report_inverted_items(declaration, declaration.marker)",
             "log.report_inverted_items(declaration, type(declaration.marker)())",
             "the declaration's own marker never reaches the warning, so an item comparing the wrong way is left "
             "unreported and reads as understood",
         ),
         Mutation(
-            uv,
+            uv._with_reported_markers,
             "[replace(declaration, marker=_reported_marker(declaration, log)) for declaration in declarations]",
             "[replace(declaration, marker=_reported_marker(declaration, log)) "
             "if declaration.current_version else declaration for declaration in declarations]",
@@ -321,7 +321,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            uv,
+            uv._reported_marker,
             "return acted_on",
             "return acted_on.frozen if any(threshold.inverted_item for threshold in "
             "(declaration.marker.stale, declaration.marker.cooldown, declaration.marker.vulnerable)) else acted_on",

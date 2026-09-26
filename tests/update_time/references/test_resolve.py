@@ -291,7 +291,7 @@ class LatestVersionTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            resolve,
+            resolve._warn_if_the_floating_pin_is_redundant,
             "    floats = None if latest is None else latest.floating is not None",
             '    floats = None if latest is None else latest.floating == "resolved"',
             "a floating pin the source could not resolve is reported as redundant, although its tag still floats",
@@ -314,7 +314,7 @@ class LatestVersionTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            resolve,
+            resolve.floating_pin_redundancy,
             "if not marker.allows(Scope.FLOATING_PIN):",
             "if not marker.allows(Scope.FLOATING_PIN) and Scope.FLOATING_PIN not in marker.written_scopes:",
             "the explicit default is reported as redundant, as if it kept the pin floating",
@@ -386,7 +386,7 @@ class ReportProjectChecksTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            resolve,
+            resolve.report_project_checks,
             "    if not project_is_checked(get_project, reference.dependency, threshold):\n        return\n",
             "",
             "a source is asked about a reference no check needs an answer for, so the run pays for the request",
@@ -403,7 +403,7 @@ class ReportProjectChecksTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            resolve,
+            resolve.project_is_checked,
             "    return threshold != NO_STALENESS_CHECK or "
             "(archival_is_checked() and reports_archival(source, dependency))",
             "    return threshold != NO_STALENESS_CHECK or reports_archival(source, dependency)",

@@ -13,15 +13,22 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.archival import archival_reporting
 from update_time.domain.cooldown import within_cooldown
-from update_time.domain.dependency import Archival, Project, Release
+from update_time.domain.dependency import NO_CHANGES, Archival, Changes, Project, Release
+from update_time.formats import xml
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.manifests import pom_xml as pom_xml_format
 from update_time.sources.github import archival as github_archival
-from update_time.sources.github import github_owner_and_repository
+from update_time.sources.github import (
+    changes_from_changelog_file,
+    changes_from_tagged_release,
+    github_owner_and_repository,
+    release_tags,
+)
 
 if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyName, VersionString
+    from update_time.formats.xml import XmlElement
 
 _LOG = get_logger("maven central")
 
@@ -39,59 +46,127 @@ _PUBLISHED_FORMAT = "%Y-%m-%d %H:%M"
 def project(artefact: DependencyName, *, check_archival: bool) -> Project:
     """Return the artefact's newest release on the repository, with the archival GitHub declares for its source."""
     newest = _newest_release(artefact)
-    return Project(newest=newest, archival=_archival(artefact, newest) if check_archival else Archival())
+    return Project(newest=newest, archival=_archival(artefact) if check_archival else Archival())
 
 
-def _archival(artefact: DependencyName, newest: Release | None) -> Archival:
-    """Return what GitHub declares about the repository the artefact's pom names.
-
-    The pom read is the one beside the newest release, since archival is a fact about the project. A project that
-    moved to GitHub names the repository in its later poms alone. Update-time can read a pom only for an artefact it
-    found a dated version of.
-    """
-    if newest is None:
-        return Archival()
-    owner, repository = _scm_repository(artefact, newest.version)
+def _archival(artefact: DependencyName) -> Archival:
+    """Return what GitHub declares about the artefact's repository."""
+    owner, repository = _repository(artefact)
     if not repository:
         return Archival()
     return github_archival(owner, repository, check_archival=True)
 
 
-# What Update-time reads for a pom that does not name a repository on GitHub.
+def get_changes(artefact: DependencyName, version: VersionString) -> Changes:
+    """Return the version's changes, from the release notes the artefact's GitHub repository published for it.
+
+    The changes come from the repository's changelog file when it did not publish a release for the version.
+    """
+    owner, repository = _repository(artefact)
+    tags = _release_tags(artefact, repository, version)
+    return changes_from_tagged_release(owner, repository, tags) or _changes_from_changelog_file(
+        owner, repository, version
+    )
+
+
+# The qualifier Maven appends to a version, such as `-jre` or `.Final`, which a repository may leave out of its tags.
+_QUALIFIER = re.compile(r"[.-][A-Za-z].*$")
+# A Maven project may prefix a version's tag with one of these instead of a `v`, as JUnit tags `r6.1.3`.
+_VERSION_PREFIXES = ("r", "version-", "REL")
+
+
+def _spellings(version: VersionString) -> tuple[str, str]:
+    """Return the spellings a repository may give the version: as Maven spells it, and without its qualifier."""
+    return (version, _QUALIFIER.sub("", version))
+
+
+def _release_tags(artefact: DependencyName, repository: str, version: VersionString) -> list[str]:
+    """Return the tags the artefact's repository may release the version under, the version as Maven spells it first.
+
+    A repository may tag a release by the artifact's name, without its group, or by its own name.
+    """
+    _group_id, artifact_id = pom_xml_format.coordinates(artefact)
+    tags = (
+        tag
+        for spelling in _spellings(version)
+        for tag in [
+            *release_tags(artifact_id, spelling, repository),
+            *(f"{prefix}{spelling}" for prefix in _VERSION_PREFIXES),
+        ]
+    )
+    return list(dict.fromkeys(tags))
+
+
+def _changes_from_changelog_file(owner: str, repository: str, version: VersionString) -> Changes:
+    """Return the version's changes from the repository's changelog file, the version as Maven spells it first."""
+    for spelling in _spellings(version):
+        if changes := changes_from_changelog_file(owner, repository, spelling):
+            return changes
+    return NO_CHANGES
+
+
+# What Update-time reads for an artefact where it does not find a repository on GitHub.
 _NO_REPOSITORY = ("", "")
 
 
-def _scm_repository(artefact: DependencyName, version: VersionString) -> tuple[str, str]:
-    """Return the owner and repository the version's pom names in its `<scm>`, empty where it names none on GitHub."""
-    document = _pom(artefact, version)
-    if document is None:
+def _repository(artefact: DependencyName) -> tuple[str, str]:
+    """Return the owner and repository of the artefact's project, read from the pom beside its newest release.
+
+    Where the project's source lives is a fact about the project rather than about a version. A project that moved to
+    GitHub names the repository in its later poms alone. Update-time can read a pom only for an artefact it found a
+    dated version of.
+    """
+    newest = _newest_release(artefact)
+    return _NO_REPOSITORY if newest is None else _pom_repository(artefact, newest.version)
+
+
+def _pom_repository(artefact: DependencyName, version: VersionString) -> tuple[str, str]:
+    """Return the owner and repository the version's pom names, or else the one its parent pom names."""
+    pom = _pom(artefact, version)
+    if pom is None:
         return _NO_REPOSITORY
-    scm_urls = pom_xml_format.scm_urls(document)
-    if scm_urls is None:
-        _LOG.invalid_pom(_pom_url(artefact, version))
+    named = _named_repository(pom)
+    if named != _NO_REPOSITORY:
+        return named
+    return _named_repository(_parent_pom(pom))
+
+
+def _parent_pom(pom: XmlElement) -> XmlElement | None:
+    """Return the parent pom to read the repository from, or None where the pom's `<scm>` names a URL of its own."""
+    if pom_xml_format.scm_urls(pom):
+        return None
+    parent = pom_xml_format.parent(pom)
+    return None if parent is None else _pom(parent.name, parent.version)
+
+
+def _named_repository(pom: XmlElement | None) -> tuple[str, str]:
+    """Return the owner and repository the pom names, empty where it names none on GitHub."""
+    if pom is None:
         return _NO_REPOSITORY
-    for scm_url in scm_urls:
-        owner, repository = github_owner_and_repository(scm_url)
+    for url in pom_xml_format.source_urls(pom):
+        owner, repository = github_owner_and_repository(url)
         if owner and repository:
             return owner, repository
     return _NO_REPOSITORY
 
 
 def _pom_url(artefact: DependencyName, version: VersionString) -> str:
-    """Return the URL of the pom the repository serves beside the artefact's version.
-
-    The repository names a pom after the artefact, which its directory is named after too.
-    """
-    artefact_url = _artefact_url(artefact)
-    artifact_id = artefact_url.rpartition("/")[2]
-    return f"{artefact_url}/{version}/{artifact_id}-{version}.pom"
+    """Return the URL of the pom the repository serves beside the artefact's version, named after the artifact."""
+    _group_id, artifact_id = pom_xml_format.coordinates(artefact)
+    return f"{_artefact_url(artefact)}/{version}/{artifact_id}-{version}.pom"
 
 
 @cache
-def _pom(artefact: DependencyName, version: VersionString) -> bytes | None:
-    """Return the pom the repository serves beside the artefact's version, or None where fetching it failed."""
-    response = fetch(_pom_url(artefact, version), _LOG)
-    return None if response is None else response.content
+def _pom(artefact: DependencyName, version: VersionString) -> XmlElement | None:
+    """Return the pom served beside the artefact's version, or None where it is unserved or unparsable."""
+    url = _pom_url(artefact, version)
+    response = fetch(url, _LOG)
+    if response is None:
+        return None
+    pom = xml.parse(response.content)
+    if pom is None:
+        _LOG.invalid_pom(url)
+    return pom
 
 
 def _newest_release(artefact: DependencyName) -> Release | None:
@@ -117,7 +192,7 @@ def _artefact_url(artefact: DependencyName) -> str:
 
     Maven names an artefact `groupId:artifactId`, and serves it under the group's dots spelled as directories.
     """
-    group_id, _, artifact_id = artefact.partition(":")
+    group_id, artifact_id = pom_xml_format.coordinates(artefact)
     return f"{_MAVEN_CENTRAL}/{group_id.replace('.', '/')}/{artifact_id}"
 
 

@@ -214,7 +214,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            resolve_module,
+            resolve_module.report_project,
             "    log.report_archival(resolved, resolved.marker)",
             "    if staleness_threshold(resolved.marker):\n        log.report_archival(resolved, resolved.marker)",
             "the archival check sits behind the staleness gate, so switching staleness off silences archival too",
@@ -276,7 +276,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pypi_module,
+            pypi_module._archival,
             "    if not check_archival:\n        return Archival()\n",
             "",
             "the source is told not to check for archival but answers anyway, so an archived project is warned "
@@ -682,9 +682,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            log_module,
-            "            reference.location,\n            advisory=vulnerability.advisory,",
-            "            reference.location,\n"
+            log_module.Logger.ignored_vulnerability,
+            "            advisory=vulnerability.advisory,",
             "            advisory=next(iter(marker.ignored_advisories), vulnerability.advisory),",
             "the line names the identifier the marker spelled rather than the one OSV answered under",
         )
@@ -731,7 +730,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            vulnerability_module,
+            vulnerability_module._warn_about_vulnerable_versions,
             "        for vulnerability in vulnerabilities:",
             "        for vulnerability in (vulnerabilities[:1] "
             "if reference.marker.ignores(Scope.VULNERABLE) else vulnerabilities):",
@@ -813,7 +812,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            vulnerability_module,
+            vulnerability_module._report,
             "        logger.globally_ignored_vulnerability(reference, vulnerability, silenced_by)",
             "        logger.globally_ignored_vulnerability(reference, vulnerability, "
             "frozenset({vulnerability.advisory}))",

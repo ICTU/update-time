@@ -46,7 +46,7 @@ class ApiHeadersTest(LoggingTestCase):
     @patch_environ({"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
     @kills(
         Mutation(
-            docker_hub,
+            docker_hub.api_headers,
             'response.json().get("access_token")',
             'response.json()["access_token"]',
             "a Docker Hub token response carrying no token ends the run with a traceback",

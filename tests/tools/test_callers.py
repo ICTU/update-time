@@ -22,7 +22,7 @@ class CallSitesTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            callers_module,
+            callers_module._calls_name,
             '    return ast.unparse(call.func).rsplit(".", 1)[-1] == name',
             "    return ast.unparse(call.func) == name",
             "a call made on an object is missed, so the count comes out short",
@@ -41,7 +41,7 @@ class CallSitesTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            callers_module,
+            callers_module.call_sites,
             '    return [f"{path}:{call.lineno}: {ast.unparse(call)}"',
             '    return [f"{path}:{call.end_lineno}: {ast.unparse(call)}"',
             "a call is reported at the line its arguments end on, so the report points past the call it names",
@@ -53,7 +53,7 @@ class CallSitesTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            callers_module,
+            callers_module._calls,
             "    return [node for node in ast.walk(_parsed(path)) "
             "if isinstance(node, ast.Call) and _calls_name(node, name)]",
             '    return [node for node in ast.walk(_parsed(path)) if getattr(node, "name", None) == name '
@@ -61,7 +61,7 @@ class CallSitesTest(unittest.TestCase):
             "the line defining the name counts as a call site, which is the miscount a grep makes",
         ),
         Mutation(
-            callers_module,
+            callers_module._calls_name,
             '    return ast.unparse(call.func).rsplit(".", 1)[-1] == name',
             '    return name in ast.unparse(call.func).split(".")',
             "a call made on the name counts as a call to it, so a method call inflates the count",
@@ -112,7 +112,7 @@ class MainTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            callers_module,
+            callers_module.main,
             "        undefined = not sites and not _defined(name, files)",
             "        undefined = not sites",
             "a name nothing calls fails the run, so a name nobody uses cannot be told from a misspelled one",
