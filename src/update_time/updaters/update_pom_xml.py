@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import DependencyVersion
+from update_time.domain.dependency import NO_CHANGES, DependencyVersion
 from update_time.domain.file_type import POM_XML
 from update_time.domain.reference import Reference
 from update_time.formats import xml
@@ -64,18 +64,20 @@ def _warn_about_vulnerabilities(declared: list[Reference]) -> None:
     steered = [
         SteeredReference.from_reference(declaration)
         for declaration in declared
-        if pom_xml_format.fully_resolved(declaration)
+        if pom_xml_format.fully_resolved(declaration.pinned)
     ]
     warn_about_vulnerable_dependencies([steered], Ecosystem.MAVEN, _LOG)
 
 
 def _report_new_versions(before: list[Reference], after: list[Reference]) -> None:
-    """Report each dependency whose version differs between the two readings."""
+    """Report each dependency whose version differs between the two readings, with the new version's changes."""
     for old, new in zip(before, after, strict=True):
         if old.current_version == new.current_version:
             continue
         updated = Reference(new.dependency, old.current_version, new.location)
-        _LOG.new_version(updated, DependencyVersion(new.current_version))
+        resolved = pom_xml_format.fully_resolved(new.pinned)
+        changes = maven_central.get_changes(new.dependency, new.current_version) if resolved else NO_CHANGES
+        _LOG.new_version(updated, DependencyVersion(new.current_version, changes))
 
 
 def main() -> None:  # pragma: no cover

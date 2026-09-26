@@ -290,7 +290,7 @@ check-readme-structure:
 # Check the readability of the prose in the code and the documentation.
 [private]
 check-readability: install-nltk-data
-    {{ start_capture() }} {{ python_m }} tools.readability_check --check-whitelist {{ code }} {{ prose }} {{ end_capture("check-readability") }}
+    {{ start_capture() }} {{ python_m }} tools.readability_check --check-whitelist {{ prose_whitelist }} {{ code }} {{ prose }} {{ end_capture("check-readability") }}
 
 # Run the quality checks. Run one by name for a quicker loop, e.g. `just ruff` or `just mypy`.
 [parallel]
@@ -352,10 +352,11 @@ fix: install-py-dependencies
 
 # Regenerate the whitelists the checks read: the dead code vulture passes over, and the sentences the prose check passes over.
 update-whitelists: install-py-dependencies
-    # Every finding the checks report is written out, the ones this run introduced included, so read the diff.
+    # Vulture writes out every finding, the ones this run introduced included, so read the diff. The prose whitelist
+    # only drops the sentences the prose no longer holds, so a sentence that fails the check has to be rewritten.
     # Vulture returns exit code 3 when there is dead code, ignore it when writing the whitelist:
     {{ vulture }} --make-whitelist {{ code }} > {{ vulture_whitelist }} || true
-    {{ python_m }} tools.readability_check --make-whitelist {{ code }} {{ prose }} > {{ prose_whitelist }}
+    {{ python_m }} tools.readability_check --make-whitelist {{ prose_whitelist }} {{ code }} {{ prose }}
 
 # === Install dependencies ===
 

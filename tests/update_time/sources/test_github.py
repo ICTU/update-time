@@ -24,6 +24,7 @@ from update_time.sources.github import (
     changes_from_release,
     github_owner_and_repository,
     github_to_raw,
+    release_tags,
 )
 
 from tests.helpers import mock_response, patch_environ, patch_get
@@ -102,6 +103,18 @@ class GitHubOwnerAndRepositoryTest(unittest.TestCase):
     def test_github_url(self):
         """Test that a GitHub URL returns an owner and repository."""
         self.assert_owner_and_repository(("ICTU", "quality-time"), "https://github.com/ICTU/quality-time")
+
+    @kills(
+        Mutation(
+            github.github_owner_and_repository,
+            "        if len(path_parts) > 1 and path_parts[0] != _GITHUB_SPONSORS_PATH:",
+            "        if len(path_parts) > 1:",
+            "a GitHub sponsors page is read as the repository `sponsors/<owner>`, which GitHub is then asked about",
+        )
+    )
+    def test_github_sponsors_url(self):
+        """Test that a GitHub sponsors URL returns an empty owner and repository."""
+        self.assert_owner_and_repository(("", ""), "https://github.com/sponsors/ICTU")
 
     def test_github_url_without_repo(self):
         """Test that a GitHub URL returns an empty owner and repository if the repository is missing."""
@@ -472,7 +485,7 @@ class GetReleaseTest(LoggingTestCase):
         """Assert that each case's package and version resolve, in the repository, to the release its tag names."""
         for package, version, tag in cases:
             with self.subTest(tag=tag):
-                self.assert_release(_get_release("owner", repository, package, version), tag, "Changelog")
+                self.assert_release(_get_release("owner", repository, release_tags(package, version)), tag, "Changelog")
 
     @patch_get(
         [
@@ -501,18 +514,16 @@ class GetReleaseTest(LoggingTestCase):
             raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
         ),
         Mutation(
-            github,
-            'for name in _package_names(package) for joiner in ("-v", "-", "@", "/")',
-            'for name in _package_names(package) for joiner in ("-v", "-", "@", "/") '
-            'if name == package or joiner == "@"',
+            github.release_tags,
+            'for name in names for joiner in ("-v", "-", "@", "/")',
+            'for name in names for joiner in ("-v", "-", "@", "/") if name == package or joiner == "@"',
             "a monorepo prefixing the unscoped name with a dash has no changelog reported",
             raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
         ),
         Mutation(
-            github,
-            'for name in _package_names(package) for joiner in ("-v", "-", "@", "/")',
-            'for name in _package_names(package) for joiner in ("-v", "-", "@", "/") '
-            'if name == package or joiner != "/"',
+            github.release_tags,
+            'for name in names for joiner in ("-v", "-", "@", "/")',
+            'for name in names for joiner in ("-v", "-", "@", "/") if name == package or joiner != "/"',
             "a monorepo joining the unscoped name and the version with a slash has no changelog reported",
             raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
         ),
@@ -552,14 +563,14 @@ class GetReleaseTest(LoggingTestCase):
     )
     def test_scoped_tag_takes_precedence(self):
         """Test that the tag carrying the scope wins over the one spelling the same version without it."""
-        release = _get_release("emotion-js", "emotion", "@emotion/react", "11.14.0")
+        release = _get_release("emotion-js", "emotion", release_tags("@emotion/react", "11.14.0"))
         self.assert_release(release, "@emotion/react@11.14.0", "Scoped")
 
     @kills(
         Mutation(
-            github,
-            'for tag in [*package_tags, f"v{version}", version]:',
-            'for tag in [*package_tags[:1], f"v{version}", version, *package_tags[1:]]:',
+            github.release_tags,
+            'return [*package_tags, f"v{version}", version]',
+            'return [*package_tags[:1], f"v{version}", version, *package_tags[1:]]',
             "a package whose repository also tags the version alone has the wrong release reported for it",
         ),
     )
@@ -597,7 +608,9 @@ class GetReleaseTest(LoggingTestCase):
     )
     def test_monorepo_tag_takes_precedence(self):
         """Test that the package-prefixed tag with a v wins over the other spellings of the same version."""
-        self.assert_release(_get_release("puppeteer", "monorepo", "puppeteer-core", "25.0.4"), "puppeteer-core-v25.0.4")
+        self.assert_release(
+            _get_release("puppeteer", "monorepo", release_tags("puppeteer-core", "25.0.4")), "puppeteer-core-v25.0.4"
+        )
 
     @patch_get([github_release_json("v1.2.3", body="Changelog"), github_release_json("4.5.6", body="Changelog")])
     def test_version_tag_match(self):
@@ -608,20 +621,20 @@ class GetReleaseTest(LoggingTestCase):
     @patch_get([github_release_json("v1.0")])
     def test_no_matching_tag(self):
         """Test that None is returned when no tag matches the requested version."""
-        self.assertIsNone(_get_release("owner", "repo with non matching tag", "any", "1.1"))
+        self.assertIsNone(_get_release("owner", "repo with non matching tag", release_tags("any", "1.1")))
 
     @patch("requests.get")
     def test_repo_without_releases(self, mock_get: Mock):
         """Test that a non-OK response yields no release, and is reported as a failed fetch."""
         mock_get.return_value = mock_response([], ok=False)
-        self.assertIsNone(_get_release("owner", "repo without releases for get_release", "any", "1.0"))
+        self.assertIsNone(_get_release("owner", "repo without releases for get_release", release_tags("any", "1.0")))
         self.assert_could_not_fetch_logged(mock_get().url, mock_get().status_code)
 
     @patch("requests.get")
     def test_timeout(self, mock_get: Mock):
         """Test that a timed-out request yields no release, and is reported as a timeout."""
         mock_get.side_effect = requests.exceptions.Timeout
-        self.assertIsNone(_get_release("owner", "repo without releases for get_release", "any", "1.0"))
+        self.assertIsNone(_get_release("owner", "repo without releases for get_release", release_tags("any", "1.0")))
         url = "https://api.github.com/repos/owner/repo without releases for get_release/releases?per_page=100"
         self.assert_logged(Logger._MESSAGE_TIMEOUT, url=url)
 

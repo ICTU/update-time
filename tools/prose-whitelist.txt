@@ -14,7 +14,6 @@ A URL the mapping doesn't cover raises a KeyError, so a request the test did not
 A URL whose attribute dictionary declares no `integrity` entry gains one, so the browser verifies the script the CDN serves before running it.
 A `*.py` file without such a block stays untouched and never invokes uv.
 A `.python-version` entry and a Node engine both follow the base image in the project's Dockerfile, so the runtime a project develops against and the runtime it ships stay in step.
-A `github.com/sponsors/…` URL parses as the repository `sponsors/<owner>`, which does not exist, so it is reported as no repository rather than queried.
 A `node` version another section declares — a Volta pin, a dependency of that name — is neither taken for the engine nor steered by the engine's marker.
 A `package.json` dependency takes no marker, because npm and pnpm update it rather than Update-time rewriting its lines.
 A `package.json` dependency takes no marker.
@@ -318,7 +317,6 @@ Return the index of the line heading the next version's section, or None when no
 Return the level the vector's base score bands into, or no level when the vector cannot be scored.
 Return the marker a risk level bracket item expresses, or None when the item names no risk level.
 Return the marker an advisory bracket item expresses, or None when the item names no advisory.
-Return the owner and repository the URL points at, or empty strings when it points at no repository.
 Return the public module-level constants that no module other than the one assigning them refers to.
 Return the public module-level definitions that no module other than the defining one refers to.
 Return the public names each module yields that no module other than the one defining them refers to.
@@ -432,7 +430,6 @@ Test that a non-OK response yields no release, and is reported as a failed fetch
 Test that a package whose description holds the changes costs no root listing, and reports those.
 Test that a package whose release answers costs no root listing, and reports the release's changes.
 Test that a package.json whose `engines` section declares no Node version is skipped.
-Test that a pom Maven changed nothing in gets no new version reported, though Maven ran over it.
 Test that a pom declaring no release raises an error naming the file, rather than one about a lookup.
 Test that a pom whose XML does not parse declares no property, rather than ending the run.
 Test that a property Maven advanced is reported for no dependency when no `<version>` names it.
@@ -490,7 +487,6 @@ Test that an advisory whose CVSS vector cannot be scored is read at no level, an
 Test that an anonymous registry token is requested (no basic auth) when no credentials are set.
 Test that an archived project is warned about although the index lists no release for it.
 Test that an artefact whose listing dates no version has no pom to read, so nothing follows the listing.
-Test that an artefact whose pom declares no `<scm>` element leaves GitHub unasked.
 Test that an entry named like a changelog with no file to fetch is passed over without a request.
 Test that an excluded reference's versions carry no publication date, so a cooldown measures against none.
 Test that an inline `# update-time: ignore` comment leaves the action untouched, looking up no version.
@@ -841,7 +837,6 @@ a service declared with no body is read as a mapping, ending the run.
 a service has no body.
 a snapshot's label is read as no part of its tag, so the pin loses it and crosses to another line.
 a source is asked about a reference no check needs an answer for, so the run pays for the request.
-a sponsors page carrying the package's name is read as its repository, so the package reports no changes.
 a tag naming neither a version nor a channel is dated by no release, whatever the registry serves.
 a tag the listing was cut short before reaching is reported as one the registry does not list.
 a tag the registry serves no manifest for is dated by the image's newest release.

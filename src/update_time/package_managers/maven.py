@@ -117,7 +117,7 @@ def _rule(artefact: DependencyName, versions: tuple[str, ...]) -> str:
 
     An `ignoreVersion` without a `type` attribute matches a version exactly, so a version is never read as a pattern.
     """
-    group_id, _, artifact_id = artefact.partition(":")
+    group_id, artifact_id = pom_xml_format.coordinates(artefact)
     ignored = "".join(f"        <ignoreVersion>{version}</ignoreVersion>\n" for version in versions)
     return (
         f'    <rule groupId="{group_id}" artifactId="{artifact_id}">\n'

@@ -1073,7 +1073,7 @@ Update-time holds nothing back for two kinds of dependency. Maven Central does n
 
 Update-time checks each dependency against the newest release Maven Central lists for it. The pom's plugins are checked too.
 
-Update-time checks a dependency or plugin that the pom declares a `<version>` for. It asks Maven Central about an artefact by that artefact's `groupId:artifactId` coordinates alone, so it still checks a dependency whose `<version>` names a property its parent declares. Update-time reads each pom on its own, however, so it does not check a dependency whose group or artifact names a property its parent declares.
+Update-time checks a dependency or plugin that the pom declares a `<version>` for. It asks Maven Central about an artefact by that artefact's `groupId:artifactId` coordinates alone, so it still checks a dependency whose `<version>` names a property its parent declares. It does not check a dependency whose group or artifact names a property its parent declares, since Update-time does not resolve the properties a parent pom declares.
 
 Maven Central lists nothing for an artefact a project resolves from a mirror or a private repository. Update-time then has nothing to measure staleness against.
 
@@ -1085,19 +1085,25 @@ Maven Central does not report a withdrawal, so Update-time never warns that a Ma
 
 Update-time checks the pom's dependencies against OSV's Maven advisories. The version checked is the one the pom holds once Maven has run, so a vulnerability the run updated away from is never reported.
 
-Update-time does not check a dependency when its group, artifact, or version names a property its parent declares. Update-time reads each pom on its own, so it leaves a property a parent declares as the pom wrote it. OSV matches an advisory to `groupId:artifactId` coordinates and a version, and a property name is neither of those.
+Update-time does not check a dependency for vulnerabilities at all when its group, artifact, or version names a property its parent declares. Update-time does not resolve the properties a parent pom declares. OSV matches an advisory to `groupId:artifactId` coordinates and a version, and a property name is neither of those. Update-time does not check a dependency whose `<version>` element is empty either, since OSV needs a version to match an advisory to.
 
-Silencing this warning for a single dependency would need a marker, and Update-time does not yet support markers for Maven dependencies. Pass `--ignore-vulnerability` to silence an advisory across the run instead, or `--vulnerability-level` to only hear about the more severe ones.
+Silencing the vulnerability warning for a single dependency would need a marker, and Update-time does not yet support markers for Maven dependencies. Pass `--ignore-vulnerability` to silence an advisory across the run instead, or `--vulnerability-level` to only hear about the more severe ones.
 
 #### Archived dependencies
 
-Maven Central does not publish an archival signal of its own. It does serve the pom each version was published with. A pom's `<scm>` element may name the repository the project's source lives in. So Update-time reads that element. Where it names a GitHub repository, Update-time warns when GitHub reports that repository as archived. The pom's plugins are checked too.
+Maven Central does not publish an archival signal of its own. So Update-time looks up the project's repository on GitHub, and warns when GitHub reports that repository as archived. It checks the pom's plugins too.
 
-The pom read is the one beside the artefact's newest release, since archival is a fact about the project rather than about the version a reference pins. The repository is taken from the `<scm>` element's `<url>`, `<connection>`, or `<developerConnection>`, whichever of them names a GitHub repository first.
+Update-time finds the repository in the pom that Maven Central serves beside the artefact's newest release. It reads the newest release's pom whatever version the reference pins, because archival is a fact about the project rather than about one of its versions. Update-time looks in these places, in this order, and takes the first one that names a GitHub repository:
 
-Update-time warns only where it finds a GitHub repository to ask about. The pom it reads may not declare an `<scm>` element, as `com.google.guava:guava`'s does not. A project whose parent pom holds the `<scm>` reads the same way, since Update-time reads the artefact's own pom alone. An `<scm>` may name a host other than GitHub, as `org.apache.commons:commons-lang3` names `gitbox.apache.org`. And Maven Central may not serve a pom at all, for an artefact a project resolves from a mirror or a private repository. Update-time warns about a pom it cannot fetch or cannot parse, and does not take a repository from either.
+1. The `<url>`, `<connection>`, and `<developerConnection>` of the `<scm>` element of the newest release's pom. That element names where the project's source lives.
+2. The `<url>` element of the newest release's pom, although it names the project's website more often than its repository. Update-time tries it after `<scm>`, because a module's `<url>` may name the repository of the larger project the module is part of. The `<url>` of `com.fasterxml.jackson.core:jackson-databind` names `FasterXML/jackson`, while its `<scm>` names `FasterXML/jackson-databind`.
+3. The `<scm>` and `<url>` of the parent pom that the `<parent>` element of the newest release's pom names. A project that consists of several modules often names its repository once, in the pom that all its modules inherit from. Update-time reads the parent pom only when the `<scm>` element of the newest release's pom does not name a URL.
 
-Silencing this warning for a single dependency would need a marker, and Update-time does not yet support markers for Maven dependencies. Pass `--ignore-archived` to switch the check off for the whole run instead.
+Update-time reads one parent pom, and does not read the parent pom's own parent. The poms higher up usually belong to an organisation rather than to a project. Every Apache project inherits from `org.apache:apache`, for example, which names the repository `apache/maven-apache-parent`. For the same reason, Update-time does not read the parent pom when the `<scm>` element of the newest release's pom names a repository outside GitHub. That parent is often an organisation's pom, too.
+
+Update-time warns only where it finds a GitHub repository to ask about. The newest release's pom and its parent pom may leave the repository unnamed. They may also name a host other than GitHub, as `org.apache.commons:commons-lang3` names `gitbox.apache.org`. And Maven Central may not serve a pom at all, for an artefact a project resolves from a mirror or a private repository. Update-time warns about a pom it cannot fetch or cannot parse.
+
+Silencing the archival warning for a single dependency would need a marker, and Update-time does not yet support markers for Maven dependencies. Pass `--ignore-archived` to switch the check off for the whole run instead.
 
 #### Markers
 
