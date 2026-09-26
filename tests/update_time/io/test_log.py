@@ -201,8 +201,8 @@ class LoggerTests(TestCase):
     @kills(
         Mutation(
             log_module.Logger,
-            '        "Floating tag %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s",',
-            '        "Floating tag %(dependency)s%(tag)s in %(location)s was left as it is",',
+            '"Floating tag %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s",',
+            '"Floating tag %(dependency)s%(tag)s in %(location)s was left as it is",',
             "the line reports that a tag was left as it is without naming the reason it was left",
         )
     )
@@ -221,8 +221,8 @@ class LoggerTests(TestCase):
     @kills(
         Mutation(
             log_module.Logger,
-            '        "Reference %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s",\n',
-            '        "Reference %(dependency)s%(tag)s in %(location)s was left as it is",\n',
+            '"Reference %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s",\n',
+            '"Reference %(dependency)s%(tag)s in %(location)s was left as it is",\n',
             "the line reports that a reference was left as it is without naming what accounts for it",
         )
     )
@@ -253,8 +253,8 @@ class LoggerTests(TestCase):
     @kills(
         Mutation(
             dependency_module.tag_of,
-            '    return f":{version}" if version else ""',
-            '    return f":{version}"',
+            'return f":{version}" if version else ""',
+            'return f":{version}"',
             "a reference naming no tag is reported with a colon that names nothing after it",
         )
     )
@@ -364,8 +364,8 @@ class LoggerTests(TestCase):
     @kills(
         Mutation(
             log_module.Logger._archival_fields,
-            '        reason = f\' ("{archival.reason}")\' if archival.reason else ""',
-            '        reason = ""',
+            'reason = f\' ("{archival.reason}")\' if archival.reason else ""',
+            'reason = ""',
             "the reason the source published is left out of the warning",
         )
     )
@@ -567,10 +567,8 @@ class LoggerTests(TestCase):
     @kills(
         Mutation(
             log_module.Logger,
-            '    _MESSAGE_IGNORED_VULNERABILITY = LogMessage(DEBUG, _ignoring("the %(advisory)s '
-            'vulnerability warning"))',
-            '    _MESSAGE_IGNORED_VULNERABILITY = LogMessage(DEBUG, _ignoring("the %(advisories)s '
-            'vulnerability warning"))',
+            '_MESSAGE_IGNORED_VULNERABILITY = LogMessage(DEBUG, _ignoring("the %(advisory)s vulnerability warning"))',
+            '_MESSAGE_IGNORED_VULNERABILITY = LogMessage(DEBUG, _ignoring("the %(advisories)s vulnerability warning"))',
             "the silenced line names a field the log call does not supply, so the line is lost at render time",
         )
     )
@@ -590,10 +588,8 @@ class LoggerTests(TestCase):
     @kills(
         Mutation(
             log_module.Logger,
-            '        DEBUG, _ignoring("the %(advisory)s vulnerability warning", '
-            '"--ignore-vulnerability %(identifiers)s")',
-            '        DEBUG, _ignoring("the %(identifiers)s vulnerability warning", '
-            '"--ignore-vulnerability %(advisory)s")',
+            'DEBUG, _ignoring("the %(advisory)s vulnerability warning", "--ignore-vulnerability %(identifiers)s")',
+            'DEBUG, _ignoring("the %(identifiers)s vulnerability warning", "--ignore-vulnerability %(advisory)s")',
             "the run-wide line names what was passed in its subject and the advisory in its cause, swapping the two",
         )
     )
@@ -789,8 +785,8 @@ class LoggerMessageTest(TestCase):
     @kills(
         Mutation(
             log_module.Logger,
-            '    _MESSAGE_NO_VERSION = LogMessage(ERROR, "No valid version found for %(dependency)s")',
-            '    _MESSAGE_ORPHANED = LogMessage(ERROR, "Nothing emits this")\n\n'
+            '_MESSAGE_NO_VERSION = LogMessage(ERROR, "No valid version found for %(dependency)s")',
+            '_MESSAGE_ORPHANED = LogMessage(ERROR, "Nothing emits this")\n\n'
             '    _MESSAGE_NO_VERSION = LogMessage(ERROR, "No valid version found for %(dependency)s")',
             "a message template that neither a log method nor a holder emits goes unnoticed",
         )

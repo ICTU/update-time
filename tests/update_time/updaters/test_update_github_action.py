@@ -399,8 +399,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @kills(
         Mutation(
             update_github_action,
-            r'    r"uses: (?P<dependency>[\w\d\.-]+/[\w\d\./-]+)@"',
-            r'    r"uses: (?P<dependency>[\w\d\./-]+)@"',
+            r'r"uses: (?P<dependency>[\w\d\.-]+/[\w\d\./-]+)@"',
+            r'r"uses: (?P<dependency>[\w\d\./-]+)@"',
             "a reference naming no repository is read as one, ending the run over that single line",
             raises="ValueError: not enough values to unpack (expected at least 2, got 1)",
         )

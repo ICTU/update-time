@@ -77,8 +77,8 @@ NULL_PROJECT_URLS_READ_AS_A_DICT = Mutation(
 )
 A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED = Mutation(
     pypi._eligible_release,
-    "    if metadata is None:",
-    '    if metadata is None or metadata["info"].get("project_urls", {}) is None:',
+    "if metadata is None:",
+    'if metadata is None or metadata["info"].get("project_urls", {}) is None:',
     "a release whose project URLs PyPI reports as null is skipped rather than adopted",
 )
 
@@ -215,8 +215,8 @@ class GetChangesTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi._changelog_from_url,
-            "    return Changes(changes, markdown=is_markdown_content_type(content_type) or is_markdown_file(url))",
-            "    return Changes(changes, markdown=is_markdown_file(url))",
+            "return Changes(changes, markdown=is_markdown_content_type(content_type) or is_markdown_file(url))",
+            "return Changes(changes, markdown=is_markdown_file(url))",
             "the content type a changelog URL is served with is passed over, so its Markdown is shown raw",
         ),
     )
@@ -236,14 +236,14 @@ class GetChangesTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi._changelog_from_url,
-            "    return Changes(changes, markdown=is_markdown_content_type(content_type) or is_markdown_file(url))",
-            "    return Changes(changes, markdown=True)",
+            "return Changes(changes, markdown=is_markdown_content_type(content_type) or is_markdown_file(url))",
+            "return Changes(changes, markdown=True)",
             "a changelog URL's extension is passed over, so a reStructuredText changelog is read as Markdown",
         ),
         Mutation(
             changelog.is_markdown_file,
-            "    return urlparse(name).path.lower().endswith(MARKDOWN_EXTENSION)",
-            "    return name.lower().endswith(MARKDOWN_EXTENSION)",
+            "return urlparse(name).path.lower().endswith(MARKDOWN_EXTENSION)",
+            "return name.lower().endswith(MARKDOWN_EXTENSION)",
             "a query or a fragment after a URL's extension hides it, so its Markdown is shown raw",
         ),
     )
@@ -359,15 +359,14 @@ class GetChangesTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi._changelog_from_description,
-            "        get_version_changes_from_changelog(description, version), "
-            "markdown=is_markdown_content_type(content_type)",
-            "        get_version_changes_from_changelog(description, version), markdown=True",
+            "get_version_changes_from_changelog(description, version), markdown=is_markdown_content_type(content_type)",
+            "get_version_changes_from_changelog(description, version), markdown=True",
             "the content type is passed over, so a reStructuredText description is read as Markdown",
         ),
         Mutation(
             changelog.is_markdown_content_type,
-            '    return content_type.partition(";")[0].strip().lower() == _MARKDOWN_CONTENT_TYPE',
-            "    return content_type.strip().lower() == _MARKDOWN_CONTENT_TYPE",
+            'return content_type.partition(";")[0].strip().lower() == _MARKDOWN_CONTENT_TYPE',
+            "return content_type.strip().lower() == _MARKDOWN_CONTENT_TYPE",
             "a content type carrying parameters matches nothing, so a Markdown description is read as text",
         ),
     )
@@ -394,8 +393,8 @@ class GetChangesTest(LoggingTestCase):
 
     _FIRST_URL_ONLY = Mutation(
         pypi._changelog_from_github_url_in_description,
-        "    for match in _GITHUB_URL_RE.finditer(description):",
-        "    for match in list(_GITHUB_URL_RE.finditer(description))[:1]:",
+        "for match in _GITHUB_URL_RE.finditer(description):",
+        "for match in list(_GITHUB_URL_RE.finditer(description))[:1]:",
         "a package whose description links another project above its own repository reports no changes",
     )
 
@@ -443,10 +442,8 @@ class GetChangesTest(LoggingTestCase):
 
     _DOCUMENTATION_READ_FIRST = Mutation(
         github.changes_from_changelog_file,
-        "    return _changes_from_files(root, version) or "
-        "_changes_from_documentation(owner, repository, root, version)",
-        "    return _changes_from_documentation(owner, repository, root, version) or "
-        "_changes_from_files(root, version)",
+        "return _changes_from_files(root, version) or _changes_from_documentation(owner, repository, root, version)",
+        "return _changes_from_documentation(owner, repository, root, version) or _changes_from_files(root, version)",
         "a repository whose root answers costs a documentation tree listing it has no need of",
     )
 
@@ -481,8 +478,8 @@ class GetChangesTest(LoggingTestCase):
     @kills(
         Mutation(
             github._changes_from_tree,
-            "            return Changes(changes, markdown=is_markdown_file(name))",
-            "            return Changes(changes, markdown=False)",
+            "return Changes(changes, markdown=is_markdown_file(name))",
+            "return Changes(changes, markdown=False)",
             "a Markdown changelog below a documentation directory is read as text, so its markup is shown raw",
         ),
     )
@@ -517,8 +514,8 @@ class GetChangesTest(LoggingTestCase):
 
     _UNFILTERED_TREE = Mutation(
         github._list_tree,
-        '    return tuple(entry["path"] for entry in tree if entry["type"] == "blob")',
-        '    return tuple(entry["path"] for entry in tree)',
+        'return tuple(entry["path"] for entry in tree if entry["type"] == "blob")',
+        'return tuple(entry["path"] for entry in tree)',
         "a directory named like a changelog in a documentation tree costs a request for the file it has none of",
     )
 
@@ -555,8 +552,8 @@ class GetChangesTest(LoggingTestCase):
 
     _UNGUARDED_URL = Mutation(
         github._changes_from_files,
-        '        if _is_changelog_file(entry["name"]) and url and (changes := ',
-        '        if _is_changelog_file(entry["name"]) and (changes := ',
+        'if _is_changelog_file(entry["name"]) and url and (changes := ',
+        'if _is_changelog_file(entry["name"]) and (changes := ',
         "a directory named like a changelog, such as pip's `news`, costs a request for the file it has none of",
     )
 
@@ -590,8 +587,8 @@ class GetChangesTest(LoggingTestCase):
 
     _ROOT_FIRST = Mutation(
         pypi.get_changes,
-        "    if changelog := _changelog_from_description(info, package, version):",
-        "    for url in repository_urls:\n"
+        "if changelog := _changelog_from_description(info, package, version):",
+        "for url in repository_urls:\n"
         "        if changelog := _changelog_from_repository_root(url, version):\n"
         "            return changelog\n"
         "    if changelog := _changelog_from_description(info, package, version):",
@@ -614,8 +611,8 @@ class GetChangesTest(LoggingTestCase):
 
     _URL_ENDS_THE_SEARCH = Mutation(
         pypi.get_changes,
-        "    if changelog := _changelog_from_description(info, package, version):",
-        "    changelog = _changelog_from_description(info, package, version)\n"
+        "if changelog := _changelog_from_description(info, package, version):",
+        "changelog = _changelog_from_description(info, package, version)\n"
         '    if changelog or _GITHUB_URL_RE.search(info["description"]):',
         "a package whose description links another project reports no changes, though its repository's root "
         "holds a changelog file",
@@ -745,8 +742,8 @@ class GetChangesTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi._changelog_from_url,
-            "    if changelog_response is None:\n        return NO_CHANGES\n    if not changelog_response.ok:",
-            "    if not changelog_response.ok:",
+            "if changelog_response is None:\n        return NO_CHANGES\n    if not changelog_response.ok:",
+            "if not changelog_response.ok:",
             "a changelog URL whose request fails ends the run with a traceback",
             raises="AttributeError: 'NoneType' object has no attribute 'ok'",
         ),
@@ -815,21 +812,21 @@ class ArchivalTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi._archival,
-            '    return Archival(archived=archived, reason=project_status.get("reason") or "")',
-            "    return Archival(archived=archived)",
+            'return Archival(archived=archived, reason=project_status.get("reason") or "")',
+            "return Archival(archived=archived)",
             "the reason published beside the status is dropped, so an archived project reports none",
         ),
         Mutation(
             pypi._archival,
-            '    project_status = _project_metadata(package).get("project-status") or {}',
-            '    project_status = _project_metadata(package).get("project-status", {})',
+            'project_status = _project_metadata(package).get("project-status") or {}',
+            'project_status = _project_metadata(package).get("project-status", {})',
             "a project status PyPI serves as null ends the run with a traceback rather than reading as active",
             raises="AttributeError: 'NoneType' object has no attribute 'get'",
         ),
         Mutation(
             pypi._archival,
-            '    return Archival(archived=archived, reason=project_status.get("reason") or "")',
-            '    return Archival(archived=archived, reason=project_status.get("reason", ""))',
+            'return Archival(archived=archived, reason=project_status.get("reason") or "")',
+            'return Archival(archived=archived, reason=project_status.get("reason", ""))',
             "a reason PyPI serves as null is carried as None in the field that holds the words to quote",
         ),
     )
@@ -921,8 +918,8 @@ class GetLatestVersionTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi.get_latest_version,
-            "    return replace(latest, project=project(package, check_archival=check_archival))",
-            "    _p = project(package, check_archival=check_archival)\n"
+            "return replace(latest, project=project(package, check_archival=check_archival))",
+            "_p = project(package, check_archival=check_archival)\n"
             "    return replace(latest, project=Project("
             "newest=Release(latest.version, _p.newest.published) if _p.newest else None, archival=_p.archival))",
             "the release attached names the version the run leaves the pin on, not the package's newest",

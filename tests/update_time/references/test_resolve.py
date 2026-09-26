@@ -292,8 +292,8 @@ class LatestVersionTest(unittest.TestCase):
     @kills(
         Mutation(
             resolve._warn_if_the_floating_pin_is_redundant,
-            "    floats = None if latest is None else latest.floating is not None",
-            '    floats = None if latest is None else latest.floating == "resolved"',
+            "floats = None if latest is None else latest.floating is not None",
+            'floats = None if latest is None else latest.floating == "resolved"',
             "a floating pin the source could not resolve is reported as redundant, although its tag still floats",
         )
     )
@@ -404,9 +404,9 @@ class ReportProjectChecksTest(unittest.TestCase):
     @kills(
         Mutation(
             resolve.project_is_checked,
-            "    return threshold != NO_STALENESS_CHECK or "
+            "return threshold != NO_STALENESS_CHECK or "
             "(archival_is_checked() and reports_archival(source, dependency))",
-            "    return threshold != NO_STALENESS_CHECK or reports_archival(source, dependency)",
+            "return threshold != NO_STALENESS_CHECK or reports_archival(source, dependency)",
             "a source is asked about a reference with both checks off, so the run pays for an answer nothing reads",
         )
     )

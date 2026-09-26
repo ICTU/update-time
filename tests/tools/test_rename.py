@@ -134,8 +134,8 @@ class MainTest(unittest.TestCase):
     @kills(
         Mutation(
             rename_module.main,
-            "        return _FAILED\n    for path, source in changed.items():",
-            "        for path, source in changed.items():\n            Path(path).write_text(source)\n"
+            "return _FAILED\n    for path, source in changed.items():",
+            "for path, source in changed.items():\n            Path(path).write_text(source)\n"
             "        return _FAILED\n    for path, source in changed.items():",
             "a rename that left the old name behind still writes the files it changed to disk",
         )
@@ -148,8 +148,8 @@ class MainTest(unittest.TestCase):
     @kills(
         Mutation(
             rename_module._renamed_sources,
-            '            _report(f"{path} could not be renamed: {reason}")',
-            '            _report(f"{path} could not be renamed: {reason}")\n'
+            '_report(f"{path} could not be renamed: {reason}")',
+            '_report(f"{path} could not be renamed: {reason}")\n'
             "            for written, renamed_source in renamed.items():\n"
             "                Path(written).write_text(renamed_source)",
             "a file the codemod cannot parse still writes the renames already made to the other files",

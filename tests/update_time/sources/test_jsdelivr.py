@@ -169,8 +169,8 @@ class GetLatestVersionTest(LoggingTestCase):
     @kills(
         Mutation(
             jsdelivr.version_getter,
-            "        return replace(latest, project=npm_project(pinned.name, check_archival=check_archival))",
-            "        _p = npm_project(pinned.name, check_archival=check_archival)\n"
+            "return replace(latest, project=npm_project(pinned.name, check_archival=check_archival))",
+            "_p = npm_project(pinned.name, check_archival=check_archival)\n"
             "        return replace(latest, project=replace(_p, "
             "newest=_p.newest and replace(_p.newest, version=latest.version)))",
             "the release attached names the version the run leaves the URL on, not the package's newest",

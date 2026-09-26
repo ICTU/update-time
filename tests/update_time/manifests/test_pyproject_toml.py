@@ -103,8 +103,8 @@ class RewritePinnedVersionsTest(unittest.TestCase):
     @kills(
         Mutation(
             pyproject_toml._rewritten_spec,
-            '    return re.sub(rf"(==\\s*){re.escape(current)}", lambda match: match[1] + new_version, spec, count=1)',
-            '    return f"{declaration.dependency}=={new_version}"',
+            'return re.sub(rf"(==\\s*){re.escape(current)}", lambda match: match[1] + new_version, spec, count=1)',
+            'return f"{declaration.dependency}=={new_version}"',
             "a rewrite replaces the whole declaration, dropping the extra, environment marker, and spaces around "
             "the pin",
         )
@@ -132,8 +132,8 @@ class RewritePinnedVersionsTest(unittest.TestCase):
     @kills(
         Mutation(
             pyproject_toml._replaced_specs,
-            "                array[index] = toml.string(new_spec, quoted_as=spec)",
-            "                array[index] = new_spec",
+            "array[index] = toml.string(new_spec, quoted_as=spec)",
+            "array[index] = new_spec",
             "a rewritten spec is quoted the way tomlkit quotes a plain string, so the file's own quoting is lost",
         )
     )
@@ -223,8 +223,8 @@ class DeclaredDependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pyproject_toml._pinned_version,
-            '    if len(specifiers) == 1 and specifiers[0].operator == "==" and is_valid(specifiers[0].version):',
-            '    if (exact := [s for s in specifiers if s.operator == "=="]) and is_valid(exact[0].version):',
+            'if len(specifiers) == 1 and specifiers[0].operator == "==" and is_valid(specifiers[0].version):',
+            'if (exact := [s for s in specifiers if s.operator == "=="]) and is_valid(exact[0].version):',
             "a declaration combining an equals with another specifier is read as a pin on the version the equals names",
         )
     )
@@ -282,15 +282,15 @@ class DeclaredDependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pyproject_toml.declared_dependencies,
-            "            uv_sourced=normalized_python_name(requirement.name) in sourced,",
-            "            uv_sourced=requirement.name in sourced,",
+            "uv_sourced=normalized_python_name(requirement.name) in sourced,",
+            "uv_sourced=requirement.name in sourced,",
             "a dependency spelled another way than its `sources` key reads as one PyPI serves, so PyPI is asked "
             "about a name it has no release for",
         ),
         Mutation(
             pyproject_toml._uv_source_names,
-            '    return {normalized_python_name(name) for name in _uv_table(config).get("sources", {})}',
-            '    return set(_uv_table(config).get("sources", {}))',
+            'return {normalized_python_name(name) for name in _uv_table(config).get("sources", {})}',
+            'return set(_uv_table(config).get("sources", {}))',
             "a `sources` key spelled another way than the dependency it names covers it not, so PyPI is asked about "
             "a name it has no release for",
         ),
@@ -421,8 +421,8 @@ class PinnedDeclarationsTest(unittest.TestCase):
     @kills(
         Mutation(
             pyproject_toml.declared_dependencies,
-            "            requirement.name,\n",
-            '            requirement.name + "".join(f"[{extra}]" for extra in requirement.extras),\n',
+            "requirement.name,\n",
+            'requirement.name + "".join(f"[{extra}]" for extra in requirement.extras),\n',
             "a pin's name carries the extra its declaration spells, so it names no package the source knows",
         )
     )
@@ -447,8 +447,8 @@ class PinnedDeclarationsTest(unittest.TestCase):
     @kills(
         Mutation(
             pyproject_toml._pinned_version,
-            '    if len(specifiers) == 1 and specifiers[0].operator == "==" and is_valid(specifiers[0].version):',
-            '    if len(specifiers) == 1 and specifiers[0].operator == "==" '
+            'if len(specifiers) == 1 and specifiers[0].operator == "==" and is_valid(specifiers[0].version):',
+            'if len(specifiers) == 1 and specifiers[0].operator == "==" '
             'and re.fullmatch("[0-9.]+", specifiers[0].version):',
             "a version is judged by its shape rather than by parsing it, so a local version and an epoch pin nothing",
         )

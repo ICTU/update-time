@@ -372,8 +372,8 @@ class UpdateReferencesTest(unittest.TestCase):
     @kills(
         Mutation(
             marker_module.Marker.allow_directive,
-            '        return _directive(Verb.ALLOW, str(scope)) if self.allows(scope) else ""',
-            '        return self.raw_directives(Verb.ALLOW) if self.allows(scope) else ""',
+            'return _directive(Verb.ALLOW, str(scope)) if self.allows(scope) else ""',
+            'return self.raw_directives(Verb.ALLOW) if self.allows(scope) else ""',
             "the cause names every allow directive again, not the one that kept the tag floating",
         )
     )

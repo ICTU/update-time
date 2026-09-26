@@ -87,8 +87,8 @@ class RecordRenderingTests(TestCase):
     @kills(
         Mutation(
             console_module._ChangelogHandler._changes_markup,
-            "        return _ChangelogMarkdown(changes, hyperlinks=self.console.is_terminal)",
-            "        return _ChangelogMarkdown(changes, hyperlinks=True)",
+            "return _ChangelogMarkdown(changes, hyperlinks=self.console.is_terminal)",
+            "return _ChangelogMarkdown(changes, hyperlinks=True)",
             "a link's URL is written into an escape nothing renders, so a file or a CI log holds the text alone",
         )
     )
@@ -103,10 +103,10 @@ class RecordRenderingTests(TestCase):
     @kills(
         Mutation(
             console_module._ChangelogHandler.render_message,
-            '        if note := getattr(record, NOTE, ""):\n'
+            'if note := getattr(record, NOTE, ""):\n'
             "            return Group(rendered, Text(note))\n"
             "        return rendered",
-            '        return Group(rendered, Text(getattr(record, NOTE, "")))',
+            'return Group(rendered, Text(getattr(record, NOTE, "")))',
             "every record without changes gets a blank line below it",
         )
     )
@@ -119,10 +119,10 @@ class RecordRenderingTests(TestCase):
     @kills(
         Mutation(
             console_module._RawHtml.__rich_console__,
-            "        html = self.html.strip()\n"
+            "html = self.html.strip()\n"
             '        if not (html.startswith("<!--") and html.endswith("-->")):\n'
             '            yield Text(self.html.rstrip("\\n"))',
-            '        yield Text(self.html.rstrip("\\n"))',
+            'yield Text(self.html.rstrip("\\n"))',
             "a comment the changelog's author wrote to be invisible is printed in the log",
         )
     )
@@ -136,14 +136,14 @@ class RecordRenderingTests(TestCase):
     @kills(
         Mutation(
             console_module._ChangelogMarkdown,
-            '    elements: ClassVar = {**Markdown.elements, "html_block": _RawHtml}',
-            "    elements: ClassVar = {**Markdown.elements}",
+            'elements: ClassVar = {**Markdown.elements, "html_block": _RawHtml}',
+            "elements: ClassVar = {**Markdown.elements}",
             "a raw HTML block is dropped, taking the changes a `<details>` section wraps with it",
         ),
         Mutation(
             console_module._RawHtml.__rich_console__,
-            '            yield Text(self.html.rstrip("\\n"))',
-            "            yield Text(self.html)",
+            'yield Text(self.html.rstrip("\\n"))',
+            "yield Text(self.html)",
             "a raw HTML block keeps the newline ending it, so a blank line follows every one",
         ),
     )
@@ -177,8 +177,8 @@ class RecordRenderingTests(TestCase):
     @kills(
         Mutation(
             console_module.configure_logging,
-            "    logging.getLogger(_MARKDOWN_PARSER).setLevel(WARNING)\n    return handler",
-            "    return handler",
+            "logging.getLogger(_MARKDOWN_PARSER).setLevel(WARNING)\n    return handler",
+            "return handler",
             "the Markdown parser traces every block rule it tries, burying the run's own debug output",
         )
     )
@@ -262,8 +262,8 @@ class RecordRenderingTests(TestCase):
     @kills(
         Mutation(
             console_module._ChangelogHandler.render_message,
-            "            return Group(rendered, Text(note))",
-            "            return Group(rendered, self._rendered_changes(note))",
+            "return Group(rendered, Text(note))",
+            "return Group(rendered, self._rendered_changes(note))",
             "Update-time's own note about a changelog is boxed as if it were a changelog's changes",
         )
     )
@@ -288,8 +288,8 @@ class RecordRenderingTests(TestCase):
     @kills(
         Mutation(
             console_module._ChangelogHandler.render_message,
-            "        rendered = super().render_message(record, message)",
-            "        rendered = Markdown(super().render_message(record, message).plain)",
+            "rendered = super().render_message(record, message)",
+            "rendered = Markdown(super().render_message(record, message).plain)",
             "the message is rendered as Markdown too, mangling a command's stderr",
         )
     )

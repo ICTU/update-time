@@ -67,8 +67,8 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
     @kills(
         Mutation(
             circle_ci._machine_images,
-            "            images.add(image)\n",
-            '            if ":" in image:\n                images.add(image)\n',
+            "images.add(image)\n",
+            'if ":" in image:\n                images.add(image)\n',
             "a machine-executor image naming no tag is not collected, so it is looked up on a registry",
         )
     )
@@ -84,9 +84,8 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
     @kills(
         Mutation(
             circle_ci.update_circle_ci_config,
-            "        get_new_version_for=tag_getter_excluding_each("
-            "_machine_images, AccountedFor.MACHINE_EXECUTOR_IMAGE),\n",
-            "        get_new_version_for=tag_getter_excluding_each(_machine_images, AccountedFor.BUILT_IMAGE),\n",
+            "get_new_version_for=tag_getter_excluding_each(_machine_images, AccountedFor.MACHINE_EXECUTOR_IMAGE),\n",
+            "get_new_version_for=tag_getter_excluding_each(_machine_images, AccountedFor.BUILT_IMAGE),\n",
             "a machine-executor image is reported as one a Compose file builds",
         )
     )

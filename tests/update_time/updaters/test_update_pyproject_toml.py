@@ -174,8 +174,8 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
     @kills(
         Mutation(
             pyproject_toml.Declaration.updatable,
-            "        return not (self.pins_a_version and self.marker.ignores(Scope.UPDATE))",
-            "        return not self.marker.ignores(Scope.UPDATE)",
+            "return not (self.pins_a_version and self.marker.ignores(Scope.UPDATE))",
+            "return not self.marker.ignores(Scope.UPDATE)",
             "an `ignore[update]` holds back a dependency that pins no version, whose version uv resolves whatever "
             "the marker says, so the new version reaches nobody",
         )
@@ -193,8 +193,8 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
     @kills(
         Mutation(
             uv._reported_marker,
-            "        lambda: log.ignored(*reported) if declaration.pins_a_version else None,",
-            "        lambda: log.ignored(*reported),",
+            "lambda: log.ignored(*reported) if declaration.pins_a_version else None,",
+            "lambda: log.ignored(*reported),",
             "a dependency that pins no version reads as one whose update was held back, though the marker froze no "
             "pin and uv resolved the version anyway",
         )

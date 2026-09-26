@@ -90,10 +90,10 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             rewrite._reference_match,
-            """    if not reference_marker.reference_location.is_on_the_same_line_as(line.location):
+            """if not reference_marker.reference_location.is_on_the_same_line_as(line.location):
         return None
     return pattern.search(line.text, reference_marker.reference_location.column)""",
-            "    return pattern.search(line.text, reference_marker.reference_location.column)",
+            "return pattern.search(line.text, reference_marker.reference_location.column)",
             "every line the pattern matches is read, not the one the file names",
         )
     )
@@ -108,8 +108,8 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             rewrite._reference_match,
-            "    return pattern.search(line.text, reference_marker.reference_location.column)",
-            "    return pattern.search(line.text)",
+            "return pattern.search(line.text, reference_marker.reference_location.column)",
+            "return pattern.search(line.text)",
             "the named line is read from its start, so the entry declared before the engine is taken for it",
         )
     )
@@ -135,8 +135,8 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             update_node_engine._node_base_image_version,
-            '    return version if is_valid(version) else ""',
-            "    return version",
+            'return version if is_valid(version) else ""',
+            "return version",
             "a tag's digits are adopted as a version even when they do not form one, ending the run",
             raises="packaging.version.InvalidVersion: Invalid version: '22.'",
         )
@@ -156,8 +156,8 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             update_node_engine._has_node_engine,
-            "    return isinstance(engines, dict) and _NODE in engines",
-            "    return engines is not None and _NODE in engines",
+            "return isinstance(engines, dict) and _NODE in engines",
+            "return engines is not None and _NODE in engines",
             "a section that is a string or a list is read as one naming the engine, so the file is opened for it",
         )
     )
@@ -179,11 +179,11 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             update_node_engine._update_node_engine,
-            """    if engine_marker.reference_location.line_number is None:
+            """if engine_marker.reference_location.line_number is None:
         _LOG.no_entry(_NODE, package_json.path)
         return
     dockerfile = _find_node_dockerfile(package_json.path)""",
-            "    dockerfile = _find_node_dockerfile(package_json.path)",
+            "dockerfile = _find_node_dockerfile(package_json.path)",
             "an engine the scan cannot find is passed over in silence, as it was before",
         )
     )
@@ -338,25 +338,24 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             package_json._marker,
-            """    if not isinstance(field, dict):
+            """if not isinstance(field, dict):
         return _unreadable_field(section, name)""",
-            """    if not isinstance(field, dict):
+            """if not isinstance(field, dict):
         return Marker()""",
             "a field that is not the object it should be reads as naming no marker",
         ),
         Mutation(
             package_json._marker,
-            """    if not isinstance(references, dict):
+            """if not isinstance(references, dict):
         return _unreadable_field(section, name)""",
-            """    if not isinstance(references, dict):
+            """if not isinstance(references, dict):
         return Marker()""",
             "a section that is not the object it should be reads as naming no marker",
         ),
         Mutation(
             package_json._marker,
-            "    return parse_directives(directives) if isinstance(directives, str)"
-            " else _unreadable_field(section, name)",
-            "    return parse_directives(directives)",
+            "return parse_directives(directives) if isinstance(directives, str) else _unreadable_field(section, name)",
+            "return parse_directives(directives)",
             "a value that is not the directive list it should be reaches the parser",
             raises="TypeError: expected string or bytes-like object, got 'list'",
         ),
@@ -398,9 +397,9 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             resolve.latest_version,
-            "    if not downgrades(get_new_version, reference.pinned):\n"
+            "if not downgrades(get_new_version, reference.pinned):\n"
             "        log.warn_if_redundant_bound(reference, marker)",
-            "    log.warn_if_redundant_bound(reference, marker)",
+            "log.warn_if_redundant_bound(reference, marker)",
             "a bound is judged by sampling the versions above the current one, for a reference that can move below it",
         )
     )

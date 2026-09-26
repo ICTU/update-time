@@ -448,8 +448,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             update_pom_xml_module._report_new_versions,
-            "        resolved = pom_xml_format.fully_resolved(new.pinned)",
-            "        resolved = True",
+            "resolved = pom_xml_format.fully_resolved(new.pinned)",
+            "resolved = True",
             "Maven Central is asked for the changes of coordinates holding an unresolved property",
         ),
     )
@@ -645,8 +645,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             update_pom_xml_module._report_new_versions,
-            "        if old.current_version == new.current_version:\n",
-            "        maven_central.get_changes(new.dependency, new.current_version)\n"
+            "if old.current_version == new.current_version:\n",
+            "maven_central.get_changes(new.dependency, new.current_version)\n"
             "        if old.current_version == new.current_version:\n",
             "Update-time asks for the changes of every dependency the pom declares, whether or not Maven moved it",
         ),
@@ -664,8 +664,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "        return\n    maven",
-            "    maven",
+            "    return\n    maven",
+            "maven",
             "Maven runs on a pom Update-time cannot read, rewriting a file it could not parse",
         )
     )

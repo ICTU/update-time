@@ -215,8 +215,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     @kills(
         Mutation(
             resolve_module.report_project,
-            "    log.report_archival(resolved, resolved.marker)",
-            "    if staleness_threshold(resolved.marker):\n        log.report_archival(resolved, resolved.marker)",
+            "log.report_archival(resolved, resolved.marker)",
+            "if staleness_threshold(resolved.marker):\n        log.report_archival(resolved, resolved.marker)",
             "the archival check sits behind the staleness gate, so switching staleness off silences archival too",
         )
     )
@@ -392,8 +392,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     @kills(
         Mutation(
             directive_module,
-            "        Reason.NO_ARCHIVAL_SIGNAL,",
-            "        Reason.NO_ARCHIVAL_SIGNAL,\n        Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,",
+            "Reason.NO_ARCHIVAL_SIGNAL,",
+            "Reason.NO_ARCHIVAL_SIGNAL,\n        Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,",
             "ignore[archived] on a loose requirement is reported as redundant, though archival needs the package's "
             "name alone",
         )
@@ -683,8 +683,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     @kills(
         Mutation(
             log_module.Logger.ignored_vulnerability,
-            "            advisory=vulnerability.advisory,",
-            "            advisory=next(iter(marker.ignored_advisories), vulnerability.advisory),",
+            "advisory=vulnerability.advisory,",
+            "advisory=next(iter(marker.ignored_advisories), vulnerability.advisory),",
             "the line names the identifier the marker spelled rather than the one OSV answered under",
         )
     )
@@ -731,8 +731,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     @kills(
         Mutation(
             vulnerability_module._warn_about_vulnerable_versions,
-            "        for vulnerability in vulnerabilities:",
-            "        for vulnerability in (vulnerabilities[:1] "
+            "for vulnerability in vulnerabilities:",
+            "for vulnerability in (vulnerabilities[:1] "
             "if reference.marker.ignores(Scope.VULNERABLE) else vulnerabilities):",
             "a reference's silenced vulnerabilities are reported as one line rather than one line per advisory",
         )
@@ -813,9 +813,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     @kills(
         Mutation(
             vulnerability_module._report,
-            "        logger.globally_ignored_vulnerability(reference, vulnerability, silenced_by)",
-            "        logger.globally_ignored_vulnerability(reference, vulnerability, "
-            "frozenset({vulnerability.advisory}))",
+            "logger.globally_ignored_vulnerability(reference, vulnerability, silenced_by)",
+            "logger.globally_ignored_vulnerability(reference, vulnerability, frozenset({vulnerability.advisory}))",
             "the option's line names the identifier OSV answered under rather than the one the reader passed",
         )
     )

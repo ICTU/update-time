@@ -144,8 +144,8 @@ class ProjectTest(LoggingTestCase):
     @kills(
         Mutation(
             maven_central._pom_repository,
-            "    named = _named_repository(pom)\n",
-            "    named = _named_repository(pom)\n"
+            "named = _named_repository(pom)\n",
+            "named = _named_repository(pom)\n"
             "    if eager := pom_xml_format.parent(pom):\n"
             "        _pom(eager.name, eager.version)\n",
             "every artefact whose pom names its repository costs a request for its parent pom as well",
@@ -200,8 +200,8 @@ class ProjectTest(LoggingTestCase):
         ),
         Mutation(
             pom_xml_format.parent,
-            "    return pinned if fully_resolved(pinned) else None",
-            "    return pinned",
+            "return pinned if fully_resolved(pinned) else None",
+            "return pinned",
             "a parent pom is fetched at a URL that spells out a property, which Maven Central serves nothing at",
         ),
     )
@@ -493,8 +493,8 @@ class GetChangesTest(LoggingTestCase):
         ),
         Mutation(
             maven_central.get_changes,
-            "    tags =",
-            "    changelog = changes_from_changelog_file(owner, repository, version)\n    tags =",
+            "tags =",
+            "changelog = changes_from_changelog_file(owner, repository, version)\n    tags =",
             "every dependency Maven moved costs a changelog file request, whether or not a release matched",
         ),
     )
@@ -509,14 +509,14 @@ class GetChangesTest(LoggingTestCase):
     @kills(
         Mutation(
             pom_xml_format.source_urls,
-            "    return urls if project_url is None else [*urls, project_url.text]",
-            "    return urls",
+            "return urls if project_url is None else [*urls, project_url.text]",
+            "return urls",
             "a pom naming its repository in the project's `<url>` alone is read as naming none",
         ),
         Mutation(
             pom_xml_format.source_urls,
-            "    urls = scm_urls(project)\n",
-            '    urls = scm_urls(project)\n    if project.child("scm") is None:\n        return urls\n',
+            "urls = scm_urls(project)\n",
+            'urls = scm_urls(project)\n    if project.child("scm") is None:\n        return urls\n',
             "Update-time reads the project's `<url>` only when the pom declares an `<scm>` element",
         ),
         Mutation(
@@ -631,9 +631,9 @@ class VersionsWithinCooldownTest(LoggingTestCase):
     @kills(
         Mutation(
             maven_central._published,
-            "    try:\n        return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)\n"
+            "try:\n        return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)\n"
             "    except ValueError:\n        return None\n",
-            "    return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)\n",
+            "return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)\n",
             "one row the repository dated outside the calendar ends the run over every pom",
             raises="ValueError: time data '2026-13-45 99:99' does not match format '%Y-%m-%d %H:%M'",
         )
@@ -690,8 +690,8 @@ class PublishedTest(unittest.TestCase):
     @kills(
         Mutation(
             maven_central._published,
-            "    return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)\n",
-            "    return datetime.strptime(published, _PUBLISHED_FORMAT).astimezone()\n",
+            "return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)\n",
+            "return datetime.strptime(published, _PUBLISHED_FORMAT).astimezone()\n",
             "a date is read in the machine's own zone, so a version falls on the wrong side of the window",
         )
     )
