@@ -915,7 +915,7 @@ The `update-properties` goal advances a property whatever it versions, so a prop
 
 #### What versions are updated?
 
-The versions plugin picks the newest release of each dependency, and adopts no snapshot. Update-time excludes the pre-releases, which the plugin would otherwise adopt, since Maven reads a release candidate as a release.
+The versions plugin picks the newest release of each dependency, and adopts no snapshot. The plugin reads every other version as a release, a release candidate included. So Update-time excludes the pre-releases, which the plugin would otherwise adopt.
 
 #### Pinning
 

@@ -150,7 +150,7 @@ def _maven_command(executable: str = "mvn", rules: Path | None = None) -> Comman
         "--non-recursive",
         "--update-snapshots",
         "-DgenerateBackupPoms=false",
-        "-Dmaven.version.ignore=(?i).*[-.](alpha|beta|rc|cr|m|pre|preview)[-.]?[0-9]*",
+        f"-Dmaven.version.ignore={maven_module._PRE_RELEASES}",
         *rule_set,
         f"org.codehaus.mojo:versions-maven-plugin:{_plugin_version()}:use-latest-releases",
         f"org.codehaus.mojo:versions-maven-plugin:{_plugin_version()}:update-properties",
