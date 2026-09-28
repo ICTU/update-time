@@ -37,9 +37,11 @@ def _declared_plugin_version() -> str:
 
 _PLUGIN = f"org.codehaus.mojo:versions-maven-plugin:{_declared_plugin_version()}"
 
-# The versions no goal may adopt. Maven reads a release candidate as a release, so both goals adopt one otherwise.
-# The pattern must match a whole version string.
-_PRE_RELEASES = "(?i).*[-.](alpha|beta|rc|cr|m|pre|preview)[-.]?[0-9]*"
+# The versions no goal may adopt. The versions plugin reads every version but a snapshot as a release, so both
+# goals adopt a pre-release otherwise. The pattern must match a whole version string. Maven reads an `a`, `b`, or
+# `m` followed directly by a number as `alpha`, `beta`, or `milestone`:
+# https://maven.apache.org/pom.html#version-order-specification.
+_PRE_RELEASES = "(?i).*[-.](alpha|beta|milestone|rc|cr|m|pre|preview|[ab][0-9])[-.]?[0-9]*"
 
 # `--update-snapshots` forces a fresh read of the version metadata Maven caches for a day. `generateBackupPoms`
 # stops the plugin writing a backup pom beside the one it rewrites.
