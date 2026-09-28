@@ -692,6 +692,16 @@ class Logger:
         """Report that the file an updater rewrote cannot be parsed, so its update failed rather than being skipped."""
         self._log_file(self._MESSAGE_INVALID_XML_AFTER_UPDATE, path)
 
+    _MESSAGE_EFFECTIVE_POM_UNREADABLE = LogMessage(
+        WARNING,
+        "Could not read the effective pom Maven wrote for %(location)s, so the versions its parent declares were not "
+        "checked",
+    )
+
+    def effective_pom_unreadable(self, path: Path) -> None:
+        """Warn that the effective pom Maven wrote cannot be read, so a version the parent declares goes unchecked."""
+        self._log_file(self._MESSAGE_EFFECTIVE_POM_UNREADABLE, path)
+
     _MESSAGE_DECLARATIONS_CHANGED = LogMessage(
         ERROR,
         "Could not tell what changed in %(location)s: it declared %(before)s dependencies before the update and "

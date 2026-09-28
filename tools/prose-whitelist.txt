@@ -367,7 +367,6 @@ Test that a Helm chart whose YAML does not parse is updated, a Go-templated char
 Test that a JSON key naming no version is left alone, a feature reference always naming one.
 Test that a Link header without a `next` relation (e.g. only `last`) yields no next page.
 Test that a Markdown link's URL reaches an output that can hold no clickable link, such as a CI log.
-Test that a Maven run exiting non-zero is reported with what it wrote, and leaves no new version reported.
 Test that a Node base image elsewhere in the repo is used when the package.json has no local Dockerfile.
 Test that a Python base image elsewhere in the repo is used when the version file has no local one.
 Test that a URL whose attribute dictionary carries no integrity hash gains one, logged as a pin.

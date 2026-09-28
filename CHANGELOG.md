@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Check a Maven dependency for vulnerabilities when the parent pom declares the property holding its version. Part of [#379](https://github.com/ICTU/update-time/issues/379).
+
 ### Fixed
 
 - Keep a Maven dependency off a pre-release such as `2.0-a1`, `2.0-b1`, or `2.0-milestone-1`. Closes [#383](https://github.com/ICTU/update-time/issues/383).

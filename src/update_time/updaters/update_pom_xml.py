@@ -39,7 +39,7 @@ def _update_pom_xml(pom_xml: Path) -> None:
     if before is None:
         _LOG.invalid_file(pom_xml, xml.FORMAT)  # The pom cannot be read, so Maven is not run on it either.
         return
-    maven.update_pom_xml(pom_xml)
+    effective_pom = maven.update_pom_xml(pom_xml)
     after = pom_xml_format.dependencies(pom_xml)
     if after is None:
         _LOG.invalid_xml_after_update(pom_xml)  # Maven rewrote the pom into something that does not parse.
@@ -50,7 +50,7 @@ def _update_pom_xml(pom_xml: Path) -> None:
         return
     _report_new_versions(before, after)
     _check_projects(pom_xml_format.artefact_references(pom_xml))
-    _warn_about_vulnerabilities(after)
+    _warn_about_vulnerabilities(pom_xml_format.dependencies(pom_xml, effective_pom) or [])
 
 
 def _check_projects(declared: list[Reference]) -> None:

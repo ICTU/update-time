@@ -813,6 +813,70 @@ def _pom_parent(parent: str) -> str:
     return f"  <parent>{coordinates}</parent>\n"
 
 
+def dependency_element(group: str, artifact: str, version: str) -> str:
+    """Return a `<dependency>` element declaring the group, the artifact, and the version."""
+    parts = {"groupId": group, "artifactId": artifact, "version": version}
+    declared = "".join(f"      <{tag}>{value}</{tag}>\n" for tag, value in parts.items())
+    return f"    <dependency>\n{declared}    </dependency>\n"
+
+
+def guava_element(version: str) -> str:
+    """Return the `<dependency>` element declaring guava."""
+    return dependency_element("com.google.guava", "guava", version)
+
+
+def dependency_management_element(*dependencies: str) -> str:
+    """Return a `<dependencyManagement>` element declaring the given dependency elements."""
+    declared = "".join(dependencies)
+    return f"  <dependencyManagement>\n    <dependencies>\n{declared}    </dependencies>\n  </dependencyManagement>\n"
+
+
+def pom_declaring(*dependencies: str, properties: str = "", managed: str = "", build: str = "") -> str:
+    """Return a pom declaring the given properties, managed dependencies, dependency elements, and build plugins."""
+    return (
+        '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
+        f"{properties}"
+        f"{managed}"
+        "  <dependencies>\n"
+        f"{''.join(dependencies)}"
+        "  </dependencies>\n"
+        f"{build}"
+        "</project>\n"
+    )
+
+
+# Each input location names the scanned pom by this id. The pom is a child inheriting its parent's group.
+_SCANNED_POM_ID = "org.example:child:1.0"
+
+
+def effective_dependency_element(
+    group: str, artifact: str, version: str, line: int, declared_by: str = _SCANNED_POM_ID
+) -> str:
+    """Return a `<dependency>` of the effective pom, its `<artifactId>` located on the line of the declaring pom."""
+    locations = {"groupId": (group, line - 1), "artifactId": (artifact, line), "version": (version, line + 1)}
+    declared = "".join(
+        f"      <{tag}>{value}</{tag}>  <!-- {declared_by}, line {located} -->\n"
+        for tag, (value, located) in locations.items()
+    )
+    return f"    <dependency>\n{declared}    </dependency>\n"
+
+
+def effective_pom_declaring(*dependencies: str, managed: str = "") -> str:
+    """Return the effective pom Maven writes for the scanned pom, holding the given dependencies."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<!-- Effective POM for project 'org.example:child:jar:1.0' -->\n"
+        '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
+        "  <groupId>org.example</groupId>  <!-- org.example:parent:1.0, line 3 -->\n"
+        f"  <artifactId>child</artifactId>  <!-- {_SCANNED_POM_ID}, line 8 -->\n"
+        f"{managed}"
+        "  <dependencies>\n"
+        f"{''.join(dependencies)}"
+        "  </dependencies>\n"
+        "</project>\n"
+    )
+
+
 def _maven_central_api(listing: str, pom: str | None, *, archived: bool, releases: list | None) -> Mock:
     """Return a requests.get mock serving an artefact's listing, a version's pom, and the GitHub repository it names.
 

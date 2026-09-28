@@ -6,6 +6,7 @@ from unittest.mock import Mock
 from update_time.formats import xml
 
 from tests.helpers import mock_path
+from tests.mutation import Mutation, kills
 
 
 def _latin_1_file(contents: str) -> Mock:
@@ -42,3 +43,25 @@ class ReadTest(unittest.TestCase):
     def test_a_file_that_cannot_be_read(self):
         """Test that a file the filesystem refuses is read as unparsable, rather than ending the run."""
         self.assertIsNone(xml.read(Mock(read_bytes=Mock(side_effect=OSError))))
+
+    def test_a_comment_belongs_to_the_element_it_follows(self):
+        """Test that a comment is the comment of the element it follows, stripped, rather than of one before that."""
+        commented = "<project>\n  <name>probe</name>\n  <url>https://example.org</url>  <!-- a remark -->\n</project>\n"
+        project = xml.read(mock_path(commented))
+        self.assertEqual([child.comment for child in project.children] if project else [], ["", "a remark"])
+
+    @kills(
+        Mutation(
+            xml.parse,
+            "if siblings:",
+            "if True:",
+            "a comment opening a document or an element ends the run, since it does not follow an element",
+            raises="IndexError: list index out of range",
+        )
+    )
+    def test_a_comment_without_an_element_before_it_is_left_unattached(self):
+        """Test that a comment before the root, or opening an element before its first child, is left unattached."""
+        commented = "<!-- a header -->\n<project>  <!-- an opening -->\n  <name>probe</name>\n</project>\n"
+        project = xml.read(mock_path(commented))
+        comments = [project.comment, *(child.comment for child in project.children)] if project else []
+        self.assertEqual(comments, ["", ""])

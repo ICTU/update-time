@@ -17,3 +17,4 @@
 - 2026-09-24 `tests.update_time.sources.test_maven_central.ProjectTest.test_an_artefact_is_asked_for_its_pom_once_per_run` — every pom declaring an artefact costs a pom request of its own
 - 2026-09-25 `tests.update_time.sources.test_maven_central.GetChangesTest.test_a_release_tagged_with_the_artifact_id_matches` — a release tagged by the artifact's name goes unmatched, since the tag names never carry the group
 - 2026-09-26 `tests.update_time.sources.test_maven_central.ProjectTest.test_a_parent_pom_naming_no_repository_leaves_its_own_parent_unread` — an artefact's grandparent pom is read too, which may name a generic parent project's repository
+- 2026-09-28 `tests.update_time.updaters.test_update_pom_xml.UpdatePomXmlTest.test_an_entry_the_parent_declares_lends_its_version_to_no_declaration` — a dependency takes the version of whatever the parent declares on the same line of its own pom

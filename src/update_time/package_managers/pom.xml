@@ -5,11 +5,17 @@
   <version>0.0.1</version>
   <packaging>pom</packaging>
   <properties>
-    <!-- The versions plugin release Update-time runs, which `maven.py` reads from this property. -->
+    <!-- The plugin releases Update-time runs, which `maven.py` reads from these properties. -->
+    <help.plugin.version>3.5.2</help.plugin.version>
     <versions.plugin.version>2.22.0</versions.plugin.version>
   </properties>
   <build>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-help-plugin</artifactId>
+        <version>${help.plugin.version}</version>
+      </plugin>
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>versions-maven-plugin</artifactId>

@@ -4,7 +4,7 @@ Note: `from xml.parsers import expat` below resolves to the standard library's p
 are absolute.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 from xml.parsers import expat  # nosec B405: the files parsed here are the user's own
 
@@ -22,6 +22,7 @@ class XmlElement:
     """An element of an XML document, and where in the file it starts.
 
     The tag leaves out the namespace prefix, so an element reads the same however the document spells its namespace.
+    The comment is the one following the element, before the element's next sibling starts.
     """
 
     tag: str
@@ -29,6 +30,7 @@ class XmlElement:
     line: int  # 1-based, as expat counts lines
     column: int  # 0-based, as `Location` counts columns
     children: tuple[XmlElement, ...]
+    comment: str = ""
 
     def child(self, tag: str) -> XmlElement | None:
         """Return the first child carrying the tag, or None where this element holds no such child."""
@@ -82,9 +84,15 @@ def parse(document: bytes) -> XmlElement | None:
         element = open_elements.pop().close()
         (open_elements[-1].children if open_elements else roots).append(element)
 
+    def comment(text: str) -> None:
+        siblings = open_elements[-1].children if open_elements else roots
+        if siblings:
+            siblings[-1] = replace(siblings[-1], comment=text.strip())
+
     parser.StartElementHandler = start
     parser.CharacterDataHandler = data
     parser.EndElementHandler = end
+    parser.CommentHandler = comment
     try:
         parser.Parse(document, True)  # noqa: FBT003 # `isfinal` is positional: pyexpat takes no keyword
     except expat.ExpatError:

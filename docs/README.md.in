@@ -909,7 +909,7 @@ Update-time looks for `pom.xml` files recursively from the starting path.
 
 Update-time reads every `<dependency>` element the pom declares, wherever it sits: under `<dependencies>`, under `<dependencyManagement>`, and in a `<profile>`. A dependency that declares no `<version>` of its own, such as one a parent pom manages, is left out, since this pom holds no version to advance.
 
-Update-time delegates updating Maven dependencies to Maven. The Maven it runs is the project's own `./mvnw` wrapper when one sits beside the pom, and the `mvn` on your path where the project ships none. In each pom's own directory, it runs two goals of the [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/). Update-time names the plugin's version in each goal it runs, so which version of the plugin runs is Update-time's decision rather than the scanned project's. Both goals run in one invocation. The `use-latest-releases` goal advances a dependency whose `<version>` element holds a version. The `update-properties` goal advances a dependency whose `<version>` element names one of the pom's properties, by advancing that property. Update-time reports such a dependency at the property's line, which is where the change landed. Two dependencies that name the same property therefore get a report each, both pointing at that line.
+Update-time delegates updating Maven dependencies to Maven. The Maven it runs is the project's own `./mvnw` wrapper when one sits beside the pom, and the `mvn` on your path where the project ships none. In each pom's own directory, it runs two goals of the [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/). The same invocation runs the `effective-pom` goal of the [help plugin](https://maven.apache.org/plugins/maven-help-plugin/) first. That goal changes nothing. Update-time names the release of both plugins in every goal it runs, so which release runs is Update-time's decision rather than the scanned project's. The `use-latest-releases` goal advances a dependency whose `<version>` element holds a version. The `update-properties` goal advances a dependency whose `<version>` element names one of the pom's properties, by advancing that property. Two dependencies that name the same property each get a report.
 
 The `update-properties` goal advances a property whatever it versions, so a property that versions a plugin is advanced as well. Update-time reads the pom's `<dependency>` elements to see what changed. A plugin sits in a `<plugin>` element, so no log line names that change: it shows in the diff alone.
 
@@ -931,7 +931,7 @@ Update-time holds nothing back for two kinds of dependency. Maven Central does n
 
 Update-time checks each dependency against the newest release Maven Central lists for it. The pom's plugins are checked too.
 
-Update-time checks a dependency or plugin that the pom declares a `<version>` for. It asks Maven Central about an artefact by that artefact's `groupId:artifactId` coordinates alone, so it still checks a dependency whose `<version>` names a property its parent declares. It does not check a dependency whose group or artifact names a property its parent declares, since Update-time does not resolve the properties a parent pom declares.
+Update-time checks a dependency or plugin that the pom declares a `<version>` for. It asks Maven Central about an artefact by that artefact's `groupId:artifactId` coordinates alone, so it still checks a dependency whose `<version>` names a property its parent declares. It does not check a dependency whose group or artifact names a property its parent declares, since Update-time asks Maven Central about the coordinates the pom itself spells.
 
 Maven Central lists nothing for an artefact a project resolves from a mirror or a private repository. Update-time then has nothing to measure staleness against.
 
@@ -941,9 +941,15 @@ Maven Central does not report a withdrawal, so Update-time never warns that a Ma
 
 #### Vulnerable dependencies
 
-Update-time checks the pom's dependencies against OSV's Maven advisories. The version checked is the one the pom holds once Maven has run, so a vulnerability the run updated away from is never reported.
+Update-time checks the pom's dependencies against OSV's Maven advisories. For a version the pom holds itself, the version checked is the one the pom holds once Maven has run. So the run never reports a vulnerability it updated away from.
 
-Update-time does not check a dependency for vulnerabilities at all when its group, artifact, or version names a property its parent declares. Update-time does not resolve the properties a parent pom declares. OSV matches an advisory to `groupId:artifactId` coordinates and a version, and a property name is neither of those. Update-time does not check a dependency whose `<version>` element is empty either, since OSV needs a version to match an advisory to.
+A pom can leave a dependency's version to a property its parent declares. Update-time takes that version from the effective pom Maven writes before it updates the pom, so it checks the dependency at the version the property holds. The scan can reach a child pom before its parent pom, and the parent's own Maven run can then still move that version. Update-time then warns about a version the same run updates away from, and the next run checks the version the parent moved to.
+
+Update-time does not yet check a dependency whose group or artifact names a property its parent declares. It does not check a dependency whose `<version>` element is empty, since OSV needs a version to match an advisory to. It does not check a dependency whose version Maven leaves unresolved either, such as one naming a property the poms leave undeclared. When Maven cannot build the pom at all, it does not write an effective pom. Update-time then checks none of the versions the parent declares, and reports Maven's error. When Maven succeeds but Update-time cannot read the effective pom it wrote, those versions go unchecked as well, and Update-time warns about it:
+
+```console
+WARNING Could not read the effective pom Maven wrote for pom.xml, so the versions its parent declares were not checked
+```
 
 Silencing the vulnerability warning for a single dependency would need a marker, and Update-time does not yet support markers for Maven dependencies. Pass `--ignore-vulnerability` to silence an advisory across the run instead, or `--vulnerability-level` to only hear about the more severe ones.
 
