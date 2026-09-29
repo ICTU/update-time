@@ -79,8 +79,8 @@ def _redundant_directive(reason: str) -> str:
 def _effective_pom_unused(problem: str, cause: str) -> str:
     """Return a message saying why the effective pom went unused, what the run missed, and what may cause it."""
     return (
-        f"{problem}, so any dependency or plugin whose group or artifact the parent declares was neither cooled down "
-        f"nor checked, and any version left to Maven was not checked for vulnerabilities; {cause}"
+        f"{problem}, so the cooldown and the checks passed over any group or artifact the pom leaves to its parent, "
+        f"and the vulnerability check passed over any version the pom leaves to another pom; {cause}"
     )
 
 
@@ -520,6 +520,16 @@ class Logger:
         """Log that a tag's commit date couldn't be resolved, and why, so the tag was skipped as an update candidate."""
         self._log(self._MESSAGE_NO_TAG_DATE, dependency=dependency, tag=tag, reason=reason)
 
+    _MESSAGE_UNREADABLE_PUBLICATION_DATE = LogMessage(
+        WARNING,
+        "Could not read the publication date '%(date)s' that Maven Central lists for %(dependency)s %(version)s, "
+        "so the cooldown holds this version back",
+    )
+
+    def unreadable_publication_date(self, dependency: str, version: str, date: str) -> None:
+        """Warn that a listed version's date does not parse, so the cooldown holds that version back."""
+        self._log(self._MESSAGE_UNREADABLE_PUBLICATION_DATE, dependency=dependency, version=version, date=date)
+
     _MESSAGE_NO_INTEGRITY_HASH = LogMessage(
         WARNING,
         "Could not resolve the integrity hash for %(dependency)s %(version)s (%(filename)s), leaving it unchanged",
@@ -704,7 +714,7 @@ class Logger:
         WARNING,
         _effective_pom_unused(
             "Could not read the effective pom of %(location)s",
-            "a --quiet in the project's Maven config hides where Maven wrote it",
+            "perhaps a --quiet in the project's Maven config hid where Maven wrote it",
         ),
     )
 

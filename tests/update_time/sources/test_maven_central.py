@@ -12,17 +12,12 @@ from update_time.domain.dependency import Archival, ArchivedSubject, Project, Re
 from update_time.io.log import Logger
 from update_time.manifests import pom_xml as pom_xml_format
 from update_time.sources import maven_central
-from update_time.sources.maven_central import (
-    _newest_release,
-    _published,
-    get_changes,
-    project,
-    versions_within_cooldown,
-)
+from update_time.sources.maven_central import _newest_release, _published, get_changes, project, versions_held_back
 
 from tests.helpers import mock_response, patch_environ, patch_get
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
+    GUAVA,
     LoggingTestCase,
     github_release_json,
     maven_central_dated_row,
@@ -49,7 +44,6 @@ def _guava_pom_url(artifact: str) -> str:
     return f"{_GUAVA_GROUP_URL}/{artifact}/{_GUAVA_VERSION}/{artifact}-{_GUAVA_VERSION}.pom"
 
 
-_GUAVA = "com.google.guava:guava"
 _GUAVA_GROUP_URL = "https://repo1.maven.org/maven2/com/google/guava"
 _GUAVA_LISTING = f"{_GUAVA_GROUP_URL}/guava/"
 _GUAVA_VERSION = "33.7.1-jre"
@@ -139,7 +133,7 @@ class ProjectTest(LoggingTestCase):
                 self.clear_caches()
                 served = maven_central_pom(scm, tag)
                 with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
-                    self.assert_archived(mock_get, project(_GUAVA, check_archival=True).archival)
+                    self.assert_archived(mock_get, project(GUAVA, check_archival=True).archival)
 
     @kills(
         Mutation(
@@ -155,7 +149,7 @@ class ProjectTest(LoggingTestCase):
         """Test that an artefact whose pom names a GitHub repository is checked without a request for its parent pom."""
         served = maven_central_pom(_GUAVA_SCM, parent=_GUAVA_PARENT)
         with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
-            self.assert_archived(mock_get, project(_GUAVA, check_archival=True).archival)
+            self.assert_archived(mock_get, project(GUAVA, check_archival=True).archival)
 
     @kills(
         Mutation(
@@ -170,7 +164,7 @@ class ProjectTest(LoggingTestCase):
         with patch("requests.get") as mock_get:
             archived = {_GUAVA_REPOSITORY: mock_response({"archived": True})}
             _serve_guava_with_parent(mock_get, maven_central_pom(_GUAVA_SCM), archived)
-            archival = project(_GUAVA, check_archival=True).archival
+            archival = project(GUAVA, check_archival=True).archival
         self.assertEqual(archival, Archival(archived=True, subject=ArchivedSubject.REPOSITORY))
         self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING, _GUAVA_POM, _GUAVA_PARENT_POM, _GUAVA_REPOSITORY])
 
@@ -188,7 +182,7 @@ class ProjectTest(LoggingTestCase):
         parent_pom = maven_central_pom(parent=f"com.google.guava:guava-grandparent:{_GUAVA_VERSION}")
         with patch("requests.get") as mock_get:
             _serve_guava_with_parent(mock_get, parent_pom)
-            archival = project(_GUAVA, check_archival=True).archival
+            archival = project(GUAVA, check_archival=True).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM, _GUAVA_PARENT_POM)
 
     @kills(
@@ -204,10 +198,18 @@ class ProjectTest(LoggingTestCase):
             "return pinned",
             "a parent pom is fetched at a URL that spells out a property, which Maven Central serves nothing at",
         ),
+        Mutation(
+            pom_xml_format.parent,
+            "    if element is None:\n        return None\n",
+            "",
+            "a pom without a `<parent>` ends the archival check with a traceback",
+            raises="AttributeError: 'NoneType' object has no attribute 'child'",
+        ),
     )
-    def test_a_parent_missing_a_coordinate_or_naming_one_by_property_is_passed_over(self):
-        """Test that a `<parent>` without a group, artifact, or version of its own leaves its pom and GitHub unasked."""
+    def test_a_pom_naming_no_repository_and_no_complete_parent_leaves_github_unasked(self):
+        """Test that GitHub stays unasked for a pom lacking both a repository and a complete parent."""
         cases = {
+            "no parent": "",
             "no groupId": f":guava-parent:{_GUAVA_VERSION}",
             "no artifactId": f"com.google.guava::{_GUAVA_VERSION}",
             "no version": "com.google.guava:guava-parent:",
@@ -219,7 +221,7 @@ class ProjectTest(LoggingTestCase):
                 self.clear_caches()
                 served = maven_central_pom(parent=parent)
                 with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
-                    archival = project(_GUAVA, check_archival=True).archival
+                    archival = project(GUAVA, check_archival=True).archival
                 self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
 
     @kills(
@@ -235,27 +237,21 @@ class ProjectTest(LoggingTestCase):
         elsewhere = "scm:git:https://gitbox.apache.org/repos/asf/commons-lang.git"
         served = maven_central_pom(elsewhere, parent=_GUAVA_PARENT)
         with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
-            archival = project(_GUAVA, check_archival=True).archival
-        self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
-
-    def test_a_pom_naming_no_source_repository(self):
-        """Test that a pom naming a repository in neither `<scm>` nor its `<url>` leaves GitHub unasked."""
-        with patch_maven_central(_DATED_LISTING, maven_central_pom(), archived=True) as mock_get:
-            archival = project(_GUAVA, check_archival=True).archival
+            archival = project(GUAVA, check_archival=True).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
 
     def test_an_artefact_the_repository_dates_no_version_for(self):
         """Test that an artefact whose listing dates no version has no pom to read, so nothing follows the listing."""
         undated = maven_central_listing()
         with patch_maven_central(undated, maven_central_pom(_GUAVA_SCM), archived=True) as mock_get:
-            reported = project(_GUAVA, check_archival=True)
+            reported = project(GUAVA, check_archival=True)
         self.assertEqual(reported, Project())
         self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
 
     def test_a_pom_the_repository_does_not_serve(self):
         """Test that a pom the repository withholds is warned about, and leaves GitHub unasked about the artefact."""
         with patch_maven_central(_DATED_LISTING, None, archived=True) as mock_get:
-            archival = project(_GUAVA, check_archival=True).archival
+            archival = project(GUAVA, check_archival=True).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
         self.assert_could_not_fetch_logged(url=_GUAVA_POM, status=404, reason="Not Found")
 
@@ -270,7 +266,7 @@ class ProjectTest(LoggingTestCase):
     def test_a_pom_whose_xml_does_not_parse(self):
         """Test that an artefact whose pom does not parse is warned about, and leaves GitHub unasked."""
         with patch_maven_central(_DATED_LISTING, "<project><scm>", archived=True) as mock_get:
-            archival = project(_GUAVA, check_archival=True).archival
+            archival = project(GUAVA, check_archival=True).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
         self.assert_logged(Logger._MESSAGE_INVALID_POM, url=_GUAVA_POM)
 
@@ -285,8 +281,8 @@ class ProjectTest(LoggingTestCase):
     def test_an_artefact_is_asked_for_its_pom_once_per_run(self):
         """Test that two poms declaring the same artefact cost one pom request between them."""
         with patch_maven_central(_DATED_LISTING, maven_central_pom(_GUAVA_SCM), archived=True) as mock_get:
-            first = project(_GUAVA, check_archival=True).archival
-            second = project(_GUAVA, check_archival=True).archival
+            first = project(GUAVA, check_archival=True).archival
+            second = project(GUAVA, check_archival=True).archival
         # Asserting what each answered, so the one request says the pom was shared rather than never read.
         self.assert_archived(mock_get, first)
         self.assertEqual(second, first)
@@ -302,14 +298,14 @@ class ProjectTest(LoggingTestCase):
     def test_artefacts_sharing_a_parent_are_asked_for_its_pom_once_per_run(self):
         """Test that two artefacts whose poms name the same parent cost one request for the parent's pom."""
         with patch_maven_central(_DATED_LISTING, maven_central_pom(parent=_GUAVA_PARENT)) as mock_get:
-            project(_GUAVA, check_archival=True)
+            project(GUAVA, check_archival=True)
             project("com.google.guava:guava-testlib", check_archival=True)
         self.assertEqual(requested_urls(mock_get).count(_GUAVA_PARENT_POM), 1)
 
     def test_a_run_that_checks_nothing_for_archival(self):
         """Test that a run checking no dependency for archival reads no pom, so the listing is all it asks for."""
         with patch_maven_central(_DATED_LISTING, maven_central_pom(_GUAVA_SCM), archived=True) as mock_get:
-            archival = project(_GUAVA, check_archival=False).archival
+            archival = project(GUAVA, check_archival=False).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING)
 
 
@@ -343,7 +339,7 @@ class GetChangesTest(LoggingTestCase):
                 self.clear_caches()
                 releases = [github_release_json(tag, body=f"Changes in {version}")]
                 with patch_maven_central(_listing_of(version), maven_central_pom(_GUAVA_SCM), releases=releases):
-                    self.assertEqual(get_changes(_GUAVA, version), f"Changes in {version}")
+                    self.assertEqual(get_changes(GUAVA, version), f"Changes in {version}")
 
     @kills(
         Mutation(
@@ -360,7 +356,7 @@ class GetChangesTest(LoggingTestCase):
             github_release_json(f"v{_GUAVA_VERSION}", body="Changes in 33.7.1"),
         ]
         with patch_maven_central(_DATED_LISTING, maven_central_pom(_GUAVA_SCM), releases=releases):
-            self.assertEqual(get_changes(_GUAVA, "33.6.0-jre"), "Changes in 33.6.0")
+            self.assertEqual(get_changes(GUAVA, "33.6.0-jre"), "Changes in 33.6.0")
 
     @kills(
         Mutation(
@@ -373,7 +369,7 @@ class GetChangesTest(LoggingTestCase):
     def test_the_repository_is_read_from_the_newest_releases_pom(self):
         """Test that the pom naming the repository is the newest release's, whatever version the changes are for."""
         with patch_maven_central(_DATED_LISTING, maven_central_pom(_GUAVA_SCM)) as mock_get:
-            get_changes(_GUAVA, "33.6.0-jre")
+            get_changes(GUAVA, "33.6.0-jre")
         self.assertIn(_GUAVA_POM, requested_urls(mock_get))
 
     @kills(
@@ -482,7 +478,7 @@ class GetChangesTest(LoggingTestCase):
             with self.subTest(heading=heading), patch("requests.get") as mock_get:
                 self.clear_caches()
                 self.serve_releases_and_changelog(mock_get, [github_release_json("v33.6.0-jre")], heading)
-                self.assertEqual(get_changes(_GUAVA, _GUAVA_VERSION), markdown_changes(heading))
+                self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), markdown_changes(heading))
 
     @kills(
         Mutation(
@@ -503,7 +499,7 @@ class GetChangesTest(LoggingTestCase):
         releases = [github_release_json(f"v{_GUAVA_VERSION}", body="Changes in 33.7.1")]
         with patch("requests.get") as mock_get:
             self.serve_releases_and_changelog(mock_get, releases)
-            self.assertEqual(get_changes(_GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
+            self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
         self.assertNotIn(contents_url("google/guava"), requested_urls(mock_get))
 
     @kills(
@@ -542,7 +538,7 @@ class GetChangesTest(LoggingTestCase):
             with self.subTest(case=case):
                 self.clear_caches()
                 with patch_maven_central(_DATED_LISTING, pom, releases=releases) as mock_get:
-                    self.assertEqual(get_changes(_GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
+                    self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
                 self.assertIn(releases_url(repository), requested_urls(mock_get))
 
     @kills(
@@ -560,18 +556,18 @@ class GetChangesTest(LoggingTestCase):
             _serve_guava_with_parent(
                 mock_get, maven_central_pom(_GUAVA_SCM), {releases_url("google/guava"): mock_response(releases)}
             )
-            self.assertEqual(get_changes(_GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
+            self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
 
 
-class VersionsWithinCooldownTest(LoggingTestCase):
-    """Unit tests for reading the versions the repository published inside the cooldown window."""
+class VersionsHeldBackTest(LoggingTestCase):
+    """Unit tests for reading the versions the cooldown holds back."""
 
     def test_only_a_version_published_inside_the_window_is_held_back(self):
         """Test that the version dated inside the window is held back, and the one dated before it is not."""
         settled = maven_central_version_row("33.7.0-jre", _days_ago(COOLDOWN.default + 1))
         fresh = maven_central_version_row("33.7.1-jre", _days_ago(1))
         with patch_get(text=maven_central_listing(settled, fresh)):
-            self.assertEqual(versions_within_cooldown(_GUAVA, COOLDOWN.default), ("33.7.1-jre",))
+            self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ("33.7.1-jre",))
 
     @kills(
         Mutation(
@@ -589,7 +585,7 @@ class VersionsWithinCooldownTest(LoggingTestCase):
         answer = mock_response(ok=False, status_code=404, reason="Not Found", url=_GUAVA_LISTING, text=error_page)
         mock_get = Mock(return_value=answer)
         with patch("requests.get", mock_get):
-            self.assertEqual(versions_within_cooldown(_GUAVA, COOLDOWN.default), ())
+            self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ())
         # Asserting the request was made, so holding nothing back says something about the answer rather than
         # about a request that was never sent.
         self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
@@ -604,13 +600,10 @@ class VersionsWithinCooldownTest(LoggingTestCase):
         )
     )
     def test_an_error_other_than_a_missing_listing_is_warned_about(self):
-        """Test that a repository answering with a server error warns, and that nothing is held back.
-
-        The cooldown then held nothing back for an artefact the repository does have, which is worth knowing.
-        """
+        """Test that a repository answering with a server error warns, and that nothing is held back."""
         answer = mock_response(ok=False, status_code=503, reason="Service Unavailable", url=_GUAVA_LISTING, text="")
         with patch("requests.get", Mock(return_value=answer)):
-            self.assertEqual(versions_within_cooldown(_GUAVA, COOLDOWN.default), ())
+            self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ())
         self.assert_could_not_fetch_logged(url=_GUAVA_LISTING, status=503, reason="Service Unavailable")
 
     @kills(
@@ -625,7 +618,7 @@ class VersionsWithinCooldownTest(LoggingTestCase):
     def test_a_listing_request_that_times_out_holds_no_version_back(self):
         """Test that a listing request that times out is reported as a timeout, and that nothing is held back."""
         with patch("requests.get", Mock(side_effect=requests.exceptions.Timeout)):
-            self.assertEqual(versions_within_cooldown(_GUAVA, COOLDOWN.default), ())
+            self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ())
         self.assert_logged(Logger._MESSAGE_TIMEOUT, url=_GUAVA_LISTING)
 
     @kills(
@@ -636,14 +629,32 @@ class VersionsWithinCooldownTest(LoggingTestCase):
             "return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)\n",
             "one row the repository dated outside the calendar ends the run over every pom",
             raises="ValueError: time data '2026-13-45 99:99' does not match format '%Y-%m-%d %H:%M'",
-        )
+        ),
+        Mutation(
+            maven_central._held_back,
+            "return True",
+            "return False",
+            "the versions plugin adopts a version dated outside the calendar, with the cooldown unchecked",
+        ),
+        Mutation(
+            maven_central._held_back,
+            '_LOG.unreadable_publication_date(artefact, row["version"], row["published"])',
+            "pass",
+            "a version dated outside the calendar is held back without a word",
+        ),
     )
-    def test_a_row_dated_in_a_shape_the_format_cannot_read_is_passed_over(self):
-        """Test that a row whose date does not parse holds nothing back, and the rows beside it are still read."""
+    def test_a_row_dated_in_a_shape_the_format_cannot_read_is_held_back_and_logged(self):
+        """Test that a version whose date does not parse is held back and logged, and the rows beside it are read."""
         unreadable = maven_central_dated_row("33.7.2-jre/", "2026-13-45 99:99", "-")
         fresh = maven_central_version_row("33.7.1-jre", _days_ago(1))
         with patch_get(text=maven_central_listing(unreadable, fresh)):
-            self.assertEqual(versions_within_cooldown(_GUAVA, COOLDOWN.default), ("33.7.1-jre",))
+            self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ("33.7.2-jre", "33.7.1-jre"))
+        self.assert_logged(
+            Logger._MESSAGE_UNREADABLE_PUBLICATION_DATE,
+            dependency=GUAVA,
+            version="33.7.2-jre",
+            date="2026-13-45 99:99",
+        )
 
     @kills(
         Mutation(
@@ -658,7 +669,7 @@ class VersionsWithinCooldownTest(LoggingTestCase):
         published = _days_ago(1)
         listing = maven_central_listing(maven_central_version_row("33.7.1-jre", published), *_metadata_rows(published))
         with patch_get(text=listing):
-            held_back = versions_within_cooldown(_GUAVA, COOLDOWN.default)
+            held_back = versions_held_back(GUAVA, COOLDOWN.default)
         self.assertEqual(held_back, ("33.7.1-jre",))
 
     @kills(
@@ -677,8 +688,8 @@ class VersionsWithinCooldownTest(LoggingTestCase):
             )
         )
         with patch("requests.get", mock_get):
-            first = versions_within_cooldown(_GUAVA, COOLDOWN.default)
-            second = versions_within_cooldown(_GUAVA, COOLDOWN.default)
+            first = versions_held_back(GUAVA, COOLDOWN.default)
+            second = versions_held_back(GUAVA, COOLDOWN.default)
         self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
         self.assertEqual(first, ("33.7.1-jre",))
         self.assertEqual(second, ("33.7.1-jre",))
@@ -714,17 +725,7 @@ class NewestReleaseTest(LoggingTestCase):
             maven_central_version_row("33.8.0-jre", datetime(2020, 1, 2, 3, 4, tzinfo=UTC)),
         )
         with patch_get(text=maven_central_listing(*rows)):
-            self.assertEqual(_newest_release(_GUAVA), Release("33.7.0-jre", newest))
-
-    def test_a_listing_the_repository_does_not_serve_dates_no_release(self):
-        """Test that an artefact whose listing the repository withholds leaves staleness nothing to measure."""
-        answer = mock_response(ok=False, status_code=404, reason="Not Found", url=_GUAVA_LISTING, text="")
-        mock_get = Mock(return_value=answer)
-        with patch("requests.get", mock_get):
-            self.assertIsNone(_newest_release(_GUAVA))
-        # Asserting the request was made, so the missing release says something about the answer rather than
-        # about a request that was never sent.
-        self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
+            self.assertEqual(_newest_release(GUAVA), Release("33.7.0-jre", newest))
 
     @kills(
         Mutation(
@@ -742,8 +743,8 @@ class NewestReleaseTest(LoggingTestCase):
             return_value=mock_response(text=maven_central_listing(maven_central_version_row("33.7.1-jre", dated)))
         )
         with patch("requests.get", mock_get):
-            held_back = versions_within_cooldown(_GUAVA, COOLDOWN.default)
-            newest = _newest_release(_GUAVA)
+            held_back = versions_held_back(GUAVA, COOLDOWN.default)
+            newest = _newest_release(GUAVA)
         self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
         # Asserting what each read, so the single request says the listing was shared rather than never read.
         self.assertEqual(held_back, ("33.7.1-jre",))

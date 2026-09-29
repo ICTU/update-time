@@ -12,7 +12,7 @@ from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.manifests import pom_xml as pom_xml_format
 from update_time.primitives.command import Command
-from update_time.sources.maven_central import versions_within_cooldown
+from update_time.sources.maven_central import versions_held_back
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -158,7 +158,7 @@ def _versions_options(artefacts: Iterable[DependencyName]) -> Iterator[tuple[str
 
 
 def _rules(artefacts: Iterable[DependencyName]) -> str:
-    """Return a rule per artefact that has versions inside the cooldown window, or nothing where none has.
+    """Return a rule per artefact the cooldown holds versions of back, or nothing where it holds none back.
 
     An artefact several declarations name gets one rule, so a pom declaring it twice names its versions once. The
     repository is not asked at all for a window that holds nothing back.
@@ -167,7 +167,7 @@ def _rules(artefacts: Iterable[DependencyName]) -> str:
     if cooldown_days <= 0:
         return ""
     named = dict.fromkeys(artefacts)
-    held_back = ((artefact, versions_within_cooldown(artefact, cooldown_days)) for artefact in named)
+    held_back = ((artefact, versions_held_back(artefact, cooldown_days)) for artefact in named)
     return "".join(_rule(artefact, versions) for artefact, versions in held_back if versions)
 
 

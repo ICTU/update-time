@@ -814,11 +814,30 @@ def _pom_parent(parent: str) -> str:
     return f"  <parent>{coordinates}</parent>\n"
 
 
+def _coordinates_element(tag: str, indent: str, group: str | None, artifact: str, version: str | None) -> str:
+    """Return a `<tag>` element at the indent, declaring the artifact, and the group and the version where given."""
+    parts = {"groupId": group, "artifactId": artifact, "version": version}
+    declared = "".join(f"{indent}  <{name}>{value}</{name}>\n" for name, value in parts.items() if value is not None)
+    return f"{indent}<{tag}>\n{declared}{indent}</{tag}>\n"
+
+
 def dependency_element(group: str, artifact: str, version: str | None) -> str:
     """Return a `<dependency>` element declaring the group, the artifact, and the version, where one is given."""
-    parts = {"groupId": group, "artifactId": artifact, "version": version}
-    declared = "".join(f"      <{tag}>{value}</{tag}>\n" for tag, value in parts.items() if value is not None)
-    return f"    <dependency>\n{declared}    </dependency>\n"
+    return _coordinates_element("dependency", "    ", group, artifact, version)
+
+
+def plugin_element(artifact: str, version: str | None, group: str | None = "org.apache.maven.plugins") -> str:
+    """Return a `<plugin>` element declaring the artifact, and the version and the group where each is given."""
+    return _coordinates_element("plugin", "      ", group, artifact, version)
+
+
+def build_element(*plugins: str) -> str:
+    """Return a `<build>` element declaring the given plugin elements."""
+    return f"  <build>\n    <plugins>\n{''.join(plugins)}    </plugins>\n  </build>\n"
+
+
+# The artefact most Maven tests declare.
+GUAVA = "com.google.guava:guava"
 
 
 def guava_element(version: str | None) -> str:
@@ -901,6 +920,10 @@ def _located_coordinates(artefact: str, version: str, locations: dict[str, tuple
         f"      <{tag}>{values[tag]}</{tag}>  <!-- {pom}, line {located} -->\n"
         for tag, (pom, located) in locations.items()
     )
+
+
+# A pom declaring guava alone gets this entry in its effective pom, with guava's `<artifactId>` on line 5.
+EFFECTIVE_GUAVA = effective_dependency_element(GUAVA, "33.0.0-jre", line=5)
 
 
 def effective_pom_declaring(*dependencies: str, properties: str = "", managed: str = "", build: str = "") -> str:

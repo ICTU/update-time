@@ -8,6 +8,8 @@ from update_time.manifests import pom_xml
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
+    EFFECTIVE_GUAVA,
+    GUAVA,
     PARENT_POM_ID,
     SCANNED_POM_ID,
     dependency_element,
@@ -150,13 +152,59 @@ class DependenciesTest(unittest.TestCase):
     def test_a_dependency_is_read_unless_it_misses_its_group_or_artifact(self):
         """Test that a dependency missing its group or artifact is left out, and one missing its version is read."""
         declared = pom_xml.dependencies(mock_path(_POM_WITH_INCOMPLETE_DEPENDENCIES)) or []
-        expected = ["org.springframework:spring-web", "com.google.guava:guava"]
+        expected = ["org.springframework:spring-web", GUAVA]
         self.assertEqual([reference.dependency for reference in declared], expected)
 
-    def test_a_dependency_naming_the_projects_own_group(self):
-        """Test that a dependency whose group names the project's own is reported under the group it resolves to."""
-        declared = pom_xml.dependencies(mock_path(_POM_NAMING_ITS_OWN_GROUP)) or []
-        self.assertEqual([reference.dependency for reference in declared], ["com.acme:api"])
+    @kills(
+        Mutation(
+            pom_xml._reference,
+            "artifact_name = _interpolated(artifact.text, property_elements)",
+            "artifact_name = _element_holding(artifact, property_elements).text",
+            "an artifact naming a property in part is read with its `${…}` left unresolved",
+        ),
+        Mutation(
+            pom_xml._reference,
+            "_interpolated(group.text, property_elements)",
+            "_element_holding(group, property_elements).text",
+            "a group naming a property in part is read with its `${…}` left unresolved",
+        ),
+    )
+    def test_coordinates_naming_a_property_the_pom_declares_resolve(self):
+        """Test that a group or artifact naming a pom property, wholly or in part, reads as that property's value."""
+        properties = properties_element({"scala.binary": "2.13", "akka.prefix": "com.typesafe"})
+        cases = {
+            "the project's own group": (_POM_NAMING_ITS_OWN_GROUP, "com.acme:api"),
+            "part of an artifact": (
+                pom_declaring(
+                    dependency_element("com.typesafe", "akka-actor_${scala.binary}", "2.6.0"), properties=properties
+                ),
+                "com.typesafe:akka-actor_2.13",
+            ),
+            "part of a group": (
+                pom_declaring(dependency_element("${akka.prefix}.akka", "akka-actor", "2.6.0"), properties=properties),
+                "com.typesafe.akka:akka-actor",
+            ),
+        }
+        for case, (pom, expected) in cases.items():
+            with self.subTest(case=case):
+                declared = pom_xml.dependencies(mock_path(pom)) or []
+                self.assertEqual([reference.dependency for reference in declared], [expected])
+
+    @kills(
+        Mutation(
+            pom_xml._reference,
+            'own_version = "" if version is None else _interpolated(version.text, property_elements)',
+            'own_version = "" if version is None else versioned_by.text',
+            "a version naming a property in part is read with its `${…}` left unresolved",
+        )
+    )
+    def test_a_version_naming_a_property_in_part_reads_as_that_propertys_value(self):
+        """Test that a version naming a pom property in part reads as that property's value, at its own element."""
+        spring = dependency_element("org.springframework", "spring-core", "${spring.major}.1.0")
+        pom = pom_declaring(spring, properties=properties_element({"spring.major": "6"}))
+        declared = pom_xml.dependencies(mock_path(pom)) or []
+        versions = [(reference.current_version, reference.location.line_number) for reference in declared]
+        self.assertEqual(versions, [("6.1.0", 9)])
 
     def test_a_dependency_resolves_a_property_its_own_profile_declares(self):
         """Test that a dependency in a profile resolves the property it names, among the several that profile holds."""
@@ -191,18 +239,16 @@ class ResolvedDependenciesTest(unittest.TestCase):
     def test_an_entry_the_parent_declares_lends_its_version_to_no_declaration(self):
         """Test that an effective pom entry located in the parent leaves the declaration on the same line alone."""
         pom = pom_declaring(managed=dependency_management_element(guava_element("${guava.version}")))
-        guava = effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=6)
-        inherited = effective_dependency_element(
-            "com.google.guava:guava", "32.1.0-jre", line=6, declared_by=PARENT_POM_ID
-        )
+        guava = effective_dependency_element(GUAVA, "33.0.0-jre", line=6)
+        inherited = effective_dependency_element(GUAVA, "32.1.0-jre", line=6, declared_by=PARENT_POM_ID)
         # The managed section comes before `<dependencies>`, so the inherited guava is read after the managed one.
         effective_pom = effective_pom_declaring(inherited, managed=dependency_management_element(guava))
-        self.assertEqual(_resolved(pom, effective_pom), [("com.google.guava:guava", "33.0.0-jre", 7)])
+        self.assertEqual(_resolved(pom, effective_pom), [(GUAVA, "33.0.0-jre", 7)])
 
     @kills(
         Mutation(
             pom_xml._EffectiveArtefacts.get,
-            "self.declared.get(_ArtifactDeclaration(artifact_name, artifact.line))",
+            "self.declared.get(_ArtifactAtLine(artifact_name, artifact.line))",
             "{key.artifact: pinned for key, pinned in self.declared.items()}.get(artifact_name)",
             "two declarations of one artefact share a version, so OSV is asked about one of them at the other's",
         )
@@ -211,16 +257,16 @@ class ResolvedDependenciesTest(unittest.TestCase):
         """Test that two declarations of one artefact, each versioned by a parent's property, keep their own version."""
         managed = dependency_management_element(guava_element("${guava.managed.version}"))
         pom = pom_declaring(guava_element("${guava.version}"), managed=managed)
-        managed_guava = effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=6)
-        guava = effective_dependency_element("com.google.guava:guava", "32.1.0-jre", line=14)
+        managed_guava = effective_dependency_element(GUAVA, "33.0.0-jre", line=6)
+        guava = effective_dependency_element(GUAVA, "32.1.0-jre", line=14)
         effective_pom = effective_pom_declaring(guava, managed=dependency_management_element(managed_guava))
-        expected = [("com.google.guava:guava", "33.0.0-jre", 7), ("com.google.guava:guava", "32.1.0-jre", 15)]
+        expected = [(GUAVA, "33.0.0-jre", 7), (GUAVA, "32.1.0-jre", 15)]
         self.assertEqual(_resolved(pom, effective_pom), expected)
 
     @kills(
         Mutation(
             pom_xml._EffectiveArtefacts.get,
-            "self.declared.get(_ArtifactDeclaration(artifact_name, artifact.line))",
+            "self.declared.get(_ArtifactAtLine(artifact_name, artifact.line))",
             "{key.line: pinned for key, pinned in self.declared.items()}.get(artifact.line)",
             "a dependency takes the version of whichever dependency is declared last on its line",
         )
@@ -241,7 +287,7 @@ class ResolvedDependenciesTest(unittest.TestCase):
         Mutation(
             pom_xml._EffectiveArtefacts.get,
             "_interpolated(artifact.text, self.property_elements)",
-            "_resolved(artifact, self.property_elements).text",
+            "_element_holding(artifact, self.property_elements).text",
             "an artifact holding a parent's property inside its name keeps the property, so it goes unchecked",
         )
     )
@@ -265,11 +311,9 @@ class ResolvedDependenciesTest(unittest.TestCase):
         """Test that a dependency without a version takes the effective pom's version where the parent manages it."""
         pom = pom_declaring(guava_element(None), guava_element("32.0.0-jre"))
         # The parent manages guava's version on line 10, where the scanned pom declares guava a second time.
-        guava = effective_dependency_element(
-            "com.google.guava:guava", "33.0.0-jre", line=5, managed_at=(PARENT_POM_ID, 10)
-        )
-        second_guava = effective_dependency_element("com.google.guava:guava", "32.0.0-jre", line=9)
-        expected = [("com.google.guava:guava", "33.0.0-jre", 3), ("com.google.guava:guava", "32.0.0-jre", 10)]
+        guava = effective_dependency_element(GUAVA, "33.0.0-jre", line=5, managed_at=(PARENT_POM_ID, 10))
+        second_guava = effective_dependency_element(GUAVA, "32.0.0-jre", line=9)
+        expected = [(GUAVA, "33.0.0-jre", 3), (GUAVA, "32.0.0-jre", 10)]
         self.assertEqual(_resolved(pom, effective_pom_declaring(guava, second_guava)), expected)
 
     @kills(
@@ -282,7 +326,7 @@ class ResolvedDependenciesTest(unittest.TestCase):
         Mutation(
             pom_xml._own_versions,
             "_interpolated(artifact.text, property_elements)",
-            "_resolved(artifact, property_elements).text",
+            "_element_holding(artifact, property_elements).text",
             "a managed artifact holding a parent's property inside its name keeps the version Maven moved away from",
         ),
     )
@@ -313,23 +357,36 @@ class ResolvedDependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml._version_as_left,
-            "_resolved(own_element, property_elements).text",
+            "_interpolated(own_element.text, property_elements)",
             "own_element.text",
             "Update-time checks the version Maven moved away from, where the pom manages it through a property",
-        )
+        ),
+        Mutation(
+            pom_xml._version_as_left,
+            "_interpolated(own_element.text, property_elements)",
+            "_element_holding(own_element, property_elements).text",
+            "Update-time checks the version Maven moved away from, where the managed version names a property in part",
+        ),
     )
     def test_a_version_the_pom_manages_through_its_own_property_is_read_from_that_property(self):
-        """Test that a dependency without a version takes the value of the property its own pom manages it with."""
-        properties = properties_element({"guava.version": "33.7.1-jre"})
-        managed = dependency_management_element(guava_element("${guava.version}"))
-        pom = pom_declaring(guava_element(None), properties=properties, managed=managed)
-        effective_managed = effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=9)
-        guava = effective_dependency_element(
-            "com.google.guava:guava", "33.0.0-jre", line=17, managed_at=(SCANNED_POM_ID, 10)
-        )
+        """Test that a dependency without a version takes the value its own pom manages it with, through a property."""
+        effective_managed = effective_dependency_element(GUAVA, "33.0.0-jre", line=9)
+        guava = effective_dependency_element(GUAVA, "33.0.0-jre", line=17, managed_at=(SCANNED_POM_ID, 10))
         effective_pom = effective_pom_declaring(guava, managed=dependency_management_element(effective_managed))
-        expected = [("com.google.guava:guava", "33.7.1-jre", 3), ("com.google.guava:guava", "33.7.1-jre", 15)]
-        self.assertEqual(_resolved(pom, effective_pom), expected)
+        # Each case names the property, the managed version naming it, and the line the managed version is read at.
+        cases = {
+            "the whole version": ({"guava.version": "33.7.1-jre"}, "${guava.version}", 3),
+            "part of the version": ({"guava.major": "33"}, "${guava.major}.7.1-jre", 10),
+        }
+        for case, (values, version, line) in cases.items():
+            with self.subTest(case=case):
+                managed = dependency_management_element(guava_element(version))
+                pom = pom_declaring(guava_element(None), properties=properties_element(values), managed=managed)
+                expected = [
+                    (GUAVA, "33.7.1-jre", line),
+                    (GUAVA, "33.7.1-jre", 15),
+                ]
+                self.assertEqual(_resolved(pom, effective_pom), expected)
 
     @kills(
         Mutation(
@@ -346,16 +403,14 @@ class ResolvedDependenciesTest(unittest.TestCase):
         pom = pom_declaring(guava_element(None), managed=managed)
         # Maven locates each `<version>` on the shared line 4, and does not name a column to tell them apart.
         managed_at = (SCANNED_POM_ID, 4)
-        effective_guava = effective_dependency_element(
-            "com.google.guava:guava", "33.0.0-jre", line=4, managed_at=managed_at
-        )
+        effective_guava = effective_dependency_element(GUAVA, "33.0.0-jre", line=4, managed_at=managed_at)
         effective_junit = effective_dependency_element("junit:junit", "4.13.2", line=4, managed_at=managed_at)
-        guava = effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=10, managed_at=managed_at)
+        guava = effective_dependency_element(GUAVA, "33.0.0-jre", line=10, managed_at=managed_at)
         effective_managed = dependency_management_element(effective_guava + effective_junit)
         expected = [
-            ("com.google.guava:guava", "33.7.1-jre", 4),
+            (GUAVA, "33.7.1-jre", 4),
             ("junit:junit", "4.13.2", 4),
-            ("com.google.guava:guava", "33.7.1-jre", 8),
+            (GUAVA, "33.7.1-jre", 8),
         ]
         self.assertEqual(_resolved(pom, effective_pom_declaring(guava, managed=effective_managed)), expected)
 
@@ -370,13 +425,11 @@ class ResolvedDependenciesTest(unittest.TestCase):
     )
     def test_an_entry_whose_input_location_lacks_a_line_is_skipped(self):
         """Test that an entry whose input location lacks a line is skipped, and the entries beside it are read."""
-        guava = effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=5)
+        guava = EFFECTIVE_GUAVA
         # Maven locates what it adds itself in its own model rather than on a line of a pom.
         bindings = "org.apache.maven:maven-core:3.9.16:default-lifecycle-bindings"
         unlocated = dependency_element("org.example", "injected", "1.0").replace(
             "<artifactId>injected</artifactId>", f"<artifactId>injected</artifactId>  <!-- {bindings} -->"
         )
         pom = pom_declaring(guava_element("${guava.version}"))
-        self.assertEqual(
-            _resolved(pom, effective_pom_declaring(guava, unlocated)), [("com.google.guava:guava", "33.0.0-jre", 6)]
-        )
+        self.assertEqual(_resolved(pom, effective_pom_declaring(guava, unlocated)), [(GUAVA, "33.0.0-jre", 6)])

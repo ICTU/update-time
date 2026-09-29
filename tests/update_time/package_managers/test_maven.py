@@ -70,10 +70,7 @@ class PreReleasePatternTest(unittest.TestCase):
 
 
 class RuleSetFileTest(unittest.TestCase):
-    """Unit tests for the file Update-time writes the rule set to.
-
-    This is the one part of the run that reaches the file system, so it is exercised against a real file.
-    """
+    """Unit tests for the file Update-time writes the rule set to."""
 
     def test_the_rule_set_is_readable_until_the_file_is_removed(self):
         """Test that the file holds the rule set while the context is open, and is removed once it closes."""

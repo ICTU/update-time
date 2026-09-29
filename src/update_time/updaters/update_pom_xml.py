@@ -41,14 +41,14 @@ def _update_pom_xml(pom_xml: Path) -> None:
         return
     effective_pom = maven.update_pom_xml(pom_xml)
     after = pom_xml_format.dependencies(pom_xml)
-    if after is None:
+    resolved = pom_xml_format.dependencies(pom_xml, effective_pom)
+    if after is None or resolved is None:
         _LOG.invalid_xml_after_update(pom_xml)  # Maven rewrote the pom into something that does not parse.
         return
     if len(before) != len(after):
         # The two readings pair up declaration by declaration, which a reading of another length cannot do.
         _LOG.declarations_changed(pom_xml, len(before), len(after))
         return
-    resolved = pom_xml_format.dependencies(pom_xml, effective_pom) or []
     _report_new_versions(before, after, resolved)
     _check_projects(pom_xml_format.artefact_references(pom_xml, effective_pom))
     _warn_about_vulnerabilities(resolved)

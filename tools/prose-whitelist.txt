@@ -17,7 +17,6 @@ A `.python-version` entry and a Node engine both follow the base image in the pr
 A `node` version another section declares — a Volta pin, a dependency of that name — is neither taken for the engine nor steered by the engine's marker.
 A `package.json` dependency takes no marker, because npm and pnpm update it rather than Update-time rewriting its lines.
 A `package.json` dependency takes no marker.
-A `pom.xml` dependency takes no marker, because Maven updates it rather than Update-time rewriting its lines.
 A `repo: local` or `repo: meta` entry has no `rev:`, so Update-time leaves it untouched, as it leaves a repository hosted outside GitHub untouched.
 A `rev:` whose repository is not on GitHub carries no dependency, so it is left untouched.
 A `start` that opens no object yields nothing, so a section declared as anything but an object holds no entry.
