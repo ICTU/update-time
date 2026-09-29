@@ -26,8 +26,8 @@ _PROPERTY_REFERENCE = re.compile(r"\$\{(?P<name>[^}]+)\}")
 # Maven's verbose effective pom writes an input location after each element: the pom and the line declaring it.
 _INPUT_LOCATION = re.compile(r"(?P<pom>\S+), line (?P<line>\d+)")
 
-# The group Maven gives a plugin that declares none. A dependency names its own group.
-_PLUGIN_GROUP = "org.apache.maven.plugins"
+# The group Maven gives each kind of artefact that declares none, keyed by its tag. A dependency names its own group.
+_DEFAULT_GROUPS = {"dependency": "", "plugin": "org.apache.maven.plugins"}
 
 # Maven's own prefix on an `<scm>` value: `scm:<provider>:` in front of the URL that provider reads.
 _SCM_PREFIX = re.compile(r"^scm:[^:]+:")
@@ -76,12 +76,12 @@ def dependencies(path: Path, effective_pom: XmlElement | None = None) -> list[Re
 
     Both `<dependencies>` and `<dependencyManagement>` hold their dependencies in a `<dependency>` element, so
     reading the element wherever it sits reaches the dependencies of either. Maven's effective pom, where one is
-    given, supplies a version the parent declares or manages.
+    given, supplies the coordinates and the version the parent declares or manages.
     """
     project = xml.read(path)
     if project is None:
         return None
-    return _references(path, project, {"dependency": ""}, _effective_versions(effective_pom, project))
+    return _references(path, project, {"dependency": ""}, effective_pom)
 
 
 @dataclass(frozen=True)
@@ -95,33 +95,51 @@ class _ArtifactDeclaration:
     line: int
 
 
-# The version Maven's effective pom gives each dependency, keyed by where its `<artifactId>` sits.
-type _EffectiveVersions = Mapping[_ArtifactDeclaration, str]
+@dataclass(frozen=True)
+class _EffectiveArtefacts:
+    """The coordinates and the version Maven's effective pom gives each dependency and plugin, keyed by declaration."""
+
+    declared: Mapping[_ArtifactDeclaration, PinnedDependency]
+    # The properties Maven resolved the pom with, the parent's included.
+    property_elements: dict[str, XmlElement]
+
+    def get(self, artifact: XmlElement) -> PinnedDependency | None:
+        """Return what the effective pom gives the dependency that the `<artifactId>` element declares."""
+        artifact_name = _interpolated(artifact.text, self.property_elements)
+        return self.declared.get(_ArtifactDeclaration(artifact_name, artifact.line))
 
 
-def _effective_versions(effective_pom: XmlElement | None, project: XmlElement) -> _EffectiveVersions:
-    """Return the version the effective pom gives each dependency the pom declares.
+def _effective_artefacts(effective_pom: XmlElement | None, project: XmlElement) -> _EffectiveArtefacts:
+    """Return the coordinates and the version the effective pom gives each dependency and plugin the pom declares.
 
     A project never inherits its own `<artifactId>`, so the input location of that element names the scanned pom.
     """
     if effective_pom is None:
-        return {}
+        return _EffectiveArtefacts({}, {})
     scanned, _ = _input_location(effective_pom.child("artifactId"))
     property_elements = _resolvable_elements(project)
-    own_versions = _own_versions(project, property_elements)
-    versions = {}
-    for dependency in effective_pom.descendants("dependency"):
-        artifact = dependency.child("artifactId")
-        version = dependency.child("version")
+    effective_property_elements = _resolvable_elements(effective_pom)
+    own_versions = _own_versions(project, effective_property_elements)
+    artefacts = {}
+    entries = (
+        (entry, default_group)
+        for tag, default_group in _DEFAULT_GROUPS.items()
+        for entry in effective_pom.descendants(tag)
+    )
+    for entry, default_group in entries:
+        group = entry.child("groupId")
+        artifact = entry.child("artifactId")
+        version = entry.child("version")
         declared_by, line = _input_location(artifact)
         if declared_by == scanned and artifact is not None and version is not None:
             managed_by, managed_line = _input_location(version)
             managed_at = _ArtifactDeclaration(artifact.text, managed_line)
             own_element = own_versions.get(managed_at) if managed_by == scanned else None
-            versions[_ArtifactDeclaration(artifact.text, line)] = _version_as_left(
-                version, own_element, property_elements
+            group_name = default_group if group is None else group.text
+            artefacts[_ArtifactDeclaration(artifact.text, line)] = PinnedDependency(
+                _artefact(group_name, artifact.text), _version_as_left(version, own_element, property_elements)
             )
-    return versions
+    return _EffectiveArtefacts(artefacts, effective_property_elements)
 
 
 def _own_versions(
@@ -129,7 +147,7 @@ def _own_versions(
 ) -> dict[_ArtifactDeclaration, XmlElement]:
     """Return the `<version>` element of each dependency the pom declares one for, keyed by where that element sits."""
     return {
-        _ArtifactDeclaration(_resolved(artifact, property_elements).text, version.line): version
+        _ArtifactDeclaration(_interpolated(artifact.text, property_elements), version.line): version
         for dependency in project.descendants("dependency")
         if (artifact := dependency.child("artifactId")) is not None
         and (version := dependency.child("version")) is not None
@@ -154,15 +172,16 @@ def _input_location(element: XmlElement | None) -> tuple[str, int]:
     return ("", 0) if input_location is None else (input_location["pom"], int(input_location["line"]))
 
 
-def artefact_references(path: Path) -> list[Reference]:
+def artefact_references(path: Path, effective_pom: XmlElement | None = None) -> list[Reference]:
     """Return a reference to each dependency and plugin the pom declares.
 
-    Coordinates holding an unresolved property are left out, since a repository serves nothing under them.
+    Maven's effective pom, where one is given, supplies the coordinates and the version the parent declares or
+    manages. Coordinates holding an unresolved property are left out, since a repository serves nothing under them.
     """
     project = xml.read(path)
     if project is None:
         return []
-    declared = _references(path, project, {"dependency": "", "plugin": _PLUGIN_GROUP}, {})
+    declared = _references(path, project, _DEFAULT_GROUPS, effective_pom)
     return [reference for reference in declared if _is_resolved(reference.dependency)]
 
 
@@ -170,15 +189,16 @@ def _references(
     path: Path,
     project: XmlElement,
     default_groups: dict[str, str],
-    effective_versions: _EffectiveVersions,
+    effective_pom: XmlElement | None,
 ) -> list[Reference]:
     """Return the reference each named element declares, dropping the ones that leave out their artifact or group.
 
     `default_groups` maps the tag of each element to read to the group Maven gives it when it declares none.
     """
     property_elements = _resolvable_elements(project)
+    effective_artefacts = _effective_artefacts(effective_pom, project)
     declared = (
-        _reference(path, element, property_elements, effective_versions, default_group)
+        _reference(path, element, property_elements, effective_artefacts, default_group)
         for tag, default_group in default_groups.items()
         for element in project.descendants(tag)
     )
@@ -246,15 +266,14 @@ def _reference(
     path: Path,
     element: XmlElement,
     property_elements: dict[str, XmlElement],
-    effective_versions: _EffectiveVersions,
+    effective_artefacts: _EffectiveArtefacts,
     default_group: str = "",
 ) -> Reference | None:
     """Return the reference the element declares, or None where it leaves out its artifact or its group.
 
     A `<dependency>` and a `<plugin>` name their artefact alike, as `groupId:artifactId`, and version it alike. The
-    caller passes the group to fall back on for an element whose group Maven defaults. The version is the one the
-    effective pom gives the element, and the pom's own where there is no effective pom. An element without a
-    `<version>` is located at its own line.
+    coordinates and the version are the ones the effective pom gives the element, and the pom's own where the
+    effective pom gives the element none. An element without a `<version>` is located at its own line.
     """
     group = element.child("groupId")
     artifact = element.child("artifactId")
@@ -267,9 +286,20 @@ def _reference(
         return None
     versioned_by = element if version is None else _resolved(version, property_elements)
     own_version = "" if version is None else versioned_by.text
-    current_version = effective_versions.get(_ArtifactDeclaration(artifact_name, artifact.line), own_version)
+    effective = effective_artefacts.get(artifact)
+    pinned = effective or PinnedDependency(_artefact(group_name, artifact_name), own_version)
     location = Location(path, versioned_by.line, versioned_by.column)
-    return Reference(_artefact(group_name, artifact_name), current_version, location)
+    return Reference(pinned.name, pinned.version, location)
+
+
+def _interpolated(text: str, property_elements: dict[str, XmlElement]) -> str:
+    """Return the text with each `${name}` it holds replaced by the value of that property, where there is one."""
+
+    def value(reference: re.Match[str]) -> str:
+        element = property_elements.get(reference["name"])
+        return reference[0] if element is None else element.text
+
+    return _PROPERTY_REFERENCE.sub(value, text)
 
 
 def _resolved(element: XmlElement, property_elements: dict[str, XmlElement]) -> XmlElement:

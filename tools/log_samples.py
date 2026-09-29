@@ -227,6 +227,13 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.pinned(reference("python", Location(Path("Dockerfile"), 1)), pinned_tag)
     pinned_floating_tag = capture.take()
 
+    pinned_url = DependencyVersion("2.0.11", sha=_ELIDED_INTEGRITY_HASH)
+    log.pinned(reference("clipboard", Location(Path("docs/conf.py"), 4)), pinned_url)
+    pinned_integrity_hash = capture.take()
+
+    log.effective_pom_unreadable(Path("pom.xml"))
+    effective_pom_unreadable = capture.take()
+
     compose = Location(Path("docker-compose.yml"), 7)
     log.unpinned_floating_tag(
         reference("acme/api", compose, "dev"), DependencyVersion("dev"), FloatingPin.NO_VERSION_TAG
@@ -259,6 +266,8 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     return {
         "@@DRIFT_WARNINGS@@": drift,
         "@@PINNED_FLOATING_TAG@@": pinned_floating_tag,
+        "@@PINNED_INTEGRITY_HASH@@": pinned_integrity_hash,
+        "@@EFFECTIVE_POM_UNREADABLE_WARNING@@": effective_pom_unreadable,
         "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
         "@@ACCOUNTED_FOR_REFERENCES@@": accounted_for,

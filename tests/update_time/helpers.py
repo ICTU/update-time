@@ -833,13 +833,16 @@ def dependency_management_element(*dependencies: str) -> str:
 
 
 def properties_element(values: dict[str, str]) -> str:
-    """Return a `<properties>` element declaring the given names and values, the first of them on line 3."""
+    """Return a `<properties>` element declaring the given names and values."""
     declared = "".join(f"    <{name}>{value}</{name}>\n" for name, value in values.items())
     return f"  <properties>\n{declared}  </properties>\n"
 
 
 def pom_declaring(*dependencies: str, properties: str = "", managed: str = "", build: str = "") -> str:
-    """Return a pom declaring the given properties, managed dependencies, dependency elements, and build plugins."""
+    """Return a pom declaring the given properties, managed dependencies, dependency elements, and build plugins.
+
+    The properties come first, so the first property sits on line 3.
+    """
     return (
         '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
         f"{properties}"
@@ -854,6 +857,9 @@ def pom_declaring(*dependencies: str, properties: str = "", managed: str = "", b
 
 # Each input location names the scanned pom by this id. The pom is a child inheriting its parent's group.
 SCANNED_POM_ID = "org.example:child:1.0"
+
+# An input location names the scanned pom's parent by this id, where the child inherits the element.
+PARENT_POM_ID = "org.example:parent:1.0"
 
 
 def effective_dependency_element(
@@ -874,27 +880,47 @@ def effective_dependency_element(
         "artifactId": (declared_by, line),
         "version": managed_at or (declared_by, line + 1),
     }
+    return f"    <dependency>\n{_located_coordinates(artefact, version, locations)}    </dependency>\n"
+
+
+def effective_plugin_element(artefact: str, version: str, line: int) -> str:
+    """Return a `<plugin>` of the effective pom, located in the scanned pom as a dependency is.
+
+    Maven leaves out the `<groupId>` of a plugin in its default plugin group.
+    """
+    group = {} if artefact.startswith("org.apache.maven.plugins:") else {"groupId": (SCANNED_POM_ID, line - 1)}
+    locations = group | {"artifactId": (SCANNED_POM_ID, line), "version": (SCANNED_POM_ID, line + 1)}
+    return f"      <plugin>\n{_located_coordinates(artefact, version, locations)}      </plugin>\n"
+
+
+def _located_coordinates(artefact: str, version: str, locations: dict[str, tuple[str, int]]) -> str:
+    """Return the coordinate elements of an effective pom entry, each followed by the input location given for it."""
     group, artifact = coordinates(artefact)
     values = {"groupId": group, "artifactId": artifact, "version": version}
-    declared = "".join(
+    return "".join(
         f"      <{tag}>{values[tag]}</{tag}>  <!-- {pom}, line {located} -->\n"
         for tag, (pom, located) in locations.items()
     )
-    return f"    <dependency>\n{declared}    </dependency>\n"
 
 
-def effective_pom_declaring(*dependencies: str, managed: str = "") -> str:
-    """Return the effective pom Maven writes for the scanned pom, holding the given dependencies."""
+def effective_pom_declaring(*dependencies: str, properties: str = "", managed: str = "", build: str = "") -> str:
+    """Return the effective pom Maven writes for the scanned pom, holding the given elements.
+
+    Maven lists every property the parent declares, and this lists only the ones given. Update-time reads them only to
+    resolve an artifact's name, so a test passes the properties its artifacts name.
+    """
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         "<!-- Effective POM for project 'org.example:child:jar:1.0' -->\n"
         '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
-        "  <groupId>org.example</groupId>  <!-- org.example:parent:1.0, line 3 -->\n"
+        f"  <groupId>org.example</groupId>  <!-- {PARENT_POM_ID}, line 3 -->\n"
         f"  <artifactId>child</artifactId>  <!-- {SCANNED_POM_ID}, line 8 -->\n"
+        f"{properties}"
         f"{managed}"
         "  <dependencies>\n"
         f"{''.join(dependencies)}"
         "  </dependencies>\n"
+        f"{build}"
         "</project>\n"
     )
 

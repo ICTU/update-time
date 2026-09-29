@@ -24,11 +24,13 @@ from update_time.updaters.update_pom_xml import update_pom_xmls
 from tests.helpers import mock_path, patch_environ, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
+    PARENT_POM_ID,
     LoggingTestCase,
     archival_check_disabled,
     dependency_element,
     dependency_management_element,
     effective_dependency_element,
+    effective_plugin_element,
     effective_pom_declaring,
     guava_element,
     maven_central_listing,
@@ -231,7 +233,7 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "_warn_about_vulnerabilities(pom_xml_format.dependencies(pom_xml, effective_pom) or [])",
+            "_warn_about_vulnerabilities(resolved)",
             "",
             "a pom's dependencies reach OSV never, so an advisory naming the version a run lands on goes unreported",
         )
@@ -254,8 +256,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "pom_xml_format.dependencies(pom_xml, effective_pom) or []",
-            "before",
+            "_warn_about_vulnerabilities(resolved)",
+            "_warn_about_vulnerabilities(before)",
             "the version asked about is the one Maven updated away from rather than the one the run lands on",
         ),
     )
@@ -316,19 +318,39 @@ class UpdatePomXmlTest(LoggingTestCase):
                 asked = ["com.google.guava:guava", "org.springframework:spring-core"]
                 self.assertEqual([call.args[0] for call in mock_project.call_args_list], asked)
 
-    def test_a_version_the_parent_decides_is_asked_about_as_maven_resolves_it(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a dependency the parent versions is warned about at the effective pom's version."""
+    @kills(
+        Mutation(
+            update_pom_xml_module._update_pom_xml,
+            "_warn_about_vulnerabilities(resolved)",
+            "_warn_about_vulnerabilities(after)",
+            "OSV is asked about the pom as it spells a dependency, so what the parent declares is never checked",
+        ),
+        Mutation(
+            pom_xml_module._interpolated,
+            "reference[0] if element is None else element.text",
+            "element.text",
+            "an artifact naming the parent's property ends the run, since the pom alone does not declare it",
+            raises="AttributeError: 'NoneType' object has no attribute 'text'",
+        ),
+    )
+    def test_what_the_parent_decides_is_asked_about_as_maven_resolves_it(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a dependency is warned about as Maven resolves it, whichever part of it the parent declares."""
         # The warning names the line of the `<version>` element, or of the `<dependency>` lacking one.
-        parent = "org.example:parent:1.0"
-        cases = {"a parent's property": ("${guava.version}", 6, None), "no version": (None, 3, (parent, 12))}
-        for case, (version, line, managed_at) in cases.items():
+        cases = {
+            "a parent's property": (guava_element("${guava.version}"), 6, None),
+            "no version": (guava_element(None), 3, (PARENT_POM_ID, 12)),
+            "a parent's group": (dependency_element("${guava.group}", "guava", "33.0.0-jre"), 6, None),
+            "a parent's artifact": (dependency_element("com.google.guava", "${guava.artifact}", "33.0.0-jre"), 6, None),
+        }
+        # Maven lists the properties the parent declares in the effective pom.
+        properties = properties_element({"guava.group": "com.google.guava", "guava.artifact": "guava"})
+        for case, (declared, line, managed_at) in cases.items():
             with self.subTest(case=case):
                 guava = effective_dependency_element(
                     "com.google.guava:guava", "33.0.0-jre", line=5, managed_at=managed_at
                 )
-                pom = self.find_pom(
-                    mock_run, mock_glob, pom_declaring(guava_element(version)), effective_pom_declaring(guava)
-                )
+                effective_pom = effective_pom_declaring(guava, properties=properties)
+                pom = self.find_pom(mock_run, mock_glob, pom_declaring(declared), effective_pom)
                 with osv(ADVISORY):
                     update_pom_xmls()
                 self.assert_vulnerable_dependency_logged(
@@ -375,14 +397,23 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "pom_xml_format.artefact_references(pom_xml)",
+            "pom_xml_format.artefact_references(pom_xml, effective_pom)",
             "[]",
             "a pom's dependencies reach Maven Central never, so one that stopped releasing goes unreported",
-        )
+        ),
+        Mutation(
+            update_pom_xml_module._update_pom_xml,
+            "artefact_references(pom_xml, effective_pom)",
+            "artefact_references(pom_xml)",
+            "staleness reads the pom alone, so a dependency whose group the parent declares goes unchecked",
+        ),
     )
     def test_a_stale_dependency_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a dependency whose newest release is old is warned about, at its `<version>` element's line."""
-        pom = self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("33.0.0-jre")))
+        """Test that a dependency whose newest release is old is warned about, as the effective pom names it."""
+        # The parent declares guava's group, so only the effective pom names guava in full.
+        declared = pom_declaring(dependency_element("${guava.group}", "guava", "33.0.0-jre"))
+        guava = effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=5)
+        pom = self.find_pom(mock_run, mock_glob, declared, effective_pom_declaring(guava))
         with patch.object(maven_central_module, "project", Mock(return_value=_stale("33.0.0-jre", 500))):
             update_pom_xmls()
         self.assert_stale_dependency_logged("com.google.guava:guava", "33.0.0-jre", Location(pom, 6))
@@ -390,7 +421,7 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "pom_xml_format.artefact_references(pom_xml)",
+            "pom_xml_format.artefact_references(pom_xml, effective_pom)",
             "after",
             "staleness reads the pom's dependencies alone, so a plugin that stopped releasing goes unreported",
         ),
@@ -400,19 +431,55 @@ class UpdatePomXmlTest(LoggingTestCase):
             'for element in project.descendants(tag) if tag == "dependency" or element.child("version")',
             "a plugin without a version goes unchecked, although the parent or Maven decides which release runs",
         ),
+        Mutation(
+            pom_xml_module._effective_artefacts,
+            "for tag, default_group in _DEFAULT_GROUPS.items()",
+            'for tag, default_group in {"dependency": ""}.items()',
+            "the plugin's name keeps the group's property where the parent declares it, so it goes unchecked",
+        ),
+        Mutation(
+            pom_xml_module._effective_artefacts,
+            "group_name = default_group if group is None",
+            'group_name = "" if group is None',
+            "a plugin in Maven's default group is asked about without its group, since the effective pom omits it",
+        ),
     )
     def test_a_stale_plugin_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a plugin whose newest release is old is warned about, whether it declares a version or not."""
+        """Test that a plugin whose newest release is old is warned about, as the effective pom names it."""
         # The warning names the line of the `<version>` element, or of the `<plugin>` lacking one.
-        cases = {"a version": ("3.5.0", 9), "no version": (None, 6)}
-        for case, (version, line) in cases.items():
+        surefire = "org.apache.maven.plugins:maven-surefire-plugin"
+        versions = "org.codehaus.mojo:versions-maven-plugin"
+        # Maven lists the properties the parent declares in the effective pom.
+        effective_versions = effective_pom_declaring(
+            properties=properties_element({"mojo.group": "org.codehaus.mojo"}),
+            build=_build(effective_plugin_element(versions, "2.18.0", line=8)),
+        )
+        effective_surefire = effective_pom_declaring(
+            properties=properties_element({"plugin.group": "org.apache.maven.plugins"}),
+            build=_build(effective_plugin_element(surefire, "3.5.0", line=8)),
+        )
+        cases = {
+            "a version": (_plugin("maven-surefire-plugin", "3.5.0"), surefire, 9, _EMPTY_EFFECTIVE_POM),
+            "no version": (_plugin("maven-surefire-plugin", None), surefire, 6, _EMPTY_EFFECTIVE_POM),
+            "a parent's group": (
+                _plugin("versions-maven-plugin", "2.18.0", "${mojo.group}"),
+                versions,
+                9,
+                effective_versions,
+            ),
+            "a parent's default group": (
+                _plugin("maven-surefire-plugin", "3.5.0", "${plugin.group}"),
+                surefire,
+                9,
+                effective_surefire,
+            ),
+        }
+        for case, (declared, name, line, effective_pom) in cases.items():
             with self.subTest(case=case):
-                surefire = _plugin("maven-surefire-plugin", version)
-                pom = self.find_pom(mock_run, mock_glob, pom_declaring(build=_build(surefire)))
+                pom = self.find_pom(mock_run, mock_glob, pom_declaring(build=_build(declared)), effective_pom)
                 with patch.object(maven_central_module, "project", Mock(return_value=_stale("3.5.0", 500))):
                     update_pom_xmls()
-                surefire_plugin = "org.apache.maven.plugins:maven-surefire-plugin"
-                self.assert_stale_dependency_logged(surefire_plugin, "3.5.0", Location(pom, line))
+                self.assert_stale_dependency_logged(name, "3.5.0", Location(pom, line))
 
     @kills(
         Mutation(
@@ -522,14 +589,17 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             update_pom_xml_module._report_new_versions,
-            "resolved = pom_xml_format.fully_resolved(new.pinned)",
-            "resolved = True",
+            "is_resolved = pom_xml_format.fully_resolved(named.pinned)",
+            "is_resolved = True",
             "Maven Central is asked for the changes of coordinates holding an unresolved property",
         ),
     )
-    def test_coordinates_naming_a_property_are_not_asked_about(self, mock_run: Mock, mock_glob: Mock):
-        """Test that every check passes over a dependency whose coordinates name a property the pom lacks."""
-        # A pom can spell a dependency's group as a property its parent declares, which this pom does not hold.
+    def test_coordinates_naming_a_property_without_an_effective_pom_are_not_asked_about(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that every check passes over a dependency whose group the parent declares, without an effective pom."""
+        # A pom can spell a dependency's group as a property its parent declares, which this pom does not hold. Maven
+        # rewrote the pom, but Update-time cannot read the effective pom that would resolve the group.
         inherited = dependency_element("${spring.group}", "spring-core", "${spring.version}")
         before = pom_declaring(
             guava_element("33.0.0-jre"), inherited, properties=properties_element({"spring.version": "6.1.0"})
@@ -537,7 +607,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         after = pom_declaring(
             guava_element("33.7.1-jre"), inherited, properties=properties_element({"spring.version": "7.1.0"})
         )
-        self.find_rewritten_pom(mock_run, mock_glob, before, after)
+        self.find_rewritten_pom(mock_run, mock_glob, before, after, effective_pom="")
         mock_project = Mock(return_value=Project())
         with (
             self.asked_about() as artefacts,
@@ -590,14 +660,14 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             pom_xml_module.artefact_references,
-            ', "plugin": _PLUGIN_GROUP',
-            "",
+            "_DEFAULT_GROUPS",
+            '{"dependency": ""}',
             "the rule set leaves out the pom's plugins, so a property versioning one is advanced without a cooldown",
         ),
         Mutation(
-            pom_xml_module.artefact_references,
-            "_PLUGIN_GROUP",
-            '""',
+            pom_xml_module,
+            '"plugin": "org.apache.maven.plugins"',
+            '"plugin": ""',
             "a plugin that leaves its group to Maven is dropped, so the property versioning it escapes the cooldown",
         ),
     )
@@ -669,20 +739,33 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             update_pom_xml_module._report_new_versions,
-            "get_changes(new.dependency, new.current_version)",
-            "get_changes(new.dependency, old.current_version)",
+            "get_changes(named.dependency, new.current_version)",
+            "get_changes(named.dependency, old.current_version)",
             "a dependency Maven moved is reported with the changes of the version it moved away from",
         ),
+        Mutation(
+            update_pom_xml_module._update_pom_xml,
+            "_report_new_versions(before, after, resolved)",
+            "_report_new_versions(before, after, after)",
+            "the report names a dependency as the pom spells it, so a group the parent declares stays a property",
+        ),
     )
-    def test_each_rewritten_version_is_reported_at_its_own_line_with_its_changes(self, mock_run: Mock, mock_glob: Mock):
-        """Test that two dependencies Maven rewrote are both reported, each at its own line with its new changes."""
+    def test_each_rewritten_dependency_is_reported_at_its_line_as_maven_names_it_with_its_changes(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that each dependency Maven rewrote is reported at its line, as Maven names it, with its changes."""
+        # The parent declares spring's group, so the report takes spring's name from the effective pom.
         before = pom_declaring(
-            guava_element("33.0.0-jre"), dependency_element("org.springframework", "spring-core", "6.1.0")
+            guava_element("33.0.0-jre"), dependency_element("${spring.group}", "spring-core", "6.1.0")
         )
         after = pom_declaring(
-            guava_element("33.7.1-jre"), dependency_element("org.springframework", "spring-core", "7.1.0")
+            guava_element("33.7.1-jre"), dependency_element("${spring.group}", "spring-core", "7.1.0")
         )
-        pom = self.find_rewritten_pom(mock_run, mock_glob, before, after)
+        effective_pom = effective_pom_declaring(
+            effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=5),
+            effective_dependency_element("org.springframework:spring-core", "6.1.0", line=10),
+        )
+        pom = self.find_rewritten_pom(mock_run, mock_glob, before, after, effective_pom)
 
         def changes(artefact: str, version: str) -> Changes:
             return Changes(f"Changes in {artefact} {version}", markdown=False)
@@ -703,8 +786,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._report_new_versions,
-            "zip(before, after, strict=True)",
-            "{n.location: (o, n) for o, n in zip(before, after, strict=True)}.values()",
+            "zip(before, after, resolved, strict=True)",
+            "{n.location: (o, n, r) for o, n, r in zip(before, after, resolved, strict=True)}.values()",
             "one dependency per line is reported, so of two naming the same property only one is",
         )
     )
@@ -765,8 +848,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "_report_new_versions(before, after)",
-            "_report_new_versions(before, pom_xml_format.dependencies(pom_xml, effective_pom) or [])",
+            "_report_new_versions(before, after, resolved)",
+            "_report_new_versions(before, resolved, resolved)",
             "Update-time reports a move from the parent's property to the version it holds, though Maven moved nothing",
         ),
     )
@@ -777,7 +860,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         unchanged = pom_declaring(guava_element("33.7.1-jre"), spring, junit)
         effective_guava = effective_dependency_element("com.google.guava:guava", "33.7.1-jre", line=5)
         effective_spring = effective_dependency_element("org.springframework:spring-core", "6.1.0", line=10)
-        parent_managed = ("org.example:parent:1.0", 20)
+        parent_managed = (PARENT_POM_ID, 20)
         effective_junit = effective_dependency_element("junit:junit", "4.13.2", line=15, managed_at=parent_managed)
         effective_pom = effective_pom_declaring(effective_guava, effective_spring, effective_junit)
         self.find_rewritten_pom(mock_run, mock_glob, unchanged, unchanged, effective_pom)

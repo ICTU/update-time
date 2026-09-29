@@ -694,12 +694,13 @@ class Logger:
 
     _MESSAGE_EFFECTIVE_POM_UNREADABLE = LogMessage(
         WARNING,
-        "Could not read the effective pom Maven wrote for %(location)s, so the versions its parent declares were not "
-        "checked",
+        "Could not read the effective pom Maven wrote for %(location)s, so any dependency or plugin whose group or "
+        "artifact the parent pom declares was not checked, and any version the pom leaves to Maven was not checked "
+        "for vulnerabilities",
     )
 
     def effective_pom_unreadable(self, path: Path) -> None:
-        """Warn that the effective pom Maven wrote cannot be read, so a version the parent declares goes unchecked."""
+        """Warn that the effective pom Maven wrote cannot be read, so what the pom leaves to Maven goes unchecked."""
         self._log_file(self._MESSAGE_EFFECTIVE_POM_UNREADABLE, path)
 
     _MESSAGE_DECLARATIONS_CHANGED = LogMessage(

@@ -1067,13 +1067,13 @@ Update-time adds no hash pin to a Maven dependency, since a pom has nowhere to h
 
 The versions plugin does not filter releases by age, so Update-time names the versions the plugin may not adopt instead. It reads each artefact's publication dates from [Maven Central](https://repo1.maven.org/maven2/), and writes every version published inside the cooldown into a rule set the plugin reads. The plugin then picks the newest version left. Both goals honour the rule set, so it reaches both kinds of dependency: the one whose `<version>` holds a version, and the one whose `<version>` names a property. The rule set names the pom's plugins too, so a property that versions a plugin is held back like any other.
 
-Update-time holds nothing back for two kinds of dependency. Maven Central does not serve an artefact that a project resolves from a mirror or a private repository, so Update-time cannot read its publication date. A pom can also spell a dependency's group or artifact as a property its parent declares. Update-time cannot resolve those coordinates, so it does not ask any repository about that dependency.
+Update-time holds nothing back for two kinds of artefact. Maven Central does not serve an artefact that a project resolves from a mirror or a private repository, so Update-time cannot read its publication date. A pom can also spell a dependency's or plugin's group or artifact as a property its parent declares. Update-time writes the rule set before Maven resolves those coordinates, so it does not ask any repository which versions of that artefact to hold back.
 
 #### Stale dependencies
 
 Update-time checks each dependency against the newest release Maven Central lists for it. The pom's plugins are checked too.
 
-Update-time asks Maven Central about an artefact by that artefact's `groupId:artifactId` coordinates alone. So it checks a dependency whose `<version>` names a property its parent declares. It also checks a dependency or plugin that leaves its `<version>` out. It does not check a dependency whose group or artifact names a property its parent declares, since Update-time asks Maven Central about the coordinates the pom itself spells.
+Update-time asks Maven Central about an artefact by that artefact's `groupId:artifactId` coordinates alone. So it checks a dependency whose `<version>` names a property its parent declares, and a dependency or plugin that leaves its `<version>` out. A pom can spell a dependency's or plugin's group or artifact as a property its parent declares. Update-time then takes those coordinates from the effective pom Maven writes, and asks Maven Central about the artefact Maven resolves. When Maven does not write an effective pom, or Update-time cannot read it, Update-time does not check that dependency or plugin.
 
 Maven Central lists nothing for an artefact a project resolves from a mirror or a private repository. Update-time then has nothing to measure staleness against.
 
@@ -1085,14 +1085,14 @@ Maven Central does not report a withdrawal, so Update-time never warns that a Ma
 
 Update-time checks the pom's dependencies against OSV's Maven advisories. For a version the pom holds itself, the version checked is the one the pom holds once Maven has run. That includes a dependency that omits its `<version>` element and leaves the version to the pom's own `<dependencyManagement>`. So for such a version, the run never reports a vulnerability it updated away from.
 
-A pom can also leave a dependency's version to another pom. The pom can name a property the parent declares. Or it can omit the `<version>` element, and leave the version to the parent's `<dependencyManagement>` or to an imported BOM. Update-time takes that version from the effective pom Maven writes before it updates the pom. So it checks the dependency at the version Maven resolves.
+A pom can also leave a dependency's version to another pom. The pom can name a property the parent declares. Or it can omit the `<version>` element, and leave the version to the parent's `<dependencyManagement>` or to an imported BOM. Update-time takes that version from the effective pom Maven writes before it updates the pom. So it checks the dependency at the version Maven resolves. A group or artifact that names a property the parent declares comes from the effective pom too.
 
 In two cases, Update-time warns about a version the same run updates away from. The scan can reach a child pom before its parent pom, and the parent's own Maven run can then still move that version. And the Maven run over a pom can move the version of a BOM that pom imports itself, while the effective pom lists the versions the BOM held before. In both cases, the next run checks the version the first run moved to.
 
-Update-time does not yet check a dependency whose group or artifact names a property its parent declares. It does not check a dependency whose `<version>` element is empty, since OSV needs a version to match an advisory to. It does not check a dependency whose version Maven leaves unresolved either, such as one naming a property the poms leave undeclared. When Maven cannot build the pom at all, it does not write an effective pom. Update-time then checks none of the dependencies whose version it reads from the effective pom: the ones that omit their `<version>` element, and the ones that name a property the parent declares. It reports Maven's error. When Maven succeeds but Update-time cannot read the effective pom it wrote, those versions go unchecked as well, and Update-time warns about it:
+Update-time does not check a dependency whose `<version>` element is empty, since OSV needs a version to match an advisory to. It does not check a dependency whose version Maven leaves unresolved either, such as one naming a property the poms leave undeclared. When Maven cannot build the pom at all, it does not write an effective pom. Update-time then checks none of the dependencies it reads from the effective pom: the ones that omit their `<version>` element, and the ones whose version, group, or artifact names a property the parent declares. It reports Maven's error. When Maven succeeds but Update-time cannot read the effective pom it wrote, those dependencies go unchecked as well, and Update-time warns about it:
 
 ```console
-WARNING Could not read the effective pom Maven wrote for pom.xml, so the versions its parent declares were not checked
+WARNING Could not read the effective pom Maven wrote for pom.xml, so any dependency or plugin whose group or artifact the parent pom declares was not checked, and any version the pom leaves to Maven was not checked for vulnerabilities
 ```
 
 Silencing the vulnerability warning for a single dependency would need a marker, and Update-time does not yet support markers for Maven dependencies. Pass `--ignore-vulnerability` to silence an advisory across the run instead, or `--vulnerability-level` to only hear about the more severe ones.
@@ -1350,7 +1350,11 @@ Update-time updates the npm package version embedded in the URL to the latest ve
 
 #### Pinning
 
-A URL whose attribute dictionary declares no `integrity` entry gains one, so the browser verifies the script the CDN serves before running it. Update-time inserts the hash in front of the entries the dictionary already has, and reports it as a pin: `Pinned clipboard in docs/conf.py:4 to 2.0.11@sha256-…`.
+A URL whose attribute dictionary declares no `integrity` entry gains one, so the browser verifies the script the CDN serves before running it. Update-time inserts the hash in front of the entries the dictionary already has, and reports it as a pin:
+
+```console
+INFO Pinned clipboard in docs/conf.py:4 to 2.0.11@sha256-…
+```
 
 A URL declared as a bare string, without an attribute dictionary, has nowhere to hold an integrity hash, so it stays without one. Adding a hash would mean rewriting the string into a `(url, {"integrity": …})` tuple, which is more than rewriting a line. So Update-time logs it at `INFO` and leaves it alone. Declare the URL as such a tuple to have it pinned.
 
