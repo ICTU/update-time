@@ -172,17 +172,30 @@ def _input_location(element: XmlElement | None) -> tuple[str, int]:
     return ("", 0) if input_location is None else (input_location["pom"], int(input_location["line"]))
 
 
+def has_input_locations(effective_pom: XmlElement) -> bool:
+    """Return whether the effective pom names the pom declaring each element, as Maven writes it when verbose."""
+    declared_by, _ = _input_location(effective_pom.child("artifactId"))
+    return bool(declared_by)
+
+
 def artefact_references(path: Path, effective_pom: XmlElement | None = None) -> list[Reference]:
     """Return a reference to each dependency and plugin the pom declares.
 
     Maven's effective pom, where one is given, supplies the coordinates and the version the parent declares or
     manages. Coordinates holding an unresolved property are left out, since a repository serves nothing under them.
     """
+    return [reference for reference in _artefact_references(path, effective_pom) if _is_resolved(reference.dependency)]
+
+
+def leaves_coordinates_unresolved(path: Path) -> bool:
+    """Return whether the pom declares a dependency or plugin by a group or an artifact it does not resolve itself."""
+    return not all(_is_resolved(reference.dependency) for reference in _artefact_references(path))
+
+
+def _artefact_references(path: Path, effective_pom: XmlElement | None = None) -> list[Reference]:
+    """Return a reference to each dependency and plugin the pom declares, whether or not its coordinates resolve."""
     project = xml.read(path)
-    if project is None:
-        return []
-    declared = _references(path, project, _DEFAULT_GROUPS, effective_pom)
-    return [reference for reference in declared if _is_resolved(reference.dependency)]
+    return [] if project is None else _references(path, project, _DEFAULT_GROUPS, effective_pom)
 
 
 def _references(
@@ -205,13 +218,20 @@ def _references(
     return [reference for reference in declared if reference is not None]
 
 
-def artefacts(path: Path) -> list[DependencyName]:
-    """Return the coordinates of each dependency and plugin the pom declares a version for."""
-    return [reference.dependency for reference in artefact_references(path) if reference.current_version]
+def artefacts(path: Path, effective_pom: XmlElement | None = None) -> list[DependencyName]:
+    """Return the coordinates of each dependency and plugin the pom declares a version for.
+
+    The effective pom, where one is given, supplies the coordinates. Whether a dependency declares a version is read
+    off the pom alone, since the effective pom gives one to each dependency that declares none.
+    """
+    readings = zip(_artefact_references(path), _artefact_references(path, effective_pom), strict=True)
+    return [
+        resolved.dependency for own, resolved in readings if own.current_version and _is_resolved(resolved.dependency)
+    ]
 
 
 def _is_resolved(value: str) -> bool:
-    """Return whether the pom resolved the value, rather than leaving a property its parent declares."""
+    """Return whether the pom resolved every property the value names."""
     return not _PROPERTY_REFERENCE.search(value)
 
 

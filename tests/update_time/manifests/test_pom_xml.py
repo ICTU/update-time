@@ -117,9 +117,9 @@ class ArtefactsTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            pom_xml.artefact_references,
-            "if project is None:",
-            "if False:",
+            pom_xml._artefact_references,
+            "[] if project is None else ",
+            "",
             "an unparsable pom takes the reading of its artefacts down with it",
             raises="AttributeError: 'NoneType' object has no attribute 'descendants'",
         )

@@ -76,6 +76,14 @@ def _redundant_directive(reason: str) -> str:
     return f"Redundant update-time directive %(directive)s for %(dependency)s in %(location)s: {reason}"
 
 
+def _effective_pom_unused(problem: str, cause: str) -> str:
+    """Return a message saying why the effective pom went unused, what the run missed, and what may cause it."""
+    return (
+        f"{problem}, so any dependency or plugin whose group or artifact the parent declares was neither cooled down "
+        f"nor checked, and any version left to Maven was not checked for vulnerabilities; {cause}"
+    )
+
+
 def _ignoring(subject: str, cause: str = "update-time: %(directive)s") -> str:
     """Return a message saying what is being ignored, and why."""
     return f"Ignoring {subject} for %(dependency)s in %(location)s ({cause})"
@@ -694,14 +702,27 @@ class Logger:
 
     _MESSAGE_EFFECTIVE_POM_UNREADABLE = LogMessage(
         WARNING,
-        "Could not read the effective pom Maven wrote for %(location)s, so any dependency or plugin whose group or "
-        "artifact the parent pom declares was not checked, and any version the pom leaves to Maven was not checked "
-        "for vulnerabilities",
+        _effective_pom_unused(
+            "Could not read the effective pom of %(location)s",
+            "a --quiet in the project's Maven config hides where Maven wrote it",
+        ),
     )
 
     def effective_pom_unreadable(self, path: Path) -> None:
-        """Warn that the effective pom Maven wrote cannot be read, so what the pom leaves to Maven goes unchecked."""
+        """Warn that the effective pom cannot be read, so the checks and the cooldown miss what it resolves."""
         self._log_file(self._MESSAGE_EFFECTIVE_POM_UNREADABLE, path)
+
+    _MESSAGE_EFFECTIVE_POM_WITHOUT_INPUT_LOCATIONS = LogMessage(
+        WARNING,
+        _effective_pom_unused(
+            "The effective pom of %(location)s lacks the input locations Update-time reads",
+            "the project's help plugin configuration sets verbose to false",
+        ),
+    )
+
+    def effective_pom_without_input_locations(self, path: Path) -> None:
+        """Warn that the effective pom lacks input locations, so it resolves nothing."""
+        self._log_file(self._MESSAGE_EFFECTIVE_POM_WITHOUT_INPUT_LOCATIONS, path)
 
     _MESSAGE_DECLARATIONS_CHANGED = LogMessage(
         ERROR,

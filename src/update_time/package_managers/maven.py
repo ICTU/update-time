@@ -1,5 +1,6 @@
-"""The Maven command Update-time runs over a pom.xml: the effective pom, the versions plugin's goals, and options."""
+"""The Maven runs Update-time makes over a pom.xml: the effective pom, the versions plugin's goals, and options."""
 
+import re
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
 
     from update_time.domain.dependency import DependencyName
     from update_time.formats.xml import XmlElement
+    from update_time.primitives.command import Result
 
 _LOG = get_logger("pom.xml")
 
@@ -45,24 +47,28 @@ _VERSIONS_PLUGIN = f"org.codehaus.mojo:versions-maven-plugin:{_declared_plugin_v
 # https://maven.apache.org/pom.html#version-order-specification.
 _PRE_RELEASES = "(?i).*[-.](alpha|beta|milestone|rc|cr|m|pre|preview|[ab][0-9])[-.]?[0-9]*"
 
-# `--update-snapshots` forces a fresh read of the version metadata Maven caches for a day. `generateBackupPoms`
-# stops the versions plugin writing a backup pom beside the one it rewrites. `verbose` writes the input location
-# of each element of the effective pom after it: the pom and the line declaring that element.
-_OPTIONS = (
-    "--batch-mode",
-    "--no-transfer-progress",
-    "--non-recursive",
-    "--update-snapshots",
-    "-DgenerateBackupPoms=false",
-    f"-Dmaven.version.ignore={_PRE_RELEASES}",
-    "-Dverbose",
-)
+# Every Maven run takes these options, whichever goals it runs. `--update-snapshots` forces a fresh read of what Maven
+# caches for a day: the version metadata the versions plugin reads, and a parent pom it could not resolve before.
+_OPTIONS = ("--batch-mode", "--no-transfer-progress", "--non-recursive", "--update-snapshots")
 
-# `effective-pom` writes the pom as Maven builds it, before the other goals rewrite it. `use-latest-releases`
-# advances the version in a dependency's `<version>` element, `update-properties` the property a `<version>` element
-# names.
-_GOALS = (
-    f"{_HELP_PLUGIN}:effective-pom",
+# The versions plugin's goals take these options. `generateBackupPoms` stops the versions plugin writing a backup pom
+# beside the one it rewrites.
+_VERSIONS_OPTIONS = ("-DgenerateBackupPoms=false", f"-Dmaven.version.ignore={_PRE_RELEASES}")
+
+# `verbose` writes the input location of each element of the effective pom after it: the pom and the line declaring
+# that element.
+_EFFECTIVE_POM_OPTION = "-Dverbose"
+
+# `effective-pom` writes the pom as Maven builds it, before any other goal of the same run rewrites it.
+_EFFECTIVE_POM_GOAL = f"{_HELP_PLUGIN}:effective-pom"
+
+# The help plugin reports in this line where it wrote the effective pom. A project that configures the plugin's
+# `<output>` overrides `-Doutput`, so the effective pom lands where that project says.
+_EFFECTIVE_POM_WRITTEN = re.compile(r"Effective-POM written to: (?P<path>.+)")
+
+# `use-latest-releases` advances the version in a dependency's `<version>` element, `update-properties` the property a
+# `<version>` element names.
+_VERSIONS_GOALS = (
     f"{_VERSIONS_PLUGIN}:use-latest-releases",
     f"{_VERSIONS_PLUGIN}:update-properties",
 )
@@ -90,31 +96,65 @@ def _maven(pom_xml: Path) -> str:
 def update_pom_xml(pom_xml: Path) -> XmlElement | None:
     """Update the dependencies the pom declares, running Maven in the pom's own directory.
 
-    Return the effective pom Maven wrote before it updated the pom, or None where it wrote none.
+    Return the effective pom Maven wrote before it updated the pom, or None where it wrote none. A pom leaving a group
+    or an artifact to its parent gets the effective pom in a Maven run of its own, so the rule set names the
+    coordinates Maven resolves.
     """
-    with _rule_set_option(pom_xml) as option, _effective_pom_file() as output:
-        command = Command(_maven(pom_xml), *_OPTIONS, *option, f"-Doutput={output}", *_GOALS)
-        result = run(command, cwd=pom_xml.parent)
+    if not pom_xml_format.leaves_coordinates_unresolved(pom_xml):
+        with _versions_options(pom_xml_format.artefacts(pom_xml)) as options:
+            _, effective_pom = _run_writing_effective_pom(pom_xml, options, _VERSIONS_GOALS)
+            return effective_pom
+    succeeded, effective_pom = _run_writing_effective_pom(pom_xml)
+    if succeeded:  # A single run failing at the same point would not reach the updates either.
+        with _versions_options(pom_xml_format.artefacts(pom_xml, effective_pom)) as options:
+            _run(pom_xml, options, _VERSIONS_GOALS)
+    return effective_pom
+
+
+def _run_writing_effective_pom(
+    pom_xml: Path, options: tuple[str, ...] = (), goals: tuple[str, ...] = ()
+) -> tuple[bool, XmlElement | None]:
+    """Run Maven over the pom, the effective pom's goal first, and return whether it succeeded and the effective pom."""
+    with _effective_pom_file() as output:
+        effective_pom_options = (_EFFECTIVE_POM_OPTION, f"-Doutput={output}")
+        result = _run(pom_xml, (*options, *effective_pom_options), (_EFFECTIVE_POM_GOAL, *goals))
         # Maven builds the model before any goal runs, so the effective pom holds even when a later goal fails.
         effective_pom = xml.read(output)
+    if effective_pom is None:
+        effective_pom = _effective_pom_written_elsewhere(result.stdout)
+    if result.succeeded and effective_pom is None:
+        _LOG.effective_pom_unreadable(pom_xml)
+    if effective_pom is not None and not pom_xml_format.has_input_locations(effective_pom):
+        _LOG.effective_pom_without_input_locations(pom_xml)
+    return result.succeeded, effective_pom
+
+
+def _effective_pom_written_elsewhere(stdout: str) -> XmlElement | None:
+    """Return the effective pom at the path the help plugin reports writing it to, or None where it reports none."""
+    written = _EFFECTIVE_POM_WRITTEN.search(stdout)
+    return None if written is None else xml.read(Path(written["path"]))
+
+
+def _run(pom_xml: Path, options: tuple[str, ...], goals: tuple[str, ...]) -> Result:
+    """Run Maven over the pom, and return what the run wrote and whether it succeeded."""
+    command = Command(_maven(pom_xml), *_OPTIONS, *options, *goals)
+    result = run(command, cwd=pom_xml.parent)
     # Maven writes its [ERROR] lines to stdout and leaves stderr empty, so `run` surfaces nothing for a failed run.
     # A run whose executable was missing wrote nothing at all, and `run` reported that itself.
     if not result.succeeded and result.stdout:
         _LOG.command_failed(command, result.stdout)
-    if result.succeeded and effective_pom is None:
-        _LOG.effective_pom_unreadable(pom_xml)
-    return effective_pom
+    return result
 
 
 @contextmanager
-def _rule_set_option(pom_xml: Path) -> Iterator[tuple[str, ...]]:
-    """Yield the option naming the rule set for the pom, or nothing where the cooldown holds nothing back."""
-    rules = _rules(pom_xml_format.artefacts(pom_xml))
+def _versions_options(artefacts: Iterable[DependencyName]) -> Iterator[tuple[str, ...]]:
+    """Yield the options the versions plugin's goals take, naming a rule set where the cooldown holds anything back."""
+    rules = _rules(artefacts)
     if not rules:
-        yield ()
+        yield _VERSIONS_OPTIONS
         return
     with _rule_set_file(_RULE_SET.format(rules=rules)) as path:
-        yield (f"-Dmaven.version.rules={path.as_uri()}",)
+        yield (*_VERSIONS_OPTIONS, f"-Dmaven.version.rules={path.as_uri()}")
 
 
 def _rules(artefacts: Iterable[DependencyName]) -> str:

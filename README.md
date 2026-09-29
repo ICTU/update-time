@@ -1051,9 +1051,11 @@ Update-time looks for `pom.xml` files recursively from the starting path.
 
 Update-time reads every `<dependency>` element the pom declares, wherever it sits: under `<dependencies>`, under `<dependencyManagement>`, and in a `<profile>`. A dependency can leave its `<version>` out, as one that a parent pom manages does. Update-time does not update such a dependency, since the pom does not hold a version to advance. Update-time still checks such a dependency, as the sections below describe. It checks each declaration on its own. So an artefact that a pom manages, and also declares without a `<version>`, gets every warning once per declaration. A module pom that declares the artefact without a `<version>` repeats the warnings its parent pom gets.
 
-Update-time delegates updating Maven dependencies to Maven. The Maven it runs is the project's own `./mvnw` wrapper when one sits beside the pom, and the `mvn` on your path where the project ships none. In each pom's own directory, it runs two goals of the [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/). The same invocation runs the `effective-pom` goal of the [help plugin](https://maven.apache.org/plugins/maven-help-plugin/) first. That goal changes nothing. Update-time names the release of both plugins in every goal it runs, so which release runs is Update-time's decision rather than the scanned project's. The `use-latest-releases` goal advances a dependency whose `<version>` element holds a version. The `update-properties` goal advances a dependency whose `<version>` element names one of the pom's properties, by advancing that property. Two dependencies that name the same property each get a report.
+Update-time delegates updating Maven dependencies to Maven. The Maven it runs is the project's own `./mvnw` wrapper when one sits beside the pom, and the `mvn` on your path where the project ships none. In each pom's own directory, it runs two goals of the [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/). The `use-latest-releases` goal advances a dependency whose `<version>` element holds a version. The `update-properties` goal advances a dependency whose `<version>` element names one of the pom's properties, by advancing that property. Two dependencies that name the same property each get a report.
 
 The `update-properties` goal advances a property whatever it versions, so a property that versions a plugin is advanced as well. Update-time reads the pom's `<dependency>` elements to see what changed. A plugin sits in a `<plugin>` element, so no log line names that change: it shows in the diff alone.
+
+The `effective-pom` goal of the [help plugin](https://maven.apache.org/plugins/maven-help-plugin/) runs first, and changes nothing. It runs in the same Maven run as the versions plugin's goals, except for a pom that spells a dependency's or plugin's group or artifact as a property its parent declares. That pom gets the `effective-pom` goal in a Maven run of its own, so the cooldown's rule set can name the artefact Maven resolves. Update-time names the release of both plugins in every goal it runs, so which release runs is Update-time's decision rather than the scanned project's.
 
 #### What versions are updated?
 
@@ -1067,7 +1069,9 @@ Update-time adds no hash pin to a Maven dependency, since a pom has nowhere to h
 
 The versions plugin does not filter releases by age, so Update-time names the versions the plugin may not adopt instead. It reads each artefact's publication dates from [Maven Central](https://repo1.maven.org/maven2/), and writes every version published inside the cooldown into a rule set the plugin reads. The plugin then picks the newest version left. Both goals honour the rule set, so it reaches both kinds of dependency: the one whose `<version>` holds a version, and the one whose `<version>` names a property. The rule set names the pom's plugins too, so a property that versions a plugin is held back like any other.
 
-Update-time holds nothing back for two kinds of artefact. Maven Central does not serve an artefact that a project resolves from a mirror or a private repository, so Update-time cannot read its publication date. A pom can also spell a dependency's or plugin's group or artifact as a property its parent declares. Update-time writes the rule set before Maven resolves those coordinates, so it does not ask any repository which versions of that artefact to hold back.
+Maven Central does not serve an artefact that a project resolves from a mirror or a private repository, so Update-time cannot read its publication date and holds nothing back for it.
+
+A pom can spell a dependency's or plugin's group or artifact as a property its parent declares. Update-time then takes the coordinates from the effective pom Maven writes, and holds back that artefact's versions inside the cooldown, like any other artefact's. When Update-time cannot read that effective pom, or cannot match it to the pom, it holds nothing back for the artefact.
 
 #### Stale dependencies
 
@@ -1092,7 +1096,13 @@ In two cases, Update-time warns about a version the same run updates away from. 
 Update-time does not check a dependency whose `<version>` element is empty, since OSV needs a version to match an advisory to. It does not check a dependency whose version Maven leaves unresolved either, such as one naming a property the poms leave undeclared. When Maven cannot build the pom at all, it does not write an effective pom. Update-time then checks none of the dependencies it reads from the effective pom: the ones that omit their `<version>` element, and the ones whose version, group, or artifact names a property the parent declares. It reports Maven's error. When Maven succeeds but Update-time cannot read the effective pom it wrote, those dependencies go unchecked as well, and Update-time warns about it:
 
 ```console
-WARNING Could not read the effective pom Maven wrote for pom.xml, so any dependency or plugin whose group or artifact the parent pom declares was not checked, and any version the pom leaves to Maven was not checked for vulnerabilities
+WARNING Could not read the effective pom of pom.xml, so any dependency or plugin whose group or artifact the parent declares was neither cooled down nor checked, and any version left to Maven was not checked for vulnerabilities; a --quiet in the project's Maven config hides where Maven wrote it
+```
+
+A project can configure the help plugin itself. Where it sets the plugin's `<output>`, Maven writes the effective pom to that path, and Update-time reads it there. Where it sets the plugin's `<verbose>` to false, the effective pom does not record which pom declares each element and on which line: its input locations. Update-time then cannot match the effective pom to the pom's declarations, so it resolves nothing from it, and warns:
+
+```console
+WARNING The effective pom of pom.xml lacks the input locations Update-time reads, so any dependency or plugin whose group or artifact the parent declares was neither cooled down nor checked, and any version left to Maven was not checked for vulnerabilities; the project's help plugin configuration sets verbose to false
 ```
 
 Silencing the vulnerability warning for a single dependency would need a marker, and Update-time does not yet support markers for Maven dependencies. Pass `--ignore-vulnerability` to silence an advisory across the run instead, or `--vulnerability-level` to only hear about the more severe ones.

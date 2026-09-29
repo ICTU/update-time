@@ -23,7 +23,7 @@ _LOG = get_logger("pom.xml")
 
 
 def update_pom_xmls() -> None:
-    """Update each pom.xml the scan finds, with one Maven run per pom."""
+    """Update each pom.xml the scan finds, running Maven over it."""
     for pom_xml in glob_for(POM_XML):
         _LOG.path(pom_xml)
         _update_pom_xml(pom_xml)

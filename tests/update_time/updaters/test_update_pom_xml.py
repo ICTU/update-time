@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from subprocess import CalledProcessError  # nosec
 from typing import TYPE_CHECKING
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import NO_CHANGES, Archival, ArchivedSubject, Changes, Project, Release
@@ -111,32 +111,50 @@ def _rule_set(*rules: str) -> str:
     )
 
 
-def _maven_command(executable: str = "mvn", rules: Path | None = None) -> Command:
-    """Return the command Update-time runs over a pom: the effective pom, then the versions plugin's two goals.
+# The options that open every Maven command these tests expect.
+_OPTIONS = ("--batch-mode", "--no-transfer-progress", "--non-recursive", "--update-snapshots")
 
-    Each plugin runs under the release the shipped pom declares. A run holding versions back names the rule set file
-    that lists them; a run holding none back names nothing. Every run names the file Maven writes the effective pom to.
-    """
+# The goal writing the effective pom, and its options. Each goal names the plugin release the shipped pom declares.
+_EFFECTIVE_POM_GOAL = f"org.apache.maven.plugins:maven-help-plugin:{_plugin_version('help')}:effective-pom"
+_EFFECTIVE_POM_OPTIONS = ("-Dverbose", f"-Doutput={_EFFECTIVE_POM}")
+
+# The versions plugin's two goals.
+_VERSIONS_GOALS = (
+    f"org.codehaus.mojo:versions-maven-plugin:{_plugin_version('versions')}:use-latest-releases",
+    f"org.codehaus.mojo:versions-maven-plugin:{_plugin_version('versions')}:update-properties",
+)
+
+
+def _versions_options(rules: Path | None) -> tuple[str, ...]:
+    """Return the options the versions plugin's goals take, naming the rule set file where a run holds versions back."""
     rule_set = (f"-Dmaven.version.rules={rules.as_uri()}",) if rules else ()
+    return ("-DgenerateBackupPoms=false", f"-Dmaven.version.ignore={maven_module._PRE_RELEASES}", *rule_set)
+
+
+def _maven_command(executable: str = "mvn", rules: Path | None = None) -> Command:
+    """Return the command Update-time runs over a pom whose coordinates resolve: the effective pom, then the updates."""
     return Command(
-        executable,
-        "--batch-mode",
-        "--no-transfer-progress",
-        "--non-recursive",
-        "--update-snapshots",
-        "-DgenerateBackupPoms=false",
-        f"-Dmaven.version.ignore={maven_module._PRE_RELEASES}",
-        "-Dverbose",
-        *rule_set,
-        f"-Doutput={_EFFECTIVE_POM}",
-        f"org.apache.maven.plugins:maven-help-plugin:{_plugin_version('help')}:effective-pom",
-        f"org.codehaus.mojo:versions-maven-plugin:{_plugin_version('versions')}:use-latest-releases",
-        f"org.codehaus.mojo:versions-maven-plugin:{_plugin_version('versions')}:update-properties",
+        executable, *_OPTIONS, *_versions_options(rules), *_EFFECTIVE_POM_OPTIONS, _EFFECTIVE_POM_GOAL, *_VERSIONS_GOALS
     )
+
+
+def _effective_pom_command() -> Command:
+    """Return the command writing the effective pom of a pom leaving a group or an artifact to its parent."""
+    return Command("mvn", *_OPTIONS, *_EFFECTIVE_POM_OPTIONS, _EFFECTIVE_POM_GOAL)
+
+
+def _versions_command(rules: Path | None = None) -> Command:
+    """Return the command updating a pom leaving a group or an artifact to its parent, after its effective pom."""
+    return Command("mvn", *_OPTIONS, *_versions_options(rules), *_VERSIONS_GOALS)
 
 
 # The tests hand every run this effective pom by default. It does not list a dependency, so it resolves nothing.
 _EMPTY_EFFECTIVE_POM = effective_pom_declaring()
+
+# A dependency whose group names a property the parent declares, and the entry the effective pom lists for it where a
+# pom declares that dependency alone.
+_SPRING_LEAVING_ITS_GROUP = dependency_element("${spring.group}", "spring-core", "6.1.0")
+_EFFECTIVE_SPRING = effective_dependency_element("org.springframework:spring-core", "6.1.0", line=5)
 
 
 @no_vulnerabilities
@@ -177,11 +195,12 @@ class UpdatePomXmlTest(LoggingTestCase):
     def find_rewritten_pom(
         self, mock_run: Mock, mock_glob: Mock, before: str, after: str, effective_pom: str = _EMPTY_EFFECTIVE_POM
     ) -> Mock:
-        """Discover a single mock pom.xml that Maven rewrites, so it reads as `before` until Maven runs."""
+        """Discover a single mock pom.xml that reads as `before` until the versions plugin's goals rewrite it."""
 
         def contents() -> bytes:
-            """Return what the pom holds, which Maven's run changes."""
-            return (after if mock_run.called else before).encode()
+            """Return what the pom holds, which the versions plugin's goals change."""
+            rewritten = any(_VERSIONS_GOALS[0] in run.args[0] for run in mock_run.call_args_list)
+            return (after if rewritten else before).encode()
 
         pom = self.find_pom(mock_run, mock_glob, before, effective_pom)
         pom.read_bytes = Mock(side_effect=contents)
@@ -189,8 +208,12 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     def assert_maven_ran(self, mock_run: Mock, executable: str = "mvn", rules: Path | None = None) -> None:
         """Assert that the Maven command ran once, with the given executable, in the pom's own directory."""
-        command = _maven_command(executable, rules)
-        mock_run.assert_called_once_with(command, capture_output=True, text=True, check=True, cwd=Path("/"))
+        self.assert_maven_runs(mock_run, _maven_command(executable, rules))
+
+    def assert_maven_runs(self, mock_run: Mock, *commands: Command) -> None:
+        """Assert that Maven ran the given commands, in this order, in the pom's own directory."""
+        runs = [call(command, capture_output=True, text=True, check=True, cwd=Path("/")) for command in commands]
+        self.assertEqual(mock_run.call_args_list, runs)
 
     @contextlib.contextmanager
     def asked_about(self) -> Iterator[list[str]]:
@@ -359,7 +382,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module.update_pom_xml,
+            maven_module._run_writing_effective_pom,
             "_LOG.effective_pom_unreadable(pom_xml)",
             "pass",
             "Update-time says nothing when it cannot read the effective pom, so the unchecked versions go unnoticed",
@@ -373,7 +396,36 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module.update_pom_xml,
+            maven_module._run_writing_effective_pom,
+            "_LOG.effective_pom_without_input_locations(pom_xml)",
+            "pass",
+            "an effective pom without input locations resolves nothing, and Update-time says nothing about it",
+        ),
+        Mutation(
+            pom_xml_module.has_input_locations,
+            "return bool(declared_by)",
+            "return True",
+            "every effective pom counts as having input locations, so one without them goes unnoticed",
+        ),
+    )
+    def test_an_effective_pom_without_input_locations_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
+        """Test that an effective pom lacking input locations is warned about."""
+        # A project configuring the help plugin's `<verbose>` as false gets an effective pom without input locations.
+        effective_pom = (
+            '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
+            "  <artifactId>child</artifactId>\n"
+            "  <dependencies>\n"
+            f"{guava_element('33.0.0-jre')}"
+            "  </dependencies>\n"
+            "</project>\n"
+        )
+        pom = self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("${guava.version}")), effective_pom)
+        update_pom_xmls()
+        self.assert_logged(Logger._MESSAGE_EFFECTIVE_POM_WITHOUT_INPUT_LOCATIONS, location=Location(pom))
+
+    @kills(
+        Mutation(
+            maven_module._run_writing_effective_pom,
             "effective_pom = xml.read(output)",
             "effective_pom = xml.read(output) if result.succeeded else None",
             "a failed run discards the effective pom it wrote, so the versions the parent declares go unchecked",
@@ -393,6 +445,51 @@ class UpdatePomXmlTest(LoggingTestCase):
             update_pom_xmls()
         self.assert_command_failed_logged(_maven_command(), output)
         assert_osv_asked_about(mock_post, ("com.google.guava:guava", "33.0.0-jre"), ecosystem="Maven")
+
+    @kills(
+        Mutation(
+            maven_module._run_writing_effective_pom,
+            "effective_pom = _effective_pom_written_elsewhere(result.stdout)",
+            "effective_pom = None",
+            "the effective pom of a project configuring the help plugin's output goes unread",
+        ),
+        Mutation(
+            maven_module._run_writing_effective_pom,
+            "_effective_pom_written_elsewhere(result.stdout)",
+            "_effective_pom_written_elsewhere(result.stdout) if result.succeeded else None",
+            "a failed run discards the effective pom it wrote elsewhere, so what the parent declares goes unchecked",
+        ),
+    )
+    def test_an_effective_pom_the_project_writes_elsewhere_is_read_where_maven_says(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that the effective pom is read at the path Maven prints, where the project's help plugin sends it."""
+        # The project configures the help plugin's `<output>`, which wins over Update-time's, so its file stays empty.
+        printed = "[INFO] Effective-POM written to: /project/target/effective-pom.xml\n"
+        failed = "[ERROR] Failed to execute goal org.codehaus.mojo:versions-maven-plugin:2.22.0:use-latest-releases\n"
+        # Each case names what Maven's run ends in, and the output of a failed run, which is reported as an error.
+        cases = {
+            "a run that succeeded": (Mock(stdout=printed, stderr=""), None),
+            "a run that failed after writing it": (
+                CalledProcessError(cmd="", returncode=1, output=printed + failed, stderr=""),
+                printed + failed,
+            ),
+        }
+        guava = effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=5)
+        written = effective_pom_declaring(guava).encode()
+        for case, (outcome, failure) in cases.items():
+            with self.subTest(case=case):
+                self.clear_caches()
+                self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("${guava.version}")), effective_pom="")
+                mock_run.side_effect = [outcome]
+                read_bytes = patch.object(Path, "read_bytes", autospec=True, return_value=written)
+                with read_bytes as mock_read_bytes, osv() as mock_post:
+                    update_pom_xmls()
+                if failure:
+                    self.assert_command_failed_logged(_maven_command(), failure)
+                mock_read_bytes.assert_called_once_with(Path("/project/target/effective-pom.xml"))
+                assert_osv_asked_about(mock_post, ("com.google.guava:guava", "33.0.0-jre"), ecosystem="Maven")
+                self.assert_no_warnings_logged()
 
     @kills(
         Mutation(
@@ -593,6 +690,18 @@ class UpdatePomXmlTest(LoggingTestCase):
             "is_resolved = True",
             "Maven Central is asked for the changes of coordinates holding an unresolved property",
         ),
+        Mutation(
+            maven_module.update_pom_xml,
+            "if succeeded:",
+            "if effective_pom is not None:",
+            "Update-time skips the updates wherever it cannot read the effective pom, although the run succeeded",
+        ),
+        Mutation(
+            pom_xml_module.artefacts,
+            " and _is_resolved(resolved.dependency)",
+            "",
+            "the repository is asked which versions to hold back for coordinates holding a parent's property",
+        ),
     )
     def test_coordinates_naming_a_property_without_an_effective_pom_are_not_asked_about(
         self, mock_run: Mock, mock_glob: Mock
@@ -625,17 +734,40 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             pom_xml_module.artefacts,
-            " if reference.current_version",
+            "own.current_version and ",
             "",
             "the repository is asked which versions to hold back for a dependency whose version Maven never moves",
-        )
+        ),
+        Mutation(
+            pom_xml_module.artefacts,
+            "own.current_version and",
+            "resolved.current_version and",
+            "the repository is asked which versions to hold back for a managed version, which Maven never moves here",
+        ),
     )
     def test_the_cooldown_skips_a_dependency_without_a_version(self, mock_run: Mock, mock_glob: Mock):
         """Test that the repository is not asked which versions to hold back for a dependency Maven does not update."""
-        for case, version in {"no version": None, "an empty version": ""}.items():
+        # In the last case guava's group names a parent's property, so the rule set reads the effective pom, which gives
+        # spring the version the parent manages.
+        managed = effective_pom_declaring(
+            effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=5),
+            effective_dependency_element(
+                "org.springframework:spring-core", "6.1.0", line=10, managed_at=(PARENT_POM_ID, 12)
+            ),
+        )
+        cases = {
+            "no version": (guava_element("33.0.0-jre"), None, _EMPTY_EFFECTIVE_POM),
+            "an empty version": (guava_element("33.0.0-jre"), "", _EMPTY_EFFECTIVE_POM),
+            "a version the parent manages": (
+                dependency_element("${guava.group}", "guava", "33.0.0-jre"),
+                None,
+                managed,
+            ),
+        }
+        for case, (guava, version, effective_pom) in cases.items():
             with self.subTest(case=case):
                 unversioned = dependency_element("org.springframework", "spring-core", version)
-                self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("33.0.0-jre"), unversioned))
+                self.find_pom(mock_run, mock_glob, pom_declaring(guava, unversioned), effective_pom)
                 with self.asked_about() as artefacts:
                     update_pom_xmls()
                 # Guava is asked about, so the dependency beside it going unasked says something about its version.
@@ -659,7 +791,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pom_xml_module.artefact_references,
+            pom_xml_module._artefact_references,
             "_DEFAULT_GROUPS",
             '{"dependency": ""}',
             "the rule set leaves out the pom's plugins, so a property versioning one is advanced without a cooldown",
@@ -687,6 +819,91 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
+            maven_module.update_pom_xml,
+            "pom_xml_format.artefacts(pom_xml, effective_pom)",
+            "pom_xml_format.artefacts(pom_xml)",
+            "the rule set reads the pom alone, so a dependency whose group the parent declares escapes the cooldown",
+        ),
+    )
+    def test_coordinates_naming_a_parents_property_get_a_rule_as_maven_resolves_them(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that the rule set names a dependency or plugin whose group or artifact the parent declares."""
+        spring = "org.springframework:spring-core"
+        versions = "org.codehaus.mojo:versions-maven-plugin"
+        # Maven lists the properties the parent declares in the effective pom.
+        properties = properties_element({"spring.artifact": "spring-core"})
+        effective_spring = effective_pom_declaring(_EFFECTIVE_SPRING, properties=properties)
+        effective_versions = effective_pom_declaring(build=_build(effective_plugin_element(versions, "2.18.0", line=8)))
+        cases = {
+            "a dependency's group": (
+                pom_declaring(_SPRING_LEAVING_ITS_GROUP),
+                effective_spring,
+                _rule("org.springframework", "spring-core", "7.1.0"),
+            ),
+            "a dependency's artifact": (
+                pom_declaring(dependency_element("org.springframework", "${spring.artifact}", "6.1.0")),
+                effective_spring,
+                _rule("org.springframework", "spring-core", "7.1.0"),
+            ),
+            "a plugin's group": (
+                pom_declaring(build=_build(_plugin("versions-maven-plugin", "2.18.0", "${mojo.group}"))),
+                effective_versions,
+                _rule("org.codehaus.mojo", "versions-maven-plugin", "2.19.0"),
+            ),
+        }
+        for case, (declared, effective_pom, rule) in cases.items():
+            with self.subTest(case=case):
+                self.find_pom(mock_run, mock_glob, declared, effective_pom)
+                with self.hold_back({spring: ("7.1.0",), versions: ("2.19.0",)}) as rule_sets:
+                    update_pom_xmls()
+                self.assertEqual(rule_sets, [_rule_set(rule)])
+
+    @kills(
+        Mutation(
+            maven_module.update_pom_xml,
+            "_run(pom_xml, options, _VERSIONS_GOALS)",
+            "_run_writing_effective_pom(pom_xml, options, _VERSIONS_GOALS)",
+            "the updates write the effective pom again, costing a goal per pom that the first run already paid for",
+        ),
+        Mutation(
+            maven_module.update_pom_xml,
+            "if not pom_xml_format.leaves_coordinates_unresolved(pom_xml):",
+            "if not pom_xml_format.leaves_coordinates_unresolved(pom_xml) or True:",
+            "the rule set is written before Maven resolves what the parent declares, so the cooldown misses it",
+        ),
+    )
+    def test_a_pom_leaving_coordinates_to_its_parent_gets_the_effective_pom_in_a_run_of_its_own(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that the effective pom is written in a Maven run of its own, before the run that updates the pom."""
+        self.find_pom(
+            mock_run, mock_glob, pom_declaring(_SPRING_LEAVING_ITS_GROUP), effective_pom_declaring(_EFFECTIVE_SPRING)
+        )
+        update_pom_xmls()
+        self.assert_maven_runs(mock_run, _effective_pom_command(), _versions_command())
+
+    @kills(
+        Mutation(
+            maven_module.update_pom_xml,
+            "if succeeded:",
+            "if True:",
+            "the updates run on a model Maven could not build, so its failure is reported a second time",
+        )
+    )
+    def test_a_failed_effective_pom_run_is_reported_once_and_skips_the_updates(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a failed run writing the effective pom is reported with its output, and the updates do not run."""
+        # Maven stops before any goal runs, so the file for the effective pom stays empty.
+        self.find_pom(mock_run, mock_glob, pom_declaring(_SPRING_LEAVING_ITS_GROUP), effective_pom="")
+        output = "[ERROR] Non-resolvable parent POM for org.example:child:1.0"
+        mock_run.side_effect = CalledProcessError(cmd="", returncode=1, output=output, stderr="")
+        update_pom_xmls()
+        self.assert_command_failed_logged(_effective_pom_command(), output)
+        self.assert_maven_runs(mock_run, _effective_pom_command())
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
             maven_module._rules,
             "cooldown_days <= 0",
             "cooldown_days < 0",
@@ -706,13 +923,13 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module.update_pom_xml,
+            maven_module._run,
             "not result.succeeded",
             "result.succeeded",
             "a Maven run that failed passes silently, since Maven writes its errors to stdout rather than stderr",
         ),
         Mutation(
-            maven_module.update_pom_xml,
+            maven_module._run_writing_effective_pom,
             "if result.succeeded and effective_pom is None:",
             "if effective_pom is None:",
             "a failed run is reported twice: once with Maven's error, and again as an effective pom it could not read",
@@ -945,7 +1162,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module.update_pom_xml,
+            maven_module._run,
             " and result.stdout:",
             ":",
             "a missing Maven is reported twice: once by `run`, and again as a failed run that wrote nothing",
