@@ -8,12 +8,14 @@ from update_time.manifests import pom_xml
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
+    SCANNED_POM_ID,
     dependency_element,
     dependency_management_element,
     effective_dependency_element,
     effective_pom_declaring,
     guava_element,
     pom_declaring,
+    properties_element,
 )
 
 _POM_WITH_A_PROFILE = """<project xmlns="http://maven.apache.org/POM/4.0.0">
@@ -84,6 +86,10 @@ _POM_WITH_INCOMPLETE_DEPENDENCIES = """<project xmlns="http://maven.apache.org/P
     </dependency>
     <dependency>
       <groupId>org.springframework</groupId>
+      <version>6.1.0</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework</groupId>
       <artifactId></artifactId>
       <version>6.1.0</version>
     </dependency>
@@ -128,7 +134,7 @@ class DependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml._reference,
-            "    if artifact is None or version is None:\n        return None\n",
+            "    if artifact is None:\n        return None\n",
             "",
             "an element missing a part takes the whole pom's reading down with it",
             raises="AttributeError: 'NoneType' object has no attribute 'text'",
@@ -140,10 +146,11 @@ class DependenciesTest(unittest.TestCase):
             "an empty artifact is read as the artefact `groupId:`, which Maven Central is then asked about",
         ),
     )
-    def test_a_dependency_missing_a_part_maven_names_it_by(self):
-        """Test that a dependency element missing a part is left out, and the pom is read all the same."""
+    def test_a_dependency_is_read_unless_it_misses_its_group_or_artifact(self):
+        """Test that a dependency missing its group or artifact is left out, and one missing its version is read."""
         declared = pom_xml.dependencies(mock_path(_POM_WITH_INCOMPLETE_DEPENDENCIES)) or []
-        self.assertEqual([reference.dependency for reference in declared], ["com.google.guava:guava"])
+        expected = ["org.springframework:spring-web", "com.google.guava:guava"]
+        self.assertEqual([reference.dependency for reference in declared], expected)
 
     def test_a_dependency_naming_the_projects_own_group(self):
         """Test that a dependency whose group names the project's own is reported under the group it resolves to."""
@@ -183,9 +190,9 @@ class ResolvedDependenciesTest(unittest.TestCase):
     def test_an_entry_the_parent_declares_lends_its_version_to_no_declaration(self):
         """Test that an effective pom entry located in the parent leaves the declaration on the same line alone."""
         pom = pom_declaring(managed=dependency_management_element(guava_element("${guava.version}")))
-        guava = effective_dependency_element("com.google.guava", "guava", "33.0.0-jre", line=6)
+        guava = effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=6)
         parent = "org.example:parent:1.0"
-        inherited = effective_dependency_element("com.google.guava", "guava", "32.1.0-jre", line=6, declared_by=parent)
+        inherited = effective_dependency_element("com.google.guava:guava", "32.1.0-jre", line=6, declared_by=parent)
         # The managed section comes before `<dependencies>`, so the inherited guava is read after the managed one.
         effective_pom = effective_pom_declaring(inherited, managed=dependency_management_element(guava))
         self.assertEqual(_resolved(pom, effective_pom), [("com.google.guava:guava", "33.0.0-jre", 7)])
@@ -193,8 +200,8 @@ class ResolvedDependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml._reference,
-            "effective_versions.get(_ArtifactDeclaration(artifact_name, artifact.line), versioned_by.text)",
-            "{key.artifact: text for key, text in effective_versions.items()}.get(artifact_name, versioned_by.text)",
+            "effective_versions.get(_ArtifactDeclaration(artifact_name, artifact.line), own_version)",
+            "{key.artifact: text for key, text in effective_versions.items()}.get(artifact_name, own_version)",
             "two declarations of one artefact share a version, so OSV is asked about one of them at the other's",
         )
     )
@@ -202,8 +209,8 @@ class ResolvedDependenciesTest(unittest.TestCase):
         """Test that two declarations of one artefact, each versioned by a parent's property, keep their own version."""
         managed = dependency_management_element(guava_element("${guava.managed.version}"))
         pom = pom_declaring(guava_element("${guava.version}"), managed=managed)
-        managed_guava = effective_dependency_element("com.google.guava", "guava", "33.0.0-jre", line=6)
-        guava = effective_dependency_element("com.google.guava", "guava", "32.1.0-jre", line=14)
+        managed_guava = effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=6)
+        guava = effective_dependency_element("com.google.guava:guava", "32.1.0-jre", line=14)
         effective_pom = effective_pom_declaring(guava, managed=dependency_management_element(managed_guava))
         expected = [("com.google.guava:guava", "33.0.0-jre", 7), ("com.google.guava:guava", "32.1.0-jre", 15)]
         self.assertEqual(_resolved(pom, effective_pom), expected)
@@ -211,8 +218,8 @@ class ResolvedDependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml._reference,
-            "effective_versions.get(_ArtifactDeclaration(artifact_name, artifact.line), versioned_by.text)",
-            "{key.line: text for key, text in effective_versions.items()}.get(artifact.line, versioned_by.text)",
+            "effective_versions.get(_ArtifactDeclaration(artifact_name, artifact.line), own_version)",
+            "{key.line: text for key, text in effective_versions.items()}.get(artifact.line, own_version)",
             "a dependency takes the version of whichever dependency is declared last on its line",
         )
     )
@@ -223,10 +230,90 @@ class ResolvedDependenciesTest(unittest.TestCase):
         )
         pom = pom_declaring(one_line.replace("\n", "").replace("  ", "") + "\n")
         # Maven's input location names the line and does not name the column, so both entries are located on line 3.
-        commons_io = effective_dependency_element("commons-io", "commons-io", "2.11.0", line=3)
-        junit = effective_dependency_element("junit", "junit", "4.12", line=3)
+        commons_io = effective_dependency_element("commons-io:commons-io", "2.11.0", line=3)
+        junit = effective_dependency_element("junit:junit", "4.12", line=3)
         expected = [("commons-io:commons-io", "2.11.0", 3), ("junit:junit", "4.12", 3)]
         self.assertEqual(_resolved(pom, effective_pom_declaring(commons_io, junit)), expected)
+
+    @kills(
+        Mutation(
+            pom_xml._effective_versions,
+            " if managed_by == scanned else None",
+            "",
+            "a line of the pom lends its version to a dependency the parent versions, as their line numbers match",
+        )
+    )
+    def test_a_version_the_parent_manages_is_not_read_from_the_poms_line_of_that_number(self):
+        """Test that a dependency without a version takes the effective pom's version where the parent manages it."""
+        pom = pom_declaring(guava_element(None), guava_element("32.0.0-jre"))
+        # The parent manages guava's version on line 10, where the scanned pom declares guava a second time.
+        guava = effective_dependency_element(
+            "com.google.guava:guava", "33.0.0-jre", line=5, managed_at=("org.example:parent:1.0", 10)
+        )
+        second_guava = effective_dependency_element("com.google.guava:guava", "32.0.0-jre", line=9)
+        expected = [("com.google.guava:guava", "33.0.0-jre", 3), ("com.google.guava:guava", "32.0.0-jre", 10)]
+        self.assertEqual(_resolved(pom, effective_pom_declaring(guava, second_guava)), expected)
+
+    def test_a_version_the_pom_manages_itself_is_read_from_the_pom(self):
+        """Test that a dependency without a version takes the version its own pom's managed declaration holds."""
+        pom = pom_declaring(guava_element(None), managed=dependency_management_element(guava_element("33.7.1-jre")))
+        # The effective pom holds the model from before the run, which the managed declaration has since moved from.
+        managed = effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=6)
+        guava = effective_dependency_element(
+            "com.google.guava:guava", "33.0.0-jre", line=14, managed_at=(SCANNED_POM_ID, 7)
+        )
+        effective_pom = effective_pom_declaring(guava, managed=dependency_management_element(managed))
+        expected = [("com.google.guava:guava", "33.7.1-jre", 7), ("com.google.guava:guava", "33.7.1-jre", 12)]
+        self.assertEqual(_resolved(pom, effective_pom), expected)
+
+    @kills(
+        Mutation(
+            pom_xml._version_as_left,
+            "_resolved(own_element, property_elements).text",
+            "own_element.text",
+            "Update-time checks the version Maven moved away from, where the pom manages it through a property",
+        )
+    )
+    def test_a_version_the_pom_manages_through_its_own_property_is_read_from_that_property(self):
+        """Test that a dependency without a version takes the value of the property its own pom manages it with."""
+        properties = properties_element({"guava.version": "33.7.1-jre"})
+        managed = dependency_management_element(guava_element("${guava.version}"))
+        pom = pom_declaring(guava_element(None), properties=properties, managed=managed)
+        effective_managed = effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=9)
+        guava = effective_dependency_element(
+            "com.google.guava:guava", "33.0.0-jre", line=17, managed_at=(SCANNED_POM_ID, 10)
+        )
+        effective_pom = effective_pom_declaring(guava, managed=dependency_management_element(effective_managed))
+        expected = [("com.google.guava:guava", "33.7.1-jre", 3), ("com.google.guava:guava", "33.7.1-jre", 15)]
+        self.assertEqual(_resolved(pom, effective_pom), expected)
+
+    @kills(
+        Mutation(
+            pom_xml._effective_versions,
+            "own_versions.get(managed_at) if",
+            "{key.line: element for key, element in own_versions.items()}.get(managed_line) if",
+            "a dependency takes the version of whichever dependency its own pom manages last on the same line",
+        )
+    )
+    def test_a_version_the_pom_manages_on_a_shared_line_is_read_from_its_own_declaration(self):
+        """Test that a dependency without a version takes its own managed version, not another on the same line."""
+        one_line = guava_element("33.7.1-jre") + dependency_element("junit", "junit", "4.13.2")
+        managed = dependency_management_element(one_line.replace("\n", "").replace("  ", "") + "\n")
+        pom = pom_declaring(guava_element(None), managed=managed)
+        # Maven locates each `<version>` on the shared line 4, and does not name a column to tell them apart.
+        managed_at = (SCANNED_POM_ID, 4)
+        effective_guava = effective_dependency_element(
+            "com.google.guava:guava", "33.0.0-jre", line=4, managed_at=managed_at
+        )
+        effective_junit = effective_dependency_element("junit:junit", "4.13.2", line=4, managed_at=managed_at)
+        guava = effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=10, managed_at=managed_at)
+        effective_managed = dependency_management_element(effective_guava + effective_junit)
+        expected = [
+            ("com.google.guava:guava", "33.7.1-jre", 4),
+            ("junit:junit", "4.13.2", 4),
+            ("com.google.guava:guava", "33.7.1-jre", 8),
+        ]
+        self.assertEqual(_resolved(pom, effective_pom_declaring(guava, managed=effective_managed)), expected)
 
     @kills(
         Mutation(
@@ -239,7 +326,7 @@ class ResolvedDependenciesTest(unittest.TestCase):
     )
     def test_an_entry_whose_input_location_lacks_a_line_is_skipped(self):
         """Test that an entry whose input location lacks a line is skipped, and the entries beside it are read."""
-        guava = effective_dependency_element("com.google.guava", "guava", "33.0.0-jre", line=5)
+        guava = effective_dependency_element("com.google.guava:guava", "33.0.0-jre", line=5)
         # Maven locates what it adds itself in its own model rather than on a line of a pom.
         bindings = "org.apache.maven:maven-core:3.9.16:default-lifecycle-bindings"
         unlocated = dependency_element("org.example", "injected", "1.0").replace(

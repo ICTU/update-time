@@ -44,7 +44,6 @@ A dependency a file declares, and where the file says its release comes from.
 A dependency and the version a file pins it to, which is what a source is asked about.
 A dependency name is bracketed in it, because a name has no fixed shape a pattern could match; `LogHighlighter` styles the bracketed run and strips the delimiters.
 A dependency names the two directly, as `actions/checkout` does, and as `actions/checkout/sub-action` does for an action in a subdirectory.
-A dependency that declares no `<version>` of its own, such as one a parent pom manages, is left out, since this pom holds no version to advance.
 A dependency that pins no exact version has no pin to freeze, since uv both resolves and records its version.
 A dependency's name and versions, and what a source resolves for one.
 A dictionary that declares no hash gains one there, which pins a URL that was loading whatever the CDN served; a URL declared without a dictionary at all has nowhere to hold a hash, so it is reported rather than pinned.

@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Check a Maven dependency for vulnerabilities when the parent pom declares the property holding its version. Part of [#379](https://github.com/ICTU/update-time/issues/379).
+- Check a Maven dependency or plugin that leaves its `<version>` out, such as one its parent pom manages. Part of [#379](https://github.com/ICTU/update-time/issues/379).
 
 ### Fixed
 

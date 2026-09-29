@@ -23,6 +23,7 @@ from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import Vulnerability
 from update_time.io.console import CHANGES, NOTE
 from update_time.io.log import Logger, LogMessage, reset_changelog_suppression
+from update_time.manifests.pom_xml import coordinates
 from update_time.manifests.pyproject_toml import Declaration
 from update_time.markers.bound import parse_bound
 from update_time.markers.directive import Reason
@@ -813,14 +814,14 @@ def _pom_parent(parent: str) -> str:
     return f"  <parent>{coordinates}</parent>\n"
 
 
-def dependency_element(group: str, artifact: str, version: str) -> str:
-    """Return a `<dependency>` element declaring the group, the artifact, and the version."""
+def dependency_element(group: str, artifact: str, version: str | None) -> str:
+    """Return a `<dependency>` element declaring the group, the artifact, and the version, where one is given."""
     parts = {"groupId": group, "artifactId": artifact, "version": version}
-    declared = "".join(f"      <{tag}>{value}</{tag}>\n" for tag, value in parts.items())
+    declared = "".join(f"      <{tag}>{value}</{tag}>\n" for tag, value in parts.items() if value is not None)
     return f"    <dependency>\n{declared}    </dependency>\n"
 
 
-def guava_element(version: str) -> str:
+def guava_element(version: str | None) -> str:
     """Return the `<dependency>` element declaring guava."""
     return dependency_element("com.google.guava", "guava", version)
 
@@ -829,6 +830,12 @@ def dependency_management_element(*dependencies: str) -> str:
     """Return a `<dependencyManagement>` element declaring the given dependency elements."""
     declared = "".join(dependencies)
     return f"  <dependencyManagement>\n    <dependencies>\n{declared}    </dependencies>\n  </dependencyManagement>\n"
+
+
+def properties_element(values: dict[str, str]) -> str:
+    """Return a `<properties>` element declaring the given names and values, the first of them on line 3."""
+    declared = "".join(f"    <{name}>{value}</{name}>\n" for name, value in values.items())
+    return f"  <properties>\n{declared}  </properties>\n"
 
 
 def pom_declaring(*dependencies: str, properties: str = "", managed: str = "", build: str = "") -> str:
@@ -846,17 +853,32 @@ def pom_declaring(*dependencies: str, properties: str = "", managed: str = "", b
 
 
 # Each input location names the scanned pom by this id. The pom is a child inheriting its parent's group.
-_SCANNED_POM_ID = "org.example:child:1.0"
+SCANNED_POM_ID = "org.example:child:1.0"
 
 
 def effective_dependency_element(
-    group: str, artifact: str, version: str, line: int, declared_by: str = _SCANNED_POM_ID
+    artefact: str,
+    version: str,
+    line: int,
+    declared_by: str = SCANNED_POM_ID,
+    *,
+    managed_at: tuple[str, int] | None = None,
 ) -> str:
-    """Return a `<dependency>` of the effective pom, its `<artifactId>` located on the line of the declaring pom."""
-    locations = {"groupId": (group, line - 1), "artifactId": (artifact, line), "version": (version, line + 1)}
+    """Return a `<dependency>` of the effective pom, its `<artifactId>` located on the line of the declaring pom.
+
+    Its `<version>` is located on the next line, or on the line of the pom `managed_at` names for a dependency that
+    leaves its version to a `<dependencyManagement>` section.
+    """
+    locations = {
+        "groupId": (declared_by, line - 1),
+        "artifactId": (declared_by, line),
+        "version": managed_at or (declared_by, line + 1),
+    }
+    group, artifact = coordinates(artefact)
+    values = {"groupId": group, "artifactId": artifact, "version": version}
     declared = "".join(
-        f"      <{tag}>{value}</{tag}>  <!-- {declared_by}, line {located} -->\n"
-        for tag, (value, located) in locations.items()
+        f"      <{tag}>{values[tag]}</{tag}>  <!-- {pom}, line {located} -->\n"
+        for tag, (pom, located) in locations.items()
     )
     return f"    <dependency>\n{declared}    </dependency>\n"
 
@@ -868,7 +890,7 @@ def effective_pom_declaring(*dependencies: str, managed: str = "") -> str:
         "<!-- Effective POM for project 'org.example:child:jar:1.0' -->\n"
         '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
         "  <groupId>org.example</groupId>  <!-- org.example:parent:1.0, line 3 -->\n"
-        f"  <artifactId>child</artifactId>  <!-- {_SCANNED_POM_ID}, line 8 -->\n"
+        f"  <artifactId>child</artifactId>  <!-- {SCANNED_POM_ID}, line 8 -->\n"
         f"{managed}"
         "  <dependencies>\n"
         f"{''.join(dependencies)}"
