@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.41 - 2026-09-30
+
 ### Changed
 
 - Check and cool down a Maven dependency or plugin whose group, artifact, or version another pom decides, and report its new version under the coordinates Maven resolves. Closes [#379](https://github.com/ICTU/update-time/issues/379).
