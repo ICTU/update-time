@@ -10,17 +10,19 @@ from tests.mutation import Mutation, kills
 
 
 class PluginVersionTest(unittest.TestCase):
-    """Unit tests for the versions plugin release the shipped pom declares."""
+    """Unit tests for the plugin releases the shipped pom declares."""
 
-    def test_the_version_the_shipped_pom_declares(self):
-        """Test that the versions plugin release is read from the pom Update-time ships beside the module."""
-        self.assertRegex(maven._declared_plugin_version(), r"^\d+\.\d+\.\d+$")
+    def test_the_versions_the_shipped_pom_declares(self):
+        """Test that each plugin's release is read from the pom Update-time ships beside the module."""
+        for version_property in ("help.plugin.version", "versions.plugin.version"):
+            with self.subTest(version_property=version_property):
+                self.assertRegex(maven._declared_plugin_version(version_property), r"^\d+\.\d+\.\d+$")
 
     def test_a_shipped_pom_declaring_no_release(self):
         """Test that a pom declaring no release raises an error naming the file, rather than one about a lookup."""
         patched = patch.object(maven.pom_xml_format, "properties", Mock(return_value={}))
         with patched, self.assertRaises(RuntimeError) as error:
-            maven._declared_plugin_version()
+            maven._declared_plugin_version("help.plugin.version")
         self.assertIn("pom.xml", str(error.exception))
 
 
@@ -68,14 +70,22 @@ class PreReleasePatternTest(unittest.TestCase):
 
 
 class RuleSetFileTest(unittest.TestCase):
-    """Unit tests for the file Update-time writes the rule set to.
-
-    This is the one part of the run that reaches the file system, so it is exercised against a real file.
-    """
+    """Unit tests for the file Update-time writes the rule set to."""
 
     def test_the_rule_set_is_readable_until_the_file_is_removed(self):
         """Test that the file holds the rule set while the context is open, and is removed once it closes."""
         rule_set = "<ruleset/>"
         with maven._rule_set_file(rule_set) as path:
             self.assertEqual(path.read_text(), rule_set)
+        self.assertFalse(path.exists())
+
+
+class EffectivePomFileTest(unittest.TestCase):
+    """Unit tests for the file Maven writes the effective pom to."""
+
+    def test_the_file_is_writable_until_it_is_removed(self):
+        """Test that the file takes what Maven writes while the context is open, and is removed once it closes."""
+        with maven._effective_pom_file() as path:
+            path.write_text("<project/>")
+            self.assertEqual(path.read_text(), "<project/>")
         self.assertFalse(path.exists())

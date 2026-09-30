@@ -17,7 +17,6 @@ A `.python-version` entry and a Node engine both follow the base image in the pr
 A `node` version another section declares — a Volta pin, a dependency of that name — is neither taken for the engine nor steered by the engine's marker.
 A `package.json` dependency takes no marker, because npm and pnpm update it rather than Update-time rewriting its lines.
 A `package.json` dependency takes no marker.
-A `pom.xml` dependency takes no marker, because Maven updates it rather than Update-time rewriting its lines.
 A `repo: local` or `repo: meta` entry has no `rev:`, so Update-time leaves it untouched, as it leaves a repository hosted outside GitHub untouched.
 A `rev:` whose repository is not on GitHub carries no dependency, so it is left untouched.
 A `start` that opens no object yields nothing, so a section declared as anything but an object holds no entry.
@@ -44,7 +43,6 @@ A dependency a file declares, and where the file says its release comes from.
 A dependency and the version a file pins it to, which is what a source is asked about.
 A dependency name is bracketed in it, because a name has no fixed shape a pattern could match; `LogHighlighter` styles the bracketed run and strips the delimiters.
 A dependency names the two directly, as `actions/checkout` does, and as `actions/checkout/sub-action` does for an action in a subdirectory.
-A dependency that declares no `<version>` of its own, such as one a parent pom manages, is left out, since this pom holds no version to advance.
 A dependency that pins no exact version has no pin to freeze, since uv both resolves and records its version.
 A dependency's name and versions, and what a source resolves for one.
 A dictionary that declares no hash gains one there, which pins a URL that was loading whatever the CDN served; a URL declared without a dictionary at all has nowhere to hold a hash, so it is reported rather than pinned.
@@ -367,7 +365,6 @@ Test that a Helm chart whose YAML does not parse is updated, a Go-templated char
 Test that a JSON key naming no version is left alone, a feature reference always naming one.
 Test that a Link header without a `next` relation (e.g. only `last`) yields no next page.
 Test that a Markdown link's URL reaches an output that can hold no clickable link, such as a CI log.
-Test that a Maven run exiting non-zero is reported with what it wrote, and leaves no new version reported.
 Test that a Node base image elsewhere in the repo is used when the package.json has no local Dockerfile.
 Test that a Python base image elsewhere in the repo is used when the version file has no local one.
 Test that a URL whose attribute dictionary carries no integrity hash gains one, logged as a pin.

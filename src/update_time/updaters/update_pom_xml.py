@@ -23,7 +23,7 @@ _LOG = get_logger("pom.xml")
 
 
 def update_pom_xmls() -> None:
-    """Update each pom.xml the scan finds, with one Maven run per pom."""
+    """Update each pom.xml the scan finds, running Maven over it."""
     for pom_xml in glob_for(POM_XML):
         _LOG.path(pom_xml)
         _update_pom_xml(pom_xml)
@@ -39,18 +39,19 @@ def _update_pom_xml(pom_xml: Path) -> None:
     if before is None:
         _LOG.invalid_file(pom_xml, xml.FORMAT)  # The pom cannot be read, so Maven is not run on it either.
         return
-    maven.update_pom_xml(pom_xml)
+    effective_pom = maven.update_pom_xml(pom_xml)
     after = pom_xml_format.dependencies(pom_xml)
-    if after is None:
+    resolved = pom_xml_format.dependencies(pom_xml, effective_pom)
+    if after is None or resolved is None:
         _LOG.invalid_xml_after_update(pom_xml)  # Maven rewrote the pom into something that does not parse.
         return
     if len(before) != len(after):
         # The two readings pair up declaration by declaration, which a reading of another length cannot do.
         _LOG.declarations_changed(pom_xml, len(before), len(after))
         return
-    _report_new_versions(before, after)
-    _check_projects(pom_xml_format.artefact_references(pom_xml))
-    _warn_about_vulnerabilities(after)
+    _report_new_versions(before, after, resolved)
+    _check_projects(pom_xml_format.artefact_references(pom_xml, effective_pom))
+    _warn_about_vulnerabilities(resolved)
 
 
 def _check_projects(declared: list[Reference]) -> None:
@@ -69,14 +70,17 @@ def _warn_about_vulnerabilities(declared: list[Reference]) -> None:
     warn_about_vulnerable_dependencies([steered], Ecosystem.MAVEN, _LOG)
 
 
-def _report_new_versions(before: list[Reference], after: list[Reference]) -> None:
-    """Report each dependency whose version differs between the two readings, with the new version's changes."""
-    for old, new in zip(before, after, strict=True):
+def _report_new_versions(before: list[Reference], after: list[Reference], resolved: list[Reference]) -> None:
+    """Report each dependency whose version differs between the two readings, with the new version's changes.
+
+    The name is the one the effective pom gives the dependency, where it resolves one.
+    """
+    for old, new, named in zip(before, after, resolved, strict=True):
         if old.current_version == new.current_version:
             continue
-        updated = Reference(new.dependency, old.current_version, new.location)
-        resolved = pom_xml_format.fully_resolved(new.pinned)
-        changes = maven_central.get_changes(new.dependency, new.current_version) if resolved else NO_CHANGES
+        updated = Reference(named.dependency, old.current_version, new.location)
+        is_resolved = pom_xml_format.fully_resolved(named.pinned)
+        changes = maven_central.get_changes(named.dependency, new.current_version) if is_resolved else NO_CHANGES
         _LOG.new_version(updated, DependencyVersion(new.current_version, changes))
 
 

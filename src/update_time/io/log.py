@@ -76,6 +76,14 @@ def _redundant_directive(reason: str) -> str:
     return f"Redundant update-time directive %(directive)s for %(dependency)s in %(location)s: {reason}"
 
 
+def _effective_pom_unused(problem: str, cause: str) -> str:
+    """Return a message saying why the effective pom went unused, what the run missed, and what may cause it."""
+    return (
+        f"{problem}, so the cooldown and the checks passed over any group or artifact the pom leaves to its parent, "
+        f"and the vulnerability check passed over any version the pom leaves to another pom; {cause}"
+    )
+
+
 def _ignoring(subject: str, cause: str = "update-time: %(directive)s") -> str:
     """Return a message saying what is being ignored, and why."""
     return f"Ignoring {subject} for %(dependency)s in %(location)s ({cause})"
@@ -512,6 +520,16 @@ class Logger:
         """Log that a tag's commit date couldn't be resolved, and why, so the tag was skipped as an update candidate."""
         self._log(self._MESSAGE_NO_TAG_DATE, dependency=dependency, tag=tag, reason=reason)
 
+    _MESSAGE_UNREADABLE_PUBLICATION_DATE = LogMessage(
+        WARNING,
+        "Could not read the publication date '%(date)s' that Maven Central lists for %(dependency)s %(version)s, "
+        "so the cooldown holds this version back",
+    )
+
+    def unreadable_publication_date(self, dependency: str, version: str, date: str) -> None:
+        """Warn that a listed version's date does not parse, so the cooldown holds that version back."""
+        self._log(self._MESSAGE_UNREADABLE_PUBLICATION_DATE, dependency=dependency, version=version, date=date)
+
     _MESSAGE_NO_INTEGRITY_HASH = LogMessage(
         WARNING,
         "Could not resolve the integrity hash for %(dependency)s %(version)s (%(filename)s), leaving it unchanged",
@@ -691,6 +709,30 @@ class Logger:
     def invalid_xml_after_update(self, path: Path) -> None:
         """Report that the file an updater rewrote cannot be parsed, so its update failed rather than being skipped."""
         self._log_file(self._MESSAGE_INVALID_XML_AFTER_UPDATE, path)
+
+    _MESSAGE_EFFECTIVE_POM_UNREADABLE = LogMessage(
+        WARNING,
+        _effective_pom_unused(
+            "Could not read the effective pom of %(location)s",
+            "perhaps a --quiet in the project's Maven config hid where Maven wrote it",
+        ),
+    )
+
+    def effective_pom_unreadable(self, path: Path) -> None:
+        """Warn that the effective pom cannot be read, so the checks and the cooldown miss what it resolves."""
+        self._log_file(self._MESSAGE_EFFECTIVE_POM_UNREADABLE, path)
+
+    _MESSAGE_EFFECTIVE_POM_WITHOUT_INPUT_LOCATIONS = LogMessage(
+        WARNING,
+        _effective_pom_unused(
+            "The effective pom of %(location)s lacks the input locations Update-time reads",
+            "the project's help plugin configuration sets verbose to false",
+        ),
+    )
+
+    def effective_pom_without_input_locations(self, path: Path) -> None:
+        """Warn that the effective pom lacks input locations, so it resolves nothing."""
+        self._log_file(self._MESSAGE_EFFECTIVE_POM_WITHOUT_INPUT_LOCATIONS, path)
 
     _MESSAGE_DECLARATIONS_CHANGED = LogMessage(
         ERROR,

@@ -6,9 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Changed
+
+- Check and cool down a Maven dependency or plugin whose group, artifact, or version another pom decides, and report its new version under the coordinates Maven resolves. Closes [#379](https://github.com/ICTU/update-time/issues/379).
+
 ### Fixed
 
 - Keep a Maven dependency off a pre-release such as `2.0-a1`, `2.0-b1`, or `2.0-milestone-1`. Closes [#383](https://github.com/ICTU/update-time/issues/383).
+- Check and cool down a Maven dependency or plugin whose group, artifact, or version names a property of its own pom in part, such as `akka-actor_${scala.binary}`. Part of [#379](https://github.com/ICTU/update-time/issues/379).
 
 ## 0.0.40 - 2026-09-26
 

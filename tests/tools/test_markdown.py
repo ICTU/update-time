@@ -4,6 +4,8 @@ import unittest
 
 from tools.markdown import anchor, headings, lines_without_code_blocks, without_code_blocks
 
+from tests.mutation import Mutation, kills
+
 _DOCUMENT = "# Title\n\n## ⚡ Usage\n\n### Workflow\n\n#### Detail\n"
 
 
@@ -55,4 +57,18 @@ class LinesWithoutCodeBlocksTest(unittest.TestCase):
         """Test that every line keeps its own number, and that the lines of a code block come back empty."""
         markdown = "Intro\n\n```console\n$ update-time\n```\n\nOutro\n"
         expected = [(1, "Intro"), (2, ""), (3, ""), (4, ""), (5, ""), (6, ""), (7, "Outro")]
+        self.assertEqual(list(lines_without_code_blocks(markdown)), expected)
+
+    @kills(
+        Mutation(
+            lines_without_code_blocks,
+            ".lstrip()",
+            "",
+            "a code block indented under a list item is read as prose",
+        )
+    )
+    def test_code_block_indented_under_a_list_item_comes_back_empty(self):
+        """Test that a fence indented under a list item opens and closes a code block."""
+        markdown = "1. Item:\n\n   ```console\n   $ update-time\n   ```\n\n2. Next\n"
+        expected = [(1, "1. Item:"), (2, ""), (3, ""), (4, ""), (5, ""), (6, ""), (7, "2. Next")]
         self.assertEqual(list(lines_without_code_blocks(markdown)), expected)

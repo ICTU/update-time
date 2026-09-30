@@ -18,7 +18,7 @@ def lines_without_code_blocks(markdown: str) -> Iterator[tuple[int, str]]:
     """
     in_code_block = False
     for line_number, line in enumerate(markdown.splitlines(), start=1):
-        fence = markdown_format.is_fence(line)
+        fence = markdown_format.is_fence(line.lstrip())
         if fence:
             in_code_block = not in_code_block
         yield line_number, "" if in_code_block or fence else line

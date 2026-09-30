@@ -9,6 +9,8 @@ from tools.generate_log_svg import LogOutput
 from tools.generate_readme import _README, _SCREENSHOT, _TEMPLATE, _help_output, _table_of_contents, main, render
 from tools.log_samples import sample_log_lines
 
+from update_time.io.log import Logger, LogMessage
+
 from tests.helpers import patch_environ
 
 _PLACEHOLDER = re.compile(r"@@\w+@@")
@@ -20,15 +22,36 @@ _FILLED_BY_RENDER = frozenset(
 
 _TABLE_OF_CONTENTS_HEADER = "## ☰ Table of contents\n\n"
 
+# An argument of a log message's format string, such as `%(location)s`.
+_MESSAGE_ARGUMENT = re.compile(r"%\(\w+\)[sd]")
+
+
+def _quoted_log_messages(text: str) -> list[str]:
+    """Return the name of each log message the text quotes, whatever values fill in its arguments."""
+    messages = {name: value for name, value in vars(Logger).items() if isinstance(value, LogMessage)}
+    return [name for name, message in messages.items() if _message_pattern(message).search(text)]
+
+
+def _message_pattern(message: LogMessage) -> re.Pattern[str]:
+    """Return a pattern matching the message on a single line, with any text in place of each argument."""
+    literal_parts = _MESSAGE_ARGUMENT.split(message.format)
+    return re.compile("[^\n]+?".join(re.escape(part) for part in literal_parts))
+
 
 class PlaceholderTest(unittest.TestCase):
-    """Unit tests that the template and the samples filling it name the same placeholders."""
+    """Unit tests that the template leaves its placeholders, and the log lines it quotes, to the samples."""
 
     def test_placeholders_and_samples_agree(self):
         """Test that every placeholder in the template has a sample, and every sample is named by the template."""
         in_template = set(_PLACEHOLDER.findall(_TEMPLATE.read_text()))
         filled = set(sample_log_lines()) | _FILLED_BY_RENDER
         self.assertEqual(in_template, filled)
+
+    def test_the_template_quotes_no_log_message_itself(self):
+        """Test that each log message the README quotes comes from a sample, rather than from the template's text."""
+        # The generated README quotes the samples, so the search does find a message where one is quoted.
+        self.assertNotEqual(_quoted_log_messages(_README.read_text()), [])
+        self.assertEqual(_quoted_log_messages(_TEMPLATE.read_text()), [])
 
 
 @patch_environ({}, clear=False)

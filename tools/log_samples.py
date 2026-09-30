@@ -172,6 +172,18 @@ def _inverted_items(log: Logger, capture: _Capture, requirements: Location, dock
     }
 
 
+def _effective_pom_warnings(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log a sample per warning about an effective pom Update-time cannot use, paired with the block's placeholder."""
+    log.effective_pom_unreadable(Path("pom.xml"))
+    unreadable = capture.take()
+
+    log.effective_pom_without_input_locations(Path("pom.xml"))
+    return {
+        "@@EFFECTIVE_POM_UNREADABLE_WARNING@@": unreadable,
+        "@@EFFECTIVE_POM_WITHOUT_INPUT_LOCATIONS_WARNING@@": capture.take(),
+    }
+
+
 def _accounted_for_references(log: Logger, capture: _Capture, dockerfile: Location) -> str:
     """Log one reference of each kind the file itself accounts for, and return the lines they render as."""
     compose = reference("acme/api", Location(Path("docker-compose.yml"), 4), "1.2.3")
@@ -227,6 +239,12 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.pinned(reference("python", Location(Path("Dockerfile"), 1)), pinned_tag)
     pinned_floating_tag = capture.take()
 
+    pinned_url = DependencyVersion("2.0.11", sha=_ELIDED_INTEGRITY_HASH)
+    log.pinned(reference("clipboard", Location(Path("docs/conf.py"), 4)), pinned_url)
+    pinned_integrity_hash = capture.take()
+
+    effective_pom = _effective_pom_warnings(log, capture)
+
     compose = Location(Path("docker-compose.yml"), 7)
     log.unpinned_floating_tag(
         reference("acme/api", compose, "dev"), DependencyVersion("dev"), FloatingPin.NO_VERSION_TAG
@@ -259,6 +277,8 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     return {
         "@@DRIFT_WARNINGS@@": drift,
         "@@PINNED_FLOATING_TAG@@": pinned_floating_tag,
+        "@@PINNED_INTEGRITY_HASH@@": pinned_integrity_hash,
+        **effective_pom,
         "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
         "@@ACCOUNTED_FOR_REFERENCES@@": accounted_for,

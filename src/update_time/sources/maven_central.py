@@ -178,13 +178,19 @@ def _newest_release(artefact: DependencyName) -> Release | None:
     )
 
 
-def versions_within_cooldown(artefact: DependencyName, cooldown_days: int) -> tuple[str, ...]:
-    """Return the artefact's versions the repository published inside the cooldown window."""
-    return tuple(
-        match["version"]
-        for match in _VERSION_ROW.finditer(_listing(artefact))
-        if within_cooldown(_published(match["published"]), cooldown_days)
-    )
+def versions_held_back(artefact: DependencyName, cooldown_days: int) -> tuple[str, ...]:
+    """Return the artefact's versions published inside the cooldown window, and the ones whose date does not parse."""
+    rows = _VERSION_ROW.finditer(_listing(artefact))
+    return tuple(row["version"] for row in rows if _held_back(artefact, row, cooldown_days))
+
+
+def _held_back(artefact: DependencyName, row: re.Match[str], cooldown_days: int) -> bool:
+    """Return whether the cooldown holds the row's version back, which it does where the date does not parse."""
+    published = _published(row["published"])
+    if published is None:
+        _LOG.unreadable_publication_date(artefact, row["version"], row["published"])
+        return True
+    return within_cooldown(published, cooldown_days)
 
 
 def _artefact_url(artefact: DependencyName) -> str:
