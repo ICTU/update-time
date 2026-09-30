@@ -21,3 +21,4 @@
 - 2026-09-29 `tests.update_time.updaters.test_update_pom_xml.UpdatePomXmlTest.test_osv_is_asked_about_the_version_the_run_lands_on` — the effective pom's version wins over the pom's own, so the version Maven moved away from is asked about
 - 2026-09-29 `tests.update_time.manifests.test_pom_xml.ResolvedDependenciesTest.test_a_version_the_parent_manages_is_not_read_from_the_poms_line_of_that_number` — a line of the pom lends its version to a dependency the parent versions, as their line numbers match
 - 2026-09-30 `tests.update_time.updaters.test_update_pom_xml.UpdatePomXmlTest.test_a_vulnerable_plugin_is_warned_about_as_maven_resolves_it` — OSV is asked about the pom's dependencies alone, so a vulnerable plugin goes unreported
+- 2026-09-30 `tests.update_time.sources.test_maven_central.ProjectTest.test_a_pom_naming_no_repository_and_no_complete_parent_leaves_github_unasked` — a pom without a `<parent>` ends the archival check with a traceback

@@ -17,19 +17,24 @@ from update_time.sources import maven_central
 from update_time.sources.osv import Ecosystem
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
+
+    from update_time.manifests.pom_xml import Declaration
 
 _LOG = get_logger("pom.xml")
 
 
 def update_pom_xmls() -> None:
     """Update each pom.xml the scan finds, running Maven over it."""
-    for pom_xml in glob_for(POM_XML):
+    pom_xmls = list(glob_for(POM_XML))
+    scanned_poms = {name: pom_xml for pom_xml in pom_xmls if (name := pom_xml_format.pom_name(pom_xml))}
+    for pom_xml in pom_xmls:
         _LOG.path(pom_xml)
-        _update_pom_xml(pom_xml)
+        _update_pom_xml(pom_xml, scanned_poms)
 
 
-def _update_pom_xml(pom_xml: Path) -> None:
+def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path]) -> None:
     """Update the dependencies and plugins the pom declares, and report the ones Maven moved.
 
     Which those are is read off the pom before and after the run, rather than from Maven's own report, which names
@@ -50,18 +55,19 @@ def _update_pom_xml(pom_xml: Path) -> None:
         _LOG.declarations_changed(pom_xml, len(before), len(after))
         return
     _report_new_versions(before, after, resolved)
-    declared = pom_xml_format.with_resolved_coordinates(resolved)
+    resolvable = pom_xml_format.with_resolved_coordinates(resolved)
+    declared = pom_xml_format.without_versions_left_to(resolvable, scanned_poms)
     _check_projects(declared)
     _warn_about_vulnerabilities(declared)
 
 
-def _check_projects(declared: list[Reference]) -> None:
+def _check_projects(declared: list[Declaration]) -> None:
     """Warn about each dependency and plugin whose newest release is old, or whose source repository is archived."""
     steered = [SteeredReference.from_reference(declaration) for declaration in declared]
     warn_about_projects([steered], project_resolver(maven_central.project), _LOG)
 
 
-def _warn_about_vulnerabilities(declared: list[Reference]) -> None:
+def _warn_about_vulnerabilities(declared: list[Declaration]) -> None:
     """Warn about each dependency and plugin the run leaves on a version an advisory names."""
     steered = [
         SteeredReference.from_reference(declaration)
@@ -71,7 +77,7 @@ def _warn_about_vulnerabilities(declared: list[Reference]) -> None:
     warn_about_vulnerable_dependencies([steered], Ecosystem.MAVEN, _LOG)
 
 
-def _report_new_versions(before: list[Reference], after: list[Reference], resolved: list[Reference]) -> None:
+def _report_new_versions(before: list[Declaration], after: list[Declaration], resolved: list[Declaration]) -> None:
     """Report each dependency and plugin whose version differs between the two readings, with its changes.
 
     The name is the one the effective pom gives the declaration, where it resolves one.

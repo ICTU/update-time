@@ -3,6 +3,7 @@
 import contextlib
 import re
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from subprocess import CalledProcessError  # nosec
 from typing import TYPE_CHECKING
@@ -27,6 +28,8 @@ from tests.update_time.helpers import (
     EFFECTIVE_GUAVA,
     GUAVA,
     PARENT_POM_ID,
+    SCANNED_POM_COORDINATES,
+    SCANNED_POM_ID,
     SUREFIRE,
     LoggingTestCase,
     archival_check_disabled,
@@ -42,6 +45,7 @@ from tests.update_time.helpers import (
     maven_central_version_row,
     patch_maven_central,
     plugin_element,
+    pom_coordinates,
     pom_declaring,
     properties_element,
     staleness_disabled,
@@ -175,6 +179,22 @@ _EFFECTIVE_SUREFIRE = effective_pom_declaring(
     build=build_element(effective_plugin_element(SUREFIRE, "3.5.0", line=8)),
 )
 
+# A parent and a child scanned together. Both runs read the child's effective pom, which locates the child's guava on
+# a line the parent declares nothing on, so the parent's run reads guava's version off the parent alone.
+# The parent, named `PARENT_POM_ID`, manages guava's version on line 10.
+_PARENT_MANAGING_GUAVA = pom_declaring(
+    coordinates=pom_coordinates("parent", "org.example", "1.0"),
+    managed=dependency_management_element(guava_element("33.0.0-jre")),
+)
+# The parent managing guava's version on line 13 by its own property, on line 6.
+_PARENT_MANAGING_GUAVA_BY_PROPERTY = pom_declaring(
+    coordinates=pom_coordinates("parent", "org.example", "1.0"),
+    properties=properties_element({"guava.version": "33.0.0-jre"}),
+    managed=dependency_management_element(guava_element("${guava.version}")),
+)
+# The child, which declares guava without a version on line 5, and its `<artifactId>` on line 7.
+_CHILD_LEAVING_GUAVAS_VERSION = pom_declaring(guava_element(None), coordinates=SCANNED_POM_COORDINATES)
+
 
 @no_vulnerabilities
 @patch.object(maven_central_module, "project", Mock(return_value=Project()))
@@ -304,8 +324,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             pom_xml_module.with_resolved_coordinates,
-            "_is_resolved(reference.dependency)",
-            "fully_resolved(reference.pinned)",
+            "_is_resolved(declaration.dependency)",
+            "fully_resolved(declaration.pinned)",
             "staleness judges the version too, so a dependency its parent versions goes unchecked for years",
         ),
         Mutation(
@@ -413,6 +433,170 @@ class UpdatePomXmlTest(LoggingTestCase):
                     update_pom_xmls()
                 self.assert_vulnerable_dependency_logged(name, version, VULNERABILITY, Location(pom, line))
 
+    def test_a_dependency_its_own_pom_manages_is_warned_about_at_the_managed_declaration_alone(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a dependency the pom declares without a version, and manages, is warned about once per check."""
+        managed = dependency_management_element(guava_element("33.0.0-jre"))
+        declared = pom_declaring(guava_element(None), coordinates=SCANNED_POM_COORDINATES, managed=managed)
+        # The pom manages guava's version on line 9, and declares guava without a version on line 14.
+        effective_managed = effective_dependency_element(GUAVA, "33.0.0-jre", line=8)
+        unversioned = effective_dependency_element(GUAVA, "33.0.0-jre", line=16, managed_at=(SCANNED_POM_ID, 9))
+        effective_pom = effective_pom_declaring(unversioned, managed=dependency_management_element(effective_managed))
+        cases = {
+            "staleness": (
+                patch.object(maven_central_module, "project", Mock(return_value=_stale("33.0.0-jre", 500))),
+                partial(self.assert_stale_dependency_logged, GUAVA, "33.0.0-jre"),
+            ),
+            "vulnerability": (
+                osv(ADVISORY),
+                partial(self.assert_vulnerable_dependency_logged, GUAVA, "33.0.0-jre", VULNERABILITY),
+            ),
+        }
+        for case, (source, assert_warned) in cases.items():
+            with self.subTest(case=case):
+                pom = self.find_pom(mock_run, mock_glob, declared, effective_pom)
+                with source:
+                    update_pom_xmls()
+                assert_warned(Location(pom, 9))
+
+    @kills(
+        Mutation(
+            pom_xml_module._effective_artefacts,
+            "_EffectiveArtefact(pinned, managed_by)",
+            "_EffectiveArtefact(pinned, _InputLocation() if default_group else managed_by)",
+            "a plugin is warned about twice: where the pom manages its version, and where it declares none",
+        )
+    )
+    def test_a_plugin_its_own_pom_manages_is_warned_about_at_the_managed_declaration_alone(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a plugin the pom declares without a version, and manages, is warned about once."""
+        managed = plugin_element("maven-surefire-plugin", "3.5.0")
+        build = build_element(plugin_element("maven-surefire-plugin", None), managed=managed)
+        declared = pom_declaring(coordinates=SCANNED_POM_COORDINATES, build=build)
+        # The pom manages surefire's version on line 12, and declares surefire without a version on line 17.
+        effective_managed = effective_plugin_element(SUREFIRE, "3.5.0", line=11)
+        unversioned = effective_plugin_element(SUREFIRE, "3.5.0", line=19, managed_at=(SCANNED_POM_ID, 12))
+        effective_pom = effective_pom_declaring(build=build_element(unversioned, managed=effective_managed))
+        pom = self.find_pom(mock_run, mock_glob, declared, effective_pom)
+        with patch.object(maven_central_module, "project", Mock(return_value=_stale("3.5.0", 500))):
+            update_pom_xmls()
+        self.assert_stale_dependency_logged(SUREFIRE, "3.5.0", Location(pom, 12))
+
+    def test_a_dependency_another_scanned_pom_manages_is_warned_about_at_the_managed_declaration_alone(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a dependency a child declares without a version is warned about in the parent alone.
+
+        The scan finds the child first, so the child's run needs the parent's name before the parent's own run.
+        """
+        unversioned = effective_dependency_element(GUAVA, "33.0.0-jre", line=7, managed_at=(PARENT_POM_ID, 10))
+        _, parent_pom = self.find_poms(
+            mock_run,
+            mock_glob,
+            _CHILD_LEAVING_GUAVAS_VERSION,
+            _PARENT_MANAGING_GUAVA,
+            effective_pom=effective_pom_declaring(unversioned),
+        )
+        with patch.object(maven_central_module, "project", Mock(return_value=_stale("33.0.0-jre", 500))):
+            update_pom_xmls()
+        self.assert_stale_dependency_logged(GUAVA, "33.0.0-jre", Location(parent_pom, 10))
+
+    def test_a_dependency_whose_managed_version_its_own_pom_overrides_is_warned_about_at_that_version(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a child overriding the property its parent manages a version with is checked at its own version."""
+        child = pom_declaring(
+            guava_element(None),
+            coordinates=SCANNED_POM_COORDINATES,
+            properties=properties_element({"guava.version": "33.7.1-jre"}),
+        )
+        # The child declares guava without a version on line 8, and its `<artifactId>` on line 10.
+        unversioned = effective_dependency_element(GUAVA, "33.7.1-jre", line=10, managed_at=(PARENT_POM_ID, 13))
+        child_pom, parent_pom = self.find_poms(
+            mock_run,
+            mock_glob,
+            child,
+            _PARENT_MANAGING_GUAVA_BY_PROPERTY,
+            effective_pom=effective_pom_declaring(unversioned),
+        )
+        with osv(ADVISORY):
+            update_pom_xmls()
+        self.assert_vulnerable_dependency_logged(
+            GUAVA, "33.7.1-jre", VULNERABILITY, Location(child_pom, 8), among_others=True
+        )
+        self.assert_vulnerable_dependency_logged(
+            GUAVA, "33.0.0-jre", VULNERABILITY, Location(parent_pom, 6), among_others=True
+        )
+
+    @kills(
+        Mutation(
+            pom_xml_module._managed_versions,
+            "_interpolated(version.text, property_elements) for",
+            "version.text for",
+            "a managed version naming a property never matches a child's, so every child is warned about again",
+        )
+    )
+    def test_a_dependency_whose_managed_version_its_managing_pom_resolves_is_warned_about_there_alone(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a child is skipped where the parent manages its version by a property the parent declares."""
+        unversioned = effective_dependency_element(GUAVA, "33.0.0-jre", line=7, managed_at=(PARENT_POM_ID, 13))
+        _, parent_pom = self.find_poms(
+            mock_run,
+            mock_glob,
+            _CHILD_LEAVING_GUAVAS_VERSION,
+            _PARENT_MANAGING_GUAVA_BY_PROPERTY,
+            effective_pom=effective_pom_declaring(unversioned),
+        )
+        with osv(ADVISORY):
+            update_pom_xmls()
+        self.assert_vulnerable_dependency_logged(GUAVA, "33.0.0-jre", VULNERABILITY, Location(parent_pom, 6))
+
+    def test_a_dependency_whose_managed_version_names_a_property_its_managing_pom_leaves_out_is_warned_about(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a child is checked where the parent manages its version by a property the parent inherits."""
+        # The parent manages guava's version on line 10, by a property a pom above it declares.
+        parent = pom_declaring(
+            coordinates=pom_coordinates("parent", "org.example", "1.0"),
+            managed=dependency_management_element(guava_element("${guava.version}")),
+        )
+        unversioned = effective_dependency_element(GUAVA, "33.0.0-jre", line=7, managed_at=(PARENT_POM_ID, 10))
+        child_pom, parent_pom = self.find_poms(
+            mock_run,
+            mock_glob,
+            _CHILD_LEAVING_GUAVAS_VERSION,
+            parent,
+            effective_pom=effective_pom_declaring(unversioned),
+        )
+        with patch.object(maven_central_module, "project", Mock(return_value=_stale("33.0.0-jre", 500))):
+            update_pom_xmls()
+        self.assert_stale_dependency_logged(GUAVA, "33.0.0-jre", Location(child_pom, 5), Location(parent_pom, 10))
+
+    def test_a_dependency_whose_managing_pom_no_longer_parses_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a child's dependency is checked when Maven left the parent managing its version unparsable."""
+        unversioned = effective_dependency_element(GUAVA, "33.0.0-jre", line=7, managed_at=(PARENT_POM_ID, 10))
+        parent_pom, child_pom = self.find_poms(
+            mock_run,
+            mock_glob,
+            _PARENT_MANAGING_GUAVA,
+            _CHILD_LEAVING_GUAVAS_VERSION,
+            effective_pom=effective_pom_declaring(unversioned),
+        )
+
+        def parent_contents() -> bytes:
+            """Return what the parent holds, which the versions plugin's goals of its own run leave unparsable."""
+            rewritten = any(_VERSIONS_GOALS[0] in run.args[0] for run in mock_run.call_args_list)
+            return b"<project><broken>" if rewritten else _PARENT_MANAGING_GUAVA.encode()
+
+        parent_pom.read_bytes = Mock(side_effect=parent_contents)
+        with patch.object(maven_central_module, "project", Mock(return_value=_stale("33.0.0-jre", 500))):
+            update_pom_xmls()
+        self.assert_error_logged(Logger._MESSAGE_INVALID_XML_AFTER_UPDATE, location=Location(parent_pom))
+        self.assert_stale_dependency_logged(GUAVA, "33.0.0-jre", Location(child_pom, 5))
+
     @kills(
         Mutation(
             maven_module._run_writing_effective_pom,
@@ -436,14 +620,14 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             pom_xml_module.has_input_locations,
-            "return bool(declared_by)",
+            "return bool(_effective_pom_name(effective_pom))",
             "return True",
             "every effective pom counts as having input locations, so one without them goes unnoticed",
         ),
         Mutation(
             pom_xml_module._input_location,
-            '("", 0) if input_location',
-            '("", 5) if input_location',
+            "return _InputLocation()",
+            "return _InputLocation(line=5)",
             "without input locations, a dependency takes the version of any entry the line number happens to match",
         ),
     )
@@ -671,7 +855,7 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             pom_xml_module.with_resolved_coordinates,
-            " if _is_resolved(reference.dependency)",
+            " if _is_resolved(declaration.dependency)",
             "",
             "a pom inheriting a group from its parent is asked about coordinates that resolve to nothing",
         ),
@@ -1160,8 +1344,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             update_pom_xml_module.update_pom_xmls,
-            "_update_pom_xml(pom_xml)",
-            "_update_pom_xml(pom_xml)\n        return",
+            "_update_pom_xml(pom_xml, scanned_poms)",
+            "_update_pom_xml(pom_xml, scanned_poms)\n        return",
             "the walk ends at the first pom, so the poms after it are never updated",
         ),
     )

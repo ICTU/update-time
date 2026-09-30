@@ -1053,6 +1053,8 @@ Update-time reads every `<dependency>` element the pom declares, wherever it sit
 
 Update-time also reads every `<plugin>` element the pom declares: under `<plugins>`, under `<pluginManagement>`, and in a `<profile>`. It checks each plugin as it checks a dependency.
 
+Update-time warns once about a version that a scanned pom manages, at the declaration managing it. It skips the checks for each declaration that leaves its `<version>` to that pom, whether in the managing pom itself or in a module inheriting from it. A module can override a property that the managed `<version>` names, and so resolve another version. Update-time then checks the module's declaration at that version. It also checks the module's declaration where the managing pom leaves that property to a pom above it. A pom outside the scan can manage the version as well, such as a released parent pom or an imported BOM. Update-time then checks each declaration that leaves its `<version>` out.
+
 Update-time delegates updating Maven dependencies to Maven. The Maven it runs is the project's own `./mvnw` wrapper when one sits beside the pom, and the `mvn` on your path where the project ships none. In each pom's own directory, it runs two goals of the [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/). The `use-latest-releases` goal advances a dependency whose `<version>` element holds a version. The `update-properties` goal advances a dependency or plugin whose `<version>` element names one of the pom's properties, by advancing that property. Update-time reports the new version of each dependency and plugin that Maven moved, so two that name the same property get a report each. Update-time reports each new version under the group and artifact Maven resolves.
 
 The `use-latest-releases` goal leaves a plugin alone, so a plugin whose `<version>` element holds a version stays on that version. Update-time reports no new version for such a plugin.
@@ -1079,7 +1081,7 @@ Without an effective pom to read, the cooldown holds nothing back for a group or
    WARNING The effective pom of pom.xml lacks the input locations Update-time reads, so the cooldown and the checks passed over any group or artifact the pom leaves to its parent, and the vulnerability check passed over any version the pom leaves to another pom or to Maven; the project's help plugin configuration sets verbose to false
    ```
 
-Update-time checks each declaration on its own. So an artefact that a pom manages, and also declares without a `<version>`, gets every warning once per declaration. A module pom that declares the artefact without a `<version>` repeats the warnings its parent pom gets, when the scan reaches that parent pom too.
+Update-time checks the managing pom's own declarations only where it can read that pom back after Maven's run. Maven can leave that pom unparsable, or holding another number of declarations, and Update-time then reports an error. A module still skips the declarations that leave their version to that pom, unless the managing pom no longer parses by the time the module's run reads it. So those declarations can go unchecked in that run, and the next run checks them.
 
 #### What versions are updated?
 
@@ -1101,7 +1103,7 @@ The rule set names an artefact whose group or artifact the pom leaves to its par
 
 Update-time checks each dependency and plugin against the newest release Maven Central lists for it.
 
-Update-time asks Maven Central about an artefact by that artefact's `groupId:artifactId` coordinates alone. So it checks a dependency whose `<version>` names a property its parent declares, and a dependency or plugin that leaves its `<version>` out. For a group or artifact the pom leaves to its parent, it asks about the artefact Maven resolves.
+Update-time asks Maven Central about an artefact by that artefact's `groupId:artifactId` coordinates alone. So it checks a dependency whose `<version>` names a property its parent declares. It also checks a dependency or plugin that leaves its `<version>` out, unless Update-time checks the declaration managing that version in its place. For a group or artifact the pom leaves to its parent, it asks about the artefact Maven resolves.
 
 Maven Central lists nothing for an artefact a project resolves from a mirror or a private repository. Update-time then has nothing to measure staleness against.
 
@@ -1113,7 +1115,7 @@ Maven Central does not report a withdrawal, so Update-time never warns that a Ma
 
 Update-time checks the pom's dependencies and plugins against OSV's Maven advisories. Where the pom holds the version of a dependency or plugin itself, Update-time checks the version the pom holds once Maven has run. The pom holds that version in the declaration's own `<version>` element, in one of its own properties, or in its own `<dependencyManagement>` or `<pluginManagement>`. So the run never reports a vulnerability it updated such a dependency or plugin away from.
 
-For a version the pom leaves to another pom or to Maven, Update-time checks the version the effective pom gives the dependency or plugin. Maven wrote that effective pom before it updated the pom.
+For a version the pom leaves to another pom or to Maven, Update-time checks the version the effective pom gives the dependency or plugin. Maven wrote that effective pom before it updated the pom. Update-time skips a dependency or plugin that leaves its `<version>` out where it checks the declaration managing that version in its place.
 
 In two cases, Update-time warns about a version the same run updates away from. The scan can reach a child pom before its parent pom, and the parent's own Maven run can then still move that version. And the Maven run over a pom can move the version of a BOM that pom imports itself, while the effective pom lists the versions the BOM held before. In both cases, the next run checks the version the first run moved to.
 

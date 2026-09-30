@@ -814,6 +814,16 @@ def _pom_parent(parent: str) -> str:
     return f"  <parent>{coordinates}</parent>\n"
 
 
+def pom_coordinates(
+    artifact: str | None, group: str | None = None, version: str | None = None, parent: str = ""
+) -> str:
+    """Return the elements naming a pom: its `<parent>` element where a parent is given, then its own coordinates."""
+    own = {"groupId": group, "artifactId": artifact, "version": version}
+    return _pom_parent(parent) + "".join(
+        f"  <{tag}>{value}</{tag}>\n" for tag, value in own.items() if value is not None
+    )
+
+
 def _coordinates_element(tag: str, indent: str, group: str | None, artifact: str, version: str | None) -> str:
     """Return a `<tag>` element at the indent, declaring the artifact, and the group and the version where given."""
     parts = {"groupId": group, "artifactId": artifact, "version": version}
@@ -861,13 +871,16 @@ def properties_element(values: dict[str, str]) -> str:
     return f"  <properties>\n{declared}  </properties>\n"
 
 
-def pom_declaring(*dependencies: str, properties: str = "", managed: str = "", build: str = "") -> str:
-    """Return a pom declaring the given properties, managed dependencies, dependency elements, and build plugins.
+def pom_declaring(
+    *dependencies: str, coordinates: str = "", properties: str = "", managed: str = "", build: str = ""
+) -> str:
+    """Return a pom declaring the given coordinates, properties, managed dependencies, dependencies, and plugins.
 
-    The properties come first, so the first property sits on line 3.
+    Without coordinates the properties come first, so the first property sits on line 3.
     """
     return (
         '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
+        f"{coordinates}"
         f"{properties}"
         f"{managed}"
         "  <dependencies>\n"
@@ -883,6 +896,9 @@ SCANNED_POM_ID = "org.example:child:1.0"
 
 # An input location names the scanned pom's parent by this id, where the child inherits the element.
 PARENT_POM_ID = "org.example:parent:1.0"
+
+# The elements of a pom that Maven names by `SCANNED_POM_ID`, on lines 2 and 3.
+SCANNED_POM_COORDINATES = pom_coordinates("child", parent=PARENT_POM_ID)
 
 
 def effective_dependency_element(
@@ -942,8 +958,8 @@ def effective_pom_declaring(*dependencies: str, properties: str = "", managed: s
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         "<!-- Effective POM for project 'org.example:child:jar:1.0' -->\n"
         '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
-        f"  <groupId>org.example</groupId>  <!-- {PARENT_POM_ID}, line 3 -->\n"
-        f"  <artifactId>child</artifactId>  <!-- {SCANNED_POM_ID}, line 8 -->\n"
+        f"  <groupId>org.example</groupId>  <!-- {PARENT_POM_ID}, line 2 -->\n"
+        f"  <artifactId>child</artifactId>  <!-- {SCANNED_POM_ID}, line 3 -->\n"
         f"{properties}"
         f"{managed}"
         "  <dependencies>\n"

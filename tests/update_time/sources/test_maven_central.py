@@ -198,13 +198,6 @@ class ProjectTest(LoggingTestCase):
             "return pinned",
             "a parent pom is fetched at a URL that spells out a property, which Maven Central serves nothing at",
         ),
-        Mutation(
-            pom_xml_format.parent,
-            "    if element is None:\n        return None\n",
-            "",
-            "a pom without a `<parent>` ends the archival check with a traceback",
-            raises="AttributeError: 'NoneType' object has no attribute 'child'",
-        ),
     )
     def test_a_pom_naming_no_repository_and_no_complete_parent_leaves_github_unasked(self):
         """Test that GitHub stays unasked for a pom lacking both a repository and a complete parent."""
