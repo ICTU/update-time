@@ -94,7 +94,7 @@ def _maven(pom_xml: Path) -> str:
 
 
 def update_pom_xml(pom_xml: Path) -> XmlElement | None:
-    """Update the dependencies the pom declares, running Maven in the pom's own directory.
+    """Update the dependencies and plugins the pom declares, running Maven in the pom's own directory.
 
     Return the effective pom Maven wrote before it updated the pom, or None where it wrote none. A pom leaving a group
     or an artifact to its parent gets the effective pom in a Maven run of its own, so the rule set names the

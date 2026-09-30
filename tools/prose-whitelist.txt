@@ -84,7 +84,6 @@ A pass reading lines a rewrite walked first passes none, since `apply_marker` re
 A path the user named on the command line stays a plain `Path` instead (see `_render_field`).
 A payload that is no list lists nothing: the contents endpoint answers a path naming a file with that file's own object rather than with a listing.
 A pinned reference as a file records it: a dependency, the version it is pinned to, and the line it sits on.
-A plugin sits in a `<plugin>` element, so no log line names that change: it shows in the diff alone.
 A printf-style interpolation, such as a log message's ``: a value rather than prose.
 A problem you hit and fixed yourself needs no narration, at whatever step it happens: a probe that misfired, a rewrite that overreached, a formatter that undid an edit.
 A project that is part of no workspace (the common case) is its own root.
@@ -679,7 +678,6 @@ The verb's other operator names the levels below the threshold rather than the o
 The version a runtime reference takes from the base image it follows.
 The version comes from the Python base image in a Dockerfile, or from Docker Hub when no Dockerfile declares one.
 The versions no goal may adopt.
-The versions plugin picks the newest release of each dependency, and adopts no snapshot.
 The volta pin is steered by no marker.
 The warning costs no request, the item being unreadable on its own.
 The warning names where the marker would sit rather than the value that is wrong.

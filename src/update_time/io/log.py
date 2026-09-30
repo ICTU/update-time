@@ -736,12 +736,12 @@ class Logger:
 
     _MESSAGE_DECLARATIONS_CHANGED = LogMessage(
         ERROR,
-        "Could not tell what changed in %(location)s: it declared %(before)s dependencies before the update and "
-        "%(after)s after it",
+        "Could not tell what changed in %(location)s: it declared %(before)s dependencies and plugins before the "
+        "update and %(after)s after it",
     )
 
     def declarations_changed(self, path: Path, before: int, after: int) -> None:
-        """Report that the file an updater rewrote declares more or fewer dependencies than before the update."""
+        """Report that the file an updater rewrote declares more or fewer dependencies and plugins than before."""
         self._log_file(self._MESSAGE_DECLARATIONS_CHANGED, path, before=before, after=after)
 
     _MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG = LogMessage(

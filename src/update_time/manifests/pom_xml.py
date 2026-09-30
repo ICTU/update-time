@@ -72,17 +72,24 @@ def parent(project: XmlElement) -> PinnedDependency | None:
     return pinned if fully_resolved(pinned) else None
 
 
-def dependencies(path: Path, effective_pom: XmlElement | None = None) -> list[Reference] | None:
-    """Return a reference to each dependency the pom declares, or None when the pom's XML does not parse.
+def declarations(path: Path, effective_pom: XmlElement | None = None) -> list[Reference] | None:
+    """Return a reference to each dependency and plugin the pom declares, or None when the pom's XML does not parse.
 
-    Both `<dependencies>` and `<dependencyManagement>` hold their dependencies in a `<dependency>` element, so
-    reading the element wherever it sits reaches the dependencies of either. Maven's effective pom, where one is
-    given, supplies the coordinates and the version the parent declares or manages.
+    An element that does not name its artifact is left out, and so is a dependency that does not name its group. A
+    plugin that does not name its group is in Maven's default plugin group. Maven's effective pom, where one is given,
+    supplies the coordinates and the version the pom leaves to Maven to resolve.
     """
     project = xml.read(path)
     if project is None:
         return None
-    return _references(path, project, {"dependency": _ARTEFACT_ELEMENTS["dependency"]}, effective_pom)
+    property_elements = _resolvable_elements(project)
+    effective_artefacts = _effective_artefacts(effective_pom, project)
+    declared = (
+        _reference(path, element, property_elements, effective_artefacts, default_group)
+        for tag, default_group in _ARTEFACT_ELEMENTS.items()
+        for element in project.descendants(tag)
+    )
+    return [reference for reference in declared if reference is not None]
 
 
 @dataclass(frozen=True)
@@ -177,13 +184,9 @@ def has_input_locations(effective_pom: XmlElement) -> bool:
     return bool(declared_by)
 
 
-def artefact_references(path: Path, effective_pom: XmlElement | None = None) -> list[Reference]:
-    """Return a reference to each dependency and plugin the pom declares.
-
-    Maven's effective pom, where one is given, supplies the coordinates and the version the pom leaves to Maven to
-    resolve. Coordinates holding an unresolved property are left out, since a repository serves nothing under them.
-    """
-    return [reference for reference in _artefact_references(path, effective_pom) if _is_resolved(reference.dependency)]
+def with_resolved_coordinates(declared: list[Reference]) -> list[Reference]:
+    """Return the references whose coordinates resolve, since a repository serves nothing under the others."""
+    return [reference for reference in declared if _is_resolved(reference.dependency)]
 
 
 def leaves_coordinates_unresolved(path: Path) -> bool:
@@ -192,29 +195,8 @@ def leaves_coordinates_unresolved(path: Path) -> bool:
 
 
 def _artefact_references(path: Path, effective_pom: XmlElement | None = None) -> list[Reference]:
-    """Return a reference to each dependency and plugin the pom declares, whether or not its coordinates resolve."""
-    project = xml.read(path)
-    return [] if project is None else _references(path, project, _ARTEFACT_ELEMENTS, effective_pom)
-
-
-def _references(
-    path: Path,
-    project: XmlElement,
-    default_groups: dict[str, str],
-    effective_pom: XmlElement | None,
-) -> list[Reference]:
-    """Return the reference each named element declares, dropping the ones that leave out their artifact or group.
-
-    `default_groups` maps the tag of each element to read to the group Maven gives it when it declares none.
-    """
-    property_elements = _resolvable_elements(project)
-    effective_artefacts = _effective_artefacts(effective_pom, project)
-    declared = (
-        _reference(path, element, property_elements, effective_artefacts, default_group)
-        for tag, default_group in default_groups.items()
-        for element in project.descendants(tag)
-    )
-    return [reference for reference in declared if reference is not None]
+    """Return the pom's declarations, or an empty list where its XML does not parse."""
+    return declarations(path, effective_pom) or []
 
 
 def artefacts(path: Path, effective_pom: XmlElement | None = None) -> list[DependencyName]:
