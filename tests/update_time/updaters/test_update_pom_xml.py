@@ -303,7 +303,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             "OSV is asked about a version holding an unresolved property, which it matches nothing to",
         ),
         Mutation(
-            pom_xml_module.artefact_references,
+            pom_xml_module.with_resolved_coordinates,
             "_is_resolved(reference.dependency)",
             "fully_resolved(reference.pinned)",
             "staleness judges the version too, so a dependency its parent versions goes unchecked for years",
@@ -379,14 +379,6 @@ class UpdatePomXmlTest(LoggingTestCase):
                     update_pom_xmls()
                 self.assert_vulnerable_dependency_logged(GUAVA, "33.0.0-jre", VULNERABILITY, Location(pom, line))
 
-    @kills(
-        Mutation(
-            update_pom_xml_module._update_pom_xml,
-            "_warn_about_vulnerabilities(declared)",
-            "_warn_about_vulnerabilities(resolved)",
-            "OSV is asked about the pom's dependencies alone, so a vulnerable plugin goes unreported",
-        )
-    )
     def test_a_vulnerable_plugin_is_warned_about_as_maven_resolves_it(self, mock_run: Mock, mock_glob: Mock):
         """Test that a plugin an advisory names is warned about as Maven resolves it, whichever pom decides it."""
         # The warning names the line of the `<version>` element, or of the `<plugin>` lacking one.
@@ -540,8 +532,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "artefact_references(pom_xml, effective_pom)",
-            "artefact_references(pom_xml)",
+            "with_resolved_coordinates(resolved)",
+            "with_resolved_coordinates(after)",
             "staleness reads the pom alone, so a dependency whose group the parent declares goes unchecked",
         ),
     )
@@ -555,18 +547,6 @@ class UpdatePomXmlTest(LoggingTestCase):
         self.assert_stale_dependency_logged(GUAVA, "33.0.0-jre", Location(pom, 6))
 
     @kills(
-        Mutation(
-            update_pom_xml_module._update_pom_xml,
-            "pom_xml_format.artefact_references(pom_xml, effective_pom)",
-            "after",
-            "staleness reads the pom's dependencies alone, so a plugin that stopped releasing goes unreported",
-        ),
-        Mutation(
-            pom_xml_module._references,
-            "for element in project.descendants(tag)",
-            'for element in project.descendants(tag) if tag == "dependency" or element.child("version")',
-            "a plugin without a version goes unchecked, although the parent or Maven decides which release runs",
-        ),
         Mutation(
             pom_xml_module._effective_artefacts,
             "for tag, default_group in _ARTEFACT_ELEMENTS.items()",
@@ -690,7 +670,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pom_xml_module.artefact_references,
+            pom_xml_module.with_resolved_coordinates,
             " if _is_resolved(reference.dependency)",
             "",
             "a pom inheriting a group from its parent is asked about coordinates that resolve to nothing",
@@ -1013,19 +993,23 @@ class UpdatePomXmlTest(LoggingTestCase):
             update_pom_xml_module._report_new_versions,
             "zip(before, after, resolved, strict=True)",
             "{n.location: (o, n, r) for o, n, r in zip(before, after, resolved, strict=True)}.values()",
-            "one dependency per line is reported, so of two naming the same property only one is",
+            "one declaration per line is reported, so of two naming the same property only one is",
         )
     )
-    def test_dependencies_sharing_a_property_are_each_reported_at_it(self, mock_run: Mock, mock_glob: Mock):
-        """Test that two dependencies naming the same property are both reported, at that property's line."""
-        core = dependency_element("org.springframework", "spring-core", "${spring.version}")
-        web = dependency_element("org.springframework", "spring-web", "${spring.version}")
-        before = pom_declaring(core, web, properties=properties_element({"spring.version": "6.1.0"}))
-        after = pom_declaring(core, web, properties=properties_element({"spring.version": "7.1.0"}))
+    def test_a_dependency_and_a_plugin_sharing_a_property_are_each_reported_at_it(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a dependency and a plugin naming the same property are both reported, at that property's line."""
+        provider = dependency_element("org.apache.maven.surefire", "surefire-junit-platform", "${surefire.version}")
+        plugin = build_element(plugin_element("maven-surefire-plugin", "${surefire.version}", group=None))
+        before = pom_declaring(provider, properties=properties_element({"surefire.version": "3.5.0"}), build=plugin)
+        after = pom_declaring(provider, properties=properties_element({"surefire.version": "3.5.2"}), build=plugin)
         pom = self.find_rewritten_pom(mock_run, mock_glob, before, after)
         update_pom_xmls()
-        self.assert_new_version_logged_among_others("org.springframework:spring-core", "7.1.0", Location(pom, 3))
-        self.assert_new_version_logged_among_others("org.springframework:spring-web", "7.1.0", Location(pom, 3))
+        self.assert_new_version_logged_among_others(
+            "org.apache.maven.surefire:surefire-junit-platform", "3.5.2", Location(pom, 3)
+        )
+        self.assert_new_version_logged_among_others(SUREFIRE, "3.5.2", Location(pom, 3))
         self.assertEqual(len(self.new_version_records()), 2)
 
     def test_a_property_no_dependency_names_is_reported_for_none(self, mock_run: Mock, mock_glob: Mock):
@@ -1150,13 +1134,12 @@ class UpdatePomXmlTest(LoggingTestCase):
         Mutation(
             update_pom_xml_module._update_pom_xml,
             "_LOG.declarations_changed(pom_xml, len(before), len(after))",
-            "_LOG.declarations_changed(pom_xml, len(before), len(after))"
-            "\n        _check_projects(pom_xml_format.artefact_references(pom_xml))",
+            "_LOG.declarations_changed(pom_xml, len(before), len(after))\n        _check_projects(before)",
             "a pom Update-time gave up on is checked for staleness all the same, beside the error saying it was not",
         ),
     )
-    def test_a_pom_declaring_fewer_dependencies_after_the_run_is_an_error(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a pom Maven removed a declaration from is reported as a failed update."""
+    def test_a_pom_holding_fewer_declarations_after_the_run_is_an_error(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a pom Maven removed a declaration from is reported as an error, and left unchecked."""
         before = pom_declaring(
             guava_element("33.0.0-jre"), dependency_element("org.springframework", "spring-core", "6.1.0")
         )

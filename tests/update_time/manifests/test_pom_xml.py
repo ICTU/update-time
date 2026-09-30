@@ -1,7 +1,6 @@
 """Unit tests for reading a pom.xml, with file I/O mocked."""
 
 import unittest
-from typing import TYPE_CHECKING
 
 from update_time.formats import xml
 from update_time.manifests import pom_xml
@@ -25,11 +24,6 @@ from tests.update_time.helpers import (
     pom_declaring,
     properties_element,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from update_time.domain.reference import Reference
 
 _POM_WITH_A_PROFILE = """<project xmlns="http://maven.apache.org/POM/4.0.0">
   <properties>
@@ -130,10 +124,10 @@ class ArtefactsTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml._artefact_references,
-            "[] if project is None else ",
+            " or []",
             "",
             "an unparsable pom takes the reading of its artefacts down with it",
-            raises="AttributeError: 'NoneType' object has no attribute 'descendants'",
+            raises="TypeError: 'NoneType' object is not iterable",
         )
     )
     def test_a_pom_that_does_not_parse(self):
@@ -141,8 +135,8 @@ class ArtefactsTest(unittest.TestCase):
         self.assertEqual(pom_xml.artefacts(mock_path("<project><broken>")), [])
 
 
-class DependenciesTest(unittest.TestCase):
-    """Unit tests for the dependencies a pom declares."""
+class DeclarationsTest(unittest.TestCase):
+    """Unit tests for the dependencies and plugins a pom declares."""
 
     @kills(
         Mutation(
@@ -161,7 +155,7 @@ class DependenciesTest(unittest.TestCase):
     )
     def test_a_dependency_is_read_unless_it_misses_its_group_or_artifact(self):
         """Test that a dependency missing its group or artifact is left out, and one missing its version is read."""
-        declared = pom_xml.dependencies(mock_path(_POM_WITH_INCOMPLETE_DEPENDENCIES)) or []
+        declared = pom_xml.declarations(mock_path(_POM_WITH_INCOMPLETE_DEPENDENCIES)) or []
         expected = ["org.springframework:spring-web", GUAVA]
         self.assertEqual([reference.dependency for reference in declared], expected)
 
@@ -197,7 +191,7 @@ class DependenciesTest(unittest.TestCase):
         }
         for case, (pom, expected) in cases.items():
             with self.subTest(case=case):
-                declared = pom_xml.dependencies(mock_path(pom)) or []
+                declared = pom_xml.declarations(mock_path(pom)) or []
                 self.assertEqual([reference.dependency for reference in declared], [expected])
 
     @kills(
@@ -212,28 +206,26 @@ class DependenciesTest(unittest.TestCase):
         """Test that a version naming a pom property in part reads as that property's value, at its own element."""
         spring = dependency_element("org.springframework", "spring-core", "${spring.major}.1.0")
         pom = pom_declaring(spring, properties=properties_element({"spring.major": "6"}))
-        declared = pom_xml.dependencies(mock_path(pom)) or []
+        declared = pom_xml.declarations(mock_path(pom)) or []
         versions = [(reference.current_version, reference.location.line_number) for reference in declared]
         self.assertEqual(versions, [("6.1.0", 9)])
 
     def test_a_dependency_resolves_a_property_its_own_profile_declares(self):
         """Test that a dependency in a profile resolves the property it names, among the several that profile holds."""
-        declared = pom_xml.dependencies(mock_path(_POM_WITH_A_PROFILE_ONLY_PROPERTY)) or []
+        declared = pom_xml.declarations(mock_path(_POM_WITH_A_PROFILE_ONLY_PROPERTY)) or []
         versions = [(reference.current_version, reference.location.line_number) for reference in declared]
         self.assertEqual(versions, [("3.0", 6)])
 
     def test_a_property_a_profile_declares_does_not_override_the_projects_own(self):
         """Test that a dependency resolves to the project's own property, whatever value a profile gives that name."""
-        declared = pom_xml.dependencies(mock_path(_POM_WITH_A_PROFILE)) or []
+        declared = pom_xml.declarations(mock_path(_POM_WITH_A_PROFILE)) or []
         versions = [(reference.current_version, reference.location.line_number) for reference in declared]
         self.assertEqual(versions, [("6.1.0", 3)])
 
 
-def _resolved(
-    pom: str, effective_pom: str, read: Callable[..., list[Reference] | None] = pom_xml.dependencies
-) -> list[tuple[str, str, int | None]]:
+def _resolved(pom: str, effective_pom: str) -> list[tuple[str, str, int | None]]:
     """Return the name, the resolved version, and the line of each artefact that reading the pom returns."""
-    declared = read(mock_path(pom), xml.parse(effective_pom.encode())) or []
+    declared = pom_xml.declarations(mock_path(pom), xml.parse(effective_pom.encode())) or []
     return [(reference.dependency, reference.current_version, reference.location.line_number) for reference in declared]
 
 
@@ -396,7 +388,7 @@ class ResolvedDependenciesTest(unittest.TestCase):
             with self.subTest(case=case):
                 pom = pom_declaring(properties=properties, build=build)
                 effective_pom = effective_pom_declaring(build=effective_build)
-                self.assertEqual(_resolved(pom, effective_pom, pom_xml.artefact_references), expected)
+                self.assertEqual(_resolved(pom, effective_pom), expected)
 
     @kills(
         Mutation(

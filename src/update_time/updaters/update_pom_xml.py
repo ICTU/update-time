@@ -1,4 +1,4 @@
-"""Find pom.xml files and update the dependencies they declare with Maven."""
+"""Find pom.xml files and update the dependencies and plugins they declare with Maven."""
 
 from typing import TYPE_CHECKING
 
@@ -30,18 +30,18 @@ def update_pom_xmls() -> None:
 
 
 def _update_pom_xml(pom_xml: Path) -> None:
-    """Update the dependencies the pom declares, and report the ones Maven moved.
+    """Update the dependencies and plugins the pom declares, and report the ones Maven moved.
 
     Which those are is read off the pom before and after the run, rather than from Maven's own report, which names
     no line to report a change at.
     """
-    before = pom_xml_format.dependencies(pom_xml)
+    before = pom_xml_format.declarations(pom_xml)
     if before is None:
         _LOG.invalid_file(pom_xml, xml.FORMAT)  # The pom cannot be read, so Maven is not run on it either.
         return
     effective_pom = maven.update_pom_xml(pom_xml)
-    after = pom_xml_format.dependencies(pom_xml)
-    resolved = pom_xml_format.dependencies(pom_xml, effective_pom)
+    after = pom_xml_format.declarations(pom_xml)
+    resolved = pom_xml_format.declarations(pom_xml, effective_pom)
     if after is None or resolved is None:
         _LOG.invalid_xml_after_update(pom_xml)  # Maven rewrote the pom into something that does not parse.
         return
@@ -50,7 +50,7 @@ def _update_pom_xml(pom_xml: Path) -> None:
         _LOG.declarations_changed(pom_xml, len(before), len(after))
         return
     _report_new_versions(before, after, resolved)
-    declared = pom_xml_format.artefact_references(pom_xml, effective_pom)
+    declared = pom_xml_format.with_resolved_coordinates(resolved)
     _check_projects(declared)
     _warn_about_vulnerabilities(declared)
 
@@ -72,9 +72,9 @@ def _warn_about_vulnerabilities(declared: list[Reference]) -> None:
 
 
 def _report_new_versions(before: list[Reference], after: list[Reference], resolved: list[Reference]) -> None:
-    """Report each dependency whose version differs between the two readings, with the new version's changes.
+    """Report each dependency and plugin whose version differs between the two readings, with its changes.
 
-    The name is the one the effective pom gives the dependency, where it resolves one.
+    The name is the one the effective pom gives the declaration, where it resolves one.
     """
     for old, new, named in zip(before, after, resolved, strict=True):
         if old.current_version == new.current_version:
@@ -86,7 +86,7 @@ def _report_new_versions(before: list[Reference], after: list[Reference], resolv
 
 
 def main() -> None:  # pragma: no cover
-    """Update the dependencies in the repository's pom.xml files."""
+    """Update the dependencies and plugins in the repository's pom.xml files."""
     update_pom_xmls()
 
 

@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Report the new version of a Maven plugin that a property versions. Closes [#388](https://github.com/ICTU/update-time/issues/388).
 
 ## 0.0.41 - 2026-09-30
 
