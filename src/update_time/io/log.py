@@ -80,7 +80,7 @@ def _effective_pom_unused(problem: str, cause: str) -> str:
     """Return a message saying why the effective pom went unused, what the run missed, and what may cause it."""
     return (
         f"{problem}, so the cooldown and the checks passed over any group or artifact the pom leaves to its parent, "
-        f"and the vulnerability check passed over any version the pom leaves to another pom; {cause}"
+        f"and the vulnerability check passed over any version the pom leaves to another pom or to Maven; {cause}"
     )
 
 

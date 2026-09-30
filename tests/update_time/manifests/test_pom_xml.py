@@ -1,6 +1,7 @@
 """Unit tests for reading a pom.xml, with file I/O mocked."""
 
 import unittest
+from typing import TYPE_CHECKING
 
 from update_time.formats import xml
 from update_time.manifests import pom_xml
@@ -12,14 +13,23 @@ from tests.update_time.helpers import (
     GUAVA,
     PARENT_POM_ID,
     SCANNED_POM_ID,
+    SUREFIRE,
+    build_element,
     dependency_element,
     dependency_management_element,
     effective_dependency_element,
+    effective_plugin_element,
     effective_pom_declaring,
     guava_element,
+    plugin_element,
     pom_declaring,
     properties_element,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from update_time.domain.reference import Reference
 
 _POM_WITH_A_PROFILE = """<project xmlns="http://maven.apache.org/POM/4.0.0">
   <properties>
@@ -219,14 +229,16 @@ class DependenciesTest(unittest.TestCase):
         self.assertEqual(versions, [("6.1.0", 3)])
 
 
-def _resolved(pom: str, effective_pom: str) -> list[tuple[str, str, int | None]]:
-    """Return the name, the resolved version, and the line of each dependency the pom declares."""
-    declared = pom_xml.dependencies(mock_path(pom), xml.parse(effective_pom.encode())) or []
+def _resolved(
+    pom: str, effective_pom: str, read: Callable[..., list[Reference] | None] = pom_xml.dependencies
+) -> list[tuple[str, str, int | None]]:
+    """Return the name, the resolved version, and the line of each artefact that reading the pom returns."""
+    declared = read(mock_path(pom), xml.parse(effective_pom.encode())) or []
     return [(reference.dependency, reference.current_version, reference.location.line_number) for reference in declared]
 
 
 class ResolvedDependenciesTest(unittest.TestCase):
-    """Unit tests for the coordinates and the versions Maven's effective pom gives the dependencies a pom declares."""
+    """Unit tests for the coordinates and the versions Maven's effective pom gives the artefacts a pom declares."""
 
     @kills(
         Mutation(
@@ -353,6 +365,38 @@ class ResolvedDependenciesTest(unittest.TestCase):
                 )
                 expected = [(artefact, "33.7.1-jre", 7), (artefact, "33.7.1-jre", 12)]
                 self.assertEqual(_resolved(pom, effective_pom), expected)
+
+    @kills(
+        Mutation(
+            pom_xml._own_versions,
+            "for tag in _ARTEFACT_ELEMENTS",
+            'for tag in ("dependency",)',
+            "a plugin is checked at the version its property held before the run, which Maven updated away from",
+        )
+    )
+    def test_a_version_the_pom_holds_for_a_plugin_is_read_from_the_pom(self):
+        """Test that a plugin takes the version its own pom holds, in the plugin or in its `<pluginManagement>`."""
+        properties = properties_element({"surefire.version": "3.5.2"})
+        versioned = plugin_element("maven-surefire-plugin", "${surefire.version}")
+        unversioned = plugin_element("maven-surefire-plugin", None)
+        # The effective pom holds the version from before the run, which the property has moved from. The pom
+        # manages surefire's version on line 13, and declares surefire without a version on line 18.
+        effective_surefire = effective_plugin_element(SUREFIRE, "3.2.5", line=11)
+        effective_managed = effective_plugin_element(SUREFIRE, "3.2.5", line=12)
+        effective_unversioned = effective_plugin_element(SUREFIRE, "3.2.5", line=20, managed_at=(SCANNED_POM_ID, 13))
+        cases = {
+            "its own version": (build_element(versioned), build_element(effective_surefire), [(SUREFIRE, "3.5.2", 3)]),
+            "a managed version": (
+                build_element(unversioned, managed=versioned),
+                build_element(effective_unversioned, managed=effective_managed),
+                [(SUREFIRE, "3.5.2", 3), (SUREFIRE, "3.5.2", 18)],
+            ),
+        }
+        for case, (build, effective_build, expected) in cases.items():
+            with self.subTest(case=case):
+                pom = pom_declaring(properties=properties, build=build)
+                effective_pom = effective_pom_declaring(build=effective_build)
+                self.assertEqual(_resolved(pom, effective_pom, pom_xml.artefact_references), expected)
 
     @kills(
         Mutation(
