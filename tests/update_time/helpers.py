@@ -831,13 +831,17 @@ def plugin_element(artifact: str, version: str | None, group: str | None = "org.
     return _coordinates_element("plugin", "      ", group, artifact, version)
 
 
-def build_element(*plugins: str) -> str:
-    """Return a `<build>` element declaring the given plugin elements."""
-    return f"  <build>\n    <plugins>\n{''.join(plugins)}    </plugins>\n  </build>\n"
+def build_element(*plugins: str, managed: str = "") -> str:
+    """Return a `<build>` element declaring the given plugin elements, and the managed ones in `<pluginManagement>`."""
+    management = f"    <pluginManagement>\n      <plugins>\n{managed}      </plugins>\n    </pluginManagement>\n"
+    return f"  <build>\n{management if managed else ''}    <plugins>\n{''.join(plugins)}    </plugins>\n  </build>\n"
 
 
 # The artefact most Maven tests declare.
 GUAVA = "com.google.guava:guava"
+
+# A plugin in Maven's default plugin group.
+SUREFIRE = "org.apache.maven.plugins:maven-surefire-plugin"
 
 
 def guava_element(version: str | None) -> str:
@@ -902,13 +906,15 @@ def effective_dependency_element(
     return f"    <dependency>\n{_located_coordinates(artefact, version, locations)}    </dependency>\n"
 
 
-def effective_plugin_element(artefact: str, version: str, line: int) -> str:
+def effective_plugin_element(
+    artefact: str, version: str, line: int, *, managed_at: tuple[str, int] | None = None
+) -> str:
     """Return a `<plugin>` of the effective pom, located in the scanned pom as a dependency is.
 
     Maven leaves out the `<groupId>` of a plugin in its default plugin group.
     """
     group = {} if artefact.startswith("org.apache.maven.plugins:") else {"groupId": (SCANNED_POM_ID, line - 1)}
-    locations = group | {"artifactId": (SCANNED_POM_ID, line), "version": (SCANNED_POM_ID, line + 1)}
+    locations = group | {"artifactId": (SCANNED_POM_ID, line), "version": managed_at or (SCANNED_POM_ID, line + 1)}
     return f"      <plugin>\n{_located_coordinates(artefact, version, locations)}      </plugin>\n"
 
 

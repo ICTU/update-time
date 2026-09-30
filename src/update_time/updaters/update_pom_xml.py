@@ -50,8 +50,9 @@ def _update_pom_xml(pom_xml: Path) -> None:
         _LOG.declarations_changed(pom_xml, len(before), len(after))
         return
     _report_new_versions(before, after, resolved)
-    _check_projects(pom_xml_format.artefact_references(pom_xml, effective_pom))
-    _warn_about_vulnerabilities(resolved)
+    declared = pom_xml_format.artefact_references(pom_xml, effective_pom)
+    _check_projects(declared)
+    _warn_about_vulnerabilities(declared)
 
 
 def _check_projects(declared: list[Reference]) -> None:
@@ -61,7 +62,7 @@ def _check_projects(declared: list[Reference]) -> None:
 
 
 def _warn_about_vulnerabilities(declared: list[Reference]) -> None:
-    """Warn about each dependency the run leaves on a version an advisory names."""
+    """Warn about each dependency and plugin the run leaves on a version an advisory names."""
     steered = [
         SteeredReference.from_reference(declaration)
         for declaration in declared

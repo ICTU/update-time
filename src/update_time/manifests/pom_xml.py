@@ -1,4 +1,4 @@
-"""Read the dependencies, properties, parent, and source repository a pom.xml declares.
+"""Read the dependencies, plugins, properties, parent, and source repository a pom.xml declares.
 
 This module owns what a pom's elements mean, whether Update-time scans the pom or a registry serves it. Reading the
 XML itself is the formats layer's concern.
@@ -26,8 +26,9 @@ _PROPERTY_REFERENCE = re.compile(r"\$\{(?P<name>[^}]+)\}")
 # Maven's verbose effective pom writes an input location after each element: the pom and the line declaring it.
 _INPUT_LOCATION = re.compile(r"(?P<pom>\S+), line (?P<line>\d+)")
 
-# The group Maven gives each kind of artefact that declares none, keyed by its tag. A dependency names its own group.
-_DEFAULT_GROUPS = {"dependency": "", "plugin": "org.apache.maven.plugins"}
+# The elements that declare an artefact, keyed by tag. Each maps to the group Maven gives it where it names none.
+# A dependency names its own group.
+_ARTEFACT_ELEMENTS = {"dependency": "", "plugin": "org.apache.maven.plugins"}
 
 # Maven's own prefix on an `<scm>` value: `scm:<provider>:` in front of the URL that provider reads.
 _SCM_PREFIX = re.compile(r"^scm:[^:]+:")
@@ -81,7 +82,7 @@ def dependencies(path: Path, effective_pom: XmlElement | None = None) -> list[Re
     project = xml.read(path)
     if project is None:
         return None
-    return _references(path, project, {"dependency": _DEFAULT_GROUPS["dependency"]}, effective_pom)
+    return _references(path, project, {"dependency": _ARTEFACT_ELEMENTS["dependency"]}, effective_pom)
 
 
 @dataclass(frozen=True)
@@ -123,7 +124,7 @@ def _effective_artefacts(effective_pom: XmlElement | None, project: XmlElement) 
     artefacts = {}
     entries = (
         (entry, default_group)
-        for tag, default_group in _DEFAULT_GROUPS.items()
+        for tag, default_group in _ARTEFACT_ELEMENTS.items()
         for entry in effective_pom.descendants(tag)
     )
     for entry, default_group in entries:
@@ -143,12 +144,12 @@ def _effective_artefacts(effective_pom: XmlElement | None, project: XmlElement) 
 
 
 def _own_versions(project: XmlElement, property_elements: dict[str, XmlElement]) -> dict[_ArtifactAtLine, XmlElement]:
-    """Return the `<version>` element of each dependency the pom declares one for, keyed by where that element sits."""
+    """Return the `<version>` element of each dependency and plugin declaring one, keyed by where that element sits."""
     return {
         _ArtifactAtLine(_interpolated(artifact.text, property_elements), version.line): version
-        for dependency in project.descendants("dependency")
-        if (artifact := dependency.child("artifactId")) is not None
-        and (version := dependency.child("version")) is not None
+        for tag in _ARTEFACT_ELEMENTS
+        for element in project.descendants(tag)
+        if (artifact := element.child("artifactId")) is not None and (version := element.child("version")) is not None
     }
 
 
@@ -179,8 +180,8 @@ def has_input_locations(effective_pom: XmlElement) -> bool:
 def artefact_references(path: Path, effective_pom: XmlElement | None = None) -> list[Reference]:
     """Return a reference to each dependency and plugin the pom declares.
 
-    Maven's effective pom, where one is given, supplies the coordinates the pom leaves to its parent. Coordinates
-    holding an unresolved property are left out, since a repository serves nothing under them.
+    Maven's effective pom, where one is given, supplies the coordinates and the version the pom leaves to Maven to
+    resolve. Coordinates holding an unresolved property are left out, since a repository serves nothing under them.
     """
     return [reference for reference in _artefact_references(path, effective_pom) if _is_resolved(reference.dependency)]
 
@@ -193,7 +194,7 @@ def leaves_coordinates_unresolved(path: Path) -> bool:
 def _artefact_references(path: Path, effective_pom: XmlElement | None = None) -> list[Reference]:
     """Return a reference to each dependency and plugin the pom declares, whether or not its coordinates resolve."""
     project = xml.read(path)
-    return [] if project is None else _references(path, project, _DEFAULT_GROUPS, effective_pom)
+    return [] if project is None else _references(path, project, _ARTEFACT_ELEMENTS, effective_pom)
 
 
 def _references(

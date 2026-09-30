@@ -27,6 +27,7 @@ from tests.update_time.helpers import (
     EFFECTIVE_GUAVA,
     GUAVA,
     PARENT_POM_ID,
+    SUREFIRE,
     LoggingTestCase,
     archival_check_disabled,
     build_element,
@@ -161,6 +162,19 @@ _EMPTY_EFFECTIVE_POM = effective_pom_declaring()
 _SPRING_LEAVING_ITS_GROUP = dependency_element("${spring.group}", "spring-core", "6.1.0")
 _EFFECTIVE_SPRING = effective_dependency_element("org.springframework:spring-core", "6.1.0", line=5)
 
+# A plugin in a group of its own, declared by a group the parent declares, and the effective pom listing it where a
+# pom declares that plugin alone. Maven lists the parent's property in the effective pom.
+_VERSIONS = "org.codehaus.mojo:versions-maven-plugin"
+_VERSIONS_LEAVING_ITS_GROUP = plugin_element("versions-maven-plugin", "2.18.0", "${mojo.group}")
+_EFFECTIVE_VERSIONS = effective_pom_declaring(
+    properties=properties_element({"mojo.group": "org.codehaus.mojo"}),
+    build=build_element(effective_plugin_element(_VERSIONS, "2.18.0", line=8)),
+)
+_EFFECTIVE_SUREFIRE = effective_pom_declaring(
+    properties=properties_element({"plugin.group": "org.apache.maven.plugins"}),
+    build=build_element(effective_plugin_element(SUREFIRE, "3.5.0", line=8)),
+)
+
 
 @no_vulnerabilities
 @patch.object(maven_central_module, "project", Mock(return_value=Project()))
@@ -268,7 +282,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "_warn_about_vulnerabilities(resolved)",
+            "_warn_about_vulnerabilities(declared)",
             "_warn_about_vulnerabilities(before)",
             "the version asked about is the one Maven updated away from rather than the one the run lands on",
         ),
@@ -332,7 +346,7 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "_warn_about_vulnerabilities(resolved)",
+            "_warn_about_vulnerabilities(declared)",
             "_warn_about_vulnerabilities(after)",
             "OSV is asked about the pom as it spells a dependency, so what the parent declares is never checked",
         ),
@@ -364,6 +378,48 @@ class UpdatePomXmlTest(LoggingTestCase):
                 with osv(ADVISORY):
                     update_pom_xmls()
                 self.assert_vulnerable_dependency_logged(GUAVA, "33.0.0-jre", VULNERABILITY, Location(pom, line))
+
+    @kills(
+        Mutation(
+            update_pom_xml_module._update_pom_xml,
+            "_warn_about_vulnerabilities(declared)",
+            "_warn_about_vulnerabilities(resolved)",
+            "OSV is asked about the pom's dependencies alone, so a vulnerable plugin goes unreported",
+        )
+    )
+    def test_a_vulnerable_plugin_is_warned_about_as_maven_resolves_it(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a plugin an advisory names is warned about as Maven resolves it, whichever pom decides it."""
+        # The warning names the line of the `<version>` element, or of the `<plugin>` lacking one.
+        managed_surefire = effective_plugin_element(SUREFIRE, "3.5.0", line=8, managed_at=(PARENT_POM_ID, 12))
+        cases = {
+            "a version": (
+                plugin_element("maven-surefire-plugin", "3.5.0"),
+                SUREFIRE,
+                "3.5.0",
+                9,
+                _EMPTY_EFFECTIVE_POM,
+            ),
+            "Maven's default group": (
+                plugin_element("maven-surefire-plugin", "3.5.0", group=None),
+                SUREFIRE,
+                "3.5.0",
+                8,
+                _EMPTY_EFFECTIVE_POM,
+            ),
+            "no version": (
+                plugin_element("maven-surefire-plugin", None),
+                SUREFIRE,
+                "3.5.0",
+                6,
+                effective_pom_declaring(build=build_element(managed_surefire)),
+            ),
+        }
+        for case, (declared, name, version, line, effective_pom) in cases.items():
+            with self.subTest(case=case):
+                pom = self.find_pom(mock_run, mock_glob, pom_declaring(build=build_element(declared)), effective_pom)
+                with osv(ADVISORY):
+                    update_pom_xmls()
+                self.assert_vulnerable_dependency_logged(name, version, VULNERABILITY, Location(pom, line))
 
     @kills(
         Mutation(
@@ -513,7 +569,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             pom_xml_module._effective_artefacts,
-            "for tag, default_group in _DEFAULT_GROUPS.items()",
+            "for tag, default_group in _ARTEFACT_ELEMENTS.items()",
             'for tag, default_group in {"dependency": ""}.items()',
             "the plugin's name keeps the group's property where the parent declares it, so it goes unchecked",
         ),
@@ -527,31 +583,15 @@ class UpdatePomXmlTest(LoggingTestCase):
     def test_a_stale_plugin_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
         """Test that a plugin whose newest release is old is warned about, as the effective pom names it."""
         # The warning names the line of the `<version>` element, or of the `<plugin>` lacking one.
-        surefire = "org.apache.maven.plugins:maven-surefire-plugin"
-        versions = "org.codehaus.mojo:versions-maven-plugin"
-        # Maven lists the properties the parent declares in the effective pom.
-        effective_versions = effective_pom_declaring(
-            properties=properties_element({"mojo.group": "org.codehaus.mojo"}),
-            build=build_element(effective_plugin_element(versions, "2.18.0", line=8)),
-        )
-        effective_surefire = effective_pom_declaring(
-            properties=properties_element({"plugin.group": "org.apache.maven.plugins"}),
-            build=build_element(effective_plugin_element(surefire, "3.5.0", line=8)),
-        )
         cases = {
-            "a version": (plugin_element("maven-surefire-plugin", "3.5.0"), surefire, 9, _EMPTY_EFFECTIVE_POM),
-            "no version": (plugin_element("maven-surefire-plugin", None), surefire, 6, _EMPTY_EFFECTIVE_POM),
-            "a parent's group": (
-                plugin_element("versions-maven-plugin", "2.18.0", "${mojo.group}"),
-                versions,
-                9,
-                effective_versions,
-            ),
+            "a version": (plugin_element("maven-surefire-plugin", "3.5.0"), SUREFIRE, 9, _EMPTY_EFFECTIVE_POM),
+            "no version": (plugin_element("maven-surefire-plugin", None), SUREFIRE, 6, _EMPTY_EFFECTIVE_POM),
+            "a parent's group": (_VERSIONS_LEAVING_ITS_GROUP, _VERSIONS, 9, _EFFECTIVE_VERSIONS),
             "a parent's default group": (
                 plugin_element("maven-surefire-plugin", "3.5.0", "${plugin.group}"),
-                surefire,
+                SUREFIRE,
                 9,
-                effective_surefire,
+                _EFFECTIVE_SUREFIRE,
             ),
         }
         for case, (declared, name, line, effective_pom) in cases.items():
@@ -775,7 +815,7 @@ class UpdatePomXmlTest(LoggingTestCase):
                 properties = properties_element({"surefire.version": "3.5.0"})
                 pom = pom_declaring(guava_element("33.0.0-jre"), properties=properties, build=build_element(surefire))
                 self.find_pom(mock_run, mock_glob, pom)
-                with self.hold_back({"org.apache.maven.plugins:maven-surefire-plugin": ("3.6.0",)}) as rule_sets:
+                with self.hold_back({SUREFIRE: ("3.6.0",)}) as rule_sets:
                     update_pom_xmls()
                 surefire_rule = _rule("org.apache.maven.plugins", "maven-surefire-plugin", "3.6.0")
                 self.assertEqual(rule_sets, [_rule_set(surefire_rule)])
@@ -799,13 +839,9 @@ class UpdatePomXmlTest(LoggingTestCase):
     ):
         """Test that the rule set names a dependency or plugin whose group or artifact the parent declares."""
         spring = "org.springframework:spring-core"
-        versions = "org.codehaus.mojo:versions-maven-plugin"
         # Maven lists the properties the parent declares in the effective pom.
         properties = properties_element({"spring.artifact": "spring-core"})
         effective_spring = effective_pom_declaring(_EFFECTIVE_SPRING, properties=properties)
-        effective_versions = effective_pom_declaring(
-            build=build_element(effective_plugin_element(versions, "2.18.0", line=8))
-        )
         cases = {
             "a dependency's group": (
                 pom_declaring(_SPRING_LEAVING_ITS_GROUP),
@@ -818,15 +854,15 @@ class UpdatePomXmlTest(LoggingTestCase):
                 _rule("org.springframework", "spring-core", "7.1.0"),
             ),
             "a plugin's group": (
-                pom_declaring(build=build_element(plugin_element("versions-maven-plugin", "2.18.0", "${mojo.group}"))),
-                effective_versions,
+                pom_declaring(build=build_element(_VERSIONS_LEAVING_ITS_GROUP)),
+                _EFFECTIVE_VERSIONS,
                 _rule("org.codehaus.mojo", "versions-maven-plugin", "2.19.0"),
             ),
         }
         for case, (declared, effective_pom, rule) in cases.items():
             with self.subTest(case=case):
                 self.find_pom(mock_run, mock_glob, declared, effective_pom)
-                with self.hold_back({spring: ("7.1.0",), versions: ("2.19.0",)}) as rule_sets:
+                with self.hold_back({spring: ("7.1.0",), _VERSIONS: ("2.19.0",)}) as rule_sets:
                     update_pom_xmls()
                 self.assertEqual(rule_sets, [_rule_set(rule)])
                 self.assert_maven_runs(mock_run, _effective_pom_command(), _versions_command(_RULES))
