@@ -11,6 +11,7 @@ from tests.update_time.helpers import (
     EFFECTIVE_GUAVA,
     GUAVA,
     PARENT_POM_ID,
+    SCANNED_POM_COORDINATES,
     SCANNED_POM_ID,
     SUREFIRE,
     build_element,
@@ -21,6 +22,7 @@ from tests.update_time.helpers import (
     effective_pom_declaring,
     guava_element,
     plugin_element,
+    pom_coordinates,
     pom_declaring,
     properties_element,
 )
@@ -123,7 +125,7 @@ class ArtefactsTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            pom_xml._artefact_references,
+            pom_xml._artefact_declarations,
             " or []",
             "",
             "an unparsable pom takes the reading of its artefacts down with it",
@@ -135,19 +137,74 @@ class ArtefactsTest(unittest.TestCase):
         self.assertEqual(pom_xml.artefacts(mock_path("<project><broken>")), [])
 
 
+class PomNameTest(unittest.TestCase):
+    """Unit tests for the name Maven's input locations give a pom."""
+
+    @kills(
+        Mutation(
+            pom_xml.pom_name,
+            'if project is None or project.child("artifactId") is None:',
+            "if project is None:",
+            "a pom without an artifact of its own is named after its parent, so its parent's versions are skipped",
+        ),
+        Mutation(
+            pom_xml.pom_name,
+            ' if all(parts) else ""',
+            "",
+            "a pom lacking both a coordinate and a parent to take it from is named anyway",
+        ),
+    )
+    def test_a_pom_is_named_by_its_coordinates_as_written(self):
+        """Test that a pom is named by its own coordinates, each it leaves out taken from its parent, as written."""
+        revision = properties_element({"revision": "1.0"})
+        cases = {
+            "its own coordinates": (pom_coordinates("child", "org.example", "1.0"), "", "org.example:child:1.0"),
+            "a parent's group and version": (SCANNED_POM_COORDINATES, "", SCANNED_POM_ID),
+            "a parent's version": (
+                pom_coordinates("child", "org.other", parent=PARENT_POM_ID),
+                "",
+                "org.other:child:1.0",
+            ),
+            "a property": (
+                pom_coordinates("child", parent="org.example:parent:${revision}"),
+                revision,
+                "org.example:child:${revision}",
+            ),
+            "no artifact": (pom_coordinates(None, parent=PARENT_POM_ID), "", ""),
+            "no version to inherit": (pom_coordinates("child", "org.example"), "", ""),
+        }
+        for case, (coordinates, properties, name) in cases.items():
+            with self.subTest(case=case):
+                pom = pom_declaring(coordinates=coordinates, properties=properties)
+                self.assertEqual(pom_xml.pom_name(mock_path(pom)), name)
+
+    @kills(
+        Mutation(
+            pom_xml.pom_name,
+            "if project is None or project.child",
+            "if project.child",
+            "an unparsable pom ends the run",
+            raises="AttributeError: 'NoneType' object has no attribute 'child'",
+        )
+    )
+    def test_a_pom_that_does_not_parse(self):
+        """Test that a pom whose XML does not parse goes unnamed, rather than ending the run."""
+        self.assertEqual(pom_xml.pom_name(mock_path("<project><broken>")), "")
+
+
 class DeclarationsTest(unittest.TestCase):
     """Unit tests for the dependencies and plugins a pom declares."""
 
     @kills(
         Mutation(
-            pom_xml._reference,
+            pom_xml._declaration,
             "    if artifact is None:\n        return None\n",
             "",
             "an element missing a part takes the whole pom's reading down with it",
             raises="AttributeError: 'NoneType' object has no attribute 'text'",
         ),
         Mutation(
-            pom_xml._reference,
+            pom_xml._declaration,
             "if not group_name or not artifact_name:",
             "if not group_name:",
             "an empty artifact is read as the artefact `groupId:`, which Maven Central is then asked about",
@@ -161,13 +218,13 @@ class DeclarationsTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            pom_xml._reference,
+            pom_xml._declaration,
             "artifact_name = _interpolated(artifact.text, property_elements)",
             "artifact_name = _element_holding(artifact, property_elements).text",
             "an artifact naming a property in part is read with its `${…}` left unresolved",
         ),
         Mutation(
-            pom_xml._reference,
+            pom_xml._declaration,
             "_interpolated(group.text, property_elements)",
             "_element_holding(group, property_elements).text",
             "a group naming a property in part is read with its `${…}` left unresolved",
@@ -196,7 +253,7 @@ class DeclarationsTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            pom_xml._reference,
+            pom_xml._declaration,
             'own_version = "" if version is None else _interpolated(version.text, property_elements)',
             'own_version = "" if version is None else versioned_by.text',
             "a version naming a property in part is read with its `${…}` left unresolved",
@@ -235,7 +292,7 @@ class ResolvedDependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml._effective_artefacts,
-            "declared_by == scanned and artifact",
+            "declared_by.pom_name == effective_pom_name and artifact",
             "artifact",
             "a dependency takes the version of whatever the parent declares on the same line of its own pom",
         )
@@ -306,7 +363,7 @@ class ResolvedDependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml._effective_artefacts,
-            " if managed_by == scanned else None",
+            " if managed_by.pom_name == effective_pom_name else None",
             "",
             "a line of the pom lends its version to a dependency the parent versions, as their line numbers match",
         )
@@ -428,7 +485,7 @@ class ResolvedDependenciesTest(unittest.TestCase):
         Mutation(
             pom_xml._effective_artefacts,
             "own_versions.get(managed_at) if",
-            "{key.line: element for key, element in own_versions.items()}.get(managed_line) if",
+            "{key.line: element for key, element in own_versions.items()}.get(managed_by.line) if",
             "a dependency takes the version of whichever dependency its own pom manages last on the same line",
         )
     )
@@ -453,8 +510,8 @@ class ResolvedDependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml._input_location,
-            '("", 0) if input_location is None else (input_location["pom"], int(input_location["line"]))',
-            '(input_location["pom"], int(input_location["line"]))',
+            "    if input_location is None:\n        return _InputLocation()\n",
+            "",
             "an entry Maven adds from its own model ends the run, since its input location lacks a line",
             raises="TypeError: 'NoneType' object is not subscriptable",
         )

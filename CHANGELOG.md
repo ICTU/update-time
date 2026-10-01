@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 - Report the new version of a Maven plugin that a property versions. Closes [#388](https://github.com/ICTU/update-time/issues/388).
 
+### Fixed
+
+- Warn once about a Maven dependency or plugin whose version a scanned pom manages, rather than once per declaration. Closes [#386](https://github.com/ICTU/update-time/issues/386).
+
 ## 0.0.41 - 2026-09-30
 
 ### Changed
