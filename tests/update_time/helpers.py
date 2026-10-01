@@ -27,6 +27,8 @@ from update_time.manifests.pom_xml import coordinates
 from update_time.manifests.pyproject_toml import Declaration
 from update_time.markers.bound import parse_bound
 from update_time.markers.directive import Reason
+from update_time.markers.drift import ALLOW_HASH_DRIFT
+from update_time.markers.floating import ALLOW_FLOATING_PIN
 from update_time.markers.marker import Marker
 from update_time.markers.reference import SteeredResolvedReference
 from update_time.primitives.location import Location
@@ -279,6 +281,10 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that no new version was logged (other records at the same level are allowed)."""
         self.assert_none_logged(Logger._MESSAGE_NEW_VERSION, "new version")
 
+    def assert_no_unpinned_floating_tag_logged(self) -> None:
+        """Assert that the run did not report a floating tag left as it is (other records are allowed)."""
+        self.assert_none_logged(Logger._MESSAGE_UNPINNED_FLOATING_TAG, "unpinned floating tag")
+
     def assert_pinned_logged(self, dependency: str, version: str, sha: str, location: Location) -> None:
         """Assert that pinning a previously unpinned reference to a digest was logged for the file."""
         self._assert_last_logged(
@@ -286,18 +292,18 @@ class LoggingTestCase(CacheClearingTestCase):
         )
 
     def assert_unpinned_floating_tag_logged(
-        self, dependency: str, version: str, location: Location, reason: FloatingPin
+        self, dependency: str, version: str, location: Location, reason: FloatingPin, looked_up: str = ""
     ) -> None:
         """Assert that a floating tag pinned to no version was reported, with its reason, among the other records.
 
-        `version` is the tag the report names, which for a reference naming none is the `latest` looked up for it.
+        The reason names the tag looked up, which is the version unless the reference names none.
         """
         self.assert_logged_among_others(
             Logger._MESSAGE_UNPINNED_FLOATING_TAG,
             dependency=dependency,
             tag=tag_of(version),
             location=location,
-            reason=reason,
+            reason=reason.explained(looked_up or version),
         )
 
     def assert_kept_floating_logged(
@@ -332,22 +338,24 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_digest_drift_logged(self, drifted: DriftedPin) -> None:
         """Assert that a re-pushed tag's digest drift was logged as a single warning for the file."""
-        self.assert_logged(Logger._MESSAGE_DIGEST_DRIFT, **Logger._drift_fields(drifted))
+        self.assert_logged(Logger.DIGEST_DRIFT.warning, **Logger._drift_fields(Logger.DIGEST_DRIFT, drifted))
 
     def assert_tag_drift_logged(self, drifted: DriftedPin) -> None:
         """Assert that a moved tag's commit drift was logged as a single warning for the file."""
-        self.assert_logged(Logger._MESSAGE_TAG_DRIFT, **Logger._drift_fields(drifted))
+        self.assert_logged(Logger.TAG_DRIFT.warning, **Logger._drift_fields(Logger.TAG_DRIFT, drifted))
 
     def assert_adopted_tag_drift_logged(self, drifted: DriftedPin, cause: object = ANY) -> None:
         """Assert that adopting a moved tag's new commit was logged once for the file."""
-        self.assert_logged(Logger._MESSAGE_ADOPTED_TAG_DRIFT, **Logger._drift_fields(drifted), cause=cause)
+        fields = Logger._drift_fields(Logger.TAG_DRIFT, drifted, cause=cause)
+        self.assert_logged(Logger.TAG_DRIFT.adopted, **fields)
 
     def assert_adopted_digest_drift_logged(
         self, drifted: DriftedPin, cause: object = ANY, *, among_others: bool = False
     ) -> None:
         """Assert that adopting a re-pushed tag's new digest was logged, as the file's only record by default."""
         assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
-        assert_logged(Logger._MESSAGE_ADOPTED_DIGEST_DRIFT, **Logger._drift_fields(drifted), cause=cause)
+        fields = Logger._drift_fields(Logger.DIGEST_DRIFT, drifted, cause=cause)
+        assert_logged(Logger.DIGEST_DRIFT.adopted, **fields)
 
     def assert_hash_mismatch_logged(
         self,
@@ -641,6 +649,11 @@ staleness_disabled = patch_environ({STALE_AFTER.name: "0"})
 # Reusable decorator that switches the archival check off run-wide, as --ignore-archived does, for the tests
 # of what a run then leaves unasked and unreported.
 archival_check_disabled = patch_environ({IGNORE_ARCHIVED.name: "1"})
+
+# Reusable context managers that make every reference in the run adopt hash drift or keep its tag floating, as
+# --allow-hash-drift and --allow-floating-pin do.
+hash_drift_allowed = patch_environ({ALLOW_HASH_DRIFT.name: "1"})
+floating_pin_allowed = patch_environ({ALLOW_FLOATING_PIN.name: "1"})
 
 
 def pyproject(*specs: str, marker: str = "") -> str:

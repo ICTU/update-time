@@ -12,13 +12,10 @@ from update_time.domain.reference import DriftedPin, Reference
 from update_time.io.log import Logger
 from update_time.markers import marker as marker_module
 from update_time.markers.directive import Reason
-from update_time.markers.drift import ALLOW_HASH_DRIFT
-from update_time.markers.floating import ALLOW_FLOATING_PIN
 from update_time.markers.marker import _SOURCE_CHECK_SCOPES, Marker, Scope, Threshold
 from update_time.primitives.location import Location
 from update_time.references.rewrite import update_references_in_lines
 
-from tests.helpers import patch_environ
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import (
     BARE_IGNORE,
@@ -31,7 +28,7 @@ from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.fixtures import DIGEST1 as OLD_DIGEST
 from tests.update_time.fixtures import DIGEST2 as NEW_DIGEST
-from tests.update_time.helpers import bound, reference
+from tests.update_time.helpers import bound, floating_pin_allowed, hash_drift_allowed, reference
 from tests.update_time.references.helpers import mock_new_version_getter, new_version_getter
 
 if TYPE_CHECKING:
@@ -398,7 +395,7 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_flag_adopts_digest_drift_repo_wide(self):
         """Test that the --allow-hash-drift flag (via its env var) adopts drift without a per-line marker."""
         lines = [f"image: python:3.14@{OLD_DIGEST}"]
-        with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
+        with hash_drift_allowed:
             new_lines = self.rewrite(lines, _SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST))
         self.assertEqual(new_lines, [f"image: python:3.14@{NEW_DIGEST}"])
         self.logger.adopted_drift.assert_called_once_with(Logger.DIGEST_DRIFT, self.drifted(), "--allow-hash-drift")
@@ -408,7 +405,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that an `ignore` marker still wins over the global --allow-hash-drift flag."""
         get_new_version = Mock()
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: ignore"]
-        with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
+        with hash_drift_allowed:
             self.assertEqual(self.rewrite(lines, _SHA_REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.adopted_drift.assert_not_called()
@@ -416,7 +413,7 @@ class UpdateReferencesTest(unittest.TestCase):
     def test_ignore_hash_drift_wins_over_allow_hash_drift_flag(self):
         """Test that an `ignore[hash-drift]` marker keeps its pin in a run adopting every other reference's drift."""
         lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: ignore[hash-drift]"]
-        with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
+        with hash_drift_allowed:
             self.assertEqual(self.rewrite(lines, _SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST)), lines)
         self.logger.adopted_drift.assert_not_called()
         self.logger.drift.assert_called_once_with(Logger.DIGEST_DRIFT, self.drifted())
@@ -426,7 +423,7 @@ class UpdateReferencesTest(unittest.TestCase):
         """Test that an `ignore[floating-pin]` marker pins its reference in a run keeping every other pin floating."""
         resolved = DependencyVersion(version="3.15", sha=DIGEST, floating=FloatingPin.RESOLVED)
         lines = ["image: python:latest  # update-time: ignore[floating-pin]"]
-        with patch_environ({ALLOW_FLOATING_PIN.name: "1"}):
+        with floating_pin_allowed:
             new_lines = self.rewrite(lines, IMAGE_REGEXP, Mock(return_value=resolved))
         self.assertEqual(new_lines, [f"image: python:3.15@{DIGEST}  # update-time: ignore[floating-pin]"])
         self.logger.keeping_floating_tag.assert_not_called()

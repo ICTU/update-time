@@ -50,8 +50,7 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         self.run_updater(config_yml)
         config_yml.write_text.assert_not_called()
         location = Location(config_yml, 1)
-        # The reference names no tag, so the report names the `latest` that was looked up for it.
-        self.assert_unpinned_floating_tag_logged("default", "latest", location, FloatingPin.NOT_LISTED)
+        self.assert_unpinned_floating_tag_logged("default", "", location, FloatingPin.NOT_LISTED, looked_up="latest")
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 

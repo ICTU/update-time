@@ -12,14 +12,13 @@ from update_time.domain.dependency import DependencyVersion, PinnedDependency, P
 from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
 from update_time.markers.directive import Reason
-from update_time.markers.drift import ALLOW_HASH_DRIFT
 from update_time.primitives.location import Location
 from update_time.references import github as references_github
 from update_time.sources import github as sources_github
 from update_time.updaters import update_github_action
 from update_time.updaters.update_github_action import update_github_actions
 
-from tests.helpers import mock_path, patch_environ
+from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
@@ -29,6 +28,7 @@ from tests.update_time.helpers import (
     bound,
     github_commits_json,
     github_release_json,
+    hash_drift_allowed,
     patch_github,
     staleness_disabled,
 )
@@ -122,7 +122,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion(version="1.0", sha=NEW_SHA)
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
-        with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
+        with hash_drift_allowed:
             update_github_actions()
         workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0\n")
         self.assert_adopted_tag_drift_logged(self.drifted(workflow_yml), "--allow-hash-drift")

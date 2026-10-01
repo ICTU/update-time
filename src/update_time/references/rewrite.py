@@ -51,7 +51,8 @@ class _Rewriter:
 
         Which version to update to — honouring the reference's `# update-time:` marker — is `latest_version`'s
         decision, or None to leave the line unchanged. A pin that floats is replaced by the version and digest its
-        tag serves, and a reference already at its newest version is checked for digest drift.
+        tag serves. Digest drift is checked for every reference the source resolved, unless it moves to a newer
+        version.
         """
         reference = matched_reference(match, location, self.dependency)
         latest = latest_version(reference, self.get_new_version, marker, self.logger)
@@ -61,8 +62,7 @@ class _Rewriter:
             self.logger.accounted_for_reference(reference, latest.accounted_for)
             return match.string
         if latest.floating is not None and latest.floating is not FloatingPin.RESOLVED:
-            self.logger.unpinned_floating_tag(reference, latest, latest.floating)
-            return match.string
+            return self._keep_unresolved_floating_reference(match, marker, latest, reference, latest.floating)
         if latest.floating is FloatingPin.RESOLVED:
             return self._pin_floating_reference(match, marker, latest, reference)
         has_sha_group = "sha" in match.groupdict()
@@ -90,6 +90,15 @@ class _Rewriter:
             return match.string
         return self._apply_update(match, latest, reference, pin_unpinned=match.groupdict().get("sha") is None)
 
+    def _keep_unresolved_floating_reference(
+        self, match: re.Match[str], marker: Marker, latest: DependencyVersion, reference: Reference, reason: FloatingPin
+    ) -> str:
+        """Return the line for a reference whose floating tag the source could not replace by a version."""
+        if self._drifted(match, latest):
+            return self._drifted_pin(match, marker, latest, reference)
+        self.logger.unpinned_floating_tag(reference, latest, reason)
+        return match.string
+
     @staticmethod
     def _drifted(match: re.Match[str], latest: DependencyVersion) -> bool:
         """Return whether the reference records a hash that its source no longer serves."""
@@ -114,7 +123,7 @@ class _Rewriter:
         """Return the line for a reference whose digest has drifted, adopting what its tag serves now or not.
 
         Whether the drift is adopted or only warned about is `report_drift`'s decision. The digest alone is
-        replaced, so the reference keeps the tag it names, which is what a reference kept floating needs.
+        replaced, so the reference keeps the tag it names.
         """
         if self._adopts_drift(match, marker, latest, reference):
             return rewrite_string(match, {"sha": latest.sha})

@@ -187,7 +187,7 @@ Update-time logs at four levels. `--log-level` sets the lowest one shown, which 
 | :-: | :---- | :------------- |
 | 🔍 | `DEBUG` | what Update-time is doing: files it checks, [markers](#-controlling-updates-and-warnings-per-reference) it recognises, updates held back, warnings silenced, and more |
 | ℹ️ | `INFO` | what Update-time changed: a version updated, a [hash pinned](#-pinning) |
-| ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a source it could not reach, a file it could not parse, a marker that is [invalid](#invalid-markers), [incorrect](#incorrect-markers), or [redundant](#redundant-markers) |
+| ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a source it cannot reach, a file it cannot parse, a marker that is [invalid](#invalid-markers), [incorrect](#incorrect-markers), or [redundant](#redundant-markers) |
 | ❌ | `ERROR` | failures that stop an update, such as a package manager that is not installed |
 
 ### Workflow
@@ -273,18 +273,20 @@ Update-time leaves the following kinds of floating tag as they are:
 - A tag whose image has no version tag, such as an image tagged only `dev` or `prod`.
 - A tag the registry does not list, such as an image a pipeline builds and never pushes, a tag deleted from the repository, or a mistyped tag.
 - A tag listed further down a large repository's tag list than Update-time reads.
-- A tag on a registry other than Docker Hub, where Update-time reads the candidate tags one at a time and none of those it tried serves the same image.
-- A tag whose registry serves no manifest for it — a private image Update-time cannot authenticate to, or a registry it could not reach — so it cannot read the digest that tag serves
+- A tag on a registry other than Docker Hub, where Update-time reads the candidate tags one at a time and none of those it tries serves the same image.
+- A tag whose registry does not serve a manifest for it — a private image Update-time cannot authenticate to, or a registry it cannot reach — so it cannot read the digest that tag serves
 
 Update-time reports each of them at `DEBUG`, naming the reason the tag was not pinned:
 
 ```console
 DEBUG Floating tag acme/api:dev in docker-compose.yml:7 was left as it is: no tag naming a version serves the same image
-DEBUG Floating tag acme/api:nightly in docker-compose.yml:7 was left as it is: its tag is not among the tags listed for the image
-DEBUG Floating tag acme/api:canary in docker-compose.yml:7 was left as it is: its tag is not among the newest tags examined for the image
+DEBUG Floating tag acme/api:nightly in docker-compose.yml:7 was left as it is: nightly is not among the tags listed for the image
+DEBUG Floating tag acme/api:canary in docker-compose.yml:7 was left as it is: canary is not among the newest tags examined for the image
 DEBUG Floating tag ghcr.io/acme/api:latest in Dockerfile:1 was left as it is: no tag naming a version among the newest examined serves the same image
-DEBUG Floating tag ghcr.io/acme/api:edge in Dockerfile:1 was left as it is: the registry serves no manifest for its tag, so what that tag serves is unknown
+DEBUG Floating tag ghcr.io/acme/api:edge in Dockerfile:1 was left as it is: the registry does not serve a manifest for edge, so what that tag serves is unknown
 ```
+
+When Update-time finds the tag but cannot match its image to a version tag, it knows the digest the tag serves. Where the reference records another digest, Update-time warns about the [hash drift](#hash-drift) instead. When the registry does not list the tag among those Update-time reads, or does not serve a manifest for it, Update-time cannot tell whether the tag was re-pointed.
 
 #### Version precision
 
@@ -320,7 +322,7 @@ WARNING Tag drift for actions/checkout@4.1.1 in .github/workflows/ci.yml:17: pin
 WARNING Integrity hash mismatch for clipboard@2.0.11 in docs/conf.py:4: declares sha256-… but jsDelivr serves sha256-…; the hash was left unchanged, and since npm does not republish a version it is probably the declared hash that is wrong
 ```
 
-*Digest drift* means an image tag was re-pushed (rebuilt) under the same name and version, so the registry now serves a different digest. Update-time judges a floating tag that already carries a digest the same way. When the digest is the one its tag still serves, Update-time pins the reference to the version that serves it. When it differs, the tag was re-pointed after the reference was pinned, so the pin stands and Update-time warns about the drift.
+*Digest drift* means an image tag was re-pushed (rebuilt) under the same name and version, so the registry now serves a different digest. Update-time judges a floating tag that already carries a digest the same way. When the digest differs from the one its tag serves now, the tag was re-pointed after the reference was pinned, so the pin stands and Update-time warns about the drift. When the digest is the one its tag still serves, Update-time pins the reference to the version tag serving that digest, if there is one (see [Floating image tags](#floating-image-tags)).
 
 *Tag drift* means someone moved the version tag of a GitHub Action or pre-commit hook onto another commit than the one the reference pins. A git tag is mutable, so whoever controls the repository can move it. This is what pinning to a commit SHA exists to catch. The pin keeps the reference on the commit it was pinned to, whatever the tag does. The warning tells you that the tag and the pin now name different commits.
 
@@ -754,7 +756,7 @@ Update-time reports what the marker held back or silenced separately, in lines a
 DEBUG Ignoring the staleness warning for python in Dockerfile:2 (update-time: ignore[stale])
 ```
 
-A line about a warning appears only when the marker actually silenced one, so an `ignore[yanked]` on a version that was never yanked produces none. A bound produces no line either, whatever it blocks. The line about the update appears whenever a marker Update-time could read holds the update back, whether or not a newer version was available. An unreadable item holds the update back too, but gets no such line: Update-time reports it as invalid instead.
+A line about a warning appears only when the marker actually silenced one, so an `ignore[yanked]` on a version that was never yanked produces none. A bound produces no line either, whatever it blocks. The line about the update appears whenever a marker Update-time can read holds the update back, whether or not a newer version was available. An unreadable item holds the update back too, but gets no such line: Update-time reports it as invalid instead.
 
 ### Redundant markers
 
@@ -862,7 +864,7 @@ Update-time never pins a reference a file accounts for itself, so an `allow[floa
 WARNING Redundant update-time directive allow[floating-pin] for acme/api in docker-compose.yml:4: Update-time does not ask a registry about this reference, so its tag is never pinned
 ```
 
-Update-time does not report a floating tag it could not pin, since that tag does float. It logs the reason at `DEBUG` instead (see [Floating image tags](#floating-image-tags)).
+Update-time does not report a floating tag it cannot pin, since that tag does float. It logs the reason at `DEBUG` instead, or reports the [hash drift](#hash-drift) when the tag's digest changed (see [Floating image tags](#floating-image-tags)).
 
 #### A bound
 

@@ -132,7 +132,6 @@ A suffix without an embedded version has no version to strip, so its whole strin
 A tag Update-time can read as neither a version nor a channel, such as `debian:dev-2024`: it names no version to advance, so the tag stands and the digest it serves pins it.
 A tag the registry does not list, such as an image a pipeline builds and never pushes, a tag deleted from the repository, or a mistyped tag.
 A tag whose image has no version tag, such as an image tagged only `dev` or `prod`.
-A tag whose registry serves no manifest for it — a private image Update-time cannot authenticate to, or a registry it could not reach — so it cannot read the digest that tag serves.
 A tag without a release carries no pre-release flag; its version tells instead (`v4.0.0-alpha.8`).
 A target that is part of a line rewrites the rest of that line too, and matching once is no protection: the `Edit` tool accepts any fragment that matches once.
 A test that pins existing behaviour drives no code.
@@ -275,7 +274,6 @@ PyPI answers with metadata naming no changelog, so the log renders an available 
 PyPI serves the status under `status`, where PEP 792's text spells it `state`, so a response spelling it the PEP's way declares no status to read.
 Read the files it touched end to end rather than its diff: a finding can span cycles and show up in no single one, such as a helper the second cycle duplicated, a module head grown long with constants, or a name that restates the line beside it.
 Record the subject the capability is asked about, and answer that this resolver reports none.
-Register the mutation with `@kills` only where that test is what kills it, and leave it unregistered where the suite kills it anyway.
 Report an npm package's changes from a changelog file in its repository when no release matches its version, instead of reporting that no changelog is available.
 Report each name the docstring quotes that the code mentions only under the opposite visibility.
 Report each reference a file accounts for itself at log level DEBUG, naming why.
@@ -407,7 +405,6 @@ Test that a floating tag naming no variant lands on the alias that adds none, ve
 Test that a floating tag no version tag near the top of the listing serves is left as it is.
 Test that a floating tag no version tag of the registry serves is left as it is.
 Test that a floating tag pinned to no version is reported with the reason it was left as it is.
-Test that a floating tag serving no concrete version is left unchanged and reported.
 Test that a floating tag the registry does not list is left as it is, and dated by no release.
 Test that a floating tag the registry serves no manifest for is left as it is, its digest unknown.
 Test that a floating tag whose digest no concrete tag serves is left as it is.
@@ -637,7 +634,6 @@ The prefix is `!`, so `!!python/object` still reaches no constructor and the loa
 The project status PEP 792 defines for a project that expects no further release.
 The publish date needed for the cooldown is only available from Docker Hub's proprietary API, so other registries' tags have no publish date and no cooldown.
 The reason the source published, empty when it published none.
-The reference names no tag, so the report names the `latest` that was looked up for it.
 The reference names no version: a `package.json` declares a range, and which version it resolves to is recorded in the lock file.
 The references a file accounts for itself, as it writes them: one naming a tag and one naming none.
 The registry dates the versions it lists, so one it does not list — a version published moments ago, or one it no longer serves — has no date to read.
@@ -812,7 +808,6 @@ a pin's name carries the extra its declaration spells, so it names no package th
 a reading of another length than its own pairs up all the same, taking the whole run down with it.
 a reference naming no repository is read as one, ending the run over that single line.
 a reference naming no tag is matched with an empty tag, so it is looked up on a registry.
-a reference naming no tag is reported with a colon that names nothing after it.
 a reference naming no tag is reported with the version it resolves to, as if it had named it.
 a reference naming no version has its marker passed over, so a directive holding nothing back is never reported for it.
 a reference no registry is asked about is reported as one whose pin does not float, which it may do.
@@ -871,7 +866,6 @@ the line below declares nothing, so this steers no declaration.
 the lookahead's copy of the pin drifts from the pin itself, so a spelling only one of them accepts matches both patterns and is read twice.
 the marker a report settles on is discarded, so an unreadable item warns and the pin it may have been meant to freeze is rewritten anyway.
 the reason the source published is left out of the warning.
-the registry serves no manifest for its tag, so what that tag serves is unknown.
 the repository is asked for at a URL GitHub answers 404, so no repository ever reads as archived.
 the repository reports no archival, so a switched-off staleness check skips the pom it reads.
 the resolver reports no archival, so a switched-off staleness check skips the file it reads.

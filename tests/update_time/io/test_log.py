@@ -11,7 +11,6 @@ from unittest.mock import ANY, Mock, patch
 
 from rich.logging import RichHandler
 
-from update_time.domain import dependency as dependency_module
 from update_time.domain.bound import Redundancy, Verb
 from update_time.domain.dependency import (
     AccountedFor,
@@ -40,7 +39,7 @@ from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.primitives.location import Location
 
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import BARE_IGNORE, DIGEST, DIGEST1, DIGEST2
+from tests.update_time.fixtures import BARE_IGNORE, COMMIT_SHA1, COMMIT_SHA2, DIGEST, DIGEST1, DIGEST2
 from tests.update_time.helpers import bound, reference, resolved_reference, vulnerability
 from tests.update_time.io.helpers import at, create_location, dependency
 
@@ -218,6 +217,40 @@ class LoggerTests(TestCase):
             "no tag naming a version serves the same image",
         )
 
+    def test_unpinned_floating_tag_of_a_reference_that_names_no_tag(self, mock_log: Mock):
+        """Test that a floating tag is reported by the image's name alone when the reference does not name a tag."""
+        location = create_location("docker-compose.yml", 7)
+        release = DependencyVersion("latest")
+        _new_logger().unpinned_floating_tag(reference("acme/api", location), release, FloatingPin.NO_VERSION_TAG)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_UNPINNED_FLOATING_TAG,
+            f"Floating tag {dependency('acme/api')} in {at('docker-compose.yml:7')} was left as it is: "
+            f"{FloatingPin.NO_VERSION_TAG}",
+        )
+
+    def test_unpinned_floating_tag_reason_names_the_tag_looked_up(self, mock_log: Mock):
+        """Test that a reason about the tag names the tag looked up, which for a reference naming none is `latest`."""
+        location = create_location(".circleci/config.yml", 1)
+        cases = {
+            FloatingPin.NOT_LISTED: "latest is not among the tags listed for the image",
+            FloatingPin.NOT_AMONG_EXAMINED: "latest is not among the newest tags examined for the image",
+            FloatingPin.NO_MANIFEST: (
+                "the registry does not serve a manifest for latest, so what that tag serves is unknown"
+            ),
+        }
+        for reason, explanation in cases.items():
+            with self.subTest(reason.name):
+                mock_log.reset_mock()
+                release = DependencyVersion("latest", floating=reason)
+                _new_logger().unpinned_floating_tag(reference("default", location), release, reason)
+                self.assert_message(
+                    mock_log,
+                    Logger._MESSAGE_UNPINNED_FLOATING_TAG,
+                    f"Floating tag {dependency('default')} in {at('.circleci/config.yml:1')} was left as it is: "
+                    f"{explanation}",
+                )
+
     @kills(
         Mutation(
             log_module.Logger,
@@ -250,14 +283,6 @@ class LoggerTests(TestCase):
             f"3.14.7@{DIGEST} ({cause})",
         )
 
-    @kills(
-        Mutation(
-            dependency_module.tag_of,
-            'return f":{version}" if version else ""',
-            'return f":{version}"',
-            "a reference naming no tag is reported with a colon that names nothing after it",
-        )
-    )
     def test_keeping_a_reference_that_names_no_tag(self, mock_log: Mock):
         """Test that a reference naming no tag is reported by its name alone, there being no tag to name after it."""
         location = create_location("Dockerfile", 1)
@@ -279,6 +304,39 @@ class LoggerTests(TestCase):
             mock_log,
             Logger._MESSAGE_DIGEST_DRIFT,
             f"Digest drift for {dependency('dependency')}:3.14 in {at('Dockerfile:2')}: pinned to {DIGEST1} "
+            f"but the registry now serves {DIGEST2}; the pin was left unchanged, verify the change is expected "
+            "before updating the pin",
+        )
+
+    @kills(
+        Mutation(
+            log_module.Logger,
+            '"@")',
+            '":")',
+            "a moved tag is reported with the colon of an image tag rather than the at sign of a git ref",
+        )
+    )
+    def test_tag_drift(self, mock_log: Mock):
+        """Test that a moved tag whose commit changed under an unchanged pin is warned about at warning level."""
+        location = create_location(".github/workflows/ci.yml", 17)
+        drifted = DriftedPin("actions/checkout", "4.1.1", location, COMMIT_SHA1, new_sha=COMMIT_SHA2)
+        _new_logger().drift(Logger.TAG_DRIFT, drifted)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_TAG_DRIFT,
+            f"Tag drift for {dependency('actions/checkout')}@4.1.1 in {at('.github/workflows/ci.yml:17')}: pinned to "
+            f"commit {COMMIT_SHA1} but the tag now points at {COMMIT_SHA2}; the pin was left unchanged, verify the "
+            "tag was moved deliberately before updating the pin",
+        )
+
+    def test_digest_drift_of_a_reference_naming_no_tag(self, mock_log: Mock):
+        """Test that a drifted digest is reported by the image's name alone when the reference does not name a tag."""
+        location = create_location("Dockerfile", 1)
+        _new_logger().drift(Logger.DIGEST_DRIFT, DriftedPin("python", "", location, DIGEST1, new_sha=DIGEST2))
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_DIGEST_DRIFT,
+            f"Digest drift for {dependency('python')} in {at('Dockerfile:1')}: pinned to {DIGEST1} "
             f"but the registry now serves {DIGEST2}; the pin was left unchanged, verify the change is expected "
             "before updating the pin",
         )

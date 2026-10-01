@@ -16,13 +16,11 @@ from urllib.parse import parse_qs, urlparse
 from update_time.domain.dependency import DependencyVersion, FloatingPin
 from update_time.domain.reference import DriftedPin
 from update_time.markers.directive import Reason
-from update_time.markers.drift import ALLOW_HASH_DRIFT
-from update_time.markers.floating import ALLOW_FLOATING_PIN
 from update_time.primitives.location import Location
 
-from tests.helpers import mock_path, mock_response, patch_environ
+from tests.helpers import mock_path, mock_response
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import LoggingTestCase, docker_tag
+from tests.update_time.helpers import LoggingTestCase, docker_tag, floating_pin_allowed, hash_drift_allowed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -189,9 +187,9 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         return f"# update-time: {directive}\n"
 
     @staticmethod
-    def drifted(mock_file: Mock) -> DriftedPin:
-        """Return the drifted pin the re-pushed `python:3.14` reference these tests use produces."""
-        return DriftedPin("python", "3.14", Location(mock_file, 1), DIGEST1, new_sha=DIGEST2)
+    def drifted(mock_file: Mock, image: str, tag: str, line: int = 1) -> DriftedPin:
+        """Return the drifted pin of the image and tag at the line, re-pointed from `DIGEST1` to `DIGEST2`."""
+        return DriftedPin(image, tag, Location(mock_file, line), DIGEST1, new_sha=DIGEST2)
 
     def test_no_changes(self) -> None:
         """Test that an image already at the latest pinned tag is left unchanged."""
@@ -299,17 +297,17 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file = mock_path(self.reference(f"python:3.14@{DIGEST1}"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
-        self.assert_digest_drift_logged(self.drifted(mock_file))
+        self.assert_digest_drift_logged(self.drifted(mock_file, "python", "3.14"))
         self.assert_no_new_version_logged()
 
     def test_digest_drift_adopted_with_flag(self) -> None:
         """Test that --allow-hash-drift re-pins a re-pushed tag's digest instead of only warning about it."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST2))
         mock_file = mock_path(self.reference(f"python:3.14@{DIGEST1}"))
-        with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
+        with hash_drift_allowed:
             self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14@{DIGEST2}"))
-        self.assert_adopted_digest_drift_logged(self.drifted(mock_file))
+        self.assert_adopted_digest_drift_logged(self.drifted(mock_file, "python", "3.14"))
         self.assert_no_warnings_logged()
 
     def test_pinned_floating_tag_on_another_registry_drift_warned(self) -> None:
@@ -319,8 +317,16 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file = mock_path(self.reference(f"{image}:latest@{DIGEST1}"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
-        drifted = DriftedPin(image, "latest", Location(mock_file, 1), DIGEST1, new_sha=DIGEST2)
-        self.assert_digest_drift_logged(drifted)
+        self.assert_digest_drift_logged(self.drifted(mock_file, image, "latest"))
+
+    def test_pinned_floating_tag_on_another_registry_serving_no_concrete_version_drift_warned(self) -> None:
+        """Test that a drifted floating tag off Docker Hub is warned about when only floating tags serve its image."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("dev", DIGEST2), docker_tag("prod", DIGEST2))
+        image = "ghcr.io/acme/api"
+        mock_file = mock_path(self.reference(f"{image}:dev@{DIGEST1}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        self.assert_digest_drift_logged(self.drifted(mock_file, image, "dev"))
 
     def test_pin_reference_naming_a_digest_but_no_tag(self) -> None:
         """Test that a reference naming a digest but no tag gains the version tag that digest serves."""
@@ -330,6 +336,14 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14.7@{DIGEST}"))
         self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(mock_file, 1))
         self.assert_no_warnings_logged()
+
+    def test_drifted_reference_naming_a_digest_but_no_tag(self) -> None:
+        """Test that a drifted reference that does not name a tag is warned about by the image's name alone."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST2), docker_tag("prod", DIGEST2))
+        mock_file = mock_path(self.reference(f"acme/api@{DIGEST1}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        self.assert_digest_drift_logged(self.drifted(mock_file, "acme/api", ""))
 
     def test_pin_unpinned_image(self) -> None:
         """Test that an image referenced by tag only is pinned with the latest tag and digest."""
@@ -359,12 +373,25 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_floating_tag_serving_no_concrete_version(self) -> None:
-        """Test that a floating tag serving no concrete version is left unchanged and reported."""
+        """Test that a floating tag without a concrete version is left alone and reported unless its digest drifted."""
         self.requests.side_effect = mock_docker_registry(docker_tag("dev", DIGEST), docker_tag("prod", DIGEST))
-        mock_file = mock_path(self.reference("acme/api:dev"))
+        reason = FloatingPin.NO_VERSION_TAG
+        cases = {"no digest": "acme/api:dev", "the digest it serves": f"acme/api:dev@{DIGEST}"}
+        for case, image in cases.items():
+            with self.subTest(case):
+                mock_file = mock_path(self.reference(image))
+                self.run_updater(mock_file)
+                mock_file.write_text.assert_not_called()
+                self.assert_unpinned_floating_tag_logged("acme/api", "dev", Location(mock_file, 1), reason)
+                self.assert_no_warnings_logged()
+
+    def test_pinned_floating_tag_the_registry_does_not_list(self) -> None:
+        """Test that a floating tag the registry does not list keeps its digest, without a drift warning."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("prod", DIGEST2))
+        mock_file = mock_path(self.reference(f"acme/api:dev@{DIGEST1}"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
-        reason = FloatingPin.NO_VERSION_TAG
+        reason = FloatingPin.NOT_LISTED
         self.assert_unpinned_floating_tag_logged("acme/api", "dev", Location(mock_file, 1), reason)
         self.assert_no_warnings_logged()
 
@@ -383,19 +410,46 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         mock_file = mock_path(self.reference(f"python:latest@{DIGEST1}"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
-        drifted = DriftedPin("python", "latest", Location(mock_file, 1), DIGEST1, new_sha=DIGEST2)
-        self.assert_digest_drift_logged(drifted)
+        self.assert_digest_drift_logged(self.drifted(mock_file, "python", "latest"))
         self.assert_no_new_version_logged()
+
+    def test_pinned_floating_tag_serving_no_concrete_version_that_drifted(self) -> None:
+        """Test that a pinned floating tag is warned about when it drifted to an image only floating tags serve."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("dev", DIGEST2), docker_tag("prod", DIGEST2))
+        mock_file = mock_path(self.reference(f"acme/api:dev@{DIGEST1}"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        self.assert_digest_drift_logged(self.drifted(mock_file, "acme/api", "dev"))
+        self.assert_no_unpinned_floating_tag_logged()
+
+    def test_pinned_floating_tag_serving_no_concrete_version_drift_adopted_with_flag(self) -> None:
+        """Test that a drifted floating tag adopts its new digest under --allow-hash-drift, and keeps its tag."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("dev", DIGEST2), docker_tag("prod", DIGEST2))
+        mock_file = mock_path(self.reference(f"acme/api:dev@{DIGEST1}"))
+        with hash_drift_allowed:
+            self.run_updater(mock_file)
+        mock_file.write_text.assert_called_once_with(self.reference(f"acme/api:dev@{DIGEST2}"))
+        self.assert_adopted_digest_drift_logged(self.drifted(mock_file, "acme/api", "dev"))
+        self.assert_no_warnings_logged()
+
+    def test_pinned_floating_tag_serving_no_concrete_version_kept_floating_that_drifted(self) -> None:
+        """Test that a drifted floating tag is warned about when a marker keeps it floating."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("dev", DIGEST2), docker_tag("prod", DIGEST2))
+        marked = self.marker_line("allow[floating-pin]") + self.reference(f"acme/api:dev@{DIGEST1}")
+        mock_file = mock_path(marked)
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        self.assert_digest_drift_logged(self.drifted(mock_file, "acme/api", "dev", 2))
+        self.assert_no_unpinned_floating_tag_logged()
 
     def test_pinned_floating_tag_drift_adopted_with_flag(self) -> None:
         """Test that --allow-hash-drift re-pins a re-pointed floating tag to the version and digest it now serves."""
         self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST2), docker_tag("3.14.7", DIGEST2))
         mock_file = mock_path(self.reference(f"python:latest@{DIGEST1}"))
-        with patch_environ({ALLOW_HASH_DRIFT.name: "1"}):
+        with hash_drift_allowed:
             self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(self.reference(f"python:3.14.7@{DIGEST2}"))
-        drifted = DriftedPin("python", "latest", Location(mock_file, 1), DIGEST1, new_sha=DIGEST2)
-        self.assert_adopted_digest_drift_logged(drifted, among_others=True)
+        self.assert_adopted_digest_drift_logged(self.drifted(mock_file, "python", "latest"), among_others=True)
         self.assert_pinned_logged("python", "3.14.7", DIGEST2, Location(mock_file, 1))
         self.assert_no_warnings_logged()
 
@@ -414,7 +468,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         """Test that --allow-floating-pin leaves a floating tag as it is, naming the flag as what kept it."""
         self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
         mock_file = mock_path(self.reference("python:latest"))
-        with patch_environ({ALLOW_FLOATING_PIN.name: "1"}):
+        with floating_pin_allowed:
             self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
         resolved = DependencyVersion(version="3.14.7", sha=DIGEST)

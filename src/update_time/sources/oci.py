@@ -439,7 +439,7 @@ def _resolved_floating_tag(image: DependencyName, current: Tag) -> DependencyVer
         return _unpinned_floating_tag(current, reason_no_version_was_pinned)
     aliases = [Tag(name=name) for name, tag_digest in digests.items() if tag_digest == digest]
     if (alias := _pinned_alias(current, aliases)) is None:
-        return _unpinned_floating_tag(current, FloatingPin.NO_VERSION_TAG)
+        return _unpinned_floating_tag(current, FloatingPin.NO_VERSION_TAG, digest)
     return DependencyVersion(version=alias.name, sha=digest, floating=FloatingPin.RESOLVED)
 
 
@@ -468,17 +468,18 @@ def _walked_floating_tag(image: DependencyName, current: Tag) -> DependencyVersi
             return DependencyVersion(version=candidate.name, sha=digest, floating=FloatingPin.RESOLVED)
     examined_all = len(ordered) <= _MAX_FLOATING_TAG_PROBES
     return _unpinned_floating_tag(
-        current, FloatingPin.NO_VERSION_TAG if examined_all else FloatingPin.NO_VERSION_TAG_EXAMINED
+        current, FloatingPin.NO_VERSION_TAG if examined_all else FloatingPin.NO_VERSION_TAG_EXAMINED, digest
     )
 
 
-def _unpinned_floating_tag(current: Tag, reason: FloatingPin) -> DependencyVersion:
+def _unpinned_floating_tag(current: Tag, reason: FloatingPin, digest: str = "") -> DependencyVersion:
     """Return the floating tag as it is, carrying why no version was pinned in its place.
 
-    Two of the reasons say the registry does not serve the tag, so nothing dates the reference.
+    It carries the digest the tag serves, where that digest is known. Two of the reasons say the registry does not
+    serve the tag, so nothing dates the reference.
     """
     served = reason not in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)
-    return DependencyVersion(version=current.name, floating=reason, served=served)
+    return DependencyVersion(version=current.name, sha=digest, floating=reason, served=served)
 
 
 def _pinned_alias(current: Tag, aliases: list[Tag]) -> Tag | None:
