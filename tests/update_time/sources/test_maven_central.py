@@ -557,9 +557,9 @@ class VersionsHeldBackTest(LoggingTestCase):
 
     def test_only_a_version_published_inside_the_window_is_held_back(self):
         """Test that the version dated inside the window is held back, and the one dated before it is not."""
-        settled = maven_central_version_row("33.7.0-jre", _days_ago(COOLDOWN.default + 1))
+        past_cooldown = maven_central_version_row("33.7.0-jre", _days_ago(COOLDOWN.default + 1))
         fresh = maven_central_version_row("33.7.1-jre", _days_ago(1))
-        with patch_get(text=maven_central_listing(settled, fresh)):
+        with patch_get(text=maven_central_listing(past_cooldown, fresh)):
             self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ("33.7.1-jre",))
 
     @kills(

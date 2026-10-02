@@ -1,70 +1,56 @@
-"""Shared decision for updating a GitHub reference pinned to a commit SHA with a version comment.
+"""The decision of which commit a GitHub Action `uses:` or a pre-commit hook `rev:` is pinned to."""
 
-A GitHub Action `uses:` pinned as `<sha> # v4.1.1` and a pre-commit hook `rev:` pinned as `<sha> # frozen: v4.5.0`
-are the same kind of reference: a GitHub repository pinned to a commit SHA, with the human-readable version travelling
-in a trailing comment. Both are (re)pinned to the latest version's commit SHA the same way; only the surrounding
-syntax — and so how the new reference text is spelled — differs. This module owns what the two share: reading the
-reference from a match, deciding the version to pin it to, and rewriting the line. It handles one more case they
-share, a reference that names no version at all: a branch, a floating tag, or a bare commit SHA. No update is
-resolved for such a reference, so it goes to `report_project_checks` with the lookup that reads its repository. Its
-marker is judged all the same, so a directive the source cannot apply is reported for it as for any other reference.
-Each updater supplies only how its own reference is spelled.
-"""
-
+import re
 from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
+from update_time.domain.cooldown import within_cooldown
 from update_time.domain.dependency import DependencyVersion, is_valid
 from update_time.domain.reference import DriftedPin, Reference, hash_drifted
 from update_time.io.log import Logger
 from update_time.markers.drift import report_drift
+from update_time.markers.floating import floating_pin_cause
+from update_time.markers.marker import Scope
+from update_time.primitives.digest import COMMIT_SHA
 from update_time.primitives.text import replace_match
 from update_time.references.match import matched_dependency
 from update_time.references.resolve import (
+    cooldown_days,
+    floating_pin_redundancy,
     latest_version,
+    report_directives_that_set_nothing,
     report_project_checks,
-    warn_about_directives_the_source_cannot_apply,
 )
-from update_time.sources.github import get_latest_version, project
+from update_time.sources.github import commit_date, get_latest_version, pinned_branch, project
 
 if TYPE_CHECKING:
-    import re
     from collections.abc import Callable
 
+    from update_time.io.log import Drift
     from update_time.markers.marker import Marker
     from update_time.primitives.location import Location
 
 
-def _sha_pinned_reference(match: re.Match[str], location: Location, dependency: str) -> Reference:
-    """Return the SHA-pinned GitHub reference the match captured.
-
-    A pinned reference carries its version in the trailing comment's `version` group, an unpinned one in its `tag`
-    group, so which group holds the version follows from whether `sha` matched.
-    """
+def _github_reference(match: re.Match[str], location: Location, dependency: str) -> Reference:
+    """Return the GitHub reference the match captured."""
     current_sha = match.group("sha") or ""
     version = match.group("version") if current_sha else match.group("tag")
     return Reference(dependency, version, location, current_sha)
 
 
 def _latest_pin(reference: Reference, marker: Marker, log: Logger) -> DependencyVersion | None:
-    """Return the latest version to (re)pin the GitHub reference to, or None to leave it unchanged.
-
-    Which version to update to is `latest_version`'s decision, resolving through `sources.github`; layered on top
-    here is what is specific to a SHA-pinned reference. Returns None — leave the reference as it is — when the
-    marker holds the update back, when no commit SHA is available to pin to, or when the reference is already up
-    to date. It returns None for an invalid current version too, such as a branch name or a bare SHA without a
-    version comment. A reference that stays on its version is handed to `_drifted_pin`, since its tag may have moved.
-    Otherwise it logs the change (a pin for a previously unpinned reference, a new version for an already-pinned one)
-    and returns the resolved version for the caller to format into its own syntax.
-    """
+    """Return the version or branch to pin the GitHub reference to, or None to leave the reference as it is."""
     current_version, current_sha = reference.current_version, reference.current_sha
     if not is_valid(current_version):
-        warn_about_directives_the_source_cannot_apply(marker, get_latest_version, reference, log)
+        report_directives_that_set_nothing(marker, get_latest_version, reference, log)
         report_project_checks(reference, marker, log, project)
-        return None
+        is_branch = not re.fullmatch(COMMIT_SHA, current_version)
+        if (reason := floating_pin_redundancy(marker, floats=is_branch)) is not None:
+            log.redundant_directive(reference, marker.allow_directive(Scope.FLOATING_PIN), reason)
+        return _branch_pin(reference, marker, log) if is_branch else None
     latest = latest_version(reference, get_latest_version, marker, log)
     if latest is None or not latest.sha:
         return None
@@ -72,50 +58,91 @@ def _latest_pin(reference: Reference, marker: Marker, log: Logger) -> Dependency
         log.pinned(reference, latest)
     elif Version(latest.version) != Version(current_version):
         log.new_version(reference, latest)
+    elif not hash_drifted(latest.sha, current_sha):
+        return None  # Already pinned and up to date
     else:
-        return _drifted_pin(reference, latest, marker, log)
+        # The reference names the version as the source spells it, so a rev frozen as v4.5.0 is reported as 4.5.0.
+        # It then names the version the pin does, so an adopted move logs as adopted drift rather than as a pin.
+        moved = replace(reference, current_version=latest.version)
+        return _drifted_pin(Logger.TAG_DRIFT, moved, latest, marker, log)
     return latest
 
 
-def _drifted_pin(
-    reference: Reference, latest: DependencyVersion, marker: Marker, log: Logger
-) -> DependencyVersion | None:
-    """Return the version to re-pin the reference to when its tag has moved, or None to leave its pin as it is.
+def _branch_pin(reference: Reference, marker: Marker, log: Logger) -> DependencyVersion | None:
+    """Return the branch's commit, named by a version tag or by the branch, or None to leave the reference as it is."""
+    branch = reference.current_version
+    if marker.ignores(Scope.UPDATE):
+        return None
+    pinned, reason = pinned_branch(reference.dependency, branch)
+    if pinned is None:
+        log.unpinned_branch(reference, reason)
+        return None
+    if (cause := floating_pin_cause(marker)) is not None:
+        if reference.current_sha and hash_drifted(pinned.sha, reference.current_sha):
+            kept = DependencyVersion(branch, sha=pinned.sha)  # A branch kept floating keeps following the branch.
+            return _drifted_pin(Logger.BRANCH_DRIFT, reference, kept, marker, log)
+        log.keeping_branch(reference, pinned, cause)
+        return None
+    if reference.current_sha:
+        return _repinned_branch(reference, pinned, marker, log)
+    log.pinned(reference, pinned)
+    return pinned
 
-    A reference that stays on its version can still have had that version's tag moved onto another commit. Whether
-    the commit it moved to is adopted or only warned about is `report_drift`'s decision, and the version is returned
-    for re-pinning only when it is adopted.
+
+def _repinned_branch(
+    reference: Reference, pinned: DependencyVersion, marker: Marker, log: Logger
+) -> DependencyVersion | None:
+    """Return the new pin of a branch already pinned to a commit, or None when the pin still holds."""
+    if hash_drifted(pinned.sha, reference.current_sha):
+        return _drifted_pin(Logger.BRANCH_DRIFT, reference, pinned, marker, log)
+    if pinned.version == reference.current_version:
+        return None  # Still pinned to the commit the branch points at
+    log.pinned(reference, pinned)
+    return pinned
+
+
+def _drifted_pin(
+    kind: Drift, reference: Reference, pin: DependencyVersion, marker: Marker, log: Logger
+) -> DependencyVersion | None:
+    """Return the pin to re-pin the reference to now that its tag or branch moved to another commit, or None.
+
+    The new commit is adopted only once it is past the cooldown. Adopting a branch's move onto a commit a version
+    tag names logs a pin, since the reference then names that version rather than the branch.
     """
-    if not hash_drifted(latest.sha, reference.current_sha):
-        return None  # Already pinned and up to date
-    # The version is reported as the source spells it, which the reference's own spelling need only equal, not match.
-    moved = replace(reference, current_version=latest.version)
-    drifted = DriftedPin.from_reference(moved, new_sha=latest.sha)
-    warn = partial(log.drift, Logger.TAG_DRIFT, drifted)
-    adopt = partial(log.adopted_drift, Logger.TAG_DRIFT, drifted)
-    adopted = report_drift(marker, warn, adopt)
-    return latest if adopted else None
+    renamed = pin.version != reference.current_version
+    drifted = DriftedPin.from_reference(reference, new_sha=pin.sha)
+    warn = partial(log.drift, kind, drifted)
+
+    def adopt(cause: str) -> None:
+        """Log a pin when the reference comes to name another version, and adopted drift otherwise."""
+        if renamed:
+            log.pinned(reference, pin)
+        else:
+            log.adopted_drift(kind, drifted, cause)
+
+    def past_cooldown() -> bool:
+        """Return whether the commit the pin moved to is dated, and dated before the cooldown."""
+        # The branch's commit was fetched by the branch's name, so dating it by that name reuses that response.
+        commit_ref = reference.current_version if kind is Logger.BRANCH_DRIFT else pin.sha
+        committed, reason = commit_date(reference.dependency, commit_ref)
+        if committed is None:
+            log.no_commit_date(reference.dependency, pin.sha, reason)
+            return False
+        return not within_cooldown(committed, cooldown_days(marker))
+
+    return pin if report_drift(marker, warn, adopt, past_cooldown) else None
 
 
 @dataclass(frozen=True)
 class PinUpdater:
-    """Everything needed to update one kind of GitHub-SHA-pinned reference: how it is spelled, and where it reports.
-
-    `spell` turns the reference and the version it is being pinned to into that reference's own syntax — a `uses:`
-    for a GitHub Action, a `rev:` for a pre-commit hook.
-    """
+    """How one kind of GitHub reference, a `uses:` or a `rev:`, is spelled, and the logger it reports to."""
 
     spell: Callable[[Reference, DependencyVersion], str]
     logger: Logger
 
     def update_line(self, match: re.Match[str], location: Location, marker: Marker, dependency: str = "") -> str:
-        """Return the line with the reference (re)pinned to the latest version, or unchanged when it stays put.
-
-        Unchanged covers each case `_latest_pin` declines: an invalid current version, a marker holding the update
-        back, no commit SHA to pin to, and a reference already pinned and up to date. The dependency comes from the
-        regexp's `dependency` group; a `rev:` takes it from the `repo:` above, so it names it in `dependency` instead.
-        """
-        reference = _sha_pinned_reference(match, location, matched_dependency(match, dependency))
+        """Return the line with the reference (re)pinned, or the line as it is when the reference stays put."""
+        reference = _github_reference(match, location, matched_dependency(match, dependency))
         latest = _latest_pin(reference, marker, self.logger)
         if latest is None:
             return match.string

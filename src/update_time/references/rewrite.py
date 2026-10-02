@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
 
+from update_time.domain.cooldown import within_cooldown
 from update_time.domain.dependency import FloatingPin
 from update_time.domain.line import located_lines
 from update_time.domain.reference import DriftedPin, hash_drifted
@@ -21,7 +22,7 @@ from update_time.markers.floating import floating_pin_cause
 from update_time.markers.marker import parse_marker
 from update_time.primitives.text import rewrite_string
 from update_time.references.match import matched_dependency, matched_reference
-from update_time.references.resolve import latest_version
+from update_time.references.resolve import cooldown_days, latest_version
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -122,8 +123,7 @@ class _Rewriter:
     ) -> str:
         """Return the line for a reference whose digest has drifted, adopting what its tag serves now or not.
 
-        Whether the drift is adopted or only warned about is `report_drift`'s decision. The digest alone is
-        replaced, so the reference keeps the tag it names.
+        The digest alone is replaced, so the reference keeps the tag it names.
         """
         if self._adopts_drift(match, marker, latest, reference):
             return rewrite_string(match, {"sha": latest.sha})
@@ -132,16 +132,12 @@ class _Rewriter:
     def _adopts_drift(
         self, match: re.Match[str], marker: Marker, latest: DependencyVersion, reference: Reference
     ) -> bool:
-        """Report the reference's digest as drifted and return whether the digest the registry serves is adopted.
-
-        Whether drift is adopted or only warned about is `report_drift`'s decision, which the reference's marker
-        and the run-wide flag steer.
-        """
+        """Report the reference's digest as drifted and return whether the digest the registry serves is adopted."""
         dependency, version = matched_dependency(match, self.dependency), match.group("version")
         drifted = DriftedPin(dependency, version, reference.location, match.group("sha"), new_sha=latest.sha)
         warn = partial(self.logger.drift, Logger.DIGEST_DRIFT, drifted)
         adopt = partial(self.logger.adopted_drift, Logger.DIGEST_DRIFT, drifted)
-        return report_drift(marker, warn, adopt)
+        return report_drift(marker, warn, adopt, lambda: not within_cooldown(latest.published, cooldown_days(marker)))
 
     def _apply_update(
         self, match: re.Match[str], latest: DependencyVersion, reference: Reference, *, pin_unpinned: bool

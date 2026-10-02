@@ -105,7 +105,7 @@ In the table above, each dependency type links to its own section under [Details
 
 *Pinning* means specifying exactly what a reference should resolve to, rather than leaving that to whatever its source serves at the time. Two things can be pinned: the version a reference resolves to, and the artefact that the version resolves to.
 
-A **version pin** names an exact version instead of something that floats: `python:3.14` instead of `python:latest`, `humanize==4.15.0` instead of `humanize>=4`. Its opposite is a **floating pin**, which leaves the version to the source. A channel such as `python:latest`, a range such as `humanize>=4` or npm's `^17.0.0`, and a branch such as the `main` in `actions/checkout@main` each float. Update-time updates version pins, and replaces the floating pin of an image reference with the version it currently serves (see [Floating image tags](#floating-image-tags)). Update-time leaves the floating pin of any other reference as it is.
+A **version pin** names an exact version instead of something that floats: `python:3.14` instead of `python:latest`, `humanize==4.15.0` instead of `humanize>=4`. Its opposite is a **floating pin**, which leaves the version to the source. A channel such as `python:latest`, a range such as `humanize>=4` or npm's `^17.0.0`, and a branch such as the `main` in `actions/checkout@main` each float. Update-time updates version pins. It pins a floating image tag to the version and digest it serves, and a branch to the commit it points at (see [Floating image tags](#floating-image-tags) and [GitHub Actions and pre-commit hooks](#github-actions-and-pre-commit-hooks)). It leaves a range such as `humanize>=4` or `^17.0.0` as it is.
 
 A **hash pin** adds a cryptographic hash of the artefact the version resolves to — an image digest, a commit SHA, or an integrity hash. The difference with a version pin is immutability. A version pin can be re-pointed under you, because a tag can be moved or re-pushed. A hash pin can only match the one thing it was computed from. That is what protects against a supply chain attack, and Update-time adds a hash pin wherever it can.
 
@@ -128,10 +128,10 @@ Registries name one image under several tags, so a floating tag shares its diges
 3. Then the most precise version of a variant the floating tag names, so `node:lts-alpine` lands on `24.19.0-alpine3.24` rather than on `24.19.0-alpine`.
 4. The shortest name comes last, so `node:latest` lands on `26.7.0` rather than on `26.7.0-trixie`, and `amazoncorretto:latest` on `8` rather than on `8-al2023`. This prevents adopting a label the floating tag doesn't have.
 
-Pinning does not change the image, so the [cooldown](#-cooldown) does not prevent it. A [bound](#bounding-an-update) does not either, so `allow[update<3.13]` on `python:latest` still pins to `3.14.7`, the version that tag serves. From the next run on, the reference is a version pin like any other, and Update-time updates, bounds, and checks it as one.
+A [bound](#bounding-an-update) does not prevent pinning, so `allow[update<3.13]` on `python:latest` still pins to `3.14.7`, the version that tag serves. From the next run on, the reference is a version pin like any other, and Update-time updates, bounds, and checks it as one.
 
 > [!IMPORTANT]
-> Once pinned, a reference no longer follows a channel. Later runs move `node:lts` pinned to `24.19.0` to whatever version is newest, LTS or not. To keep the channel, mark the reference `# update-time: allow[floating-pin]` (see [Keeping a tag floating](#keeping-a-tag-floating)). To keep the pin under 25, add a bound. From the next run on, `ignore[major-update]` or `allow[update<25]` holds it there (see [Bounding an update](#bounding-an-update)).
+> Once pinned, a reference no longer follows a channel. Later runs move `node:lts` pinned to `24.19.0` to whatever version is newest, LTS or not. To keep the channel, mark the reference `# update-time: allow[floating-pin]` (see [Keeping a pin floating](#keeping-a-pin-floating)). To keep the pin under 25, add a bound. From the next run on, `ignore[major-update]` or `allow[update<25]` holds it there (see [Bounding an update](#bounding-an-update)).
 
 Update-time leaves the following kinds of floating tag as they are:
 
@@ -169,27 +169,31 @@ What Update-time adds depends on what the reference can hold:
 | [Node engine version](#node-engine-version-and-python-version) | nothing: it names a Node version, not an artefact that could be hashed |
 | [Python version](#node-engine-version-and-python-version) | nothing: it names a Python version, not an artefact that could be hashed |
 | [Docker images](#docker-images) | the `@sha256:digest` of the tag, appended to the reference |
-| [GitHub Actions](#github-actions-and-pre-commit-hooks) | the commit SHA of the version, with the version in a trailing comment |
-| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | the commit SHA of the version, with the version in a `# frozen:` comment |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | the commit SHA of the version or branch, with the version or branch in a trailing comment |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | the commit SHA of the version or branch, with the version or branch in a `# frozen:` comment |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | the SRI `integrity` hash of the file the URL points at |
 
 #### Hash drift
 
-Sometimes a reference already carries a hash pin, and only what it points at changed. Update-time warns about that and leaves the pin unchanged. It never silently adopts a changed target, which would defeat the immutability a pin exists to provide. Hash drift takes three forms, one per kind of hash pin:
+Sometimes a reference already carries a hash pin, and only what it points at changed. Update-time warns about that and leaves the pin unchanged. It never silently adopts a changed target, which would defeat the immutability a pin exists to provide. Hash drift takes four forms:
 
 ```console
 @@DRIFT_WARNINGS@@
 ```
 
-*Digest drift* means an image tag was re-pushed (rebuilt) under the same name and version, so the registry now serves a different digest. Update-time judges a floating tag that already carries a digest the same way. When the digest differs from the one its tag serves now, the tag was re-pointed after the reference was pinned, so the pin stands and Update-time warns about the drift. When the digest is the one its tag still serves, Update-time pins the reference to the version tag serving that digest, if there is one (see [Floating image tags](#floating-image-tags)).
+*Digest drift* means an image tag was re-pushed (rebuilt) under the same name and version, so the registry now serves a different digest.
 
-*Tag drift* means someone moved the version tag of a GitHub Action or pre-commit hook onto another commit than the one the reference pins. A git tag is mutable, so whoever controls the repository can move it. This is what pinning to a commit SHA exists to catch. The pin keeps the reference on the commit it was pinned to, whatever the tag does. The warning tells you that the tag and the pin now name different commits.
+*Tag drift* and *branch drift* mean the version tag or the branch of a GitHub Action or pre-commit hook now points at another commit than the one the reference pins. The pin keeps the reference on its commit, and the warning names the commit the tag or branch points at now. A git tag is mutable, so whoever controls the repository can move it, and pinning to a commit SHA exists to catch that. A branch is meant to move, so review the new commit before you adopt it.
 
-An *integrity hash mismatch* means the hash a jsDelivr URL declares is not the one jsDelivr serves for the version the URL sits on. Unlike the other two this rarely means anything upstream changed, since npm does not allow a published version to be republished. More likely, the declared hash is wrong: mistyped, copied from another file, or tampered with. It is also the most urgent, because the browser silently refuses to load the script until the hash matches, which no build step catches.
+An *integrity hash mismatch* means the hash a jsDelivr URL declares is not the one jsDelivr serves for the version the URL sits on. Unlike the other forms this rarely means anything upstream changed, since npm does not allow a published version to be republished. More likely, the declared hash is wrong: mistyped, copied from another file, or tampered with. It is also the most urgent, because the browser silently refuses to load the script until the hash matches, which no build step catches.
+
+A floating image tag that carries a digest, and a branch pinned to a commit, can drift as well. Where the tag or branch moved, Update-time warns about the drift. Where it did not, and a version tag names that image or commit, Update-time pins the reference to that version tag (see [Floating image tags](#floating-image-tags) and [GitHub Actions and pre-commit hooks](#github-actions-and-pre-commit-hooks)).
 
 A reference without hash pin has nothing that can drift. So Update-time checks no `requirements.txt` pin, no `.python-version` entry, and no Node engine version. It checks none of the dependencies it delegates to a package manager either.
 
-To adopt the new value, opt the reference in with a marker (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). An image reference then adopts the re-pushed digest, and a GitHub Action or pre-commit hook adopts the commit its tag was moved to. Alternatively, pass `--allow-hash-drift` to opt every reference in the run in at once. A marker that holds the reference back wins over both, so a reference you deliberately froze is never re-pinned. Update-time logs adopted drift at `INFO`, like any other change.
+To adopt the new value, mark the reference `allow[hash-drift]` or pass `--allow-hash-drift` (see [Adopting hash drift](#adopting-hash-drift)). A marker that holds the reference back wins over both, so a reference you deliberately froze is never re-pinned. Update-time logs adopted drift at `INFO`, like any other change.
+
+Update-time adopts drift only once what the tag or branch now points at is past the [cooldown](#-cooldown). Until then, it warns about the drift, as it does for a reference that is not opted in.
 
 Update-time never adopts an integrity hash mismatch, whatever you opt in to. The whole point of the hash is to refuse content that doesn't match it. So Update-time reports the mismatch and leaves correcting it to you.
 
@@ -205,11 +209,13 @@ To avoid adopting releases that are too fresh to trust, Update-time honours a co
 | [Node engine version](#node-engine-version-and-python-version) | Update-time, or already applied via the Dockerfile | the Node image tag's push date |
 | [Python version](#node-engine-version-and-python-version) | Update-time, or already applied via the Dockerfile | the Python image tag's push date |
 | [Docker images](#docker-images) | Update-time, on Docker Hub only | the image tag's push date |
-| [GitHub Actions](#github-actions-and-pre-commit-hooks) | Update-time | the release's publication date, or the tagged commit's date |
-| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | Update-time | the release's publication date, or the tagged commit's date |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | Update-time | the release's publication date, or the committer date of the commit a tag or branch points at |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | Update-time | the release's publication date, or the committer date of the commit a tag or branch points at |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | Update-time | the release's publication date on the npm registry |
 
 Where Update-time applies the cooldown itself, it holds back every version published inside the window.
+
+The cooldown holds back updates, not pins. Pinning writes down what a reference uses today: the digest its image tag serves, or the commit its version tag or branch points at. So Update-time pins `python:latest`, `python:3.14.6`, `actions/checkout@v4.1.1`, and `actions/checkout@main`, however recently that image was pushed or that commit was made.
 
 Where a package manager applies the cooldown, Update-time hands the value to uv, npm, or pnpm. Each of them takes the value per run rather than per dependency. Each of them also leaves a cooldown your project already configures in place. [Python dependencies](#python-dependencies) and [npm and pnpm dependencies](#npm-and-pnpm-dependencies) describe what that means per dependency type.
 
@@ -402,7 +408,7 @@ So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen.
 
 `# update-time: ignore[vulnerable]` silences the vulnerability warning for one you assessed, while the reference keeps updating. `# update-time: ignore[archived]` silences the archival warning for a dependency you decided to keep using. To silence it for every dependency in the run, pass `--ignore-archived` (see [Archived dependencies](#-archived-dependencies)). A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
 
-A bare `# update-time: ignore` and an `ignore[update]` win over any directive beside them that would change the reference: a [bound](#bounding-an-update), an [`allow[hash-drift]`](#adopting-hash-drift), or an [`allow[floating-pin]`](#keeping-a-tag-floating). Update-time leaves the reference untouched, its tag included.
+A bare `# update-time: ignore` and an `ignore[update]` win over any directive beside them that would change the reference: a [bound](#bounding-an-update), an [`allow[hash-drift]`](#adopting-hash-drift), or an [`allow[floating-pin]`](#keeping-a-pin-floating). Update-time leaves the reference untouched, its tag or branch included.
 
 #### Setting a staleness threshold
 
@@ -464,21 +470,22 @@ The level applies to the reference carrying it, and every other reference in the
 
 ### Adopting hash drift
 
-`# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting what it now points at (see [Hash drift](#hash-drift)). Update-time then pins a re-pushed image tag's new digest, or the commit a moved version tag points at, instead of only warning about it. The global `--allow-hash-drift` flag applies it to every reference at once.
+`# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting what it now points at (see [Hash drift](#hash-drift)). Update-time then pins a re-pushed image tag's new digest, or the commit a moved version tag or branch points at, instead of only warning about it. It does so once that digest or commit is past the [cooldown](#-cooldown). The global `--allow-hash-drift` flag applies it to every reference at once.
 
 `ignore[hash-drift]` is the opposite and the default. A reference carrying it keeps its pin exactly as one carrying no marker at all, in a run passing `--allow-hash-drift` as well.
 
-### Keeping a tag floating
+### Keeping a pin floating
 
-`# update-time: allow[floating-pin]` keeps a reference's [floating image tag](#floating-image-tags) as it is. Update-time would otherwise replace that tag with the version and digest it serves. Use the marker for a reference you want to follow a channel, such as an image you rebuild from `latest` on purpose. Run with `--log-level DEBUG` to see what the marker held back. That line names the version the tag resolves to, so a marker you no longer need shows what dropping it would pin. Where the tag serves another digest than the reference records, Update-time reports the [hash drift](#hash-drift) instead:
+`# update-time: allow[floating-pin]` keeps a floating pin as it is: a [floating image tag](#floating-image-tags) such as `python:latest`, or a branch such as `actions/checkout@main`. Update-time would otherwise pin the tag to the version and digest it serves, and the branch to the commit it points at (see [GitHub Actions and pre-commit hooks](#github-actions-and-pre-commit-hooks)). Use the marker for a reference you want to follow a channel or a branch, such as an image you rebuild from `latest` on purpose. Run with `--log-level DEBUG` to see what the marker held back. That line names what dropping the marker would pin: the version the tag resolves to, or the version tag at the branch's commit, or else the branch itself:
 
 ```console
 @@KEPT_FLOATING_TAG@@
+@@KEPT_BRANCH@@
 ```
 
 Update-time keeps a reference without a tag the same way. The `DEBUG` line then names the image alone, since the reference has no tag to name.
 
-Update-time still checks a reference kept floating for [hash drift](#hash-drift). Where it already records a digest and its tag now serves another, Update-time warns about the drift. A reference opted into drift adopts the new digest, while its tag stays as it is.
+Update-time still checks a reference kept floating for [hash drift](#hash-drift). It warns about the drift when the image tag now serves another digest than the reference records, or when the branch moved off the commit the reference records. A reference opted into drift adopts the new digest or commit, while its tag or branch stays as it is.
 
 The global `--allow-floating-pin` flag keeps every reference in the run floating at once. `ignore[floating-pin]` is the opposite and the default, so Update-time pins a reference carrying it exactly as one carrying no marker at all. It pins that reference in a run passing `--allow-floating-pin` as well.
 
@@ -710,7 +717,7 @@ An `allow[floating-pin]` on a reference whose pin does not float keeps nothing f
 @@REDUNDANT_FLOATING_PIN_WARNING@@
 ```
 
-An `ignore` or an `ignore[update]` keeps nothing floating either, since Update-time never pins a reference whose update it holds back. Update-time reports the `allow[floating-pin]` directive as redundant whether or not the tag floats:
+An `ignore` or an `ignore[update]` keeps nothing floating either, since Update-time never pins a reference whose update it holds back. Update-time reports the `allow[floating-pin]` directive as redundant whether or not its pin floats:
 
 ```console
 @@REDUNDANT_FROZEN_FLOATING_PIN_WARNING@@
@@ -722,7 +729,7 @@ Update-time never pins a reference a file accounts for itself, so an `allow[floa
 @@REDUNDANT_UNASKED_FLOATING_PIN_WARNING@@
 ```
 
-Update-time does not report a floating tag it cannot pin, since that tag does float. It logs the reason at `DEBUG` instead, or reports the [hash drift](#hash-drift) when the tag's digest changed (see [Floating image tags](#floating-image-tags)).
+Update-time does not report a floating tag or a branch it cannot pin, since its pin does float. It logs why instead: at `DEBUG` for a floating tag (see [Floating image tags](#floating-image-tags)), and at `ERROR` for a branch whose commit it cannot fetch (see [GitHub Actions and pre-commit hooks](#github-actions-and-pre-commit-hooks)). Where a floating tag's digest changed, Update-time reports the [hash drift](#hash-drift) instead.
 
 #### A bound
 
@@ -1015,9 +1022,11 @@ For pre-commit hooks, it looks for `.pre-commit-config.yaml` files, recursively 
 
 #### What dependencies are updated?
 
-In a workflow or action definition, the actions in the `uses:` references. Actions referenced by a branch (for example `@main`), or as a local action without an `@`, don't resolve to a version. So Update-time does not update them.
+In a workflow or action definition, the actions in the `uses:` references. A local action, without an `@`, does not name a repository, so Update-time leaves it alone.
 
-In a `.pre-commit-config.yaml`, the `rev:` of each hook repository hosted on GitHub. A `repo: local` or `repo: meta` entry has no `rev:`, so Update-time leaves it untouched, as it leaves a repository hosted outside GitHub untouched. Update-time does not update a `rev:` that names a branch rather than a version.
+In a `.pre-commit-config.yaml`, the `rev:` of each hook repository hosted on GitHub. A `repo: local` or `repo: meta` entry has no `rev:`, so Update-time leaves it untouched, as it leaves a repository hosted outside GitHub untouched.
+
+Update-time pins a `uses:` or a `rev:` that names a branch, such as `@main` or `rev: main`, rather than updating it, since a branch does not name a version.
 
 #### What versions are updated?
 
@@ -1027,15 +1036,39 @@ Often, the latest version is the latest GitHub release. But a version that was t
 
 #### Pinning
 
-Update-time pins an action referenced by version tag only to the commit SHA of the latest version, and adds the version as a trailing comment. So `uses: actions/checkout@v4` becomes `uses: actions/checkout@<sha> # v4.1.1`.
+Update-time pins an action referenced by version tag only to the commit SHA of the latest version, and adds that version's tag as a trailing comment. So `uses: actions/checkout@v4` becomes `uses: actions/checkout@<sha> # v4.1.1`.
 
-Update-time pins a `rev:` referenced by version tag only to the commit SHA the same way. The version travels in pre-commit's own `# frozen: <version>` comment convention, so `rev: v4.5.0` becomes `rev: <sha>  # frozen: v4.5.0`. This is the same format `pre-commit autoupdate --freeze` produces and understands, so the config stays interoperable with pre-commit's own tooling. Update-time keeps the tag's `v` prefix convention in the comment, so a repository that tags without a `v` gets `# frozen: 4.5.0`.
+Update-time pins a `rev:` referenced by version tag only to the commit SHA the same way. The version travels in pre-commit's own `# frozen: <version>` comment convention, so `rev: v4.5.0` becomes `rev: <sha>  # frozen: v4.5.0`. This is the same format `pre-commit autoupdate --freeze` produces and understands, so the config stays interoperable with pre-commit's own tooling.
 
-An action referenced by a branch gets no pin, since it resolves to no version. Neither does a `rev:` that names a branch, or one that is already a bare commit SHA without a `# frozen:` comment.
+Both comments name the tag as the repository spells it, whatever the reference's own spelling. So a repository that tags without a `v` gets `# 4.5.0` and `# frozen: 4.5.0`, even where the reference read `@v4.4.0` or `rev: v4.4.0`.
+
+Update-time pins an action referenced by a branch to the commit the branch points at. When a version tag points at that commit, the comment names it, so `uses: actions/checkout@main` becomes `uses: actions/checkout@<sha> # v4.3.0`. When several do, the comment names the highest, spelled most precisely: `v4.3.0` rather than `v4.3` or `v4`. A pre-release tag does not count. When no version tag points at the commit, the comment names the branch, so `@main` becomes `@<sha> # main`. Update-time pins a `rev:` that names a branch the same way, in a `# frozen:` comment. It leaves a bare commit SHA without a comment alone, in a `uses:` and a `rev:` alike.
+
+A [bound](#bounding-an-update) does not prevent pinning a branch, so `allow[update<4]` on `actions/checkout@main` still pins to `v4.3.0`. From the next run on, the reference is a version pin like any other, and Update-time bounds it as one.
+
+Update-time leaves a branch reference as it is when it cannot fetch the commit the branch points at, and logs why at `ERROR`:
+
+```console
+@@UNPINNED_BRANCH@@
+```
+
+When the commit can be fetched but the repository's tags cannot be listed, Update-time pins the reference as the branch. When a later run can list the tags, it names the version tag.
+
+On every later run, Update-time compares the commit the branch points at with the commit the reference is pinned to, as [Hash drift](#hash-drift) describes. So `@<sha> # main` becomes `@<sha> # v4.3.1` once a version tag points at the pinned commit. Where Update-time adopts a moved branch's new commit, the comment names the version tag pointing at that commit, or the branch where none does.
+
+A reference kept floating with `allow[floating-pin]` keeps naming the branch in both cases (see [Keeping a pin floating](#keeping-a-pin-floating)).
+
+`pre-commit autoupdate` moves each `rev:` to the repository's newest tag. So running it stops a hook from following its branch.
 
 #### Cooldown
 
 The cooldown is measured against the release's publication date, or, for a version that was only tagged, the date of the commit it tags. Update-time skips a version whose commit date it cannot fetch, rather than adopting it with the cooldown unchecked.
+
+Update-time dates the commit a moved tag or branch now points at by its committer date. GitHub does not report when a tag or branch was moved, and whoever makes a commit sets its committer date. So a tag or branch moved onto an old commit passes the cooldown at once. Update-time adopts the new commit only when it can fetch the commit's date. When it cannot, it warns about the drift and logs why at `ERROR`:
+
+```console
+@@NO_COMMIT_DATE@@
+```
 
 #### Stale dependencies
 
@@ -1170,7 +1203,7 @@ Update-time reports every reference a file accounts for itself at `DEBUG`, namin
 
 When updating an image tag, Update-time keeps the non-numeric parts of the tag and only advances its version numbers. A tag such as `python:3.14.6-alpine3.23` has three parts: the label prefix `python`, the main version `3.14.6`, and the suffix `alpine3.23`. Update-time preserves the label prefix and the suffix's label, so it never replaces a variant: `python` never becomes `pypy`, and `alpine` never becomes `debian`. It upgrades both the main version and a version embedded in the suffix, independently or together, for example `3.14.6-alpine3.23` → `3.15.0-alpine3.24`. A suffix without an embedded version (`bookworm-slim`, `windows`) is never updated, since it carries no version to advance. It never downgrades one axis to adopt a newer value on the other.
 
-A tag naming a channel in labels alone, such as `latest` or `trixie`, floats. Update-time replaces it with the version tag serving the same image, and keeps the labels the tag itself carries (see [Floating image tags](#floating-image-tags)). A reference that names no tag asks for `latest`, the tag a registry serves by default. So it floats too, and Update-time pins it the same way.
+A floating tag such as `latest` or `trixie`, or a reference without a tag, is pinned rather than updated (see [Floating image tags](#floating-image-tags)).
 
 A dated snapshot such as `debian:bookworm-20260803` names the day its image was built. Update-time updates it to the newest snapshot under its label, so a reference on `bookworm-20240110` moves to `bookworm-20260803`. A repository can also name a snapshot by the date alone, as Alpine names one `20260805` beside its `3.24.1` release. Update-time updates such a tag to the newest snapshot as well. A reference on a release keeps following releases, and a reference on a snapshot keeps following snapshots.
 
@@ -1178,13 +1211,11 @@ A dated snapshot such as `debian:bookworm-20260803` names the day its image was 
 
 Update-time appends the `@sha256:digest` of the (latest) tag to an image referenced by tag only, so the image is reproducible. This covers base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, Docker Compose and Helm manifest images, and devcontainer base images and features. Update-time takes the image's registry from the reference, so it resolves images on Docker Hub and on other OCI registries (`ghcr.io`, `mcr.microsoft.com`, …) alike.
 
-A floating tag is pinned to both at once: the version tag serving the image it currently resolves to, and that image's digest.
-
 Update-time ignores an image whose tag it cannot read, so a reference through a `{{ ... }}` template or `${VAR}` variable substitution gets no digest. Update-time does not ask a registry about a reference a file accounts for itself, so that reference gets none either. A CircleCI machine-executor image (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) and an image a Docker Compose file builds are such references.
 
 #### Cooldown
 
-Update-time adopts a newer tag only once it is past the cooldown, provided Docker Hub hosts the image. Other registries (`ghcr.io`, `mcr.microsoft.com`, …) do not expose a publication date, so Update-time updates images there without a cooldown. Pinning a floating tag adopts no newer image, so the cooldown holds nothing back there (see [Floating image tags](#floating-image-tags)).
+Update-time adopts a newer tag, or a re-pushed digest, only once it is past the cooldown, provided Docker Hub hosts the image. Other registries (`ghcr.io`, `mcr.microsoft.com`, …) do not expose a publication date, so Update-time updates images there, and adopts a re-pushed digest, without a cooldown.
 
 #### Stale dependencies
 

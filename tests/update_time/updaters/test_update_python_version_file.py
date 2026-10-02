@@ -1,6 +1,5 @@
 """Unit tests for the Python version file update script."""
 
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -14,7 +13,7 @@ from update_time.updaters.update_python_version_file import update_python_versio
 
 from tests.helpers import mock_path, patch_pathlib_path
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import DIGEST
+from tests.update_time.fixtures import DIGEST, STALE_DATE
 from tests.update_time.helpers import LoggingTestCase, docker_tag
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
 from tests.update_time.updaters.helpers import mock_docker_hub_auth
@@ -265,7 +264,7 @@ class UpdatePythonVersionFilesFallbackTest(RegistryRequestsMixin, _VersionFileTe
 
     def test_fallback_stale_warned(self, mock_glob: Mock):
         """Test that a stale `python` release (newest tag pushed long ago) is warned about via the fallback."""
-        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        old = STALE_DATE.isoformat()
         self.requests.side_effect = mock_docker_registry(_python_tag(last_pushed=old))
         version_file = self.update_version_file(mock_glob, "3.13.2\n")
         version_file.write_text.assert_not_called()

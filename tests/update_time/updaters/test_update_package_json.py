@@ -2,7 +2,7 @@
 
 import json
 import subprocess  # nosec
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import ANY, Mock, call, patch
 
@@ -12,6 +12,7 @@ from update_time.primitives.location import Location
 from update_time.updaters.update_package_json import update_package_jsons
 
 from tests.helpers import mock_path, mock_response, patch_pathlib_path
+from tests.update_time.fixtures import STALE_DATE
 from tests.update_time.helpers import LoggingTestCase, github_commits_json, github_release_json, staleness_disabled
 
 _NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN.default}"  # the cooldown npm option Update-time adds by default
@@ -430,7 +431,7 @@ class StaleDependencyTest(LoggingTestCase):
     def test_stale_dependency_warned(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that a direct dependency whose newest release is old is warned about, at the line it is declared on."""
         self.stub_no_update(mock_run)
-        get.return_value = self.registry_doc("2.0.11", (datetime.now(UTC) - timedelta(days=512)).isoformat())
+        get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
         package_json = self.package_json(glob)
         update_package_jsons()
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4))
@@ -439,7 +440,7 @@ class StaleDependencyTest(LoggingTestCase):
     def test_dependency_declared_in_two_sections(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that a dependency two sections declare is warned about at each of the lines declaring it."""
         self.stub_no_update(mock_run)
-        get.return_value = self.registry_doc("2.0.11", (datetime.now(UTC) - timedelta(days=512)).isoformat())
+        get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
         contents = (
             "{\n"
             '  "dependencies": {\n    "clipboard": "^2.0.11"\n  },\n'

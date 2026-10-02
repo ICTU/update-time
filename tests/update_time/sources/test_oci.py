@@ -24,7 +24,7 @@ from update_time.sources.oci import (
 
 from tests.helpers import mock_response, patch_environ
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3
+from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3, STALE_DATE
 from tests.update_time.helpers import LoggingTestCase, bound, docker_tag
 from tests.update_time.registry import Endpoint, RegistryRequestsMixin, mock_docker_registry
 
@@ -383,8 +383,8 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             oci._eligible_tag,
-            "if latest is None or not latest.is_eligible(cooldown_days):",
-            "if latest is None or not (latest.is_eligible(cooldown_days) or latest._is_dated_snapshot):",
+            "if not latest.is_eligible(0 if is_current else cooldown_days):",
+            "if not (latest.is_eligible(0 if is_current else cooldown_days) or latest._is_dated_snapshot):",
             "a dated snapshot is adopted however freshly it was pushed",
         )
     )
@@ -591,9 +591,9 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            docker_hub.tag_digests,
-            "return digests, not url",
-            "return digests, True",
+            docker_hub.tag_listing,
+            "examined_all=not url",
+            "examined_all=True",
             "a tag the listing was cut short before reaching is reported as one the registry does not list",
         )
     )
@@ -616,7 +616,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
     )
     def test_newest_release_when_the_listing_was_cut_short(self):
         """Test that a floating tag the listing may hold below the page cap is dated by the image's newest release."""
-        pushed = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        pushed = STALE_DATE.isoformat()
         self.requests.side_effect = mock_docker_registry(*_tags_past_the_page_cap(tag_last_pushed=pushed))
         latest = get_latest_tag("node", "lts-alpine")
         newest_on_the_first_page = f"1.{_TAG_LISTING_PAGE_SIZE - 1}"
@@ -673,7 +673,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
 
         The run pins the tag to the version it serves, and that version names the same dependency as any other.
         """
-        pushed = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        pushed = STALE_DATE.isoformat()
         names = ("latest", "3.14.7")
         self.requests.side_effect = mock_docker_registry(
             *(docker_tag(name, DIGEST, tag_last_pushed=pushed) for name in names)
@@ -698,7 +698,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
     )
     def test_tag_naming_neither_a_version_nor_a_channel(self):
         """Test that a tag such as `dev-2024` keeps its tag, is pinned to the digest it serves, and is dated."""
-        pushed = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        pushed = STALE_DATE.isoformat()
         aliases = ("dev-2024", "dev", "12.15", "12")
         self.requests.side_effect = mock_docker_registry(
             *(docker_tag(name, DIGEST, tag_last_pushed=pushed) for name in aliases)
@@ -719,7 +719,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
     )
     def test_no_newest_release_when_the_registry_serves_no_manifest(self):
         """Test that a tag such as `dev-2024` the registry serves no manifest for is dated by no release."""
-        pushed = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        pushed = STALE_DATE.isoformat()
         self.requests.side_effect = mock_docker_registry(docker_tag("4.7.0", DIGEST, tag_last_pushed=pushed))
         latest = get_latest_tag("acme/api", "dev-2024")
         self.assertEqual(latest.version, "dev-2024")
@@ -757,7 +757,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
     )
     def test_tag_not_listed(self):
         """Test that a floating tag the registry does not list is left as it is, and dated by no release."""
-        pushed = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        pushed = STALE_DATE.isoformat()
         self.requests.side_effect = mock_docker_registry(docker_tag("3.14.7", DIGEST, tag_last_pushed=pushed))
         latest = get_latest_tag("python", "latest")
         self.assertEqual(latest.version, "latest")

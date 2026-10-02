@@ -64,7 +64,7 @@ class _Check:
 
 
 @dataclass(frozen=True)
-class _Drift:
+class Drift:
     """A kind of hash pin that can drift: the warning that it did, and the report that the new value was adopted.
 
     Both messages name the reference as its dependency, then the separator and the version it records, if any.
@@ -201,7 +201,7 @@ class Logger:
     _MESSAGE_PINNED = LogMessage(INFO, "Pinned %(dependency)s in %(location)s to %(version)s@%(sha)s")
 
     def pinned(self, reference: Reference, version: DependencyVersion) -> None:
-        """Log that a previously unpinned reference in a file was pinned to a digest, without changing its version."""
+        """Log that a reference was pinned to a version and its hash."""
         self._log(self._MESSAGE_PINNED, **self._reference_fields(reference, version=version.version, sha=version.sha))
 
     _MESSAGE_KEEPING_FLOATING_TAG = LogMessage(
@@ -222,6 +222,29 @@ class Logger:
         """
         fields = self._tagged_fields(reference, reference.current_version)
         self._log(self._MESSAGE_KEEPING_FLOATING_TAG, **fields, resolved=release.version, sha=release.sha, cause=cause)
+
+    _MESSAGE_KEEPING_BRANCH = LogMessage(
+        DEBUG,
+        "Keeping the branch %(dependency)s@%(branch)s in %(location)s: it resolves to %(resolved)s@%(sha)s (%(cause)s)",
+    )
+
+    def keeping_branch(self, reference: Reference, release: DependencyVersion, cause: str) -> None:
+        """Log that a branch reference was left as it is, naming the release it resolves to."""
+        fields = self._reference_fields(reference, branch=reference.current_version)
+        self._log(self._MESSAGE_KEEPING_BRANCH, **fields, resolved=release.version, sha=release.sha, cause=cause)
+
+    _MESSAGE_UNPINNED_BRANCH = LogMessage(
+        ERROR,
+        "Branch %(dependency)s@%(branch)s in %(location)s was left as it is: its commit could not be fetched "
+        "(%(reason)s)",
+    )
+
+    def unpinned_branch(self, reference: Reference, reason: str) -> None:
+        """Log that a branch reference was left as it is, saying why its commit could not be fetched."""
+        self._log(
+            self._MESSAGE_UNPINNED_BRANCH,
+            **self._reference_fields(reference, branch=reference.current_version, reason=reason),
+        )
 
     _MESSAGE_UNPINNED_FLOATING_TAG = LogMessage(
         DEBUG,
@@ -269,7 +292,7 @@ class Logger:
         "re-pinned from %(current_sha)s to %(new_sha)s (%(cause)s)",
     )
 
-    DIGEST_DRIFT = _Drift(_MESSAGE_DIGEST_DRIFT, _MESSAGE_ADOPTED_DIGEST_DRIFT, ":")
+    DIGEST_DRIFT = Drift(_MESSAGE_DIGEST_DRIFT, _MESSAGE_ADOPTED_DIGEST_DRIFT, ":")
 
     _MESSAGE_TAG_DRIFT = LogMessage(
         WARNING,
@@ -284,10 +307,25 @@ class Logger:
         "re-pinned from commit %(current_sha)s to %(new_sha)s (%(cause)s)",
     )
 
-    TAG_DRIFT = _Drift(_MESSAGE_TAG_DRIFT, _MESSAGE_ADOPTED_TAG_DRIFT, "@")
+    TAG_DRIFT = Drift(_MESSAGE_TAG_DRIFT, _MESSAGE_ADOPTED_TAG_DRIFT, "@")
+
+    _MESSAGE_BRANCH_DRIFT = LogMessage(
+        WARNING,
+        "Branch drift for %(dependency)s%(tag)s in %(location)s: pinned to commit %(current_sha)s but the branch now "
+        "points at %(new_sha)s; the pin was left unchanged, verify the branch moved to a commit you trust before "
+        "updating the pin",
+    )
+
+    _MESSAGE_ADOPTED_BRANCH_DRIFT = LogMessage(
+        INFO,
+        "Adopted branch drift for %(dependency)s%(tag)s in %(location)s: "
+        "re-pinned from commit %(current_sha)s to %(new_sha)s (%(cause)s)",
+    )
+
+    BRANCH_DRIFT = Drift(_MESSAGE_BRANCH_DRIFT, _MESSAGE_ADOPTED_BRANCH_DRIFT, "@")
 
     @staticmethod
-    def _drift_fields(kind: _Drift, drifted: DriftedPin, **extra: object) -> dict[str, object]:
+    def _drift_fields(kind: Drift, drifted: DriftedPin, **extra: object) -> dict[str, object]:
         """Return the fields every drift message carries, plus the ones the message reporting it adds."""
         return {
             "dependency": drifted.dependency,
@@ -298,11 +336,11 @@ class Logger:
             **extra,
         }
 
-    def drift(self, kind: _Drift, drifted: DriftedPin) -> None:
+    def drift(self, kind: Drift, drifted: DriftedPin) -> None:
         """Warn that a hash pin no longer matches what it points at, and was left unchanged."""
         self._log(kind.warning, **self._drift_fields(kind, drifted))
 
-    def adopted_drift(self, kind: _Drift, drifted: DriftedPin, cause: str) -> None:
+    def adopted_drift(self, kind: Drift, drifted: DriftedPin, cause: str) -> None:
         """Log that what a hash pin now points at was adopted because the reference opted in.
 
         `cause` names the opt-in that triggered the adoption.
@@ -523,6 +561,16 @@ class Logger:
     def no_tag_date(self, dependency: str, tag: str, reason: str) -> None:
         """Log that a tag's commit date couldn't be resolved, and why, so the tag was skipped as an update candidate."""
         self._log(self._MESSAGE_NO_TAG_DATE, dependency=dependency, tag=tag, reason=reason)
+
+    _MESSAGE_NO_COMMIT_DATE = LogMessage(
+        ERROR,
+        "Could not determine the date of commit %(sha)s of %(dependency)s (%(reason)s), "
+        "so the cooldown can't be verified; not adopting the drift",
+    )
+
+    def no_commit_date(self, dependency: str, sha: str, reason: str) -> None:
+        """Log that the commit a drifted pin moved to couldn't be dated, and why, so the drift was not adopted."""
+        self._log(self._MESSAGE_NO_COMMIT_DATE, dependency=dependency, sha=sha, reason=reason)
 
     _MESSAGE_UNREADABLE_PUBLICATION_DATE = LogMessage(
         WARNING,

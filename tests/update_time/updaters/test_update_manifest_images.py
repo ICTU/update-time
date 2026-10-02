@@ -1,7 +1,6 @@
 """Unit tests for the manifest image update script."""
 
 import unittest
-from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, patch
 
 from update_time.domain.dependency import AccountedFor, FloatingPin
@@ -17,7 +16,7 @@ from update_time.updaters.update_manifest_images import update_manifest_images
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time import registry
-from tests.update_time.fixtures import DIGEST
+from tests.update_time.fixtures import DIGEST, STALE_DATE
 from tests.update_time.helpers import docker_tag
 from tests.update_time.registry import mock_docker_registry
 from tests.update_time.updaters.helpers import mock_docker_hub_auth
@@ -67,7 +66,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     def test_image_whose_tag_the_registry_does_not_serve_is_not_stale(self):
         """Test that an `image:` whose tag the registry does not list is not reported stale."""
-        pushed = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        pushed = STALE_DATE.isoformat()
         self.requests.side_effect = mock_docker_registry(docker_tag("v4.7.0", DIGEST, tag_last_pushed=pushed))
         mock_manifest = mock_path(self.reference("acme/api:ci"))
         self.run_compose_updater(mock_manifest)

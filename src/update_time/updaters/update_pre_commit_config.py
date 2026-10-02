@@ -24,10 +24,9 @@ _LOG = get_logger("pre-commit config")
 # `meta` sentinels that carry no `rev:`. The value sets the repository the following `rev:` lines belong to.
 _REPO_RE = re.compile(r"repo:\s*(?P<repo>\S+)")
 # Match a `rev:` value that is either already pinned to a commit SHA with a pre-commit `# frozen: <version>` comment
-# (`rev: <sha> # frozen: v4.5.0`) or unpinned to a version tag (`rev: v4.5.0`, optionally quoted). A bare commit SHA
-# without a frozen comment doesn't resolve to a version, so it falls through to the tag branch and is rejected as a
-# non-version by the `is_valid` check in `_update_rev`, like a branch name. The tag stops at whitespace, a quote, or
-# a `#`, so a trailing `# update-time:` marker (or any comment) is left outside the match and preserved.
+# (`rev: <sha> # frozen: v4.5.0`) or unpinned to a version tag (`rev: v4.5.0`, optionally quoted). A branch name and
+# a bare commit SHA without a frozen comment fall in the tag group too. The tag stops at whitespace, a quote, or a
+# `#`, so a trailing `# update-time:` marker (or any comment) is left outside the match and preserved.
 _REV_RE = re.compile(
     r"rev:\s*"
     rf"(?:(?P<sha>{COMMIT_SHA})\s*#\s*frozen:\s*(?P<version>\S+)|(?P<quote>['\"]?)(?P<tag>[^\s'\"#]+)(?P=quote))"
@@ -45,10 +44,9 @@ def _dependency_from_repo(repo: str) -> str:
     return f"{owner}/{repository}" if owner and repository else ""
 
 
-def _spell_rev(reference: Reference, latest: DependencyVersion) -> str:
-    """Return the `rev:` pinned to the latest version's commit SHA, with the version in a `# frozen:` comment."""
-    frozen_version = f"v{latest.version}" if reference.current_version.startswith("v") else latest.version
-    return f"rev: {latest.sha}  # frozen: {frozen_version}"
+def _spell_rev(_reference: Reference, latest: DependencyVersion) -> str:
+    """Return the `rev:` pinned to the commit SHA, with the tag or branch in a `# frozen:` comment."""
+    return f"rev: {latest.sha}  # frozen: {latest.tag_name or latest.version}"
 
 
 _REV = PinUpdater(_spell_rev, _LOG)
