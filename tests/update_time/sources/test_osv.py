@@ -268,7 +268,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
 
         mock_post.side_effect = serve
         self.assertEqual(get_vulnerabilities([_REFERENCE], Ecosystem.PYPI), [None])
-        self.assert_could_not_fetch_logged(url="https://osv", status=status, reason=status.phrase)
+        self.assert_could_not_fetch_logged("https://osv", status=status, reason=status.phrase)
 
     def test_unreachable_osv(self, mock_post: Mock):
         """Test that an unreachable OSV returns an answer per pin, each of them none, and is warned about."""
@@ -280,7 +280,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
             ),
             [None, None],
         )
-        self.assert_could_not_fetch_logged(url="https://osv", status=status, reason=status.phrase)
+        self.assert_could_not_fetch_logged("https://osv", status=status, reason=status.phrase)
 
 
 class RiskLevelBandTest(unittest.TestCase):

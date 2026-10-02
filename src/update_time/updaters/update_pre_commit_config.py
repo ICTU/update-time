@@ -1,4 +1,4 @@
-"""Pre-commit config updater bumps the `rev:` of each GitHub-hosted hook repository to its latest version."""
+"""Pin the `rev:` of each GitHub-hosted hook in pre-commit configs to a commit, and bump it to the latest version."""
 
 import re
 from functools import partial
@@ -14,7 +14,6 @@ from update_time.references.rewrite import apply_marker
 from update_time.sources.github import github_owner_and_repository
 
 if TYPE_CHECKING:
-    from update_time.domain.dependency import DependencyVersion
     from update_time.domain.line import Line
     from update_time.domain.reference import Reference
 
@@ -23,11 +22,11 @@ _LOG = get_logger("pre-commit config")
 # Match a `repo:` key and capture its value: a repository URL (`https://github.com/owner/repo`), or the `local` /
 # `meta` sentinels that carry no `rev:`. The value sets the repository the following `rev:` lines belong to.
 _REPO_RE = re.compile(r"repo:\s*(?P<repo>\S+)")
-# Match a `rev:` value that is either already pinned to a commit SHA with a pre-commit `# frozen: <version>` comment
-# (`rev: <sha> # frozen: v4.5.0`) or unpinned to a version tag (`rev: v4.5.0`, optionally quoted). A bare commit SHA
-# without a frozen comment doesn't resolve to a version, so it falls through to the tag branch and is rejected as a
-# non-version by the `is_valid` check in `_update_rev`, like a branch name. The tag stops at whitespace, a quote, or
-# a `#`, so a trailing `# update-time:` marker (or any comment) is left outside the match and preserved.
+# Match a `rev:` value that is either already pinned to a commit SHA with a pre-commit `# frozen:` comment naming a
+# version or a branch (`rev: <sha> # frozen: v4.5.0`, `rev: <sha> # frozen: main`), or unpinned (`rev: v4.5.0`,
+# optionally quoted). The tag group also takes an unpinned branch, a tag such as `stable-2024`, and a bare commit
+# SHA. The tag stops at whitespace, a quote, or a `#`, so a trailing `# update-time:` marker (or any comment) is left
+# outside the match and preserved.
 _REV_RE = re.compile(
     r"rev:\s*"
     rf"(?:(?P<sha>{COMMIT_SHA})\s*#\s*frozen:\s*(?P<version>\S+)|(?P<quote>['\"]?)(?P<tag>[^\s'\"#]+)(?P=quote))"
@@ -45,10 +44,9 @@ def _dependency_from_repo(repo: str) -> str:
     return f"{owner}/{repository}" if owner and repository else ""
 
 
-def _spell_rev(reference: Reference, latest: DependencyVersion) -> str:
-    """Return the `rev:` pinned to the latest version's commit SHA, with the version in a `# frozen:` comment."""
-    frozen_version = f"v{latest.version}" if reference.current_version.startswith("v") else latest.version
-    return f"rev: {latest.sha}  # frozen: {frozen_version}"
+def _spell_rev(_reference: Reference, sha: str, comment: str) -> str:
+    """Return the `rev:` pinned to the commit SHA, with the tag or branch, if any, in a `# frozen:` comment."""
+    return f"rev: {sha}" + (f"  # frozen: {comment}" if comment else "")
 
 
 _REV = PinUpdater(_spell_rev, _LOG)

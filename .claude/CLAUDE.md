@@ -10,7 +10,7 @@ Consult the justfile to learn how to run tests and checks:
 
 I create the branches, commit, and push. Never do any of that, and never offer to. A piece of work is finished when you report it with the tests and checks green, not when you propose a commit.
 
-Run `git status` before you edit, whenever you come back to the tree. I may have committed or switched branch meanwhile, and an edit onto a tree that moved is lost without a word.
+Run `git status` before you edit, whenever you come back to the tree. I may have committed or switched branch meanwhile, and an edit onto a tree that moved is lost without a word. Don't mention a clean branch.
 
 Never run a command that throws away work I have not committed: `git checkout <path>`, `git restore`, `git stash`. Undo your own experiment by editing the file back, or run it on a copy.
 
@@ -18,7 +18,7 @@ Never run a command that throws away work I have not committed: `git checkout <p
 
 Run every script with `just py`, which puts the package on the path, or with `uv run` where no recipe fits. Never use the system interpreter. This holds for a heredoc that edits one file as much as for a tree-wide rewrite.
 
-Rename a Python name with `just rename`, never by substitution. It resolves the name against each module's scopes, so it leaves the same word alone in a docstring, a help string, a parameter, and a local. It renames module-level names. For a method or an attribute it rewrites the call sites but not the definition, so rename that by hand.
+Rename a Python name with `just rename`, never by substitution. `just help rename` says how to spell the name and what the tool leaves alone.
 
 Any other bulk rewrite can destroy uncommitted work, whether you write a script or a `sed` one-liner. Follow these rules:
 

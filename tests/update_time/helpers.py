@@ -7,18 +7,20 @@ import pathlib
 import pkgutil
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from functools import cache
-from logging import DEBUG, ERROR, WARNING
+from logging import DEBUG, ERROR, INFO, WARNING
 from typing import TYPE_CHECKING, Protocol, cast
 from unittest.mock import ANY, MagicMock, Mock, call, patch
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+import requests
 from packaging.version import Version
 
 import update_time
 from update_time.domain.archival import IGNORE_ARCHIVED
 from update_time.domain.dependency import AccountedFor, ArchivedSubject, DependencyVersion, FloatingPin, tag_of
-from update_time.domain.reference import Reference
+from update_time.domain.reference import Reference, RefKind
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import Vulnerability
 from update_time.io.console import CHANGES, NOTE
@@ -32,26 +34,24 @@ from update_time.markers.floating import ALLOW_FLOATING_PIN
 from update_time.markers.marker import Marker
 from update_time.markers.reference import SteeredResolvedReference
 from update_time.primitives.location import Location
+from update_time.primitives.lookup import LookedUp
 
 from tests.helpers import mock_path, mock_response, patch_environ
-from tests.update_time.fixtures import COMMIT_SHA
+from tests.update_time.fixtures import COMMIT_SHA, FRESH_DATE, PAST_COOLDOWN_DATE
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator, Mapping, Sequence
-    from datetime import datetime
     from pathlib import Path
     from types import ModuleType
     from unittest.mock import _Call, _patch
 
     from update_time.domain.bound import Verb, VersionBound
     from update_time.domain.reference import DriftedPin
+    from update_time.io.log import Drift
 
 
 def declaration(dependency: str, version: str, path: Mock, line: int, position: int) -> Declaration:
-    """Return the declaration a file makes at the line, of a dependency PyPI serves a release for.
-
-    A test about a dependency PyPI serves none for states that for itself, since that is what it is about.
-    """
+    """Return the declaration a file makes at the line, of a dependency PyPI serves a release for."""
     return Declaration(dependency, version, Location(path, line), uv_sourced=False, direct_url=False, position=position)
 
 
@@ -91,9 +91,8 @@ class _Cached(Protocol):
 def _package_modules(package: ModuleType) -> tuple[ModuleType, ...]:
     """Return the package and every module within it, walked once and remembered.
 
-    Walking reads the filesystem, which is too slow to repeat before each of the hundreds of tests that clear the
-    caches. What each module holds is read afresh every time, so a cache added to one is still found. This cache
-    survives the clearing itself as long as the module defining it sits outside `package`.
+    What each module holds is read afresh every time, so a cache added to one is still found. This cache survives the
+    clearing itself as long as the module defining it sits outside `package`.
     """
     prefix = f"{package.__name__}."
     return (
@@ -127,8 +126,12 @@ class CacheClearingTestCase(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        """Clear all caches and logger state so each test gets fresh results."""
+        """Start each test as a fresh run."""
         super().setUp()
+        self._start_new_run()
+
+    def _start_new_run(self) -> None:
+        """Forget what the previous run fetched and which changelogs it suppressed, so the next run starts afresh."""
         self.clear_caches()
         reset_changelog_suppression()
 
@@ -142,43 +145,39 @@ class LoggingTestCase(CacheClearingTestCase):
     """Base test case for any test of code that logs.
 
     It mocks the logger's log method, exposed as the mock_log attribute, and offers the assert_*_logged helpers below.
-    The mock lives for the whole test, so `subTest` starts each case of a table against the records of its own run.
     """
 
     def setUp(self) -> None:
-        """Start the logger patch and register its cleanup."""
-        super().setUp()
+        """Start the logger patch and register its cleanup, before the test starts as a fresh run."""
         patcher = patch("logging.Logger.log")
         self.addCleanup(patcher.stop)
         self.mock_log = patcher.start()
-        self._error_expected = False  # Set by assert_error_logged; tearDown fails on an error the test didn't expect.
+        super().setUp()
 
     def tearDown(self) -> None:
-        """Fail the test if an error was logged that it did not explicitly expect via assert_error_logged."""
+        """Fail the test on an error its last run logged unexpectedly."""
         super().tearDown()
-        if not self._error_expected:
-            self.assertEqual(self.records(ERROR), [])
+        self._assert_no_unexpected_error()
 
     @contextlib.contextmanager
     def subTest(self, *args: object, **kwargs: object) -> Iterator[None]:  # noqa: N802
-        """Run the case against the records of its own run, so a table cannot forget to start one.
-
-        A case therefore sees nothing an earlier case logged. Write out the assertions about a single run rather
-        than looping them, and keep `subTest` for the cases that each run the tool.
-        """
+        """Run the case as a run of its own, so a table cannot forget to start one."""
         self._start_new_run()
         with super().subTest(*args, **kwargs):
             yield
+            self._assert_no_unexpected_error()
+        self._start_new_run()  # The case checked its own run, so tearDown has nothing of it left to check again
 
     def _start_new_run(self) -> None:
-        """Forget what the previous run logged and reported, so the next case reads the records of its own run.
-
-        `setUp` does this for each test and `subTest` for each case, so a table needs no call of its own. The
-        caches are left alone, since a table may span its cases deliberately to count the requests they share.
-        A case that needs its sources fetched afresh calls `clear_caches` itself.
-        """
+        """Forget what the previous run logged and expected as well, so the next run starts afresh."""
+        super()._start_new_run()
         self.mock_log.reset_mock()
-        reset_changelog_suppression()
+        self._error_expected = False  # Set by assert_error_logged; the run fails on an error the test didn't expect.
+
+    def _assert_no_unexpected_error(self) -> None:
+        """Fail if the run logged an error that it did not explicitly expect via assert_error_logged."""
+        if not self._error_expected:
+            self.assertEqual(self.records(ERROR), [])
 
     def records(self, level: int) -> list[_Call]:
         """Return the records logged at the level, each as the message and the fields it carries, changes folded in."""
@@ -285,10 +284,19 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that the run did not report a floating tag left as it is (other records are allowed)."""
         self.assert_none_logged(Logger._MESSAGE_UNPINNED_FLOATING_TAG, "unpinned floating tag")
 
-    def assert_pinned_logged(self, dependency: str, version: str, sha: str, location: Location) -> None:
-        """Assert that pinning a previously unpinned reference to a digest was logged for the file."""
-        self._assert_last_logged(
-            Logger._MESSAGE_PINNED, dependency=dependency, location=location, version=version, sha=sha
+    def assert_pinned_logged(
+        self, dependency: str, version: str, sha: str, location: Location, *, among_others: bool = False
+    ) -> None:
+        """Assert that the reference was logged as pinned to a version and its hash, as the only record by default."""
+        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
+        assert_logged(Logger._MESSAGE_PINNED, dependency=dependency, location=location, version=version, sha=sha)
+
+    def assert_unpinned_ref_logged(
+        self, dependency: str, name: str, location: Location, reason: str, *, ref: RefKind = RefKind.BRANCH
+    ) -> None:
+        """Assert that a ref left unpinned was reported, with the reason, as the run's only error."""
+        self.assert_error_logged(
+            Logger._MESSAGE_UNPINNED_REF, dependency=dependency, ref=ref, name=name, location=location, reason=reason
         )
 
     def assert_unpinned_floating_tag_logged(
@@ -320,6 +328,34 @@ class LoggingTestCase(CacheClearingTestCase):
             cause=cause,
         )
 
+    def assert_comment_naming_no_ref_logged(self, dependency: str, name: str, location: Location) -> None:
+        """Assert that a commit SHA whose comment does not name a ref was reported as left as it is."""
+        self.assert_logged_among_others(
+            Logger._MESSAGE_COMMENT_NAMING_NO_REF, dependency=dependency, name=name, location=location
+        )
+
+    def assert_kept_ref_logged(  # noqa: PLR0913 — the fields the message carries
+        self,
+        dependency: str,
+        name: str,
+        release: DependencyVersion,
+        location: Location,
+        cause: str,
+        *,
+        ref: RefKind = RefKind.BRANCH,
+    ) -> None:
+        """Assert that a branch or tag reference left as it is was reported, naming the release it resolves to."""
+        self.assert_logged_among_others(
+            Logger._MESSAGE_KEEPING_REF,
+            dependency=dependency,
+            ref=ref,
+            name=name,
+            resolved=release.version,
+            sha=release.sha,
+            location=location,
+            cause=cause,
+        )
+
     def assert_accounted_for_reference_logged(
         self, dependency: str, tag: str, location: Location, reason: AccountedFor
     ) -> None:
@@ -336,26 +372,27 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that a reference with nowhere to hold a hash was reported as one that cannot be pinned."""
         self.assert_logged(Logger._MESSAGE_CANNOT_PIN, dependency=dependency, location=location)
 
-    def assert_digest_drift_logged(self, drifted: DriftedPin) -> None:
-        """Assert that a re-pushed tag's digest drift was logged as a single warning for the file."""
-        self.assert_logged(Logger.DIGEST_DRIFT.warning, **Logger._drift_fields(Logger.DIGEST_DRIFT, drifted))
-
-    def assert_tag_drift_logged(self, drifted: DriftedPin) -> None:
-        """Assert that a moved tag's commit drift was logged as a single warning for the file."""
-        self.assert_logged(Logger.TAG_DRIFT.warning, **Logger._drift_fields(Logger.TAG_DRIFT, drifted))
-
-    def assert_adopted_tag_drift_logged(self, drifted: DriftedPin, cause: object = ANY) -> None:
-        """Assert that adopting a moved tag's new commit was logged once for the file."""
-        fields = Logger._drift_fields(Logger.TAG_DRIFT, drifted, cause=cause)
-        self.assert_logged(Logger.TAG_DRIFT.adopted, **fields)
-
-    def assert_adopted_digest_drift_logged(
-        self, drifted: DriftedPin, cause: object = ANY, *, among_others: bool = False
-    ) -> None:
-        """Assert that adopting a re-pushed tag's new digest was logged, as the file's only record by default."""
+    def assert_drift_logged(self, kind: Drift, drifted: DriftedPin, *, among_others: bool = False) -> None:
+        """Assert that the drift was logged, as the file's only warning by default."""
         assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
-        fields = Logger._drift_fields(Logger.DIGEST_DRIFT, drifted, cause=cause)
-        assert_logged(Logger.DIGEST_DRIFT.adopted, **fields)
+        assert_logged(kind.warning, **Logger._drift_fields(kind, drifted))
+
+    def assert_adopted_drift_logged(
+        self, kind: Drift, drifted: DriftedPin, cause: object = ANY, *, among_others: bool = False
+    ) -> None:
+        """Assert that the adopted drift was logged, as the file's only record at its level by default."""
+        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
+        assert_logged(kind.adopted, **Logger._drift_fields(kind, drifted, cause=cause))
+
+    def assert_undated_commit_logged(self, kind: Drift, drifted: DriftedPin, reason: str) -> None:
+        """Assert that a commit whose date could not be determined was logged as the file's only error."""
+        fields = Logger._drifted_reference_fields(kind, drifted, new_sha=drifted.new_sha, reason=reason)
+        self.assert_error_logged(Logger._MESSAGE_NO_COMMIT_DATE, **fields)
+
+    def assert_undated_push_logged(self, drifted: DriftedPin, reason: str) -> None:
+        """Assert that a re-pushed digest that could not be dated was logged as the file's only error."""
+        fields = Logger._drifted_reference_fields(Logger.DIGEST_DRIFT, drifted, reason=reason)
+        self.assert_error_logged(Logger._MESSAGE_NO_PUSH_DATE, **fields)
 
     def assert_hash_mismatch_logged(
         self,
@@ -509,11 +546,7 @@ class LoggingTestCase(CacheClearingTestCase):
         self.assertEqual(self.records(DEBUG), [])
 
     def assert_recognised_marker_logged(self, dependency: str, location: Location, marker: Marker) -> None:
-        """Assert that a reference's marker was reported as recognised, among the other records at its level.
-
-        A `Marker` compares without the raw text it echoes, so that the message renders it verbatim is the
-        logger's own test to pin.
-        """
+        """Assert that a reference's marker was reported as recognised, among the other records at its level."""
         self.assert_logged_among_others(
             Logger._MESSAGE_RECOGNISED_MARKER, directives=marker, dependency=dependency, location=location
         )
@@ -598,9 +631,11 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that a file that does not parse was logged for the file, naming its format."""
         self.assert_logged(Logger._MESSAGE_INVALID_FILE, location=Location(path), format=file_format)
 
-    def assert_could_not_fetch_logged(self, url: object = ANY, status: object = ANY, reason: object = ANY) -> None:
-        """Assert that a single 'could not fetch' warning was logged, optionally for a given URL and status/reason."""
-        self.assert_logged(Logger._MESSAGE_NOT_OK_RESPONSE, url=url, status=status, reason=reason)
+    def assert_could_not_fetch_logged(self, *urls: object, status: object = ANY, reason: object = ANY) -> None:
+        """Assert that the run's only warnings say each of the URLs could not be fetched, a single one by default."""
+        message = Logger._MESSAGE_NOT_OK_RESPONSE
+        fields = [{"url": url, "status": status, "reason": reason} for url in urls or (ANY,)]
+        self.assertEqual(self.records(message.level), [self._expected_call(message, each) for each in fields])
 
     def assert_command_failed_logged(self, command: object, output: object) -> None:
         """Assert that a single 'command failed' error was logged, for the given command and output."""
@@ -609,6 +644,10 @@ class LoggingTestCase(CacheClearingTestCase):
     def assert_command_stderr_logged(self, command: object = ANY, stderr: object = ANY) -> None:
         """Assert that a single 'command wrote to stderr' warning was logged, optionally for a given command/stderr."""
         self.assert_logged(Logger._MESSAGE_COMMAND_STDERR, command=command, stderr=stderr)
+
+    def assert_no_info_logged(self) -> None:
+        """Assert that nothing was logged at INFO."""
+        self.assertEqual(self.records(INFO), [])
 
     def assert_no_warnings_logged(self) -> None:
         """Assert that no warnings were logged."""
@@ -650,10 +689,16 @@ staleness_disabled = patch_environ({STALE_AFTER.name: "0"})
 # of what a run then leaves unasked and unreported.
 archival_check_disabled = patch_environ({IGNORE_ARCHIVED.name: "1"})
 
-# Reusable context managers that make every reference in the run adopt hash drift or keep its tag floating, as
+# Reusable context managers that make every reference in the run adopt hash drift or keep its pin floating, as
 # --allow-hash-drift and --allow-floating-pin do.
 hash_drift_allowed = patch_environ({ALLOW_HASH_DRIFT.name: "1"})
 floating_pin_allowed = patch_environ({ALLOW_FLOATING_PIN.name: "1"})
+
+# Reusable decorator for the tests that patch the GitHub source's getter: the commit a reference's own tag points at
+# carries that tag alone, so the reference keeps its version.
+no_other_version_at_the_tag = patch(
+    "update_time.references.github.version_at_tag", new=lambda _dependency, version: version
+)
 
 
 def pyproject(*specs: str, marker: str = "") -> str:
@@ -702,9 +747,15 @@ def requirements_file(contents: str, *, sibling_in: bool = False) -> Mock:
     return requirements_txt
 
 
-def github_release_json(tag_name: str, **extra: object) -> dict[str, object]:
+def days_ago(days: int) -> datetime:
+    """Return the instant the given number of days ago."""
+    return datetime.now(UTC) - timedelta(days=days)
+
+
+def github_release_json(tag_name: str, published_at: datetime | None = None, **extra: object) -> dict[str, object]:
     """Return a GitHub release API result for the tag, eligible (not a draft or prerelease) unless overridden."""
-    return {"draft": False, "prerelease": False, "tag_name": tag_name, "body": None, "published_at": None, **extra}
+    published = published_at.isoformat() if published_at else None
+    return {"draft": False, "prerelease": False, "tag_name": tag_name, "body": None, "published_at": published, **extra}
 
 
 def github_tag_json(name: str, sha: str = COMMIT_SHA) -> dict[str, object]:
@@ -712,14 +763,65 @@ def github_tag_json(name: str, sha: str = COMMIT_SHA) -> dict[str, object]:
     return {"name": name, "commit": {"sha": sha}}
 
 
-def github_commits_json(sha: str = COMMIT_SHA, date: str = "") -> dict[str, object]:
-    """Return a GitHub commits API result carrying a tag's commit SHA and, when given, its committer date.
+# The reason Update-time reports for a GitHub request refused because the rate limit is exceeded.
+GITHUB_RATE_LIMITED_REASON = "HTTP 403, API rate limit exceeded"
 
-    GitHub reports the commit and its committer whether or not the committer has a date, so a dateless commit
-    carries both, with the date left out.
+
+def github_rate_limited() -> Mock:
+    """Return the response GitHub refuses a request with once the rate limit is exceeded."""
+    return mock_response({"message": "API rate limit exceeded"}, ok=False, status_code=403)
+
+
+def github_unknown_ref(ref: str) -> Mock:
+    """Return the response GitHub's commits endpoint gives for a ref that does not name a commit in the repository."""
+    return mock_response({"message": f"No commit found for SHA: {ref}"}, ok=False, status_code=422)
+
+
+def github_not_found() -> Mock:
+    """Return the 404 GitHub answers about a repository that does not exist, and a commit listing of an unknown ref."""
+    return mock_response({"message": "Not Found"}, ok=False, status_code=404)
+
+
+def github_commits_json(
+    sha: str = COMMIT_SHA, date: datetime | None = None, parents: Sequence[str] = ()
+) -> dict[str, object]:
+    """Return a GitHub commits API result carrying a commit SHA, its parents, and, when given, its committer date.
+
+    GitHub reports the commit and its committer whether or not the committer has a date, so a dateless commit carries
+    both, with the date left out.
     """
-    committer = {"date": date} if date else {"name": "The committer"}
-    return {"sha": sha, "commit": {"committer": committer}}
+    committer = {"date": date.isoformat()} if date else {"name": "The committer"}
+    return {"sha": sha, "commit": {"committer": committer}, "parents": [{"sha": parent} for parent in parents]}
+
+
+def github_fresh_line(length: int, parent: str) -> list[dict[str, object]]:
+    """Return a line of fresh commits, newest first, each the first parent of the one listed before it."""
+    shas = [f"{index:040x}" for index in range(length)]
+    return [
+        github_commits_json(sha, date=FRESH_DATE, parents=[first_parent])
+        for sha, first_parent in zip(shas, [*shas[1:], parent], strict=True)
+    ]
+
+
+def _listing_page(commits: list, url: str) -> Mock:
+    """Return the page of the listing that the URL asks for, linking to the next page while the listing goes on.
+
+    A response among the commits answers for the page holding it, so a page after the first can fail.
+    """
+    parsed = urlparse(url)
+    query = {name: values[0] for name, values in parse_qs(parsed.query).items()}
+    size, page = int(query["per_page"]), int(query.get("page", 1))
+    start = (page - 1) * size
+    if failed := [response for response in commits[start : start + size] if isinstance(response, Mock)]:
+        return failed[0]
+    next_url = urlunparse(parsed._replace(query=urlencode({**query, "page": page + 1})))
+    links = {"next": {"url": next_url, "rel": "next"}} if start + size < len(commits) else {}
+    return mock_response(commits[start : start + size], ok=True, status_code=200, url=url, links=links)
+
+
+def full_commit_sha(short_sha: str) -> str:
+    """Return a full commit SHA that the short one abbreviates, as GitHub resolves it."""
+    return short_sha.ljust(len(COMMIT_SHA), "0")
 
 
 def _github_endpoint(url: str) -> str:
@@ -729,50 +831,97 @@ def _github_endpoint(url: str) -> str:
     return endpoint.partition("/")[0]
 
 
-def _github_api(
+def _tag_ref(url: str, tags: list) -> Mapping | Mock:
+    """Return the ref of the tag the URL looks up, or the 404 GitHub answers for a name the tags do not carry."""
+    name = url.partition("/git/ref/tags/")[2]
+    return {"ref": f"refs/tags/{name}"} if any(tag["name"] == name for tag in tags) else github_not_found()
+
+
+def _github_api(  # noqa: PLR0913 — what each endpoint answers
     releases: list | None = None,
     tags: list | None = None,
     commit: Mapping | Mock | Exception | None = None,
     *,
+    listed_commits: list | Mock | None = None,
+    comparison_status: str | Mock = "ahead",
     archived: bool = False,
+    tag_ref: Mock | Exception | None = None,
 ) -> Mock:
-    """Return a requests.get mock serving the GitHub releases, tags, commits, and repository endpoints.
+    """Return a requests.get mock serving the GitHub releases, tags, commits, compare, and repository endpoints.
 
-    Each request is answered by the endpoint it names, so a test needs no expectation about the order the source
-    asks in. An endpoint given as None answers non-OK, so a test can make it unreachable. The commits endpoint
-    serves the same commit for every ref. Pass a Mock there to serve a whole response rather than JSON, such as a
-    non-OK one with an error body, or an exception to fail the request itself.
+    Each request is answered by the endpoint it names. An endpoint given as None answers non-OK, so a test can make it
+    unreachable. The commits endpoint serves the same commit for every ref. A listing of commits serves the listed
+    commits a page at a time, or else that commit alone. The compare endpoint answers every comparison of two commits
+    with the comparison status. Pass a Mock as the commit, the listed commits, or the comparison status to serve a
+    whole response rather than JSON, such as a non-OK one with an error body, or an exception as the commit to fail the
+    request itself. A Mock among the listed commits answers for the page holding it. The tags are listed a page at a
+    time too, and the lookup of a single tag finds any of them, unless a Mock or an exception given as the tag ref
+    answers it.
     """
 
+    def answer(url: str) -> Mapping | list | Mock | Exception | None:
+        """Return what the endpoint the URL names answers: JSON, a whole response, or an exception to raise."""
+        if urlparse(url).path.endswith("/commits"):
+            listing = listed_commits if listed_commits is not None else [commit] if isinstance(commit, dict) else commit
+            return _listing_page(listing, url) if isinstance(listing, list) else listing
+        if (endpoint := _github_endpoint(url)) == "git":
+            return tag_ref if tag_ref is not None else _tag_ref(url, tags or [])
+        if endpoint == "tags" and tags is not None:
+            return _listing_page(tags, url)
+        compared = {"status": comparison_status} if isinstance(comparison_status, str) else comparison_status
+        answers = {"commits": commit, "releases": releases, "compare": compared, "": {"archived": archived}}
+        return answers.get(endpoint, tags)
+
     def serve(url: str, **_kwargs: object) -> Mock:
-        json: Mapping | list | None
-        endpoint = _github_endpoint(url)
-        if endpoint == "commits":
-            if isinstance(commit, Exception):
-                raise commit
-            if isinstance(commit, Mock):
-                return commit
-            json = commit
-        elif endpoint == "releases":
-            json = releases
-        elif endpoint:
-            json = tags
-        else:
-            json = {"archived": archived}
+        json = answer(url)
+        if isinstance(json, Exception):
+            raise json
+        if isinstance(json, Mock):
+            return json
         return mock_response(json, ok=json is not None, status_code=200 if json is not None else 404, url=url)
 
     return Mock(side_effect=serve)
 
 
-def patch_github(
+def patch_github(  # noqa: PLR0913 — what each endpoint answers
     releases: list | None = None,
     tags: list | None = None,
     commit: Mapping | Mock | Exception | None = None,
     *,
+    listed_commits: list | Mock | None = None,
+    comparison_status: str | Mock = "ahead",
     archived: bool = False,
+    tag_ref: Mock | Exception | None = None,
 ) -> _patch:
     """Patch requests.get to serve the GitHub API endpoints from the given values (see `_github_api`)."""
-    return patch("requests.get", _github_api(releases, tags, commit, archived=archived))
+    api = _github_api(
+        releases,
+        tags,
+        commit,
+        listed_commits=listed_commits,
+        comparison_status=comparison_status,
+        archived=archived,
+        tag_ref=tag_ref,
+    )
+    return patch("requests.get", api)
+
+
+def github_requests(endpoint: str) -> list[str]:
+    """Return the URLs requested from the GitHub API endpoint."""
+    requests_get = cast("Mock", requests.get)
+    urls = [request.args[0] for request in requests_get.call_args_list]
+    return [url for url in urls if _github_endpoint(url) == endpoint]
+
+
+def github_commit_listing_queries() -> list[dict[str, list[str]]]:
+    """Return the query of each request that listed commits."""
+    urls = [urlparse(url) for url in github_requests("commits")]
+    return [parse_qs(url.query) for url in urls if url.path.endswith("/commits")]
+
+
+def github_refs_whose_commits_were_listed() -> list[str]:
+    """Return the refs whose commits were listed."""
+    return [ref for query in github_commit_listing_queries() for ref in query["sha"]]
 
 
 def maven_central_dated_row(name: str, published: str, size: str) -> str:
@@ -1070,7 +1219,7 @@ def npm_registry(published: dict[str, str], deprecated: dict[str, str] | None = 
     return mock_response({"time": published, "versions": versions})
 
 
-PYPI_OLD_UPLOAD = "2020-01-01T00:00:00.000000Z"  # A distribution upload time well outside the cooldown window.
+PYPI_OLD_UPLOAD = "2020-01-01T00:00:00.000000Z"  # A distribution upload time far older than the cooldown.
 
 
 def pypi_index(
@@ -1112,6 +1261,14 @@ def pypi_release(
     return mock_response({"info": info, "urls": urls})
 
 
-def docker_tag(name: str, digest: str = "", **extra: object) -> dict[str, object]:
-    """Return a single-tag Docker Hub API result for the tag, with an optional digest and extra fields."""
-    return {"name": name, **({"digest": digest} if digest else {}), **extra}
+def docker_tag(
+    name: str, digest: str = "", *, tag_last_pushed: datetime | None = PAST_COOLDOWN_DATE, **extra: object
+) -> dict[str, object]:
+    """Return a single-tag Docker Hub API result for the tag, with an optional digest, a push date, and extra fields."""
+    pushed = {"tag_last_pushed": tag_last_pushed.isoformat()} if tag_last_pushed else {}
+    return {"name": name, **({"digest": digest} if digest else {}), **pushed, **extra}
+
+
+def docker_hub_version(version: str) -> str:
+    """Return the version as a new-version line renders it for a tag `docker_tag` dates by default."""
+    return str(DependencyVersion(version, publication=LookedUp(PAST_COOLDOWN_DATE)))

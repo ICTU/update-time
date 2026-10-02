@@ -81,6 +81,48 @@ class BoundTest(unittest.TestCase):
         self.assertRaises(ValueError, bound, Verb.ALLOW, "not-a-bound")
 
 
+class LoggingTestCaseTest(unittest.TestCase):
+    """Unit tests for the base test case that fails a test on an error it did not expect."""
+
+    def assert_fails_once_on_the_unexpected_error(self, table: type[LoggingTestCase]) -> None:
+        """Assert that running the table's test reports one failure, naming the error it logged unexpectedly."""
+        result = unittest.TestResult()
+        table("test_table").run(result)
+        self.assertEqual(len(result.failures), 1)
+        self.assertIn("No valid version found", result.failures[0][1])
+
+    def test_an_error_an_earlier_case_of_a_table_logs_fails_the_test(self):
+        """Test that an error the first case of a table logs fails the test, although the last case logs none."""
+
+        class Table(LoggingTestCase):
+            """A table whose first case logs an error without asserting it."""
+
+            def test_table(self) -> None:
+                """Log an error in the first case only."""
+                for case in ("logs an error", "logs nothing"):
+                    with self.subTest(case):
+                        if case == "logs an error":
+                            Logger("test").no_version("owner/repository")
+
+        self.assert_fails_once_on_the_unexpected_error(Table)
+
+    def test_an_error_a_later_case_of_a_table_logs_fails_the_test_although_an_earlier_case_expected_one(self):
+        """Test that an error a later case of a table logs fails the test, although an earlier case asserted one."""
+
+        class Table(LoggingTestCase):
+            """A table whose first case asserts the error it logs, and whose second case does not."""
+
+            def test_table(self) -> None:
+                """Log an error in both cases, asserting it in the first only."""
+                for case in ("expects an error", "logs an error"):
+                    with self.subTest(case):
+                        Logger("test").no_version("owner/repository")
+                        if case == "expects an error":
+                            self.assert_error_logged(Logger._MESSAGE_NO_VERSION, dependency="owner/repository")
+
+        self.assert_fails_once_on_the_unexpected_error(Table)
+
+
 class AssertNoRedundantSuppressionLoggedTest(unittest.TestCase):
     """Unit tests for the assertion that no vulnerability suppression was reported as silencing nothing."""
 

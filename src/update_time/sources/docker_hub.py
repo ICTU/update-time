@@ -9,11 +9,13 @@ push dates, for the digests Docker Hub's listing gives, and for credentials, whi
 """
 
 import os
+from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
-from update_time.io.fetch import fetch
+from update_time.io.fetch import failure_reason, fetch
 from update_time.io.log import get_logger
+from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import parse_timestamp
 
 if TYPE_CHECKING:
@@ -68,8 +70,25 @@ _TAG_LISTING_PAGE_SIZE = 100
 _MAX_TAG_LISTING_PAGES = 5
 
 
-def tag_digests(repository: str, tag: str) -> tuple[dict[str, str], bool]:
-    """Return the digest each listed tag of a Docker Hub repository serves, and whether the listing was read out.
+# Why a tag's push date is unknown when Docker Hub answered without one.
+_NO_PUSH_DATE = "Docker Hub did not report a push date"
+
+
+@dataclass(frozen=True)
+class _TagListing:
+    """A Docker Hub repository's listed tags: their digests and push dates, and whether the listing was read out."""
+
+    digests: dict[str, str]
+    pushes: dict[str, datetime]
+    examined_all: bool
+
+    def pushed(self, tag: str) -> LookedUp[datetime]:
+        """Return when the listed tag was pushed, or why the listing can't say."""
+        return LookedUp(self.pushes[tag]) if tag in self.pushes else LookedUp(None, _NO_PUSH_DATE)
+
+
+def tag_listing(repository: str, tag: str) -> _TagListing:
+    """Return a Docker Hub repository's tag listing, read until it holds every tag serving the tag's digest.
 
     `repository` is the `namespace/repository` path (e.g. `library/python`). The OCI listing gives tag names only,
     so this is the only listing that says which tags serve one digest. The listing is ordered by push date and a
@@ -80,13 +99,15 @@ def tag_digests(repository: str, tag: str) -> tuple[dict[str, str], bool]:
     """
     url = _listing_url(repository)
     digests: dict[str, str] = {}
+    pushes: dict[str, datetime] = {}
     for _page in range(_MAX_TAG_LISTING_PAGES):
         entries, url = _listing_page(url)
         page = {entry["name"]: entry.get("digest", "") for entry in entries}
         digests |= page
+        pushes |= _push_dates(entries)
         if not url or _lists_every_alias(digests, page, tag):
             break
-    return digests, not url
+    return _TagListing(digests, pushes, examined_all=not url)
 
 
 def newest_pushes(repository: str) -> dict[str, datetime]:
@@ -97,6 +118,11 @@ def newest_pushes(repository: str) -> dict[str, datetime]:
     date is left out.
     """
     entries, _next_page = _listing_page(_listing_url(repository))
+    return _push_dates(entries)
+
+
+def _push_dates(entries: tuple[_TagJSON, ...]) -> dict[str, datetime]:
+    """Return each tag listed with the date it was pushed, leaving out a tag without a push date."""
     return {
         entry["name"]: published
         for entry in entries
@@ -145,14 +171,16 @@ def _lists_every_alias(digests: dict[str, str], page: dict[str, str], tag: str) 
     return bool(digest) and digest not in page.values()
 
 
-def last_pushed(repository: str, tag: str) -> datetime | None:
-    """Return the push date of a Docker Hub tag from Docker Hub's proprietary API, used only for the cooldown.
+def last_pushed(repository: str, tag: str) -> LookedUp[datetime]:
+    """Return the push date of a Docker Hub tag.
 
-    `repository` is the `namespace/repository` path (e.g. `library/redis`). This proprietary API is the only source
-    of a real push date (see the module docstring); when it can't be fetched the response is logged and None is
-    returned, which means no cooldown is applied to the tag.
+    `repository` is the `namespace/repository` path (e.g. `library/redis`).
     """
-    response = fetch(f"{_tags_url(repository)}/{tag}", _LOG, headers=api_headers())
-    if response is None:
-        return None
-    return parse_timestamp(response.json().get("tag_last_pushed"))
+    response = fetch(f"{_tags_url(repository)}/{tag}", _LOG, headers=api_headers(), require_ok=False)
+    if response is not None and not response.ok:  # The fetch logged a failed request, but not a refused one
+        _LOG.response(response)
+    if response is None or not response.ok:
+        return LookedUp(None, failure_reason(response))
+    if (pushed := parse_timestamp(response.json().get("tag_last_pushed"))) is None:
+        return LookedUp(None, _NO_PUSH_DATE)
+    return LookedUp(pushed)

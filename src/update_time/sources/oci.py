@@ -16,10 +16,11 @@ from typing import TYPE_CHECKING, cast
 
 from packaging.version import InvalidVersion, Version
 
-from update_time.domain.cooldown import within_cooldown
+from update_time.domain.cooldown import CooldownWalk
 from update_time.domain.dependency import (
     LOWEST_VERSION,
     MAIN_VERSION,
+    UNDATED,
     AccountedFor,
     DependencyName,
     DependencyVersion,
@@ -35,6 +36,7 @@ from update_time.domain.publication import publication_date_reporting, reports_p
 from update_time.io.fetch import fetch, next_page_url
 from update_time.io.log import get_logger
 from update_time.primitives.digest import SHA256_DIGEST
+from update_time.primitives.lookup import DeferredLookup
 from update_time.sources import docker_hub
 
 if TYPE_CHECKING:
@@ -43,6 +45,7 @@ if TYPE_CHECKING:
 
     from update_time.domain.bound import NewVersionGetter, VersionBound
     from update_time.formats.yaml import Document
+    from update_time.primitives.lookup import Lookup
 
 _LOG = get_logger("oci")
 
@@ -119,7 +122,7 @@ class Tag:
 
     name: str
     digest: str = ""
-    last_pushed: datetime | None = None
+    pushed: Lookup[datetime] = UNDATED  # When Docker Hub says the tag was pushed, or why it could not say
 
     @cached_property
     def _match(self) -> re.Match[str] | None:
@@ -219,13 +222,6 @@ class Tag:
         """
         return self._sort_key < other._sort_key
 
-    def _within_cooldown(self, cooldown_days: int) -> bool:
-        """Return whether the tag was pushed within a cooldown period of the given number of days.
-
-        Only Docker Hub exposes a push date; for tags without one (other registries) no cooldown is applied.
-        """
-        return within_cooldown(self.last_pushed, cooldown_days)
-
     def with_version(self, version: Version, suffix: str) -> Tag:
         """Return a new Tag with this tag's prefix, the given main version, and the given suffix.
 
@@ -284,13 +280,6 @@ class Tag:
         if self.suffix_label != current.suffix_label:
             return False  # Ignore tags whose suffix label differs so we don't change e.g. fat to slim, or alpine to fat
         return self.is_newer_or_equal(current)
-
-    def is_eligible(self, cooldown_days: int) -> bool:
-        """Return whether this tag (with metadata fetched) can be used: it has a digest and is past the cooldown.
-
-        The name-only checks have already been made by `is_candidate_for` before the metadata was fetched.
-        """
-        return bool(self.digest) and not self._within_cooldown(cooldown_days)
 
 
 def _split_domain(image: str) -> tuple[str | None, str]:
@@ -357,8 +346,9 @@ def _resolved_tag(
     Keeps the tag's non-numerical parts while upgrading its version. A tag naming a channel rather than a version
     is floating, and resolves to the concrete tag that channel currently serves instead of to a newer one. A
     reference naming no tag equals `latest`, so it resolves the way a floating tag does. One request lists the tag
-    names, and each candidate examined costs one more, for its digest and its push date. A bound narrows the
-    candidates by their main version alone, leaving the labels to match as they otherwise would.
+    names, and each candidate examined costs one more, for its digest. On Docker Hub, the cooldown costs another for
+    the candidate's push date. A bound narrows the candidates by their main version alone, leaving the labels to
+    match as they otherwise would.
     """
     current = Tag(name=current_tag or _DEFAULT_TAG)
     if _is_floating(current):
@@ -366,16 +356,27 @@ def _resolved_tag(
     if current.version is None:
         # A tag Update-time can read as neither a version nor a channel, such as `debian:dev-2024`: it names no
         # version to advance, so the tag stands and the digest it serves pins it.
-        digest = _manifest_digest(image, current.name)
-        return DependencyVersion(version=current.name, sha=digest, served=bool(digest))
+        if (tag := _get_tag(image, current.name)) is None:
+            return DependencyVersion(version=current.name, served=False)
+        return DependencyVersion(version=current.name, sha=tag.digest, publication=tag.pushed)
     candidates = [
         tag
         for tag in (Tag(name=name) for name in _tag_names(image))
-        if tag.is_candidate_for(current) and version_bound.keeps(cast("Version", tag.version), current_tag)
+        if tag.is_candidate_for(current)
+        and version_bound.keeps(cast("Version", tag.version), current_tag)
+        and not _is_another_spelling(tag, current)
     ]
-    return first_eligible(
-        candidates, lambda candidate: _eligible_tag(image, current, candidate, cooldown_days), current_tag
-    )
+    walk = CooldownWalk(cooldown_days)
+    return first_eligible(candidates, lambda candidate: _eligible_tag(image, current, candidate, walk), current_tag)
+
+
+def _is_another_spelling(candidate: Tag, current: Tag) -> bool:
+    """Return whether the candidate names the current version under another spelling, such as `3.12.0` for `3.12`.
+
+    `is_newer_or_equal` tells equality here, since a candidate is never older than the current tag (see
+    `is_candidate_for`).
+    """
+    return candidate.name != current.name and current.is_newer_or_equal(candidate)
 
 
 def tag_getter(accounted_for: Callable[[PinnedDependency], AccountedFor | None]) -> NewVersionGetter:
@@ -433,14 +434,17 @@ def _resolved_floating_tag(image: DependencyName, current: Tag) -> DependencyVer
     """
     if not is_docker_hub_image(image):
         return _walked_floating_tag(image, current)
-    digests, examined_all = docker_hub.tag_digests(_repository(image), current.name)
-    if not (digest := digests.get(current.name)):
-        reason_no_version_was_pinned = FloatingPin.NOT_LISTED if examined_all else FloatingPin.NOT_AMONG_EXAMINED
+    listing = docker_hub.tag_listing(_repository(image), current.name)
+    if not (digest := listing.digests.get(current.name)):
+        reason_no_version_was_pinned = (
+            FloatingPin.NOT_LISTED if listing.examined_all else FloatingPin.NOT_AMONG_EXAMINED
+        )
         return _unpinned_floating_tag(current, reason_no_version_was_pinned)
-    aliases = [Tag(name=name) for name, tag_digest in digests.items() if tag_digest == digest]
+    pushed = listing.pushed(current.name)
+    aliases = [Tag(name=name) for name, tag_digest in listing.digests.items() if tag_digest == digest]
     if (alias := _pinned_alias(current, aliases)) is None:
-        return _unpinned_floating_tag(current, FloatingPin.NO_VERSION_TAG, digest)
-    return DependencyVersion(version=alias.name, sha=digest, floating=FloatingPin.RESOLVED)
+        return _unpinned_floating_tag(current, FloatingPin.NO_VERSION_TAG, digest, pushed)
+    return DependencyVersion(version=alias.name, sha=digest, publication=pushed, floating=FloatingPin.RESOLVED)
 
 
 # How many tags the walk asks for a manifest at most, so that a repository whose tags the floating tag's image
@@ -472,14 +476,16 @@ def _walked_floating_tag(image: DependencyName, current: Tag) -> DependencyVersi
     )
 
 
-def _unpinned_floating_tag(current: Tag, reason: FloatingPin, digest: str = "") -> DependencyVersion:
+def _unpinned_floating_tag(
+    current: Tag, reason: FloatingPin, digest: str = "", pushed: Lookup[datetime] = UNDATED
+) -> DependencyVersion:
     """Return the floating tag as it is, carrying why no version was pinned in its place.
 
-    It carries the digest the tag serves, where that digest is known. Two of the reasons say the registry does not
-    serve the tag, so nothing dates the reference.
+    It carries the digest the tag serves, and when the tag was pushed, where those are known. Two of the reasons say
+    the registry does not serve the tag, so nothing dates the reference.
     """
     served = reason not in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)
-    return DependencyVersion(version=current.name, sha=digest, floating=reason, served=served)
+    return DependencyVersion(version=current.name, sha=digest, publication=pushed, floating=reason, served=served)
 
 
 def _pinned_alias(current: Tag, aliases: list[Tag]) -> Tag | None:
@@ -588,20 +594,23 @@ def _newest_release(image: str) -> Release | None:
     return Release(version=named_by.name, published=published)
 
 
-def _eligible_tag(image: str, current: Tag, candidate: Tag, cooldown_days: int) -> DependencyVersion | None:
-    """Resolve the candidate's digest and push date and return it when eligible, or None when it isn't.
+def _eligible_tag(image: str, current: Tag, candidate: Tag, walk: CooldownWalk) -> DependencyVersion | None:
+    """Return the candidate, resolved to its digest, when it is eligible, or None when it isn't.
 
-    A candidate that equals the current tag on every version axis is the current version under another tag spelling
-    (an alias such as `22.15` for `22.15.0`), so the current spelling is kept and only its digest is adopted.
+    The cooldown does not hold the current tag back, since the reference uses it already. A cooldown that applies
+    holds back a candidate whose push date Docker Hub failed to report, and every tag between it and the current one.
     """
-    latest = _get_tag(image, candidate.name)
-    if latest is None or not latest.is_eligible(cooldown_days):
+    is_current = candidate.name == current.name
+    if walk.stopped and not is_current:
         return None
-    if current.is_newer_or_equal(latest):  # The candidate is never older (see `is_candidate_for`), so this is equality.
-        name = current.name
-    else:
-        name = current.with_version(cast("Version", latest.version), latest.suffix).name
-    return DependencyVersion(version=name, sha=latest.digest, published=latest.last_pushed)
+    latest = _get_tag(image, candidate.name)
+    if latest is None:
+        return None
+    report_undated = partial(_LOG.undated_push, image, candidate.name, current.name)
+    if not is_current and not walk.past(latest.pushed, report_undated):
+        return None
+    name = current.name if is_current else current.with_version(cast("Version", latest.version), latest.suffix).name
+    return DependencyVersion(version=name, sha=latest.digest, publication=latest.pushed)
 
 
 def _registry_host(image: str) -> str:
@@ -659,17 +668,19 @@ def _tag_names(image: str) -> list[str]:
 
 @cache
 def _get_tag(image: str, name: str) -> Tag | None:
-    """Resolve a tag's digest (from its OCI manifest) and push date (Docker Hub only), or None if it has no digest.
+    """Return the tag with the digest its OCI manifest holds, or None when the registry does not serve one.
 
-    The digest comes from the OCI manifest, which works on every registry. The publish date needed for the cooldown
-    is only available from Docker Hub's proprietary API, so other registries' tags have no publish date and no
-    cooldown. The OCI protocol exposes no publish date; see `docker_hub`.
+    The digest comes from the OCI manifest, which works on every registry. Docker Hub's proprietary API reports a push
+    date, which the OCI protocol does not expose; see `docker_hub`. So the cooldown applies to a Docker Hub tag alone,
+    and the push date is read when the cooldown needs it.
     """
     digest = _manifest_digest(image, name)
     if not digest:
         return None
-    pushed = docker_hub.last_pushed(_repository(image), name) if is_docker_hub_image(image) else None
-    return Tag(name=name, digest=digest, last_pushed=pushed)
+    if not is_docker_hub_image(image):
+        return Tag(name=name, digest=digest)
+    pushed = DeferredLookup(partial(docker_hub.last_pushed, _repository(image), name))
+    return Tag(name=name, digest=digest, pushed=pushed)
 
 
 @cache

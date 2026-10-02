@@ -161,7 +161,7 @@ def _rules(artefacts: Iterable[DependencyName]) -> str:
     """Return a rule per artefact the cooldown holds versions of back, or nothing where it holds none back.
 
     An artefact several declarations name gets one rule, so a pom declaring it twice names its versions once. The
-    repository is not asked at all for a window that holds nothing back.
+    repository is not asked at all for a cooldown that holds nothing back.
     """
     cooldown_days = COOLDOWN.get()
     if cooldown_days <= 0:

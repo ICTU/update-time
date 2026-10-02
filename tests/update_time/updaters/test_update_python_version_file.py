@@ -1,7 +1,7 @@
 """Unit tests for the Python version file update script."""
 
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND
@@ -14,15 +14,18 @@ from update_time.updaters.update_python_version_file import update_python_versio
 
 from tests.helpers import mock_path, patch_pathlib_path
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import LoggingTestCase, docker_tag
+from tests.update_time.fixtures import DIGEST, PAST_COOLDOWN_DATE, STALE_DATE
+from tests.update_time.helpers import LoggingTestCase, docker_hub_version, docker_tag
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
 from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
+if TYPE_CHECKING:
+    from datetime import datetime
 
-def _python_tag(last_pushed: str | None = None) -> dict[str, object]:
-    """Return a Docker Hub `python:3.13.2` tag with a digest, and optionally a push date, for the fallback tests."""
-    return docker_tag("3.13.2", DIGEST, **({"tag_last_pushed": last_pushed} if last_pushed else {}))
+
+def _python_tag(last_pushed: datetime = PAST_COOLDOWN_DATE) -> dict[str, object]:
+    """Return a Docker Hub `python:3.13.2` tag with a digest and a push date, for the fallback tests."""
+    return docker_tag("3.13.2", DIGEST, tag_last_pushed=last_pushed)
 
 
 class _VersionFileTestCase(LoggingTestCase):
@@ -239,7 +242,7 @@ class UpdatePythonVersionFilesFallbackTest(RegistryRequestsMixin, _VersionFileTe
         self.requests.side_effect = mock_docker_registry(_python_tag())
         version_file = self.update_version_file(mock_glob)
         version_file.write_text.assert_called_once_with("3.13.2\n")
-        self.assert_new_version_logged("python", "3.13.2", Location(version_file, 1))
+        self.assert_new_version_logged("python", docker_hub_version("3.13.2"), Location(version_file, 1))
         self.assert_no_warnings_logged()
 
     def test_fallback_cooldown_marker_is_not_reported_as_redundant(self, mock_glob: Mock):
@@ -265,8 +268,7 @@ class UpdatePythonVersionFilesFallbackTest(RegistryRequestsMixin, _VersionFileTe
 
     def test_fallback_stale_warned(self, mock_glob: Mock):
         """Test that a stale `python` release (newest tag pushed long ago) is warned about via the fallback."""
-        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
-        self.requests.side_effect = mock_docker_registry(_python_tag(last_pushed=old))
+        self.requests.side_effect = mock_docker_registry(_python_tag(last_pushed=STALE_DATE))
         version_file = self.update_version_file(mock_glob, "3.13.2\n")
         version_file.write_text.assert_not_called()
         self.assert_stale_dependency_logged("python", "3.13.2", Location(version_file, 1))

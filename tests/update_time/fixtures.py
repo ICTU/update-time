@@ -1,5 +1,7 @@
 """Test fixtures."""
 
+from datetime import UTC, datetime, timedelta
+
 from update_time.markers.marker import _IGNORABLE_SCOPES, _SOURCE_CHECK_SCOPES, Marker
 from update_time.sources import github
 
@@ -19,6 +21,7 @@ DIGEST3 = f"sha256:{_HASH3}"
 # 40-character hex git commit SHAs, as a GitHub Action `uses:` or a pre-commit hook `rev:` pins to.
 COMMIT_SHA = COMMIT_SHA1 = "a" * 40
 COMMIT_SHA2 = "b" * 40
+COMMIT_SHA3 = "c" * 40
 
 # The marker a bare `# update-time: ignore` expresses: every check the marker can hold back is held back.
 BARE_IGNORE = Marker(ignored_scopes=_IGNORABLE_SCOPES)
@@ -30,6 +33,15 @@ EVERY_IGNORABLE_SCOPE = " ".join(f"ignore[{scope}]" for scope in _IGNORABLE_SCOP
 # The directives naming every scope the reference's own source answers, so a marker carrying them leaves that
 # source nothing to be asked for.
 EVERY_SOURCE_CHECK_SCOPE = " ".join(f"ignore[{scope}]" for scope in _SOURCE_CHECK_SCOPES)
+
+# A publication date old enough that the default staleness threshold warns about it, and one inside the default
+# cooldown.
+STALE_DATE = datetime.now(UTC) - timedelta(days=512)
+FRESH_DATE = datetime.now(UTC)
+
+# A publication date past the default cooldown that the default staleness threshold passes over, and a threshold of
+# 90 days does not.
+PAST_COOLDOWN_DATE = datetime.now(UTC) - timedelta(days=100)
 
 # A changelog naming version 1.1, so parsing it for 1.1 yields the whole fixture.
 CHANGELOG = "## 1.1\n- Fixed ..."

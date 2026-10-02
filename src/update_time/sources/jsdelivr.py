@@ -25,6 +25,7 @@ from update_time.domain.vulnerability import vulnerability_reporting
 from update_time.domain.yank import with_yank_state, yank_reporting
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
+from update_time.primitives.lookup import LookedUp
 from update_time.sources.npmjs import deprecation, get_publication_datetime
 from update_time.sources.npmjs import project as npm_project
 
@@ -52,7 +53,7 @@ def version_getter(filename: str) -> NewVersionGetter:
         """Return the latest jsDelivr version published outside the cooldown, with the file's integrity hash.
 
         Mirrors the pypi and oci sources: walk the available versions newest-first and pick the first one published
-        outside the cooldown window. Pre-releases, invalid versions, versions the bound rules out, and versions the
+        outside the cooldown. Pre-releases, invalid versions, versions the bound rules out, and versions the
         npm registry has no publication date for (e.g. present on jsDelivr but not yet mirrored) are skipped.
         Returns the current version unchanged when it is invalid, already the newest eligible version, or the
         referenced file's integrity hash can't be resolved (updating the version without a matching hash would break
@@ -89,7 +90,7 @@ def _eligible_version(
     if deprecation(pinned.name, version_string).yanked:
         return None
     if integrity := integrity_hash(pinned.name, version_string, filename):
-        return DependencyVersion(version_string, sha=integrity, published=published)
+        return DependencyVersion(version_string, sha=integrity, publication=LookedUp(published))
     _LOG.no_integrity_hash(pinned.name, version_string, filename)
     return DependencyVersion(version=pinned.version)
 

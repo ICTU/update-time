@@ -1,6 +1,6 @@
 """Unit tests for the jsDelivr source."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 from update_time.domain.bound import NO_BOUND
@@ -12,8 +12,8 @@ from update_time.sources.jsdelivr import version_getter
 
 from tests.helpers import mock_response
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import HASH, HASH1, HASH2
-from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, npm_registry, staleness_disabled
+from tests.update_time.fixtures import FRESH_DATE, HASH, HASH1, HASH2, PAST_COOLDOWN_DATE, STALE_DATE
+from tests.update_time.helpers import LoggingTestCase, days_ago, jsdelivr_versions, npm_registry, staleness_disabled
 
 # The file referenced in the jsDelivr URL, and a flat package listing as returned by the API with ?structure=flat.
 _FILENAME = "/dist/clipboard.min.js"
@@ -29,8 +29,8 @@ def _get_latest_version(
 
 
 # npm publication dates, relative to now so the cooldown decision is independent of the wall clock.
-_ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN.default + 1)).isoformat()  # comfortably past the cooldown
-_FRESH = (datetime.now(UTC) - timedelta(days=1)).isoformat()  # still within the cooldown
+_ELIGIBLE = PAST_COOLDOWN_DATE.isoformat()
+_FRESH = FRESH_DATE.isoformat()
 
 
 @patch("requests.get")
@@ -80,7 +80,7 @@ class GetLatestVersionTest(LoggingTestCase):
 
     def test_cooldown_decides_eligibility(self, mock_get: Mock):
         """Test that a version is held back or adopted according to the cooldown the getter is passed."""
-        published = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+        published = days_ago(10).isoformat()
         for cooldown_days, expected in ((30, "1.0"), (5, "1.1")):
             with self.subTest(cooldown_days=cooldown_days):
                 mock_get.side_effect = [
@@ -181,16 +181,15 @@ class GetLatestVersionTest(LoggingTestCase):
 
         The cooldown holds 1.1 back, so the URL stays on 1.0 while 1.1 is the release that dates the package.
         """
-        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
-        fresh = (datetime.now(UTC) - timedelta(days=1)).isoformat()
-        mock_get.side_effect = [jsdelivr_versions("1.1", "1.0"), npm_registry({"1.0": old, "1.1": fresh})]
+        old = STALE_DATE.isoformat()
+        mock_get.side_effect = [jsdelivr_versions("1.1", "1.0"), npm_registry({"1.0": old, "1.1": _FRESH})]
         latest = _get_latest_version("clipboard", "1.0", _FILENAME)
         self.assertEqual(latest.version, "1.0")
-        self.assertEqual(Release("1.1", datetime.fromisoformat(fresh)), latest.project.newest)
+        self.assertEqual(Release("1.1", datetime.fromisoformat(_FRESH)), latest.project.newest)
 
     def test_newest_release_attached_when_globally_disabled(self, mock_get: Mock):
         """Test that the newest release is attached with the check off, so a marker can set its own threshold."""
-        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        old = STALE_DATE.isoformat()
         mock_get.side_effect = [jsdelivr_versions("1.0", "0.9"), npm_registry({"1.0": old})]
         with staleness_disabled:
             latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)

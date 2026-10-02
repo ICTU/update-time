@@ -27,13 +27,19 @@ class Reason(StrEnum):
     NO_ARCHIVAL_SIGNAL = "this dependency's source does not publish an archival signal"
     NO_VERSION_TO_UPDATE = "this requirement does not pin a version to update"
     BOUND_DECIDES_NOTHING = "the package manager resolves this dependency's version, so a bound decides nothing"
+    FOLLOWS_A_BRANCH = (
+        "this reference follows a branch or a floating tag rather than a version, so a bound decides nothing"
+    )
+    PINS_A_COMMIT = "this reference pins a commit rather than a version, so a bound decides nothing"
+    NO_COOLDOWN_FOR_A_COMMIT = "this reference pins a commit rather than a version, so a cooldown holds nothing back"
+    NO_DRIFT_FOR_A_COMMIT = "this reference pins a commit rather than a tag or branch, so it cannot drift"
     MANAGER_RESOLVES_THE_VERSION = "the package manager resolves this dependency's version"
     COOLDOWN_PER_RUN = "the package manager applies the cooldown per run rather than per dependency"
     NO_PYPI_RELEASE = "PyPI does not serve a release for this dependency"
     NO_VERSION_TO_CHECK_FOR_A_YANK = "this requirement does not pin a version to check for a yank"
     NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY = "this requirement does not pin a version to check for a vulnerability"
     PIN_NOT_FLOATING = "this reference's pin does not float"
-    UPDATE_HELD_BACK = "this reference's update is held back, so its tag is never pinned"
+    UPDATE_HELD_BACK = "this reference's update is held back, so it is never pinned"
     NO_REGISTRY_ASKED = "Update-time does not ask a registry about this reference, so its tag is never pinned"
 
 

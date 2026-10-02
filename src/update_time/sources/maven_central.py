@@ -179,7 +179,7 @@ def _newest_release(artefact: DependencyName) -> Release | None:
 
 
 def versions_held_back(artefact: DependencyName, cooldown_days: int) -> tuple[str, ...]:
-    """Return the artefact's versions published inside the cooldown window, and the ones whose date does not parse."""
+    """Return the artefact's versions published inside the cooldown, and the ones whose date does not parse."""
     rows = _VERSION_ROW.finditer(_listing(artefact))
     return tuple(row["version"] for row in rows if _held_back(artefact, row, cooldown_days))
 

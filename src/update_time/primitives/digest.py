@@ -5,3 +5,5 @@ SHA256_DIGEST = rf"sha256:[0-9a-f]{{{SHA256_HEX_CHARS}}}"
 
 _COMMIT_SHA_HEX_CHARS = 40  # The hexadecimal characters of the git commit SHA an action or a hook is pinned to
 COMMIT_SHA = rf"[0-9a-f]{{{_COMMIT_SHA_HEX_CHARS}}}"
+_SHORT_COMMIT_SHA_HEX_CHARS = 7  # The hexadecimal characters git abbreviates a commit SHA to by default
+SHORT_COMMIT_SHA = rf"[0-9a-f]{{{_SHORT_COMMIT_SHA_HEX_CHARS},{_COMMIT_SHA_HEX_CHARS - 1}}}"

@@ -12,7 +12,7 @@ from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import docker_tag
+from tests.update_time.helpers import docker_hub_version, docker_tag
 from tests.update_time.registry import mock_docker_registry
 from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
@@ -40,7 +40,9 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         config_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         next_yml.write_text.assert_called_with(f"image: cimg/go:1.26.2@{DIGEST2}\n")
         self.assert_path_logged(next_yml)
-        self.assert_last_new_version_logged("cimg/go", "1.26.2", Location(next_yml, 1), Logger._SUPPRESSING_CHANGELOG)
+        self.assert_last_new_version_logged(
+            "cimg/go", docker_hub_version("1.26.2"), Location(next_yml, 1), Logger._SUPPRESSING_CHANGELOG
+        )
         self.assert_no_warnings_logged()
 
     def test_alias_that_no_registry_serves_is_left_alone(self):
@@ -109,5 +111,5 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         config_yml = mock_path(config)
         self.run_updater(config_yml)
         config_yml.write_text.assert_called_with(config.replace("cimg/python:3.13", f"cimg/python:3.14@{DIGEST}"))
-        self.assert_new_version_logged("cimg/python", "3.14", Location(config_yml, 6))
+        self.assert_new_version_logged("cimg/python", docker_hub_version("3.14"), Location(config_yml, 6))
         self.assert_no_warnings_logged()

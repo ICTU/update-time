@@ -2,7 +2,7 @@
 
 import time
 import unittest
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
 import requests
@@ -19,6 +19,7 @@ from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
     GUAVA,
     LoggingTestCase,
+    days_ago,
     github_release_json,
     maven_central_dated_row,
     maven_central_listing,
@@ -58,11 +59,6 @@ _NETTY_VERSION = "4.1.138.Final"
 _NETTY_SCM = "scm:git:https://github.com/netty/netty.git"
 
 
-def _days_ago(days: int) -> datetime:
-    """Return the instant the given number of days ago."""
-    return datetime.now(UTC) - timedelta(days=days)
-
-
 # The metadata files a listing closes with, each with the bytes the repository sizes it at: the metadata itself,
 # and the checksums over it, whose lengths are those of an MD5 and a SHA-1 written out in hexadecimal.
 _METADATA_FILES = {"maven-metadata.xml": "5927", "maven-metadata.xml.md5": "32", "maven-metadata.xml.sha1": "40"}
@@ -78,7 +74,7 @@ def _metadata_rows(published: datetime) -> tuple[str, ...]:
 
 def _listing_of(version: str) -> str:
     """Return a listing that holds the version alone, dated yesterday."""
-    return maven_central_listing(maven_central_version_row(version, _days_ago(1)))
+    return maven_central_listing(maven_central_version_row(version, days_ago(1)))
 
 
 # The listing the repository serves for guava where the tests care about the pom beside a version rather than the
@@ -130,7 +126,6 @@ class ProjectTest(LoggingTestCase):
         }
         for case, (tag, scm) in cases.items():
             with self.subTest(case=case):
-                self.clear_caches()
                 served = maven_central_pom(scm, tag)
                 with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
                     self.assert_archived(mock_get, project(GUAVA, check_archival=True).archival)
@@ -211,7 +206,6 @@ class ProjectTest(LoggingTestCase):
         }
         for case, parent in cases.items():
             with self.subTest(case=case):
-                self.clear_caches()
                 served = maven_central_pom(parent=parent)
                 with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
                     archival = project(GUAVA, check_archival=True).archival
@@ -246,7 +240,7 @@ class ProjectTest(LoggingTestCase):
         with patch_maven_central(_DATED_LISTING, None, archived=True) as mock_get:
             archival = project(GUAVA, check_archival=True).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
-        self.assert_could_not_fetch_logged(url=_GUAVA_POM, status=404, reason="Not Found")
+        self.assert_could_not_fetch_logged(_GUAVA_POM, status=404, reason="Not Found")
 
     @kills(
         Mutation(
@@ -329,7 +323,6 @@ class GetChangesTest(LoggingTestCase):
         """Assert that each case's version has the changes of the release the repository published under its tag."""
         for case, (version, tag) in cases.items():
             with self.subTest(case=case):
-                self.clear_caches()
                 releases = [github_release_json(tag, body=f"Changes in {version}")]
                 with patch_maven_central(_listing_of(version), maven_central_pom(_GUAVA_SCM), releases=releases):
                     self.assertEqual(get_changes(GUAVA, version), f"Changes in {version}")
@@ -406,7 +399,6 @@ class GetChangesTest(LoggingTestCase):
         }
         for case, (less_specific, more_specific) in cases.items():
             with self.subTest(case=case):
-                self.clear_caches()
                 releases = [
                     github_release_json(less_specific, body="Less specific"),
                     github_release_json(more_specific, body="More specific"),
@@ -469,7 +461,6 @@ class GetChangesTest(LoggingTestCase):
         """Test that the changes come from the changelog file when the repository did not release the version."""
         for heading in (_GUAVA_VERSION, "33.7.1"):
             with self.subTest(heading=heading), patch("requests.get") as mock_get:
-                self.clear_caches()
                 self.serve_releases_and_changelog(mock_get, [github_release_json("v33.6.0-jre")], heading)
                 self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), markdown_changes(heading))
 
@@ -529,7 +520,6 @@ class GetChangesTest(LoggingTestCase):
         releases = [github_release_json(f"v{_GUAVA_VERSION}", body="Changes in 33.7.1")]
         for case, (pom, repository) in cases.items():
             with self.subTest(case=case):
-                self.clear_caches()
                 with patch_maven_central(_DATED_LISTING, pom, releases=releases) as mock_get:
                     self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
                 self.assertIn(releases_url(repository), requested_urls(mock_get))
@@ -556,10 +546,10 @@ class VersionsHeldBackTest(LoggingTestCase):
     """Unit tests for reading the versions the cooldown holds back."""
 
     def test_only_a_version_published_inside_the_window_is_held_back(self):
-        """Test that the version dated inside the window is held back, and the one dated before it is not."""
-        settled = maven_central_version_row("33.7.0-jre", _days_ago(COOLDOWN.default + 1))
-        fresh = maven_central_version_row("33.7.1-jre", _days_ago(1))
-        with patch_get(text=maven_central_listing(settled, fresh)):
+        """Test that the version dated inside the cooldown is held back, and the one dated before it is not."""
+        past_cooldown = maven_central_version_row("33.7.0-jre", days_ago(COOLDOWN.default + 1))
+        fresh = maven_central_version_row("33.7.1-jre", days_ago(1))
+        with patch_get(text=maven_central_listing(past_cooldown, fresh)):
             self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ("33.7.1-jre",))
 
     @kills(
@@ -597,7 +587,7 @@ class VersionsHeldBackTest(LoggingTestCase):
         answer = mock_response(ok=False, status_code=503, reason="Service Unavailable", url=_GUAVA_LISTING, text="")
         with patch("requests.get", Mock(return_value=answer)):
             self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ())
-        self.assert_could_not_fetch_logged(url=_GUAVA_LISTING, status=503, reason="Service Unavailable")
+        self.assert_could_not_fetch_logged(_GUAVA_LISTING, status=503, reason="Service Unavailable")
 
     @kills(
         Mutation(
@@ -639,7 +629,7 @@ class VersionsHeldBackTest(LoggingTestCase):
     def test_a_row_dated_in_a_shape_the_format_cannot_read_is_held_back_and_logged(self):
         """Test that a version whose date does not parse is held back and logged, and the rows beside it are read."""
         unreadable = maven_central_dated_row("33.7.2-jre/", "2026-13-45 99:99", "-")
-        fresh = maven_central_version_row("33.7.1-jre", _days_ago(1))
+        fresh = maven_central_version_row("33.7.1-jre", days_ago(1))
         with patch_get(text=maven_central_listing(unreadable, fresh)):
             self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ("33.7.2-jre", "33.7.1-jre"))
         self.assert_logged(
@@ -658,8 +648,8 @@ class VersionsHeldBackTest(LoggingTestCase):
         )
     )
     def test_a_metadata_file_is_not_held_back(self):
-        """Test that a metadata file the listing dates inside the window is not among the versions held back."""
-        published = _days_ago(1)
+        """Test that a metadata file the listing dates inside the cooldown is not among the versions held back."""
+        published = days_ago(1)
         listing = maven_central_listing(maven_central_version_row("33.7.1-jre", published), *_metadata_rows(published))
         with patch_get(text=listing):
             held_back = versions_held_back(GUAVA, COOLDOWN.default)
@@ -676,9 +666,7 @@ class VersionsHeldBackTest(LoggingTestCase):
     def test_an_artefact_is_asked_about_once_per_run(self):
         """Test that asking about an artefact twice costs one request."""
         mock_get = Mock(
-            return_value=mock_response(
-                text=maven_central_listing(maven_central_version_row("33.7.1-jre", _days_ago(1)))
-            )
+            return_value=mock_response(text=maven_central_listing(maven_central_version_row("33.7.1-jre", days_ago(1))))
         )
         with patch("requests.get", mock_get):
             first = versions_held_back(GUAVA, COOLDOWN.default)
@@ -696,7 +684,7 @@ class PublishedTest(unittest.TestCase):
             maven_central._published,
             "return datetime.strptime(published, _PUBLISHED_FORMAT).replace(tzinfo=UTC)\n",
             "return datetime.strptime(published, _PUBLISHED_FORMAT).astimezone()\n",
-            "a date is read in the machine's own zone, so a version falls on the wrong side of the window",
+            "a date is read in the machine's own zone, so a version falls on the wrong side of the cooldown",
         )
     )
     @patch_environ({"TZ": "Asia/Tokyo"})
@@ -731,7 +719,7 @@ class NewestReleaseTest(LoggingTestCase):
     def test_the_cooldown_has_already_paid_for_the_listing(self):
         """Test that the newest release is free once the cooldown has read the same artefact's listing."""
         # The listing dates a row to the minute, so the expected release is dated to the minute too.
-        dated = _days_ago(1).replace(second=0, microsecond=0)
+        dated = days_ago(1).replace(second=0, microsecond=0)
         mock_get = Mock(
             return_value=mock_response(text=maven_central_listing(maven_central_version_row("33.7.1-jre", dated)))
         )

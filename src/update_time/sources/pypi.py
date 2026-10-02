@@ -15,7 +15,7 @@ from update_time.domain.changelog import (
     is_markdown_content_type,
     is_markdown_file,
 )
-from update_time.domain.cooldown import within_cooldown
+from update_time.domain.cooldown import CooldownWalk, within_cooldown
 from update_time.domain.dependency import (
     NO_CHANGES,
     Archival,
@@ -33,8 +33,9 @@ from update_time.domain.dependency import (
 from update_time.domain.publication import publication_date_reporting
 from update_time.domain.vulnerability import vulnerability_reporting
 from update_time.domain.yank import with_yank_state, yank_reporting
-from update_time.io.fetch import fetch
+from update_time.io.fetch import failure_reason, fetch
 from update_time.io.log import get_logger
+from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import newest_timestamp, parse_timestamp
 from update_time.sources.github import (
     changes_from_changelog_file,
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from update_time.domain.bound import VersionBound
+    from update_time.domain.dependency import VersionString
 
 _LOG = get_logger("pypi")
 
@@ -121,10 +123,14 @@ class ReleaseMetadata(TypedDict):
 
 
 @cache
-def release_metadata(package: str, version: str) -> ReleaseMetadata | None:
-    """Get the release metadata from PyPI, or None if it can't be fetched."""
-    response = fetch(f"{_PYPI}/pypi/{package}/{version}/json", _LOG)
-    return response.json() if response is not None else None
+def release_metadata(package: str, version: str) -> LookedUp[ReleaseMetadata]:
+    """Get the release metadata from PyPI, or why it can't be fetched."""
+    response = fetch(f"{_PYPI}/pypi/{package}/{version}/json", _LOG, require_ok=False)
+    if response is not None and not response.ok:  # The fetch logged a failed request, but not a refused one
+        _LOG.response(response)
+    if response is None or not response.ok:
+        return LookedUp(None, failure_reason(response))
+    return LookedUp(response.json())
 
 
 def _project_metadata(package: str) -> dict:
@@ -215,7 +221,7 @@ def _release_datetime(urls: list[_Distribution]) -> datetime | None:
 def get_latest_version(
     pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
 ) -> DependencyVersion:
-    """Return the latest stable release of the package that is available outside the cooldown window.
+    """Return the latest stable release of the package that is available outside the cooldown.
 
     Returns the current version unchanged when it is invalid or already the latest eligible version.
     """
@@ -228,8 +234,9 @@ def get_latest_version(
         for version in _stable_versions(package)
         if version > current and version_bound.keeps(version, current_version)
     ]
+    walk = CooldownWalk(cooldown_days)
     latest = first_eligible(
-        candidates, lambda version: _eligible_release(package, version, cooldown_days), current_version
+        candidates, lambda version: _eligible_release(package, version, current_version, walk), current_version
     )
     latest = with_yank_state(latest, current_version, partial(yank_state, package))
     # Always attach what PyPI reports about the project, so a pin that is already up to date can still be reported
@@ -261,16 +268,28 @@ def _distribution_version(filename: str) -> Version | None:
         return None
 
 
-def _eligible_release(package: str, version: Version, cooldown_days: int) -> DependencyVersion | None:
-    """Return the release as a DependencyVersion when it's eligible, or None when it's yanked or too fresh."""
-    metadata = release_metadata(package, str(version))
-    if metadata is None:
+def _eligible_release(
+    package: str, version: Version, current_version: VersionString, walk: CooldownWalk
+) -> DependencyVersion | None:
+    """Return the release as a DependencyVersion when it's eligible, or None when it's held back.
+
+    A release whose metadata can't be fetched can't be checked for a yank, so it stops the walk. A release without
+    distribution files can't be installed, so it is skipped.
+    """
+    if walk.stopped:
         return None
-    published = _release_datetime(metadata["urls"])
-    if metadata["info"].get("yanked") or published is None or within_cooldown(published, cooldown_days):
+    found = release_metadata(package, str(version))
+    if (metadata := found.value) is None:
+        walk.stop()
+        _LOG.no_release_metadata(package, str(version), current_version, found.reason)
+        return None
+    publication = LookedUp(_release_datetime(metadata["urls"]))
+    if publication.value is None or within_cooldown(publication.value, walk.days):
+        return None
+    if metadata["info"].get("yanked"):
         return None
     latest = str(version)
-    return DependencyVersion(latest, changes=get_changes(package, latest), published=published)
+    return DependencyVersion(latest, changes=get_changes(package, latest), publication=publication)
 
 
 def get_changes(package: str, version: str) -> Changes:
@@ -285,7 +304,7 @@ def get_changes(package: str, version: str) -> Changes:
       use that to find GitHub releases.
     - Check the root of each project URL that points at GitHub for a changelog file.
     """
-    metadata = release_metadata(package, version)
+    metadata = release_metadata(package, version).value
     if metadata is None:
         return NO_CHANGES
     info = metadata["info"]
@@ -307,7 +326,7 @@ def get_changes(package: str, version: str) -> Changes:
 
 def get_publication_datetime(package: str, version: str) -> datetime | None:
     """Return the datetime the version was published, or None if it can't be fetched or has no distribution files."""
-    metadata = release_metadata(package, version)
+    metadata = release_metadata(package, version).value
     return _release_datetime(metadata["urls"]) if metadata is not None else None
 
 

@@ -208,8 +208,10 @@ _LOG_MESSAGE_FORMAT = "%(message)s"
 
 
 def configure_logging(console: Console, level: str) -> RichHandler:
-    """Send every record at the level or above to the console, and return the handler that renders it there."""
+    """Send every record at the level or above to the console, replacing any earlier one, and return its handler."""
     handler = _ChangelogHandler(console=console, highlighter=LogHighlighter(), show_path=False)
-    logging.basicConfig(level=level, datefmt=_LOG_TIME_FORMAT, format=_LOG_MESSAGE_FORMAT, handlers=[handler])
+    logging.basicConfig(
+        level=level, datefmt=_LOG_TIME_FORMAT, format=_LOG_MESSAGE_FORMAT, handlers=[handler], force=True
+    )
     logging.getLogger(_MARKDOWN_PARSER).setLevel(WARNING)
     return handler

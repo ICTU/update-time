@@ -23,13 +23,14 @@ from update_time.domain.dependency import (
     Release,
     Yank,
 )
-from update_time.domain.reference import DriftedPin
+from update_time.domain.reference import DriftedPin, RefKind
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.console import undelimited
 from update_time.io.log import Logger
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.primitives.location import Location
+from update_time.sources.github import BEYOND_THE_COMMITS_EXAMINED
 
 _ELIDED = "…"
 _ELIDED_DIGEST = f"sha256:{_ELIDED}"
@@ -144,6 +145,34 @@ def _redundant_directives(
     }
 
 
+def _redundant_for_the_dependency_type(
+    log: Logger, capture: _Capture, requirements: Location, workflow: Location
+) -> dict[str, str]:
+    """Log a sample per redundant cooldown, drift opt-in, and bound, paired with the block's placeholder."""
+    managed = reference("humanize", Location(Path("pyproject.toml"), 12))
+    loose = reference("humanize", requirements)
+    commit = reference("actions/checkout", workflow)
+    branch = reference("actions/setup-python", Location(Path(".github/workflows/ci.yml"), 18))
+    log.redundant_directive(managed, "ignore[cooldown<30]", Reason.COOLDOWN_PER_RUN)
+    log.redundant_directive(loose, "ignore[cooldown<30]", Reason.NO_VERSION_TO_UPDATE)
+    log.redundant_directive(commit, "ignore[cooldown<30]", Reason.NO_COOLDOWN_FOR_A_COMMIT)
+    cooldowns = capture.take()
+
+    log.redundant_directive(commit, "allow[hash-drift]", Reason.NO_DRIFT_FOR_A_COMMIT)
+    drift = capture.take()
+
+    log.redundant_directive(managed, "allow[update<5]", Reason.BOUND_DECIDES_NOTHING)
+    log.redundant_directive(managed, "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION)
+    log.redundant_directive(loose, "allow[update<5]", Reason.NO_VERSION_TO_UPDATE)
+    log.redundant_directive(commit, "allow[update<5]", Reason.PINS_A_COMMIT)
+    log.redundant_directive(branch, "allow[update<6]", Reason.FOLLOWS_A_BRANCH)
+    return {
+        "@@REDUNDANT_COOLDOWN_WARNINGS@@": cooldowns,
+        "@@REDUNDANT_HASH_DRIFT_WARNING@@": drift,
+        "@@REDUNDANT_BOUND_WARNINGS@@": capture.take(),
+    }
+
+
 def _invalid_items(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
     """Log a sample per warning about an item Update-time cannot read, paired with the block's placeholder."""
     log.invalid_bracket_item("python", "stlae", dockerfile)
@@ -195,6 +224,63 @@ def _accounted_for_references(log: Logger, capture: _Capture, dockerfile: Locati
     return capture.take()
 
 
+def _unpinned_floating_tags(log: Logger, capture: _Capture) -> str:
+    """Log one floating tag for each reason Update-time leaves it unpinned, and return the lines they render as."""
+    compose = Location(Path("docker-compose.yml"), 7)
+    log.unpinned_floating_tag(
+        reference("acme/api", compose, "dev"), DependencyVersion("dev"), FloatingPin.NO_VERSION_TAG
+    )
+    log.unpinned_floating_tag(
+        reference("acme/api", compose, "nightly"), DependencyVersion("nightly"), FloatingPin.NOT_LISTED
+    )
+    log.unpinned_floating_tag(
+        reference("acme/api", compose, "canary"), DependencyVersion("canary"), FloatingPin.NOT_AMONG_EXAMINED
+    )
+    ghcr = Location(Path("Dockerfile"), 1)
+    log.unpinned_floating_tag(
+        reference("ghcr.io/acme/api", ghcr, "latest"), DependencyVersion("latest"), FloatingPin.NO_VERSION_TAG_EXAMINED
+    )
+    log.unpinned_floating_tag(
+        reference("ghcr.io/acme/api", ghcr, "edge"), DependencyVersion("edge"), FloatingPin.NO_MANIFEST
+    )
+    return capture.take()
+
+
+def _github_refs(log: Logger, capture: _Capture, workflow: Location) -> dict[str, str]:
+    """Log a branch kept floating, refs left unpinned, unchecked drift, and undated commits, with placeholders."""
+    branch = reference("actions/checkout", workflow, "main")
+    cause, rate_limited = "update-time: allow[floating-pin]", "HTTP 403, API rate limit exceeded"
+    log.keeping_ref(branch, DependencyVersion("4.3.0", sha=_ELIDED), cause, RefKind.BRANCH)
+    kept = capture.take()
+    log.unpinned_ref(branch, rate_limited, RefKind.REF)
+    unpinned = capture.take()
+    log.unpinned_ref(branch, BEYOND_THE_COMMITS_EXAMINED, RefKind.BRANCH)
+    beyond = capture.take()
+    log.unchecked_branch_drift(branch, _ELIDED, rate_limited)
+    unchecked = capture.take()
+    log.undated_commit("actions/checkout", "v4.4.0", "4.3.0", rate_limited)
+    undated = capture.take()
+    moved = DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, new_sha=_ELIDED)
+    log.no_commit_date(Logger.TAG_DRIFT, moved, rate_limited)
+    return {
+        "@@KEPT_BRANCH@@": kept,
+        "@@UNPINNED_REF@@": unpinned,
+        "@@BRANCH_BEYOND_THE_COMMITS_EXAMINED@@": beyond,
+        "@@UNCHECKED_BRANCH_DRIFT@@": unchecked,
+        "@@UNDATED_TAGGED_COMMIT@@": undated,
+        "@@NO_COMMIT_DATE@@": capture.take(),
+    }
+
+
+def _undated_pushes(log: Logger, capture: _Capture, dockerfile: Location) -> str:
+    """Log a newer tag and a re-pushed digest whose push date Docker Hub failed to report, and return their lines."""
+    log.undated_push("python", "3.15.0", "3.14.6", "HTTP 429")
+    log.no_push_date(
+        Logger.DIGEST_DRIFT, DriftedPin("python", "3.14", dockerfile, _ELIDED, new_sha=_ELIDED), "HTTP 429"
+    )
+    return capture.take()
+
+
 def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log each block's sample records and pair the lines they render as with the block's placeholder."""
     log.drift(
@@ -203,6 +289,8 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     )
     workflow = Location(Path(".github/workflows/ci.yml"), 17)
     log.drift(Logger.TAG_DRIFT, DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, new_sha=_ELIDED))
+    log.drift(Logger.BRANCH_DRIFT, DriftedPin("actions/checkout", "main", workflow, _ELIDED, new_sha=_ELIDED))
+    log.drift(Logger.REF_DRIFT, DriftedPin("actions/checkout", "stable-2024", workflow, _ELIDED, new_sha=_ELIDED))
     location = Location(Path("docs/conf.py"), 4)
     log.hash_mismatch("clipboard", "2.0.11", _ELIDED_INTEGRITY_HASH, _ELIDED_INTEGRITY_HASH, location)
     drift = capture.take()
@@ -231,6 +319,8 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     redundant = _redundant_directives(log, capture, requirements, dockerfile)
 
+    redundant_for_the_type = _redundant_for_the_dependency_type(log, capture, requirements, workflow)
+
     invalid = _invalid_items(log, capture, dockerfile)
 
     inverted = _inverted_items(log, capture, requirements, dockerfile)
@@ -245,27 +335,17 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     effective_pom = _effective_pom_warnings(log, capture)
 
-    compose = Location(Path("docker-compose.yml"), 7)
-    log.unpinned_floating_tag(
-        reference("acme/api", compose, "dev"), DependencyVersion("dev"), FloatingPin.NO_VERSION_TAG
-    )
-    log.unpinned_floating_tag(
-        reference("acme/api", compose, "nightly"), DependencyVersion("nightly"), FloatingPin.NOT_LISTED
-    )
-    log.unpinned_floating_tag(
-        reference("acme/api", compose, "canary"), DependencyVersion("canary"), FloatingPin.NOT_AMONG_EXAMINED
-    )
-    ghcr = Location(Path("Dockerfile"), 1)
-    log.unpinned_floating_tag(
-        reference("ghcr.io/acme/api", ghcr, "latest"), DependencyVersion("latest"), FloatingPin.NO_VERSION_TAG_EXAMINED
-    )
-    log.unpinned_floating_tag(
-        reference("ghcr.io/acme/api", ghcr, "edge"), DependencyVersion("edge"), FloatingPin.NO_MANIFEST
-    )
-    unpinned_floating_tag = capture.take()
+    unpinned_floating_tag = _unpinned_floating_tags(log, capture)
 
     log.keeping_floating_tag(reference("python", dockerfile, "latest"), pinned_tag, "update-time: allow[floating-pin]")
     kept_floating_tag = capture.take()
+
+    github_refs = _github_refs(log, capture, workflow)
+
+    undated_pushes = _undated_pushes(log, capture, dockerfile)
+
+    log.no_release_metadata("humanize", "4.16.0", "4.15.0", "HTTP 503")
+    no_release_metadata = capture.take()
 
     accounted_for = _accounted_for_references(log, capture, dockerfile)
 
@@ -281,12 +361,16 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **effective_pom,
         "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
+        **github_refs,
+        "@@NO_RELEASE_METADATA@@": no_release_metadata,
+        "@@NO_PUSH_DATE@@": undated_pushes,
         "@@ACCOUNTED_FOR_REFERENCES@@": accounted_for,
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@VULNERABILITY_WARNING@@": vulnerable,
         "@@ARCHIVED_WARNING@@": archival,
         **redundant,
+        **redundant_for_the_type,
         **invalid,
         **inverted,
         "@@RECOGNISED_MARKER@@": recognised,

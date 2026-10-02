@@ -1,8 +1,10 @@
-"""GitHub Action updater script finds YAML files in the GitHub directory and updates 'uses' keys to latest versions."""
+"""Pin each GitHub Action `uses:` in the GitHub directory to a commit, and bump it to the latest version."""
 
 import re
 from functools import partial
 from typing import TYPE_CHECKING
+
+from packaging.version import VERSION_PATTERN
 
 from update_time.domain.file_type import GITHUB_WORKFLOWS
 from update_time.io.filesystem import glob_for
@@ -13,26 +15,33 @@ from update_time.references.github import PinUpdater
 from update_time.references.rewrite import updated_lines
 
 if TYPE_CHECKING:
-    from update_time.domain.dependency import DependencyVersion
     from update_time.domain.reference import Reference
 
 _LOG = get_logger("github action")
-# Match a `uses:` reference: one already pinned to a commit SHA with a version comment (`<sha> # vX.Y.Z`), one
-# unpinned to a version tag (`@vX` / `@vX.Y.Z`), and one naming a branch (`@main`), whose repository is checked for
-# staleness although no update is resolved for it. The dependency names an owner and a repository, which is what an
-# action reference names, so `myaction@v1` is passed over. A local action carries no `@`, so it doesn't match at all.
+# A tag or branch name, and the end of a comment word that stands alone or before another comment.
+_REF_CHARACTER = r"[\w.\-/]"
+_REF = rf"{_REF_CHARACTER}+"
+_ALONE = r"\s*(?:#|$)"
+# Match a `uses:` reference: one already pinned to a commit SHA with a comment naming a version, a branch, or a tag
+# (`<sha> # vX.Y.Z`, `<sha> # main`), or one unpinned (`@vX`, `@vX.Y.Z`). The tag group also takes an unpinned branch
+# (`@main`), a tag such as `@stable-2024`, and a commit SHA. The dependency names an owner and a repository, which is
+# what an action reference names, so `myaction@v1` is passed over. A local action carries no `@`, so it doesn't match at
+# all. A tag or branch is read whole, so `v3-node20` and `release/v1` keep their names. The first word of a comment
+# counts as a version when the character after it cannot continue a tag or branch name, as in `# v4.1.1, see notes`. It
+# counts as a tag or branch only when it stands alone, or before another comment such as a marker. A lone `TODO` or
+# `FIXME` counts as neither. Any other comment leaves the commit SHA bare, such as `# pinned by hand` or
+# `# ratchet:actions/checkout@v4`.
 _ACTION_RE = re.compile(
     r"uses: (?P<dependency>[\w\d\.-]+/[\w\d\./-]+)@"
-    rf"(?:(?P<sha>{COMMIT_SHA}) # v?(?P<version>[\d\w\.\-]+)|v?(?P<tag>[\d\w\.\-]+))"
+    rf"(?:(?P<sha>{COMMIT_SHA}) # (?P<version>(?ix:{VERSION_PATTERN})(?!{_REF_CHARACTER})"
+    rf"|(?!(?:TODO|FIXME){_ALONE}){_REF}(?={_ALONE}))"
+    rf"|(?P<tag>{_REF}))"
 )
 
 
-def _spell_action(reference: Reference, latest: DependencyVersion) -> str:
-    """Return the `uses:` reference pinned to the latest version's commit SHA, with the version as a comment.
-
-    The SHA is the latest version's, or — for a reference adopting a moved tag — that tag's new commit.
-    """
-    return f"uses: {reference.dependency}@{latest.sha} # v{latest.version}"
+def _spell_action(reference: Reference, sha: str, comment: str) -> str:
+    """Return the `uses:` reference pinned to the commit SHA, with the tag or branch, if any, as a comment."""
+    return f"uses: {reference.dependency}@{sha}" + (f" # {comment}" if comment else "")
 
 
 _ACTION = PinUpdater(_spell_action, _LOG)

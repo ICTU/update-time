@@ -1,7 +1,7 @@
 """Unit tests for the PyPI module."""
 
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
@@ -31,6 +31,7 @@ from tests.update_time.helpers import (
     CacheClearingTestCase,
     LoggingTestCase,
     bound,
+    days_ago,
     github_release_json,
     pypi_index,
     pypi_release,
@@ -47,6 +48,7 @@ from tests.update_time.sources.helpers import (
     respond_per_url,
     tree_url,
 )
+from tests.update_time.updaters.fixtures import PYPI_RECENT_UPLOAD
 
 if TYPE_CHECKING:
     from update_time.domain.bound import VersionBound
@@ -66,20 +68,14 @@ def get_latest_version(
     return pypi.get_latest_version(pinned, version_bound, cooldown_days, check_archival=True)
 
 
-# The mutations of how a null the PyPI metadata reports for the project URLs is read. The tests of the updater that
-# rewrites the pins kill them too, so they are named here rather than spelled out in each registration.
+# The mutation that reads the null project URLs PyPI reports as a dictionary. The tests of the updater that rewrites
+# the pins kill it too, so it is named here rather than spelled out in each registration.
 NULL_PROJECT_URLS_READ_AS_A_DICT = Mutation(
     pypi.get_changes,
     'urls = info.get("project_urls") or {}',
     'urls = info.get("project_urls", {})',
     "the project URLs PyPI reports as null are read as a dictionary, which ends the run with a traceback",
     raises="AttributeError: 'NoneType' object has no attribute 'items'",
-)
-A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED = Mutation(
-    pypi._eligible_release,
-    "if metadata is None:",
-    'if metadata is None or metadata["info"].get("project_urls", {}) is None:',
-    "a release whose project URLs PyPI reports as null is skipped rather than adopted",
 )
 
 
@@ -548,7 +544,7 @@ class GetChangesTest(LoggingTestCase):
             extra={doc_tree_url: unreachable},
         )
         self.assertEqual(get_changes("gitpython", "1.1"), "")
-        self.assert_could_not_fetch_logged(url=doc_tree_url)
+        self.assert_could_not_fetch_logged(doc_tree_url)
 
     _UNGUARDED_URL = Mutation(
         github._changes_from_files,
@@ -672,7 +668,7 @@ class GetChangesTest(LoggingTestCase):
         )
         self.assertEqual(get_changes("packaging", "1.1"), "")
         self.assert_root_listed(mock_get, "pypa/packaging")
-        self.assert_could_not_fetch_logged(url=root_url)
+        self.assert_could_not_fetch_logged(root_url)
 
     @kills(GITHUB_UNCACHED)
     def test_root_listing_is_fetched_once_per_repository(self, mock_get: Mock):
@@ -684,9 +680,8 @@ class GetChangesTest(LoggingTestCase):
             files={"CHANGES.rst": "1.1\n===\n\n- Fixed foo\n"},
             repository="googleapis/google-cloud-python",
         )
-        for package in ("google-cloud-storage", "google-cloud-bigquery"):
-            with self.subTest(package=package):
-                self.assertEqual(get_changes(package, "1.1"), "1.1\n===\n\n- Fixed foo")
+        changes = [get_changes(package, "1.1") for package in ("google-cloud-storage", "google-cloud-bigquery")]
+        self.assertEqual(changes, ["1.1\n===\n\n- Fixed foo"] * 2)
         self.assert_root_listed(mock_get, "googleapis/google-cloud-python")
 
     _FIRST_FILE_ONLY = Mutation(
@@ -707,10 +702,11 @@ class GetChangesTest(LoggingTestCase):
         self.assertEqual(get_changes("cryptography", "1.1"), "1.1\n===\n\n- Fixed foo")
 
     def test_release_metadata_unreachable(self, mock_get: Mock):
-        """Test that the changes are empty, and no source is consulted, when PyPI doesn't serve the metadata."""
-        self.create_mock_response(mock_get, status_code=HTTPStatus.NOT_FOUND)
+        """Test that the changes are empty, other sources go unasked, and the failure is logged when PyPI refuses."""
+        self.create_mock_response(mock_get, {"message": "Not Found"}, status_code=HTTPStatus.NOT_FOUND)
         self.assertEqual(get_changes("setuptools", "1.1"), "")
         self.assert_releases_requested(mock_get)
+        self.assert_could_not_fetch_logged(status=HTTPStatus.NOT_FOUND)
 
     @kills(
         Mutation(
@@ -890,21 +886,52 @@ class GetLatestVersionTest(LoggingTestCase):
             "an unparsable version": ("invalid_release", [pypi_index("1.0", "not-a-version")]),
             "a yanked release": ("yanked", [pypi_index("1.0", "1.1"), pypi_release(yanked=True)]),
             "a release without files": ("no_files", [pypi_index("1.0", "1.1"), pypi_release(upload_time="")]),
-            "unreachable metadata": ("metadata_error", [pypi_index("1.0", "1.1"), mock_response(ok=False)]),
         }
         for case, (package, responses) in cases.items():
             with self.subTest(case=case):
                 mock_get.side_effect = responses
                 self.assertEqual(get_latest_version(package, "1.0").version, "1.0")
 
+    @kills(
+        Mutation(
+            pypi._eligible_release,
+            "if walk.stopped:",
+            "if False:",
+            "unreachable release metadata costs a request and an error for every release in between",
+        ),
+        Mutation(
+            pypi._eligible_release,
+            "walk.stop()",
+            "pass",
+            "unreachable release metadata lets the walk try the releases in between",
+        ),
+    )
+    def test_release_whose_metadata_cannot_be_fetched_holds_back_the_releases_in_between_whatever_the_cooldown(
+        self, mock_get: Mock
+    ):
+        """Test that a release whose metadata can't be fetched holds back the releases in between, its reason logged."""
+        unavailable = mock_response({}, ok=False, status_code=503)
+        for cooldown_days in (COOLDOWN.default, 0):
+            with self.subTest(cooldown_days=cooldown_days):
+                mock_get.reset_mock()
+                mock_get.side_effect = [pypi_index("1.0", "1.1", "1.2"), unavailable, unavailable]
+                self.assertEqual(get_latest_version("unreachable", "1.0", cooldown_days=cooldown_days).version, "1.0")
+                self.assertEqual(mock_get.call_count, 2)  # The index and the newest release's metadata
+                self.assert_error_logged(
+                    Logger._MESSAGE_NO_RELEASE_METADATA,
+                    dependency="unreachable",
+                    candidate="1.2",
+                    current="1.0",
+                    reason="HTTP 503",
+                )
+
     def test_new_version(self, mock_get: Mock):
         """Test that the latest version is returned, with its publication date."""
         mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release()]
         latest = get_latest_version("new_version", "1.0")
         self.assertEqual(latest.version, "1.1")
-        self.assertEqual(datetime(2020, 1, 1, tzinfo=UTC), latest.published)
+        self.assertEqual(datetime(2020, 1, 1, tzinfo=UTC), latest.publication.value)
 
-    @kills(A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED)
     def test_new_version_of_a_release_without_project_urls(self, mock_get: Mock):
         """Test that a release whose metadata reports the project URLs as null is adopted like any other."""
         mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(project_urls=None)]
@@ -930,7 +957,7 @@ class GetLatestVersionTest(LoggingTestCase):
 
         The cooldown holds 2.0 back, so the pin stays on 1.0 while 2.0 is the release that dates the package.
         """
-        fresh = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        fresh = PYPI_RECENT_UPLOAD
         files = [{"filename": "package-1.0.tar.gz", "upload-time": PYPI_OLD_UPLOAD}]
         files += [{"filename": "package-2.0.tar.gz", "upload-time": fresh}]
         mock_get.side_effect = [pypi_index("1.0", "2.0", files=files), pypi_release(fresh)]
@@ -977,7 +1004,7 @@ class GetLatestVersionTest(LoggingTestCase):
 
     def test_cooldown_decides_eligibility(self, mock_get: Mock):
         """Test that a release is held back or adopted according to the cooldown the getter is passed."""
-        published = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+        published = days_ago(10).isoformat()
         for cooldown_days, expected in ((30, "1.0"), (5, "1.1")):
             with self.subTest(cooldown_days=cooldown_days):
                 mock_get.side_effect = [pypi_index("1.0", "1.1"), pypi_release(published)]

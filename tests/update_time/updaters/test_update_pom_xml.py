@@ -2,7 +2,6 @@
 
 import contextlib
 import re
-from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from subprocess import CalledProcessError  # nosec
@@ -34,6 +33,7 @@ from tests.update_time.helpers import (
     LoggingTestCase,
     archival_check_disabled,
     build_element,
+    days_ago,
     dependency_element,
     dependency_management_element,
     effective_dependency_element,
@@ -66,12 +66,12 @@ _RULES = Path("/rules.xml")
 _EFFECTIVE_POM = "/effective-pom.xml"
 
 # The listing the repository serves where a test lets it answer for itself: guava's version, dated yesterday.
-_LISTING = maven_central_listing(maven_central_version_row("33.0.0-jre", datetime.now(UTC) - timedelta(days=1)))
+_LISTING = maven_central_listing(maven_central_version_row("33.0.0-jre", days_ago(1)))
 
 
-def _stale(version: str, days_ago: int) -> Project:
+def _stale(version: str, age: int) -> Project:
     """Return what the repository reports about an artefact whose newest release is that many days old."""
-    return Project(newest=Release(version, datetime.now(UTC) - timedelta(days=days_ago)))
+    return Project(newest=Release(version, days_ago(age)))
 
 
 def _archived(_artefact: str, *, check_archival: bool) -> Project:
@@ -273,7 +273,7 @@ class UpdatePomXmlTest(LoggingTestCase):
     ) -> Iterator[list[str]]:
         """Hold the named versions back per artefact, and collect the rule sets Update-time writes for Maven.
 
-        The stub answers with the named versions only where the window is `cooldown_days`, and with an empty tuple
+        The stub answers with the named versions only where the cooldown is `cooldown_days`, and with an empty tuple
         otherwise. The rule set file of a real run is gone by the time the run ends, so the file is stood in for here.
         """
         written: list[str] = []
@@ -349,7 +349,6 @@ class UpdatePomXmlTest(LoggingTestCase):
         }
         for case, (version, output) in cases.items():
             with self.subTest(case=case):
-                self.clear_caches()
                 unversioned = dependency_element("org.springframework", "spring-core", version)
                 self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("33.0.0-jre"), unversioned), "")
                 mock_run.side_effect = _maven_failed(output)
@@ -701,7 +700,6 @@ class UpdatePomXmlTest(LoggingTestCase):
         written = effective_pom_declaring(EFFECTIVE_GUAVA).encode()
         for case, (outcome, failure) in cases.items():
             with self.subTest(case=case):
-                self.clear_caches()
                 self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("${guava.version}")), effective_pom="")
                 mock_run.side_effect = [outcome]
                 read_bytes = patch.object(Path, "read_bytes", autospec=True, return_value=written)
@@ -959,12 +957,12 @@ class UpdatePomXmlTest(LoggingTestCase):
             maven_module._rules,
             "versions_held_back(artefact, cooldown_days)",
             "versions_held_back(artefact, 7)",
-            "every run asks about the default window, so --cooldown never reaches a Maven dependency",
+            "every run asks about the default cooldown, so --cooldown never reaches a Maven dependency",
         )
     )
     @patch_environ({COOLDOWN.name: "30"})
     def test_the_repository_is_asked_about_the_window_the_run_sets(self, mock_run: Mock, mock_glob: Mock):
-        """Test that the window the repository is asked about is the one --cooldown sets, not the default one."""
+        """Test that the cooldown the repository is asked about is the one --cooldown sets, not the default one."""
         self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("33.0.0-jre")))
         with self.hold_back({GUAVA: ("33.7.1-jre",)}, cooldown_days=30) as rule_sets:
             update_pom_xmls()
@@ -1089,8 +1087,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         with self.asked_about() as artefacts:
             update_pom_xmls()
         self.assertEqual(artefacts, [])
-        # Asserting Maven ran, so the window rather than a pom that was never read is what left the artefacts alone.
-        # The staleness check asks the repository whatever the window is, so this says nothing about that request.
+        # Asserting Maven ran, so the cooldown rather than a pom that was never read is what left the artefacts alone.
+        # The staleness check asks the repository whatever the cooldown is, so this says nothing about that request.
         self.assert_maven_ran(mock_run)
 
     @kills(

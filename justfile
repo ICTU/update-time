@@ -99,22 +99,30 @@ publish version *flags: (check-version version) check-repo test check
 
 # === Run tests ===
 
-# The variable `tests/mutation.py` reads to make the registered checks stand aside. A test compares this spelling with the name that file gives it, so the two cannot drift apart.
-checks_off := "_UPDATE_TIME_MUTATION_CHECKS_OFF"
+# The variable `tests/mutation.py` reads to make the registered mutations stand aside. A test compares this spelling with the name that file gives it, so the two cannot drift apart.
+mutation_checks_off := "_UPDATE_TIME_MUTATION_CHECKS_OFF"
+
+# Switch the registered mutations off for a command, and tell whether a caller switched them off. Both spell the
+# value 1 that `tests/mutation.py` reads.
+switch_mutations_off := "env " + mutation_checks_off + "=1"
+mutations_switched_off := '[ "${' + mutation_checks_off + ':-}" = 1 ]'
 
 # Wrap a command in the spinner and the PASS or FAIL line. A recipe that chooses between commands cannot keep the pair in its body, so it builds the wrapped command instead.
 progress(name, command) := start_progress() + " " + command + " " + end_progress(name)
 
-# The registered checks stand aside while coverage runs, so coverage is measured over the tests alone and a line that only a mutated re-run reaches shows up as a gap.
-measured_run := "env " + checks_off + "=1 " + coverage + " run -m unittest --quiet"
+# The registered mutations stand aside while coverage runs, so coverage is measured over the tests alone and a line that only a mutated re-run reaches shows up as a gap.
+measured_run := switch_mutations_off + " " + coverage + " run -m unittest --quiet"
 
 # A measured run must reach 100%: the text and HTML reports are written first, then `xml` applies the gate. A named subset is skipped rather than measured, since it reaches too little of the tree to meet the gate and its report names every file it never imports.
 coverage_command(tests) := if tests == "" { progress("test-coverage", measured_run + " && " + coverage + " report --show-missing --fail-under=0 && " + coverage + " html --quiet --fail-under=0 && " + coverage + " xml --quiet") } else { 'echo "test-coverage SKIP (a named subset is not measured)"' }
 
-# The tests run again, unmeasured, against the mutations they register. A caller that switched the registered checks off already, as `just mutate` does, leaves this pass nothing to run, so it says so rather than reporting a run of no tests.
-mutations_command(tests) := 'if [ -n "${' + checks_off + ':-}" ]; then echo "test-mutations SKIP (the registered checks are switched off)"; else ' + progress("test-mutations", python_m + " unittest --quiet " + tests) + "; fi"
+# The tests run again, unmeasured, against the mutations they register. A caller that switched the registered mutations off already, as `just mutate` does, leaves this pass nothing to add to the coverage pass, so it says so rather than running the whole suite twice. A named subset, which the coverage pass skips, runs here either way, labelled a plain `test` run when the registered mutations are off.
+mutations_command(tests) := if tests == "" { 'if ' + mutations_switched_off + '; then echo "test-mutations SKIP (the registered mutations are switched off)"; else ' + mutations_run(tests) + "; fi" } else { mutations_run(tests) }
 
-# Run the unit tests under coverage, with the registered checks standing aside, so coverage is measured over the tests alone. A named subset is skipped rather than measured.
+# Run the tests against the mutations they register, all of them or only the ones named, or as a plain test run when a caller switched the registered mutations off.
+mutations_run(tests) := 'label=test-mutations; if ' + mutations_switched_off + '; then label=test; fi; ' + progress('"$label"', python_m + " unittest --quiet " + tests)
+
+# Run the unit tests under coverage, with the registered mutations standing aside, so coverage is measured over the tests alone. A named subset is skipped rather than measured.
 [env("PYTHONDEVMODE", "1")]
 [env("PYTHONPATH", "src")]
 test-coverage *tests: install-py-dependencies install-nltk-data
@@ -157,8 +165,8 @@ mutate-help:
     @echo "mutation: another gate of COMMAND failed, such as the coverage gate of just test."
     @echo "\nTelling 3 from a kill needs the test count of a clean run, so reaching it runs COMMAND a second time"
     @echo "on the restored file. That costs as long again as the first run, and the probe says so before it starts."
-    @echo "\nThe run has the @kills checks switched off, so a test whose own mutation names a line this probe"
-    @echo "rewrote is not reported: the kill list holds the tests that failed on the mutation you gave it."
+    @echo "\nThe run has the registered mutations switched off, so a test whose own mutation names a line this"
+    @echo "probe rewrote is not reported: the kill list holds the tests that failed on the mutation you gave it."
     @echo "\nA killed run ends by naming each test that killed it, a subTest case with its parameters. Read that"
     @echo "list rather than the outcome alone: a case of a table missing from it guards nothing its neighbours"
     @echo "don't, and two tests in it for a one-line change say one of them guards nothing the other doesn't."
@@ -307,7 +315,7 @@ verify: format test-and-check
 
 # === Fix issues ===
 
-# Rename a module-level name and every reference to it, in the files named. See `just help rename`.
+# Rename a module-level name, a method, or an attribute, and every reference to it, in the files named. See `just help rename`.
 rename old new +files:
     {{ python_m }} tools.rename "$@"
 
@@ -319,12 +327,19 @@ rename-help:
     @echo "\n    just rename release_metadata _release_metadata src/update_time/sources/pypi.py"
     @echo "\nA name defined in one module and used in another is renamed only where the files named cover both, so"
     @echo "name every file that refers to it, and spell OLD as the fully qualified name, since a bare name reaches"
-    @echo "the definition alone across modules. A module-private name takes the bare form, the qualified one"
-    @echo "resolving to nothing. The recipe fails when the old name survives in a file it was given, so a rename"
-    @echo "that reached only some of them is caught rather than left on disk. A rename that landed then reports the"
-    @echo "prose that still mentions the old name in backticks, wherever in the repository it sits, since a rename"
-    @echo "rewrites none of it: the same word is a parameter or a local elsewhere, and means something else there."
-    @echo "Read the diff afterwards, as with any rewrite."
+    @echo "the definition alone across modules. The recipe fails, renaming nothing, when none of FILES is a module"
+    @echo "the qualified OLD names, so name the file that defines it as well. A module-private name takes the bare"
+    @echo "form, the qualified one resolving to nothing. The recipe fails when a module-level name survives in a file"
+    @echo "it was given, so a rename that reached only some of them is caught rather than left on disk. A rename that"
+    @echo "landed reports the prose that still mentions the old name in backticks, wherever in the repository it"
+    @echo "sits, since a rename rewrites none of it: the same word is a parameter or a local elsewhere, and means"
+    @echo "something else there."
+    @echo "\nSpell a method or an attribute as module.Class.name. Every file renames each attribute, keyword argument,"
+    @echo "method, and class attribute of that name, whatever it belongs to, so an override in a subclass is renamed"
+    @echo "with the definition. A function or a local of that name is left alone, so a member rename runs no"
+    @echo "check for the old name surviving:"
+    @echo "\n    just rename tests.update_time.helpers.LoggingTestCase.old_name new_name FILES"
+    @echo "\nRead the diff afterwards, as with any rewrite."
 
 # Format and lint-fix Python code, the part of `just fix` a quicker loop needs after an edit.
 format: install-py-dependencies
@@ -391,8 +406,8 @@ readme:
 # Run SonarCloud prerequisites
 _sonarcloud: test
     {{ coverage }} xml # SonarCloud needs a Cobertura compatible XML coverage report
-    # SonarCloud needs a JUnit compatible XML report. The registered checks are not run, because `test-mutations` ran them already and this run is here for the report alone.
-    env {{ checks_off }}=1 {{ python_m }} xmlrunner discover --output-file build/xunit.xml
+    # SonarCloud needs a JUnit compatible XML report. The registered mutations are not run, because `test-mutations` ran them already and this run is here for the report alone.
+    {{ switch_mutations_off }} {{ python_m }} xmlrunner discover --output-file build/xunit.xml
 
 # Run everything in CI
 _ci: _sonarcloud check

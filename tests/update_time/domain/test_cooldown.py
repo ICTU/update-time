@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff, within_cooldown
 
-from tests.helpers import patch_environ
+from tests.update_time.helpers import days_ago
 
 
 class WithinCooldownTest(unittest.TestCase):
@@ -17,13 +17,13 @@ class WithinCooldownTest(unittest.TestCase):
 
     def test_cooldown_argument(self):
         """Test that within_cooldown honours the cooldown period passed to it."""
-        timestamp = datetime.now(UTC) - timedelta(days=10)
+        timestamp = days_ago(10)
         self.assertTrue(within_cooldown(timestamp, 30))
         self.assertFalse(within_cooldown(timestamp, 5))
 
     def test_cooldown_longer_than_a_date_interval_can_hold(self):
         """Test that a cooldown of more days than a `timedelta` holds is honoured rather than aborting the run."""
-        self.assertTrue(within_cooldown(datetime.now(UTC) - timedelta(days=1), 10**12))
+        self.assertTrue(within_cooldown(days_ago(1), 10**12))
 
     def test_just_within_cooldown(self):
         """Test that a timestamp just inside the cooldown period is reported as within cooldown."""
@@ -41,15 +41,13 @@ class WithinCooldownTest(unittest.TestCase):
 
 
 class CooldownCutoffTest(unittest.TestCase):
-    """Unit tests for the cooldown expressed as the cutoff instant uv's `--exclude-newer` wants."""
+    """Unit tests for the cooldown expressed as a cutoff instant."""
 
     def test_cutoff_is_the_cooldown_ago(self):
         """Test that the cutoff is the instant the cooldown reaches back to."""
-        with patch_environ({COOLDOWN.name: "30"}):
-            cutoff = datetime.fromisoformat(cooldown_cutoff())
+        cutoff = datetime.fromisoformat(cooldown_cutoff(30))
         self.assertEqual((datetime.now(UTC) - cutoff).days, 30)
 
     def test_cutoff_reaching_past_the_earliest_date(self):
         """Test that a cooldown reaching further back than a date can express yields the earliest instant."""
-        with patch_environ({COOLDOWN.name: str(10**12)}):
-            self.assertEqual(cooldown_cutoff(), datetime.min.replace(tzinfo=UTC).isoformat())
+        self.assertEqual(cooldown_cutoff(10**12), datetime.min.replace(tzinfo=UTC).isoformat())

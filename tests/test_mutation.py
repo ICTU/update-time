@@ -37,6 +37,7 @@ _MULTIPLE_TEST_NAME = "tests.test_mutation.IsMultipleOfThreeTest.test_a_multiple
 _DOUBLER_TEST_NAME = "tests.test_mutation.DoublerTest.test_a_doubled_value"
 _ONE_DOUBLED_TEST_NAME = "tests.test_mutation.DoublerTest.test_one_doubled"
 _TWO_DOUBLED_TEST_NAME = "tests.test_mutation.DoublerTest.test_two_doubled"
+_THREE_DOUBLED_TEST_NAME = "tests.test_mutation.DoublerTest.test_three_doubled"
 # The `IsEvenTest` tests `KillsTest` runs to exercise the decorator: one registers a single mutation, one several.
 _DECORATED_TEST = "test_an_odd_number"
 _SEVERAL_MUTATIONS_TEST = "test_an_odd_number_against_several_mutations"
@@ -149,6 +150,10 @@ class DoublerTest(unittest.TestCase):
         """Test that two doubled is four."""
         self.assertEqual(Doubler.two_doubled(), 4)
 
+    def test_three_doubled(self):
+        """Test that three doubled is six."""
+        self.assertEqual(Doubler().three_doubled, 6)
+
 
 class CheckTest(unittest.TestCase):
     """Unit tests for checking a test against the mutation it is meant to kill."""
@@ -189,6 +194,23 @@ class CheckTest(unittest.TestCase):
         """Test that a mutation anchored to a property reaches the getter, which is what carries its names."""
         mutation = Mutation(Doubler.one_doubled, "self.doubled(1)", "self.doubled(2)")
         self.assertEqual(mutation.check(_ONE_DOUBLED_TEST_NAME), Result(Outcome.KILLED))
+
+    @kills(
+        Mutation(
+            checker.Mutation._unwrapped,
+            'return cast("_Function", self.anchor.func)',
+            "return self.anchor",
+            "a cached property anchor is passed on as it is, so the run ends with a traceback",
+            raises=(
+                "AttributeError: 'cached_property' object has no attribute '__qualname__'. "
+                "Did you mean: '__set_name__'?"
+            ),
+        )
+    )
+    def test_a_mutation_anchored_to_a_cached_property_is_applied_inside_its_function(self):
+        """Test that a mutation anchored to a cached property reaches its function, which is what carries its names."""
+        mutation = Mutation(Doubler.three_doubled, "self.doubled(3)", "self.doubled(4)")
+        self.assertEqual(mutation.check(_THREE_DOUBLED_TEST_NAME), Result(Outcome.KILLED))
 
     @kills(
         Mutation(
@@ -867,15 +889,22 @@ class KillsTest(unittest.TestCase):
     @kills(
         Mutation(
             helpers.patch_environ,
-            'in_dict.setdefault(CHECKS_OFF, os.environ.get(CHECKS_OFF, "0"))',
-            "pass",
+            "for sentinel in (CHECKS_OFF, CHECKED_TEST):",
+            "for sentinel in (CHECKED_TEST,):",
             "a test whose class clears the environment loses the sentinel, so `just mutate` checks it after all",
-        )
+        ),
+        Mutation(
+            helpers.patch_environ,
+            "for sentinel in (CHECKS_OFF, CHECKED_TEST):",
+            "for sentinel in (CHECKS_OFF,):",
+            "a rerun that clears the environment checks its registrations again, so a survivor passes as killed",
+        ),
     )
-    def test_the_sentinel_survives_a_cleared_environment(self):
-        """Test that patching the environment keeps the checks-off sentinel, whatever else it clears."""
-        with patch.dict(os.environ, {CHECKS_OFF: "1"}, clear=True), patch_environ():
-            self.assertEqual(os.environ.get(CHECKS_OFF), "1")
+    def test_the_sentinels_survive_a_cleared_environment(self):
+        """Test that patching the environment keeps both mutation-check sentinels, whatever else it clears."""
+        for sentinel, value in ((CHECKS_OFF, "1"), (CHECKED_TEST, _SUBJECT_TEST_NAME)):
+            with self.subTest(sentinel), patch.dict(os.environ, {sentinel: value}, clear=True), patch_environ():
+                self.assertEqual(os.environ.get(sentinel), value)
 
     @kills(
         Mutation(

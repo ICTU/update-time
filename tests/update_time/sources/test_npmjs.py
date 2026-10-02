@@ -134,7 +134,6 @@ class GetChangesRepositoryTest(LoggingTestCase):
             ("url_not_a_string", {"repository": {"url": 42}}),
         ):
             with self.subTest(metadata=metadata), patch_get(metadata) as mock_get:
-                self.clear_caches()
                 self.assertEqual(get_changes(package, "1.0"), "")
                 self.assertEqual(requested_urls(mock_get), [_version_url(package)])
 
@@ -150,7 +149,6 @@ class GetChangesRepositoryTest(LoggingTestCase):
             ("scp_repo", {"url": "git@github.com:org/package.git"}),
         ):
             with self.subTest(repository=repository):
-                self.clear_caches()
                 mock_get.reset_mock()
                 respond_per_url(
                     mock_get,

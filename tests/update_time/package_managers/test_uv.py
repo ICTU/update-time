@@ -1,7 +1,6 @@
 """Unit tests for the uv package manager's operations (detection is covered via the pyproject.toml updater)."""
 
 import unittest
-from logging import INFO
 from pathlib import Path
 from unittest.mock import ANY, Mock, call, patch
 
@@ -65,7 +64,7 @@ class PersistExcludeNewerTest(LoggingTestCase):
         """Test that an exclude-newer without the marker (the user's own) is left alone, writing and logging nothing."""
         pyproject_toml = self.persist(pyproject("a==1.0") + '\n[tool.uv]\nexclude-newer = "2024-01-01"\n')
         pyproject_toml.write_text.assert_not_called()
-        self.assertEqual(self.records(INFO), [])
+        self.assert_no_info_logged()
 
     def test_does_not_rewrite_when_already_current(self):
         """Test that a marked value already matching the cooldown is not rewritten (no spurious file churn)."""
