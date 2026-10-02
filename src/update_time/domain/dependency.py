@@ -79,16 +79,20 @@ class FloatingPin(StrEnum):
     """What a source made of a reference with a floating pin and why, if the pin was not resolved."""
 
     RESOLVED = auto()
-    NOT_LISTED = "its tag is not among the tags listed for the image"
-    NOT_AMONG_EXAMINED = "its tag is not among the newest tags examined for the image"
-    NO_MANIFEST = "the registry serves no manifest for its tag, so what that tag serves is unknown"
+    NOT_LISTED = "%(tag)s is not among the tags listed for the image"
+    NOT_AMONG_EXAMINED = "%(tag)s is not among the newest tags examined for the image"
+    NO_MANIFEST = "the registry does not serve a manifest for %(tag)s, so what that tag serves is unknown"
     NO_VERSION_TAG = "no tag naming a version serves the same image"
     NO_VERSION_TAG_EXAMINED = "no tag naming a version among the newest examined serves the same image"
 
+    def explained(self, tag: str) -> str:
+        """Return the reason with the tag the source looked up filled in."""
+        return self % {"tag": tag}
 
-def tag_of(version: VersionString) -> str:
-    """Return the version with the colon attaching it to a dependency's name, or nothing when it names none."""
-    return f":{version}" if version else ""
+
+def tag_of(version: VersionString, separator: str = ":") -> str:
+    """Return the version with the separator attaching it to a dependency's name, or nothing when it names none."""
+    return f"{separator}{version}" if version else ""
 
 
 class AccountedFor(StrEnum):

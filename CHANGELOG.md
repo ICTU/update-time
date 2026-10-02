@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Fixed
 
+- Warn about hash drift on a floating image tag whose new digest only floating tags serve. Closes [#396](https://github.com/ICTU/update-time/issues/396).
 - Warn once about a Maven dependency or plugin whose version a scanned pom manages, rather than once per declaration. Closes [#386](https://github.com/ICTU/update-time/issues/386).
 
 ## 0.0.41 - 2026-09-30

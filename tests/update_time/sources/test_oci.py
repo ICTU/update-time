@@ -820,6 +820,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         latest = get_latest_tag("ghcr.io/owner/python", "latest")
         self.assertEqual(latest.version, "latest")
         self.assertEqual(latest.floating, FloatingPin.NO_VERSION_TAG_EXAMINED)
+        self.assertEqual(latest.sha, DIGEST1)
         manifests = [call for call in self.requests.call_args_list if "/manifests/" in call.args[0]]
         # The walk asked the floating tag for its digest, then spent its budget on the newest version tags:
         self.assertEqual(len(manifests), _MAX_FLOATING_TAG_PROBES + 1)

@@ -65,10 +65,14 @@ class _Check:
 
 @dataclass(frozen=True)
 class _Drift:
-    """A kind of hash pin that can drift: the warning that it did, and the report that the new value was adopted."""
+    """A kind of hash pin that can drift: the warning that it did, and the report that the new value was adopted.
+
+    Both messages name the reference as its dependency, then the separator and the version it records, if any.
+    """
 
     warning: LogMessage
     adopted: LogMessage
+    separator: str
 
 
 def _redundant_directive(reason: str) -> str:
@@ -227,11 +231,11 @@ class Logger:
     def unpinned_floating_tag(self, reference: Reference, release: DependencyVersion, reason: FloatingPin) -> None:
         """Log that a floating tag was pinned to no version, naming which of the reasons left it as it is.
 
-        The tag named is the one the source looked up. A reference naming none means `latest`, which the source
-        reports back as the release it resolved, nothing having been pinned in its place.
+        A reference that does not name a tag is named by its image alone, as the file writes it. The reason names
+        the tag the source looked up, which is the release it reports back.
         """
-        fields = self._tagged_fields(reference, reference.current_version or release.version)
-        self._log(self._MESSAGE_UNPINNED_FLOATING_TAG, **fields, reason=reason)
+        fields = self._tagged_fields(reference, reference.current_version)
+        self._log(self._MESSAGE_UNPINNED_FLOATING_TAG, **fields, reason=reason.explained(release.version))
 
     _MESSAGE_ACCOUNTED_FOR_REFERENCE = LogMessage(
         DEBUG,
@@ -255,39 +259,39 @@ class Logger:
 
     _MESSAGE_DIGEST_DRIFT = LogMessage(
         WARNING,
-        "Digest drift for %(dependency)s:%(version)s in %(location)s: pinned to %(current_sha)s but the registry "
+        "Digest drift for %(dependency)s%(tag)s in %(location)s: pinned to %(current_sha)s but the registry "
         "now serves %(new_sha)s; the pin was left unchanged, verify the change is expected before updating the pin",
     )
 
     _MESSAGE_ADOPTED_DIGEST_DRIFT = LogMessage(
         INFO,
-        "Adopted digest drift for %(dependency)s:%(version)s in %(location)s: "
+        "Adopted digest drift for %(dependency)s%(tag)s in %(location)s: "
         "re-pinned from %(current_sha)s to %(new_sha)s (%(cause)s)",
     )
 
-    DIGEST_DRIFT = _Drift(_MESSAGE_DIGEST_DRIFT, _MESSAGE_ADOPTED_DIGEST_DRIFT)
+    DIGEST_DRIFT = _Drift(_MESSAGE_DIGEST_DRIFT, _MESSAGE_ADOPTED_DIGEST_DRIFT, ":")
 
     _MESSAGE_TAG_DRIFT = LogMessage(
         WARNING,
-        "Tag drift for %(dependency)s@%(version)s in %(location)s: pinned to commit %(current_sha)s but the tag now "
+        "Tag drift for %(dependency)s%(tag)s in %(location)s: pinned to commit %(current_sha)s but the tag now "
         "points at %(new_sha)s; the pin was left unchanged, verify the tag was moved deliberately before updating "
         "the pin",
     )
 
     _MESSAGE_ADOPTED_TAG_DRIFT = LogMessage(
         INFO,
-        "Adopted tag drift for %(dependency)s@%(version)s in %(location)s: "
+        "Adopted tag drift for %(dependency)s%(tag)s in %(location)s: "
         "re-pinned from commit %(current_sha)s to %(new_sha)s (%(cause)s)",
     )
 
-    TAG_DRIFT = _Drift(_MESSAGE_TAG_DRIFT, _MESSAGE_ADOPTED_TAG_DRIFT)
+    TAG_DRIFT = _Drift(_MESSAGE_TAG_DRIFT, _MESSAGE_ADOPTED_TAG_DRIFT, "@")
 
     @staticmethod
-    def _drift_fields(drifted: DriftedPin, **extra: object) -> dict[str, object]:
+    def _drift_fields(kind: _Drift, drifted: DriftedPin, **extra: object) -> dict[str, object]:
         """Return the fields every drift message carries, plus the ones the message reporting it adds."""
         return {
             "dependency": drifted.dependency,
-            "version": drifted.current_version,
+            "tag": tag_of(drifted.current_version, kind.separator),
             "location": drifted.location,
             "current_sha": drifted.current_sha,
             "new_sha": drifted.new_sha,
@@ -296,14 +300,14 @@ class Logger:
 
     def drift(self, kind: _Drift, drifted: DriftedPin) -> None:
         """Warn that a hash pin no longer matches what it points at, and was left unchanged."""
-        self._log(kind.warning, **self._drift_fields(drifted))
+        self._log(kind.warning, **self._drift_fields(kind, drifted))
 
     def adopted_drift(self, kind: _Drift, drifted: DriftedPin, cause: str) -> None:
         """Log that what a hash pin now points at was adopted because the reference opted in.
 
         `cause` names the opt-in that triggered the adoption.
         """
-        self._log(kind.adopted, **self._drift_fields(drifted, cause=cause))
+        self._log(kind.adopted, **self._drift_fields(kind, drifted, cause=cause))
 
     _MESSAGE_HASH_MISMATCH = LogMessage(
         WARNING,
