@@ -195,6 +195,39 @@ def _accounted_for_references(log: Logger, capture: _Capture, dockerfile: Locati
     return capture.take()
 
 
+def _unpinned_floating_tags(log: Logger, capture: _Capture) -> str:
+    """Log one floating tag for each reason Update-time leaves it unpinned, and return the lines they render as."""
+    compose = Location(Path("docker-compose.yml"), 7)
+    log.unpinned_floating_tag(
+        reference("acme/api", compose, "dev"), DependencyVersion("dev"), FloatingPin.NO_VERSION_TAG
+    )
+    log.unpinned_floating_tag(
+        reference("acme/api", compose, "nightly"), DependencyVersion("nightly"), FloatingPin.NOT_LISTED
+    )
+    log.unpinned_floating_tag(
+        reference("acme/api", compose, "canary"), DependencyVersion("canary"), FloatingPin.NOT_AMONG_EXAMINED
+    )
+    ghcr = Location(Path("Dockerfile"), 1)
+    log.unpinned_floating_tag(
+        reference("ghcr.io/acme/api", ghcr, "latest"), DependencyVersion("latest"), FloatingPin.NO_VERSION_TAG_EXAMINED
+    )
+    log.unpinned_floating_tag(
+        reference("ghcr.io/acme/api", ghcr, "edge"), DependencyVersion("edge"), FloatingPin.NO_MANIFEST
+    )
+    return capture.take()
+
+
+def _commits(log: Logger, capture: _Capture, workflow: Location) -> dict[str, str]:
+    """Log a branch kept floating, a branch left unpinned, and an undated commit, each paired with its placeholder."""
+    branch = reference("actions/checkout", workflow, "main")
+    log.keeping_branch(branch, DependencyVersion("4.3.0", sha=_ELIDED), "update-time: allow[floating-pin]")
+    kept = capture.take()
+    log.unpinned_branch(branch, "HTTP 403, API rate limit exceeded")
+    unpinned = capture.take()
+    log.no_commit_date("actions/checkout", _ELIDED, "HTTP 403, API rate limit exceeded")
+    return {"@@KEPT_BRANCH@@": kept, "@@UNPINNED_BRANCH@@": unpinned, "@@NO_COMMIT_DATE@@": capture.take()}
+
+
 def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log each block's sample records and pair the lines they render as with the block's placeholder."""
     log.drift(
@@ -203,6 +236,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     )
     workflow = Location(Path(".github/workflows/ci.yml"), 17)
     log.drift(Logger.TAG_DRIFT, DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, new_sha=_ELIDED))
+    log.drift(Logger.BRANCH_DRIFT, DriftedPin("actions/checkout", "main", workflow, _ELIDED, new_sha=_ELIDED))
     location = Location(Path("docs/conf.py"), 4)
     log.hash_mismatch("clipboard", "2.0.11", _ELIDED_INTEGRITY_HASH, _ELIDED_INTEGRITY_HASH, location)
     drift = capture.take()
@@ -245,27 +279,12 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     effective_pom = _effective_pom_warnings(log, capture)
 
-    compose = Location(Path("docker-compose.yml"), 7)
-    log.unpinned_floating_tag(
-        reference("acme/api", compose, "dev"), DependencyVersion("dev"), FloatingPin.NO_VERSION_TAG
-    )
-    log.unpinned_floating_tag(
-        reference("acme/api", compose, "nightly"), DependencyVersion("nightly"), FloatingPin.NOT_LISTED
-    )
-    log.unpinned_floating_tag(
-        reference("acme/api", compose, "canary"), DependencyVersion("canary"), FloatingPin.NOT_AMONG_EXAMINED
-    )
-    ghcr = Location(Path("Dockerfile"), 1)
-    log.unpinned_floating_tag(
-        reference("ghcr.io/acme/api", ghcr, "latest"), DependencyVersion("latest"), FloatingPin.NO_VERSION_TAG_EXAMINED
-    )
-    log.unpinned_floating_tag(
-        reference("ghcr.io/acme/api", ghcr, "edge"), DependencyVersion("edge"), FloatingPin.NO_MANIFEST
-    )
-    unpinned_floating_tag = capture.take()
+    unpinned_floating_tag = _unpinned_floating_tags(log, capture)
 
     log.keeping_floating_tag(reference("python", dockerfile, "latest"), pinned_tag, "update-time: allow[floating-pin]")
     kept_floating_tag = capture.take()
+
+    commits = _commits(log, capture, workflow)
 
     accounted_for = _accounted_for_references(log, capture, dockerfile)
 
@@ -281,6 +300,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **effective_pom,
         "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
+        **commits,
         "@@ACCOUNTED_FOR_REFERENCES@@": accounted_for,
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,

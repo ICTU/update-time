@@ -229,6 +229,17 @@ class LoggerTests(TestCase):
             f"{FloatingPin.NO_VERSION_TAG}",
         )
 
+    def test_unpinned_branch(self, mock_log: Mock):
+        """Test that a branch left unpinned is reported with the reason its commit could not be fetched."""
+        location = create_location(".github/workflows/ci.yml", 17)
+        _new_logger().unpinned_branch(reference("actions/checkout", location, "main"), "HTTP 404, Not Found")
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_UNPINNED_BRANCH,
+            f"Branch {dependency('actions/checkout')}@main in {at('.github/workflows/ci.yml:17')} was left as it is: "
+            "its commit could not be fetched (HTTP 404, Not Found)",
+        )
+
     def test_unpinned_floating_tag_reason_names_the_tag_looked_up(self, mock_log: Mock):
         """Test that a reason about the tag names the tag looked up, which for a reference naming none is `latest`."""
         location = create_location(".circleci/config.yml", 1)
@@ -271,7 +282,7 @@ class LoggerTests(TestCase):
         )
 
     def test_keeping_a_floating_tag(self, mock_log: Mock):
-        """Test that a floating tag left as it is is reported with the tag it names and what it resolves to."""
+        """Test that keeping a floating tag is reported with the tag it names and what it resolves to."""
         location = create_location("Dockerfile", 1)
         release = DependencyVersion("3.14.7", sha=DIGEST)
         cause = "update-time: allow[floating-pin]"
@@ -281,6 +292,19 @@ class LoggerTests(TestCase):
             Logger._MESSAGE_KEEPING_FLOATING_TAG,
             f"Keeping the floating tag {dependency('python')}:latest in {at('Dockerfile:1')}: it resolves to "
             f"3.14.7@{DIGEST} ({cause})",
+        )
+
+    def test_keeping_a_branch(self, mock_log: Mock):
+        """Test that keeping a branch is reported with the branch it names and what it resolves to."""
+        location = create_location(".github/workflows/ci.yml", 17)
+        cause = "update-time: allow[floating-pin]"
+        release = DependencyVersion("4.3.0", sha=COMMIT_SHA1)
+        _new_logger().keeping_branch(reference("actions/checkout", location, "main"), release, cause)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_KEEPING_BRANCH,
+            f"Keeping the branch {dependency('actions/checkout')}@main in {at('.github/workflows/ci.yml:17')}: it "
+            f"resolves to 4.3.0@{COMMIT_SHA1} ({cause})",
         )
 
     def test_keeping_a_reference_that_names_no_tag(self, mock_log: Mock):
@@ -311,8 +335,8 @@ class LoggerTests(TestCase):
     @kills(
         Mutation(
             log_module.Logger,
-            '"@")',
-            '":")',
+            'ADOPTED_TAG_DRIFT, "@")',
+            'ADOPTED_TAG_DRIFT, ":")',
             "a moved tag is reported with the colon of an image tag rather than the at sign of a git ref",
         )
     )
@@ -329,6 +353,27 @@ class LoggerTests(TestCase):
             "tag was moved deliberately before updating the pin",
         )
 
+    @kills(
+        Mutation(
+            log_module.Logger,
+            'ADOPTED_BRANCH_DRIFT, "@")',
+            'ADOPTED_BRANCH_DRIFT, ":")',
+            "a moved branch is reported with the colon of an image tag rather than the at sign of a git ref",
+        )
+    )
+    def test_branch_drift(self, mock_log: Mock):
+        """Test that a branch whose commit changed under an unchanged pin is warned about at warning level."""
+        location = create_location(".github/workflows/ci.yml", 17)
+        drifted = DriftedPin("actions/checkout", "main", location, COMMIT_SHA1, new_sha=COMMIT_SHA2)
+        _new_logger().drift(Logger.BRANCH_DRIFT, drifted)
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_BRANCH_DRIFT,
+            f"Branch drift for {dependency('actions/checkout')}@main in {at('.github/workflows/ci.yml:17')}: pinned "
+            f"to commit {COMMIT_SHA1} but the branch now points at {COMMIT_SHA2}; the pin was left unchanged, verify "
+            "the branch moved to a commit you trust before updating the pin",
+        )
+
     def test_digest_drift_of_a_reference_naming_no_tag(self, mock_log: Mock):
         """Test that a drifted digest is reported by the image's name alone when the reference does not name a tag."""
         location = create_location("Dockerfile", 1)
@@ -342,18 +387,41 @@ class LoggerTests(TestCase):
         )
 
     def test_adopted_drift(self, mock_log: Mock):
-        """Test that adopting a re-pushed tag's new digest is logged at info level, naming the opt-in that caused it."""
+        """Test that adopted drift is logged at info level, naming the kind of drift and the opt-in that caused it."""
         cause = "update-time: allow[hash-drift]"
-        location = create_location("Dockerfile", 2)
-        _new_logger().adopted_drift(
-            Logger.DIGEST_DRIFT, DriftedPin("dependency", "3.14", location, DIGEST1, new_sha=DIGEST2), cause
-        )
-        self.assert_message(
-            mock_log,
-            Logger._MESSAGE_ADOPTED_DIGEST_DRIFT,
-            f"Adopted digest drift for {dependency('dependency')}:3.14 in {at('Dockerfile:2')}: "
-            f"re-pinned from {DIGEST1} to {DIGEST2} ({cause})",
-        )
+        dockerfile, workflow = create_location("Dockerfile", 2), create_location(".github/workflows/ci.yml", 17)
+        checkout, ci = dependency("actions/checkout"), at(".github/workflows/ci.yml:17")
+        cases = {
+            "digest": (
+                Logger.DIGEST_DRIFT,
+                DriftedPin("dependency", "3.14", dockerfile, DIGEST1, new_sha=DIGEST2),
+                (
+                    f"Adopted digest drift for {dependency('dependency')}:3.14 in {at('Dockerfile:2')}: "
+                    f"re-pinned from {DIGEST1} to {DIGEST2} ({cause})"
+                ),
+            ),
+            "tag": (
+                Logger.TAG_DRIFT,
+                DriftedPin("actions/checkout", "4.1.1", workflow, COMMIT_SHA1, new_sha=COMMIT_SHA2),
+                (
+                    f"Adopted tag drift for {checkout}@4.1.1 in {ci}: "
+                    f"re-pinned from commit {COMMIT_SHA1} to {COMMIT_SHA2} ({cause})"
+                ),
+            ),
+            "branch": (
+                Logger.BRANCH_DRIFT,
+                DriftedPin("actions/checkout", "main", workflow, COMMIT_SHA1, new_sha=COMMIT_SHA2),
+                (
+                    f"Adopted branch drift for {checkout}@main in {ci}: "
+                    f"re-pinned from commit {COMMIT_SHA1} to {COMMIT_SHA2} ({cause})"
+                ),
+            ),
+        }
+        for name, (kind, drifted, rendered) in cases.items():
+            with self.subTest(name):
+                mock_log.reset_mock()  # Judge each kind on the record of its own call.
+                _new_logger().adopted_drift(kind, drifted, cause)
+                self.assert_message(mock_log, kind.adopted, rendered)
 
     def test_stale_dependency_warning(self, mock_log: Mock):
         """Test that an old newest release is warned about at warning level, naming the release that was measured.

@@ -9,9 +9,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Report the new version of a Maven plugin that a property versions. Closes [#388](https://github.com/ICTU/update-time/issues/388).
+- Pin a GitHub Action or pre-commit hook that references a branch to the commit the branch points at, and warn when the branch moves on. Closes [#322](https://github.com/ICTU/update-time/issues/322).
+
+### Changed
+
+- Name the tag as its repository spells it in the comment of a pinned GitHub Action or pre-commit hook. Part of [#322](https://github.com/ICTU/update-time/issues/322).
+- Adopt hash drift only after the cooldown has passed for the commit or image that a tag or branch moved to. Part of [#322](https://github.com/ICTU/update-time/issues/322).
 
 ### Fixed
 
+- Warn about hash drift on a version tag or image tag that was moved or re-pushed inside the cooldown, instead of leaving it unreported. Part of [#322](https://github.com/ICTU/update-time/issues/322).
+- Pin an image tag or a GitHub version tag that was pushed or tagged inside the cooldown, instead of leaving it unpinned. Part of [#322](https://github.com/ICTU/update-time/issues/322).
+- Report an `allow[floating-pin]` on a GitHub Action or pre-commit hook pinned to a bare commit SHA as redundant. Part of [#322](https://github.com/ICTU/update-time/issues/322).
 - Warn about hash drift on a floating image tag whose new digest only floating tags serve. Closes [#396](https://github.com/ICTU/update-time/issues/396).
 - Warn once about a Maven dependency or plugin whose version a scanned pom manages, rather than once per declaration. Closes [#386](https://github.com/ICTU/update-time/issues/386).
 

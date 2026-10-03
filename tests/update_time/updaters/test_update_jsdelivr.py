@@ -10,7 +10,7 @@ from update_time.primitives.location import Location
 from update_time.updaters.update_jsdelivr import update_jsdelivrs
 
 from tests.helpers import mock_path, mock_response
-from tests.update_time.fixtures import HASH1, HASH2
+from tests.update_time.fixtures import HASH1, HASH2, STALE_DATE
 from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, npm_registry
 from tests.update_time.updaters.helpers import no_vulnerabilities, osv, osv_vulnerability
 
@@ -201,7 +201,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
 
     def test_stale_dependency_warned(self, mock_get: Mock, mock_glob: Mock):
         """Test that a jsDelivr package whose newest release is old is warned about, without rewriting the URL."""
-        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        old = STALE_DATE.isoformat()
         self.offer_versions(mock_get, "2.0.11", published=old, served_hash=HASH1)
         mock_conf = self.update(_CONF, mock_glob)
         mock_conf.write_text.assert_not_called()  # no newer version, so no rewrite
@@ -270,7 +270,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
 
     def test_ignore_stale_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
         """Test that an `ignore[stale]` marker on the URL's line silences the warning, but not the update."""
-        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        old = STALE_DATE.isoformat()
         self.offer_versions(mock_get, "2.0.12", "2.0.11", published=old)
         mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: ignore[stale]", _INTEGRITY)), mock_glob)
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", self.written(mock_conf))

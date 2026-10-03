@@ -433,14 +433,17 @@ def _resolved_floating_tag(image: DependencyName, current: Tag) -> DependencyVer
     """
     if not is_docker_hub_image(image):
         return _walked_floating_tag(image, current)
-    digests, examined_all = docker_hub.tag_digests(_repository(image), current.name)
-    if not (digest := digests.get(current.name)):
-        reason_no_version_was_pinned = FloatingPin.NOT_LISTED if examined_all else FloatingPin.NOT_AMONG_EXAMINED
+    listing = docker_hub.tag_listing(_repository(image), current.name)
+    if not (digest := listing.digests.get(current.name)):
+        reason_no_version_was_pinned = (
+            FloatingPin.NOT_LISTED if listing.examined_all else FloatingPin.NOT_AMONG_EXAMINED
+        )
         return _unpinned_floating_tag(current, reason_no_version_was_pinned)
-    aliases = [Tag(name=name) for name, tag_digest in digests.items() if tag_digest == digest]
+    pushed = listing.pushes.get(current.name)
+    aliases = [Tag(name=name) for name, tag_digest in listing.digests.items() if tag_digest == digest]
     if (alias := _pinned_alias(current, aliases)) is None:
-        return _unpinned_floating_tag(current, FloatingPin.NO_VERSION_TAG, digest)
-    return DependencyVersion(version=alias.name, sha=digest, floating=FloatingPin.RESOLVED)
+        return _unpinned_floating_tag(current, FloatingPin.NO_VERSION_TAG, digest, pushed)
+    return DependencyVersion(version=alias.name, sha=digest, published=pushed, floating=FloatingPin.RESOLVED)
 
 
 # How many tags the walk asks for a manifest at most, so that a repository whose tags the floating tag's image
@@ -472,14 +475,16 @@ def _walked_floating_tag(image: DependencyName, current: Tag) -> DependencyVersi
     )
 
 
-def _unpinned_floating_tag(current: Tag, reason: FloatingPin, digest: str = "") -> DependencyVersion:
+def _unpinned_floating_tag(
+    current: Tag, reason: FloatingPin, digest: str = "", pushed: datetime | None = None
+) -> DependencyVersion:
     """Return the floating tag as it is, carrying why no version was pinned in its place.
 
-    It carries the digest the tag serves, where that digest is known. Two of the reasons say the registry does not
-    serve the tag, so nothing dates the reference.
+    It carries the digest the tag serves, and when the tag was pushed, where those are known. Two of the reasons say
+    the registry does not serve the tag, so nothing dates the reference.
     """
     served = reason not in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)
-    return DependencyVersion(version=current.name, sha=digest, floating=reason, served=served)
+    return DependencyVersion(version=current.name, sha=digest, published=pushed, floating=reason, served=served)
 
 
 def _pinned_alias(current: Tag, aliases: list[Tag]) -> Tag | None:
@@ -592,15 +597,17 @@ def _eligible_tag(image: str, current: Tag, candidate: Tag, cooldown_days: int) 
     """Resolve the candidate's digest and push date and return it when eligible, or None when it isn't.
 
     A candidate that equals the current tag on every version axis is the current version under another tag spelling
-    (an alias such as `22.15` for `22.15.0`), so the current spelling is kept and only its digest is adopted.
+    (an alias such as `22.15` for `22.15.0`), so the current spelling is kept and only its digest is adopted. The
+    cooldown does not hold the current version back, since the reference uses it already.
     """
     latest = _get_tag(image, candidate.name)
-    if latest is None or not latest.is_eligible(cooldown_days):
+    if latest is None:
         return None
-    if current.is_newer_or_equal(latest):  # The candidate is never older (see `is_candidate_for`), so this is equality.
-        name = current.name
-    else:
-        name = current.with_version(cast("Version", latest.version), latest.suffix).name
+    # The candidate is never older (see `is_candidate_for`), so this is equality.
+    is_current = current.is_newer_or_equal(latest)
+    if not latest.is_eligible(0 if is_current else cooldown_days):
+        return None
+    name = current.name if is_current else current.with_version(cast("Version", latest.version), latest.suffix).name
     return DependencyVersion(version=name, sha=latest.digest, published=latest.last_pushed)
 
 

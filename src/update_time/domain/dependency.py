@@ -202,6 +202,7 @@ class DependencyVersion:
     floating: FloatingPin | None = None  # What happened to the floating pin if the reference had one
     served: bool = True  # Whether the source serves the version the reference names
     accounted_for: AccountedFor | None = None  # Why the file accounts for the reference, so no registry was asked
+    tag_name: str = ""  # The version's tag as the repository spells it (`v6.0.0`), where the source reads tags
 
     @classmethod
     def unpinned(cls, project: Project) -> DependencyVersion:

@@ -9,6 +9,7 @@ push dates, for the digests Docker Hub's listing gives, and for credentials, whi
 """
 
 import os
+from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
@@ -68,8 +69,17 @@ _TAG_LISTING_PAGE_SIZE = 100
 _MAX_TAG_LISTING_PAGES = 5
 
 
-def tag_digests(repository: str, tag: str) -> tuple[dict[str, str], bool]:
-    """Return the digest each listed tag of a Docker Hub repository serves, and whether the listing was read out.
+@dataclass(frozen=True)
+class _TagListing:
+    """A Docker Hub repository's listed tags: their digests and push dates, and whether the listing was read out."""
+
+    digests: dict[str, str]
+    pushes: dict[str, datetime]
+    examined_all: bool
+
+
+def tag_listing(repository: str, tag: str) -> _TagListing:
+    """Return a Docker Hub repository's tag listing, read until it holds every tag serving the tag's digest.
 
     `repository` is the `namespace/repository` path (e.g. `library/python`). The OCI listing gives tag names only,
     so this is the only listing that says which tags serve one digest. The listing is ordered by push date and a
@@ -80,13 +90,15 @@ def tag_digests(repository: str, tag: str) -> tuple[dict[str, str], bool]:
     """
     url = _listing_url(repository)
     digests: dict[str, str] = {}
+    pushes: dict[str, datetime] = {}
     for _page in range(_MAX_TAG_LISTING_PAGES):
         entries, url = _listing_page(url)
         page = {entry["name"]: entry.get("digest", "") for entry in entries}
         digests |= page
+        pushes |= _push_dates(entries)
         if not url or _lists_every_alias(digests, page, tag):
             break
-    return digests, not url
+    return _TagListing(digests, pushes, examined_all=not url)
 
 
 def newest_pushes(repository: str) -> dict[str, datetime]:
@@ -97,6 +109,11 @@ def newest_pushes(repository: str) -> dict[str, datetime]:
     date is left out.
     """
     entries, _next_page = _listing_page(_listing_url(repository))
+    return _push_dates(entries)
+
+
+def _push_dates(entries: tuple[_TagJSON, ...]) -> dict[str, datetime]:
+    """Return each tag listed with the date it was pushed, leaving out a tag without a push date."""
     return {
         entry["name"]: published
         for entry in entries

@@ -18,21 +18,19 @@ if TYPE_CHECKING:
 
 _LOG = get_logger("github action")
 # Match a `uses:` reference: one already pinned to a commit SHA with a version comment (`<sha> # vX.Y.Z`), one
-# unpinned to a version tag (`@vX` / `@vX.Y.Z`), and one naming a branch (`@main`), whose repository is checked for
-# staleness although no update is resolved for it. The dependency names an owner and a repository, which is what an
-# action reference names, so `myaction@v1` is passed over. A local action carries no `@`, so it doesn't match at all.
+# unpinned to a version tag (`@vX` / `@vX.Y.Z`), and one naming a branch (`@main`), which is pinned to the commit the
+# branch points at. The dependency names an owner and a repository, which is what an action reference names, so
+# `myaction@v1` is passed over. A local action carries no `@`, so it doesn't match at all. The `v` is dropped before a
+# digit alone, so `v4.1.1` reads as version 4.1.1, and a branch such as `vnext` or `release/v1` is read whole.
 _ACTION_RE = re.compile(
     r"uses: (?P<dependency>[\w\d\.-]+/[\w\d\./-]+)@"
-    rf"(?:(?P<sha>{COMMIT_SHA}) # v?(?P<version>[\d\w\.\-]+)|v?(?P<tag>[\d\w\.\-]+))"
+    rf"(?:(?P<sha>{COMMIT_SHA}) # (?:v(?=\d))?(?P<version>[\d\w\.\-/]+)|(?:v(?=\d))?(?P<tag>[\d\w\.\-/]+))"
 )
 
 
 def _spell_action(reference: Reference, latest: DependencyVersion) -> str:
-    """Return the `uses:` reference pinned to the latest version's commit SHA, with the version as a comment.
-
-    The SHA is the latest version's, or — for a reference adopting a moved tag — that tag's new commit.
-    """
-    return f"uses: {reference.dependency}@{latest.sha} # v{latest.version}"
+    """Return the `uses:` reference pinned to the commit SHA, with the tag or branch as a comment."""
+    return f"uses: {reference.dependency}@{latest.sha} # {latest.tag_name or latest.version}"
 
 
 _ACTION = PinUpdater(_spell_action, _LOG)

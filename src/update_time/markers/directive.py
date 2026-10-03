@@ -33,7 +33,7 @@ class Reason(StrEnum):
     NO_VERSION_TO_CHECK_FOR_A_YANK = "this requirement does not pin a version to check for a yank"
     NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY = "this requirement does not pin a version to check for a vulnerability"
     PIN_NOT_FLOATING = "this reference's pin does not float"
-    UPDATE_HELD_BACK = "this reference's update is held back, so its tag is never pinned"
+    UPDATE_HELD_BACK = "this reference's update is held back, so it is never pinned"
     NO_REGISTRY_ASKED = "Update-time does not ask a registry about this reference, so its tag is never pinned"
 
 

@@ -1,6 +1,5 @@
 """Unit tests for the pre-commit config update script."""
 
-from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb, VersionBound
@@ -14,19 +13,25 @@ from update_time.domain.dependency import (
     Release,
 )
 from update_time.domain.reference import DriftedPin
+from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters.update_pre_commit_config import update_pre_commit_configs
 
 from tests.helpers import mock_path
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
-from tests.update_time.helpers import LoggingTestCase, bound, github_release_json, patch_github
+from tests.update_time.fixtures import FRESH_DATE, PAST_COOLDOWN_DATE, STALE_DATE
+from tests.update_time.helpers import (
+    LoggingTestCase,
+    bound,
+    github_commits_json,
+    github_release_json,
+    github_requests,
+    github_tag_json,
+    patch_github,
+)
 
 _HOOKS = "hooks:\n      - id: trailing-whitespace\n"
-# A publication date old enough that the default staleness threshold warns about it.
-_STALE_ISO = (datetime.now(UTC) - timedelta(days=512)).isoformat()
-# A publication date too fresh for the default staleness threshold to warn about.
-_FRESH_ISO = datetime.now(UTC).isoformat()
 
 
 def config(rev_block: str) -> str:
@@ -55,7 +60,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
 
     def test_pin_unpinned_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a rev given as a version tag only is pinned to the commit SHA with a frozen version comment."""
-        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
+        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA, tag_name="v4.6.0")
         config_file = mock_path(config("rev: v4.5.0\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
@@ -68,7 +73,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
 
     def test_pin_unpinned_tag_already_at_latest(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an unpinned tag already at the latest version is still pinned to that version's commit SHA."""
-        mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=NEW_SHA)
+        mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=NEW_SHA, tag_name="v4.5.0")
         config_file = mock_path(config("rev: v4.5.0\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
@@ -77,19 +82,21 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    def test_pin_unpinned_tag_without_v_prefix(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that a tag without a `v` prefix keeps that convention in the frozen version comment."""
-        mock_get_latest_version.return_value = DependencyVersion(version="24.1.0", sha=NEW_SHA)
+    def test_frozen_comment_names_the_tag_as_the_repository_spells_it(
+        self, mock_glob: Mock, mock_get_latest_version: Mock
+    ):
+        """Test that a rev is frozen with the tag as the repository spells it, whatever the rev's own spelling."""
+        mock_get_latest_version.return_value = DependencyVersion(version="24.1.0", sha=NEW_SHA, tag_name="v24.1.0")
         config_file = mock_path(config("rev: 22.10.0\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
-        config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: 24.1.0\n"))
+        config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v24.1.0\n"))
         self.assert_resolved(mock_get_latest_version, "22.10.0")
         self.assert_pinned_logged(self.HOOK, "24.1.0", NEW_SHA, Location(config_file, 3))
 
     def test_pin_quoted_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a quoted rev tag is pinned, dropping the quotes like pre-commit's own freeze does."""
-        mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=NEW_SHA)
+        mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=NEW_SHA, tag_name="v4.5.0")
         config_file = mock_path(config('rev: "v4.5.0"\n'))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
@@ -98,7 +105,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
 
     def test_bump_frozen_rev(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a rev already pinned to a SHA with a frozen comment is bumped to the latest version's SHA."""
-        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
+        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA, tag_name="v4.6.0")
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
@@ -118,27 +125,53 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_moved_tag_warned_not_refrozen(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that a frozen rev whose tag now points at another commit is warned about, not silently re-frozen.
-
-        The version is reported as the source spells it, without the `v` the frozen comment carries.
-        """
+        """Test that a frozen rev whose tag now points at another commit is warned about, not silently re-frozen."""
         mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=NEW_SHA)
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
-        self.assert_tag_drift_logged(self.drifted(config_file))
+        self.assert_drift_logged(Logger.TAG_DRIFT, self.drifted(config_file))
         self.assert_no_new_version_logged()
 
+    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA, date=PAST_COOLDOWN_DATE))
+    def test_moved_branch_warned_not_refrozen(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that a rev frozen to a branch that now points at another commit is warned about, not re-frozen."""
+        config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: main\n"))
+        mock_glob.return_value = [config_file]
+        update_pre_commit_configs()
+        config_file.write_text.assert_not_called()
+        mock_get_latest_version.assert_not_called()
+        drifted = DriftedPin(self.HOOK, "main", Location(config_file, 3), OLD_SHA, new_sha=NEW_SHA)
+        self.assert_drift_logged(Logger.BRANCH_DRIFT, drifted)
+
+    @patch_github(
+        releases=[],
+        tags=[github_tag_json("v6.0.0", NEW_SHA)],
+        commit=github_commits_json(NEW_SHA, date=PAST_COOLDOWN_DATE),
+    )
+    def test_moved_branch_kept_floating_is_refrozen_as_the_branch(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that a rev kept floating and opted into hash drift is re-frozen as the branch, past a version tag."""
+        marker = "  # update-time: allow[floating-pin, hash-drift]"
+        config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: main{marker}\n"))
+        mock_glob.return_value = [config_file]
+        update_pre_commit_configs()
+        config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: main{marker}\n"))
+        mock_get_latest_version.assert_not_called()
+        drifted = DriftedPin(self.HOOK, "main", Location(config_file, 3), OLD_SHA, new_sha=NEW_SHA)
+        self.assert_adopted_drift_logged(Logger.BRANCH_DRIFT, drifted, "update-time: allow[hash-drift]")
+        self.assert_no_warnings_logged()
+
+    @patch_github(commit=github_commits_json(NEW_SHA, date=PAST_COOLDOWN_DATE))
     def test_allow_hash_drift_marker_adopts_moved_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a rev opted into hash drift is re-frozen to the tag's new commit, leaving its comments intact."""
-        mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=NEW_SHA)
+        mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=NEW_SHA, tag_name="v4.5.0")
         marker = "  # update-time: allow[hash-drift]"
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0{marker}\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.5.0{marker}\n"))
-        self.assert_adopted_tag_drift_logged(self.drifted(config_file), "update-time: allow[hash-drift]")
+        self.assert_adopted_drift_logged(Logger.TAG_DRIFT, self.drifted(config_file), "update-time: allow[hash-drift]")
         self.assert_no_warnings_logged()
 
     def test_local_repo_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -161,7 +194,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
 
     def test_ssh_repo_is_updated(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a hook repository given as an ssh URL is updated."""
-        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
+        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA, tag_name="v4.6.0")
         repo = f"repos:\n  - repo: ssh://git@github.com/{self.HOOK}\n"
         config_file = mock_path(f"{repo}    rev: v4.5.0\n")
         mock_glob.return_value = [config_file]
@@ -171,34 +204,46 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         self.assert_pinned_logged(self.HOOK, "4.6.0", NEW_SHA, Location(config_file, 3))
         self.assert_no_warnings_logged()
 
-    @patch_github(releases=[github_release_json("v4.5.0", published_at=_STALE_ISO)], tags=[])
+    @patch_github(
+        releases=[github_release_json("v4.5.0", published_at=STALE_DATE)], tags=[], commit=github_commits_json(NEW_SHA)
+    )
     def test_stale_branch_rev_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a rev naming a branch is warned about when its repository's newest release is old."""
         config_file = mock_path(config("rev: main\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
-        config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         self.assert_stale_dependency_logged(self.HOOK, "4.5.0", Location(config_file, 3))
 
-    @patch_github(releases=[github_release_json("v4.5.0", published_at=_FRESH_ISO)], tags=[])
-    def test_branch_rev_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that a rev that is a branch name rather than a version is not rewritten."""
-        config_file = mock_path(config("rev: main\n"))
-        mock_glob.return_value = [config_file]
-        update_pre_commit_configs()
-        config_file.write_text.assert_not_called()
-        mock_get_latest_version.assert_not_called()
-        self.assert_no_warnings_logged()
+    def test_branch_rev_is_frozen_to_its_commit(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that a branch rev is frozen as the branch, or as the version tag there as the repository spells it."""
+        cases = [
+            ("main", [], "main"),
+            ("vnext", [], "vnext"),
+            ("main", [github_tag_json("v6.0.0", NEW_SHA)], "v6.0.0"),
+            ("main", [github_tag_json("6.0.0", NEW_SHA)], "6.0.0"),
+        ]
+        commit = github_commits_json(NEW_SHA)
+        for branch, tags, frozen in cases:
+            with self.subTest(f"{branch} → {frozen}"), patch_github(releases=[], tags=tags, commit=commit):
+                self.clear_caches()
+                config_file = mock_path(config(f"rev: {branch}\n"))
+                mock_glob.return_value = [config_file]
+                update_pre_commit_configs()
+                config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: {frozen}\n"))
+                mock_get_latest_version.assert_not_called()
 
-    @patch_github(releases=[github_release_json("v4.5.0", published_at=_FRESH_ISO)], tags=[])
+    @patch_github(
+        releases=[github_release_json("v4.5.0", published_at=FRESH_DATE)], tags=[], commit=github_commits_json(NEW_SHA)
+    )
     def test_bare_sha_without_frozen_comment_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that a rev pinned to a bare commit SHA without a frozen comment is not rewritten."""
+        """Test that a rev pinned to a bare commit SHA without a frozen comment is not rewritten, its commit unasked."""
         config_file = mock_path(config(f"rev: {OLD_SHA}\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
         mock_get_latest_version.assert_not_called()
+        self.assertEqual(github_requests("commits"), [])
         self.assert_no_warnings_logged()
 
     def test_rev_without_repo_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -222,7 +267,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
     def test_multiple_repositories(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that each hook repository is resolved and pinned against its own repo, in one file."""
         mock_get_latest_version.side_effect = [
-            DependencyVersion(version="4.6.0", sha=NEW_SHA),
+            DependencyVersion(version="4.6.0", sha=NEW_SHA, tag_name="v4.6.0"),
             DependencyVersion(version="24.1.0", sha=NEW_SHA),
         ]
         content = (
@@ -258,7 +303,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
 
     def test_stale_hook_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that a hook whose newest version is old is warned about, even when it is up to date."""
-        old = datetime.now(UTC) - timedelta(days=512)
+        old = STALE_DATE
         newest = Release("4.7.0", old)
         project = Project(newest=newest)
         mock_get_latest_version.return_value = DependencyVersion(version="4.5.0", sha=OLD_SHA, project=project)
@@ -313,7 +358,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
 
     def test_ignore_update_marker_skips_repin_but_still_checks_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[update]` leaves the rev unchanged but still warns when the hook is stale."""
-        old = datetime.now(UTC) - timedelta(days=512)
+        old = STALE_DATE
         newest = Release("4.7.0", old)
         mock_latest.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA, project=Project(newest=newest))
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0  # update-time: ignore[update]\n"))
@@ -326,9 +371,11 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
 
     def test_ignore_stale_marker_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[stale]` bumps the rev but skips the staleness check even for an old release."""
-        old = datetime.now(UTC) - timedelta(days=512)
+        old = STALE_DATE
         newest = Release("4.7.0", old)
-        mock_latest.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA, project=Project(newest=newest))
+        mock_latest.return_value = DependencyVersion(
+            version="4.6.0", sha=NEW_SHA, project=Project(newest=newest), tag_name="v4.6.0"
+        )
         config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0  # update-time: ignore[stale]\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
@@ -342,7 +389,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
 
     def test_allow_update_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an `allow[update<…>]` marker passes the bound to the source and pins the bounded release."""
-        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
+        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA, tag_name="v4.6.0")
         config_file = mock_path(config("rev: v4.5.0  # update-time: allow[update<5]\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
@@ -355,7 +402,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
 
     def test_level_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an `ignore[major-update]` marker passes the level bound to the source."""
-        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
+        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA, tag_name="v4.6.0")
         config_file = mock_path(config("rev: v4.5.0  # update-time: ignore[major-update]\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
@@ -367,10 +414,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_invalid_specifier_leaves_rev_unchanged(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that a marker with an unparsable version specifier warns and leaves the rev unchanged.
-
-        The source is still asked about the hook; only the update is held back.
-        """
+        """Test that a marker with an unparsable version specifier warns and leaves the rev unchanged."""
         mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
         config_file = mock_path(config("rev: v4.5.0  # update-time: allow[update@@@]\n"))
         mock_glob.return_value = [config_file]
