@@ -230,11 +230,11 @@ class TaggedVersion:
 
     @cached_property
     def publication(self) -> Lookup[datetime]:
-        """Look up the release's publication date, or the tagged commit's committer date for a tag without a release.
+        """Look up the publication date, or else, for a tag without a release, the tagged commit's committer date.
 
         A tag can be created long after its commit, so the committer date can overstate the version's age.
         """
-        if self.has_release:
+        if self.has_release or self.published_at is not None:
             return LookedUp(self.published_at)
         return DeferredLookup(partial(commit_date, self.dependency, self.commit_ref))
 
@@ -515,8 +515,8 @@ def _committer_date(commit: _CommitJSON) -> LookedUp[datetime]:
 def _tagged_versions(owner: str, repository: str) -> list[TaggedVersion] | None:
     """Return the repository's versions: its tags with their releases, plus the releases whose tag wasn't listed.
 
-    Both endpoints return their first page only, so a release can fall outside the tags listed. None means neither
-    endpoint answered.
+    A tag without a release takes the publication date of the first release of the same commit. Both endpoints return
+    their first page only, so a release can fall outside the tags listed. None means neither endpoint answered.
     """
     releases = _list_releases(owner, repository)
     tags = _list_tags(owner, repository)
@@ -526,6 +526,15 @@ def _tagged_versions(owner: str, repository: str) -> list[TaggedVersion] | None:
     listed_tags = {tag["name"] for tag in tags or ()}
     tagged_versions = [
         TaggedVersion.from_tag(owner, repository, tag, releases_by_tag.get(tag["name"])) for tag in tags or ()
+    ]
+    release_dates_by_sha: dict[str, datetime] = {}
+    for published_at, sha in sorted(
+        (version.published_at, version.sha) for version in tagged_versions if version.published_at
+    ):
+        release_dates_by_sha.setdefault(sha, published_at)
+    tagged_versions = [
+        version if version.has_release else replace(version, published_at=release_dates_by_sha.get(version.sha))
+        for version in tagged_versions
     ]
     tagged_versions.extend(
         TaggedVersion.from_release(owner, repository, release)

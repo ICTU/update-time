@@ -1104,7 +1104,7 @@ A reference kept floating with `allow[floating-pin]` keeps naming the branch. Th
 
 #### Cooldown
 
-The cooldown is measured against the release's publication date, or, for a version that was only tagged, the date of the commit it tags. Update-time skips a version whose commit date it cannot fetch, rather than adopting it with the cooldown unchecked. It then skips the older versions as well, and stays on the version the reference names, since the failure, such as a rate limit, would hold for them too. It logs why at `ERROR`:
+The cooldown is measured against the release's publication date. A version that was only tagged takes the publication date of the first release of the same commit, so a `v4.3` tag waits as long as a `v4.3.0` release of that commit. Without such a release, the cooldown is measured against the date of the commit the tag points at. Update-time skips a version whose commit date it cannot fetch, rather than adopting it with the cooldown unchecked. It then skips the older versions as well, and stays on the version the reference names, since the failure, such as a rate limit, would hold for them too. It logs why at `ERROR`:
 
 ```console
 @@UNDATED_TAGGED_COMMIT@@

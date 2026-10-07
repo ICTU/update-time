@@ -291,11 +291,48 @@ class GetLatestVersionTest(LoggingTestCase):
         latest = get_latest_version("owner/mixed", "1.0")
         self.assert_version(latest, "2.0", "", COMMIT_SHA2)
 
-    @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=github_commits_json(date=FRESH_DATE))
+    @patch_github(
+        releases=[github_release_json("v0.9", published_at=PAST_COOLDOWN_DATE)],
+        tags=[github_tag_json("v1.1", sha=COMMIT_SHA2), github_tag_json("v0.9", sha=COMMIT_SHA1)],
+        commit=github_commits_json(date=FRESH_DATE),
+    )
     def test_skip_tags_within_cooldown(self):
-        """Test that a tag whose commit falls within the cooldown is skipped."""
+        """Test that a tag whose commit falls within the cooldown is skipped, beside a release of another commit."""
         latest = get_latest_version("owner/fresh tag", "1.0")
         self.assert_version(latest, "1.0", "", "")
+
+    @patch_github(
+        releases=[github_release_json("v8.3.0", published_at=FRESH_DATE), github_release_json("v8", draft=True)],
+        tags=[github_tag_json("v8.3.0"), github_tag_json("v8"), github_tag_json("v8.3")],
+        commit=github_commits_json(date=PAST_COOLDOWN_DATE),
+    )
+    def test_skip_tag_on_the_commit_of_a_release_within_cooldown(self):
+        """Test that a tag without a release is skipped while a release of the same commit falls within the cooldown.
+
+        A draft release of that commit, listed after the published one, does not date the tag.
+        """
+        latest = get_latest_version("owner/tag beside fresh release", "8.2.2")
+        self.assert_version(latest, "8.2.2", "", "")
+
+    def test_tag_takes_the_earliest_publication_date_of_the_releases_of_its_commit(self):
+        """Test that a tag without a release takes the earliest date of its commit's releases, whatever the tag order.
+
+        Each case names a repository of its own, since the releases and tags are cached per repository.
+        """
+        releases = [
+            github_release_json("v8.3", published_at=PAST_COOLDOWN_DATE),
+            github_release_json("v8", published_at=FRESH_DATE),
+        ]
+        cases = {
+            "the fresh release listed last": ["v8.3", "v8", "v8.3.0"],
+            "the fresh release listed first": ["v8", "v8.3", "v8.3.0"],
+        }
+        for case, tag_names in cases.items():
+            tags = [github_tag_json(tag_name) for tag_name in tag_names]
+            with self.subTest(case=case), patch_github(releases=releases, tags=tags):
+                latest = get_latest_version(f"owner/{case}", "8.2.2")
+                self.assert_version(latest, "8.3.0", "", COMMIT_SHA)
+                self.assertEqual(latest.publication.value, PAST_COOLDOWN_DATE)
 
     @patch_github(releases=[], tags=[github_tag_json("v1.1")])
     def test_skip_tag_whose_commit_cannot_be_fetched(self):
