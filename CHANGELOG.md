@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Fixed
 
 - Measure the cooldown of a GitHub version tag without a release against the publication date of a release of the same commit, instead of against the commit's date. Closes [#400](https://github.com/ICTU/update-time/issues/400).
+- Show the release notes of the new version alone, also from a changelog that links each release heading to a comparison with the release before it. Closes [#403](https://github.com/ICTU/update-time/issues/403).
 
 ## 0.0.42 - 2026-10-07
 

@@ -67,6 +67,11 @@ class VersionAnchorTest(unittest.TestCase):
         text = "Changelog\n\n## Version 0.9\n\n- Fixed ..."
         self.assertEqual(get_version_changes_from_changelog(text, "1.0"), "")
 
+    def test_version_in_prose_link_target_does_not_anchor_parsing(self):
+        """Test that a version named in a prose link's target alone does not anchor parsing."""
+        text = "# Changelog\n\n## 1.0.1\n\n- Fixed a regression, see [the diff](https://example.org/compare/v1.0.0...v1.0.1)."
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), "")
+
     def test_version_number_found(self):
         """Test that a changelog with the version number returns the text after the version number."""
         v1_change = "Version 1.0\n\n- Fixed ...\n- Changed ..."
@@ -130,15 +135,15 @@ class VersionAnchorTest(unittest.TestCase):
 
     _NO_LOOKAHEAD = Mutation(
         changelog._names_version,
-        'return re.search(rf"{_VERSION_START}{re.escape(version)}(?!\\.?\\w)", line) is not None',
-        'return re.search(rf"{_VERSION_START}{re.escape(version)}", line) is not None',
+        '{re.escape(version)}(?!\\.?\\w)"',
+        '{re.escape(version)}"',
         "a changelog naming a longer version that starts with this one reports the longer version's changes",
     )
 
     _NO_LOOKBEHIND = Mutation(
         changelog._names_version,
-        'return re.search(rf"{_VERSION_START}{re.escape(version)}(?!\\.?\\w)", line) is not None',
-        'return re.search(rf"{re.escape(version)}(?!\\.?\\w)", line) is not None',
+        'rf"{_VERSION_START}{re.escape(version)}',
+        'rf"{re.escape(version)}',
         "a changelog naming a longer version that ends with this one reports the longer version's changes",
     )
 
@@ -241,6 +246,40 @@ class VersionAnchorTest(unittest.TestCase):
         v1_change = "## [1.0.0]\n\n- Fixed ...\n- Changed ..."
         footer = "[1.0.0]: https://example.org/compare/v0.9.0...v1.0.0"
         text = f"# Changelog\n\n{v1_change}\n\n## [0.9.0]\n\n- Fixed ...\n\n{footer}\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), v1_change)
+
+    @kills(
+        Mutation(
+            markdown_format.without_link_targets,
+            'return _LINK_TARGET.sub("", line)',
+            "return line",
+            "a changelog linking each release heading to a comparison with the release before it reports the newer "
+            "release's changes first",
+        )
+    )
+    def test_version_in_heading_link_target_does_not_anchor_parsing(self):
+        """Test that a newer version's heading, whose comparison link targets the version, doesn't anchor parsing."""
+        v1_0_1_change = "## [1.0.1](https://example.org/compare/v1.0.0...v1.0.1)\n\n- Fixed ..."
+        v1_change = "## [1.0.0](https://example.org/compare/v0.9.0...v1.0.0)\n\n- Added ..."
+        v0_9_change = "## [0.9.0](https://example.org/compare/v0.8.0...v0.9.0)\n\n- Changed ..."
+        text = f"# Changelog\n\n{v1_0_1_change}\n\n{v1_change}\n\n{v0_9_change}\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), v1_change)
+
+    @kills(
+        Mutation(
+            changelog._names_version,
+            '_RESTRUCTUREDTEXT_LINK_TARGET.sub("", markdown.without_link_targets(line))',
+            "markdown.without_link_targets(line)",
+            "a reStructuredText changelog linking each release heading to a comparison with the release before it "
+            "reports the newer release's changes first",
+        )
+    )
+    def test_version_in_underlined_heading_link_target_does_not_anchor_parsing(self):
+        """Test that a newer version's underlined heading, whose link targets the version, doesn't anchor parsing."""
+        v1_0_1_change = "`1.0.1 <https://example.org/compare/v1.0.0...v1.0.1>`_\n=====\n\n- Fixed ..."
+        v1_change = "`1.0.0 <https://example.org/compare/v0.9.0...v1.0.0>`_\n=====\n\n- Added ..."
+        v0_9_change = "`0.9.0 <https://example.org/compare/v0.8.0...v0.9.0>`_\n=====\n\n- Changed ..."
+        text = f"Changelog\n\n{v1_0_1_change}\n\n{v1_change}\n\n{v0_9_change}\n"
         self.assertEqual(get_version_changes_from_changelog(text, "1.0.0"), v1_change)
 
 
