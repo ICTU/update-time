@@ -28,6 +28,8 @@ def is_markdown_content_type(content_type: str) -> bool:
 
 # The characters reStructuredText allows a heading to be underlined with.
 _ADORNMENT_CHARACTERS = frozenset(string.punctuation)
+# The target of a reStructuredText hyperlink, in the angle brackets that follow the link's text.
+_RESTRUCTUREDTEXT_LINK_TARGET = re.compile(r"\s*<[^>]*>(?=`_)")
 # The version a changelog names at the head of a section.
 _VERSION = re.compile(r"\d+(?:\.\d+)+")
 # What a version may not follow, so the tail of a longer version does not read as a version of its own.
@@ -69,8 +71,11 @@ def _names_version(line: str, version: str) -> bool:
 
     `2.9.0.post0` spells `2.9.0` at its start and `11.0` spells `1.0` at its end, and neither of them names the
     shorter version. A version headed `v1.0` is still named, so a letter before it is allowed where a digit is not.
+    A link's target does not name a version, so `[1.0.1](compare/v1.0.0...v1.0.1)` names `1.0.1` alone, and so
+    does its reStructuredText spelling.
     """
-    return re.search(rf"{_VERSION_START}{re.escape(version)}(?!\.?\w)", line) is not None
+    text = _RESTRUCTUREDTEXT_LINK_TARGET.sub("", markdown.without_link_targets(line))
+    return re.search(rf"{_VERSION_START}{re.escape(version)}(?!\.?\w)", text) is not None
 
 
 def _underlines_the_line_above(lines: list[str], index: int) -> bool:
