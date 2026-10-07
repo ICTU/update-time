@@ -9,6 +9,7 @@ file and process I/O) so that network access is centralized: sources and updater
 `requests` directly, which the architecture tests enforce.
 """
 
+from contextlib import suppress
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
@@ -41,6 +42,17 @@ def fetch(url: str, logger: Logger, *, method: str = "get", require_ok: bool = T
         logger.response(response)
         return None
     return response
+
+
+def failure_reason(response: Fetched) -> str:
+    """Return why a request failed: at the transport level, or with the status code and message of its response."""
+    if response is None:
+        return "the request failed"
+    body = None
+    with suppress(ValueError):  # A body that isn't JSON has no message to include
+        body = response.json()
+    message = body.get("message", "") if isinstance(body, dict) else ""
+    return f"HTTP {response.status_code}" + (f", {message}" if message else "")
 
 
 def next_page_url(response: requests.Response) -> str | None:

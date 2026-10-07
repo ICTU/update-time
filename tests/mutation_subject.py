@@ -1,5 +1,7 @@
 """Code for the tests of the mutation decorator to mutate, so that they never break code written for another purpose."""
 
+from functools import cached_property
+
 
 def is_even(number: int) -> bool:
     """Return whether the number is even."""
@@ -23,7 +25,8 @@ def is_multiple_of_three(value: int) -> bool:
 class Doubler:
     """A value doubler whose two methods end on the same snippet, so an anchor has to reach the method itself.
 
-    Its property and its classmethod are here for an anchor to name, neither being a plain function nor a module.
+    Its property, cached property, and classmethod are here for an anchor to name, none of them being a plain function
+    or a module.
     """
 
     def doubled(self, value: int) -> int:
@@ -38,6 +41,11 @@ class Doubler:
     def one_doubled(self) -> int:
         """Return one doubled."""
         return self.doubled(1)
+
+    @cached_property
+    def three_doubled(self) -> int:
+        """Return three doubled."""
+        return self.doubled(3)
 
     @classmethod
     def two_doubled(cls) -> int:

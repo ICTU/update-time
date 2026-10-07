@@ -9,12 +9,16 @@ from typing import TYPE_CHECKING, Self
 
 from packaging.version import InvalidVersion, Version
 
+from update_time.primitives.lookup import LookedUp
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
     from datetime import datetime
     from typing import Protocol
 
     from _typeshed import SupportsRichComparison
+
+    from update_time.primitives.lookup import Lookup
 
     class ProjectGetter(Protocol):
         """The contract the project checks bind and a source implements, answering what it reports about a project."""
@@ -188,20 +192,26 @@ class Changes(str):
 # The changes of a version no changelog records, which no markup is written in.
 NO_CHANGES = Changes("", markdown=False)
 
+# What a version carries when its source does not date it.
+UNDATED: LookedUp[datetime] = LookedUp(None)
+
 
 @dataclass(frozen=True)
 class DependencyVersion:
     """A version of a dependency."""
 
-    version: VersionString  # Arbitrary version string as returned by a source (PyPI, Docker Hub, GitHub releases, ...)
+    # The version the source offers (PyPI, Docker Hub, GitHub releases, ...), or else the tag or branch the reference
+    # names, such as `latest` or `main`, and nothing for a commit that only its SHA names
+    version: VersionString
     changes: Changes = NO_CHANGES  # What the changelog records for this version, and the markup it writes it in
     sha: str = ""
-    published: datetime | None = None  # Publication date of this (candidate) version, when known
+    publication: Lookup[datetime] = UNDATED  # When the source says the version was published, or why it can't say
     yank: Yank = Yank()  # The version's withdrawal state (yanked on PyPI, deprecated on npm)
     project: Project = Project()  # What the source reports about the project behind the dependency
     floating: FloatingPin | None = None  # What happened to the floating pin if the reference had one
     served: bool = True  # Whether the source serves the version the reference names
     accounted_for: AccountedFor | None = None  # Why the file accounts for the reference, so no registry was asked
+    tag_name: str = ""  # The version's tag as the repository spells it (`v6.0.0`), where the source reads tags
 
     @classmethod
     def unpinned(cls, project: Project) -> DependencyVersion:
@@ -210,9 +220,9 @@ class DependencyVersion:
 
     def __str__(self) -> str:
         """Render the version as its version string, followed by its publication date in UTC when that is known."""
-        if self.published is None:
+        if (published := self.publication.value) is None:
             return self.version
-        return f"{self.version}, published: {self.published.astimezone(UTC):%Y-%m-%d %H:%M}"
+        return f"{self.version}, published: {published.astimezone(UTC):%Y-%m-%d %H:%M}"
 
 
 def first_eligible[Candidate: SupportsRichComparison](

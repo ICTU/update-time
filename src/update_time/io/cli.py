@@ -156,16 +156,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--allow-hash-drift",
         action="store_true",
-        help="when an already-pinned image tag has been re-pushed, or a pinned version tag has been moved to another "
-        "commit, adopt the new digest or commit instead of only warning; equivalent to marking every reference with "
-        "# update-time: allow[hash-drift] (an # update-time: ignore marker still wins)",
+        help="adopt hash drift instead of only warning about it. Hash drift is an image tag re-pushed with another "
+        "digest, or a tag or branch moved to another commit. Update-time adopts the new digest or commit once it is "
+        "older than the cooldown. Equivalent to marking every reference with # update-time: allow[hash-drift] (a "
+        "marker that holds the reference back, such as # update-time: ignore, still wins)",
     )
     parser.add_argument(
         "--allow-floating-pin",
         action="store_true",
-        help="keep every floating image tag in the run as it is, instead of pinning it to the version and digest "
-        "it currently serves; equivalent to marking every reference with # update-time: allow[floating-pin] (an "
-        "# update-time: ignore[floating-pin] marker still pins that reference)",
+        help="keep every floating tag and branch in the run as it is, such as python:latest, stable-2024, or main. "
+        "Without this flag, Update-time pins a floating image tag to the version and digest it serves, and a branch "
+        "or another floating tag to the commit it points at. Equivalent to marking every reference with "
+        "# update-time: allow[floating-pin] (an # update-time: ignore[floating-pin] marker still pins that reference)",
     )
     parser.add_argument(
         "--force",

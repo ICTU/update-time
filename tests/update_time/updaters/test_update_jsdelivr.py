@@ -1,6 +1,5 @@
 """Unit tests for the jsdelivr CDN URLs update script."""
 
-from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
@@ -10,8 +9,8 @@ from update_time.primitives.location import Location
 from update_time.updaters.update_jsdelivr import update_jsdelivrs
 
 from tests.helpers import mock_path, mock_response
-from tests.update_time.fixtures import HASH1, HASH2
-from tests.update_time.helpers import LoggingTestCase, jsdelivr_versions, npm_registry
+from tests.update_time.fixtures import HASH1, HASH2, STALE_DATE
+from tests.update_time.helpers import LoggingTestCase, days_ago, jsdelivr_versions, npm_registry
 from tests.update_time.updaters.helpers import no_vulnerabilities, osv, osv_vulnerability
 
 _FILENAME = "/dist/clipboard.min.js"
@@ -25,8 +24,9 @@ def _served(*hashes: str) -> Mock:
     return mock_response({"default": _FILENAME, "files": [{"name": _FILENAME, "hash": served} for served in hashes]})
 
 
-# An npm publication date comfortably past the cooldown, relative to now so the decision doesn't depend on the clock.
-_ELIGIBLE = (datetime.now(UTC) - timedelta(days=COOLDOWN.default + 1)).isoformat()
+# This npm publication date is a day older than the default cooldown. It counts back from now, so the clock decides
+# nothing.
+_ELIGIBLE = days_ago(COOLDOWN.default + 1).isoformat()
 
 # The deprecation npm reports for clipboard 2.0.11: the reason the registry states, and the yank it becomes.
 _DEPRECATION_REASON = "use 3.0 instead"
@@ -201,7 +201,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
 
     def test_stale_dependency_warned(self, mock_get: Mock, mock_glob: Mock):
         """Test that a jsDelivr package whose newest release is old is warned about, without rewriting the URL."""
-        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        old = STALE_DATE.isoformat()
         self.offer_versions(mock_get, "2.0.11", published=old, served_hash=HASH1)
         mock_conf = self.update(_CONF, mock_glob)
         mock_conf.write_text.assert_not_called()  # no newer version, so no rewrite
@@ -270,7 +270,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
 
     def test_ignore_stale_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
         """Test that an `ignore[stale]` marker on the URL's line silences the warning, but not the update."""
-        old = (datetime.now(UTC) - timedelta(days=512)).isoformat()
+        old = STALE_DATE.isoformat()
         self.offer_versions(mock_get, "2.0.12", "2.0.11", published=old)
         mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: ignore[stale]", _INTEGRITY)), mock_glob)
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", self.written(mock_conf))

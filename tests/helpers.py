@@ -6,7 +6,7 @@ from logging import INFO
 from typing import TYPE_CHECKING, TypeVar, cast
 from unittest.mock import Mock, patch
 
-from tests.mutation import CHECKS_OFF
+from tests.mutation import CHECKED_TEST, CHECKS_OFF
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 _Decorated = TypeVar("_Decorated", bound="Callable[..., object]")
 
 
-def mock_response(json: Mapping | list | None = None, **kwargs: object) -> Mock:
+def mock_response(json: Mapping | list | str | None = None, **kwargs: object) -> Mock:
     """Return a mock requests Response whose .json() returns the given value.
 
     Extra response attributes (text, status_code, headers, ...) can be set via keyword arguments.
@@ -42,8 +42,11 @@ def patch_environ(environment_variables: dict[str, str] | None = None, *, clear:
     """
     clear = not environment_variables if clear is None else clear
     in_dict = environment_variables or {}
-    # Carry the checks-off flag through, off by default; `tools/mutate.py` sets it to switch the `@kills` checks off.
-    in_dict.setdefault(CHECKS_OFF, os.environ.get(CHECKS_OFF, "0"))
+    # Carry the mutation variables through a cleared environment, so the registered mutations run as they would
+    # outside it.
+    for sentinel in (CHECKS_OFF, CHECKED_TEST):
+        if (value := os.environ.get(sentinel)) is not None:
+            in_dict.setdefault(sentinel, value)
     return patch.dict("os.environ", in_dict, clear=clear)
 
 

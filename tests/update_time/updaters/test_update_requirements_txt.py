@@ -35,21 +35,19 @@ from tests.update_time.helpers import (
     staleness_disabled,
     yanked_file,
 )
-from tests.update_time.sources.test_pypi import (
-    A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED,
-    NULL_PROJECT_URLS_READ_AS_A_DICT,
-)
+from tests.update_time.sources.test_pypi import NULL_PROJECT_URLS_READ_AS_A_DICT
 from tests.update_time.updaters.fixtures import (
     DJANGO_ADVISORY,
     DJANGO_VULNERABILITY,
     OTHER_DJANGO_ADVISORY,
     OTHER_DJANGO_VULNERABILITY,
+    PYPI_PAST_COOLDOWN_UPLOAD,
+    PYPI_RECENT_UPLOAD,
 )
 from tests.update_time.updaters.helpers import (
     OSV_BATCH_URL,
     assert_osv_asked_about,
     dated_pypi_index,
-    days_ago,
     no_vulnerabilities,
     osv,
     osv_queries,
@@ -113,7 +111,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    @kills(NULL_PROJECT_URLS_READ_AS_A_DICT, A_RELEASE_WITHOUT_PROJECT_URLS_SKIPPED)
+    @kills(NULL_PROJECT_URLS_READ_AS_A_DICT)
     def test_a_pin_whose_metadata_reports_no_project_urls(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin whose metadata reports the project URLs as null is updated, and so is the pin beside it."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "flask==1.0\nhumanize==4.14.0\n")
@@ -173,8 +171,6 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """
         for requirement in ("humanize==4.15.0,!=4.15.1", "humanize==4.15.0 ,!=4.15.1"):
             with self.subTest(requirement=requirement):
-                # The cases need a different number of responses, so neither may read what the other cached.
-                self.clear_caches()
                 requirements_txt = self.discovered_requirements_txt(mock_rglob, f"{requirement}\n")
                 mock_get.side_effect = [*self.stale_pypi("4.15.0", "4.16.0"), pypi_release(PYPI_OLD_UPLOAD)]
                 update_requirements_txts()
@@ -204,10 +200,9 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Test that a requirement whose newest release is recent is not warned about, however it is spelled."""
         for case, requirement in {"an exact pin": "humanize==4.15.0", "a range": "humanize>=4"}.items():
             with self.subTest(case=case):
-                self.clear_caches()  # so each case fetches the index itself rather than reading the other's
                 mock_get.reset_mock()
                 self.discovered_requirements_txt(mock_rglob, f"{requirement}\n")
-                mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=days_ago(0))
+                mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=PYPI_RECENT_UPLOAD)
                 update_requirements_txts()
                 self.assertEqual(self.queried_packages(mock_get), ["humanize"])
                 self.assert_no_warnings_logged()
@@ -244,7 +239,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         force run-wide does not override.
         """
         requirements_txt = self.loose_requirement(mock_rglob, "ignore[stale<90]")
-        published = days_ago(100)
+        published = PYPI_PAST_COOLDOWN_UPLOAD
         mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=published)
         with staleness_disabled:
             update_requirements_txts()
@@ -413,7 +408,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         so the warning is given only when the marker's threshold is the one applied.
         """
         requirements_txt = self.loose_requirement(mock_rglob, "ignore[stale<90]")
-        published = days_ago(100)
+        published = PYPI_PAST_COOLDOWN_UPLOAD
         mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=published)
         update_requirements_txts()
         self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
@@ -440,7 +435,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         }.items():
             with self.subTest(item=item):
                 requirements_txt = self.loose_requirement(mock_rglob, f"ignore[{item}]")
-                mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=days_ago(100))
+                mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=PYPI_PAST_COOLDOWN_UPLOAD)
                 update_requirements_txts()
                 self.assert_logged(message, item=item, dependency="humanize", location=Location(requirements_txt, 1))
 
@@ -602,7 +597,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_a_requirement_pinning_a_range_queries_no_vulnerabilities(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a requirement pinning a range is looked up at PyPI but not at OSV, which matches a version."""
         self.discovered_requirements_txt(mock_rglob, "django==3.2.*\n")
-        mock_get.side_effect = self.stale_pypi("3.2.0", upload_time=days_ago(0))
+        mock_get.side_effect = self.stale_pypi("3.2.0", upload_time=PYPI_RECENT_UPLOAD)
         with osv(DJANGO_ADVISORY) as mock_post:
             update_requirements_txts()
         mock_post.assert_not_called()
@@ -920,8 +915,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_held_back_by_cooldown(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a newer version published within the cooldown period is not picked up."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "flask==1.0\n")
-        recent = days_ago(0)
-        mock_get.side_effect = self.pypi("1.0", "1.1", bump=True, upload_time=recent)
+        mock_get.side_effect = self.pypi("1.0", "1.1", bump=True, upload_time=PYPI_RECENT_UPLOAD)
         update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
         self.assert_path_logged(requirements_txt)

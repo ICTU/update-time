@@ -161,7 +161,7 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assertEqual(new_lines, ["line1", "image: python:3.13"])
         self.logger.new_version.assert_called_with(self.reference(line=2), DependencyVersion(version="3.13"))
 
-    def test_inline_ignore_marker_pins_line(self):
+    def test_inline_ignore_marker_leaves_line_untouched(self):
         """Test that an inline `# update-time: ignore` comment leaves the line untouched, looking up no version."""
         get_new_version = Mock()
         lines = ["image: python:3.14  # update-time: ignore"]
@@ -169,8 +169,8 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version.assert_not_called()
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
-    def test_preceding_ignore_marker_pins_next_line(self):
-        """Test that a standalone `# update-time: ignore` comment pins the reference on the line below it.
+    def test_preceding_ignore_marker_leaves_next_line_untouched(self):
+        """Test that a standalone `# update-time: ignore` comment leaves the reference on the line below it untouched.
 
         The marker comment itself carries no reference, so only the reference below it is logged as ignored.
         """
@@ -180,8 +180,8 @@ class UpdateReferencesTest(unittest.TestCase):
         get_new_version.assert_not_called()
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 2))
 
-    def test_inline_marker_does_not_pin_following_line(self):
-        """Test that an inline marker pins only its own line, not the reference on the line below it."""
+    def test_inline_marker_leaves_following_line_alone(self):
+        """Test that an inline marker steers only a reference on its own line, never on the line below it."""
         lines = ["image: a:3.14  # update-time: ignore", "image: b:3.14"]
         new_lines = self.rewrite(lines, IMAGE_REGEXP, new_version_getter("3.15"))
         self.assertEqual(new_lines, ["image: a:3.14  # update-time: ignore", "image: b:3.15"])
@@ -253,16 +253,16 @@ class UpdateReferencesTest(unittest.TestCase):
             self.reference(), "ignore[stale<90]", Reason.NO_STALENESS_DATES
         )
 
-    def test_inline_slash_slash_marker_pins_line(self):
-        """Test that a `//`-style ignore marker (as JSONC/devcontainer.json uses) also pins a line inline."""
+    def test_inline_slash_slash_marker_leaves_line_untouched(self):
+        """Test that an inline `//` ignore marker (as in devcontainer.json) holds back the reference on its line."""
         get_new_version = Mock()
         lines = ["image: python:3.14  // update-time: ignore"]
         self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)
         get_new_version.assert_not_called()
         self.logger.ignored.assert_called_once_with("python", BARE_IGNORE, Location(self.path, 1))
 
-    def test_preceding_slash_slash_marker_pins_next_line(self):
-        """Test that a standalone `//` marker comment pins the reference on the line below it."""
+    def test_preceding_slash_slash_marker_leaves_next_line_untouched(self):
+        """Test that a standalone `//` marker comment holds back the reference on the line below it."""
         get_new_version = Mock()
         lines = ["// update-time: ignore", "image: python:3.14"]
         self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)

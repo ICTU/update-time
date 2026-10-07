@@ -1,6 +1,7 @@
 """What a file records about a dependency it pins, what a source resolved for it, and whether the two agree."""
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Self
 
 from update_time.domain.dependency import PinnedDependency
@@ -19,10 +20,10 @@ class Reference:
     The line is part of the reference because every report about one names where to edit it, so the two are never
     apart for long.
 
-    `current_sha` is the commit SHA the reference is pinned to when it carries one in a `<sha> # <version>` form (a
-    GitHub Action `uses:` or pre-commit hook `rev:`); it is empty for a reference that is still an unpinned version
-    tag or that records no SHA of its own. A subclass declares its own fields keyword-only, because `current_sha`
-    carries a default and Python refuses the class otherwise.
+    `current_sha` is the commit SHA a GitHub Action `uses:` or pre-commit hook `rev:` is pinned to, in a `<sha> # <ref>`
+    form whose comment names a version, a branch, or a tag. It is empty for a reference that does not record a SHA of
+    its own. A subclass declares its own fields keyword-only, because `current_sha` carries a default and Python
+    refuses the class otherwise.
     """
 
     dependency: DependencyName
@@ -59,6 +60,15 @@ class DriftedPin(Reference):
     """A hash pin that no longer matches what it points at, and the hash it now resolves to."""
 
     new_sha: str
+
+
+class RefKind(StrEnum):
+    """A kind of git ref: a tag, a branch, an abbreviated commit SHA, or a ref of unknown kind."""
+
+    TAG = "tag"
+    BRANCH = "branch"
+    SHORT_COMMIT_SHA = "short commit SHA"
+    REF = "ref"
 
 
 # What a delegating updater hands its checks: a function asking its source about the references of one file.

@@ -1,11 +1,13 @@
 """Logger unit tests."""
 
+import contextlib
 import inspect
 import logging
 import re
 from dataclasses import fields, is_dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from unittest import TestCase
 from unittest.mock import ANY, Mock, patch
 
@@ -22,7 +24,7 @@ from update_time.domain.dependency import (
     Release,
     Yank,
 )
-from update_time.domain.reference import DriftedPin
+from update_time.domain.reference import DriftedPin, RefKind
 from update_time.io import log as log_module
 from update_time.io.console import (
     CHANGES,
@@ -37,11 +39,15 @@ from update_time.io.log import (
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.primitives.location import Location
+from update_time.primitives.lookup import LookedUp
 
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import BARE_IGNORE, COMMIT_SHA1, COMMIT_SHA2, DIGEST, DIGEST1, DIGEST2
+from tests.update_time.fixtures import BARE_IGNORE, COMMIT_SHA1, COMMIT_SHA2, DIGEST, DIGEST1, DIGEST2, FRESH_DATE
 from tests.update_time.helpers import bound, reference, resolved_reference, vulnerability
 from tests.update_time.io.helpers import at, create_location, dependency
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class GetLoggerTests(TestCase):
@@ -133,6 +139,13 @@ class RenderTests(TestCase):
 class LoggerTests(TestCase):
     """Unit tests for the logger class."""
 
+    @contextlib.contextmanager
+    def subTest(self, *args: object, **kwargs: object) -> Iterator[None]:  # noqa: N802
+        """Run the case on records of its own, so a table cannot forget to reset the log."""
+        cast("Mock", logging.Logger.log).reset_mock()  # The class-level patch makes the method the mock
+        with super().subTest(*args, **kwargs):
+            yield
+
     def assert_message(self, mock_log: Mock, message: LogMessage, rendered: str) -> None:
         """Assert the log method emitted the message once, at its own level, reading as the given text."""
         mock_log.assert_called_once()
@@ -142,7 +155,7 @@ class LoggerTests(TestCase):
         """Assert the most recent record reads as the given text, carrying exactly the fields the message names."""
         level, template, fields = mock_log.call_args.args
         self.assertEqual((level, template), (message.level, message))
-        self.assertEqual(sorted(fields), sorted(re.findall(r"%\((\w+)\)", str(template))))
+        self.assertEqual(set(fields), set(re.findall(r"%\((\w+)\)", str(template))))
         self.assertEqual(str(template) % fields, rendered)
 
     def assert_changes(self, mock_log: Mock, changes: str) -> None:
@@ -229,6 +242,44 @@ class LoggerTests(TestCase):
             f"{FloatingPin.NO_VERSION_TAG}",
         )
 
+    def test_unpinned_ref(self, mock_log: Mock):
+        """Test that a branch or tag left unpinned is reported by its kind, with why its commit could not be fetched."""
+        location = create_location(".github/workflows/ci.yml", 17)
+        for kind, ref in ((RefKind.BRANCH, "branch"), (RefKind.TAG, "tag")):
+            with self.subTest(ref):
+                _new_logger().unpinned_ref(reference("actions/checkout", location, "main"), "HTTP 404, Not Found", kind)
+                self.assert_message(
+                    mock_log,
+                    Logger._MESSAGE_UNPINNED_REF,
+                    f"Could not fetch the commit of the {ref} {dependency('actions/checkout')}@main in "
+                    f"{at('.github/workflows/ci.yml:17')}, so it was left as it is (HTTP 404, Not Found)",
+                )
+
+    def test_unchecked_branch_drift(self, mock_log: Mock):
+        """Test that a branch drift that could not be checked names the check, why it failed, and the pin's fate."""
+        location = create_location(".github/workflows/ci.yml", 17)
+        branch = reference("actions/checkout", location, "main")
+        _new_logger().unchecked_branch_drift(branch, COMMIT_SHA2, "HTTP 403, API rate limit exceeded")
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_UNCHECKED_BRANCH_DRIFT,
+            f"Could not check branch drift for {dependency('actions/checkout')}@main in "
+            f"{at('.github/workflows/ci.yml:17')}: GitHub did not compare the pinned commit with {COMMIT_SHA2}, the "
+            "branch's newest commit older than the cooldown (HTTP 403, API rate limit exceeded); the pin was left "
+            "unchanged",
+        )
+
+    def test_comment_naming_no_ref(self, mock_log: Mock):
+        """Test that a commit SHA whose comment does not name a ref is reported with the comment and its location."""
+        location = create_location(".github/workflows/ci.yml", 17)
+        _new_logger().comment_naming_no_ref(reference("actions/checkout", location, "pinned"))
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_COMMENT_NAMING_NO_REF,
+            f"Commit SHA of {dependency('actions/checkout')} in {at('.github/workflows/ci.yml:17')} was left as it "
+            "is: its comment pinned does not name a branch or tag of the repository",
+        )
+
     def test_unpinned_floating_tag_reason_names_the_tag_looked_up(self, mock_log: Mock):
         """Test that a reason about the tag names the tag looked up, which for a reference naming none is `latest`."""
         location = create_location(".circleci/config.yml", 1)
@@ -241,7 +292,6 @@ class LoggerTests(TestCase):
         }
         for reason, explanation in cases.items():
             with self.subTest(reason.name):
-                mock_log.reset_mock()
                 release = DependencyVersion("latest", floating=reason)
                 _new_logger().unpinned_floating_tag(reference("default", location), release, reason)
                 self.assert_message(
@@ -271,7 +321,7 @@ class LoggerTests(TestCase):
         )
 
     def test_keeping_a_floating_tag(self, mock_log: Mock):
-        """Test that a floating tag left as it is is reported with the tag it names and what it resolves to."""
+        """Test that keeping a floating tag is reported with the tag it names and what it resolves to."""
         location = create_location("Dockerfile", 1)
         release = DependencyVersion("3.14.7", sha=DIGEST)
         cause = "update-time: allow[floating-pin]"
@@ -282,6 +332,21 @@ class LoggerTests(TestCase):
             f"Keeping the floating tag {dependency('python')}:latest in {at('Dockerfile:1')}: it resolves to "
             f"3.14.7@{DIGEST} ({cause})",
         )
+
+    def test_keeping_a_ref(self, mock_log: Mock):
+        """Test that keeping a branch or tag is reported by its kind, with the name it has and what it resolves to."""
+        location = create_location(".github/workflows/ci.yml", 17)
+        cause = "update-time: allow[floating-pin]"
+        release = DependencyVersion("4.3.0", sha=COMMIT_SHA1)
+        for kind, ref in ((RefKind.BRANCH, "branch"), (RefKind.TAG, "tag")):
+            with self.subTest(ref):
+                _new_logger().keeping_ref(reference("actions/checkout", location, "main"), release, cause, kind)
+                self.assert_message(
+                    mock_log,
+                    Logger._MESSAGE_KEEPING_REF,
+                    f"Keeping the {ref} {dependency('actions/checkout')}@main in {at('.github/workflows/ci.yml:17')}: "
+                    f"it resolves to 4.3.0@{COMMIT_SHA1} ({cause})",
+                )
 
     def test_keeping_a_reference_that_names_no_tag(self, mock_log: Mock):
         """Test that a reference naming no tag is reported by its name alone, there being no tag to name after it."""
@@ -296,37 +361,112 @@ class LoggerTests(TestCase):
             f"3.14.7@{DIGEST} ({cause})",
         )
 
-    def test_digest_drift(self, mock_log: Mock):
-        """Test that a re-pushed tag whose digest changed under an unchanged pin is warned about at warning level."""
-        location = create_location("Dockerfile", 2)
-        _new_logger().drift(Logger.DIGEST_DRIFT, DriftedPin("dependency", "3.14", location, DIGEST1, new_sha=DIGEST2))
+    def test_drift(self, mock_log: Mock):
+        """Test that a hash pin whose target changed under it is warned about, naming the kind of drift."""
+        dockerfile, workflow = create_location("Dockerfile", 2), create_location(".github/workflows/ci.yml", 17)
+        checkout, ci = dependency("actions/checkout"), at(".github/workflows/ci.yml:17")
+        cases = {
+            "digest": (
+                Logger.DIGEST_DRIFT,
+                DriftedPin("dependency", "3.14", dockerfile, DIGEST1, new_sha=DIGEST2),
+                (
+                    f"Digest drift for {dependency('dependency')}:3.14 in {at('Dockerfile:2')}: pinned to "
+                    f"{DIGEST1} but the registry now serves {DIGEST2}; the pin was left unchanged, verify the change "
+                    "is expected before updating the pin"
+                ),
+            ),
+            "tag": (
+                Logger.TAG_DRIFT,
+                DriftedPin("actions/checkout", "4.1.1", workflow, COMMIT_SHA1, new_sha=COMMIT_SHA2),
+                (
+                    f"Tag drift for {checkout}@4.1.1 in {ci}: pinned to commit {COMMIT_SHA1} but the tag now "
+                    f"points at {COMMIT_SHA2}; the pin was left unchanged, verify the tag was moved deliberately "
+                    "before updating the pin"
+                ),
+            ),
+            "branch": (
+                Logger.BRANCH_DRIFT,
+                DriftedPin("actions/checkout", "main", workflow, COMMIT_SHA1, new_sha=COMMIT_SHA2),
+                (
+                    f"Branch drift for {checkout}@main in {ci}: pinned to commit {COMMIT_SHA1} but the branch has "
+                    f"moved on to {COMMIT_SHA2}; the pin was left unchanged, verify the branch moved to a commit you "
+                    "trust before updating the pin"
+                ),
+            ),
+            "ref": (
+                Logger.REF_DRIFT,
+                DriftedPin("actions/checkout", "stable-2024", workflow, COMMIT_SHA1, new_sha=COMMIT_SHA2),
+                (
+                    f"Ref drift for {checkout}@stable-2024 in {ci}: pinned to commit {COMMIT_SHA1} but the ref now "
+                    f"points at {COMMIT_SHA2}; the pin was left unchanged, verify the ref moved to a commit you trust "
+                    "before updating the pin"
+                ),
+            ),
+        }
+        for name, (kind, drifted, rendered) in cases.items():
+            with self.subTest(name):
+                _new_logger().drift(kind, drifted)
+                self.assert_message(mock_log, kind.warning, rendered)
+
+    def test_undated_candidate(self, mock_log: Mock):
+        """Test that an undated candidate names the source, what it dates, and the version the reference stays on."""
+        python, checkout = dependency("python"), dependency("actions/checkout")
+        cases = {
+            "image tag": (
+                lambda log: log.undated_push("python", "3.15.0", "3.14.6", "HTTP 429"),
+                Logger._MESSAGE_UNDATED_PUSH,
+                (
+                    f"Could not determine from Docker Hub when {python}:3.15.0 was pushed (HTTP 429), so the cooldown "
+                    f"can't be verified; {python} stays on 3.14.6 rather than trying the tags in between"
+                ),
+            ),
+            "tagged commit": (
+                lambda log: log.undated_commit("actions/checkout", "v4.4.0", "4.3.0", "HTTP 403"),
+                Logger._MESSAGE_UNDATED_TAGGED_COMMIT,
+                (
+                    f"Could not determine from GitHub when {checkout} v4.4.0 was committed (HTTP 403), so the cooldown "
+                    f"can't be verified; {checkout} stays on 4.3.0 rather than trying the versions in between"
+                ),
+            ),
+        }
+        for name, (report, message, rendered) in cases.items():
+            with self.subTest(name):
+                report(_new_logger())
+                self.assert_message(mock_log, message, rendered)
+
+    def test_no_release_metadata(self, mock_log: Mock):
+        """Test that unfetched release metadata names what it leaves unknown and the version the reference stays on."""
+        _new_logger().no_release_metadata("humanize", "4.16.0", "4.15.0", "HTTP 503")
+        humanize = dependency("humanize")
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_DIGEST_DRIFT,
-            f"Digest drift for {dependency('dependency')}:3.14 in {at('Dockerfile:2')}: pinned to {DIGEST1} "
-            f"but the registry now serves {DIGEST2}; the pin was left unchanged, verify the change is expected "
-            "before updating the pin",
+            Logger._MESSAGE_NO_RELEASE_METADATA,
+            f"Could not fetch from PyPI the metadata of {humanize} 4.16.0 (HTTP 503), so its yank state and "
+            f"publication date are unknown; {humanize} stays on 4.15.0 rather than trying the versions in between",
         )
 
-    @kills(
-        Mutation(
-            log_module.Logger,
-            '"@")',
-            '":")',
-            "a moved tag is reported with the colon of an image tag rather than the at sign of a git ref",
-        )
-    )
-    def test_tag_drift(self, mock_log: Mock):
-        """Test that a moved tag whose commit changed under an unchanged pin is warned about at warning level."""
+    def test_undated_commit(self, mock_log: Mock):
+        """Test that the undated commit a moved branch points at is reported with the reference and its location."""
         location = create_location(".github/workflows/ci.yml", 17)
-        drifted = DriftedPin("actions/checkout", "4.1.1", location, COMMIT_SHA1, new_sha=COMMIT_SHA2)
-        _new_logger().drift(Logger.TAG_DRIFT, drifted)
+        drifted = DriftedPin("actions/checkout", "main", location, COMMIT_SHA1, new_sha=COMMIT_SHA2)
+        _new_logger().no_commit_date(Logger.BRANCH_DRIFT, drifted, "HTTP 403, API rate limit exceeded")
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_TAG_DRIFT,
-            f"Tag drift for {dependency('actions/checkout')}@4.1.1 in {at('.github/workflows/ci.yml:17')}: pinned to "
-            f"commit {COMMIT_SHA1} but the tag now points at {COMMIT_SHA2}; the pin was left unchanged, verify the "
-            "tag was moved deliberately before updating the pin",
+            Logger._MESSAGE_NO_COMMIT_DATE,
+            f"Could not determine from GitHub the date of commit {COMMIT_SHA2} that "
+            f"{dependency('actions/checkout')}@main in {at('.github/workflows/ci.yml:17')} now points at (HTTP 403, "
+            "API rate limit exceeded), so the cooldown can't be verified; not adopting the drift",
+        )
+
+    def test_undated_push(self, mock_log: Mock):
+        """Test that a re-pushed tag that could not be dated is reported with the reference and its location."""
+        drifted = DriftedPin("python", "3.14", create_location("Dockerfile", 1), DIGEST1, new_sha=DIGEST2)
+        _new_logger().no_push_date(Logger.DIGEST_DRIFT, drifted, "HTTP 429")
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_NO_PUSH_DATE,
+            f"Could not determine from Docker Hub when {dependency('python')}:3.14 in {at('Dockerfile:1')} was pushed "
+            "(HTTP 429), so the cooldown can't be verified; not adopting the drift",
         )
 
     def test_digest_drift_of_a_reference_naming_no_tag(self, mock_log: Mock):
@@ -342,18 +482,48 @@ class LoggerTests(TestCase):
         )
 
     def test_adopted_drift(self, mock_log: Mock):
-        """Test that adopting a re-pushed tag's new digest is logged at info level, naming the opt-in that caused it."""
+        """Test that adopted drift is logged at info level, naming the kind of drift and the opt-in that caused it."""
         cause = "update-time: allow[hash-drift]"
-        location = create_location("Dockerfile", 2)
-        _new_logger().adopted_drift(
-            Logger.DIGEST_DRIFT, DriftedPin("dependency", "3.14", location, DIGEST1, new_sha=DIGEST2), cause
-        )
-        self.assert_message(
-            mock_log,
-            Logger._MESSAGE_ADOPTED_DIGEST_DRIFT,
-            f"Adopted digest drift for {dependency('dependency')}:3.14 in {at('Dockerfile:2')}: "
-            f"re-pinned from {DIGEST1} to {DIGEST2} ({cause})",
-        )
+        dockerfile, workflow = create_location("Dockerfile", 2), create_location(".github/workflows/ci.yml", 17)
+        checkout, ci = dependency("actions/checkout"), at(".github/workflows/ci.yml:17")
+        cases = {
+            "digest": (
+                Logger.DIGEST_DRIFT,
+                DriftedPin("dependency", "3.14", dockerfile, DIGEST1, new_sha=DIGEST2),
+                (
+                    f"Adopted digest drift for {dependency('dependency')}:3.14 in {at('Dockerfile:2')}: "
+                    f"re-pinned from {DIGEST1} to {DIGEST2} ({cause})"
+                ),
+            ),
+            "tag": (
+                Logger.TAG_DRIFT,
+                DriftedPin("actions/checkout", "4.1.1", workflow, COMMIT_SHA1, new_sha=COMMIT_SHA2),
+                (
+                    f"Adopted tag drift for {checkout}@4.1.1 in {ci}: "
+                    f"re-pinned from commit {COMMIT_SHA1} to {COMMIT_SHA2} ({cause})"
+                ),
+            ),
+            "branch": (
+                Logger.BRANCH_DRIFT,
+                DriftedPin("actions/checkout", "main", workflow, COMMIT_SHA1, new_sha=COMMIT_SHA2),
+                (
+                    f"Adopted branch drift for {checkout}@main in {ci}: "
+                    f"re-pinned from commit {COMMIT_SHA1} to {COMMIT_SHA2} ({cause})"
+                ),
+            ),
+            "ref": (
+                Logger.REF_DRIFT,
+                DriftedPin("actions/checkout", "stable-2024", workflow, COMMIT_SHA1, new_sha=COMMIT_SHA2),
+                (
+                    f"Adopted ref drift for {checkout}@stable-2024 in {ci}: "
+                    f"re-pinned from commit {COMMIT_SHA1} to {COMMIT_SHA2} ({cause})"
+                ),
+            ),
+        }
+        for name, (kind, drifted, rendered) in cases.items():
+            with self.subTest(name):
+                _new_logger().adopted_drift(kind, drifted, cause)
+                self.assert_message(mock_log, kind.adopted, rendered)
 
     def test_stale_dependency_warning(self, mock_log: Mock):
         """Test that an old newest release is warned about at warning level, naming the release that was measured.
@@ -408,7 +578,6 @@ class LoggerTests(TestCase):
             "a reason": ("broke Python 3.10 support", 'version 4.15.0 was yanked ("broke Python 3.10 support")'),
         }.items():
             with self.subTest(case=case):
-                mock_log.reset_mock()
                 version = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason=reason))
                 _new_logger().report_yank(
                     resolved_reference("humanize", create_location("requirements.txt", 9), version), Marker()
@@ -434,7 +603,6 @@ class LoggerTests(TestCase):
             "a reason": ("superseded by humanize2", 'the project was archived ("superseded by humanize2")'),
         }.items():
             with self.subTest(case=case):
-                mock_log.reset_mock()
                 archival = Archival(archived=True, reason=reason)
                 version = DependencyVersion("4.15.0", project=Project(archival=archival))
                 _new_logger().report_archival(
@@ -506,7 +674,6 @@ class LoggerTests(TestCase):
         for verb, item, clause in cases:
             directive = f"{verb.value}[{item}]"
             with self.subTest(bound=directive):
-                mock_log.reset_mock()
                 marker = Marker(version_bound=bound(verb, item))
                 _new_logger().warn_if_redundant_bound(reference("python", location, "3.12"), marker)
                 self.assert_message(
@@ -525,7 +692,6 @@ class LoggerTests(TestCase):
         }
         for case, marker in markers.items():
             with self.subTest(case=case):
-                mock_log.reset_mock()
                 location = create_location("Dockerfile", 6)
                 _new_logger().warn_if_redundant_bound(reference("python", location, "3.12"), marker)
                 mock_log.assert_not_called()
@@ -581,14 +747,13 @@ class LoggerTests(TestCase):
 
     def test_report_staleness_does_nothing_when_not_stale(self, mock_log: Mock):
         """Test that a release that is recent or undated is reported by nothing, marker or no marker."""
-        newest = Release("4.15.0", datetime.now(UTC) - timedelta(days=1))
+        newest = Release("4.15.0", FRESH_DATE)
         recent = DependencyVersion("4.15.0", project=Project(newest=newest))
         undated = DependencyVersion("4.15.0")
         logger = _new_logger()
         location = create_location("requirements.txt", 9)
         for marker in (Marker(), Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")):
             with self.subTest(marker=marker.raw or "no marker"):
-                mock_log.reset_mock()
                 logger.report_staleness(resolved_reference("humanize", location, recent), marker, 90)
                 logger.report_staleness(resolved_reference("humanize", location, undated), marker, 90)
                 mock_log.assert_not_called()
@@ -673,7 +838,6 @@ class LoggerTests(TestCase):
         }
         for directive, reason in cases.items():
             with self.subTest(directive=directive):
-                mock_log.reset_mock()  # Judge each case on the records of its own run.
                 location = create_location("Dockerfile", 2)
                 _new_logger().redundant_directive(reference("python", location), directive, reason)
                 self.assert_message(
@@ -717,7 +881,6 @@ class LoggerTests(TestCase):
         """Test that a file that does not parse is warned about, naming the format given rather than its suffix."""
         for file_name, file_format in (("pom.xml", "XML"), ("compose.yml", "YAML")):
             with self.subTest(format=file_format):
-                mock_log.reset_mock()
                 _new_logger().invalid_file(Path.cwd() / file_name, file_format)
                 self.assert_message(
                     mock_log,
@@ -773,7 +936,7 @@ class LoggerTests(TestCase):
     def test_new_version_with_publication_date(self, mock_log: Mock):
         """Test that the publication date is appended to the version when it is known."""
         published = datetime(2026, 5, 29, 13, 54, tzinfo=UTC)
-        version = DependencyVersion("1.0", Changes("Changelog", markdown=False), published=published)
+        version = DependencyVersion("1.0", Changes("Changelog", markdown=False), publication=LookedUp(published))
         location = create_location("a.txt", 3)
         _new_logger().new_version(reference("dependency", location), version)
         self.assert_message(
@@ -788,7 +951,9 @@ class LoggerTests(TestCase):
         """Test that a non-UTC publication date is converted to UTC before logging."""
         published = datetime(2026, 5, 29, 15, 54, tzinfo=timezone(timedelta(hours=2)))
         location = create_location("a.txt", 3)
-        _new_logger().new_version(reference("dependency", location), DependencyVersion("1.0", published=published))
+        _new_logger().new_version(
+            reference("dependency", location), DependencyVersion("1.0", publication=LookedUp(published))
+        )
         self.assert_message(
             mock_log,
             Logger._MESSAGE_NEW_VERSION,

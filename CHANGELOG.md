@@ -9,9 +9,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Report the new version of a Maven plugin that a property versions. Closes [#388](https://github.com/ICTU/update-time/issues/388).
+- Pin a GitHub Action or pre-commit hook that references a branch, a tag such as `stable-2024`, or a short commit SHA to the commit it points at, and warn when a branch moves on. Closes [#322](https://github.com/ICTU/update-time/issues/322).
+
+### Changed
+
+- Adopt hash drift only once a moved version tag's new commit or a re-pushed image's new digest is older than the cooldown, and move a branch to its newest commit older than the cooldown, never back. Part of [#322](https://github.com/ICTU/update-time/issues/322).
 
 ### Fixed
 
+- Warn about hash drift on a version tag or image tag that was moved or re-pushed inside the cooldown, instead of leaving it unreported, unless the reference opts into adopting drift. Part of [#322](https://github.com/ICTU/update-time/issues/322).
+- Pin an image tag or a GitHub version tag that was pushed or tagged inside the cooldown, or whose commit cannot be dated, instead of leaving it unpinned. Part of [#322](https://github.com/ICTU/update-time/issues/322).
+- Report an `allow[floating-pin]`, an `allow[hash-drift]`, a bound, or a cooldown on a GitHub Action or pre-commit hook that names a commit SHA as redundant. Part of [#322](https://github.com/ICTU/update-time/issues/322).
+- Keep a `requirements.txt` pin on its version when PyPI does not serve the metadata of a newer release, instead of trying the older releases. Part of [#322](https://github.com/ICTU/update-time/issues/322).
+- Hold back a newer Docker Hub tag whose push date Docker Hub fails to report, instead of adopting it without a cooldown. Part of [#322](https://github.com/ICTU/update-time/issues/322).
+- Pin and check a GitHub Action or pre-commit hook that references a moving version tag such as `v4` by the commit that tag points at, not by the commit of `v4.0.0`, which spells the same version. Part of [#322](https://github.com/ICTU/update-time/issues/322).
+- Pin and check an image tag such as `python:3.12` by the digest that tag serves, not by the digest of `3.12.0`, which spells the same version. Part of [#322](https://github.com/ICTU/update-time/issues/322).
 - Warn about hash drift on a floating image tag whose new digest only floating tags serve. Closes [#396](https://github.com/ICTU/update-time/issues/396).
 - Warn once about a Maven dependency or plugin whose version a scanned pom manages, rather than once per declaration. Closes [#386](https://github.com/ICTU/update-time/issues/386).
 

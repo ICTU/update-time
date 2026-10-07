@@ -13,6 +13,9 @@ if TYPE_CHECKING:
     from update_time.markers.marker import Marker, Scope
     from update_time.primitives.environment import EnvVar
 
+# What opted a reference in, as the user wrote it: the marker's own directive, or the command-line flag.
+type OptInCause = str
+
 
 @dataclass(frozen=True)
 class RunWideOptIn:
@@ -27,7 +30,7 @@ class RunWideOptIn:
     flag: str
     scope: Scope
 
-    def cause(self, marker: Marker) -> str | None:
+    def cause(self, marker: Marker) -> OptInCause | None:
         """Return what opts the reference in, the marker's own directive or the flag, or None when neither does.
 
         An empty directive means the marker says nothing about this behaviour, whatever else it opts into, so the

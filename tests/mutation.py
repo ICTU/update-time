@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 from unittest.mock import patch
 
 if TYPE_CHECKING:
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 # a global, because checking a mutation drops this module from `sys.modules` and imports it afresh.
 CHECKED_TEST = "_UPDATE_TIME_MUTATION_CHECKED_TEST"
 
-# Set for the whole of a `just mutate` run, which applies a mutation of its own: the registered checks stand aside,
+# Set for the whole of a `just mutate` run, which applies a mutation of its own: the registered mutations stand aside,
 # so that run's kill list holds the tests that failed on the mutation it was given.
 CHECKS_OFF = "_UPDATE_TIME_MUTATION_CHECKS_OFF"
 
@@ -93,13 +93,13 @@ class Mutation:
     scaffolding. Naming the error in `raises` tells the two apart: the test kills the mutation by raising that
     error, while any other error is reported as broken.
 
-    The anchor names the code to change: a module, or a class, function, method, classmethod or property the module
-    holds. The qualified name reaches a member through its class, and only the source of the definition is changed.
-    A module anchor is for a snippet that spans several definitions or lies outside them. A module anchor is stale
-    when one function or method holds the snippet.
+    The anchor names the code to change: a module, or a class, function, method, classmethod, property or cached
+    property the module holds. The qualified name reaches a member through its class, and only the source of the
+    definition is changed. A module anchor is for a snippet that spans several definitions or lies outside them. A
+    module anchor is stale when one function or method holds the snippet.
     """
 
-    anchor: types.ModuleType | _Function | types.MethodType | property
+    anchor: types.ModuleType | _Function | types.MethodType | property | functools.cached_property[Any]
     old: str
     new: str
     regression: str = ""
@@ -107,7 +107,9 @@ class Mutation:
 
     @property
     def _unwrapped(self) -> types.ModuleType | _Function | types.MethodType:
-        """Return the anchor in the form that carries its names, which for a property is the getter behind it."""
+        """Return the anchor in the form that carries its names: a property's getter, a cached property's function."""
+        if isinstance(self.anchor, functools.cached_property):
+            return cast("_Function", self.anchor.func)
         return cast("_Function", self.anchor.fget) if isinstance(self.anchor, property) else self.anchor
 
     @property

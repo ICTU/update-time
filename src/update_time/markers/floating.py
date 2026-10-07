@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING
 
 from update_time.markers.marker import Scope
-from update_time.markers.opt_in import RunWideOptIn
+from update_time.markers.opt_in import OptInCause, RunWideOptIn
 from update_time.primitives.environment import flag
 
 if TYPE_CHECKING:
@@ -16,6 +16,6 @@ ALLOW_FLOATING_PIN = flag("_UPDATE_TIME_ALLOW_FLOATING_PIN")
 _FLOATING_PIN = RunWideOptIn(ALLOW_FLOATING_PIN, "--allow-floating-pin", Scope.FLOATING_PIN)
 
 
-def floating_pin_cause(marker: Marker) -> str | None:
+def floating_pin_cause(marker: Marker) -> OptInCause | None:
     """Return what keeps the reference's pin floating (a marker or the run-wide flag), or None when nothing does."""
     return _FLOATING_PIN.cause(marker)

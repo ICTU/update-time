@@ -5,9 +5,10 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from update_time.io.fetch import fetch, next_page_url
+from update_time.io.fetch import failure_reason, fetch, next_page_url
 
 from tests.helpers import mock_response
+from tests.mutation import Mutation, kills
 
 
 class FetchTest(unittest.TestCase):
@@ -64,6 +65,40 @@ class FetchTest(unittest.TestCase):
         mock_get.side_effect = error
         self.assertIsNone(fetch("https://example.org", self.logger))
         self.logger.request_error.assert_called_once_with("https://example.org", error)
+
+
+class FailureReasonTest(unittest.TestCase):
+    """Unit tests for the reason a failed request is reported with."""
+
+    @kills(
+        Mutation(
+            failure_reason,
+            'message = body.get("message", "") if isinstance(body, dict) else ""',
+            'message = (body or {}).get("message", "")',
+            "an error body that is a JSON list or string ends the run",
+            raises="AttributeError: 'list' object has no attribute 'get'",
+        )
+    )
+    def test_a_json_body_other_than_an_object_gives_the_status_alone(self):
+        """Test that a JSON body other than an object gives the status code alone, since it does not hold a message."""
+        for body in (["x"], "Too Many Requests"):
+            with self.subTest(body=body):
+                self.assertEqual(failure_reason(mock_response(body, ok=False, status_code=429)), "HTTP 429")
+
+    @kills(
+        Mutation(
+            failure_reason,
+            "with suppress(ValueError):",
+            "with suppress():",
+            "an error body that is not JSON ends the run",
+            raises="requests.exceptions.JSONDecodeError: Expecting value: line 1 column 1 (char 0)",
+        )
+    )
+    def test_a_body_that_is_not_json_gives_the_status_alone(self):
+        """Test that a body that is not JSON, such as plain text, gives the status code alone."""
+        response = mock_response(ok=False, status_code=429)
+        response.json.side_effect = requests.JSONDecodeError("Expecting value", "Too Many Requests", 0)
+        self.assertEqual(failure_reason(response), "HTTP 429")
 
 
 class NextPageUrlTest(unittest.TestCase):

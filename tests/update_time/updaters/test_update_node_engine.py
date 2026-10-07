@@ -17,7 +17,7 @@ from update_time.updaters.update_node_engine import update_node_engines
 from tests.helpers import mock_path, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import LoggingTestCase, bound, docker_tag
+from tests.update_time.helpers import LoggingTestCase, bound, docker_hub_version, docker_tag
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
 from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
@@ -203,7 +203,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         mock_package_json = self.update_engine(mock_glob)  # Its engine is node 18.
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "20" }}\n')
         self.assert_path_logged(mock_package_json)
-        self.assert_new_version_logged("node", "20", Location(mock_package_json, 1))
+        self.assert_new_version_logged("node", docker_hub_version("20"), Location(mock_package_json, 1))
         self.assert_no_warnings_logged()
 
     @patch_pathlib_path(exists=False)

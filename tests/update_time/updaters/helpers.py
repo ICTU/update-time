@@ -1,13 +1,14 @@
 """Test helpers the updater tests share: the sources they answer, and the checks they switch off."""
 
-import datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
+from update_time.domain.dependency import DependencyVersion, Project
 from update_time.domain.vulnerability import NO_RISK_LEVEL, VULNERABILITY_LEVEL
 
 from tests.helpers import mock_response, patch_environ
+from tests.update_time.fixtures import COMMIT_SHA2
 from tests.update_time.helpers import PYPI_OLD_UPLOAD, osv_advisory, osv_api, pypi_index, vulnerability
 
 if TYPE_CHECKING:
@@ -20,9 +21,13 @@ if TYPE_CHECKING:
 mock_docker_hub_auth = patch("requests.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec
 
 
-def days_ago(days: int) -> str:
-    """Return the upload time of a distribution file published the given number of days ago."""
-    return (datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days)).isoformat()
+# The default project for the versions a test builds without one.
+_NO_PROJECT = Project()
+
+
+def github_version(version: str, project: Project = _NO_PROJECT) -> DependencyVersion:
+    """Return the version the GitHub source resolves to, pinned to the new commit and tagged with a `v` prefix."""
+    return DependencyVersion(version=version, sha=COMMIT_SHA2, tag_name=f"v{version}", project=project)
 
 
 def dated_pypi_index(*versions: str, upload_time: str = PYPI_OLD_UPLOAD, archived: bool | str = False) -> Mock:

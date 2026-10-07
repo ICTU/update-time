@@ -1,28 +1,11 @@
-"""Rename a name and every reference to it in the files named, and fail when a file is left holding the old one.
-
-LibCST resolves a name against the module a file sits in, so the names are spelled per file: bare for the file
-holding the definition, qualified for the files importing it (see `_names_for`). It renames the references it
-resolves and hands back the source either way, so two rewrites it did not make look like one that landed: a
-misspelled name reaches nothing, and a file none of the spellings reach comes back as it was. Both are read off
-the source it hands back — the first as every source coming back unchanged, the second as the old name surviving
-as an identifier, which leaves the docstrings that mention it alone, unlike a grep.
-
-The sources are written once every one of them has come back clean, so a rename that fails leaves the files as
-it found them rather than a tree holding half a rename. A source LibCST cannot parse fails the run the same way,
-before anything has been written.
-
-Those docstrings are then reported, since a rename leaves the prose about a name as it found it, and the prose
-mostly lives in files the rename was never given. They are reported rather than rewritten because the same word
-is a parameter or a local elsewhere, where it means something else.
-
-Usage: `uv run python tools/rename.py OLD NEW FILE ...`, with OLD qualified for a name defined in another module.
-"""
+"""Rename a name and every reference to it in the files named, and fail when a file is left holding the old one."""
 
 import ast
 import re
 import subprocess  # nosec
 import sys
 from fnmatch import fnmatch
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -31,7 +14,7 @@ from libcst.codemod import CodemodContext
 from libcst.codemod.commands.rename import RenameCommand
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
 # What the rename exits with when it did not land, so the recipe that runs it stops.
 _FAILED = 1
@@ -108,20 +91,102 @@ def _renamed(old: str, new: str, source: str) -> str:
     return RenameCommand(CodemodContext(), old, new).transform_module(libcst.parse_module(source)).code
 
 
+class _AttributeRenamer(libcst.CSTTransformer):
+    """Rename each attribute, keyword argument, and method of one name, whatever it belongs to, and leave the rest."""
+
+    def __init__(self, old: str, new: str) -> None:
+        """Remember the name to rename, and what to rename it to."""
+        super().__init__()
+        self._old, self._new = old, new
+
+    def leave_Attribute(self, original_node: libcst.Attribute, updated_node: libcst.Attribute) -> libcst.Attribute:  # noqa: N802
+        """Return the attribute renamed when it carries the old name, or as it is otherwise."""
+        return updated_node.with_changes(attr=self._renamed(original_node.attr))
+
+    def leave_Arg(self, original_node: libcst.Arg, updated_node: libcst.Arg) -> libcst.Arg:  # noqa: N802
+        """Return the argument renamed when its keyword is the old name, or as it is otherwise."""
+        if original_node.keyword is None:
+            return updated_node
+        return updated_node.with_changes(keyword=self._renamed(original_node.keyword))
+
+    def leave_ClassDef(self, original_node: libcst.ClassDef, updated_node: libcst.ClassDef) -> libcst.ClassDef:  # noqa: N802, ARG002
+        """Return the class with its members of the old name renamed."""
+        body = [self._renamed_member(statement) for statement in updated_node.body.body]
+        return updated_node.with_changes(body=updated_node.body.with_changes(body=body))
+
+    def _renamed_member(
+        self, statement: libcst.BaseStatement | libcst.BaseSmallStatement
+    ) -> libcst.BaseStatement | libcst.BaseSmallStatement:
+        """Return the class body's statement with the method it defines or the attributes it sets renamed."""
+        if isinstance(statement, libcst.FunctionDef):
+            decorators = [self._renamed_decorator(decorator) for decorator in statement.decorators]
+            return statement.with_changes(name=self._renamed(statement.name), decorators=decorators)
+        if isinstance(statement, libcst.SimpleStatementLine):
+            return statement.with_changes(body=[self._renamed_assignment(small) for small in statement.body])
+        return statement
+
+    def _renamed_decorator(self, decorator: libcst.Decorator) -> libcst.Decorator:
+        """Return the decorator with the property it extends renamed, as `@old.setter` extends `old`."""
+        if isinstance(expression := decorator.decorator, libcst.Attribute):
+            return decorator.with_changes(decorator=expression.with_changes(value=self._renamed(expression.value)))
+        return decorator
+
+    def _renamed_assignment(self, statement: libcst.BaseSmallStatement) -> libcst.BaseSmallStatement:
+        """Return the statement with the attribute it sets renamed, when it is an assignment."""
+        if isinstance(statement, libcst.AnnAssign):
+            return statement.with_changes(target=self._renamed(statement.target))
+        if isinstance(statement, libcst.Assign):
+            targets = [target.with_changes(target=self._renamed(target.target)) for target in statement.targets]
+            return statement.with_changes(targets=targets)
+        return statement
+
+    def _renamed(self, node: libcst.BaseExpression) -> libcst.BaseExpression:
+        """Return the new name when the node is the old name, or the node as it is otherwise."""
+        return libcst.Name(self._new) if isinstance(node, libcst.Name) and node.value == self._old else node
+
+
+def _renamed_attributes(old: str, new: str, _path: str, source: str) -> str:
+    """Return the source with each attribute, keyword argument, and method of the old name renamed to the new one."""
+    bare_old, bare_new = old.rpartition(".")[-1], new.rpartition(".")[-1]
+    return libcst.parse_module(source).visit(_AttributeRenamer(bare_old, bare_new)).code
+
+
+def _renamed_module_level(old: str, new: str, path: str, source: str) -> str:
+    """Return the source with the module-level name renamed, spelled the way the file at the path reaches it."""
+    return _renamed(*_names_for(path, old, new), source)
+
+
 def _names_for(path: str, old: str, new: str) -> tuple[str, str]:
     """Return the pair of names to rename the file at the path with, both spelled the way it reaches them.
 
-    LibCST resolves a definition against the module it sits in rather than against the module a qualified name
-    names, so the file holding the definition is reached by the bare name alone, and every other file by the
-    qualified one. It reads the new name the same way it reads the old, taking the module to import from out of
-    it, so the two are spelled alike: a new name given bare beside a qualified old one leaves that module empty,
-    which LibCST fails to parse.
+    LibCST reads the new name the way it reads the old, taking the module to import from out of it, so the two are
+    spelled alike: a new name given bare beside a qualified old one leaves that module empty, which LibCST fails to
+    parse.
     """
-    module, _, bare_old = old.rpartition(".")
     bare_new = new.rpartition(".")[-1]
-    if _is_module(path, module):
-        return bare_old, bare_new
+    if (inside := _inside_module(path, old)) is not None:
+        return inside, bare_new
+    module = old.rpartition(".")[0]
     return old, f"{module}.{bare_new}" if module else bare_new
+
+
+def _names_its_module(old: str, paths: Iterable[str]) -> bool:
+    """Return whether one of the files is a module the old name names, as a bare name always does."""
+    return "." not in old or any(_inside_module(path, old) is not None for path in paths)
+
+
+def _names_a_member(old: str, paths: Iterable[str]) -> bool:
+    """Return whether the old name names a member of a class, in a module that one of the files is."""
+    return any((name := _inside_module(path, old)) is not None and "." in name for path in paths)
+
+
+def _inside_module(path: str, old: str) -> str | None:
+    """Return the name inside the module the file at the path is, such as `Class.method`, or None for another file."""
+    parts = old.split(".")
+    for end in range(len(parts) - 1, 0, -1):
+        if _is_module(path, ".".join(parts[:end])):
+            return ".".join(parts[end:])
+    return None
 
 
 def _is_module(path: str, module: str) -> bool:
@@ -139,7 +204,7 @@ def _report(message: str) -> None:
     sys.stderr.write(f"Error: {message}\n")
 
 
-def _renamed_sources(old: str, new: str, sources: dict[str, str]) -> dict[str, str] | None:
+def _renamed_sources(sources: dict[str, str], rename: Callable[[str, str], str]) -> dict[str, str] | None:
     """Return each source renamed, or None where one of them could not be, which is reported.
 
     A rename is turned down for a source LibCST cannot parse, and for an old name holding a colon.
@@ -147,9 +212,12 @@ def _renamed_sources(old: str, new: str, sources: dict[str, str]) -> dict[str, s
     renamed = {}
     for path, source in sources.items():
         try:
-            renamed[path] = _renamed(*_names_for(path, old, new), source)
+            renamed[path] = rename(path, source)
         except (libcst.ParserSyntaxError, ValueError) as reason:
-            _report(f"{path} could not be renamed: {reason}")
+            # Rendering a parse error's context can itself fail, so the report gives the message alone. A parser
+            # error's message names the position. A tokenizer error's message names none.
+            described = reason.message if isinstance(reason, libcst.ParserSyntaxError) else str(reason)
+            _report(f"{path} could not be renamed: {described}")
             return None
     return renamed
 
@@ -168,15 +236,25 @@ def _survivors_message(name: str, left: list[str], changed: dict[str, str]) -> s
 def main() -> int:
     """Rename the name over the files named on the command line, and report a rename that did not land."""
     old, new, *paths = sys.argv[1:]
+    if not _names_its_module(old, paths):
+        _report(f"none of the files given is a module that {old} names; add the file that defines it")
+        return _FAILED
     sources = _sources(paths)
-    if (renamed := _renamed_sources(old, new, sources)) is None:
+    member = _names_a_member(old, paths)
+    # A member is renamed by its bare name in every source, a module-level name as each file reaches it.
+    rename = partial(_renamed_attributes if member else _renamed_module_level, old, new)
+    if (renamed := _renamed_sources(sources, rename)) is None:
         return _FAILED
     changed = {path: source for path, source in renamed.items() if source != sources[path]}
     if not changed:
         _report(f"nothing was renamed; check the spelling of {old}")
         return _FAILED
     name = old.rsplit(".", 1)[-1]
-    left = [f"{path}:{line}" for path, source in renamed.items() for line in surviving_occurrences(name, source)]
+    left = (
+        []
+        if member
+        else [f"{path}:{line}" for path, source in renamed.items() for line in surviving_occurrences(name, source)]
+    )
     if left:
         _report(_survivors_message(name, left, changed))
         return _FAILED

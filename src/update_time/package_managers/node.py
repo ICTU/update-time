@@ -11,6 +11,7 @@ from update_time.io.process import run
 from update_time.manifests.package_json import DEPENDENCY_SECTIONS, dependency_locations
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
+from update_time.primitives.lookup import LookedUp
 from update_time.sources.npmjs import get_changes, get_publication_datetime
 
 if TYPE_CHECKING:
@@ -100,7 +101,7 @@ class _PackageManager:
                 updated = True
                 changes = get_changes(package, new_version)
                 published = get_publication_datetime(package, new_version)
-                package_version = DependencyVersion(new_version, changes, published=published)
+                package_version = DependencyVersion(new_version, changes, publication=LookedUp(published))
                 current = version.get("current", "")
                 for location in declarations.get(package, [Location(package_json)]):
                     _LOG.new_version(Reference(package, current, location), package_version)

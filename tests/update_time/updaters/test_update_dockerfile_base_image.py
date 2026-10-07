@@ -15,7 +15,7 @@ from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import docker_tag
+from tests.update_time.helpers import docker_hub_version, docker_tag
 from tests.update_time.registry import mock_docker_registry
 from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
@@ -92,7 +92,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         requested = "".join(call.args[0] for call in self.requests.call_args_list)
         self.assertNotIn("deps", requested)
         self.assert_accounted_for_reference_logged("deps", "", Location(mock_dockerfile, 2), AccountedFor.BUILD_STAGE)
-        self.assert_new_version_logged("python", "3.14.7", Location(mock_dockerfile, 1))
+        self.assert_new_version_logged("python", docker_hub_version("3.14.7"), Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
     @kills(
@@ -188,7 +188,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile = mock_path("from python:3.14\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_called_once_with(f"from python:3.15@{DIGEST}\n")
-        self.assert_new_version_logged("python", "3.15", Location(mock_dockerfile, 1))
+        self.assert_new_version_logged("python", docker_hub_version("3.15"), Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
     @kills(
@@ -231,7 +231,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile = mock_path("FROM ruby:3.3 AS build\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_called_with(f"FROM ruby:3.4@{DIGEST} AS build\n")
-        self.assert_new_version_logged("ruby", "3.4", Location(mock_dockerfile, 1))
+        self.assert_new_version_logged("ruby", docker_hub_version("3.4"), Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
     def test_platform_flag_with_build_arg_is_preserved(self):
@@ -240,7 +240,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile = mock_path("FROM --platform=$BUILDPLATFORM python:3.14\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_called_with(f"FROM --platform=$BUILDPLATFORM python:3.15@{DIGEST}\n")
-        self.assert_new_version_logged("python", "3.15", Location(mock_dockerfile, 1))
+        self.assert_new_version_logged("python", docker_hub_version("3.15"), Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
     def test_platform_flag_with_literal_value_and_stage_alias_is_preserved(self):
@@ -249,11 +249,11 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile = mock_path("FROM --platform=linux/amd64 node:18 AS build\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_called_with(f"FROM --platform=linux/amd64 node:20@{DIGEST} AS build\n")
-        self.assert_new_version_logged("node", "20", Location(mock_dockerfile, 1))
+        self.assert_new_version_logged("node", docker_hub_version("20"), Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
     def test_ignore_marker_leaves_base_image_untouched(self):
-        """Test that a FROM line pinned by a preceding `# update-time: ignore` comment is not updated or queried."""
+        """Test that a base image a preceding `# update-time: ignore` comment holds back is not updated or queried."""
         mock_dockerfile = mock_path("# update-time: ignore\nFROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_not_called()

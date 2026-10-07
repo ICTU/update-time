@@ -28,10 +28,11 @@ if TYPE_CHECKING:
     from update_time.markers.marker import Marker
 
 
-def warn_about_directives_the_source_cannot_apply(
+def report_directives_that_set_nothing(
     marker: Marker, get_new_version: NewVersionGetter, reference: Reference, log: Logger
 ) -> None:
-    """Warn about each directive the reference's source cannot apply, so it holds nothing back."""
+    """Report what sets nothing: each item with an inverted comparison, and each directive the source cannot apply."""
+    log.report_inverted_items(reference, marker)
     as_written = marker.as_written
     for directive in DIRECTIVES:
         if (written := as_written.directive_for(directive.scope)) and not directive.is_applied_by(
@@ -73,6 +74,11 @@ def staleness_threshold(marker: Marker) -> int:
     return marker.stale.value_or(STALE_AFTER.get())
 
 
+def cooldown_days(marker: Marker) -> int:
+    """Return the number of days the reference holds back what was published: its own cooldown, or the run's."""
+    return marker.cooldown.value_or(COOLDOWN.get())
+
+
 def latest_version(
     reference: Reference,
     get_new_version: NewVersionGetter,
@@ -82,14 +88,14 @@ def latest_version(
     """Return the latest version to update the reference to, or None when the marker holds the update back."""
     if not downgrades(get_new_version, reference.pinned):
         log.warn_if_redundant_bound(reference, marker)
-    log.report_inverted_items(reference, marker)
-    warn_about_directives_the_source_cannot_apply(marker, get_new_version, reference, log)
+    report_directives_that_set_nothing(marker, get_new_version, reference, log)
     if marker.holds_back_source_checks:
         _warn_if_the_floating_pin_is_redundant(marker, reference, log, latest=None)
         return None
     version_bound = BLOCK_ALL_UPDATES if marker.ignores(Scope.UPDATE) else marker.version_bound
-    cooldown = marker.cooldown.value_or(COOLDOWN.get())
-    latest = get_new_version(reference.pinned, version_bound, cooldown, check_archival=archival_is_checked())
+    latest = get_new_version(
+        reference.pinned, version_bound, cooldown_days(marker), check_archival=archival_is_checked()
+    )
     resolved = SteeredResolvedReference.from_reference(reference, release=latest, marker=marker)
     report_project(resolved, log)
     log.report_yank(resolved, marker)

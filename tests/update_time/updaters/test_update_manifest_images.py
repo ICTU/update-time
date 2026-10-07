@@ -1,7 +1,6 @@
 """Unit tests for the manifest image update script."""
 
 import unittest
-from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, patch
 
 from update_time.domain.dependency import AccountedFor, FloatingPin
@@ -17,8 +16,8 @@ from update_time.updaters.update_manifest_images import update_manifest_images
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time import registry
-from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import docker_tag
+from tests.update_time.fixtures import DIGEST, STALE_DATE
+from tests.update_time.helpers import docker_hub_version, docker_tag
 from tests.update_time.registry import mock_docker_registry
 from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
@@ -67,8 +66,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     def test_image_whose_tag_the_registry_does_not_serve_is_not_stale(self):
         """Test that an `image:` whose tag the registry does not list is not reported stale."""
-        pushed = (datetime.now(UTC) - timedelta(days=512)).isoformat()
-        self.requests.side_effect = mock_docker_registry(docker_tag("v4.7.0", DIGEST, tag_last_pushed=pushed))
+        self.requests.side_effect = mock_docker_registry(docker_tag("v4.7.0", DIGEST, tag_last_pushed=STALE_DATE))
         mock_manifest = mock_path(self.reference("acme/api:ci"))
         self.run_compose_updater(mock_manifest)
         mock_manifest.write_text.assert_not_called()
@@ -153,7 +151,9 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
                 expected = compose.replace("postgres:16", f"postgres:17@{DIGEST}")
                 mock_manifest.write_text.assert_called_once_with(expected)
                 postgres_line = len(compose.splitlines())  # The `db` service's image is the file's last line.
-                self.assert_new_version_logged("postgres", "17", Location(mock_manifest, postgres_line))
+                self.assert_new_version_logged(
+                    "postgres", docker_hub_version("17"), Location(mock_manifest, postgres_line)
+                )
                 self.assert_no_warnings_logged()
 
     @kills(
@@ -211,7 +211,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         mock_manifest = mock_path(compose)
         self.run_compose_updater(mock_manifest)
         mock_manifest.write_text.assert_called_once_with(compose.replace("2.0.0", f"3.0.0@{DIGEST}"))
-        self.assert_new_version_logged("acme/api", "3.0.0", Location(mock_manifest, 6))
+        self.assert_new_version_logged("acme/api", docker_hub_version("3.0.0"), Location(mock_manifest, 6))
         self.assert_no_warnings_logged()
 
     @kills(
@@ -231,7 +231,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.run_compose_updater(builder, puller)
         builder.write_text.assert_not_called()
         puller.write_text.assert_called_once_with(f"services:\n  api:\n    image: acme/api:1.3.0@{DIGEST}\n")
-        self.assert_new_version_logged("acme/api", "1.3.0", Location(puller, 3))
+        self.assert_new_version_logged("acme/api", docker_hub_version("1.3.0"), Location(puller, 3))
         self.assert_no_warnings_logged()
 
     @kills(
@@ -260,7 +260,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         mock_chart = mock_path(chart)
         self.run_helm_updater(mock_chart)
         mock_chart.write_text.assert_called_once_with(chart.replace("python:3.14", f"python:3.15@{DIGEST}"))
-        self.assert_new_version_logged("python", "3.15", Location(mock_chart, 3))
+        self.assert_new_version_logged("python", docker_hub_version("3.15"), Location(mock_chart, 3))
         self.assert_no_warnings_logged()
 
     def test_variable_substitution_ignored(self):

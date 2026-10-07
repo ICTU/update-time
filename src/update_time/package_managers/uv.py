@@ -22,6 +22,7 @@ from update_time.markers.directive import Reason
 from update_time.markers.reference import SteeredResolvedReference
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
+from update_time.primitives.lookup import LookedUp
 from update_time.sources.pypi import get_changes, get_publication_datetime, project, yank_state
 
 if TYPE_CHECKING:
@@ -192,7 +193,7 @@ def _log_new_version(log: Logger, package: DependencyName, version: VersionStrin
     """
     changes = get_changes(package, version)
     published = get_publication_datetime(package, version)
-    dependency_version = DependencyVersion(version, changes, published=published)
+    dependency_version = DependencyVersion(version, changes, publication=LookedUp(published))
     for location in locations:
         # This message renders no version the reference is pinned to, so the reference names none.
         log.new_version(Reference(package, "", location), dependency_version)
@@ -267,7 +268,7 @@ def update_python_inline_script_metadata(script: InlineScript, log: Logger) -> b
         "--depth=0",
         "--outdated",
         "--exclude-newer",
-        cooldown_cutoff(),
+        cooldown_cutoff(COOLDOWN.get()),
     )
     return _update_dependencies(uv_tree, script, log)
 

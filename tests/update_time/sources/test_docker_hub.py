@@ -1,7 +1,11 @@
 """Unit tests for the Docker Hub specifics."""
 
+from http import HTTPStatus
 from unittest.mock import Mock, patch
 
+import requests
+
+from update_time.primitives.lookup import LookedUp
 from update_time.sources import docker_hub
 from update_time.sources.docker_hub import api_headers
 
@@ -57,3 +61,24 @@ class ApiHeadersTest(LoggingTestCase):
     def test_no_headers_when_token_response_carries_no_token(self):
         """Test that a token response carrying no token degrades to anonymous access rather than crashing."""
         self.assertEqual(api_headers(), {})
+
+
+class LastPushedTest(LoggingTestCase):
+    """Unit tests for reading a Docker Hub tag's push date."""
+
+    @patch("requests.get", Mock(side_effect=requests.exceptions.Timeout))
+    def test_a_push_date_request_that_fails_gives_its_failure_as_the_reason(self):
+        """Test that a push-date request failing at the transport level returns that failure as the reason."""
+        self.assertEqual(docker_hub.last_pushed("library/python", "3.14"), LookedUp(None, "the request failed"))
+
+    @patch("requests.get", Mock(return_value=mock_response({}, ok=False, status_code=HTTPStatus.TOO_MANY_REQUESTS)))
+    def test_a_push_date_request_docker_hub_refuses_is_logged_and_gives_its_status_as_the_reason(self):
+        """Test that a push-date request Docker Hub refuses is logged, and returns its status as the reason."""
+        self.assertEqual(docker_hub.last_pushed("library/python", "3.14"), LookedUp(None, "HTTP 429"))
+        self.assert_could_not_fetch_logged(status=HTTPStatus.TOO_MANY_REQUESTS)
+
+    @patch("requests.get", Mock(return_value=mock_response({"name": "3.14"})))
+    def test_an_answer_without_a_push_date_gives_a_reason(self):
+        """Test that an answer that lacks a push date returns a reason, so the cooldown holds the tag back."""
+        no_push_date = LookedUp(None, "Docker Hub did not report a push date")
+        self.assertEqual(docker_hub.last_pushed("library/python", "3.14"), no_push_date)

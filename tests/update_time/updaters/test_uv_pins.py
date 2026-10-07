@@ -36,12 +36,12 @@ from tests.update_time.updaters.fixtures import (
     DJANGO_VULNERABILITY,
     OTHER_DJANGO_ADVISORY,
     OTHER_DJANGO_VULNERABILITY,
+    PYPI_PAST_COOLDOWN_UPLOAD,
     PYPI_RECENT_UPLOAD,
     VULNERABILITY,
 )
 from tests.update_time.updaters.helpers import (
     dated_pypi_index,
-    days_ago,
     no_vulnerabilities,
     osv,
     osv_queries,
@@ -151,7 +151,7 @@ class StaleDependencyTest(DependencyTomlFileTestCase):
         The newest release is 100 days old, which is stale against the marker's 90 and not against the run's 365,
         so the warning is given only when the marker's threshold is the one applied.
         """
-        get.return_value = dated_pypi_index("1.0", upload_time=days_ago(100))
+        get.return_value = dated_pypi_index("1.0", upload_time=PYPI_PAST_COOLDOWN_UPLOAD)
         file = self.dependency_toml_file("package==1.0", marker="ignore[stale<90]")
         warn_about_pins([file], _LOG)
         self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
@@ -162,7 +162,7 @@ class StaleDependencyTest(DependencyTomlFileTestCase):
         The newest release is 100 days old, which is stale against the 90 the item names and not against the run's
         365, so the silence shows the item set no threshold of its own.
         """
-        get.return_value = dated_pypi_index("1.0", upload_time=days_ago(100))
+        get.return_value = dated_pypi_index("1.0", upload_time=PYPI_PAST_COOLDOWN_UPLOAD)
         file = self.dependency_toml_file("package==1.0", marker="ignore[stale>=90]")
         warn_about_pins([file], _LOG)
         self.assertEqual(get.call_count, 1)  # The release was looked up, so the silence is a judgement of its age.
@@ -185,7 +185,7 @@ class StaleDependencyTest(DependencyTomlFileTestCase):
         force run-wide does not override. The dependency below it sets no threshold, so no check runs for it and
         PyPI is not asked about it at all.
         """
-        get.return_value = dated_pypi_index("1.0", upload_time=days_ago(100))
+        get.return_value = dated_pypi_index("1.0", upload_time=PYPI_PAST_COOLDOWN_UPLOAD)
         file = self.file_holding(pyproject_per_line("package>=1.0", "other>=1.0", marker="ignore[stale<90]"))
         warn_about_pins([file], _LOG)
         self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 3))
@@ -435,7 +435,6 @@ class ArchivedDependencyTest(DependencyTomlFileTestCase):
         }
         for marker, index in cases.items():
             with self.subTest(marker=marker):
-                self.clear_caches()  # each case reads its own index, where the cache would serve the case before it
                 get.return_value = index
                 warn_about_pins([self.dependency_toml_file("package>=1.0", marker=marker)], _LOG)
                 self.assert_no_warnings_logged()
