@@ -109,6 +109,11 @@ def _redundant_directives(
     log.redundant_directive(
         reference("humanize", requirements), "ignore[vulnerable]", Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY
     )
+    log.redundant_directive(
+        reference("nl.example:internal-lib", Location(Path("pom.xml"), 12)),
+        "ignore[vulnerable]",
+        Reason.NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
+    )
     redundant_vulnerable_without_a_version = capture.take()
 
     cooldown_reference = reference("python", Location(Path(".python-version"), 2))
@@ -136,7 +141,7 @@ def _redundant_directives(
         "@@REDUNDANT_YANK_SCOPE_WARNING@@": redundant_yank_scope,
         "@@REDUNDANT_YANK_WITHOUT_A_VERSION_WARNING@@": redundant_yank_without_a_version,
         "@@REDUNDANT_ARCHIVED_SCOPE_WARNING@@": redundant_archived_scope,
-        "@@REDUNDANT_VULNERABLE_WITHOUT_A_VERSION_WARNING@@": redundant_vulnerable_without_a_version,
+        "@@REDUNDANT_VULNERABLE_WITHOUT_A_VERSION_WARNINGS@@": redundant_vulnerable_without_a_version,
         "@@REDUNDANT_COOLDOWN_ITEM_WARNING@@": redundant_cooldown_item,
         "@@REDUNDANT_STALE_SOURCE_WARNING@@": redundant_stale_source,
         "@@REDUNDANT_FLOATING_PIN_WARNING@@": redundant_floating_pin,

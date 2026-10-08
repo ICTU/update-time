@@ -48,7 +48,7 @@ Review code against these criteria, whether on its own or in the TDD refactor st
 
 Develop test-first, in small steps, so I can steer.
 
-Keep a numbered list of candidate tests (T1, T2, …) with the status of each: todo, pass, or fail. Every other list you put to me is numbered too, each with a prefix of its own: R for refactorings, F for findings, and E for proposed edits. When you refer back to an item, say what it is rather than only its label: quote the line or the sentence it is about. Drop a test from the list only once every test on it passes, or when I tell you to drop it.
+Keep a numbered list of candidate tests (T1, T2, …) with the status of each: todo, pass, or fail, and whether they drive new code or pin behavior. Every other list you put to me is numbered too, each with a prefix of its own: R for refactorings, F for findings, E for proposed edits, O for options. When you refer back to an item, say what it is rather than only its label: quote the line or the sentence it is about. Drop a test from the list only once every test on it passes, or when I tell you to drop it.
 
 Where the issue specifies little, offer to write a specification first. If accepted, write the specification as a markdown file in the repo root. Prepare a cycle by adding candidate tests to the list, then let me choose where to start. This holds for a feature, a bug fix, a task, and an increment alike.
 

@@ -9,7 +9,10 @@ from update_time.formats import xml
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger, report_marker
 from update_time.manifests import pom_xml as pom_xml_format
+from update_time.markers.directive import Reason
+from update_time.markers.marker import Scope
 from update_time.package_managers import maven
+from update_time.primitives.iterables import unique
 from update_time.references.delegated import project_resolver, warn_about_projects
 from update_time.references.vulnerability import warn_about_vulnerable_dependencies
 from update_time.sources import maven_central
@@ -19,9 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from update_time.domain.dependency import DependencyName
     from update_time.manifests.pom_xml import Declaration
-    from update_time.primitives.location import Location
 
 _LOG = get_logger("pom.xml")
 
@@ -55,9 +56,10 @@ def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path]) -> None:
         # The two readings pair up declaration by declaration, which a reading of another length cannot do.
         _LOG.declarations_changed(pom_xml, len(before), len(after))
         return
-    _report_markers(resolved)
+    distinct = pom_xml_format.one_per_artefact_and_line(resolved)
+    _report_markers(distinct)
     _report_new_versions(before, after, resolved)
-    resolvable = pom_xml_format.with_resolved_coordinates(resolved)
+    resolvable = pom_xml_format.with_resolved_coordinates(distinct)
     declared = pom_xml_format.without_versions_left_to(resolvable, scanned_poms)
     _check_projects(declared)
     _warn_about_vulnerabilities(declared)
@@ -67,14 +69,9 @@ def _report_markers(declared: list[Declaration]) -> None:
     """Report the marker of each dependency and plugin, named as Maven resolves it.
 
     A marker steering the update holds the update back where the declaring pom gives the version, because the rule
-    set holds back every version of the artefact. Two declarations of one artefact naming one property share that
-    property's line, so the marker on that line is reported once.
+    set holds back every version of the artefact.
     """
-    reported: set[tuple[DependencyName, Location]] = set()
     for declaration in declared:
-        if (declaration.dependency, declaration.location) in reported:
-            continue
-        reported.add((declaration.dependency, declaration.location))
         report_marker(
             _LOG,
             declaration.dependency,
@@ -83,6 +80,15 @@ def _report_markers(declared: list[Declaration]) -> None:
             holds_the_update_back=declaration.versioned_by_its_pom and declaration.marker.steers_the_update,
         )
         _LOG.report_inverted_items(declaration, declaration.marker)
+        _report_redundant_directives(declaration)
+
+
+def _report_redundant_directives(declaration: Declaration) -> None:
+    """Report the `yanked` scope and the `allow[floating-pin]` of the declaration's marker as redundant."""
+    if yanked := declaration.marker.as_written.directive_for(Scope.YANKED):
+        _LOG.redundant_directive(declaration, yanked, Reason.NO_YANK_CONCEPT)
+    if floating_pin := declaration.marker.allow_directive(Scope.FLOATING_PIN):
+        _LOG.redundant_directive(declaration, floating_pin, Reason.PIN_NOT_FLOATING)
 
 
 def _check_projects(declared: list[Declaration]) -> None:
@@ -91,17 +97,29 @@ def _check_projects(declared: list[Declaration]) -> None:
 
 
 def _warn_about_vulnerabilities(declared: list[Declaration]) -> None:
-    """Warn about each dependency and plugin the run leaves on a version an advisory names."""
-    resolved = [declaration for declaration in declared if pom_xml_format.fully_resolved(declaration.pinned)]
+    """Warn about each dependency and plugin the run leaves on a version an advisory names.
+
+    OSV needs a version to match an advisory to, so a `vulnerable` scope on a version that Maven's effective pom
+    lists unresolved is redundant.
+    """
+    resolved = []
+    for declaration in declared:
+        if pom_xml_format.fully_resolved(declaration.pinned):
+            resolved.append(declaration)
+        elif declaration.listed_in_effective_pom and (
+            vulnerable := declaration.marker.as_written.directive_for(Scope.VULNERABLE)
+        ):
+            _LOG.redundant_directive(declaration, vulnerable, Reason.NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY)
     warn_about_vulnerable_dependencies([resolved], Ecosystem.MAVEN, _LOG)
 
 
 def _report_new_versions(before: list[Declaration], after: list[Declaration], resolved: list[Declaration]) -> None:
     """Report each dependency and plugin whose version differs between the two readings, with its changes.
 
-    The name is the one the effective pom gives the declaration, where it resolves one.
+    The name is the one the effective pom gives the declaration, where it resolves one. Two declarations of one
+    artefact naming one property read the same in each reading, so they are reported once.
     """
-    for old, new, named in zip(before, after, resolved, strict=True):
+    for old, new, named in unique(zip(before, after, resolved, strict=True)):
         if old.current_version == new.current_version:
             continue
         updated = Reference(named.dependency, old.current_version, new.location)

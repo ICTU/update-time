@@ -776,7 +776,7 @@ A line about a warning appears only when the marker actually silenced one, so an
 
 ### Redundant markers
 
-A directive is redundant when it decides nothing for the reference it sits on: a scope silencing a warning that reference never gets, or a bound narrowing nothing. Update-time reports each one at `WARNING`. In a `pom.xml`, Update-time reports a redundant `vulnerable` scope, and no other redundant directive.
+A directive is redundant when it decides nothing for the reference it sits on: a scope silencing a warning that reference never gets, or a bound narrowing nothing. Update-time reports each one at `WARNING`. In a `pom.xml`, Update-time reports a redundant `yanked`, `vulnerable`, or `floating-pin` scope, and no other redundant directive.
 
 Update-time reports every warning scope as redundant for a Python dependency PyPI does not serve a release for. That is a dependency pointing at a URL or a git repository, and one uv resolves through a `[tool.uv] sources` entry. Update-time asks PyPI about neither, so none of those warnings is ever given there.
 
@@ -816,7 +816,7 @@ WARNING Redundant update-time directive ignore[cooldown<30] for actions/checkout
 
 #### The `yanked` scope
 
-A yank can only be observed where the dependency's source reports one. Of the references that accept a marker, that means `requirements.txt` pins, `pyproject.toml` and inline script metadata pins, and jsDelivr URLs (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, a `.python-version` entry, or a Node engine, the scope can never suppress anything. So Update-time reports it as redundant:
+A yank can only be observed where the dependency's source reports one. Of the references that accept a marker, that means `requirements.txt` pins, `pyproject.toml` and inline script metadata pins, and jsDelivr URLs (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, a `.python-version` entry, a Node engine, or a `pom.xml` dependency or plugin, the scope can never suppress anything. So Update-time reports it as redundant:
 
 ```console
 WARNING Redundant update-time directive ignore[yanked] for python in Dockerfile:2: this dependency's source does not record a yank
@@ -836,10 +836,11 @@ A vulnerability can only be reported where OSV holds advisories for the dependen
 WARNING Redundant update-time directive ignore[vulnerable] for python in Dockerfile:2: this dependency's source does not report vulnerability information
 ```
 
-Update-time reports a Python dependency that pins no exact version here too. An advisory is matched against a version, and such a dependency pins none.
+Update-time reports a Python dependency that does not pin an exact version here too, and a `pom.xml` dependency or plugin whose version Maven leaves unresolved, such as a managed version naming a property that the poms do not declare. An advisory is matched against a version, and neither of them gives one.
 
 ```console
 WARNING Redundant update-time directive ignore[vulnerable] for humanize in docs/requirements.txt:12: this requirement does not pin a version to check for a vulnerability
+WARNING Redundant update-time directive ignore[vulnerable] for nl.example:internal-lib in pom.xml:12: this dependency does not resolve to a version to check for a vulnerability
 ```
 
 Update-time reports an `ignore[vulnerable=…]` as redundant when none of the version's vulnerabilities answers to the identifier. An update fixed the vulnerability, or the identifier was mistyped:
@@ -1109,7 +1110,7 @@ Update-time also reads every `<plugin>` element the pom declares: under `<plugin
 
 Update-time warns once about a version that a scanned pom manages, at the declaration managing it. It skips the checks for each declaration that leaves its `<version>` to that pom, whether in the managing pom itself or in a module inheriting from it. A module can override a property that the managed `<version>` names, and so resolve another version. Update-time then checks the module's declaration at that version. It also checks the module's declaration where the managing pom leaves that property to a pom above it. A pom outside the scan can manage the version as well, such as a released parent pom or an imported BOM. Update-time then checks each declaration that leaves its `<version>` out.
 
-Update-time delegates updating Maven dependencies to Maven. The Maven it runs is the project's own `./mvnw` wrapper when one sits beside the pom, and the `mvn` on your path where the project ships none. In each pom's own directory, it runs two goals of the [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/). The `use-latest-releases` goal advances a dependency whose `<version>` element holds a version. The `update-properties` goal advances a dependency or plugin whose `<version>` element names one of the pom's properties, by advancing that property. Update-time reports the new version of each dependency and plugin that Maven moved, so two that name the same property get a report each. Update-time reports each new version under the group and artifact Maven resolves.
+Update-time delegates updating Maven dependencies to Maven. The Maven it runs is the project's own `./mvnw` wrapper when one sits beside the pom, and the `mvn` on your path where the project ships none. In each pom's own directory, it runs two goals of the [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/). The `use-latest-releases` goal advances a dependency whose `<version>` element holds a version. The `update-properties` goal advances a dependency or plugin whose `<version>` element names one of the pom's properties, by advancing that property. Update-time reports the new version of each dependency and plugin that Maven moved, so two artefacts that name the same property get a report each. Update-time reports each new version under the group and artifact Maven resolves.
 
 The `use-latest-releases` goal leaves a plugin alone, so a plugin whose `<version>` element holds a version stays on that version. Update-time reports no new version for such a plugin.
 

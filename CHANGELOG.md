@@ -9,9 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Read markers in a `pom.xml`, in an XML comment at the end of a Maven dependency's or plugin's line. Part of [#382](https://github.com/ICTU/update-time/issues/382).
+- Report a `yanked` or `floating-pin` scope on a `pom.xml` dependency or plugin as redundant, and a `vulnerable` scope on a version Maven leaves unresolved. Part of [#382](https://github.com/ICTU/update-time/issues/382).
 
 ### Fixed
 
+- Report the new version of an artefact that two declarations in a `pom.xml` version through one property, and warn about that artefact, once rather than once per declaration. Part of [#382](https://github.com/ICTU/update-time/issues/382).
 - Measure the cooldown of a GitHub version tag without a release against the publication date of a release of the same commit, instead of against the commit's date. Closes [#400](https://github.com/ICTU/update-time/issues/400).
 - Show the release notes of the new version alone, also from a changelog that links each release heading to a comparison with the release before it. Closes [#403](https://github.com/ICTU/update-time/issues/403).
 

@@ -13,6 +13,7 @@ from update_time.domain.line import Line
 from update_time.formats import xml
 from update_time.markers.marker import parse_marker
 from update_time.markers.reference import SteeredReference
+from update_time.primitives.iterables import unique
 from update_time.primitives.location import Location
 
 if TYPE_CHECKING:
@@ -113,6 +114,7 @@ class Declaration(SteeredReference):
 
     version_managed_at: _InputLocation = _InputLocation()
     versioned_by_its_pom: bool = False
+    listed_in_effective_pom: bool = False
 
 
 def declarations(path: Path, effective_pom: XmlElement | None = None) -> list[Declaration] | None:
@@ -256,6 +258,14 @@ def has_input_locations(effective_pom: XmlElement) -> bool:
     return bool(_effective_pom_name(effective_pom))
 
 
+def one_per_artefact_and_line(declared: list[Declaration]) -> list[Declaration]:
+    """Return one declaration of each artefact at each line.
+
+    Two declarations of one artefact naming one property share that property's line, which makes them equal.
+    """
+    return unique(declared)
+
+
 def with_resolved_coordinates(declared: list[Declaration]) -> list[Declaration]:
     """Return the declarations whose coordinates resolve, since a repository serves nothing under the others."""
     return [declaration for declaration in declared if _is_resolved(declaration.dependency)]
@@ -394,7 +404,12 @@ def _declaration(
     location = Location(path, versioned_by.line, versioned_by.column)
     versioned_by_its_pom = bool(own_version) and _is_resolved(own_version)
     return Declaration(
-        pinned.name, pinned.version, location, version_managed_at=managed_at, versioned_by_its_pom=versioned_by_its_pom
+        pinned.name,
+        pinned.version,
+        location,
+        version_managed_at=managed_at,
+        versioned_by_its_pom=versioned_by_its_pom,
+        listed_in_effective_pom=effective is not None,
     )
 
 

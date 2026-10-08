@@ -682,7 +682,6 @@ Update-time does not check an image, because OSV has no ecosystem for container 
 Update-time does not check an image, because no OCI registry publishes an archival signal.
 Update-time ignores an image whose tag it cannot read, so a reference through a `{{ ... }}` template or `${VAR}` variable substitution gets no digest.
 Update-time reads it for each dependency a Python file declares, whether or not the dependency pins an exact version.
-Update-time reports a Python dependency that pins no exact version here too.
 Update-time reports a Python dependency that pins no exact version too.
 Update-time reports every reference a file accounts for itself at `DEBUG`, naming what accounts for it:.
 Update-time still reports a new version for a dependency that pins no exact version, both in a `pyproject.toml` and in an inline script metadata block.
