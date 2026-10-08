@@ -18,6 +18,7 @@ from update_time.formats import xml
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.manifests import pom_xml as pom_xml_format
+from update_time.primitives.iterables import unique
 from update_time.sources.github import archival as github_archival
 from update_time.sources.github import (
     changes_from_changelog_file,
@@ -94,7 +95,7 @@ def _release_tags(artefact: DependencyName, repository: str, version: VersionStr
             *(f"{prefix}{spelling}" for prefix in _VERSION_PREFIXES),
         ]
     )
-    return list(dict.fromkeys(tags))
+    return unique(tags)
 
 
 def _changes_from_changelog_file(owner: str, repository: str, version: VersionString) -> Changes:

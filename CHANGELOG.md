@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Read markers in a `pom.xml`, in an XML comment at the end of a Maven dependency's or plugin's line. Part of [#382](https://github.com/ICTU/update-time/issues/382).
+
 ### Fixed
 
 - Measure the cooldown of a GitHub version tag without a release against the publication date of a release of the same commit, instead of against the commit's date. Closes [#400](https://github.com/ICTU/update-time/issues/400).

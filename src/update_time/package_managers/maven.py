@@ -12,13 +12,15 @@ from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.manifests import pom_xml as pom_xml_format
 from update_time.primitives.command import Command
+from update_time.primitives.iterables import unique
 from update_time.sources.maven_central import versions_held_back
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterator
 
     from update_time.domain.dependency import DependencyName
     from update_time.formats.xml import XmlElement
+    from update_time.manifests.pom_xml import Declaration
     from update_time.primitives.command import Result
 
 _LOG = get_logger("pom.xml")
@@ -101,12 +103,12 @@ def update_pom_xml(pom_xml: Path) -> XmlElement | None:
     coordinates Maven resolves.
     """
     if not pom_xml_format.leaves_coordinates_unresolved(pom_xml):
-        with _versions_options(pom_xml_format.artefacts(pom_xml)) as options:
+        with _versions_options(pom_xml_format.versioned_declarations(pom_xml)) as options:
             _, effective_pom = _run_writing_effective_pom(pom_xml, options, _VERSIONS_GOALS)
             return effective_pom
     succeeded, effective_pom = _run_writing_effective_pom(pom_xml)
     if succeeded:  # A single run failing at the same point would not reach the updates either.
-        with _versions_options(pom_xml_format.artefacts(pom_xml, effective_pom)) as options:
+        with _versions_options(pom_xml_format.versioned_declarations(pom_xml, effective_pom)) as options:
             _run(pom_xml, options, _VERSIONS_GOALS)
     return effective_pom
 
@@ -147,9 +149,9 @@ def _run(pom_xml: Path, options: tuple[str, ...], goals: tuple[str, ...]) -> Res
 
 
 @contextmanager
-def _versions_options(artefacts: Iterable[DependencyName]) -> Iterator[tuple[str, ...]]:
-    """Yield the options the versions plugin's goals take, naming a rule set where the cooldown holds anything back."""
-    rules = _rules(artefacts)
+def _versions_options(declarations: list[Declaration]) -> Iterator[tuple[str, ...]]:
+    """Yield the options the versions plugin's goals take, naming a rule set where anything is held back."""
+    rules = _rules(declarations)
     if not rules:
         yield _VERSIONS_OPTIONS
         return
@@ -157,27 +159,41 @@ def _versions_options(artefacts: Iterable[DependencyName]) -> Iterator[tuple[str
         yield (*_VERSIONS_OPTIONS, f"-Dmaven.version.rules={path.as_uri()}")
 
 
-def _rules(artefacts: Iterable[DependencyName]) -> str:
-    """Return a rule per artefact the cooldown holds versions of back, or nothing where it holds none back.
+def _rules(declarations: list[Declaration]) -> str:
+    """Return a rule per artefact whose versions a marker or the cooldown holds back, or nothing where neither does.
 
-    An artefact several declarations name gets one rule, so a pom declaring it twice names its versions once. The
-    repository is not asked at all for a cooldown that holds nothing back.
+    An artefact several declarations name gets one rule, so a pom declaring it twice names its versions once. A
+    marker on any of them that steers the update holds back every version, and the repository is not asked about
+    that artefact.
     """
     cooldown_days = COOLDOWN.get()
-    if cooldown_days <= 0:
-        return ""
-    named = dict.fromkeys(artefacts)
-    held_back = ((artefact, versions_held_back(artefact, cooldown_days)) for artefact in named)
-    return "".join(_rule(artefact, versions) for artefact, versions in held_back if versions)
+    held_back = {declaration.dependency for declaration in declarations if declaration.marker.steers_the_update}
+    return "".join(
+        _rule(artefact, _EVERY_VERSION) if artefact in held_back else _cooldown_rule(artefact, cooldown_days)
+        for artefact in unique(declaration.dependency for declaration in declarations)
+    )
 
 
-def _rule(artefact: DependencyName, versions: tuple[str, ...]) -> str:
-    """Return the rule for the artefact, naming the versions given.
+# The `ignoreVersion` matching every version, which holds an artefact's update back whatever the repository offers.
+_EVERY_VERSION = '<ignoreVersion type="regex">.*</ignoreVersion>'
+
+
+def _cooldown_rule(artefact: DependencyName, cooldown_days: int) -> str:
+    """Return the rule naming the artefact's versions the cooldown holds back, or nothing where it holds none back.
 
     An `ignoreVersion` without a `type` attribute matches a version exactly, so a version is never read as a pattern.
+    The repository is not asked at all for a cooldown that holds nothing back.
     """
+    if cooldown_days <= 0:
+        return ""
+    versions = versions_held_back(artefact, cooldown_days)
+    return _rule(artefact, *(f"<ignoreVersion>{version}</ignoreVersion>" for version in versions)) if versions else ""
+
+
+def _rule(artefact: DependencyName, *ignore_versions: str) -> str:
+    """Return the rule for the artefact, holding the given `ignoreVersion` elements."""
     group_id, artifact_id = pom_xml_format.coordinates(artefact)
-    ignored = "".join(f"        <ignoreVersion>{version}</ignoreVersion>\n" for version in versions)
+    ignored = "".join(f"        {ignore_version}\n" for ignore_version in ignore_versions)
     return (
         f'    <rule groupId="{group_id}" artifactId="{artifact_id}">\n'
         f"      <ignoreVersions>\n{ignored}      </ignoreVersions>\n"

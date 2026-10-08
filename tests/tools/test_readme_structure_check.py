@@ -253,6 +253,11 @@ class AnchorTest(unittest.TestCase):
         markdown = "# Update-time\n\n```dockerfile\n# update-time: ignore\nFROM python:3.12\n```\n"
         self.assertEqual(_anchors(markdown), {"#update-time"})
 
+    def test_a_repeated_heading_provides_a_numbered_anchor(self):
+        """Test that each repeat of a heading provides the anchor GitHub numbers it by."""
+        markdown = "# Markers\n\n## Markers\n\n### Markers\n"
+        self.assertEqual(_anchors(markdown), {"#markers", "#markers-1", "#markers-2"})
+
     def test_link_to_a_missing_anchor_is_reported(self):
         """Test that a link to an anchor no heading provides is reported, naming the anchor."""
         expected = ["no heading provides the anchor '#no-such-heading'"]

@@ -7,9 +7,8 @@ from update_time.domain.file_type import POM_XML
 from update_time.domain.reference import Reference
 from update_time.formats import xml
 from update_time.io.filesystem import glob_for
-from update_time.io.log import get_logger
+from update_time.io.log import get_logger, report_marker
 from update_time.manifests import pom_xml as pom_xml_format
-from update_time.markers.reference import SteeredReference
 from update_time.package_managers import maven
 from update_time.references.delegated import project_resolver, warn_about_projects
 from update_time.references.vulnerability import warn_about_vulnerable_dependencies
@@ -20,7 +19,9 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
+    from update_time.domain.dependency import DependencyName
     from update_time.manifests.pom_xml import Declaration
+    from update_time.primitives.location import Location
 
 _LOG = get_logger("pom.xml")
 
@@ -54,6 +55,7 @@ def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path]) -> None:
         # The two readings pair up declaration by declaration, which a reading of another length cannot do.
         _LOG.declarations_changed(pom_xml, len(before), len(after))
         return
+    _report_markers(resolved)
     _report_new_versions(before, after, resolved)
     resolvable = pom_xml_format.with_resolved_coordinates(resolved)
     declared = pom_xml_format.without_versions_left_to(resolvable, scanned_poms)
@@ -61,20 +63,37 @@ def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path]) -> None:
     _warn_about_vulnerabilities(declared)
 
 
+def _report_markers(declared: list[Declaration]) -> None:
+    """Report the marker of each dependency and plugin, named as Maven resolves it.
+
+    A marker steering the update holds the update back where the declaring pom gives the version, because the rule
+    set holds back every version of the artefact. Two declarations of one artefact naming one property share that
+    property's line, so the marker on that line is reported once.
+    """
+    reported: set[tuple[DependencyName, Location]] = set()
+    for declaration in declared:
+        if (declaration.dependency, declaration.location) in reported:
+            continue
+        reported.add((declaration.dependency, declaration.location))
+        report_marker(
+            _LOG,
+            declaration.dependency,
+            declaration.marker,
+            declaration.location,
+            holds_the_update_back=declaration.versioned_by_its_pom and declaration.marker.steers_the_update,
+        )
+        _LOG.report_inverted_items(declaration, declaration.marker)
+
+
 def _check_projects(declared: list[Declaration]) -> None:
     """Warn about each dependency and plugin whose newest release is old, or whose source repository is archived."""
-    steered = [SteeredReference.from_reference(declaration) for declaration in declared]
-    warn_about_projects([steered], project_resolver(maven_central.project), _LOG)
+    warn_about_projects([declared], project_resolver(maven_central.project), _LOG)
 
 
 def _warn_about_vulnerabilities(declared: list[Declaration]) -> None:
     """Warn about each dependency and plugin the run leaves on a version an advisory names."""
-    steered = [
-        SteeredReference.from_reference(declaration)
-        for declaration in declared
-        if pom_xml_format.fully_resolved(declaration.pinned)
-    ]
-    warn_about_vulnerable_dependencies([steered], Ecosystem.MAVEN, _LOG)
+    resolved = [declaration for declaration in declared if pom_xml_format.fully_resolved(declaration.pinned)]
+    warn_about_vulnerable_dependencies([resolved], Ecosystem.MAVEN, _LOG)
 
 
 def _report_new_versions(before: list[Declaration], after: list[Declaration], resolved: list[Declaration]) -> None:

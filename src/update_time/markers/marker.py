@@ -13,8 +13,6 @@ from update_time.markers.bound import directive as _directive
 from update_time.markers.bound import parse_bound, spell
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from update_time.domain.bound import VersionBound
     from update_time.domain.line import Line
     from update_time.primitives.location import Location
@@ -167,6 +165,26 @@ class Marker:
         """Return whether the marker holds back every check the reference's own source answers."""
         return _SOURCE_CHECK_SCOPES in self.ignored_scopes
 
+    @property
+    def steers_the_update(self) -> bool:
+        """Return whether the marker ignores, bounds, or cools down the update.
+
+        An unreadable item counts, since it may have been meant to do any of those.
+        """
+        return (
+            self.ignores(Scope.UPDATE)
+            or self.version_bound != NO_BOUND
+            or self.cooldown.value is not None
+            or self.invalid_item is not None
+        )
+
+    @property
+    def update_directive(self) -> str:
+        """Return the directive steering the update, as the user wrote it, or nothing where none does."""
+        if self.ignores(Scope.UPDATE):
+            return self.written_directive(Scope.UPDATE)
+        return self.version_bound_directive or self.cooldown_directive
+
     def directive_for(self, scope: Scope) -> str:
         """Return the directive the marker carries for this scope, as the language spells it, or nothing for none.
 
@@ -196,24 +214,6 @@ class Marker:
         this alongside them (see `directive_for`).
         """
         return scope in self.ignored_scopes
-
-    def report(
-        self, recognised: Callable[[], None], held_back: Callable[[], None], invalid: Callable[[str], None]
-    ) -> Marker:
-        """Report this marker, and return the marker to act on.
-
-        The rule every reference's marker follows, whichever updater read it, callback-driven so `markers` stays
-        free of I/O. An item that cannot be read is reported as invalid and comes back frozen, since it may have
-        been meant to hold the update back. A marker that reads whole is echoed instead, and an `ignore` naming
-        the update names the directive that held it.
-        """
-        if self.invalid_item is not None:
-            invalid(self.invalid_item)
-            return self.frozen
-        recognised()
-        if self.ignores(Scope.UPDATE):
-            held_back()
-        return self
 
     @property
     def cooldown_directive(self) -> str:
@@ -369,8 +369,8 @@ _KEYWORD_ITEMS = (
 )
 
 # The comment leads that can carry a marker: `#` in most formats we update, `//` in devcontainer.json (which is
-# JSONC).
-_COMMENT_LEADS = ("#", "//")
+# JSONC), and `<!--` in pom.xml.
+_COMMENT_LEADS = ("#", "//", "<!--")
 
 # An `# update-time:` comment steers what happens to the reference on its line. It works inline on the reference's
 # own line (valid in YAML and requirements) or as a standalone comment on the line directly above it (the form
