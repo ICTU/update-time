@@ -587,7 +587,7 @@ FROM python:3.12
 
 The cooldown applies to the reference carrying it, and every other reference in the run keeps the global one. It wins over `--cooldown`. `allow[cooldown>=30]` sets the same 30-day cooldown as `ignore[cooldown<30]`. To adopt new releases for one reference as soon as they ship, write `allow[cooldown>=0]` or `ignore[cooldown<0]`. A zero-day cooldown holds nothing back, which is what `--cooldown 0` means globally.
 
-The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)). On a `pom.xml` dependency or plugin whose version Maven updates, a cooldown holds the whole update back (see [Maven dependencies](#maven-dependencies)).
+The override reaches the dependencies whose cooldown Update-time enforces itself. It does nothing for the dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)).
 
 #### Silencing specific vulnerabilities
 
@@ -772,7 +772,7 @@ Update-time reports what the marker held back or silenced separately, in lines a
 DEBUG Ignoring the staleness warning for python in Dockerfile:2 (update-time: ignore[stale])
 ```
 
-A line about a warning appears only when the marker actually silenced one, so an `ignore[yanked]` on a version that was never yanked produces none. A bound produces no line either, whatever it blocks. The line about the update appears whenever a marker Update-time can read holds the update back, whether or not a newer version was available. On a `pom.xml` dependency or plugin whose version Maven updates, a bound and a cooldown hold the whole update back, so each gets that line (see [Maven dependencies](#maven-dependencies)). An unreadable item holds the update back too, but gets no such line: Update-time reports it as invalid instead.
+A line about a warning appears only when the marker actually silenced one, so an `ignore[yanked]` on a version that was never yanked produces none. A bound produces no line either, whatever it blocks. The line about the update appears whenever a marker Update-time can read holds the update back, whether or not a newer version was available. On a `pom.xml` dependency or plugin whose version Maven updates, a bound holds the whole update back, so it gets that line (see [Maven dependencies](#maven-dependencies)). An unreadable item holds the update back too, but gets no such line: Update-time reports it as invalid instead.
 
 ### Redundant markers
 
@@ -1165,7 +1165,9 @@ The versions plugin does not filter releases by age, so Update-time names the ve
 
 Maven Central does not serve an artefact that a project resolves from a mirror or a private repository, so Update-time cannot read its publication date and holds nothing back for it.
 
-The rule set names an artefact whose group or artifact the pom leaves to its parent as Maven resolves it, and holds back its versions like any other artefact's. A marker that steers the update holds back every version of its artefact instead (see [Markers](#markers-2)).
+The rule set names an artefact whose group or artifact the pom leaves to its parent as Maven resolves it, and holds back its versions like any other artefact's.
+
+A marker can set a cooldown of its own, and the rule set then holds back the versions published inside that cooldown. A marker that ignores or bounds the update holds back every version of its artefact instead (see [Markers](#markers-2)).
 
 #### Stale dependencies
 
@@ -1233,7 +1235,9 @@ The `stale`, `archived`, and `vulnerable` scopes steer the checks as they do els
 
 A marker steers the update only where Maven updates the version. Maven updates a dependency's version where the declaration's `<version>` element or one of the pom's own properties holds it. It updates a plugin's version only where one of the pom's own properties holds it, since the `use-latest-releases` goal leaves plugins alone. Maven does not update a version that a declaration leaves to a parent pom, an imported BOM, or its pom's `<dependencyManagement>` or `<pluginManagement>`. On a declaration whose version Maven does not update, Update-time reports an `ignore[update]`, a bound, and a `cooldown` as redundant (see [Redundant markers](#redundant-markers)).
 
-Where Maven updates the version, Update-time hands Maven a rule per artefact. An `ignore`, an `ignore[update]`, a `cooldown`, a bound, and an item Update-time cannot read each hold back every version of the artefact. That includes a bound allowing every update, such as `allow[major-update]`, and a zero-day cooldown, `allow[cooldown>=0]`. Update-time reports each of them at `DEBUG` as holding the update back, except the unreadable item, which it warns about as invalid. A pom declaring an artefact twice gets one rule for both declarations. So a marker on a declaration whose version Maven updates holds back every declaration of that artefact in the pom.
+Where Maven updates the version, Update-time hands Maven a rule per artefact. An `ignore`, an `ignore[update]`, a bound, and an item Update-time cannot read each hold back every version of the artefact. That includes a bound allowing every update, such as `allow[major-update]`. Update-time reports each of them at `DEBUG` as holding the update back, except the unreadable item, which it warns about as invalid. A `cooldown` holds back the versions published inside the cooldown it sets.
+
+A pom can declare an artefact more than once, and Update-time then hands Maven one rule for all those declarations. The rule holds back what each declaration whose version Maven updates holds back. So a marker on one of them that holds back every version holds back every declaration of the artefact in the pom. Without such a marker, the rule holds back the versions published inside the longest cooldown among the declarations. A declaration whose marker does not set a cooldown has the run's cooldown.
 
 ### GitHub Actions and pre-commit hooks
 

@@ -4,8 +4,8 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from update_time.domain.cooldown import past_cooldown
+from update_time.markers.cooldown import cooldown_days
 from update_time.markers.drift import report_drift
-from update_time.references.resolve import cooldown_days
 
 if TYPE_CHECKING:
     from collections.abc import Callable

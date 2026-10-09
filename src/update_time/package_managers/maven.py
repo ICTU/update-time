@@ -6,13 +6,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from update_time.domain.cooldown import COOLDOWN
 from update_time.formats import xml
 from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.manifests import pom_xml as pom_xml_format
+from update_time.markers.cooldown import cooldown_days
 from update_time.primitives.command import Command
-from update_time.primitives.iterables import unique
 from update_time.sources.maven_central import versions_held_back
 
 if TYPE_CHECKING:
@@ -162,31 +161,37 @@ def _versions_options(declarations: list[Declaration]) -> Iterator[tuple[str, ..
 def _rules(declarations: list[Declaration]) -> str:
     """Return a rule per artefact whose versions a marker or the cooldown holds back, or nothing where neither does.
 
-    An artefact several declarations name gets one rule, so a pom declaring it twice names its versions once. A
-    marker on any of them that steers the update holds back every version, and the repository is not asked about
-    that artefact.
+    An artefact several declarations name gets one rule, holding every version back where one of them does.
     """
-    cooldown_days = COOLDOWN.get()
-    held_back = {declaration.dependency for declaration in declarations if declaration.marker.steers_the_update}
+    held_back = {declaration.dependency for declaration in declarations if declaration.holds_every_version_back}
     return "".join(
-        _rule(artefact, _EVERY_VERSION) if artefact in held_back else _cooldown_rule(artefact, cooldown_days)
-        for artefact in unique(declaration.dependency for declaration in declarations)
+        _rule(artefact, _EVERY_VERSION) if artefact in held_back else _cooldown_rule(artefact, days)
+        for artefact, days in _longest_cooldowns(declarations).items()
     )
+
+
+def _longest_cooldowns(declarations: list[Declaration]) -> dict[DependencyName, int]:
+    """Return the longest cooldown among each artefact's declarations, each its marker's or the run's."""
+    cooldowns: dict[DependencyName, int] = {}
+    for declaration in declarations:
+        days = cooldown_days(declaration.marker)
+        cooldowns[declaration.dependency] = max(days, cooldowns.get(declaration.dependency, days))
+    return cooldowns
 
 
 # The `ignoreVersion` matching every version, which holds an artefact's update back whatever the repository offers.
 _EVERY_VERSION = '<ignoreVersion type="regex">.*</ignoreVersion>'
 
 
-def _cooldown_rule(artefact: DependencyName, cooldown_days: int) -> str:
-    """Return the rule naming the artefact's versions the cooldown holds back, or nothing where it holds none back.
+def _cooldown_rule(artefact: DependencyName, days: int) -> str:
+    """Return the rule for the artefact's versions published inside the cooldown, or nothing where it holds none back.
 
     An `ignoreVersion` without a `type` attribute matches a version exactly, so a version is never read as a pattern.
     The repository is not asked at all for a cooldown that holds nothing back.
     """
-    if cooldown_days <= 0:
+    if days <= 0:
         return ""
-    versions = versions_held_back(artefact, cooldown_days)
+    versions = versions_held_back(artefact, days)
     return _rule(artefact, *(f"<ignoreVersion>{version}</ignoreVersion>" for version in versions)) if versions else ""
 
 

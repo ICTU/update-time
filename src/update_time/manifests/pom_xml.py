@@ -122,6 +122,11 @@ class Declaration(SteeredReference):
         """Return whether Maven updates the version the declaration gives."""
         return self.versioned_by_its_pom and not self.literal_plugin_version
 
+    @property
+    def holds_every_version_back(self) -> bool:
+        """Return whether the marker ignores or bounds the update, or carries an item that may have meant either."""
+        return bool(self.marker.bound_directive) or self.marker.invalid_item is not None
+
 
 def declarations(path: Path, effective_pom: XmlElement | None = None) -> list[Declaration] | None:
     """Return a declaration of each dependency and plugin the pom declares, or None where the pom cannot be read.

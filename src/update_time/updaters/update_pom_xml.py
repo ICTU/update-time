@@ -70,13 +70,12 @@ def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path]) -> None:
 def _report_markers(declared: list[Declaration]) -> None:
     """Report the marker of each dependency and plugin, named as Maven resolves it."""
     for declaration in declared:
-        maven_updates_it = _why_maven_leaves_the_version(declaration) is None
         report_marker(
             _LOG,
             declaration.dependency,
             declaration.marker,
             declaration.location,
-            holds_the_update_back=maven_updates_it and declaration.marker.steers_the_update,
+            holds_the_update_back=declaration.maven_updates_the_version and declaration.holds_every_version_back,
         )
         _LOG.report_inverted_items(declaration, declaration.marker)
         _report_redundant_directives(declaration)

@@ -166,24 +166,11 @@ class Marker:
         return _SOURCE_CHECK_SCOPES in self.ignored_scopes
 
     @property
-    def steers_the_update(self) -> bool:
-        """Return whether the marker ignores, bounds, or cools down the update.
-
-        An unreadable item counts, since it may have been meant to do any of those.
-        """
-        return (
-            self.ignores(Scope.UPDATE)
-            or self.version_bound != NO_BOUND
-            or self.cooldown.value is not None
-            or self.invalid_item is not None
-        )
-
-    @property
     def update_directive(self) -> str:
-        """Return the directive steering the update, as the user wrote it, or nothing where none does."""
+        """Return the directive ignoring or bounding the update, as the user wrote it, or nothing where none does."""
         if self.ignores(Scope.UPDATE):
             return self.written_directive(Scope.UPDATE)
-        return self.version_bound_directive or self.cooldown_directive
+        return self.version_bound_directive
 
     def directive_for(self, scope: Scope) -> str:
         """Return the directive the marker carries for this scope, as the language spells it, or nothing for none.

@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Added
 
-- Read markers in a `pom.xml`, in an XML comment at the end of a Maven dependency's or plugin's line. Part of [#382](https://github.com/ICTU/update-time/issues/382).
+- Read and apply markers in a `pom.xml`, in an XML comment at the end of a Maven dependency's or plugin's line. Part of [#382](https://github.com/ICTU/update-time/issues/382).
 - Report a directive in a `pom.xml` marker that decides nothing for its dependency or plugin as redundant. Part of [#382](https://github.com/ICTU/update-time/issues/382).
 
 ### Fixed
