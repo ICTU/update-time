@@ -109,12 +109,18 @@ class Declaration(SteeredReference):
 
     The input location is empty where the declaration declares a version, or is read without an effective pom.
     `versioned_by_its_pom` tells whether the declaring pom gives the version, in the `<version>` element or in one of
-    its own properties.
+    its own properties. `literal_plugin_version` tells whether a plugin's `<version>` element holds the version itself.
     """
 
     version_managed_at: _InputLocation = _InputLocation()
     versioned_by_its_pom: bool = False
+    literal_plugin_version: bool = False
     listed_in_effective_pom: bool = False
+
+    @property
+    def maven_updates_the_version(self) -> bool:
+        """Return whether Maven updates the version the declaration gives."""
+        return self.versioned_by_its_pom and not self.literal_plugin_version
 
 
 def declarations(path: Path, effective_pom: XmlElement | None = None) -> list[Declaration] | None:
@@ -310,7 +316,7 @@ def _artefact_declarations(path: Path, effective_pom: XmlElement | None = None) 
 
 
 def versioned_declarations(path: Path, effective_pom: XmlElement | None = None) -> list[Declaration]:
-    """Return the declaration of each dependency and plugin whose version the pom gives.
+    """Return the declaration of each dependency and plugin whose version Maven updates.
 
     The effective pom, where one is given, supplies the coordinates.
     """
@@ -318,7 +324,7 @@ def versioned_declarations(path: Path, effective_pom: XmlElement | None = None) 
     return [
         declaration
         for declaration in declared
-        if declaration.versioned_by_its_pom and _is_resolved(declaration.dependency)
+        if declaration.maven_updates_the_version and _is_resolved(declaration.dependency)
     ]
 
 
@@ -409,6 +415,7 @@ def _declaration(
         location,
         version_managed_at=managed_at,
         versioned_by_its_pom=versioned_by_its_pom,
+        literal_plugin_version=versioned_by_its_pom and element.tag == "plugin" and versioned_by is version,
         listed_in_effective_pom=effective is not None,
     )
 

@@ -22,6 +22,7 @@ from tests.update_time.helpers import (
     effective_plugin_element,
     effective_pom_declaring,
     guava_element,
+    marked_at_its_version,
     plugin_element,
     pom_coordinates,
     pom_declaring,
@@ -228,7 +229,7 @@ class DeclarationsTest(unittest.TestCase):
     def test_a_marker_is_read_off_the_line_xml_counts(self):
         """Test that the marker is read off the line expat counts as the declaration's, whatever the line breaks."""
         properties = properties_element({"note": "one\u2028two"})
-        marked = guava_element("33.0.0-jre").replace("</version>", "</version>  <!-- update-time: ignore[stale] -->")
+        marked = marked_at_its_version(guava_element("33.0.0-jre"), "ignore[stale]")
         pom = pom_declaring(marked, properties=properties)
         cases = {
             "a separator inside text": pom,

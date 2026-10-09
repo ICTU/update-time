@@ -61,34 +61,53 @@ def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path]) -> None:
     _report_new_versions(before, after, resolved)
     resolvable = pom_xml_format.with_resolved_coordinates(distinct)
     declared = pom_xml_format.without_versions_left_to(resolvable, scanned_poms)
+    left_to_another = [declaration for declaration in resolvable if declaration not in declared]
+    _report_scopes_checked_at_the_managing_declaration(left_to_another)
     _check_projects(declared)
     _warn_about_vulnerabilities(declared)
 
 
 def _report_markers(declared: list[Declaration]) -> None:
-    """Report the marker of each dependency and plugin, named as Maven resolves it.
-
-    A marker steering the update holds the update back where the declaring pom gives the version, because the rule
-    set holds back every version of the artefact.
-    """
+    """Report the marker of each dependency and plugin, named as Maven resolves it."""
     for declaration in declared:
+        maven_updates_it = _why_maven_leaves_the_version(declaration) is None
         report_marker(
             _LOG,
             declaration.dependency,
             declaration.marker,
             declaration.location,
-            holds_the_update_back=declaration.versioned_by_its_pom and declaration.marker.steers_the_update,
+            holds_the_update_back=maven_updates_it and declaration.marker.steers_the_update,
         )
         _LOG.report_inverted_items(declaration, declaration.marker)
         _report_redundant_directives(declaration)
 
 
 def _report_redundant_directives(declaration: Declaration) -> None:
-    """Report the `yanked` scope and the `allow[floating-pin]` of the declaration's marker as redundant."""
-    if yanked := declaration.marker.as_written.directive_for(Scope.YANKED):
+    """Report as redundant the `yanked` scope, `allow[floating-pin]`, and directives steering an update Maven skips."""
+    as_written = declaration.marker.as_written
+    if reason := _why_maven_leaves_the_version(declaration):
+        for steering in filter(None, (as_written.bound_directive, as_written.cooldown_directive)):
+            _LOG.redundant_directive(declaration, steering, reason)
+    if yanked := as_written.directive_for(Scope.YANKED):
         _LOG.redundant_directive(declaration, yanked, Reason.NO_YANK_CONCEPT)
     if floating_pin := declaration.marker.allow_directive(Scope.FLOATING_PIN):
         _LOG.redundant_directive(declaration, floating_pin, Reason.PIN_NOT_FLOATING)
+
+
+def _why_maven_leaves_the_version(declaration: Declaration) -> Reason | None:
+    """Return why Maven does not update the declaration's version, or None where it does."""
+    if declaration.maven_updates_the_version:
+        return None
+    return Reason.PLUGIN_NOT_UPDATED if declaration.literal_plugin_version else Reason.VERSION_HELD_ELSEWHERE
+
+
+def _report_scopes_checked_at_the_managing_declaration(left_to_another: list[Declaration]) -> None:
+    """Report the `stale`, `archived`, and `vulnerable` scopes of each declaration as redundant."""
+    for declaration in left_to_another:
+        as_written = declaration.marker.as_written
+        for scope in (Scope.STALE, Scope.ARCHIVED, Scope.VULNERABLE):
+            if directive := as_written.directive_for(scope):
+                _LOG.redundant_directive(declaration, directive, Reason.CHECKED_AT_THE_MANAGING_DECLARATION)
 
 
 def _check_projects(declared: list[Declaration]) -> None:

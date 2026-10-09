@@ -41,6 +41,11 @@ class Reason(StrEnum):
     NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY = (
         "this dependency does not resolve to a version to check for a vulnerability"
     )
+    VERSION_HELD_ELSEWHERE = "this declaration does not hold its version, so Maven does not update that version here"
+    PLUGIN_NOT_UPDATED = "Maven does not update this plugin's version"
+    CHECKED_AT_THE_MANAGING_DECLARATION = (
+        "Update-time checks this dependency at the declaration that manages its version"
+    )
     PIN_NOT_FLOATING = "this reference's pin does not float"
     UPDATE_HELD_BACK = "this reference's update is held back, so it is never pinned"
     NO_REGISTRY_ASKED = "Update-time does not ask a registry about this reference, so its tag is never pinned"

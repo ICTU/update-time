@@ -1021,6 +1021,11 @@ def guava_element(version: str | None) -> str:
     return dependency_element("com.google.guava", "guava", version)
 
 
+def marked_at_its_version(element: str, directives: str) -> str:
+    """Return the element with a marker carrying the directives at the end of its `<version>` line."""
+    return element.replace("</version>", f"</version>  <!-- update-time: {directives} -->")
+
+
 def dependency_management_element(*dependencies: str) -> str:
     """Return a `<dependencyManagement>` element declaring the given dependency elements."""
     declared = "".join(dependencies)
