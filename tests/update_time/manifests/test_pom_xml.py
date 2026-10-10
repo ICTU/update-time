@@ -4,6 +4,7 @@ import unittest
 
 from update_time.formats import xml
 from update_time.manifests import pom_xml
+from update_time.markers.marker import Marker, Scope
 
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
@@ -21,6 +22,7 @@ from tests.update_time.helpers import (
     effective_plugin_element,
     effective_pom_declaring,
     guava_element,
+    marked_at_its_version,
     plugin_element,
     pom_coordinates,
     pom_declaring,
@@ -120,8 +122,8 @@ class PropertiesTest(unittest.TestCase):
         self.assertEqual(pom_xml.properties(mock_path("<project><broken>")), {})
 
 
-class ArtefactsTest(unittest.TestCase):
-    """Unit tests for the coordinates a pom declares a version for."""
+class VersionedDeclarationsTest(unittest.TestCase):
+    """Unit tests for the declarations of the dependencies and plugins a pom declares a version for."""
 
     @kills(
         Mutation(
@@ -133,8 +135,8 @@ class ArtefactsTest(unittest.TestCase):
         )
     )
     def test_a_pom_that_does_not_parse(self):
-        """Test that an unparsable pom yields an empty list of artefacts, rather than ending the run."""
-        self.assertEqual(pom_xml.artefacts(mock_path("<project><broken>")), [])
+        """Test that an unparsable pom yields an empty list of declarations, rather than ending the run."""
+        self.assertEqual(pom_xml.versioned_declarations(mock_path("<project><broken>")), [])
 
 
 class PomNameTest(unittest.TestCase):
@@ -215,6 +217,50 @@ class DeclarationsTest(unittest.TestCase):
         declared = pom_xml.declarations(mock_path(_POM_WITH_INCOMPLETE_DEPENDENCIES)) or []
         expected = ["org.springframework:spring-web", GUAVA]
         self.assertEqual([reference.dependency for reference in declared], expected)
+
+    def test_a_marker_on_the_line_above_a_declaration_is_not_read(self):
+        """Test that a marker on the line above a dependency's `<version>` line steers nothing."""
+        marked_above = guava_element("33.0.0-jre").replace(
+            "<version>", "<!-- update-time: ignore[stale] -->\n<version>"
+        )
+        declared = pom_xml.declarations(mock_path(pom_declaring(marked_above))) or []
+        self.assertEqual([(reference.dependency, reference.marker) for reference in declared], [(GUAVA, Marker())])
+
+    def test_a_marker_is_read_off_the_line_xml_counts(self):
+        """Test that the marker is read off the line expat counts as the declaration's, whatever the line breaks."""
+        properties = properties_element({"note": "one\u2028two"})
+        marked = marked_at_its_version(guava_element("33.0.0-jre"), "ignore[stale]")
+        pom = pom_declaring(marked, properties=properties)
+        cases = {
+            "a separator inside text": pom,
+            "carriage return and line feed": pom.replace("\n", "\r\n"),
+            "carriage return": pom.replace("\n", "\r"),
+        }
+        stale = Marker(ignored_scopes=Scope.STALE)
+        for case, contents in cases.items():
+            with self.subTest(case=case):
+                declared = pom_xml.declarations(mock_path(contents)) or []
+                self.assertEqual([(reference.dependency, reference.marker) for reference in declared], [(GUAVA, stale)])
+
+    def test_the_pom_is_read_once(self):
+        """Test that the pom's XML and its lines come from one read, so a pom removed meanwhile cannot end the run."""
+        pom = pom_declaring(guava_element("33.0.0-jre"))
+        path = mock_path(pom)
+        path.read_bytes.side_effect = [pom.encode(), OSError("removed")]
+        declared = pom_xml.declarations(path) or []
+        self.assertEqual([reference.dependency for reference in declared], [GUAVA])
+
+    def test_a_pom_in_an_encoding_other_than_utf8_is_read(self):
+        """Test that a pom whose XML declares another encoding than UTF-8 has its dependencies read."""
+        pom = '<?xml version="1.0" encoding="ISO-8859-1"?>\n<!-- Café -->\n' + pom_declaring(
+            guava_element("33.0.0-jre")
+        )
+        path = mock_path(pom)
+        path.read_bytes.return_value = pom.encode("iso-8859-1")
+        # Reading the file as UTF-8 text fails on the é, as it does for the real file.
+        path.read_text.side_effect = UnicodeDecodeError("utf-8", b"\xe9", 0, 1, "invalid continuation byte")
+        declared = pom_xml.declarations(path) or []
+        self.assertEqual([reference.dependency for reference in declared], [GUAVA])
 
     @kills(
         Mutation(

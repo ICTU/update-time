@@ -21,7 +21,6 @@ A `repo: local` or `repo: meta` entry has no `rev:`, so Update-time leaves it un
 A `rev:` whose repository is not on GitHub carries no dependency, so it is left untouched.
 A `start` that opens no object yields nothing, so a section declared as anything but an object holds no entry.
 A backticked run holding anything else — a `path:line`, an `# update-time: ignore` marker — is skipped here, and the twin check would skip it in any case, since no name the code binds has that shape.
-A bare `ignore` names no scope, so it is echoed as the user wrote it rather than spelled out as `ignore[update]`, a directive they never typed.
 A bare word parses as a name, with no call in it.
 A body that isn't JSON has no message to include.
 A bound produces no line either, whatever it blocks.
@@ -405,7 +404,6 @@ Test that a package whose release answers costs no root listing, and reports the
 Test that a package.json whose `engines` section declares no Node version is skipped.
 Test that a pom declaring no release raises an error naming the file, rather than one about a lookup.
 Test that a pom whose XML does not parse declares no property, rather than ending the run.
-Test that a property Maven advanced is reported for no dependency when no `<version>` names it.
 Test that a record carrying no changes renders as its message alone.
 Test that a reference naming a digest but no tag gains the version tag that digest serves.
 Test that a reference naming no tag is reported by its name alone, there being no tag to name after it.
@@ -618,7 +616,6 @@ The release the cooldown held back dates it.
 The reported item being the run's only warning shows that item set no threshold.
 The repository publishes no releases.
 The risk levels an advisory can report, least severe first.
-The rule every reference's marker follows, whichever updater read it, callback-driven so `markers` stays free of I/O.
 The run sees the sentinels named and no others, so what holds the decorated test back is what the test asked for rather than what a `just mutate` run set.
 The runs of characters a fenced code block is opened and closed with.
 The same for a file location, in a code point of its own so the two runs never collide.
@@ -685,7 +682,6 @@ Update-time does not check an image, because OSV has no ecosystem for container 
 Update-time does not check an image, because no OCI registry publishes an archival signal.
 Update-time ignores an image whose tag it cannot read, so a reference through a `{{ ... }}` template or `${VAR}` variable substitution gets no digest.
 Update-time reads it for each dependency a Python file declares, whether or not the dependency pins an exact version.
-Update-time reports a Python dependency that pins no exact version here too.
 Update-time reports a Python dependency that pins no exact version too.
 Update-time reports every reference a file accounts for itself at `DEBUG`, naming what accounts for it:.
 Update-time still reports a new version for a dependency that pins no exact version, both in a `pyproject.toml` and in an inline script metadata block.

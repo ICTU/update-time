@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.archival import archival_is_checked, reports_archival
 from update_time.domain.bound import BLOCK_ALL_UPDATES
-from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyName, DependencyVersion
 from update_time.domain.downgrade import downgrades
 from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
+from update_time.markers.cooldown import cooldown_days
 from update_time.markers.directive import DIRECTIVES, Reason
 from update_time.markers.marker import Scope
 from update_time.markers.reference import SteeredResolvedReference
@@ -72,11 +72,6 @@ def _warn_if_the_floating_pin_is_redundant(
 def staleness_threshold(marker: Marker) -> int:
     """Return the number of days the reference is checked for staleness against: its own, or the run's."""
     return marker.stale.value_or(STALE_AFTER.get())
-
-
-def cooldown_days(marker: Marker) -> int:
-    """Return the number of days the reference holds back what was published: its own cooldown, or the run's."""
-    return marker.cooldown.value_or(COOLDOWN.get())
 
 
 def latest_version(

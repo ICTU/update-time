@@ -15,10 +15,11 @@ from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
 from update_time.domain.dependency import DependencyVersion, normalized_python_name
 from update_time.domain.reference import Reference
 from update_time.formats import toml
-from update_time.io.log import get_logger
+from update_time.io.log import get_logger, report_marker
 from update_time.io.process import run
 from update_time.manifests import pyproject_toml as pyproject_toml_format
 from update_time.markers.directive import Reason
+from update_time.markers.marker import Scope
 from update_time.markers.reference import SteeredResolvedReference
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
@@ -175,11 +176,12 @@ def _with_reported_markers(declarations: Iterable[Declaration], log: Logger) -> 
 
 def _reported_marker(declaration: Declaration, log: Logger) -> Marker:
     """Report the declaration's marker, and return the marker to act on."""
-    reported = (declaration.dependency, declaration.marker, declaration.location)
-    acted_on = declaration.marker.report(
-        lambda: log.recognised_marker(*reported),
-        lambda: log.ignored(*reported) if declaration.pins_a_version else None,
-        lambda item: log.invalid_bracket_item(declaration.dependency, item, declaration.location),
+    acted_on = report_marker(
+        log,
+        declaration.dependency,
+        declaration.marker,
+        declaration.location,
+        holds_the_update_back=declaration.pins_a_version and declaration.marker.ignores(Scope.UPDATE),
     )
     log.report_inverted_items(declaration, declaration.marker)
     return acted_on

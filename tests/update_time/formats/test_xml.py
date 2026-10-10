@@ -44,6 +44,10 @@ class ReadTest(unittest.TestCase):
         """Test that a file the filesystem refuses is read as unparsable, rather than ending the run."""
         self.assertIsNone(xml.read(Mock(read_bytes=Mock(side_effect=OSError))))
 
+    def test_a_document_declaring_an_encoding_python_does_not_know(self):
+        """Test that a document declaring an unknown encoding is read as unparsable, rather than ending the run."""
+        self.assertIsNone(xml.read(mock_path('<?xml version="1.0" encoding="bogus"?><project/>')))
+
     def test_a_comment_belongs_to_the_element_it_follows(self):
         """Test that a comment is the comment of the element it follows, stripped, rather than of one before that."""
         commented = "<project>\n  <name>probe</name>\n  <url>https://example.org</url>  <!-- a remark -->\n</project>\n"

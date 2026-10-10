@@ -109,7 +109,16 @@ def _redundant_directives(
     log.redundant_directive(
         reference("humanize", requirements), "ignore[vulnerable]", Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY
     )
+    log.redundant_directive(
+        reference("nl.example:internal-lib", Location(Path("pom.xml"), 12)),
+        "ignore[vulnerable]",
+        Reason.NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
+    )
     redundant_vulnerable_without_a_version = capture.take()
+
+    held_elsewhere = reference("commons-io:commons-io", Location(Path("child/pom.xml"), 5))
+    log.redundant_directive(held_elsewhere, "ignore[stale]", Reason.CHECKED_AT_THE_MANAGING_DECLARATION)
+    redundant_scope_on_a_managed_version = capture.take()
 
     cooldown_reference = reference("python", Location(Path(".python-version"), 2))
     log.redundant_directive(cooldown_reference, "ignore[cooldown<30]", Reason.NO_COOLDOWN_DATES)
@@ -136,7 +145,8 @@ def _redundant_directives(
         "@@REDUNDANT_YANK_SCOPE_WARNING@@": redundant_yank_scope,
         "@@REDUNDANT_YANK_WITHOUT_A_VERSION_WARNING@@": redundant_yank_without_a_version,
         "@@REDUNDANT_ARCHIVED_SCOPE_WARNING@@": redundant_archived_scope,
-        "@@REDUNDANT_VULNERABLE_WITHOUT_A_VERSION_WARNING@@": redundant_vulnerable_without_a_version,
+        "@@REDUNDANT_VULNERABLE_WITHOUT_A_VERSION_WARNINGS@@": redundant_vulnerable_without_a_version,
+        "@@REDUNDANT_SCOPE_ON_A_MANAGED_VERSION_WARNING@@": redundant_scope_on_a_managed_version,
         "@@REDUNDANT_COOLDOWN_ITEM_WARNING@@": redundant_cooldown_item,
         "@@REDUNDANT_STALE_SOURCE_WARNING@@": redundant_stale_source,
         "@@REDUNDANT_FLOATING_PIN_WARNING@@": redundant_floating_pin,
@@ -153,9 +163,12 @@ def _redundant_for_the_dependency_type(
     loose = reference("humanize", requirements)
     commit = reference("actions/checkout", workflow)
     branch = reference("actions/setup-python", Location(Path(".github/workflows/ci.yml"), 18))
+    held_elsewhere = reference("commons-io:commons-io", Location(Path("child/pom.xml"), 5))
+    plugin = reference("org.apache.maven.plugins:maven-surefire-plugin", Location(Path("pom.xml"), 30))
     log.redundant_directive(managed, "ignore[cooldown<30]", Reason.COOLDOWN_PER_RUN)
     log.redundant_directive(loose, "ignore[cooldown<30]", Reason.NO_VERSION_TO_UPDATE)
     log.redundant_directive(commit, "ignore[cooldown<30]", Reason.NO_COOLDOWN_FOR_A_COMMIT)
+    log.redundant_directive(held_elsewhere, "ignore[cooldown<30]", Reason.VERSION_HELD_ELSEWHERE)
     cooldowns = capture.take()
 
     log.redundant_directive(commit, "allow[hash-drift]", Reason.NO_DRIFT_FOR_A_COMMIT)
@@ -166,6 +179,8 @@ def _redundant_for_the_dependency_type(
     log.redundant_directive(loose, "allow[update<5]", Reason.NO_VERSION_TO_UPDATE)
     log.redundant_directive(commit, "allow[update<5]", Reason.PINS_A_COMMIT)
     log.redundant_directive(branch, "allow[update<6]", Reason.FOLLOWS_A_BRANCH)
+    log.redundant_directive(held_elsewhere, "ignore[major-update]", Reason.VERSION_HELD_ELSEWHERE)
+    log.redundant_directive(plugin, "allow[update<4]", Reason.PLUGIN_NOT_UPDATED)
     return {
         "@@REDUNDANT_COOLDOWN_WARNINGS@@": cooldowns,
         "@@REDUNDANT_HASH_DRIFT_WARNING@@": drift,

@@ -1,16 +1,19 @@
-"""Read the dependencies, plugins, properties, parent, and source repository a pom.xml declares.
+"""Read the dependencies, plugins, markers, properties, parent, and source repository a pom.xml declares.
 
 This module owns what a pom's elements mean, whether Update-time scans the pom or a registry serves it. Reading the
 XML itself is the formats layer's concern.
 """
 
 import re
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, cast
 
 from update_time.domain.dependency import PinnedDependency
-from update_time.domain.reference import Reference
+from update_time.domain.line import Line
 from update_time.formats import xml
+from update_time.markers.marker import parse_marker
+from update_time.markers.reference import SteeredReference
+from update_time.primitives.iterables import unique
 from update_time.primitives.location import Location
 
 if TYPE_CHECKING:
@@ -19,6 +22,7 @@ if TYPE_CHECKING:
 
     from update_time.domain.dependency import DependencyName
     from update_time.formats.xml import XmlElement
+    from update_time.markers.marker import Marker
 
 # An element naming one of the pom's properties rather than holding its own value, such as `${spring.version}`.
 _PROPERTY_REFERENCE = re.compile(r"\$\{(?P<name>[^}]+)\}")
@@ -100,25 +104,41 @@ class _InputLocation:
 
 
 @dataclass(frozen=True, kw_only=True)
-class Declaration(Reference):
-    """A dependency or plugin a pom declares, and where the version the declaration leaves out is managed.
+class Declaration(SteeredReference):
+    """A dependency or plugin a pom declares, its marker, and where the version the declaration leaves out is managed.
 
-    The input location is empty where the declaration holds a version, or is read without an effective pom.
+    The input location is empty where the declaration declares a version, or is read without an effective pom.
+    `versioned_by_its_pom` tells whether the declaring pom gives the version, in the `<version>` element or in one of
+    its own properties. `literal_plugin_version` tells whether a plugin's `<version>` element holds the version itself.
     """
 
     version_managed_at: _InputLocation = _InputLocation()
+    versioned_by_its_pom: bool = False
+    literal_plugin_version: bool = False
+    listed_in_effective_pom: bool = False
+
+    @property
+    def maven_updates_the_version(self) -> bool:
+        """Return whether Maven updates the version the declaration gives."""
+        return self.versioned_by_its_pom and not self.literal_plugin_version
+
+    @property
+    def holds_every_version_back(self) -> bool:
+        """Return whether the marker ignores or bounds the update, or carries an item that may have meant either."""
+        return bool(self.marker.bound_directive) or self.marker.invalid_item is not None
 
 
 def declarations(path: Path, effective_pom: XmlElement | None = None) -> list[Declaration] | None:
-    """Return a declaration of each dependency and plugin the pom declares, or None when the pom's XML does not parse.
+    """Return a declaration of each dependency and plugin the pom declares, or None where the pom cannot be read.
 
     An element that does not name its artifact is left out, and so is a dependency that does not name its group. A
     plugin that does not name its group is in Maven's default plugin group. Maven's effective pom, where one is given,
     supplies the coordinates and the version the pom leaves to Maven to resolve.
     """
-    project = xml.read(path)
-    if project is None:
+    document = xml.read_document(path)
+    if document is None:
         return None
+    project = document.root
     property_elements = _resolvable_elements(project)
     effective_artefacts = _effective_artefacts(effective_pom, project)
     declared = (
@@ -126,7 +146,20 @@ def declarations(path: Path, effective_pom: XmlElement | None = None) -> list[De
         for tag, default_group in _ARTEFACT_ELEMENTS.items()
         for element in project.descendants(tag)
     )
-    return [declaration for declaration in declared if declaration is not None]
+    return [
+        replace(declaration, marker=_marker(document.lines, declaration.location))
+        for declaration in declared
+        if declaration is not None
+    ]
+
+
+def _marker(lines: list[str], location: Location) -> Marker:
+    """Return the marker at the end of the line at the location.
+
+    The line above is left out, because a pom's marker sits on the declaration's own line.
+    """
+    line_number = cast("int", location.line_number)  # A declaration is always located at a line.
+    return parse_marker(Line(lines[line_number - 1], "", location))
 
 
 @dataclass(frozen=True)
@@ -170,7 +203,7 @@ def _effective_artefacts(effective_pom: XmlElement | None, project: XmlElement) 
     property_elements = _resolvable_elements(project)
     effective_property_elements = _resolvable_elements(effective_pom)
     own_versions = _own_versions(project, effective_property_elements)
-    artefacts = {}
+    declared = {}
     entries = (
         (entry, default_group)
         for tag, default_group in _ARTEFACT_ELEMENTS.items()
@@ -189,8 +222,8 @@ def _effective_artefacts(effective_pom: XmlElement | None, project: XmlElement) 
             pinned = PinnedDependency(
                 _artefact(group_name, artifact.text), _version_as_left(version, own_element, property_elements)
             )
-            artefacts[_ArtifactAtLine(artifact.text, declared_by.line)] = _EffectiveArtefact(pinned, managed_by)
-    return _EffectiveArtefacts(artefacts, effective_property_elements)
+            declared[_ArtifactAtLine(artifact.text, declared_by.line)] = _EffectiveArtefact(pinned, managed_by)
+    return _EffectiveArtefacts(declared, effective_property_elements)
 
 
 def _own_versions(project: XmlElement, property_elements: dict[str, XmlElement]) -> dict[_ArtifactAtLine, XmlElement]:
@@ -236,6 +269,14 @@ def has_input_locations(effective_pom: XmlElement) -> bool:
     return bool(_effective_pom_name(effective_pom))
 
 
+def one_per_artefact_and_line(declared: list[Declaration]) -> list[Declaration]:
+    """Return one declaration of each artefact at each line.
+
+    Two declarations of one artefact naming one property share that property's line, which makes them equal.
+    """
+    return unique(declared)
+
+
 def with_resolved_coordinates(declared: list[Declaration]) -> list[Declaration]:
     """Return the declarations whose coordinates resolve, since a repository serves nothing under the others."""
     return [declaration for declaration in declared if _is_resolved(declaration.dependency)]
@@ -279,15 +320,16 @@ def _artefact_declarations(path: Path, effective_pom: XmlElement | None = None) 
     return declarations(path, effective_pom) or []
 
 
-def artefacts(path: Path, effective_pom: XmlElement | None = None) -> list[DependencyName]:
-    """Return the coordinates of each dependency and plugin the pom declares a version for.
+def versioned_declarations(path: Path, effective_pom: XmlElement | None = None) -> list[Declaration]:
+    """Return the declaration of each dependency and plugin whose version Maven updates.
 
-    The effective pom, where one is given, supplies the coordinates. Whether a dependency declares a version is read
-    off the pom alone, since the effective pom gives one to each dependency that declares none.
+    The effective pom, where one is given, supplies the coordinates.
     """
-    readings = zip(_artefact_declarations(path), _artefact_declarations(path, effective_pom), strict=True)
+    declared = _artefact_declarations(path, effective_pom)
     return [
-        resolved.dependency for own, resolved in readings if own.current_version and _is_resolved(resolved.dependency)
+        declaration
+        for declaration in declared
+        if declaration.maven_updates_the_version and _is_resolved(declaration.dependency)
     ]
 
 
@@ -371,7 +413,16 @@ def _declaration(
     pinned = effective.pinned if effective else PinnedDependency(_artefact(group_name, artifact_name), own_version)
     managed_at = effective.version_managed_at if effective and version is None else _InputLocation()
     location = Location(path, versioned_by.line, versioned_by.column)
-    return Declaration(pinned.name, pinned.version, location, version_managed_at=managed_at)
+    versioned_by_its_pom = bool(own_version) and _is_resolved(own_version)
+    return Declaration(
+        pinned.name,
+        pinned.version,
+        location,
+        version_managed_at=managed_at,
+        versioned_by_its_pom=versioned_by_its_pom,
+        literal_plugin_version=versioned_by_its_pom and element.tag == "plugin" and versioned_by is version,
+        listed_in_effective_pom=effective is not None,
+    )
 
 
 def _interpolated(text: str, property_elements: dict[str, XmlElement]) -> str:

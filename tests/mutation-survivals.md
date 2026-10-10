@@ -24,3 +24,5 @@
 - 2026-09-30 `tests.update_time.sources.test_maven_central.ProjectTest.test_a_pom_naming_no_repository_and_no_complete_parent_leaves_github_unasked` — a pom without a `<parent>` ends the archival check with a traceback
 - 2026-10-05 `tests.update_time.sources.test_oci.GetLatestTagForFloatingTagTest.test_repeating_a_reference_costs_no_request` — a tag named more than once in a scan is resolved once per reference
 - 2026-10-06 `tests.update_time.updaters.test_update_github_action.UpdateGitHubActionsThroughTheSourceTest.test_two_pinned_references_to_one_branch_list_its_commits_once` — every reference to a branch lists its commits again, the cutoff making each request new
+- 2026-10-08 `tests.update_time.updaters.test_update_pom_xml.UpdatePomXmlTest.test_a_marker_on_a_version_a_parent_gives_holds_back_no_other_declaration` — a pom declaring an artefact twice writes the artefact's rule twice
+- 2026-10-10 `tests.update_time.updaters.test_update_pom_xml.UpdatePomXmlTest.test_a_marker_ignoring_or_bounding_the_update_holds_every_version_back` — a bare `ignore` does not name the update, so reading the marker as written lets Maven move the version

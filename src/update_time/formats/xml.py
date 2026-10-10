@@ -1,9 +1,10 @@
-"""Read an XML file as a tree of elements, each knowing where in the file it sits.
+"""Read an XML file as a tree of elements, each knowing where in the file it sits, and as the lines it holds.
 
 Note: `from xml.parsers import expat` below resolves to the standard library's parser, not to this module — imports
 are absolute.
 """
 
+import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 from xml.parsers import expat  # nosec B405: the files parsed here are the user's own
@@ -15,6 +16,10 @@ if TYPE_CHECKING:
 
 # What this format is called in a message about a file that does not parse.
 FORMAT = "XML"
+
+# Expat numbers an element's line by the line breaks XML counts: `\r\n`, `\r`, and `\n`. `str.splitlines` also
+# breaks a line at characters XML allows inside text, such as U+2028, so it would number the lines differently.
+_LINE_BREAK = re.compile(r"\r\n?|\n")
 
 
 @dataclass(frozen=True)
@@ -59,12 +64,32 @@ class _OpenElement:
         return XmlElement(self.tag, "".join(self.text).strip(), self.line, self.column, tuple(self.children))
 
 
+@dataclass(frozen=True)
+class _XmlDocument:
+    """An XML document's root element, and its lines, numbered as its elements' lines are."""
+
+    root: XmlElement
+    lines: list[str]
+
+
 def read(path: Path) -> XmlElement | None:
     """Return the root element of the XML file at the path, or None when it cannot be read or does not parse."""
+    document = read_document(path)
+    return None if document is None else document.root
+
+
+def read_document(path: Path) -> _XmlDocument | None:
+    """Return the XML file at the path, or None when it cannot be read or does not parse."""
     try:
-        return parse(path.read_bytes())
+        content = path.read_bytes()
     except OSError:
         return None
+    root = parse(content)
+    if root is None:
+        return None
+    # The lines are decoded as UTF-8, whatever encoding the XML declares. A character that does not decode is
+    # replaced rather than ending the run.
+    return _XmlDocument(root, _LINE_BREAK.split(content.decode(errors="replace")))
 
 
 def parse(document: bytes) -> XmlElement | None:
@@ -95,6 +120,6 @@ def parse(document: bytes) -> XmlElement | None:
     parser.CommentHandler = comment
     try:
         parser.Parse(document, True)  # noqa: FBT003 # `isfinal` is positional: pyexpat takes no keyword
-    except expat.ExpatError:
+    except expat.ExpatError, LookupError:  # A `LookupError` names an encoding the document declares but Python lacks.
         return None
     return roots[0]
