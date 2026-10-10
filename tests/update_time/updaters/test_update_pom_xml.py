@@ -12,7 +12,6 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import NO_CHANGES, Archival, ArchivedSubject, Changes, Project, Release
 from update_time.io.log import Logger
 from update_time.manifests import pom_xml as pom_xml_module
-from update_time.markers import marker as marker_module
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.package_managers import maven as maven_module
@@ -1016,9 +1015,9 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            marker_module.Marker.bound_directive,
-            "self.ignores(Scope.UPDATE)",
-            "self.as_written.ignores(Scope.UPDATE)",
+            maven_module._versions_held_back_by_markers,
+            "declaration.marker)",
+            "declaration.marker.as_written)",
             "a bare `ignore` does not name the update, so reading the marker as written lets Maven move the version",
         ),
     )
@@ -1040,6 +1039,15 @@ class UpdatePomXmlTest(LoggingTestCase):
                 self.assertEqual(rule_sets, [_GUAVA_HELD_BACK])
                 self.assertEqual(asked, [])  # The repository is not asked which versions to hold back.
                 self.assert_maven_ran(mock_run, rules=_RULES)
+
+    def test_a_bound_holds_back_the_range_it_names(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a bound ignoring the versions from 34 on holds back that range rather than every version."""
+        self.find_marked_pom(mock_run, mock_glob, "ignore[update>=34]")
+        with self.hold_back({}) as rule_sets:
+            update_pom_xmls()
+        range_rule = _rule_ignoring("com.google.guava", "guava", '<ignoreVersion type="range">[34,)</ignoreVersion>')
+        self.assertEqual(rule_sets, [_rule_set(range_rule)])
+        self.assert_maven_ran(mock_run, rules=_RULES)
 
     def test_a_marker_on_a_version_maven_leaves_holds_back_nothing(self, mock_run: Mock, mock_glob: Mock):
         """Test that a marker on a version Maven does not update leaves the artefact to the cooldown."""
@@ -1274,7 +1282,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._cooldown_rule,
+            maven_module._cooldown_versions,
             "days <= 0",
             "days < 0",
             "a cooldown of zero days asks the repository about the artefact and ignores the answer",

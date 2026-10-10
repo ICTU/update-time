@@ -6,20 +6,24 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from update_time.domain.bound import NO_BOUND, Verb
 from update_time.formats import xml
 from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.manifests import pom_xml as pom_xml_format
 from update_time.markers.cooldown import cooldown_days
+from update_time.markers.marker import Scope
 from update_time.primitives.command import Command
 from update_time.sources.maven_central import versions_held_back
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from update_time.domain.bound import VersionBound
     from update_time.domain.dependency import DependencyName
     from update_time.formats.xml import XmlElement
     from update_time.manifests.pom_xml import Declaration
+    from update_time.markers.marker import Marker
     from update_time.primitives.command import Result
 
 _LOG = get_logger("pom.xml")
@@ -161,13 +165,58 @@ def _versions_options(declarations: list[Declaration]) -> Iterator[tuple[str, ..
 def _rules(declarations: list[Declaration]) -> str:
     """Return a rule per artefact whose versions a marker or the cooldown holds back, or nothing where neither does.
 
-    An artefact several declarations name gets one rule, holding every version back where one of them does.
+    An artefact several declarations name gets one rule, holding back what each of them does.
     """
-    held_back = {declaration.dependency for declaration in declarations if declaration.holds_every_version_back}
+    versions_held_back_by_markers = _versions_held_back_by_markers(declarations)
     return "".join(
-        _rule(artefact, _EVERY_VERSION) if artefact in held_back else _cooldown_rule(artefact, days)
+        _artefact_rule(artefact, versions_held_back_by_markers.get(artefact, []), days)
         for artefact, days in _longest_cooldowns(declarations).items()
     )
+
+
+# The `ignoreVersion` matching every version, which holds an artefact's update back whatever the repository offers.
+_EVERY_VERSION = '<ignoreVersion type="regex">.*</ignoreVersion>'
+
+
+def _artefact_rule(artefact: DependencyName, versions_held_back_by_markers: list[str], days: int) -> str:
+    """Return the rule holding back what the markers and the cooldown do, or nothing where they hold nothing back.
+
+    The repository is not asked about the cooldown where a marker holds every version back.
+    """
+    if _EVERY_VERSION in versions_held_back_by_markers:
+        return _rule(artefact, _EVERY_VERSION)
+    ignored = (*versions_held_back_by_markers, *_cooldown_versions(artefact, days))
+    return _rule(artefact, *ignored) if ignored else ""
+
+
+def _versions_held_back_by_markers(declarations: list[Declaration]) -> dict[DependencyName, list[str]]:
+    """Return the `ignoreVersion` elements holding back what each artefact's markers do."""
+    held_back: dict[DependencyName, list[str]] = {}
+    for declaration in declarations:
+        if ignored := _versions_held_back_by_marker(declaration.marker):
+            held_back.setdefault(declaration.dependency, []).append(ignored)
+    return held_back
+
+
+def _versions_held_back_by_marker(marker: Marker) -> str:
+    """Return the `ignoreVersion` holding back what the marker does, or nothing where it holds nothing back.
+
+    Where the rule set cannot express a bound, the marker holds every version back, so Maven never crosses the bound.
+    """
+    if marker.ignores(Scope.UPDATE) or marker.invalid_item is not None:
+        return _EVERY_VERSION
+    if (bound := marker.version_bound) == NO_BOUND:
+        return ""
+    maven_range = _maven_range(bound)
+    return _EVERY_VERSION if maven_range is None else f'<ignoreVersion type="range">{maven_range}</ignoreVersion>'
+
+
+def _maven_range(bound: VersionBound) -> str | None:
+    """Return the Maven range of the versions the bound drops, or None where the rule set cannot express it."""
+    clauses = list(bound.specifier or ())
+    if bound.verb is Verb.IGNORE and len(clauses) == 1 and clauses[0].operator == ">=":
+        return f"[{clauses[0].version},)"
+    return None
 
 
 def _longest_cooldowns(declarations: list[Declaration]) -> dict[DependencyName, int]:
@@ -179,20 +228,15 @@ def _longest_cooldowns(declarations: list[Declaration]) -> dict[DependencyName, 
     return cooldowns
 
 
-# The `ignoreVersion` matching every version, which holds an artefact's update back whatever the repository offers.
-_EVERY_VERSION = '<ignoreVersion type="regex">.*</ignoreVersion>'
-
-
-def _cooldown_rule(artefact: DependencyName, days: int) -> str:
-    """Return the rule for the artefact's versions published inside the cooldown, or nothing where it holds none back.
+def _cooldown_versions(artefact: DependencyName, days: int) -> tuple[str, ...]:
+    """Return an `ignoreVersion` for each of the artefact's versions published inside the cooldown.
 
     An `ignoreVersion` without a `type` attribute matches a version exactly, so a version is never read as a pattern.
     The repository is not asked at all for a cooldown that holds nothing back.
     """
     if days <= 0:
-        return ""
-    versions = versions_held_back(artefact, days)
-    return _rule(artefact, *(f"<ignoreVersion>{version}</ignoreVersion>" for version in versions)) if versions else ""
+        return ()
+    return tuple(f"<ignoreVersion>{version}</ignoreVersion>" for version in versions_held_back(artefact, days))
 
 
 def _rule(artefact: DependencyName, *ignore_versions: str) -> str:
