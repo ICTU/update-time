@@ -735,6 +735,17 @@ class Logger:
             **self._reference_fields(reference, bound=spell(bound), version=current_version, redundancy=redundancy),
         )
 
+    _MESSAGE_HOLDING_BACK_RANGE = LogMessage(
+        DEBUG, "Holding back the versions %(range)s of %(dependency)s in %(location)s (update-time: %(directive)s)"
+    )
+
+    def holding_back_range(self, reference: Reference, maven_range: str, directive: str) -> None:
+        """Log the range of versions a bound holds the reference back from, as the package manager reads it."""
+        self._log(
+            self._MESSAGE_HOLDING_BACK_RANGE,
+            **self._reference_fields(reference, range=maven_range, directive=directive),
+        )
+
     # --- File scanning and selection ---
 
     _MESSAGE_CHECKING_PATH = LogMessage(DEBUG, "Checking if there are updates for %(location)s")

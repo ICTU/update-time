@@ -3,7 +3,7 @@
 import enum
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from packaging.specifiers import SpecifierSet
 from packaging.version import InvalidVersion, Version
@@ -44,15 +44,20 @@ _SENTINEL_VERSION = Version("9" * 18)
 
 _MAIN_VERSION_COMPONENT = re.compile(MAIN_VERSION)
 
+# A version's first numbers end at a qualifier PEP 440 cannot read, such as the `.Final` of `4.1.100.Final` or the
+# `_7` of `21.0.4_7-jdk`.
+_NUMBERS = re.compile(r"\d+(?:\.\d+)*")
+
 
 def _parse_version(version: VersionString) -> Version | None:
-    """Parse the version, or its main version component (e.g. for an image tag), or None if neither parses."""
+    """Parse the version, its main version component (e.g. for an image tag), or the first numbers it holds, if any."""
     if is_valid(version):
         return Version(version)
     component = _MAIN_VERSION_COMPONENT.search(version)
     if component is not None and is_valid(component.group()):
         return Version(component.group())
-    return None
+    numbers = _NUMBERS.search(version)
+    return None if numbers is None else Version(numbers.group())
 
 
 class Redundancy(enum.StrEnum):
@@ -86,7 +91,7 @@ class VersionBound:
     """A constraint on the versions a reference may update to: keep the candidates it matches, or drop them.
 
     The bound holds exactly one of two forms: a `specifier` is absolute (`update<3.13`), a `level` is relative to
-    whatever version is currently pinned (`minor-update`, anchored by `_resolve`). The `item` is the text its
+    whatever version is currently pinned (`minor-update`, see `anchored`). The `item` is the text its
     creator spelled, compared as no part of the bound, so two spellings of one bound are equal and cache alike.
     """
 
@@ -98,24 +103,29 @@ class VersionBound:
     def keeps(self, version: Version, current_version: VersionString) -> bool:
         """Return whether a candidate version survives the bound for a reference currently at `current_version`.
 
-        An absolute bound is unaffected by the current version; a level-based bound is anchored to it first.
+        An absolute bound is unaffected by the current version; a level-based bound is anchored to it first, and keeps
+        every version where it cannot be.
         """
         if (specifier := self.specifier) is None:
-            return self._resolve(current_version).keeps(version, current_version)
+            return (self.anchored(current_version) or NO_BOUND).keeps(version, current_version)
         return specifier.contains(version, prereleases=True) == (self.verb is Verb.ALLOW)
 
-    def _resolve(self, current_version: VersionString) -> VersionBound:
-        """Return a level-based bound anchored to the current version: its concrete, absolute equivalent.
+    def anchored(self, current_version: VersionString) -> VersionBound | None:
+        """Return the bound as an absolute one: this bound, or a level-based one anchored to the current version.
 
-        The bound may not change the components before the named level, and for `ignore` the level's own component
-        too. Those are pinned with a `==<prefix>.*` specifier, so `ignore[minor-update]` on `3.12.1` resolves to
-        `==3.12.*`, and on `3.13.0` to `==3.13.*`. A missing component counts as zero, so `22` resolves to
-        `==22.0.*`. A bound that fixes nothing, or a current version that will not parse, resolves to `NO_BOUND`.
+        A level-based bound may not change the components before the named level, and for `ignore` the level's own
+        component too. Those are pinned with a `==<prefix>.*` specifier, so `ignore[minor-update]` on `3.12.1`
+        resolves to `==3.12.*`, and on `3.13.0` to `==3.13.*`. A missing component counts as zero, so `22` resolves
+        to `==22.0.*`. A bound that fixes nothing resolves to `NO_BOUND`. A level-based bound resolves to None where
+        the current version will not parse.
         """
-        level = cast("UpdateLevel", self.level)  # `keeps` and `redundancy` only anchor level-based bounds.
+        if (level := self.level) is None:
+            return self
         fixed = level + (0 if self.verb is Verb.ALLOW else 1)
-        if fixed == 0 or (current := _parse_version(current_version)) is None:
+        if fixed == 0:
             return NO_BOUND
+        if (current := _parse_version(current_version)) is None:
+            return None
         release = current.release + (0,) * (fixed - len(current.release))
         if fixed == len(UpdateLevel):  # Every component is fixed: pin the current release exactly.
             pinned, wildcard = release, ""
@@ -134,7 +144,8 @@ class VersionBound:
         than blocking.
         """
         if self.level is not None:
-            return self._resolve(current_version).redundancy(current_version)
+            anchored = self.anchored(current_version)
+            return None if anchored is None else anchored.redundancy(current_version)
         if (current := _parse_version(current_version)) is None:
             return None
         keeps_above = [self.keeps(version, current_version) for version in self._probe_versions(current)]

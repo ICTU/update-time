@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, cast
 from update_time.domain.dependency import PinnedDependency
 from update_time.domain.line import Line
 from update_time.formats import xml
-from update_time.markers.marker import parse_marker
+from update_time.markers.marker import Scope, parse_marker
 from update_time.markers.reference import SteeredReference
 from update_time.primitives.iterables import unique
 from update_time.primitives.location import Location
@@ -124,8 +124,8 @@ class Declaration(SteeredReference):
 
     @property
     def holds_every_version_back(self) -> bool:
-        """Return whether the marker ignores or bounds the update, or carries an item that may have meant either."""
-        return bool(self.marker.bound_directive) or self.marker.invalid_item is not None
+        """Return whether the marker ignores the update, or carries an item that may have meant to."""
+        return self.marker.ignores(Scope.UPDATE) or self.marker.invalid_item is not None
 
 
 def declarations(path: Path, effective_pom: XmlElement | None = None) -> list[Declaration] | None:

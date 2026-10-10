@@ -151,6 +151,18 @@ class LevelBoundTest(unittest.TestCase):
         self.assertTrue(version_bound.keeps(Version("3.12.9"), "python3.12-slim"))
         self.assertFalse(version_bound.keeps(Version("3.13.0"), "python3.12-slim"))
 
+    def test_anchors_to_the_first_numbers_a_version_holds(self):
+        """Test that a version PEP 440 cannot read anchors at the first numbers it holds."""
+        cases = {
+            "a Maven version with a qualifier": ("4.1.100.Final", "4.1.999", "4.2.0"),
+            "a version with a build number after an underscore": ("21.0.4_7-jdk", "21.0.9", "21.1.0"),
+        }
+        for case, (current_version, kept, dropped) in cases.items():
+            with self.subTest(case=case):
+                version_bound = VersionBound(Verb.IGNORE, level=UpdateLevel.MINOR)
+                self.assertTrue(version_bound.keeps(Version(kept), current_version))
+                self.assertFalse(version_bound.keeps(Version(dropped), current_version))
+
     def test_epoch_is_kept_in_the_anchor(self):
         """Test that a current version with an epoch anchors the bound within that epoch."""
         version_bound = VersionBound(Verb.IGNORE, level=UpdateLevel.MAJOR)

@@ -7,15 +7,15 @@ from subprocess import CalledProcessError  # nosec
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, call, patch
 
-from update_time.domain.bound import Verb
+from update_time.domain.bound import Redundancy, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import NO_CHANGES, Archival, ArchivedSubject, Changes, Project, Release
 from update_time.io.log import Logger
 from update_time.manifests import pom_xml as pom_xml_module
-from update_time.markers import marker as marker_module
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.package_managers import maven as maven_module
+from update_time.package_managers import maven_range as maven_range_module
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.references import delegated as delegated_module
@@ -99,7 +99,12 @@ def _plugin_version(plugin: str) -> str:
 
 def _rule(group: str, artifact: str, *versions: str) -> str:
     """Return the rule Update-time writes for the artefact, naming the given versions."""
-    return _rule_ignoring(group, artifact, *(f"<ignoreVersion>{version}</ignoreVersion>" for version in versions))
+    return _rule_ignoring(group, artifact, *map(_exact_version_element, versions))
+
+
+def _exact_version_element(version: str) -> str:
+    """Return the `<ignoreVersion>` element matching the version exactly."""
+    return f"<ignoreVersion>{version}</ignoreVersion>"
 
 
 def _rule_ignoring(group: str, artifact: str, *ignore_versions: str) -> str:
@@ -126,6 +131,13 @@ def _rule_set(*rules: str) -> str:
 _GUAVA_HELD_BACK = _rule_set(
     _rule_ignoring("com.google.guava", "guava", '<ignoreVersion type="regex">.*</ignoreVersion>')
 )
+
+
+def _guava_range_held_back(*maven_ranges: str, versions: tuple[str, ...] = ()) -> str:
+    """Return the rule set a run writes for guava: the ranges its markers drop, then the versions its cooldown holds."""
+    ranges = (f'<ignoreVersion type="range">{maven_range}</ignoreVersion>' for maven_range in maven_ranges)
+    return _rule_set(_rule_ignoring("com.google.guava", "guava", *ranges, *map(_exact_version_element, versions)))
+
 
 # The rule set a run writes where the cooldown holds back guava 33.7.1-jre.
 _GUAVA_33_7_1_HELD_BACK = _rule_set(_rule("com.google.guava", "guava", "33.7.1-jre"))
@@ -367,8 +379,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         with patch.object(maven_module, "versions_held_back", versions_held_back), self.written_rule_sets() as written:
             yield written
 
-    def test_a_marker_ignoring_the_update_is_reported_as_holding_it_back(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a marker ignoring the update of a version the pom gives holds it back and is not redundant."""
+    def test_a_marker_holding_every_version_back_is_reported_as_holding_it_back(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a marker holding every version back is reported as holding the update, naming its directive."""
         own_property = _marked_property("guava.version", "33.0.0-jre", "ignore[update]")
         surefires_property = _marked_property("surefire.version", "3.5.0", "ignore[update]")
         surefire = build_element(plugin_element("maven-surefire-plugin", "${surefire.version}"))
@@ -378,37 +390,75 @@ class UpdatePomXmlTest(LoggingTestCase):
                 pom_declaring(marked_at_its_version(guava_element("33.0.0-jre"), "ignore[update]")),
                 GUAVA,
                 6,
+                "ignore[update]",
+            ),
+            "a version under a bare ignore": (
+                pom_declaring(marked_at_its_version(guava_element("33.0.0-jre"), "ignore")),
+                GUAVA,
+                6,
+                "ignore",
             ),
             "a property of its own": (
                 pom_declaring(guava_element("${guava.version}"), properties=own_property),
                 GUAVA,
                 3,
+                "ignore[update]",
             ),
             "a plugin's property of its own": (
                 pom_declaring(properties=surefires_property, build=surefire),
                 SUREFIRE,
                 3,
+                "ignore[update]",
+            ),
+            "a bound naming a pre-release": (
+                pom_declaring(marked_at_its_version(guava_element("33.0.0-jre"), "ignore[update<=34.1rc1]")),
+                GUAVA,
+                6,
+                "ignore[update<=34.1rc1]",
+            ),
+            "a level bound on a version without numbers": (
+                pom_declaring(marked_at_its_version(guava_element("RELEASE"), "ignore[major-update]")),
+                GUAVA,
+                6,
+                "ignore[major-update]",
             ),
         }
-        for case, (declared, artefact, line) in cases.items():
+        for case, (declared, artefact, line, directive) in cases.items():
             with self.subTest(case=case):
                 pom = self.find_pom(mock_run, mock_glob, declared)
                 update_pom_xmls()
-                self.assert_ignored_logged(artefact, Location(pom, line), among_others=True)
+                self.assert_ignored_logged(artefact, Location(pom, line), directive, among_others=True)
                 self.assert_none_logged(Logger._MESSAGE_REDUNDANT_DIRECTIVE, "redundant directive")
 
-    def test_a_bound_is_reported_as_holding_the_update_back(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a marker setting a bound is reported as holding the update back, naming it."""
-        pom = self.find_marked_pom(mock_run, mock_glob, "allow[update<34]")
-        update_pom_xmls()
-        self.assert_ignored_logged(GUAVA, Location(pom, 6), "allow[update<34]", among_others=True)
+    def test_a_cooldown_or_a_bound_is_not_reported_as_holding_the_update_back(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a marker setting a cooldown or a bound is reported as recognised, and not as holding back."""
+        for directives, marker in {
+            "ignore[cooldown<30]": Marker(cooldown=Threshold(value=30)),
+            "allow[update<34]": Marker(version_bound=bound(Verb.ALLOW, "update<34")),
+        }.items():
+            with self.subTest(directives=directives):
+                pom = self.find_marked_pom(mock_run, mock_glob, directives)
+                update_pom_xmls()
+                self.assert_recognised_marker_logged(GUAVA, Location(pom, 6), marker)
+                self.assert_none_logged(Logger._MESSAGE_IGNORED, "update held back")
 
-    def test_a_marker_cooldown_is_not_reported_as_holding_the_update_back(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a marker setting a cooldown is reported as recognised, and that the update is not held back."""
-        pom = self.find_marked_pom(mock_run, mock_glob, "ignore[cooldown<30]")
-        update_pom_xmls()
-        self.assert_recognised_marker_logged(GUAVA, Location(pom, 6), Marker(cooldown=Threshold(value=30)))
-        self.assert_none_logged(Logger._MESSAGE_IGNORED, "update held back")
+    def test_a_redundant_bound_on_a_version_maven_updates_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a bound that never has an effect or blocks every update is warned about."""
+        for directives, redundancy in {
+            "allow[update>=33]": Redundancy.NO_EFFECT,
+            "ignore[update>=33]": Redundancy.BLOCKS_ALL,
+        }.items():
+            with self.subTest(directives=directives):
+                pom = self.find_marked_pom(mock_run, mock_glob, directives)
+                update_pom_xmls()
+                self.assert_logged(
+                    Logger._MESSAGE_REDUNDANT_BOUND,
+                    dependency=GUAVA,
+                    location=Location(pom, 6),
+                    bound=directives,
+                    version="33.0.0-jre",
+                    redundancy=redundancy,
+                )
 
     @kills(
         Mutation(
@@ -419,14 +469,16 @@ class UpdatePomXmlTest(LoggingTestCase):
         )
     )
     def test_a_marker_two_declarations_of_one_artefact_share_is_reported_once(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a marker on a property both declarations of an artefact name is reported once."""
-        properties = _marked_property("guava.version", "33.0.0-jre", "ignore[stale]")
+        """Test that a marker on a property both declarations of an artefact name, and its range, are reported once."""
+        properties = _marked_property("guava.version", "33.0.0-jre", "ignore[stale, update>=34]")
         guava = guava_element("${guava.version}")
         declared = pom_declaring(guava, properties=properties, managed=dependency_management_element(guava))
         pom = self.find_pom(mock_run, mock_glob, declared)
         update_pom_xmls()
-        self.assert_recognised_marker_logged(GUAVA, Location(pom, 3), Marker(ignored_scopes=Scope.STALE))
+        marker = Marker(ignored_scopes=Scope.STALE, version_bound=bound(Verb.IGNORE, "update>=34"))
+        self.assert_recognised_marker_logged(GUAVA, Location(pom, 3), marker)
         self.assertEqual(len(self.records_of(Logger._MESSAGE_RECOGNISED_MARKER)), 1)
+        self.assertEqual(len(self.records_of(Logger._MESSAGE_HOLDING_BACK_RANGE)), 1)
 
     @kills(
         Mutation(
@@ -458,7 +510,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         """Test that a marker steering the update of a version a parent's property gives is redundant here."""
         markers = {
             "ignore[update]": Marker(ignored_scopes=Scope.UPDATE),
-            "allow[update<34]": Marker(version_bound=bound(Verb.ALLOW, "update<34")),
+            "allow[update>=33]": Marker(version_bound=bound(Verb.ALLOW, "update>=33")),
             "ignore[cooldown<30]": Marker(cooldown=Threshold(value=30)),
         }
         for directive, marker in markers.items():
@@ -1014,24 +1066,15 @@ class UpdatePomXmlTest(LoggingTestCase):
         self.assertEqual(rule_sets, [_rule_set(guava, _rule("org.springframework", "spring-core", "7.1.0"))])
         self.assert_maven_ran(mock_run, rules=_RULES)
 
-    @kills(
-        Mutation(
-            marker_module.Marker.bound_directive,
-            "self.ignores(Scope.UPDATE)",
-            "self.as_written.ignores(Scope.UPDATE)",
-            "a bare `ignore` does not name the update, so reading the marker as written lets Maven move the version",
-        ),
-    )
-    def test_a_marker_ignoring_or_bounding_the_update_holds_every_version_back(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a marker ignoring or bounding the update, or with an unreadable item, holds back every version."""
+    def test_a_marker_holding_every_version_back_gets_a_rule_for_every_version(self, mock_run: Mock, mock_glob: Mock):
+        """Test that an `ignore`, an unreadable item, or a bound naming a non-release holds every version back."""
         for directives in (
             "ignore[update]",
             "ignore",
-            "allow[update<34]",
-            "ignore[major-update]",
             "ignore[stlae]",
-            "ignore[cooldown<30] allow[update<34]",
             "ignore[cooldown<30, stlae]",
+            "ignore[update<=34.1rc1]",
+            "ignore[update===nightly]",
         ):
             with self.subTest(directives=directives):
                 self.find_marked_pom(mock_run, mock_glob, directives)
@@ -1040,6 +1083,115 @@ class UpdatePomXmlTest(LoggingTestCase):
                 self.assertEqual(rule_sets, [_GUAVA_HELD_BACK])
                 self.assertEqual(asked, [])  # The repository is not asked which versions to hold back.
                 self.assert_maven_ran(mock_run, rules=_RULES)
+
+    def test_a_bound_holds_back_the_range_it_names(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a bound holds back the range of versions each kind of clause drops, rather than every version."""
+        for directive, maven_range in {
+            "ignore[update<34]": "(,34)",
+            "ignore[update<=34]": "(,34.0.0.0.1)",
+            "ignore[update>34]": "[34.0.0.0.1,)",
+            "ignore[update>=34]": "[34,)",
+            "ignore[update==34.1]": "[34.1,34.1.0.0.0.1)",
+            "ignore[update===34.1]": "[34.1]",
+            "ignore[update!=34.1]": "(,34.1),[34.1.0.0.0.1,)",
+            "ignore[update==34.*]": "[34,35)",
+            "ignore[update!=34.*]": "(,34),[35,)",
+            "ignore[update~=34.1]": "[34.1,35)",
+        }.items():
+            with self.subTest(directive=directive):
+                self.find_marked_pom(mock_run, mock_glob, directive)
+                with self.hold_back({}) as rule_sets:
+                    update_pom_xmls()
+                self.assertEqual(rule_sets, [_guava_range_held_back(maven_range)])
+                self.assert_maven_ran(mock_run, rules=_RULES)
+
+    @kills(
+        Mutation(
+            maven_range_module._tighter,
+            "return other if boundary.included else boundary",
+            "return boundary",
+            "two clauses ending at one version keep the first one's end, so `===34.1` holds 34.1 back despite `!=34.1`",
+        )
+    )
+    def test_a_bound_holds_back_the_versions_all_its_clauses_match(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a bound of several clauses holds back the versions every clause matches, and nothing where none."""
+        for directive, rule_sets_written in {
+            "ignore[update!=34.1,<35]": [_guava_range_held_back("(,34.1),[34.1.0.0.0.1,35)")],
+            "ignore[update===34.1,!=34.1]": [],
+        }.items():
+            with self.subTest(directive=directive):
+                self.find_marked_pom(mock_run, mock_glob, directive)
+                with self.hold_back({}) as rule_sets:
+                    update_pom_xmls()
+                self.assertEqual(rule_sets, rule_sets_written)
+
+    @kills(
+        Mutation(
+            maven_range_module._Interval.__str__,
+            "'[' if self.lower.included else '('",
+            "'['",
+            "a range starting past a version starts at it, so `allow[update===34.1]` holds 34.1 back",
+        ),
+    )
+    def test_an_allow_bound_holds_back_the_versions_outside_it(self, mock_run: Mock, mock_glob: Mock):
+        """Test that an `allow` bound holds back the ranges of versions its clauses do not match."""
+        for directive, maven_range in {
+            "allow[update!=34.1]": "[34.1,34.1.0.0.0.1)",
+            "allow[update===34.1]": "(,34.1),(34.1,)",
+        }.items():
+            with self.subTest(directive=directive):
+                self.find_marked_pom(mock_run, mock_glob, directive)
+                with self.hold_back({}) as rule_sets:
+                    update_pom_xmls()
+                self.assertEqual(rule_sets, [_guava_range_held_back(maven_range)])
+
+    @kills(
+        Mutation(
+            maven_range_module.maven_range,
+            "current_version)) is None:\n        return None",
+            'current_version)) is None:\n        return ""',
+            "a level bound with no version to anchor to holds nothing back, so Maven crosses it",
+        ),
+    )
+    def test_a_level_bound_holds_back_what_it_drops_from_its_version(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a level bound holds back what it drops from its declaration's version on, or every version."""
+        own_property = _marked_property("guava.version", "32.1.0-jre", "ignore[minor-update]")
+        cases = {
+            "a version": (
+                pom_declaring(marked_at_its_version(guava_element("33.0.0-jre"), "ignore[major-update]")),
+                [_guava_range_held_back("(,33),[34,)")],
+            ),
+            "a property of its own": (
+                pom_declaring(guava_element("${guava.version}"), properties=own_property),
+                [_guava_range_held_back("(,32.1),[32.2,)")],
+            ),
+            "a version without numbers": (
+                pom_declaring(marked_at_its_version(guava_element("RELEASE"), "ignore[major-update]")),
+                [_GUAVA_HELD_BACK],
+            ),
+            "a level keeping every version": (
+                pom_declaring(marked_at_its_version(guava_element("33.0.0-jre"), "allow[major-update]")),
+                [],
+            ),
+        }
+        for case, (pom, rule_sets_written) in cases.items():
+            with self.subTest(case=case):
+                self.find_pom(mock_run, mock_glob, pom)
+                with self.hold_back({}) as rule_sets:
+                    update_pom_xmls()
+                self.assertEqual(rule_sets, rule_sets_written)
+
+    def test_the_range_a_bound_holds_back_is_reported(self, mock_run: Mock, mock_glob: Mock):
+        """Test that the range of versions a bound holds back is reported at its declaration, naming the bound."""
+        pom = self.find_marked_pom(mock_run, mock_glob, "ignore[update>=34]")
+        update_pom_xmls()
+        self.assert_logged_among_others(
+            Logger._MESSAGE_HOLDING_BACK_RANGE,
+            dependency=GUAVA,
+            location=Location(pom, 6),
+            range="[34,)",
+            directive="ignore[update>=34]",
+        )
 
     def test_a_marker_on_a_version_maven_leaves_holds_back_nothing(self, mock_run: Mock, mock_glob: Mock):
         """Test that a marker on a version Maven does not update leaves the artefact to the cooldown."""
@@ -1081,18 +1233,43 @@ class UpdatePomXmlTest(LoggingTestCase):
             "cooldowns.get(declaration.dependency, days)",
             "the first declaration of an artefact sets its cooldown, so a shorter one undoes a longer one after it",
         ),
+        Mutation(
+            maven_module._ranges_held_back_by_markers,
+            "ranges.setdefault(declaration.dependency, []).append(held_back)",
+            "ranges[declaration.dependency] = [held_back]",
+            "the last declaration's bound replaces the ones before it, so Maven crosses an earlier declaration's bound",
+        ),
+        Mutation(
+            maven_module._artefact_rule,
+            "unique((*range_elements, *_cooldown_versions(artefact, days)))",
+            "(*range_elements, *_cooldown_versions(artefact, days))",
+            "two declarations setting one bound name its range twice in the artefact's rule",
+        ),
     )
     def test_an_artefact_declared_twice_gets_one_rule_for_both_declarations(self, mock_run: Mock, mock_glob: Mock):
         """Test that an artefact declared twice gets one rule, holding back the versions either declaration does."""
         guava = guava_element("33.0.0-jre")
         ignoring = marked_at_its_version(guava, "ignore[update]")
         shorter = marked_at_its_version(guava, "allow[cooldown>=0]")
+        from_34 = marked_at_its_version(guava, "ignore[update>=34]")
+        from_35 = marked_at_its_version(guava, "ignore[update>=35]")
+        on_34 = marked_at_its_version(guava, "ignore[update==34.*]")
         # The pom declares the managed guava first, and the other guava after it.
         cases = {
             "the first declaration ignoring the update": (ignoring, guava, [_GUAVA_HELD_BACK]),
             "the second declaration ignoring the update": (guava, ignoring, [_GUAVA_HELD_BACK]),
             "the first declaration setting a shorter cooldown": (shorter, guava, [_GUAVA_33_7_1_HELD_BACK]),
             "the second declaration setting a shorter cooldown": (guava, shorter, [_GUAVA_33_7_1_HELD_BACK]),
+            "each declaration setting a bound of its own": (
+                from_35,
+                on_34,
+                [_guava_range_held_back("[35,)", "[34,35)", versions=("33.7.1-jre",))],
+            ),
+            "both declarations setting one bound": (
+                from_34,
+                from_34,
+                [_guava_range_held_back("[34,)", versions=("33.7.1-jre",))],
+            ),
         }
         for case, (managed, declared, rule_set) in cases.items():
             with self.subTest(case=case):
@@ -1274,7 +1451,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._cooldown_rule,
+            maven_module._cooldown_versions,
             "days <= 0",
             "days < 0",
             "a cooldown of zero days asks the repository about the artefact and ignores the answer",

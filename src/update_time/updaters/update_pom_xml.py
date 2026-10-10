@@ -68,25 +68,30 @@ def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path]) -> None:
 
 
 def _report_markers(declared: list[Declaration]) -> None:
-    """Report the marker of each dependency and plugin, named as Maven resolves it."""
+    """Report the marker of each dependency and plugin, named as Maven resolves it, and the range a bound holds back."""
     for declaration in declared:
+        held_back = maven.range_held_back(declaration) if declaration.maven_updates_the_version else ""
         report_marker(
             _LOG,
             declaration.dependency,
             declaration.marker,
             declaration.location,
-            holds_the_update_back=declaration.maven_updates_the_version and declaration.holds_every_version_back,
+            holds_the_update_back=held_back is None,
         )
+        if held_back:
+            _LOG.holding_back_range(declaration, held_back, declaration.marker.version_bound_directive)
         _LOG.report_inverted_items(declaration, declaration.marker)
         _report_redundant_directives(declaration)
 
 
 def _report_redundant_directives(declaration: Declaration) -> None:
-    """Report as redundant the `yanked` scope, `allow[floating-pin]`, and directives steering an update Maven skips."""
+    """Report as redundant each directive that decides nothing for the declaration."""
     as_written = declaration.marker.as_written
     if reason := _why_maven_leaves_the_version(declaration):
         for steering in filter(None, (as_written.bound_directive, as_written.cooldown_directive)):
             _LOG.redundant_directive(declaration, steering, reason)
+    else:
+        _LOG.warn_if_redundant_bound(declaration, declaration.marker)
     if yanked := as_written.directive_for(Scope.YANKED):
         _LOG.redundant_directive(declaration, yanked, Reason.NO_YANK_CONCEPT)
     if floating_pin := declaration.marker.allow_directive(Scope.FLOATING_PIN):

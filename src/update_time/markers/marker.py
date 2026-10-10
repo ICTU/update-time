@@ -167,7 +167,7 @@ class Marker:
 
     @property
     def update_directive(self) -> str:
-        """Return the directive ignoring or bounding the update, as the user wrote it, or nothing where none does."""
+        """Return the directive ignoring or bounding the update, as the user wrote it."""
         if self.ignores(Scope.UPDATE):
             return self.written_directive(Scope.UPDATE)
         return self.version_bound_directive

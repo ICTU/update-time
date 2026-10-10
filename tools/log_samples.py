@@ -364,11 +364,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     accounted_for = _accounted_for_references(log, capture, dockerfile)
 
-    marker = Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")
-    log.recognised_marker("python", marker, dockerfile)
-    recognised = capture.take()
-
-    log.report_staleness(resolved("python", dockerfile, stale), marker, STALE_AFTER.get())
+    understood_markers = _understood_markers(log, capture, dockerfile, stale)
     return {
         "@@DRIFT_WARNINGS@@": drift,
         "@@PINNED_FLOATING_TAG@@": pinned_floating_tag,
@@ -388,6 +384,24 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **redundant_for_the_type,
         **invalid,
         **inverted,
+        **understood_markers,
+    }
+
+
+def _understood_markers(
+    log: Logger, capture: _Capture, dockerfile: Location, stale: DependencyVersion
+) -> dict[str, str]:
+    """Log the lines confirming a marker was understood, and pair them with their placeholders."""
+    marker = Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")
+    log.recognised_marker("python", marker, dockerfile)
+    recognised = capture.take()
+    log.report_staleness(resolved("python", dockerfile, stale), marker, STALE_AFTER.get())
+    silenced = capture.take()
+    log.holding_back_range(
+        reference("com.google.guava:guava", Location(Path("pom.xml"), 12)), "[34,)", "ignore[update>=34]"
+    )
+    return {
         "@@RECOGNISED_MARKER@@": recognised,
-        "@@SILENCED_WARNING@@": capture.take(),
+        "@@SILENCED_WARNING@@": silenced,
+        "@@RANGE_HELD_BACK@@": capture.take(),
     }

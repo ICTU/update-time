@@ -23,7 +23,6 @@ A `start` that opens no object yields nothing, so a section declared as anything
 A backticked run holding anything else — a `path:line`, an `# update-time: ignore` marker — is skipped here, and the twin check would skip it in any case, since no name the code binds has that shape.
 A bare word parses as a name, with no call in it.
 A body that isn't JSON has no message to include.
-A bound produces no line either, whatever it blocks.
 A branch names no version to resolve an update for.
 A call whose arguments sit on their own lines spreads one call site over several lines, and the line defining the name holds no call at all.
 A channel names no version and carries no digit.

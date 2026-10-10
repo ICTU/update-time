@@ -490,7 +490,7 @@ The global `--allow-floating-pin` flag keeps every reference in the run floating
 
 ### Bounding an update
 
-A bound lets a reference keep updating, while it blocks the jump you are not ready for. Name the versions the reference may move to, or the level of update it may not make. A bound narrows updates and nothing else: staleness is still measured against the project's newest overall release, and a reference still gets the hash pin of the version it lands on, even when the bound excludes the version the reference is on. On a `pom.xml` dependency or plugin whose version Maven updates, a bound holds the whole update back (see [Maven dependencies](#maven-dependencies)).
+A bound lets a reference keep updating, while it blocks the jump you are not ready for. Name the versions the reference may move to, or the level of update it may not make. A bound narrows updates and nothing else: staleness is still measured against the project's newest overall release, and a reference still gets the hash pin of the version it lands on, even when the bound excludes the version the reference is on.
 
 #### Bounding how far a reference may update
 
@@ -534,7 +534,7 @@ FROM python:3.12.1-bookworm-slim
 
 The levels are positional, not semantic: they refer to the component's position in the version, not to the project's compatibility promises. Projects may ship breaking changes in releases that bump the *second* component. So "stay on Python 3.12" is `ignore[minor-update]`, although Python 3.13 shipped breaking changes: it removed 19 legacy modules from the standard library. The same caution applies to projects using calendar versioning.
 
-And as with specifier bounds, the level applies to a Docker tag's main version. The bound does not affect a version embedded in the suffix, such as the `3.23` in `alpine3.23`. A component the current version doesn't have counts as zero, so `ignore[minor-update]` on `node:22` blocks `22.1`.
+A level bound reads the current version at the first numbers it holds. So a Maven `4.1.100.Final` anchors at `4.1.100`. For a Docker tag, those numbers are its main version, as with specifier bounds, so `python3.12-slim` anchors at `3.12`. The bound does not affect a version embedded in the suffix, such as the `3.23` in `alpine3.23`. A component the current version doesn't have counts as zero, so `ignore[minor-update]` on `node:22` blocks `22.1`.
 
 ### Writing a marker
 
@@ -624,7 +624,11 @@ Update-time reports what the marker held back or silenced separately, in lines a
 @@SILENCED_WARNING@@
 ```
 
-A line about a warning appears only when the marker actually silenced one, so an `ignore[yanked]` on a version that was never yanked produces none. A bound produces no line either, whatever it blocks. The line about the update appears whenever a marker Update-time can read holds the update back, whether or not a newer version was available. On a `pom.xml` dependency or plugin whose version Maven updates, a bound holds the whole update back, so it gets that line (see [Maven dependencies](#maven-dependencies)). An unreadable item holds the update back too, but gets no such line: Update-time reports it as invalid instead.
+A line about a warning appears only when the marker actually silenced one, so an `ignore[yanked]` on a version that was never yanked produces none. The line about the update appears whenever a marker Update-time can read holds the update back, whether or not a newer version was available. An unreadable item holds the update back too, but gets no such line: Update-time reports it as invalid instead. A bound does not produce a line either, whatever it blocks, except on a `pom.xml` dependency or plugin whose version Maven updates. There a line names the versions the bound holds back, in Maven's range notation (see [Maven dependencies](#maven-dependencies)):
+
+```console
+@@RANGE_HELD_BACK@@
+```
 
 ### Redundant markers
 
@@ -771,7 +775,7 @@ On a `pyproject.toml` or inline script metadata dependency, Update-time reports 
 
 On a GitHub Action or pre-commit hook that names a branch, a tag such as `stable-2024`, or a commit SHA, Update-time reports every bound as redundant, since none of them names a version to bound. In the run that pins a branch, a tag, or a short SHA to a version tag, Update-time judges the bound at that version instead. It never pins a full SHA, so a bound on one is always redundant.
 
-On a `pom.xml` dependency or plugin whose version Maven does not update, Update-time reports every bound as redundant, `ignore[update]` included (see [Markers](#markers-2)). On any other `pom.xml` dependency or plugin, a bound holds the whole update back, so Update-time does not judge it in the two ways above.
+On a `pom.xml` dependency or plugin whose version Maven does not update, Update-time reports every bound as redundant, `ignore[update]` included (see [Markers](#markers-2)).
 
 Update-time reports those bounds as:
 
@@ -1009,7 +1013,7 @@ Maven Central does not serve an artefact that a project resolves from a mirror o
 
 The rule set names an artefact whose group or artifact the pom leaves to its parent as Maven resolves it, and holds back its versions like any other artefact's.
 
-A marker can set a cooldown of its own, and the rule set then holds back the versions published inside that cooldown. A marker that ignores or bounds the update holds back every version of its artefact instead (see [Markers](#markers-2)).
+A marker can set a cooldown of its own, and the rule set then holds back the versions published inside that cooldown. A marker that ignores the update holds back every version of its artefact instead. A bound holds back the versions it drops, beside the ones inside the cooldown (see [Markers](#markers-2)).
 
 #### Stale dependencies
 
@@ -1077,9 +1081,11 @@ The `stale`, `archived`, and `vulnerable` scopes steer the checks as they do els
 
 A marker steers the update only where Maven updates the version. Maven updates a dependency's version where the declaration's `<version>` element or one of the pom's own properties holds it. It updates a plugin's version only where one of the pom's own properties holds it, since the `use-latest-releases` goal leaves plugins alone. Maven does not update a version that a declaration leaves to a parent pom, an imported BOM, or its pom's `<dependencyManagement>` or `<pluginManagement>`. On a declaration whose version Maven does not update, Update-time reports an `ignore[update]`, a bound, and a `cooldown` as redundant (see [Redundant markers](#redundant-markers)).
 
-Where Maven updates the version, Update-time hands Maven a rule per artefact. An `ignore`, an `ignore[update]`, a bound, and an item Update-time cannot read each hold back every version of the artefact. That includes a bound allowing every update, such as `allow[major-update]`. Update-time reports each of them at `DEBUG` as holding the update back, except the unreadable item, which it warns about as invalid. A `cooldown` holds back the versions published inside the cooldown it sets.
+Where Maven updates the version, Update-time hands Maven a rule per artefact. An `ignore`, an `ignore[update]`, and an item Update-time cannot read each hold back every version of the artefact. Update-time reports the first two at `DEBUG` as holding the update back, and warns about the unreadable item as invalid. A `cooldown` holds back the versions published inside the cooldown it sets.
 
-A pom can declare an artefact more than once, and Update-time then hands Maven one rule for all those declarations. The rule holds back what each declaration whose version Maven updates holds back. So a marker on one of them that holds back every version holds back every declaration of the artefact in the pom. Without such a marker, the rule holds back the versions published inside the longest cooldown among the declarations. A declaration whose marker does not set a cooldown has the run's cooldown.
+A bound holds back the versions it drops, which the rule names as Maven ranges. Update-time reports those ranges at `DEBUG` (see [Confirming a marker was understood](#confirming-a-marker-was-understood)). A bound reads a version at the first numbers it holds, so `allow[update<=32.1.3]` keeps guava's `32.1.3-jre`. A bound that names a version other than a release, such as `34.1rc1`, holds back every version. So does a level bound on a version that does not hold a number, such as `RELEASE`.
+
+A pom can declare an artefact more than once, and Update-time then hands Maven one rule for all those declarations. The rule holds back what each declaration whose version Maven updates holds back. So a marker on one of them that holds back every version holds back every declaration of the artefact in the pom. Without such a marker, the rule holds back the versions each declaration's bound drops, and the versions published inside the longest cooldown among the declarations. A declaration whose marker does not set a cooldown has the run's cooldown.
 
 ### GitHub Actions and pre-commit hooks
 
