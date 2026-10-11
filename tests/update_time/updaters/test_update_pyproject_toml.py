@@ -193,8 +193,8 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
     @kills(
         Mutation(
             uv._reported_marker,
-            "lambda: log.ignored(*reported) if declaration.pins_a_version else None,",
-            "lambda: log.ignored(*reported),",
+            "holds_the_update_back=declaration.pins_a_version and ",
+            "holds_the_update_back=",
             "a dependency that pins no version reads as one whose update was held back, though the marker froze no "
             "pin and uv resolved the version anyway",
         )

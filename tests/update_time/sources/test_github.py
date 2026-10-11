@@ -15,13 +15,14 @@ from update_time.domain.dependency import Archival, ArchivedSubject, PinnedDepen
 from update_time.io.log import Logger
 from update_time.sources import github
 from update_time.sources.github import (
+    GitHubRepository,
     TaggedVersion,
     _get_release,
     _newest_release,
     archival,
     changes_from_changelog_file,
     changes_from_release,
-    github_owner_and_repository,
+    github_repository,
     github_to_raw,
     release_tags,
 )
@@ -84,56 +85,58 @@ class GitHubURLtoRawTest(unittest.TestCase):
         self.assertEqual(github_to_raw(github_url), "https://raw.githubusercontent.com/user/repo/example.md")
 
 
-class GitHubOwnerAndRepositoryTest(unittest.TestCase):
-    """Unit tests for the GitHub owner and repository parse function."""
+class GitHubRepositoryTest(unittest.TestCase):
+    """Unit tests for reading the GitHub repository a URL names."""
 
-    def assert_owner_and_repository(self, expected: tuple[str, str], *urls: str) -> None:
-        """Assert that each URL parses to the expected owner and repository."""
+    def assert_repository(self, expected: GitHubRepository | None, *urls: str) -> None:
+        """Assert that each URL names the expected repository."""
         for url in urls:
             with self.subTest(url=url):
-                self.assertEqual(github_owner_and_repository(url), expected)
+                self.assertEqual(github_repository(url), expected)
 
     def test_non_github_url(self):
-        """Test that a non-GitHub URL returns an empty owner and repository, scp-like ssh URLs included."""
-        self.assert_owner_and_repository(("", ""), "https://example.org", "git@gitlab.com:ICTU/update-time.git")
+        """Test that a non-GitHub URL does not name a repository, scp-like ssh URLs included."""
+        self.assert_repository(None, "https://example.org", "git@gitlab.com:ICTU/update-time.git")
 
     def test_github_url(self):
-        """Test that a GitHub URL returns an owner and repository."""
-        self.assert_owner_and_repository(("ICTU", "quality-time"), "https://github.com/ICTU/quality-time")
+        """Test that a GitHub URL names a repository."""
+        self.assert_repository(GitHubRepository("ICTU", "quality-time"), "https://github.com/ICTU/quality-time")
 
     @kills(
         Mutation(
-            github.github_owner_and_repository,
+            github.github_repository,
             "if len(path_parts) > 1 and path_parts[0] != _GITHUB_SPONSORS_PATH:",
             "if len(path_parts) > 1:",
             "a GitHub sponsors page is read as the repository `sponsors/<owner>`, which GitHub is then asked about",
         )
     )
     def test_github_sponsors_url(self):
-        """Test that a GitHub sponsors URL returns an empty owner and repository."""
-        self.assert_owner_and_repository(("", ""), "https://github.com/sponsors/ICTU")
+        """Test that a GitHub sponsors URL does not name a repository."""
+        self.assert_repository(None, "https://github.com/sponsors/ICTU")
 
     def test_github_url_without_repo(self):
-        """Test that a GitHub URL returns an empty owner and repository if the repository is missing."""
-        self.assert_owner_and_repository(("", ""), "https://github.com/ICTU")
+        """Test that a GitHub URL naming an owner alone does not name a repository, with or without a trailing slash."""
+        self.assert_repository(None, "https://github.com/ICTU", "https://github.com/ICTU/")
 
     def test_npm_git_url(self):
         """Test that an npm-style git+https URL with a .git suffix is parsed."""
-        self.assert_owner_and_repository(("ICTU", "update-time"), "git+https://github.com/ICTU/update-time.git")
+        self.assert_repository(GitHubRepository("ICTU", "update-time"), "git+https://github.com/ICTU/update-time.git")
 
     def test_npm_ssh_url(self):
         """Test that an npm-style git+ssh URL, whose user information precedes the host, is parsed."""
-        self.assert_owner_and_repository(("ICTU", "update-time"), "git+ssh://git@github.com/ICTU/update-time.git")
+        self.assert_repository(GitHubRepository("ICTU", "update-time"), "git+ssh://git@github.com/ICTU/update-time.git")
 
     def test_scp_like_ssh_url(self):
         """Test that the scp-like ssh form is parsed, with and without the `.git` suffix."""
-        self.assert_owner_and_repository(
-            ("ICTU", "update-time"), "git@github.com:ICTU/update-time.git", "git@github.com:ICTU/update-time"
+        self.assert_repository(
+            GitHubRepository("ICTU", "update-time"),
+            "git@github.com:ICTU/update-time.git",
+            "git@github.com:ICTU/update-time",
         )
 
     def test_url_with_fragment(self):
         """Test that a URL with a trailing fragment (as npm uses) is parsed."""
-        self.assert_owner_and_repository(("ICTU", "update-time"), "https://github.com/ICTU/update-time#readme")
+        self.assert_repository(GitHubRepository("ICTU", "update-time"), "https://github.com/ICTU/update-time#readme")
 
 
 class GetLatestVersionTest(LoggingTestCase):
@@ -425,23 +428,23 @@ class NewestReleaseTest(LoggingTestCase):
 
         The 1.2b1 pre-release was published after 2.0, so the highest version is not the one measured.
         """
-        self.assertEqual(_newest_release("owner", "active"), Release("1.2b1", FRESH_DATE))
+        self.assertEqual(_newest_release(GitHubRepository("owner", "active")), Release("1.2b1", FRESH_DATE))
 
     @patch_github(releases=[], tags=[])
     def test_no_releases(self):
         """Test that a repo with no releases has no newest release."""
-        self.assertIsNone(_newest_release("owner", "no releases"))
+        self.assertIsNone(_newest_release(GitHubRepository("owner", "no releases")))
 
     @patch_github()
     def test_fetch_failure(self):
         """Test that no release is returned when neither the releases nor the tags can be fetched."""
-        self.assertIsNone(_newest_release("owner", "unreachable"))
+        self.assertIsNone(_newest_release(GitHubRepository("owner", "unreachable")))
         self.assertEqual(len(self.records(WARNING)), 2)  # One could-not-fetch warning per endpoint
 
     @patch_github(releases=[], tags=[github_tag_json("v1.0")], commit=github_commits_json(date=FRESH_DATE))
     def test_tag_without_release(self):
         """Test that a repo that tags without releasing takes its newest release from the tagged commit."""
-        self.assertEqual(_newest_release("owner", "tags only"), Release("1.0", FRESH_DATE))
+        self.assertEqual(_newest_release(GitHubRepository("owner", "tags only")), Release("1.0", FRESH_DATE))
 
     @patch_github(
         releases=[github_release_json("1.0", published_at=PAST_COOLDOWN_DATE)],
@@ -450,7 +453,7 @@ class NewestReleaseTest(LoggingTestCase):
     )
     def test_tag_running_ahead_of_releases(self):
         """Test that a repo whose releases fell behind its tags takes its newest release from the newest tag."""
-        self.assertEqual(_newest_release("owner", "mixed"), Release("2.0", FRESH_DATE))
+        self.assertEqual(_newest_release(GitHubRepository("owner", "mixed")), Release("2.0", FRESH_DATE))
 
     @kills(
         Mutation(
@@ -464,14 +467,14 @@ class NewestReleaseTest(LoggingTestCase):
     @patch_github(releases=[github_release_json("nightly", published_at=FRESH_DATE)], tags=[])
     def test_release_tagged_with_no_version(self):
         """Test that a repo whose newest release is tagged with no version is reported by that tag."""
-        self.assertEqual(_newest_release("owner", "unversioned"), Release("nightly", FRESH_DATE))
+        self.assertEqual(_newest_release(GitHubRepository("owner", "unversioned")), Release("nightly", FRESH_DATE))
 
     @patch_github(
         releases=[github_release_json("2.0", published_at=PAST_COOLDOWN_DATE)], tags=[github_tag_json("v1.0")]
     )
     def test_tag_behind_releases_needs_no_commit(self):
         """Test that a repo whose releases cover its newest version needs no commits fetch for the newest release."""
-        self.assertEqual(_newest_release("owner", "released"), Release("2.0", PAST_COOLDOWN_DATE))
+        self.assertEqual(_newest_release(GitHubRepository("owner", "released")), Release("2.0", PAST_COOLDOWN_DATE))
         self.assert_no_warnings_logged()
 
 
@@ -481,8 +484,8 @@ class ArchivalTest(LoggingTestCase):
     @kills(
         Mutation(
             github._repository_metadata,
-            'response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}")',
-            'response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}/")',
+            'response = _fetch_github(f"{_GITHUB_API}/{repository}")',
+            'response = _fetch_github(f"{_GITHUB_API}/{repository}/")',
             "the repository is asked for at a URL GitHub answers 404, so no repository ever reads as archived",
         )
     )
@@ -503,7 +506,7 @@ class ArchivalTest(LoggingTestCase):
         for repository, (response, expected, warns) in cases.items():
             with self.subTest(repository=repository):
                 mock_get.return_value = response
-                self.assertEqual(archival("owner", repository, check_archival=True), expected)
+                self.assertEqual(archival(GitHubRepository("owner", repository), check_archival=True), expected)
                 if warns:
                     self.assert_could_not_fetch_logged()
                 else:
@@ -515,7 +518,7 @@ class ArchivalTest(LoggingTestCase):
         Mutation(
             github.archival,
             "if check_archival and",
-            "_repository_metadata(owner, repository)\n    if check_archival and",
+            "_repository_metadata(repository)\n    if check_archival and",
             "the source is told not to check for archival but fetches the repository anyway, so the run pays for a "
             "check it does not make",
         )
@@ -524,7 +527,7 @@ class ArchivalTest(LoggingTestCase):
     def test_a_source_told_not_to_check_asks_github_nothing(self, mock_get: Mock):
         """Test that a source told not to check asks GitHub nothing and reads the repository as active."""
         mock_get.return_value = mock_response({"archived": True})
-        self.assertEqual(archival("owner", "not checked", check_archival=False), Archival())
+        self.assertEqual(archival(GitHubRepository("owner", "not checked"), check_archival=False), Archival())
         mock_get.assert_not_called()
 
 
@@ -540,7 +543,11 @@ class GetReleaseTest(LoggingTestCase):
         """Assert that each case's package and version resolve, in the repository, to the release its tag names."""
         for package, version, tag in cases:
             with self.subTest(tag=tag):
-                self.assert_release(_get_release("owner", repository, release_tags(package, version)), tag, "Changelog")
+                self.assert_release(
+                    _get_release(GitHubRepository("owner", repository), release_tags(package, version)),
+                    tag,
+                    "Changelog",
+                )
 
     @patch_get(
         [
@@ -618,7 +625,7 @@ class GetReleaseTest(LoggingTestCase):
     )
     def test_scoped_tag_takes_precedence(self):
         """Test that the tag carrying the scope wins over the one spelling the same version without it."""
-        release = _get_release("emotion-js", "emotion", release_tags("@emotion/react", "11.14.0"))
+        release = _get_release(GitHubRepository("emotion-js", "emotion"), release_tags("@emotion/react", "11.14.0"))
         self.assert_release(release, "@emotion/react@11.14.0", "Scoped")
 
     @kills(
@@ -664,7 +671,8 @@ class GetReleaseTest(LoggingTestCase):
     def test_monorepo_tag_takes_precedence(self):
         """Test that the package-prefixed tag with a v wins over the other spellings of the same version."""
         self.assert_release(
-            _get_release("puppeteer", "monorepo", release_tags("puppeteer-core", "25.0.4")), "puppeteer-core-v25.0.4"
+            _get_release(GitHubRepository("puppeteer", "monorepo"), release_tags("puppeteer-core", "25.0.4")),
+            "puppeteer-core-v25.0.4",
         )
 
     @patch_get([github_release_json("v1.2.3", body="Changelog"), github_release_json("4.5.6", body="Changelog")])
@@ -676,20 +684,26 @@ class GetReleaseTest(LoggingTestCase):
     @patch_get([github_release_json("v1.0")])
     def test_no_matching_tag(self):
         """Test that None is returned when no tag matches the requested version."""
-        self.assertIsNone(_get_release("owner", "repo with non matching tag", release_tags("any", "1.1")))
+        self.assertIsNone(
+            _get_release(GitHubRepository("owner", "repo with non matching tag"), release_tags("any", "1.1"))
+        )
 
     @patch("requests.get")
     def test_repo_without_releases(self, mock_get: Mock):
         """Test that a non-OK response yields no release, and is reported as a failed fetch."""
         mock_get.return_value = mock_response([], ok=False)
-        self.assertIsNone(_get_release("owner", "repo without releases for get_release", release_tags("any", "1.0")))
+        self.assertIsNone(
+            _get_release(GitHubRepository("owner", "repo without releases for get_release"), release_tags("any", "1.0"))
+        )
         self.assert_could_not_fetch_logged(mock_get().url, status=mock_get().status_code)
 
     @patch("requests.get")
     def test_timeout(self, mock_get: Mock):
         """Test that a timed-out request yields no release, and is reported as a timeout."""
         mock_get.side_effect = requests.exceptions.Timeout
-        self.assertIsNone(_get_release("owner", "repo without releases for get_release", release_tags("any", "1.0")))
+        self.assertIsNone(
+            _get_release(GitHubRepository("owner", "repo without releases for get_release"), release_tags("any", "1.0"))
+        )
         url = "https://api.github.com/repos/owner/repo without releases for get_release/releases?per_page=100"
         self.assert_logged(Logger._MESSAGE_TIMEOUT, url=url)
 
@@ -698,9 +712,9 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
     """Unit tests for getting the changelog from a GitHub release."""
 
     @patch("requests.get")
-    def test_no_owner_or_repository(self, mock_get: Mock):
-        """Test that the changes are empty, without querying GitHub, when the owner or repository is missing."""
-        self.assertEqual(changes_from_release("", "", "any", "1.0"), "")
+    def test_no_repository(self, mock_get: Mock):
+        """Test that the changes are empty, without querying GitHub, when there is no repository."""
+        self.assertEqual(changes_from_release(None, "any", "1.0"), "")
         mock_get.assert_not_called()
 
     @kills(
@@ -714,14 +728,16 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
     @patch_get([github_release_json("1.1", body="Changelog")])
     def test_the_body_is_returned_as_markdown(self):
         """Test that the body of the matching release is returned, as the Markdown a release body is written in."""
-        changes = changes_from_release("owner", "repo with changes", "any", "1.1")
+        changes = changes_from_release(GitHubRepository("owner", "repo with changes"), "any", "1.1")
         self.assertEqual(changes, "Changelog")
         self.assertTrue(is_markdown(changes))
 
     @patch_get([github_release_json("9.9")])
     def test_no_matching_release(self):
         """Test that the changes are empty when no release matches the version."""
-        self.assertEqual(changes_from_release("owner", "repo without matching release", "any", "1.1"), "")
+        self.assertEqual(
+            changes_from_release(GitHubRepository("owner", "repo without matching release"), "any", "1.1"), ""
+        )
 
     @kills(
         Mutation(
@@ -735,13 +751,15 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
     @patch_get([{"tag_name": "1.1", "draft": False, "prerelease": False, "published_at": None}])
     def test_release_without_body(self):
         """Test that the changes are empty when the release GitHub answers carries no body."""
-        self.assertEqual(changes_from_release("owner", "repo without a release body", "any", "1.1"), "")
+        self.assertEqual(
+            changes_from_release(GitHubRepository("owner", "repo without a release body"), "any", "1.1"), ""
+        )
 
 
 class ChangesFromChangelogFileTest(LoggingTestCase):
     """Unit tests for getting the changelog from a changelog file in a repository."""
 
-    MONOREPO = "org/monorepo"
+    MONOREPO = GitHubRepository("org", "monorepo")
     CHANGELOG = markdown_changelog("1.1")
     CHANGES = markdown_changes("1.1")
 
@@ -761,7 +779,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         Mutation(
             github.changes_from_changelog_file,
             "if directory:",
-            "_list_contents(owner, repository)\n    if directory:",
+            "_list_contents(repository)\n    if directory:",
             "a package whose own directory holds its changelog costs a listing of the repository's root as well",
         ),
     )
@@ -769,7 +787,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
     def test_changelog_file_in_a_directory(self, mock_get: Mock):
         """Test that a changelog file in the package's directory supplies the changes, leaving the root unread."""
         self.create_responses(mock_get, {"packages/package": ("CHANGELOG.md",), "": ("README.md",)})
-        changes = changes_from_changelog_file("org", "monorepo", "1.1", "packages/package")
+        changes = changes_from_changelog_file(self.MONOREPO, "1.1", "packages/package")
         self.assertEqual(changes, self.CHANGES)
         self.assertNotIn(contents_url(self.MONOREPO), requested_urls(mock_get))
 
@@ -777,7 +795,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
     def test_directory_without_a_changelog_file(self, mock_get: Mock):
         """Test that a directory naming no changelog file leaves the repository's root to supply the changes."""
         self.create_responses(mock_get, {"packages/package": ("README.md",), "": ("CHANGELOG.md",)})
-        changes = changes_from_changelog_file("org", "monorepo", "1.1", "packages/package")
+        changes = changes_from_changelog_file(self.MONOREPO, "1.1", "packages/package")
         self.assertEqual(changes, self.CHANGES)
         self.assertIn(contents_url(self.MONOREPO, "packages/package"), requested_urls(mock_get))
 
@@ -799,7 +817,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
                     file_url(name): mock_response(text=self.CHANGELOG),
                 }
                 respond_per_url(mock_get, responses)
-                changes = changes_from_changelog_file("org", "monorepo", "1.1")
+                changes = changes_from_changelog_file(self.MONOREPO, "1.1")
                 self.assertEqual(changes, self.CHANGES)
                 self.assertEqual(is_markdown(changes), markdown)
 
@@ -815,15 +833,15 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
     def test_changelog_file_is_fetched_once(self, mock_get: Mock):
         """Test that two packages falling back to one changelog file cost a single fetch of it between them."""
         self.create_responses(mock_get, {"packages/one": (), "packages/two": (), "": ("CHANGELOG.md",)})
-        self.assertEqual(changes_from_changelog_file("org", "monorepo", "1.1", "packages/one"), self.CHANGES)
-        self.assertEqual(changes_from_changelog_file("org", "monorepo", "1.0", "packages/two"), "")
+        self.assertEqual(changes_from_changelog_file(self.MONOREPO, "1.1", "packages/one"), self.CHANGES)
+        self.assertEqual(changes_from_changelog_file(self.MONOREPO, "1.0", "packages/two"), "")
         self.assertEqual(requested_urls(mock_get).count(file_url("CHANGELOG.md")), 1)
 
     @kills(
         Mutation(
             github._list_contents,
-            'return _list(owner, repository, f"contents/{directory}", require_ok=not directory)',
-            'return _list(owner, repository, f"contents/{directory}")',
+            'return _list(repository, f"contents/{directory}", require_ok=not directory)',
+            'return _list(repository, f"contents/{directory}")',
             "a package whose registry metadata names a directory that moved warns on every run",
         ),
     )
@@ -839,7 +857,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
                 file_url("CHANGELOG.md"): mock_response(text=self.CHANGELOG),
             },
         )
-        changes = changes_from_changelog_file("org", "monorepo", "1.1", "packages/gone")
+        changes = changes_from_changelog_file(self.MONOREPO, "1.1", "packages/gone")
         self.assertEqual(changes, self.CHANGES)
         self.assert_no_warnings_logged()
 
@@ -864,7 +882,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
                 file_url("CHANGELOG.md"): mock_response(text=self.CHANGELOG),
             },
         )
-        changes = changes_from_changelog_file("org", "monorepo", "1.1", "packages/package")
+        changes = changes_from_changelog_file(self.MONOREPO, "1.1", "packages/package")
         self.assertEqual(changes, self.CHANGES)
 
 
@@ -874,7 +892,7 @@ class GitHubHeadersTest(CacheClearingTestCase):
     def assert_request_headers(self, mock_get: Mock, expected: dict[str, str]) -> None:
         """Assert that a GitHub request carries the expected headers."""
         mock_get.return_value = mock_response({})
-        archival("owner", "repository", check_archival=True)
+        archival(GitHubRepository("owner", "repository"), check_archival=True)
         self.assertEqual(mock_get.call_args.kwargs["headers"], expected)
 
     @kills(

@@ -944,6 +944,22 @@ def maven_central_version_row(version: str, published: datetime) -> str:
     return maven_central_row(f"{version}/", published, "-")
 
 
+# The base URL Maven Central serves its artefacts under.
+_MAVEN_CENTRAL = "https://repo1.maven.org/maven2"
+
+
+def maven_central_listing_url(artefact: str) -> str:
+    """Return the URL Maven Central serves the artefact's directory listing at."""
+    group_id, artifact_id = artefact.split(":")
+    return f"{_MAVEN_CENTRAL}/{group_id.replace('.', '/')}/{artifact_id}/"
+
+
+def maven_central_pom_url(artefact: str, version: str) -> str:
+    """Return the URL Maven Central serves the pom beside the artefact's version at."""
+    artifact_id = artefact.split(":")[1]
+    return f"{maven_central_listing_url(artefact)}{version}/{artifact_id}-{version}.pom"
+
+
 def maven_central_listing(*rows: str) -> str:
     """Return the directory listing the repository serves for an artefact, holding the given rows.
 
@@ -1012,6 +1028,10 @@ def build_element(*plugins: str, managed: str = "") -> str:
 # The artefact most Maven tests declare.
 GUAVA = "com.google.guava:guava"
 
+# The source repositories poms name: guava's own on GitHub, and one outside GitHub, where commons-lang3's lives.
+GUAVA_SCM = "scm:git:https://github.com/google/guava.git"
+GITBOX_SCM = "scm:git:https://gitbox.apache.org/repos/asf/commons-lang.git"
+
 # A plugin in Maven's default plugin group.
 SUREFIRE = "org.apache.maven.plugins:maven-surefire-plugin"
 
@@ -1019,6 +1039,11 @@ SUREFIRE = "org.apache.maven.plugins:maven-surefire-plugin"
 def guava_element(version: str | None) -> str:
     """Return the `<dependency>` element declaring guava."""
     return dependency_element("com.google.guava", "guava", version)
+
+
+def marked_at_its_version(element: str, directives: str) -> str:
+    """Return the element with a marker carrying the directives at the end of its `<version>` line."""
+    return element.replace("</version>", f"</version>  <!-- update-time: {directives} -->")
 
 
 def dependency_management_element(*dependencies: str) -> str:

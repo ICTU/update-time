@@ -6,19 +6,23 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.bound import NO_BOUND
 from update_time.formats import xml
 from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.manifests import pom_xml as pom_xml_format
+from update_time.markers.cooldown import cooldown_days
+from update_time.package_managers.maven_range import maven_range
 from update_time.primitives.command import Command
+from update_time.primitives.iterables import unique
 from update_time.sources.maven_central import versions_held_back
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterator
 
     from update_time.domain.dependency import DependencyName
     from update_time.formats.xml import XmlElement
+    from update_time.manifests.pom_xml import Declaration
     from update_time.primitives.command import Result
 
 _LOG = get_logger("pom.xml")
@@ -101,12 +105,12 @@ def update_pom_xml(pom_xml: Path) -> XmlElement | None:
     coordinates Maven resolves.
     """
     if not pom_xml_format.leaves_coordinates_unresolved(pom_xml):
-        with _versions_options(pom_xml_format.artefacts(pom_xml)) as options:
+        with _versions_options(pom_xml_format.versioned_declarations(pom_xml)) as options:
             _, effective_pom = _run_writing_effective_pom(pom_xml, options, _VERSIONS_GOALS)
             return effective_pom
     succeeded, effective_pom = _run_writing_effective_pom(pom_xml)
     if succeeded:  # A single run failing at the same point would not reach the updates either.
-        with _versions_options(pom_xml_format.artefacts(pom_xml, effective_pom)) as options:
+        with _versions_options(pom_xml_format.versioned_declarations(pom_xml, effective_pom)) as options:
             _run(pom_xml, options, _VERSIONS_GOALS)
     return effective_pom
 
@@ -147,9 +151,9 @@ def _run(pom_xml: Path, options: tuple[str, ...], goals: tuple[str, ...]) -> Res
 
 
 @contextmanager
-def _versions_options(artefacts: Iterable[DependencyName]) -> Iterator[tuple[str, ...]]:
-    """Yield the options the versions plugin's goals take, naming a rule set where the cooldown holds anything back."""
-    rules = _rules(artefacts)
+def _versions_options(declarations: list[Declaration]) -> Iterator[tuple[str, ...]]:
+    """Yield the options the versions plugin's goals take, naming a rule set where anything is held back."""
+    rules = _rules(declarations)
     if not rules:
         yield _VERSIONS_OPTIONS
         return
@@ -157,27 +161,82 @@ def _versions_options(artefacts: Iterable[DependencyName]) -> Iterator[tuple[str
         yield (*_VERSIONS_OPTIONS, f"-Dmaven.version.rules={path.as_uri()}")
 
 
-def _rules(artefacts: Iterable[DependencyName]) -> str:
-    """Return a rule per artefact the cooldown holds versions of back, or nothing where it holds none back.
+def _rules(declarations: list[Declaration]) -> str:
+    """Return a rule per artefact whose versions a marker or the cooldown holds back, or nothing where neither does.
 
-    An artefact several declarations name gets one rule, so a pom declaring it twice names its versions once. The
-    repository is not asked at all for a cooldown that holds nothing back.
+    An artefact several declarations name gets one rule, holding back what each of them does.
     """
-    cooldown_days = COOLDOWN.get()
-    if cooldown_days <= 0:
-        return ""
-    named = dict.fromkeys(artefacts)
-    held_back = ((artefact, versions_held_back(artefact, cooldown_days)) for artefact in named)
-    return "".join(_rule(artefact, versions) for artefact, versions in held_back if versions)
+    ranges_held_back_by_markers = _ranges_held_back_by_markers(declarations)
+    return "".join(
+        _artefact_rule(artefact, ranges_held_back_by_markers.get(artefact, []), days)
+        for artefact, days in _longest_cooldowns(declarations).items()
+    )
 
 
-def _rule(artefact: DependencyName, versions: tuple[str, ...]) -> str:
-    """Return the rule for the artefact, naming the versions given.
+# The `ignoreVersion` matching every version, which holds an artefact's update back whatever the repository offers.
+_EVERY_VERSION = '<ignoreVersion type="regex">.*</ignoreVersion>'
+
+
+def _artefact_rule(artefact: DependencyName, ranges_held_back_by_markers: list[str | None], days: int) -> str:
+    """Return the rule holding back what the markers and the cooldown do, or nothing where they hold nothing back.
+
+    A marker that holds every version back does not have a range. The repository is not asked about the cooldown then.
+    """
+    if None in ranges_held_back_by_markers:
+        return _rule(artefact, _EVERY_VERSION)
+    range_elements = (
+        f'<ignoreVersion type="range">{held_back_range}</ignoreVersion>'
+        for held_back_range in ranges_held_back_by_markers
+    )
+    ignored = unique((*range_elements, *_cooldown_versions(artefact, days)))
+    return _rule(artefact, *ignored) if ignored else ""
+
+
+def _ranges_held_back_by_markers(declarations: list[Declaration]) -> dict[DependencyName, list[str | None]]:
+    """Return the range each artefact's markers hold back, None for a marker holding every version back."""
+    ranges: dict[DependencyName, list[str | None]] = {}
+    for declaration in declarations:
+        if (held_back := range_held_back(declaration)) != "":
+            ranges.setdefault(declaration.dependency, []).append(held_back)
+    return ranges
+
+
+def range_held_back(declaration: Declaration) -> str | None:
+    """Return the Maven range of the versions the declaration's marker holds back, or None where it holds every one.
+
+    The range is empty where the marker does not hold any version back. Where the rule set cannot express a bound,
+    the marker holds every version back, so Maven never crosses the bound.
+    """
+    if declaration.holds_every_version_back:
+        return None
+    bound = declaration.marker.version_bound
+    return "" if bound == NO_BOUND else maven_range(bound, declaration.current_version)
+
+
+def _longest_cooldowns(declarations: list[Declaration]) -> dict[DependencyName, int]:
+    """Return the longest cooldown among each artefact's declarations, each its marker's or the run's."""
+    cooldowns: dict[DependencyName, int] = {}
+    for declaration in declarations:
+        days = cooldown_days(declaration.marker)
+        cooldowns[declaration.dependency] = max(days, cooldowns.get(declaration.dependency, days))
+    return cooldowns
+
+
+def _cooldown_versions(artefact: DependencyName, days: int) -> tuple[str, ...]:
+    """Return an `ignoreVersion` for each of the artefact's versions published inside the cooldown.
 
     An `ignoreVersion` without a `type` attribute matches a version exactly, so a version is never read as a pattern.
+    The repository is not asked at all for a cooldown that holds nothing back.
     """
+    if days <= 0:
+        return ()
+    return tuple(f"<ignoreVersion>{version}</ignoreVersion>" for version in versions_held_back(artefact, days))
+
+
+def _rule(artefact: DependencyName, *ignore_versions: str) -> str:
+    """Return the rule for the artefact, holding the given `ignoreVersion` elements."""
     group_id, artifact_id = pom_xml_format.coordinates(artefact)
-    ignored = "".join(f"        <ignoreVersion>{version}</ignoreVersion>\n" for version in versions)
+    ignored = "".join(f"        {ignore_version}\n" for ignore_version in ignore_versions)
     return (
         f'    <rule groupId="{group_id}" artifactId="{artifact_id}">\n'
         f"      <ignoreVersions>\n{ignored}      </ignoreVersions>\n"

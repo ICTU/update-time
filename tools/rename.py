@@ -61,7 +61,15 @@ def stale_mentions(name: str, files: Iterable[Path]) -> list[str]:
     same word is a parameter or a local elsewhere and means something else there. The mentions are reported rather
     than rewritten, for a reader who can tell the two apart.
     """
-    return [f"{path}:{line}" for path in files for line in _mentioned_lines(name, path.read_text())]
+    return [f"{path}:{line}" for path in files for line in _mentioned_lines(name, _prose(path))]
+
+
+def _prose(path: Path) -> str:
+    """Return the file's text, or none where git lists a file the working tree no longer holds."""
+    try:
+        return path.read_text()
+    except FileNotFoundError:
+        return ""
 
 
 def _mentioned_lines(name: str, text: str) -> list[int]:

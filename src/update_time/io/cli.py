@@ -16,6 +16,7 @@ from update_time.domain.vulnerability import (
 )
 from update_time.io.filesystem import ALWAYS_IGNORED_DIRECTORIES, inside_git_repository
 from update_time.io.log import LOG_LEVEL, LOG_LEVELS
+from update_time.primitives.iterables import unique
 
 
 def _scanned_file_types() -> str:
@@ -24,11 +25,8 @@ def _scanned_file_types() -> str:
     A file type two dependency types declare, such as the `package.json` holding both npm dependencies and the Node
     engine version, is named once.
     """
-    file_types = list(
-        dict.fromkeys(
-            file_type.name for dependency_type in DEPENDENCY_TYPES for file_type in dependency_type.file_types
-        )
-    )
+    names = (file_type.name for dependency_type in DEPENDENCY_TYPES for file_type in dependency_type.file_types)
+    file_types = unique(names)
     return f"{', '.join(file_types[:-1])}, and {file_types[-1]}"
 
 

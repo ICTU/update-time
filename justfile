@@ -114,10 +114,10 @@ progress(name, command) := start_progress() + " " + command + " " + end_progress
 measured_run := switch_mutations_off + " " + coverage + " run -m unittest --quiet"
 
 # A measured run must reach 100%: the text and HTML reports are written first, then `xml` applies the gate. A named subset is skipped rather than measured, since it reaches too little of the tree to meet the gate and its report names every file it never imports.
-coverage_command(tests) := if tests == "" { progress("test-coverage", measured_run + " && " + coverage + " report --show-missing --fail-under=0 && " + coverage + " html --quiet --fail-under=0 && " + coverage + " xml --quiet") } else { 'echo "test-coverage SKIP (a named subset is not measured)"' }
+coverage_command(tests) := if tests == "" { progress("test-coverage", measured_run + " && " + coverage + " report --show-missing --fail-under=0 && " + coverage + " html --quiet --fail-under=0 && " + coverage + " xml --quiet") } else { skipped("test-coverage", "a named subset is not measured") }
 
 # The tests run again, unmeasured, against the mutations they register. A caller that switched the registered mutations off already, as `just mutate` does, leaves this pass nothing to add to the coverage pass, so it says so rather than running the whole suite twice. A named subset, which the coverage pass skips, runs here either way, labelled a plain `test` run when the registered mutations are off.
-mutations_command(tests) := if tests == "" { 'if ' + mutations_switched_off + '; then echo "test-mutations SKIP (the registered mutations are switched off)"; else ' + mutations_run(tests) + "; fi" } else { mutations_run(tests) }
+mutations_command(tests) := if tests == "" { 'if ' + mutations_switched_off + '; then ' + skipped("test-mutations", "the registered mutations are switched off") + '; else ' + mutations_run(tests) + "; fi" } else { mutations_run(tests) }
 
 # Run the tests against the mutations they register, all of them or only the ones named, or as a plain test run when a caller switched the registered mutations off.
 mutations_run(tests) := 'label=test-mutations; if ' + mutations_switched_off + '; then label=test; fi; ' + progress('"$label"', python_m + " unittest --quiet " + tests)
@@ -153,6 +153,7 @@ mutate-help:
     @echo "    @@"
     @echo "    a broken version of it"
     @echo "    EOF"
+    @echo "\nThe snippet's first line drops its leading indentation; later lines keep theirs as in the file."
     @echo "\nName a definition after the file to look for the snippet inside that definition alone, so a snippet the"
     @echo "file repeats needs no padding to tell one occurrence from another:"
     @echo "\n    just mutate tests/mutation.py:Mutation._mutated <<'EOF'"
@@ -305,12 +306,20 @@ check-readability: install-nltk-data
 [parallel]
 check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-readme-is-up-to-date check-readme-structure check-readability vale yamllint zizmor
 
-# Run the tests and the checks at the same time, neither of which reads what the other writes.
+# The exit status `run_if_code_changed` gives where it skips the tests, which `just test` itself never exits with.
+tests_skipped := "3"
+
+# Run the tests where Python code changed since they last passed, and skip them where none did.
+[private]
+test-if-python-changed:
+    status=0; {{ python_m }} tools.run_if_code_changed --skipped-status {{ tests_skipped }} -- just test || status=$?; if [ "$status" -eq {{ tests_skipped }} ]; then {{ skipped("test", "no Python code changed") }}; else exit "$status"; fi
+
+# Run the checks, and the tests where Python code changed, at the same time; neither reads what the other writes.
 [parallel]
 [private]
-test-and-check: test check
+test-and-check: test-if-python-changed check
 
-# Run the tests, format the code, and run the checks: what a TDD step ends with.
+# Format the code, then run the checks, and the tests where Python code changed: what a TDD step ends with.
 verify: format test-and-check
 
 # === Fix issues ===
@@ -429,6 +438,9 @@ when_color(yes, no) := f'$([ "$_color" = always ] && echo {{ yes }} || echo {{ n
 # Prefix and suffix that wrap a command (such as a check): `{{ start_capture() }} <cmd> {{ end_capture(name) }}` captures stdout+stderr, prints `<recipe-name> PASS` or `FAIL`, and replays the captured output on failure. Neither token contains the other, so a run's outcome cannot be misread by matching on a substring. The word is coloured only on a terminal, so a run whose output is piped or captured is plain throughout and a reader of it needs no escape codes stripped.
 start_capture() := f'_color=auto; _green=; _red=; _normal=; [ -t 1 ] && { _color=always; _green="{{ GREEN }}"; _red="{{ RED }}"; _normal="{{ NORMAL }}"; export FORCE_COLOR=1; }; output=$({'
 end_capture(name) := f'; } 2>&1) || { status=$?; printf "%s ${_red}FAIL${_normal}\n%s\n" {{ name }} "$output"; exit "$status"; }; printf "%s ${_green}PASS${_normal}\n" {{ name }}'
+
+# A line saying the step was skipped, and why. The word is coloured only on a terminal, as PASS and FAIL are.
+skipped(name, reason) := f'if [ -t 1 ]; then _yellow="{{ YELLOW }}"; _normal="{{ NORMAL }}"; else _yellow=; _normal=; fi; printf "%s ${_yellow}SKIP${_normal} (%s)\n" {{ name }} "{{ reason }}"'
 
 # Like start_capture/end_capture, but for slow commands (e.g. tests): run them in the background and animate a spinner while they run. The spinner only shows on a terminal, and leaves the cursor at the start of its line, so a PASS line printed beside it overwrites it instead of being prefixed by it. `verify` prints such lines, running the tests and the checks at the same time.
 start_progress() := f'if [ -t 1 ]; then spin=1; _green="{{ GREEN }}"; _red="{{ RED }}"; _normal="{{ NORMAL }}"; else spin=; _green=; _red=; _normal=; fi; tmp=$(mktemp); trap "rm -f $tmp" EXIT; { '

@@ -940,8 +940,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @kills(
         Mutation(
             sources_github.TaggedVersion.publication,
-            "return DeferredLookup(partial(commit_date, self.dependency, self.commit_ref))",
-            "return commit_date(self.dependency, self.commit_ref)",
+            "return DeferredLookup(partial(_commit_date, self.repository, self.commit_ref))",
+            "return _commit_date(self.repository, self.commit_ref)",
             "the version tag a reference keeps costs a commit request that the cooldown never reads",
         )
     )
@@ -1501,8 +1501,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @kills(
         Mutation(
             sources_github._highest_version_at,
-            "tagged = _tagged_versions(owner, repository) or ()",
-            "tagged = _tagged_versions(owner, repository)",
+            "tagged = _tagged_versions(repository) or ()",
+            "tagged = _tagged_versions(repository)",
             "a branch whose repository's tags cannot be listed ends the run rather than being pinned as the branch",
             raises="TypeError: 'NoneType' object is not iterable",
         )
@@ -1517,8 +1517,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @kills(
         Mutation(
             sources_github.version_at_tag,
-            "_tagged_versions(owner, repository) or ()",
-            "_tagged_versions(owner, repository)",
+            "_tagged_versions(repository) or ()",
+            "_tagged_versions(repository)",
             "a version tag whose repository's tags cannot be listed ends the run rather than being left as it is",
             raises="TypeError: 'NoneType' object is not iterable",
         )

@@ -108,8 +108,8 @@ class CommandLineInterfaceTest(unittest.TestCase):
     @kills(
         Mutation(
             cli_module._scanned_file_types,
-            "dict.fromkeys(\n",
-            "(\n",
+            "unique(names)",
+            "list(names)",
             "the help names a file type twice when two dependency types declare it",
         )
     )
@@ -124,8 +124,8 @@ class CommandLineInterfaceTest(unittest.TestCase):
     @kills(
         Mutation(
             cli_module._scanned_file_types,
-            "file_types = list(\n",
-            "file_types = sorted(\n",
+            "unique(names)",
+            "sorted(set(names))",
             "the help names the file types in an order of its own rather than the one they are declared in",
         )
     )

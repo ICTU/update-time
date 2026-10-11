@@ -11,6 +11,7 @@ from packaging.version import Version
 from update_time.domain.dependency import DependencyVersion, is_valid
 from update_time.domain.reference import DriftedPin, Reference, RefKind, hash_drifted
 from update_time.io.log import Logger
+from update_time.markers.cooldown import cooldown_days
 from update_time.markers.directive import Reason
 from update_time.markers.floating import floating_pin_cause
 from update_time.markers.marker import Scope
@@ -20,7 +21,6 @@ from update_time.primitives.text import replace_match
 from update_time.references.drift import adopts_drift
 from update_time.references.match import matched_dependency
 from update_time.references.resolve import (
-    cooldown_days,
     floating_pin_redundancy,
     latest_version,
     report_directives_that_set_nothing,

@@ -76,6 +76,21 @@ class StaleMentionsTest(unittest.TestCase):
         """Test that each file is searched, not only the first."""
         self.assertEqual(len(self.mentions("old", "`old`\n", "nothing\n", "line\n`old`\n")), 2)
 
+    @kills(
+        Mutation(
+            rename_module._prose,
+            "except FileNotFoundError:",
+            "except ValueError:",
+            "a file removed but not yet committed ends a rename that landed with a traceback",
+            raises="FileNotFoundError: [Errno 2] No such file or directory: 'gone.py'",
+        )
+    )
+    def test_a_file_the_working_tree_no_longer_holds(self):
+        """Test that a file git lists but the working tree no longer holds is skipped, and the others searched."""
+        gone = mock_path("", name="gone.py")
+        gone.read_text.side_effect = FileNotFoundError(2, "No such file or directory", "gone.py")
+        self.assertEqual(stale_mentions("old", [gone, mock_path("`old`\n")]), ["f.py:1"])
+
 
 class ProseFilesTest(unittest.TestCase):
     """Unit tests for the files searched for prose mentioning a name."""

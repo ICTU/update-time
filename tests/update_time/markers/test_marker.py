@@ -451,6 +451,15 @@ class ParseMarkerRawTest(unittest.TestCase):
         self.assertEqual(parse_marker(_line("image: python:3.12")).raw, "")
 
 
+class ParseMarkerCommentTest(unittest.TestCase):
+    """Unit tests for the comments a marker can be written in."""
+
+    def test_an_xml_comment_carries_a_marker(self):
+        """Test that a marker in an XML comment is read."""
+        marker = parse_marker(_line("<version>6.1.0</version>  <!-- update-time: ignore[stale] -->"))
+        self.assertEqual(marker, Marker(ignored_scopes=Scope.STALE))
+
+
 class ParseDirectivesTest(unittest.TestCase):
     """Unit tests for reading a directive list that carries no `# update-time:` prefix."""
 

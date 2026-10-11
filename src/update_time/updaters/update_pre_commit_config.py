@@ -11,7 +11,7 @@ from update_time.primitives.digest import COMMIT_SHA
 from update_time.references.file import rewrite_file
 from update_time.references.github import PinUpdater
 from update_time.references.rewrite import apply_marker
-from update_time.sources.github import github_owner_and_repository
+from update_time.sources.github import github_repository
 
 if TYPE_CHECKING:
     from update_time.domain.line import Line
@@ -33,17 +33,6 @@ _REV_RE = re.compile(
 )
 
 
-def _dependency_from_repo(repo: str) -> str:
-    """Return the GitHub `owner/repository` for a `repo:` value, or an empty string when it isn't on GitHub.
-
-    Covers the `local` and `meta` sentinels and non-GitHub hosts alike: `github_owner_and_repository` returns two
-    empty strings for anything it can't parse as a GitHub URL, so those all collapse to an empty dependency, which
-    tells the caller to leave the following `rev:` lines untouched.
-    """
-    owner, repository = github_owner_and_repository(repo.strip("'\""))
-    return f"{owner}/{repository}" if owner and repository else ""
-
-
 def _spell_rev(_reference: Reference, sha: str, comment: str) -> str:
     """Return the `rev:` pinned to the commit SHA, with the tag or branch, if any, in a `# frozen:` comment."""
     return f"rev: {sha}" + (f"  # frozen: {comment}" if comment else "")
@@ -60,12 +49,13 @@ def _updated_lines(lines: list[Line]) -> list[str]:
     A `rev:` whose repository is not on GitHub carries no dependency, so it is left untouched.
     """
     result = []
-    dependency = ""  # The GitHub owner/repository of the `repo:` in scope, or "" for a local/meta/non-GitHub repo.
+    repository = None  # The repository of the `repo:` in scope, None for `local`, `meta`, and a host other than GitHub
     for line in lines:
         if repo_match := _REPO_RE.search(line.text):
-            dependency = _dependency_from_repo(repo_match.group("repo"))
+            repository = github_repository(repo_match.group("repo").strip("'\""))
             result.append(line.text)
-        elif (rev_match := _REV_RE.search(line.text)) and dependency:
+        elif (rev_match := _REV_RE.search(line.text)) and repository is not None:
+            dependency = str(repository)
             update_line = partial(_REV.update_line, dependency=dependency)
             result.append(apply_marker(line, rev_match, update_line, _LOG, dependency))
         else:

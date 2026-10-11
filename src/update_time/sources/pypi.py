@@ -38,9 +38,10 @@ from update_time.io.log import get_logger
 from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import newest_timestamp, parse_timestamp
 from update_time.sources.github import (
+    GitHubRepository,
     changes_from_changelog_file,
     changes_from_release,
-    github_owner_and_repository,
+    github_repository,
     github_to_raw,
 )
 
@@ -367,24 +368,21 @@ def _changelog_from_github_url_in_description(description: str, package: str, ve
     repository can hold a release tagged with the version asked for, whose notes describe that project's release.
     """
     for match in _GITHUB_URL_RE.finditer(description):
-        if _names_the_package(match.group(), package):
-            return _changelog_from_github_releases(match.group(), package, version)
+        if (repository := github_repository(match.group())) is not None and _names_the_package(repository, package):
+            return changes_from_release(repository, package, version)
     return NO_CHANGES
 
 
-def _names_the_package(url: str, package: str) -> bool:
-    """Return whether the URL points at a repository carrying the package's name."""
-    _owner, repository = github_owner_and_repository(url)
-    return normalized_python_name(repository) == normalized_python_name(package)
+def _names_the_package(repository: GitHubRepository, package: str) -> bool:
+    """Return whether the repository carries the package's name."""
+    return normalized_python_name(repository.name) == normalized_python_name(package)
 
 
 def _changelog_from_github_releases(url: str, package: str, version: str) -> Changes:
     """Get the changelog from the GitHub releases."""
-    owner, repository = github_owner_and_repository(url)
-    return changes_from_release(owner, repository, package, version)
+    return changes_from_release(github_repository(url), package, version)
 
 
 def _changelog_from_repository_root(url: str, version: str) -> Changes:
     """Get the changelog from a changelog file in the root of the repository."""
-    owner, repository = github_owner_and_repository(url)
-    return changes_from_changelog_file(owner, repository, version)
+    return changes_from_changelog_file(github_repository(url), version)

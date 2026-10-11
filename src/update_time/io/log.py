@@ -735,6 +735,17 @@ class Logger:
             **self._reference_fields(reference, bound=spell(bound), version=current_version, redundancy=redundancy),
         )
 
+    _MESSAGE_HOLDING_BACK_RANGE = LogMessage(
+        DEBUG, "Holding back the versions %(range)s of %(dependency)s in %(location)s (update-time: %(directive)s)"
+    )
+
+    def holding_back_range(self, reference: Reference, maven_range: str, directive: str) -> None:
+        """Log the range of versions a bound holds the reference back from, as the package manager reads it."""
+        self._log(
+            self._MESSAGE_HOLDING_BACK_RANGE,
+            **self._reference_fields(reference, range=maven_range, directive=directive),
+        )
+
     # --- File scanning and selection ---
 
     _MESSAGE_CHECKING_PATH = LogMessage(DEBUG, "Checking if there are updates for %(location)s")
@@ -760,13 +771,8 @@ class Logger:
     _MESSAGE_IGNORED = LogMessage(DEBUG, _ignoring("updates"))
 
     def ignored(self, dependency: str, marker: Marker, location: Location) -> None:
-        """Log that a reference's update was held back, naming the `ignore` directive that held it back.
-
-        A bare `ignore` names no scope, so it is echoed as the user wrote it rather than spelled out as
-        `ignore[update]`, a directive they never typed.
-        """
-        directive = marker.written_directive(Scope.UPDATE)
-        self._log_ignored(self._MESSAGE_IGNORED, dependency, directive, location)
+        """Log that a reference's update was held back, naming the directive that held it back."""
+        self._log_ignored(self._MESSAGE_IGNORED, dependency, marker.update_directive, location)
 
     _MESSAGE_EXCLUDING_PATH = LogMessage(DEBUG, "Excluding %(path)s from the scan (--exclude-path)")
 
@@ -967,3 +973,19 @@ def get_logger(name: str) -> Logger:
     logger = Logger(name)
     _LOGGERS.append(logger)
     return logger
+
+
+def report_marker(
+    log: Logger, dependency: str, marker: Marker, location: Location, *, holds_the_update_back: bool
+) -> Marker:
+    """Report a reference's marker to the log, and return the marker to act on.
+
+    A marker with an unreadable item comes back frozen, since the item may have been meant to hold the update back.
+    """
+    if marker.invalid_item is not None:
+        log.invalid_bracket_item(dependency, marker.invalid_item, location)
+        return marker.frozen
+    log.recognised_marker(dependency, marker, location)
+    if holds_the_update_back:
+        log.ignored(dependency, marker, location)
+    return marker

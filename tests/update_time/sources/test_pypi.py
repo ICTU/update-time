@@ -405,15 +405,15 @@ class GetChangesTest(LoggingTestCase):
 
     _NAMES_COMPARED_AS_SPELLED = Mutation(
         pypi._names_the_package,
-        "return normalized_python_name(repository) == normalized_python_name(package)",
-        "return repository == package",
+        "normalized_python_name(repository.name) == normalized_python_name(package)",
+        "repository.name == package",
         "a package whose repository spells its name with another separator, or in another case, reports no changes",
     )
 
     _NAME_MATCHED_AS_A_SUBSTRING = Mutation(
         pypi._names_the_package,
-        "return normalized_python_name(repository) == normalized_python_name(package)",
-        "return normalized_python_name(package) in normalized_python_name(repository)",
+        "normalized_python_name(repository.name) == normalized_python_name(package)",
+        "normalized_python_name(package) in normalized_python_name(repository.name)",
         "a repository whose name merely contains the package's is read as the package's own",
     )
 
@@ -438,8 +438,8 @@ class GetChangesTest(LoggingTestCase):
 
     _DOCUMENTATION_READ_FIRST = Mutation(
         github.changes_from_changelog_file,
-        "return _changes_from_files(root, version) or _changes_from_documentation(owner, repository, root, version)",
-        "return _changes_from_documentation(owner, repository, root, version) or _changes_from_files(root, version)",
+        "return _changes_from_files(root, version) or _changes_from_documentation(repository, root, version)",
+        "return _changes_from_documentation(repository, root, version) or _changes_from_files(root, version)",
         "a repository whose root answers costs a documentation tree listing it has no need of",
     )
 
