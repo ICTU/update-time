@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Show the full release notes of a version `X.Y.0` from a changelog that heads the release `X.Y` and names `X.Y.0` in its prose, instead of only its introduction. Closes [#407](https://github.com/ICTU/update-time/issues/407).
 
 ## 0.0.43 - 2026-10-11
 

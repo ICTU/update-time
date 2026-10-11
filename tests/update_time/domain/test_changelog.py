@@ -158,19 +158,16 @@ class VersionAnchorTest(unittest.TestCase):
                 self.assertEqual(get_version_changes_from_changelog(text, version), v1_change)
 
     _NO_SHORTER_HEADING = Mutation(
-        changelog.get_version_changes_from_changelog,
-        '    if start is None and version.endswith(".0") and version.count(".") > 1:\n'
-        '        version = version.removesuffix(".0")\n'
-        "        start = _find_version_index(all_lines, version)",
-        "",
+        changelog._find_anchor,
+        'version.endswith(".0") and version.count(".") > 1:',
+        "False:",
         "a changelog heading a release one component shorter than the version reports no changes for it",
     )
 
     _SHORTEN_ANY_VERSION = Mutation(
-        changelog.get_version_changes_from_changelog,
-        'if start is None and version.endswith(".0") and version.count(".") > 1:\n'
-        '        version = version.removesuffix(".0")',
-        'if start is None and version.count(".") > 1:\n        version = version.rsplit(".", 1)[0]',
+        changelog._find_anchor,
+        'version.endswith(".0") and version.count(".") > 1:\n        short_version = version.removesuffix(".0")',
+        'version.count(".") > 1:\n        short_version = version.rsplit(".", 1)[0]',
         "a version that is no `.0` release reports the changes of the release one component shorter",
     )
 
@@ -183,9 +180,9 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.11.2"), "")
 
     _SHORTER_VERSION_NOT_REBOUND = Mutation(
-        changelog.get_version_changes_from_changelog,
-        'version = version.removesuffix(".0")\n        start = _find_version_index(all_lines, version)',
-        'start = _find_version_index(all_lines, version.removesuffix(".0"))',
+        changelog._find_anchor,
+        "return short_version, short_start",
+        "return version, short_start",
         "a changelog without heading markup naming a shorter version raises instead of reporting its changes",
         raises="ValueError: substring not found",
     )
@@ -198,9 +195,9 @@ class VersionAnchorTest(unittest.TestCase):
         self.assertEqual(get_version_changes_from_changelog(text, "1.11.0"), v1_change)
 
     _SHORTER_HEADING_TRIED_FIRST = Mutation(
-        changelog.get_version_changes_from_changelog,
-        "if start is None and",
-        'if _find_version_index(all_lines, version.removesuffix(".0")) is not None and',
+        changelog._find_anchor,
+        "start is not None and _heading_level(lines, start):",
+        "False:",
         "a changelog heading both a version and the release one component shorter reports the shorter one's changes",
     )
 
@@ -211,10 +208,41 @@ class VersionAnchorTest(unittest.TestCase):
         text = f"# Changelog\n\n## 1.11\n\nThe 1.11 series.\n\n{v1_change}\n\n## 1.10\n\n- Fixed ...\n"
         self.assertEqual(get_version_changes_from_changelog(text, "1.11.0"), v1_change)
 
+    _PROSE_WINS_OVER_A_SHORTER_HEADING = Mutation(
+        changelog._find_anchor,
+        " and _heading_level(lines, start):",
+        ":",
+        "a changelog heading a release one component shorter than the version, and naming the version in its prose, "
+        "reports the prose line alone",
+    )
+
+    @kills(_PROSE_WINS_OVER_A_SHORTER_HEADING)
+    def test_shorter_heading_anchors_parsing_rather_than_prose_naming_the_dot_zero_version(self):
+        """Test that a heading naming one component fewer anchors parsing rather than prose naming the version."""
+        v1_change = "## Example 1.11\n\nWe released example 1.11.0.\n\n### New feature\n\n- Added ..."
+        text = f"# Changelog\n\n{v1_change}\n\n## Example 1.10\n\n- Fixed ...\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.11.0"), v1_change)
+
+    _SHORTER_PROSE_WINS = Mutation(
+        changelog._find_anchor,
+        " and (start is None or _heading_level(lines, short_start)):",
+        ":",
+        "a changelog without heading markup reports a `.0` version from wherever the version one component shorter "
+        "is first named",
+    )
+
+    @kills(_SHORTER_PROSE_WINS)
+    def test_dot_zero_version_line_anchors_parsing_rather_than_prose_naming_a_shorter_version(self):
+        """Test that without headings, a `.0` version's line anchors parsing, not a line naming a component fewer."""
+        v1_change = "Version 1.11.0 released 2026-04-22\n\n- Fixed ...\n- Changed ..."
+        v2_change = "Version 1.12.0 released 2026-05-01\n\n- Dropped support for 1.11."
+        text = f"Changes\n\n{v2_change}\n\n{v1_change}\n\nVersion 1.10.0 released 2026-03-08\n\n- Fixed ...\n"
+        self.assertEqual(get_version_changes_from_changelog(text, "1.11.0"), v1_change)
+
     _SHORTEN_TO_A_BARE_COMPONENT = Mutation(
-        changelog.get_version_changes_from_changelog,
-        'if start is None and version.endswith(".0") and version.count(".") > 1:',
-        'if start is None and version.endswith(".0"):',
+        changelog._find_anchor,
+        'version.endswith(".0") and version.count(".") > 1:',
+        'version.endswith(".0"):',
         "a changelog naming a two-component version nowhere reports the entry a stray digit sits in",
     )
 
