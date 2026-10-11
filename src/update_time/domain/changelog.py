@@ -105,11 +105,10 @@ def _fenced_indexes(lines: list[str]) -> frozenset[int]:
 
 
 def _find_version_index(lines: list[str], version: str) -> int | None:
-    """Return the index of the line that introduces the version's changes, or None when absent.
+    """Return the index of the heading naming the version, or else of the first line naming it, or None when absent.
 
     A heading naming the version wins over any other line that names it, so that a prose mention inside another
-    version's section (for example "shipped in 0.10.0") doesn't anchor parsing in the wrong place. Where no heading
-    names the version, the first line that names it anchors parsing.
+    version's section (for example "shipped in 0.10.0") doesn't anchor parsing in the wrong place.
     """
     fallback = None
     fenced = _fenced_indexes(lines)
@@ -179,13 +178,28 @@ def _next_version_index(lines: list[str], start: int, version: str) -> int | Non
     return None
 
 
+def _find_anchor(lines: list[str], version: str) -> tuple[str, int | None]:
+    """Return the version as the changelog names it, and the index of the line introducing its changes, if any.
+
+    A changelog can head the changes of a `.0` version one component shorter, `1.11` for `1.11.0`. So a heading
+    naming the shorter version wins over prose naming the version itself. Where no line names the version itself,
+    any line naming the shorter version anchors parsing.
+    """
+    start = _find_version_index(lines, version)
+    if start is not None and _heading_level(lines, start):
+        return version, start
+    if version.endswith(".0") and version.count(".") > 1:
+        short_version = version.removesuffix(".0")
+        short_start = _find_version_index(lines, short_version)
+        if short_start is not None and (start is None or _heading_level(lines, short_start)):
+            return short_version, short_start
+    return version, start
+
+
 def get_version_changes_from_changelog(text: str, version: str) -> str:
     """Return the changes for the version from the changelog, or nothing when the changelog does not name it."""
     all_lines = text.splitlines()
-    start = _find_version_index(all_lines, version)
-    if start is None and version.endswith(".0") and version.count(".") > 1:
-        version = version.removesuffix(".0")
-        start = _find_version_index(all_lines, version)
+    version, start = _find_anchor(all_lines, version)
     if start is None:
         return ""
     end = _next_version_index(all_lines, start, version)
