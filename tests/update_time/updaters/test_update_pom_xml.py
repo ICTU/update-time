@@ -20,11 +20,13 @@ from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.references import delegated as delegated_module
 from update_time.sources import maven_central as maven_central_module
+from update_time.sources.maven_central import lacks_a_github_repository as maven_central_lacks_a_github_repository
 from update_time.sources.maven_central import project as maven_central_project
+from update_time.sources.maven_central import serves as maven_central_serves
 from update_time.updaters import update_pom_xml as update_pom_xml_module
 from update_time.updaters.update_pom_xml import update_pom_xmls
 
-from tests.helpers import mock_path, patch_environ, patch_pathlib_path
+from tests.helpers import mock_path, patch_environ, patch_get, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE
 from tests.update_time.helpers import (
@@ -56,6 +58,7 @@ from tests.update_time.helpers import (
     properties_element,
     staleness_disabled,
 )
+from tests.update_time.sources.helpers import requested_urls
 from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
 from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulnerabilities, osv
 
@@ -73,6 +76,10 @@ _EFFECTIVE_POM = "/effective-pom.xml"
 
 # The listing the repository serves where a test lets it answer for itself: guava's version, dated yesterday.
 _LISTING = maven_central_listing(maven_central_version_row("33.0.0-jre", days_ago(1)))
+
+# The poms Maven Central serves beside guava's version where a test has it name a repository on GitHub, or outside it.
+_POM_ON_GITHUB = maven_central_pom("scm:git:https://github.com/google/guava.git")
+_POM_OUTSIDE_GITHUB = maven_central_pom("scm:git:https://gitbox.apache.org/repos/asf/commons-lang.git")
 
 
 def _stale(version: str, age: int) -> Project:
@@ -243,6 +250,8 @@ _CHILDS_EFFECTIVE_POM = effective_pom_declaring(
 
 @no_vulnerabilities
 @patch.object(maven_central_module, "project", Mock(return_value=Project()))
+@patch.object(maven_central_module, "serves", Mock(return_value=True))
+@patch.object(maven_central_module, "lacks_a_github_repository", Mock(return_value=False))
 @patch.object(maven_central_module, "get_changes", Mock(return_value=NO_CHANGES))
 @patch.object(maven_module, "versions_held_back", Mock(return_value=()))
 @patch_pathlib_path("rglob", cwd=Path("/"), exists=False)
@@ -362,6 +371,20 @@ class UpdatePomXmlTest(LoggingTestCase):
 
         with patch.object(maven_module, "_rule_set_file", rule_set_file):
             yield written
+
+    @contextlib.contextmanager
+    def maven_central_answering(self, pom: str, *, archived: bool = False) -> Iterator[Mock]:
+        """Let Maven Central answer for itself, serving guava's listing and the pom, and yield the mock requests.get.
+
+        GitHub declares the repository the pom names archived where `archived` says so.
+        """
+        with (
+            patch.object(maven_central_module, "project", maven_central_project),
+            patch.object(maven_central_module, "serves", maven_central_serves),
+            patch.object(maven_central_module, "lacks_a_github_repository", maven_central_lacks_a_github_repository),
+            patch_maven_central(_LISTING, pom, archived=archived) as mock_get,
+        ):
+            yield mock_get
 
     @contextlib.contextmanager
     def hold_back(
@@ -506,8 +529,16 @@ class UpdatePomXmlTest(LoggingTestCase):
         self.assert_ignored_logged(GUAVA, Location(pom, 6), "ignore[update]", among_others=True)
         self.assertEqual(len(self.records_of(Logger._MESSAGE_IGNORED)), 1)
 
+    @kills(
+        Mutation(
+            update_pom_xml_module._report_scopes_maven_central_lacks_the_data_for,
+            'as_written.cooldown_directive if declaration.maven_updates_the_version else ""',
+            "as_written.cooldown_directive",
+            "a `cooldown` on a version Maven does not update is reported twice, once for each reason",
+        )
+    )
     def test_a_marker_on_a_parents_property_is_redundant(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a marker steering the update of a version a parent's property gives is redundant here."""
+        """Test that a marker steering the update of a version a parent's property gives is redundant."""
         markers = {
             "ignore[update]": Marker(ignored_scopes=Scope.UPDATE),
             "allow[update>=33]": Marker(version_bound=bound(Verb.ALLOW, "update>=33")),
@@ -516,7 +547,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         for directive, marker in markers.items():
             with self.subTest(directive=directive):
                 pom = self.find_pom_versioned_by_a_parent(mock_run, mock_glob, directive)
-                update_pom_xmls()
+                with patch.object(maven_central_module, "serves", Mock(return_value=False)):
+                    update_pom_xmls()
                 self.assert_reported_as_held_elsewhere(Location(pom, 6), marker, directive)
 
     def test_an_ignored_update_beside_a_bound_on_a_parents_property_is_redundant(self, mock_run: Mock, mock_glob: Mock):
@@ -617,6 +649,115 @@ class UpdatePomXmlTest(LoggingTestCase):
                 self.assert_redundant_directive_logged(
                     Reason.PIN_NOT_FLOATING, GUAVA, Location(pom, 6), "allow[floating-pin]"
                 )
+
+    @kills(
+        Mutation(
+            maven_central_module._listing,
+            "absent=True",
+            "absent=False",
+            "a listing Maven Central does not serve reads as a failed request, so nothing is reported as redundant",
+        ),
+        Mutation(
+            update_pom_xml_module._report_scopes_maven_central_lacks_the_data_for,
+            "directive_for(Scope.STALE)",
+            "scope_directive(Scope.STALE)",
+            "only a bare `ignore[stale]` is reported, so a threshold on an unserved artefact is not",
+        ),
+    )
+    def test_a_scope_on_an_artefact_maven_central_does_not_serve_is_redundant(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a scope on an artefact whose listing Maven Central does not serve is reported as redundant."""
+        for directive in ("ignore[cooldown<30]", "ignore[stale]", "ignore[stale<90]", "ignore[archived]"):
+            with self.subTest(directive=directive):
+                pom = self.find_marked_pom(mock_run, mock_glob, directive)
+                with (
+                    patch.object(maven_central_module, "serves", maven_central_serves),
+                    patch.object(
+                        maven_central_module, "lacks_a_github_repository", maven_central_lacks_a_github_repository
+                    ),
+                    patch_get(ok=False, status_code=404, reason="Not Found", text=""),
+                ):
+                    update_pom_xmls()
+                self.assert_redundant_directive_logged(Reason.NOT_ON_MAVEN_CENTRAL, GUAVA, Location(pom, 6), directive)
+
+    def test_a_vulnerable_scope_on_an_artefact_maven_central_does_not_serve_is_not_redundant(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a `vulnerable` scope on an artefact Maven Central does not serve is not redundant."""
+        pom = self.find_marked_pom(mock_run, mock_glob, "ignore[stale, vulnerable]")
+        with osv(ADVISORY), patch.object(maven_central_module, "serves", Mock(return_value=False)):
+            update_pom_xmls()
+        self.assert_redundant_directive_logged(Reason.NOT_ON_MAVEN_CENTRAL, GUAVA, Location(pom, 6), "ignore[stale]")
+
+    def test_an_archived_scope_on_an_artefact_without_a_github_repository_is_redundant(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that an `archived` scope is redundant where the artefact's pom names a repository outside GitHub."""
+        pom = self.find_marked_pom(mock_run, mock_glob, "ignore[archived]")
+        with self.maven_central_answering(_POM_OUTSIDE_GITHUB):
+            update_pom_xmls()
+        self.assert_redundant_directive_logged(Reason.NO_GITHUB_REPOSITORY, GUAVA, Location(pom, 6), "ignore[archived]")
+
+    def test_an_archived_scope_on_an_artefact_with_a_github_repository_is_not_redundant(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that an `archived` scope is not redundant where the artefact's pom names a repository on GitHub."""
+        self.find_marked_pom(mock_run, mock_glob, "ignore[archived]")
+        with self.maven_central_answering(_POM_ON_GITHUB) as mock_get:
+            update_pom_xmls()
+        guava_pom = "https://repo1.maven.org/maven2/com/google/guava/guava/33.0.0-jre/guava-33.0.0-jre.pom"
+        self.assertIn(guava_pom, requested_urls(mock_get))
+        self.assert_none_logged(Logger._MESSAGE_REDUNDANT_DIRECTIVE, "redundant directive")
+
+    @kills(
+        Mutation(
+            update_pom_xml_module._report_scopes_maven_central_lacks_the_data_for,
+            "archived and archival_is_checked() and",
+            "archived and",
+            "a run that checks nothing for archival fetches poms all the same, to judge an `archived` scope",
+        )
+    )
+    @archival_check_disabled
+    def test_a_run_that_checks_nothing_for_archival_reads_no_pom_to_judge_an_archived_scope(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a run with the archival check switched off does not fetch a pom to judge an `archived` scope."""
+        self.find_marked_pom(mock_run, mock_glob, "ignore[archived]")
+        with self.maven_central_answering(_POM_OUTSIDE_GITHUB) as mock_get:
+            update_pom_xmls()
+        self.assertEqual(requested_urls(mock_get), ["https://repo1.maven.org/maven2/com/google/guava/guava/"])
+        self.assert_none_logged(Logger._MESSAGE_REDUNDANT_DIRECTIVE, "redundant directive")
+
+    @kills(
+        Mutation(
+            update_pom_xml_module._report_scopes_maven_central_lacks_the_data_for,
+            "if directives and not maven_central.serves",
+            "if not maven_central.serves",
+            "Maven Central is asked whether it serves every artefact, whatever its marker carries",
+        ),
+        Mutation(
+            update_pom_xml_module._report_scopes_maven_central_lacks_the_data_for,
+            "elif archived and archival_is_checked()",
+            "elif archival_is_checked()",
+            "Maven Central's poms are read for every artefact, whether or not its marker carries an `archived` scope",
+        ),
+    )
+    def test_an_artefact_without_a_cooldown_stale_or_archived_scope_is_not_asked_about(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that Maven Central is asked only about the artefact marked with a `cooldown`, `stale`, or `archived`."""
+        commons_io = dependency_element("commons-io", "commons-io", "2.16.1")
+        declared = pom_declaring(
+            marked_at_its_version(guava_element("33.0.0-jre"), "ignore[vulnerable]"),
+            marked_at_its_version(commons_io, "ignore[stale, archived]"),
+        )
+        self.find_pom(mock_run, mock_glob, declared)
+        with (
+            patch.object(maven_central_module, "serves", Mock(return_value=True)) as mock_serves,
+            patch.object(maven_central_module, "lacks_a_github_repository", Mock(return_value=False)) as mock_lacks,
+        ):
+            update_pom_xmls()
+        self.assertEqual(_artefacts_asked(mock_serves), ["commons-io:commons-io"])
+        self.assertEqual(_artefacts_asked(mock_lacks), ["commons-io:commons-io"])
 
     @kills(
         Mutation(
@@ -809,12 +950,21 @@ class UpdatePomXmlTest(LoggingTestCase):
                 children = [Location(child, 5)] if child_warned_about else []
                 self.assert_stale_dependency_logged(GUAVA, "33.0.0-jre", *children, Location(parent_pom, 10))
 
+    @kills(
+        Mutation(
+            update_pom_xml_module._update_pom_xml,
+            "_report_scopes_maven_central_lacks_the_data_for(declared)",
+            "_report_scopes_maven_central_lacks_the_data_for(resolvable)",
+            "a scope checked at the managing declaration is reported twice, once for each reason",
+        )
+    )
     def test_a_check_scope_on_a_version_a_scanned_pom_manages_is_redundant(self, mock_run: Mock, mock_glob: Mock):
         """Test that a scope steering a check of a child leaving its version to a scanned parent is redundant."""
         for directive in ("ignore[stale<90]", "ignore[archived]", "ignore[vulnerable<high]"):
             with self.subTest(directive=directive):
                 child_pom = self.find_child_leaving_its_version(mock_run, mock_glob, directive)
-                update_pom_xmls()
+                with patch.object(maven_central_module, "serves", Mock(return_value=False)):
+                    update_pom_xmls()
                 self.assert_redundant_directive_logged(
                     Reason.CHECKED_AT_THE_MANAGING_DECLARATION, GUAVA, Location(child_pom, 5), directive
                 )
@@ -1024,11 +1174,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         Maven Central answers here, so the archival comes from the source itself rather than from a stub.
         """
         pom = self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("33.0.0-jre")))
-        served = maven_central_pom("scm:git:https://github.com/google/guava.git")
-        with (
-            patch.object(maven_central_module, "project", maven_central_project),
-            patch_maven_central(_LISTING, served, archived=True),
-        ):
+        with self.maven_central_answering(_POM_ON_GITHUB, archived=True):
             update_pom_xmls()
         self.assert_archived_repository_logged(GUAVA, Location(pom, 6))
 
@@ -1320,10 +1466,14 @@ class UpdatePomXmlTest(LoggingTestCase):
         # rewrote the pom, but Update-time cannot read the effective pom that would resolve the group.
         inherited = dependency_element("${spring.group}", "spring-core", "${spring.version}")
         before = pom_declaring(
-            guava_element("33.0.0-jre"), inherited, properties=properties_element({"spring.version": "6.1.0"})
+            marked_at_its_version(guava_element("33.0.0-jre"), "ignore[cooldown<30]"),
+            inherited,
+            properties=_marked_property("spring.version", "6.1.0", "ignore[cooldown<30]"),
         )
         after = pom_declaring(
-            guava_element("33.7.1-jre"), inherited, properties=properties_element({"spring.version": "7.1.0"})
+            marked_at_its_version(guava_element("33.7.1-jre"), "ignore[cooldown<30]"),
+            inherited,
+            properties=_marked_property("spring.version", "7.1.0", "ignore[cooldown<30]"),
         )
         self.find_rewritten_pom(mock_run, mock_glob, before, after, effective_pom="")
         mock_project = Mock(return_value=Project())
@@ -1332,10 +1482,12 @@ class UpdatePomXmlTest(LoggingTestCase):
             osv() as mock_post,
             patch.object(maven_central_module, "project", mock_project),
             patch.object(maven_central_module, "get_changes", Mock(return_value=NO_CHANGES)) as mock_changes,
+            patch.object(maven_central_module, "serves", Mock(return_value=True)) as mock_serves,
         ):
             update_pom_xmls()
         # Guava reaches every check, so the dependency beside it reaching none says something about its coordinates.
         self.assertEqual(asked, [GUAVA])
+        self.assertEqual(_artefacts_asked(mock_serves), [GUAVA])
         assert_osv_asked_about(mock_post, (GUAVA, "33.7.1-jre"), ecosystem="Maven")
         self.assertEqual(_artefacts_asked(mock_project), [GUAVA])
         self.assertEqual(_artefacts_asked(mock_changes), [GUAVA])

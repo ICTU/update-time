@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING
 
+from update_time.domain.archival import archival_is_checked
 from update_time.domain.dependency import NO_CHANGES, DependencyVersion
 from update_time.domain.file_type import POM_XML
 from update_time.domain.reference import Reference
@@ -63,6 +64,7 @@ def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path]) -> None:
     declared = pom_xml_format.without_versions_left_to(resolvable, scanned_poms)
     left_to_another = [declaration for declaration in resolvable if declaration not in declared]
     _report_scopes_checked_at_the_managing_declaration(left_to_another)
+    _report_scopes_maven_central_lacks_the_data_for(declared)
     _check_projects(declared)
     _warn_about_vulnerabilities(declared)
 
@@ -112,6 +114,26 @@ def _report_scopes_checked_at_the_managing_declaration(left_to_another: list[Dec
         for scope in (Scope.STALE, Scope.ARCHIVED, Scope.VULNERABLE):
             if directive := as_written.directive_for(scope):
                 _LOG.redundant_directive(declaration, directive, Reason.CHECKED_AT_THE_MANAGING_DECLARATION)
+
+
+def _report_scopes_maven_central_lacks_the_data_for(declared: list[Declaration]) -> None:
+    """Report as redundant each `cooldown`, `stale`, and `archived` scope that Maven Central lacks the data for.
+
+    A `cooldown` is reported only where Maven updates the version. Otherwise it is redundant because Maven does not
+    update the version, whoever serves the artefact.
+    A run with the archival check switched off does not read the poms, so it does not judge an `archived` scope by
+    the repository they name.
+    """
+    for declaration in declared:
+        as_written = declaration.marker.as_written
+        cooldown = as_written.cooldown_directive if declaration.maven_updates_the_version else ""
+        stale, archived = as_written.directive_for(Scope.STALE), as_written.directive_for(Scope.ARCHIVED)
+        directives = list(filter(None, (cooldown, stale, archived)))
+        if directives and not maven_central.serves(declaration.dependency):
+            for directive in directives:
+                _LOG.redundant_directive(declaration, directive, Reason.NOT_ON_MAVEN_CENTRAL)
+        elif archived and archival_is_checked() and maven_central.lacks_a_github_repository(declaration.dependency):
+            _LOG.redundant_directive(declaration, archived, Reason.NO_GITHUB_REPOSITORY)
 
 
 def _check_projects(declared: list[Declaration]) -> None:

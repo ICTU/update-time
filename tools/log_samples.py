@@ -106,6 +106,14 @@ def _redundant_directives(
     log.redundant_directive(reference("python", dockerfile), "ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL)
     redundant_archived_scope = capture.take()
 
+    commons_lang = reference("org.apache.commons:commons-lang3", Location(Path("pom.xml"), 12))
+    log.redundant_directive(commons_lang, "ignore[archived]", Reason.NO_GITHUB_REPOSITORY)
+    redundant_archived_without_a_github_repository = capture.take()
+
+    internal_lib = reference("nl.example:internal-lib", Location(Path("pom.xml"), 12))
+    log.redundant_directive(internal_lib, "ignore[cooldown<30]", Reason.NOT_ON_MAVEN_CENTRAL)
+    redundant_unserved_maven_artefact = capture.take()
+
     log.redundant_directive(
         reference("humanize", requirements), "ignore[vulnerable]", Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY
     )
@@ -145,6 +153,8 @@ def _redundant_directives(
         "@@REDUNDANT_YANK_SCOPE_WARNING@@": redundant_yank_scope,
         "@@REDUNDANT_YANK_WITHOUT_A_VERSION_WARNING@@": redundant_yank_without_a_version,
         "@@REDUNDANT_ARCHIVED_SCOPE_WARNING@@": redundant_archived_scope,
+        "@@REDUNDANT_ARCHIVED_WITHOUT_A_GITHUB_REPOSITORY_WARNING@@": redundant_archived_without_a_github_repository,
+        "@@REDUNDANT_UNSERVED_MAVEN_ARTEFACT_WARNING@@": redundant_unserved_maven_artefact,
         "@@REDUNDANT_VULNERABLE_WITHOUT_A_VERSION_WARNINGS@@": redundant_vulnerable_without_a_version,
         "@@REDUNDANT_SCOPE_ON_A_MANAGED_VERSION_WARNING@@": redundant_scope_on_a_managed_version,
         "@@REDUNDANT_COOLDOWN_ITEM_WARNING@@": redundant_cooldown_item,

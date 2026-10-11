@@ -166,8 +166,8 @@ class ProjectTest(LoggingTestCase):
     @kills(
         Mutation(
             maven_central._pom_repository,
-            "_parent_pom(pom))",
-            "_parent_pom(_parent_pom(pom) or pom))",
+            "parent_pom = _parent_pom(pom)\n",
+            "parent_pom = _parent_pom(_parent_pom(pom).value or pom)\n",
             "an artefact's grandparent pom is read too, which may name a generic parent project's repository",
             raises=f"KeyError: '{_guava_pom_url('guava-grandparent')}'",
         )
@@ -214,7 +214,7 @@ class ProjectTest(LoggingTestCase):
     @kills(
         Mutation(
             maven_central._parent_pom,
-            "    if pom_xml_format.scm_urls(pom):\n        return None\n",
+            "    if pom_xml_format.scm_urls(pom):\n        return LookedUp(None, absent=True)\n",
             "",
             "an artefact whose pom names its repository on another host is given its generic parent's repository",
         )
@@ -294,6 +294,42 @@ class ProjectTest(LoggingTestCase):
         with patch_maven_central(_DATED_LISTING, maven_central_pom(_GUAVA_SCM), archived=True) as mock_get:
             archival = project(GUAVA, check_archival=False).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING)
+
+
+class LacksAGithubRepositoryTest(LoggingTestCase):
+    """Unit tests for telling whether an artefact's poms name a repository on GitHub."""
+
+    @kills(
+        Mutation(
+            maven_central._pom_repository,
+            "if pom is None:\n        return LookedUp(None)",
+            "if pom is None:\n        return LookedUp(None, absent=True)",
+            "a pom that fails to fetch reads as lacking a repository, so its `archived` scope is reported as redundant",
+        ),
+        Mutation(
+            maven_central._pom_repository,
+            "LookedUp(None, absent=parent_pom.absent)",
+            "LookedUp(None, absent=True)",
+            "a parent pom that fails to fetch reads as lacking a repository, so the `archived` scope is reported too",
+        ),
+    )
+    def test_an_artefact_lacks_a_github_repository_only_where_its_poms_say_so(self):
+        """Test that an artefact lacks a GitHub repository where its poms say so, and not where a pom fails to fetch."""
+        outside_github = maven_central_pom("scm:git:https://gitbox.apache.org/repos/asf/commons-lang.git")
+        failed = mock_response(ok=False, status_code=503, reason="Service Unavailable", text="")
+        cases = {
+            "a pom naming a repository outside GitHub": (
+                {_GUAVA_POM: mock_response(content=outside_github.encode())},
+                True,
+            ),
+            "a parent pom lacking a repository": ({}, True),
+            "a pom that fails to fetch": ({_GUAVA_POM: failed}, False),
+            "a parent pom that fails to fetch": ({_GUAVA_PARENT_POM: failed}, False),
+        }
+        for case, (responses, lacks) in cases.items():
+            with self.subTest(case=case), patch("requests.get") as mock_get:
+                _serve_guava_with_parent(mock_get, maven_central_pom(), responses)
+                self.assertEqual(maven_central.lacks_a_github_repository(GUAVA), lacks)
 
 
 class GetChangesTest(LoggingTestCase):
@@ -556,7 +592,7 @@ class VersionsHeldBackTest(LoggingTestCase):
         Mutation(
             maven_central._listing,
             "    if response.status_code == HTTPStatus.NOT_FOUND:\n        _LOG.unserved_listing(response)\n"
-            '        return ""\n',
+            "        return LookedUp(None, absent=True)\n",
             "",
             "the repository warns about an artefact it does not serve, as though the request had failed",
         )
@@ -577,7 +613,7 @@ class VersionsHeldBackTest(LoggingTestCase):
     @kills(
         Mutation(
             maven_central._listing,
-            '    if not response.ok:\n        _LOG.response(response)\n        return ""\n',
+            "    if not response.ok:\n        _LOG.response(response)\n        return LookedUp(None)\n",
             "",
             "the repository fails without a word, so the cooldown is lost for an artefact it does serve",
         )
@@ -592,7 +628,7 @@ class VersionsHeldBackTest(LoggingTestCase):
     @kills(
         Mutation(
             maven_central._listing,
-            '    if response is None:\n        return ""\n',
+            "    if response is None:\n        return LookedUp(None)\n",
             "",
             "a listing whose request fails ends the run with a traceback",
             raises="AttributeError: 'NoneType' object has no attribute 'status_code'",
@@ -676,6 +712,39 @@ class VersionsHeldBackTest(LoggingTestCase):
         self.assertEqual(second, ("33.7.1-jre",))
 
 
+class ServesTest(LoggingTestCase):
+    """Unit tests for telling whether the repository serves an artefact."""
+
+    @kills(
+        Mutation(
+            maven_central._listing,
+            "_LOG.response(response)\n        return LookedUp(None)",
+            "_LOG.response(response)\n        return LookedUp(None, absent=True)",
+            "a server error reads as an artefact the repository lacks, so its scopes are reported as redundant",
+        ),
+        Mutation(
+            maven_central._listing,
+            "if response is None:\n        return LookedUp(None)",
+            "if response is None:\n        return LookedUp(None, absent=True)",
+            "a request that fails reads as an artefact the repository lacks, so its scopes are reported as redundant",
+        ),
+    )
+    def test_an_artefact_is_unserved_only_where_the_repository_lacks_its_listing(self):
+        """Test that a missing listing reads as an unserved artefact, and a failed request as a served one."""
+        missing = mock_response(ok=False, status_code=404, reason="Not Found", url=_GUAVA_LISTING, text="")
+        failed = mock_response(ok=False, status_code=503, reason="Service Unavailable", url=_GUAVA_LISTING, text="")
+        cases = {
+            "a missing listing": (Mock(return_value=missing), False),
+            "a server error": (Mock(return_value=failed), True),
+            "a timeout": (Mock(side_effect=requests.exceptions.Timeout), True),
+        }
+        for case, (mock_get, served) in cases.items():
+            with self.subTest(case=case), patch("requests.get", mock_get):
+                self.assertEqual(maven_central.serves(GUAVA), served)
+                # Asserting the request was made, so the answer says something about the response.
+                self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
+
+
 class PublishedTest(unittest.TestCase):
     """Unit tests for reading the date the listing holds for a version."""
 
@@ -710,10 +779,10 @@ class NewestReleaseTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            _newest_release,
+            maven_central._rows,
             "_listing(artefact)",
             "_listing.__wrapped__(artefact)",
-            "staleness fetches a listing of its own, so an artefact the cooldown read costs a second request",
+            "each read fetches a listing of its own, so an artefact the cooldown read costs a second request",
         )
     )
     def test_the_cooldown_has_already_paid_for_the_listing(self):

@@ -36,6 +36,8 @@ class Reason(StrEnum):
     MANAGER_RESOLVES_THE_VERSION = "the package manager resolves this dependency's version"
     COOLDOWN_PER_RUN = "the package manager applies the cooldown per run rather than per dependency"
     NO_PYPI_RELEASE = "PyPI does not serve a release for this dependency"
+    NOT_ON_MAVEN_CENTRAL = "Maven Central does not serve this dependency"
+    NO_GITHUB_REPOSITORY = "Update-time does not find a GitHub repository to check this dependency for archival"
     NO_VERSION_TO_CHECK_FOR_A_YANK = "this requirement does not pin a version to check for a yank"
     NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY = "this requirement does not pin a version to check for a vulnerability"
     NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY = (

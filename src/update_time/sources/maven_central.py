@@ -19,6 +19,7 @@ from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.manifests import pom_xml as pom_xml_format
 from update_time.primitives.iterables import unique
+from update_time.primitives.lookup import LookedUp
 from update_time.sources.github import archival as github_archival
 from update_time.sources.github import (
     changes_from_changelog_file,
@@ -28,6 +29,8 @@ from update_time.sources.github import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from update_time.domain.dependency import DependencyName, VersionString
     from update_time.formats.xml import XmlElement
 
@@ -52,10 +55,8 @@ def project(artefact: DependencyName, *, check_archival: bool) -> Project:
 
 def _archival(artefact: DependencyName) -> Archival:
     """Return what GitHub declares about the artefact's repository."""
-    owner, repository = _repository(artefact)
-    if not repository:
-        return Archival()
-    return github_archival(owner, repository, check_archival=True)
+    found = _repository(artefact).value
+    return Archival() if found is None else github_archival(*found, check_archival=True)
 
 
 def get_changes(artefact: DependencyName, version: VersionString) -> Changes:
@@ -63,7 +64,7 @@ def get_changes(artefact: DependencyName, version: VersionString) -> Changes:
 
     The changes come from the repository's changelog file when it did not publish a release for the version.
     """
-    owner, repository = _repository(artefact)
+    owner, repository = _repository(artefact).value or _NO_REPOSITORY
     tags = _release_tags(artefact, repository, version)
     return changes_from_tagged_release(owner, repository, tags) or _changes_from_changelog_file(
         owner, repository, version
@@ -110,45 +111,54 @@ def _changes_from_changelog_file(owner: str, repository: str, version: VersionSt
 _NO_REPOSITORY = ("", "")
 
 
-def _repository(artefact: DependencyName) -> tuple[str, str]:
+def _repository(artefact: DependencyName) -> LookedUp[tuple[str, str]]:
     """Return the owner and repository of the artefact's project, read from the pom beside its newest release.
 
     Where the project's source lives is a fact about the project rather than about a version. A project that moved to
     GitHub names the repository in its later poms alone. Update-time can read a pom only for an artefact it found a
-    dated version of.
+    dated version of. The repository is absent where the poms Update-time read name none on GitHub.
     """
     newest = _newest_release(artefact)
-    return _NO_REPOSITORY if newest is None else _pom_repository(artefact, newest.version)
+    return LookedUp(None) if newest is None else _pom_repository(artefact, newest.version)
 
 
-def _pom_repository(artefact: DependencyName, version: VersionString) -> tuple[str, str]:
+def lacks_a_github_repository(artefact: DependencyName) -> bool:
+    """Return whether the pom beside the artefact's newest release, and its parent pom, name no GitHub repository.
+
+    The answer is False where Update-time could not read one of those poms, since that pom may name one.
+    """
+    return _repository(artefact).absent
+
+
+def _pom_repository(artefact: DependencyName, version: VersionString) -> LookedUp[tuple[str, str]]:
     """Return the owner and repository the version's pom names, or else the one its parent pom names."""
     pom = _pom(artefact, version)
     if pom is None:
-        return _NO_REPOSITORY
+        return LookedUp(None)
     named = _named_repository(pom)
-    if named != _NO_REPOSITORY:
+    if not named.absent:
         return named
-    return _named_repository(_parent_pom(pom))
+    parent_pom = _parent_pom(pom)
+    if parent_pom.value is None:
+        return LookedUp(None, absent=parent_pom.absent)
+    return _named_repository(parent_pom.value)
 
 
-def _parent_pom(pom: XmlElement) -> XmlElement | None:
-    """Return the parent pom to read the repository from, or None where the pom's `<scm>` names a URL of its own."""
+def _parent_pom(pom: XmlElement) -> LookedUp[XmlElement]:
+    """Return the parent pom to read the repository from, absent where the pom's `<scm>` names a URL of its own."""
     if pom_xml_format.scm_urls(pom):
-        return None
+        return LookedUp(None, absent=True)
     parent = pom_xml_format.parent(pom)
-    return None if parent is None else _pom(parent.name, parent.version)
+    return LookedUp(None, absent=True) if parent is None else LookedUp(_pom(parent.name, parent.version))
 
 
-def _named_repository(pom: XmlElement | None) -> tuple[str, str]:
-    """Return the owner and repository the pom names, empty where it names none on GitHub."""
-    if pom is None:
-        return _NO_REPOSITORY
+def _named_repository(pom: XmlElement) -> LookedUp[tuple[str, str]]:
+    """Return the owner and repository the pom names, absent where it names none on GitHub."""
     for url in pom_xml_format.source_urls(pom):
         owner, repository = github_owner_and_repository(url)
         if owner and repository:
-            return owner, repository
-    return _NO_REPOSITORY
+            return LookedUp((owner, repository))
+    return LookedUp(None, absent=True)
 
 
 def _pom_url(artefact: DependencyName, version: VersionString) -> str:
@@ -174,15 +184,14 @@ def _newest_release(artefact: DependencyName) -> Release | None:
     """Return the version the repository published most recently with its date, or None where it dates none."""
     return Release.newest(
         Release(match["version"], published)
-        for match in _VERSION_ROW.finditer(_listing(artefact))
+        for match in _rows(artefact)
         if (published := _published(match["published"])) is not None
     )
 
 
 def versions_held_back(artefact: DependencyName, cooldown_days: int) -> tuple[str, ...]:
     """Return the artefact's versions published inside the cooldown, and the ones whose date does not parse."""
-    rows = _VERSION_ROW.finditer(_listing(artefact))
-    return tuple(row["version"] for row in rows if _held_back(artefact, row, cooldown_days))
+    return tuple(row["version"] for row in _rows(artefact) if _held_back(artefact, row, cooldown_days))
 
 
 def _held_back(artefact: DependencyName, row: re.Match[str], cooldown_days: int) -> bool:
@@ -203,23 +212,33 @@ def _artefact_url(artefact: DependencyName) -> str:
     return f"{_MAVEN_CENTRAL}/{group_id.replace('.', '/')}/{artifact_id}"
 
 
+def serves(artefact: DependencyName) -> bool:
+    """Return whether the repository serves the artefact, which it does unless it answers that it lacks a listing."""
+    return not _listing(artefact).absent
+
+
+def _rows(artefact: DependencyName) -> Iterator[re.Match[str]]:
+    """Return the rows of the artefact's listing, none where Update-time could not read the listing."""
+    return _VERSION_ROW.finditer(_listing(artefact).value or "")
+
+
 @cache
-def _listing(artefact: DependencyName) -> str:
-    """Return the directory listing the repository serves for the artefact, or nothing where it serves none.
+def _listing(artefact: DependencyName) -> LookedUp[str]:
+    """Return the directory listing the repository serves for the artefact, absent where it serves none.
 
     A project can depend on an artefact the repository does not serve, so a missing listing is reported at debug. Any
     other error warns, since the cooldown then held nothing back for an artefact the repository does have.
     """
     response = fetch(f"{_artefact_url(artefact)}/", _LOG, require_ok=False)
     if response is None:
-        return ""
+        return LookedUp(None)
     if response.status_code == HTTPStatus.NOT_FOUND:
         _LOG.unserved_listing(response)
-        return ""
+        return LookedUp(None, absent=True)
     if not response.ok:
         _LOG.response(response)
-        return ""
-    return response.text
+        return LookedUp(None)
+    return LookedUp(response.text)
 
 
 def _published(published: str) -> datetime | None:

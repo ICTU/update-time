@@ -636,6 +636,12 @@ A directive is redundant when it decides nothing for the reference it sits on: a
 
 Update-time reports every warning scope as redundant for a Python dependency PyPI does not serve a release for. That is a dependency pointing at a URL or a git repository, and one uv resolves through a `[tool.uv] sources` entry. Update-time asks PyPI about neither, so none of those warnings is ever given there.
 
+Update-time reports the `cooldown`, `stale`, and `archived` scopes as redundant for a `pom.xml` dependency or plugin that Maven Central does not serve. A project resolves such an artefact from a mirror or a private repository, and Update-time reads publication dates and poms from Maven Central alone. The `vulnerable` scope still applies, since OSV holds the advisories:
+
+```console
+@@REDUNDANT_UNSERVED_MAVEN_ARTEFACT_WARNING@@
+```
+
 A scanned pom can manage the version of a `pom.xml` dependency or plugin. Update-time then checks that version at the managing declaration, and the `stale`, `archived`, and `vulnerable` scopes belong on that declaration's line. Update-time reports them as redundant on each declaration that leaves its version to the managing declaration:
 
 ```console
@@ -730,6 +736,12 @@ Archival can only be observed where the dependency's source publishes an archiva
 
 ```console
 @@REDUNDANT_ARCHIVED_SCOPE_WARNING@@
+```
+
+Update-time reports the scope as redundant for a `pom.xml` dependency or plugin whose poms do not name a GitHub repository, such as `org.apache.commons:commons-lang3`, whose pom names `gitbox.apache.org` (see [Archived dependencies](#archived-dependencies-2)). It does so only in a run that checks archival, since only that run reads the poms:
+
+```console
+@@REDUNDANT_ARCHIVED_WITHOUT_A_GITHUB_REPOSITORY_WARNING@@
 ```
 
 #### The `floating-pin` scope
@@ -1009,7 +1021,7 @@ Update-time adds no hash pin to a Maven dependency, since a pom has nowhere to h
 
 The versions plugin does not filter releases by age, so Update-time names the versions the plugin may not adopt instead. It reads each artefact's publication dates from [Maven Central](https://repo1.maven.org/maven2/), and writes every version published inside the cooldown into a rule set the plugin reads. The plugin then picks the newest version left. Both goals honour the rule set, so it reaches both kinds of dependency: the one whose `<version>` holds a version, and the one whose `<version>` names a property. The rule set names the pom's plugins too, so a property that versions a plugin is held back like any other.
 
-Maven Central does not serve an artefact that a project resolves from a mirror or a private repository, so Update-time cannot read its publication date and holds nothing back for it.
+Maven Central does not serve an artefact that a project resolves from a mirror or a private repository, so Update-time cannot read its publication date and holds nothing back for it. So Update-time reports a marker's `cooldown` on such an artefact as redundant.
 
 The rule set names an artefact whose group or artifact the pom leaves to its parent as Maven resolves it, and holds back its versions like any other artefact's.
 
@@ -1021,7 +1033,7 @@ Update-time checks each dependency and plugin against the newest release Maven C
 
 Update-time asks Maven Central about an artefact by that artefact's `groupId:artifactId` coordinates alone. So it checks a dependency whose `<version>` names a property its parent declares. It also checks a dependency or plugin that leaves its `<version>` out, unless Update-time checks the declaration managing that version in its place. For a group or artifact the pom leaves to its parent, it asks about the artefact Maven resolves.
 
-Maven Central lists nothing for an artefact a project resolves from a mirror or a private repository. Update-time then has nothing to measure staleness against.
+Maven Central lists nothing for an artefact a project resolves from a mirror or a private repository. Update-time then has nothing to measure staleness against. So it reports a marker's `stale` scope on such an artefact as redundant.
 
 #### Yanked dependencies
 
@@ -1051,7 +1063,7 @@ Update-time finds the repository in the pom that Maven Central serves beside the
 
 Update-time reads one parent pom, and does not read the parent pom's own parent. The poms higher up usually belong to an organisation rather than to a project. Every Apache project inherits from `org.apache:apache`, for example, which names the repository `apache/maven-apache-parent`. For the same reason, Update-time does not read the parent pom when the `<scm>` element of the newest release's pom names a repository outside GitHub. That parent is often an organisation's pom, too.
 
-Update-time warns only where it finds a GitHub repository to ask about. The newest release's pom and its parent pom may leave the repository unnamed. They may also name a host other than GitHub, as `org.apache.commons:commons-lang3` names `gitbox.apache.org`. And Maven Central may not serve a pom at all, for an artefact a project resolves from a mirror or a private repository. Update-time warns about a pom it cannot fetch or cannot parse.
+Update-time warns only where it finds a GitHub repository to ask about. The newest release's pom and its parent pom may leave the repository unnamed. They may also name a host other than GitHub, as `org.apache.commons:commons-lang3` names `gitbox.apache.org`. And Maven Central may not serve a pom at all, for an artefact a project resolves from a mirror or a private repository. Update-time warns about a pom it cannot fetch or cannot parse. Where the poms it reads do not name a GitHub repository, it reports a marker's `archived` scope as redundant.
 
 Update-time reports a dependency or plugin whose repository is archived, unless an `ignore[archived]` marker silences that warning.
 
