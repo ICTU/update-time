@@ -31,7 +31,9 @@ from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE
 from tests.update_time.helpers import (
     EFFECTIVE_GUAVA,
+    GITBOX_SCM,
     GUAVA,
+    GUAVA_SCM,
     PARENT_POM_ID,
     SCANNED_POM_COORDINATES,
     SCANNED_POM_ID,
@@ -49,7 +51,9 @@ from tests.update_time.helpers import (
     guava_element,
     marked_at_its_version,
     maven_central_listing,
+    maven_central_listing_url,
     maven_central_pom,
+    maven_central_pom_url,
     maven_central_version_row,
     patch_maven_central,
     plugin_element,
@@ -78,8 +82,8 @@ _EFFECTIVE_POM = "/effective-pom.xml"
 _LISTING = maven_central_listing(maven_central_version_row("33.0.0-jre", days_ago(1)))
 
 # The poms Maven Central serves beside guava's version where a test has it name a repository on GitHub, or outside it.
-_POM_ON_GITHUB = maven_central_pom("scm:git:https://github.com/google/guava.git")
-_POM_OUTSIDE_GITHUB = maven_central_pom("scm:git:https://gitbox.apache.org/repos/asf/commons-lang.git")
+_POM_ON_GITHUB = maven_central_pom(GUAVA_SCM)
+_POM_OUTSIDE_GITHUB = maven_central_pom(GITBOX_SCM)
 
 
 def _stale(version: str, age: int) -> Project:
@@ -374,10 +378,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @contextlib.contextmanager
     def maven_central_answering(self, pom: str, *, archived: bool = False) -> Iterator[Mock]:
-        """Let Maven Central answer for itself, serving guava's listing and the pom, and yield the mock requests.get.
-
-        GitHub declares the repository the pom names archived where `archived` says so.
-        """
+        """Let Maven Central answer for itself, serving guava's listing and the pom, and yield the mock requests.get."""
         with (
             patch.object(maven_central_module, "project", maven_central_project),
             patch.object(maven_central_module, "serves", maven_central_serves),
@@ -531,7 +532,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module._report_scopes_maven_central_lacks_the_data_for,
+            update_pom_xml_module._report_scopes_on_artefacts_maven_central_does_not_serve,
             'as_written.cooldown_directive if declaration.maven_updates_the_version else ""',
             "as_written.cooldown_directive",
             "a `cooldown` on a version Maven does not update is reported twice, once for each reason",
@@ -658,7 +659,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             "a listing Maven Central does not serve reads as a failed request, so nothing is reported as redundant",
         ),
         Mutation(
-            update_pom_xml_module._report_scopes_maven_central_lacks_the_data_for,
+            update_pom_xml_module._report_scopes_on_artefacts_maven_central_does_not_serve,
             "directive_for(Scope.STALE)",
             "scope_directive(Scope.STALE)",
             "only a bare `ignore[stale]` is reported, so a threshold on an unserved artefact is not",
@@ -671,9 +672,6 @@ class UpdatePomXmlTest(LoggingTestCase):
                 pom = self.find_marked_pom(mock_run, mock_glob, directive)
                 with (
                     patch.object(maven_central_module, "serves", maven_central_serves),
-                    patch.object(
-                        maven_central_module, "lacks_a_github_repository", maven_central_lacks_a_github_repository
-                    ),
                     patch_get(ok=False, status_code=404, reason="Not Found", text=""),
                 ):
                     update_pom_xmls()
@@ -704,15 +702,14 @@ class UpdatePomXmlTest(LoggingTestCase):
         self.find_marked_pom(mock_run, mock_glob, "ignore[archived]")
         with self.maven_central_answering(_POM_ON_GITHUB) as mock_get:
             update_pom_xmls()
-        guava_pom = "https://repo1.maven.org/maven2/com/google/guava/guava/33.0.0-jre/guava-33.0.0-jre.pom"
-        self.assertIn(guava_pom, requested_urls(mock_get))
+        self.assertIn(maven_central_pom_url(GUAVA, "33.0.0-jre"), requested_urls(mock_get))
         self.assert_none_logged(Logger._MESSAGE_REDUNDANT_DIRECTIVE, "redundant directive")
 
     @kills(
         Mutation(
-            update_pom_xml_module._report_scopes_maven_central_lacks_the_data_for,
-            "archived and archival_is_checked() and",
-            "archived and",
+            update_pom_xml_module._report_archived_scopes_without_a_github_repository,
+            "    if not archival_is_checked():\n        return\n",
+            "",
             "a run that checks nothing for archival fetches poms all the same, to judge an `archived` scope",
         )
     )
@@ -724,20 +721,20 @@ class UpdatePomXmlTest(LoggingTestCase):
         self.find_marked_pom(mock_run, mock_glob, "ignore[archived]")
         with self.maven_central_answering(_POM_OUTSIDE_GITHUB) as mock_get:
             update_pom_xmls()
-        self.assertEqual(requested_urls(mock_get), ["https://repo1.maven.org/maven2/com/google/guava/guava/"])
+        self.assertEqual(requested_urls(mock_get), [maven_central_listing_url(GUAVA)])
         self.assert_none_logged(Logger._MESSAGE_REDUNDANT_DIRECTIVE, "redundant directive")
 
     @kills(
         Mutation(
-            update_pom_xml_module._report_scopes_maven_central_lacks_the_data_for,
+            update_pom_xml_module._report_scopes_on_artefacts_maven_central_does_not_serve,
             "if directives and not maven_central.serves",
             "if not maven_central.serves",
             "Maven Central is asked whether it serves every artefact, whatever its marker carries",
         ),
         Mutation(
-            update_pom_xml_module._report_scopes_maven_central_lacks_the_data_for,
-            "elif archived and archival_is_checked()",
-            "elif archival_is_checked()",
+            update_pom_xml_module._report_archived_scopes_without_a_github_repository,
+            "if archived and maven_central.lacks_a_github_repository",
+            "if maven_central.lacks_a_github_repository",
             "Maven Central's poms are read for every artefact, whether or not its marker carries an `archived` scope",
         ),
     )
@@ -953,8 +950,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "_report_scopes_maven_central_lacks_the_data_for(declared)",
-            "_report_scopes_maven_central_lacks_the_data_for(resolvable)",
+            "_report_scopes_on_artefacts_maven_central_does_not_serve(declared)",
+            "_report_scopes_on_artefacts_maven_central_does_not_serve(resolvable)",
             "a scope checked at the managing declaration is reported twice, once for each reason",
         )
     )

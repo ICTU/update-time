@@ -6,6 +6,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from unittest.mock import Mock
 
+    from update_time.sources.github import GitHubRepository
+
 # The GitHub REST API's per-repository base URL.
 _GITHUB_API = "https://api.github.com/repos"
 # The host these tests serve a repository's files at, one URL per file name.
@@ -33,7 +35,7 @@ def releases_url(repository: str) -> str:
     return f"{_GITHUB_API}/{repository}/releases?per_page=100"
 
 
-def contents_url(repository: str, directory: str = "") -> str:
+def contents_url(repository: GitHubRepository | str, directory: str = "") -> str:
     """Return the URL GitHub serves the listing of the repository's directory at, its root by default."""
     return f"{_GITHUB_API}/{repository}/contents/{directory}"
 

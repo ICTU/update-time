@@ -15,7 +15,8 @@ if TYPE_CHECKING:
 
 # Maven sorts a qualified version after the release it qualifies: `33.0.0-jre` after `33.0.0`. Appended to a version,
 # this suffix gives a version that Maven sorts after every qualified form of it, and before the next release. A bound
-# reads a version at the first numbers it holds, so a clause ending at a version ends after its qualified forms.
+# reads a version up to the first character that is neither a digit nor a dot, so a clause ending at a version ends
+# after its qualified forms.
 _PAST_QUALIFIERS = ".0.0.0.1"
 
 

@@ -6,7 +6,6 @@
 - the sample log lines the sections below quote, from `log_samples`, each filling the placeholder it names.
 A CVSS vector the `cvss` package refuses, since `AV:X` is not a value the metric can take.
 A CircleCI machine-executor image (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) and an image a Docker Compose file builds are such references.
-A CircleCI machine-executor image and an image a Docker Compose file builds are such references.
 A Compose override file writes `!reset` and `!override`, which the loader would otherwise refuse the document over.
 A Node base image whose tag carries no version to sync to, such as `node:lts` or `node:22.x`, is the exception to following the Dockerfile.
 A PEP 723 script has no lock file, so its pins carry no hash either.
@@ -204,7 +203,6 @@ If no Node base image is found at all, returns the local Dockerfile path; the ca
 Ignore a dated snapshot, which is no update for a tag naming a release.
 In a `requirements.txt` it reports no new version, because it resolves none for a requirement that pins no exact version.
 In a file that can hold no comment, the directives are the value of an `update-time` field instead.
-In all its forms, Update-time reports the `stale` scope as redundant for a reference whose source reports no such date.
 Incorrect 'cooldown>=30' in the update-time marker for in : this comparison adopts a release only while it is fresh and holds it back once it is old, so it sets no cooldown.
 Incorrect 'stale>=90' in the update-time marker for in : this comparison warns while a release is fresh and goes quiet once it is old, so it sets no threshold.
 Incorrect 'vulnerable>=high' in the update-time marker for in : this comparison warns about the mild vulnerabilities and stays quiet about the severe ones, so it sets no risk level.
@@ -218,7 +216,6 @@ It names no scope, so a warning would have no directive to name.
 It passes the value to `uv tree` on the command line rather than persisting it, since a standalone script has no lockfile to keep reproducible.
 It reports an `ignore[update]` as redundant only for a dependency that pins no exact version.
 It reports an advisory that gives no summary, which many do not, without the quotation.
-It reports one on a `requirements.txt` requirement that pins no exact version too.
 It rides on the Index API response fetched above, so it costs no request of its own.
 It then prints an error, exits with a non-zero status, and touches no files.
 It touches no unrelated file, such as `constraints.txt` or `requirements.in`.
@@ -513,7 +510,6 @@ Test that where the marker and the option both name the advisory, the marker's s
 That is: how to resolve a new version, where to report, and what to call a reference whose regexp captures no `dependency` group.
 That marker carries where its reference sits, so the pass rewrites that entry and no other.
 That tag names no image in the repository, so the image's newest release says nothing about the reference.
-The GitHub repository an npm version document names, and the directory it builds the package from.
 The Node engine version in the `package.json`: the `node` entry its `engines` section declares.
 The OCI protocol exposes no publish date.
 The `# update-time:` marker language: what a marker says, and what each directive it carries steers.
@@ -681,7 +677,6 @@ Update-time does not check an image, because OSV has no ecosystem for container 
 Update-time does not check an image, because no OCI registry publishes an archival signal.
 Update-time ignores an image whose tag it cannot read, so a reference through a `{{ ... }}` template or `${VAR}` variable substitution gets no digest.
 Update-time reads it for each dependency a Python file declares, whether or not the dependency pins an exact version.
-Update-time reports a Python dependency that pins no exact version too.
 Update-time reports every reference a file accounts for itself at `DEBUG`, naming what accounts for it:.
 Update-time still reports a new version for a dependency that pins no exact version, both in a `pyproject.toml` and in an inline script metadata block.
 Usable as a decorator on a test method or class (like `unittest.mock.patch`, by stacking one patch per method); it adds no mock argument.

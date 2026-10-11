@@ -143,13 +143,24 @@ class _CommitJSON(TypedDict):
     parents: list[_ParentJSON]  # The first is the commit the branch was on when the commit was made or merged
 
 
+@dataclass(frozen=True)
+class GitHubRepository:
+    """A repository on GitHub, named by its owner and its name."""
+
+    owner: str
+    name: str
+
+    def __str__(self) -> str:
+        """Return the repository as GitHub spells it: `owner/name`."""
+        return f"{self.owner}/{self.name}"
+
+
 @total_ordering
 @dataclass(frozen=True)
 class TaggedVersion:
     """A version of a GitHub repository, known from its tag, its release, or both."""
 
-    owner: str
-    repository: str
+    repository: GitHubRepository
     tag_name: str
     body: Changes = NO_CHANGES
     draft: bool = False
@@ -159,13 +170,12 @@ class TaggedVersion:
     has_release: bool = True  # False for a version that was tagged but not published as a GitHub release
 
     @classmethod
-    def from_release(cls, owner: str, repository: str, release: _ReleaseJSON) -> TaggedVersion:
+    def from_release(cls, repository: GitHubRepository, release: _ReleaseJSON) -> TaggedVersion:
         """Create a TaggedVersion from a GitHub releases endpoint result.
 
         GitHub renders a release body as Markdown, whatever the repository's own changelog file is written in.
         """
         return cls(
-            owner=owner,
             repository=repository,
             tag_name=release["tag_name"],
             body=Changes(release.get("body") or "", markdown=True),
@@ -175,19 +185,17 @@ class TaggedVersion:
         )
 
     @classmethod
-    def from_tag(cls, owner: str, repository: str, tag: _TagJSON, release: _ReleaseJSON | None) -> TaggedVersion:
+    def from_tag(cls, repository: GitHubRepository, tag: _TagJSON, release: _ReleaseJSON | None) -> TaggedVersion:
         """Create a TaggedVersion from a GitHub tags endpoint result, enriched with the tag's release when there is one.
 
         A tag without a release takes its pre-release flag from its version, such as `v4.0.0-alpha.8`.
         """
         sha = tag["commit"]["sha"]
         if release is not None:
-            return replace(cls.from_release(owner, repository, release), sha=sha)
+            return replace(cls.from_release(repository, release), sha=sha)
         tag_name = tag["name"]
         prerelease = is_valid(tag_name) and Version(tag_name).is_prerelease
-        return cls(
-            owner=owner, repository=repository, tag_name=tag_name, prerelease=prerelease, sha=sha, has_release=False
-        )
+        return cls(repository=repository, tag_name=tag_name, prerelease=prerelease, sha=sha, has_release=False)
 
     @property
     def has_valid_version(self) -> bool:
@@ -215,7 +223,7 @@ class TaggedVersion:
         if self.sha:
             return self.sha
         dependency = self.dependency
-        found = _get_commit(self.owner, self.repository, self.tag_name)
+        found = _get_commit(self.repository, self.tag_name)
         if (commit := found.value) is None:
             _LOG.no_commit_sha(
                 dependency, self.tag_name, found.reason, f"https://github.com/{dependency}/releases/tag/{self.tag_name}"
@@ -225,8 +233,8 @@ class TaggedVersion:
 
     @property
     def dependency(self) -> str:
-        """Return the dependency as <owner>/<repository>."""
-        return f"{self.owner}/{self.repository}"
+        """Return the dependency the version belongs to, named after its repository."""
+        return str(self.repository)
 
     @cached_property
     def publication(self) -> Lookup[datetime]:
@@ -236,7 +244,7 @@ class TaggedVersion:
         """
         if self.has_release or self.published_at is not None:
             return LookedUp(self.published_at)
-        return DeferredLookup(partial(commit_date, self.dependency, self.commit_ref))
+        return DeferredLookup(partial(_commit_date, self.repository, self.commit_ref))
 
     @property
     def version(self) -> Version:
@@ -263,8 +271,8 @@ _SCP_LIKE_RE = re.compile(r"^([^/@]+@[^/:]+):")
 _GITHUB_SPONSORS_PATH = "sponsors"
 
 
-def github_owner_and_repository(url: str) -> tuple[str, str]:
-    """Parse the GitHub owner and repository from a URL.
+def github_repository(url: str) -> GitHubRepository | None:
+    """Return the GitHub repository a URL names, or None where it names none.
 
     Accepts `git+https`, `git+ssh`, and `.git` URLs, and git's scp-like `git@github.com:owner/repo` form. A
     `github.com/sponsors/…` URL names a sponsorship page rather than a repository, so it parses as none.
@@ -274,17 +282,19 @@ def github_owner_and_repository(url: str) -> tuple[str, str]:
     if parsed.hostname == "github.com":
         path_parts = parsed.path.lstrip("/").split("/")
         if len(path_parts) > 1 and path_parts[0] != _GITHUB_SPONSORS_PATH:
-            return path_parts[0], path_parts[1].removesuffix(".git")
-    return "", ""
+            owner, name = path_parts[0], path_parts[1].removesuffix(".git")
+            if owner and name:
+                return GitHubRepository(owner, name)
+    return None
 
 
-def _owner_and_repository(dependency: DependencyName) -> tuple[str, str]:
-    """Return the owner and repository the dependency names, dropping any path below the repository.
+def _repository(dependency: DependencyName) -> GitHubRepository:
+    """Return the repository the dependency names, dropping any path below the repository.
 
     `actions/checkout/sub-action` names an action in a subdirectory of the `actions/checkout` repository.
     """
-    owner, repository, *_path = dependency.split("/")
-    return owner, repository
+    owner, name, *_path = dependency.split("/")
+    return GitHubRepository(owner, name)
 
 
 @cache
@@ -297,43 +307,43 @@ def _fetch_github(url: str, *, require_ok: bool = True) -> Fetched:
     return fetch(url, _LOG, headers=_github_headers(), require_ok=require_ok)
 
 
-def _list(owner: str, repository: str, path: str, *, require_ok: bool = True) -> tuple[Any, ...] | None:
+def _list(repository: GitHubRepository, path: str, *, require_ok: bool = True) -> tuple[Any, ...] | None:
     """Fetch a listing under the repository's API path: empty when it lists nothing, None when the fetch failed.
 
     The contents endpoint answers a path naming a file with that file's object, which lists nothing.
     """
-    response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}/{path}", require_ok=require_ok)
+    response = _fetch_github(f"{_GITHUB_API}/{repository}/{path}", require_ok=require_ok)
     if response is None or not response.ok:
         return None
     listing = response.json()
     return tuple(listing) if isinstance(listing, list) else ()
 
 
-def _repository_metadata(owner: str, repository: str) -> _RepositoryJSON:
+def _repository_metadata(repository: GitHubRepository) -> _RepositoryJSON:
     """Fetch what GitHub reports about the repository itself, or an empty dict when it can't be fetched.
 
     GitHub answers 404 when the repository's URL ends in a slash.
     """
-    response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}")
+    response = _fetch_github(f"{_GITHUB_API}/{repository}")
     return response.json() if response is not None else {}
 
 
-def _list_releases(owner: str, repository: str) -> tuple[_ReleaseJSON, ...] | None:
+def _list_releases(repository: GitHubRepository) -> tuple[_ReleaseJSON, ...] | None:
     """Fetch the GitHub releases for a repository, or None when they couldn't be fetched."""
-    return _list(owner, repository, f"releases?per_page={_PER_PAGE}")
+    return _list(repository, f"releases?per_page={_PER_PAGE}")
 
 
-def _list_tags(owner: str, repository: str) -> tuple[_TagJSON, ...] | None:
+def _list_tags(repository: GitHubRepository) -> tuple[_TagJSON, ...] | None:
     """Fetch the GitHub tags for a repository, or None when they couldn't be fetched."""
-    return _list(owner, repository, f"tags?per_page={_PER_PAGE}")
+    return _list(repository, f"tags?per_page={_PER_PAGE}")
 
 
-def _list_contents(owner: str, repository: str, directory: str = "") -> tuple[_ContentJSON, ...] | None:
+def _list_contents(repository: GitHubRepository, directory: str = "") -> tuple[_ContentJSON, ...] | None:
     """Fetch the entries in a directory of a repository, its root by default, or None when they can't be fetched.
 
     A directory the repository does not serve is unremarkable, so only a failure to list the root is reported.
     """
-    return _list(owner, repository, f"contents/{directory}", require_ok=not directory)
+    return _list(repository, f"contents/{directory}", require_ok=not directory)
 
 
 def _is_changelog_file(name: str) -> bool:
@@ -342,9 +352,9 @@ def _is_changelog_file(name: str) -> bool:
     return stem in _CHANGELOG_FILE_NAMES and dot + extension in _CHANGELOG_FILE_EXTENSIONS
 
 
-def _get_commit(owner: str, repository: str, ref: _GitRef) -> LookedUp[_CommitJSON]:
+def _get_commit(repository: GitHubRepository, ref: _GitRef) -> LookedUp[_CommitJSON]:
     """Fetch the commit a tag, branch, or commit SHA names."""
-    commits_url = f"{_GITHUB_API}/{owner}/{repository}/commits/{ref}"
+    commits_url = f"{_GITHUB_API}/{repository}/commits/{ref}"
     response = _fetch_github(commits_url, require_ok=False)
     if response is None or not response.ok:
         absent = response is not None and response.status_code == _NO_COMMIT_BY_THAT_NAME
@@ -354,11 +364,11 @@ def _get_commit(owner: str, repository: str, ref: _GitRef) -> LookedUp[_CommitJS
 
 def pinned_ref(dependency: DependencyName, ref: _GitRef) -> LookedUp[DependencyVersion]:
     """Return the commit the ref points at, named by the highest version tag at it, or else by the ref."""
-    owner, repository = _owner_and_repository(dependency)
-    found = _get_commit(owner, repository, ref)
+    repository = _repository(dependency)
+    found = _get_commit(repository, ref)
     if (commit := found.value) is None:
         return LookedUp(None, found.reason, absent=found.absent)
-    return LookedUp(_named_commit(owner, repository, ref, commit))
+    return LookedUp(_named_commit(repository, ref, commit))
 
 
 def newest_commit_past_cooldown(
@@ -369,10 +379,10 @@ def newest_commit_past_cooldown(
     The ref's own line runs from its head through the first parent of each commit. So it leaves out the commits of a
     merged branch, however their committers dated them.
     """
-    owner, repository = _owner_and_repository(dependency)
+    repository = _repository(dependency)
     # Without a cooldown the head is the newest commit, so the listing needs to hold the head alone.
     query = urlencode({"sha": ref, "per_page": _PER_PAGE if cooldown_days > 0 else 1})
-    url = f"{_GITHUB_API}/{owner}/{repository}/commits?{query}"
+    url = f"{_GITHUB_API}/{repository}/commits?{query}"
     commits: list[_CommitJSON] = []
     for _page in range(_MAX_COMMIT_LISTING_PAGES):
         response = _fetch_github(url, require_ok=False)
@@ -383,7 +393,7 @@ def newest_commit_past_cooldown(
             return LookedUp(None, failure_reason(response))
         commits.extend(response.json())
         if (newest := _newest_on_the_line(commits, cooldown_days)) is not None:
-            return LookedUp(_named_commit(owner, repository, ref, newest))
+            return LookedUp(_named_commit(repository, ref, newest))
         if (next_url := next_page_url(response)) is None:
             return LookedUp(None)
         url = next_url
@@ -408,26 +418,26 @@ def moved_on(dependency: DependencyName, pinned: str, commit: str) -> LookedUp[b
 
     A branch moves on by adding commits to its history, or by a force-push that rewrites it.
     """
-    owner, repository = _owner_and_repository(dependency)
+    repository = _repository(dependency)
     # A comparison lists the commits between the two, which the answer needs none of.
-    url = f"{_GITHUB_API}/{owner}/{repository}/compare/{pinned}...{commit}?per_page=1"
+    url = f"{_GITHUB_API}/{repository}/compare/{pinned}...{commit}?per_page=1"
     response = _fetch_github(url, require_ok=False)
     if response is None or not response.ok:
         return LookedUp(None, failure_reason(response))
     return LookedUp(response.json()["status"] in _MOVED_ON)
 
 
-def _named_commit(owner: str, repository: str, ref: _GitRef, commit: _CommitJSON) -> DependencyVersion:
+def _named_commit(repository: GitHubRepository, ref: _GitRef, commit: _CommitJSON) -> DependencyVersion:
     """Return the commit with its committer date, named by the highest version tag at it, or else by the ref."""
     sha, committed = commit["sha"], _committer_date(commit)
-    if (tagged := _highest_version_at(owner, repository, sha)) is None:
+    if (tagged := _highest_version_at(repository, sha)) is None:
         return DependencyVersion(ref, sha=sha, publication=committed)
     return DependencyVersion(tagged.version_string, sha=sha, publication=committed, tag_name=tagged.tag_name)
 
 
 def full_sha(dependency: DependencyName, ref: _GitRef) -> str | None:
     """Return the full SHA of the commit the ref names, or None when the commit can't be fetched."""
-    commit = _get_commit(*_owner_and_repository(dependency), ref).value
+    commit = _get_commit(_repository(dependency), ref).value
     return None if commit is None else commit["sha"]
 
 
@@ -436,20 +446,20 @@ def is_tag(dependency: DependencyName, ref: _GitRef) -> bool | None:
 
     The listing holds the first page of tags alone, so a ref a full page leaves out is looked up by name.
     """
-    owner, repository = _owner_and_repository(dependency)
-    if (tags := _list_tags(owner, repository)) is None:
+    repository = _repository(dependency)
+    if (tags := _list_tags(repository)) is None:
         return None
     if any(tag["name"] == ref for tag in tags):
         return True
     if len(tags) < _PER_PAGE:  # A page with room to spare lists every tag
         return False
-    return _looked_up_tag(owner, repository, ref)
+    return _looked_up_tag(repository, ref)
 
 
 @cache
-def _looked_up_tag(owner: str, repository: str, ref: _GitRef) -> bool | None:
+def _looked_up_tag(repository: GitHubRepository, ref: _GitRef) -> bool | None:
     """Return whether GitHub finds a tag of the ref's name once per run, or None when it refuses to say."""
-    response = _fetch_github(f"{_GITHUB_API}/{owner}/{repository}/git/ref/tags/{ref}", require_ok=False)
+    response = _fetch_github(f"{_GITHUB_API}/{repository}/git/ref/tags/{ref}", require_ok=False)
     if response is None:  # The fetch logged why
         return None
     if response.status_code == HTTPStatus.NOT_FOUND:
@@ -462,9 +472,9 @@ def _looked_up_tag(owner: str, repository: str, ref: _GitRef) -> bool | None:
 
 def version_at_tag(dependency: DependencyName, version: VersionString) -> VersionString:
     """Return the highest version tagging the commit the version's own tag points at, or the version itself."""
-    owner, repository = _owner_and_repository(dependency)
-    own_tag = _own_tag(_tagged_versions(owner, repository) or (), Version(version))
-    if own_tag is None or (highest := _highest_version_at(owner, repository, own_tag.sha)) is None:
+    repository = _repository(dependency)
+    own_tag = _own_tag(_tagged_versions(repository) or (), Version(version))
+    if own_tag is None or (highest := _highest_version_at(repository, own_tag.sha)) is None:
         return version
     return highest.version_string
 
@@ -489,16 +499,21 @@ def _tags_another_commit(tagged_version: TaggedVersion, own_tag: TaggedVersion |
     return own_tag is not None and tagged_version.version == own_tag.version and tagged_version.sha != own_tag.sha
 
 
-def _highest_version_at(owner: str, repository: str, sha: str) -> TaggedVersion | None:
+def _highest_version_at(repository: GitHubRepository, sha: str) -> TaggedVersion | None:
     """Return the highest of the commit's version tags that could be an update, or None."""
-    tagged = _tagged_versions(owner, repository) or ()
+    tagged = _tagged_versions(repository) or ()
     versions = [version for version in tagged if version.sha == sha and version.is_candidate]
     return max(versions, default=None)
 
 
 def commit_date(dependency: DependencyName, ref: _GitRef) -> LookedUp[datetime]:
+    """Return the committer date of the commit the ref points to, in the repository the dependency names."""
+    return _commit_date(_repository(dependency), ref)
+
+
+def _commit_date(repository: GitHubRepository, ref: _GitRef) -> LookedUp[datetime]:
     """Return the committer date of the commit the ref points to."""
-    found = _get_commit(*_owner_and_repository(dependency), ref)
+    found = _get_commit(repository, ref)
     if (commit := found.value) is None:
         return LookedUp(None, found.reason)
     return _committer_date(commit)
@@ -512,21 +527,19 @@ def _committer_date(commit: _CommitJSON) -> LookedUp[datetime]:
     return LookedUp(committed)
 
 
-def _tagged_versions(owner: str, repository: str) -> list[TaggedVersion] | None:
+def _tagged_versions(repository: GitHubRepository) -> list[TaggedVersion] | None:
     """Return the repository's versions: its tags with their releases, plus the releases whose tag wasn't listed.
 
     A tag without a release takes the publication date of the first release of the same commit. Both endpoints return
     their first page only, so a release can fall outside the tags listed. None means neither endpoint answered.
     """
-    releases = _list_releases(owner, repository)
-    tags = _list_tags(owner, repository)
+    releases = _list_releases(repository)
+    tags = _list_tags(repository)
     if releases is None and tags is None:
         return None
     releases_by_tag = {release["tag_name"]: release for release in releases or ()}
     listed_tags = {tag["name"] for tag in tags or ()}
-    tagged_versions = [
-        TaggedVersion.from_tag(owner, repository, tag, releases_by_tag.get(tag["name"])) for tag in tags or ()
-    ]
+    tagged_versions = [TaggedVersion.from_tag(repository, tag, releases_by_tag.get(tag["name"])) for tag in tags or ()]
     release_dates_by_sha: dict[str, datetime] = {}
     for published_at, sha in sorted(
         (version.published_at, version.sha) for version in tagged_versions if version.published_at
@@ -537,7 +550,7 @@ def _tagged_versions(owner: str, repository: str) -> list[TaggedVersion] | None:
         for version in tagged_versions
     ]
     tagged_versions.extend(
-        TaggedVersion.from_release(owner, repository, release)
+        TaggedVersion.from_release(repository, release)
         for tag_name, release in releases_by_tag.items()
         if tag_name not in listed_tags
     )
@@ -556,14 +569,14 @@ def get_latest_version(
     Neither the cooldown nor a bound holds the current version back, since the reference uses it already.
     """
     action, current_version = pinned.name, pinned.version
-    owner, repository = _owner_and_repository(action)
+    repository = _repository(action)
     repository_project = project(action, check_archival=check_archival)
-    tagged_versions = _tagged_versions(owner, repository)
+    tagged_versions = _tagged_versions(repository)
     if tagged_versions is None:  # Couldn't reach GitHub; the fetches already logged a warning.
         return DependencyVersion(current_version, project=repository_project)
     valid_versions = [version for version in tagged_versions if version.is_candidate]
     if not valid_versions:
-        _LOG.no_version(f"{owner}/{repository}")
+        _LOG.no_version(str(repository))
     current = Version(current_version)
     own_tag = _own_tag(tagged_versions, current)
     candidates = [
@@ -612,14 +625,12 @@ def _eligible_version(
     )
 
 
-def _newest_tag_beyond_releases(owner: str, repository: str) -> _TagJSON | None:
+def _newest_tag_beyond_releases(repository: GitHubRepository) -> _TagJSON | None:
     """Return the highest-versioned tag when it runs ahead of every dated release, or None.
 
     The highest tag may be a pre-release, and so may the dated releases the tag is measured against.
     """
-    versioned_tags = [
-        (Version(tag["name"]), tag) for tag in _list_tags(owner, repository) or () if is_valid(tag["name"])
-    ]
+    versioned_tags = [(Version(tag["name"]), tag) for tag in _list_tags(repository) or () if is_valid(tag["name"])]
     if not versioned_tags:
         return None
     # The key limits the comparison to the version: at equal versions (a moving `v5` tag next to `v5.0.0`) comparing
@@ -627,7 +638,7 @@ def _newest_tag_beyond_releases(owner: str, repository: str) -> _TagJSON | None:
     newest_version, newest_tag = max(versioned_tags, key=lambda versioned_tag: versioned_tag[0])
     release_versions = [
         Version(release["tag_name"])
-        for release in _list_releases(owner, repository) or ()
+        for release in _list_releases(repository) or ()
         if release["published_at"] and is_valid(release["tag_name"])
     ]
     if release_versions and newest_version <= max(release_versions):
@@ -638,29 +649,27 @@ def _newest_tag_beyond_releases(owner: str, repository: str) -> _TagJSON | None:
 @archival_reporting
 def project(dependency: DependencyName, *, check_archival: bool) -> Project:
     """Return what GitHub reports about the repository the dependency names: its newest release, and its archival."""
-    owner, repository = _owner_and_repository(dependency)
-    newest = _newest_release(owner, repository)
-    return Project(newest=newest, archival=archival(owner, repository, check_archival=check_archival))
+    repository = _repository(dependency)
+    newest = _newest_release(repository)
+    return Project(newest=newest, archival=archival(repository, check_archival=check_archival))
 
 
-def archival(owner: str, repository: str, *, check_archival: bool) -> Archival:
+def archival(repository: GitHubRepository, *, check_archival: bool) -> Archival:
     """Return what GitHub declares about the repository: whether it is archived."""
-    if check_archival and _repository_metadata(owner, repository).get("archived", False):
+    if check_archival and _repository_metadata(repository).get("archived", False):
         return Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
     return Archival()
 
 
-def _newest_release(owner: str, repository: str) -> Release | None:
+def _newest_release(repository: GitHubRepository) -> Release | None:
     """Return the repository's most recently published version with its date, or None if it has none.
 
     Every release counts, pre-releases and backports included, and so does a tag that runs ahead of them. Only that tag
     is dated, since dating a tag costs a commits request.
     """
-    versions = [
-        TaggedVersion.from_release(owner, repository, release) for release in _list_releases(owner, repository) or ()
-    ]
-    if (tag := _newest_tag_beyond_releases(owner, repository)) is not None:
-        versions.append(TaggedVersion.from_tag(owner, repository, tag, release=None))
+    versions = [TaggedVersion.from_release(repository, release) for release in _list_releases(repository) or ()]
+    if (tag := _newest_tag_beyond_releases(repository)) is not None:
+        versions.append(TaggedVersion.from_tag(repository, tag, release=None))
     return Release.newest(
         Release(version=version.version_string, published=published)
         for version in versions
@@ -668,12 +677,12 @@ def _newest_release(owner: str, repository: str) -> Release | None:
     )
 
 
-def _get_release(owner: str, repository: str, tags: list[str]) -> TaggedVersion | None:
+def _get_release(repository: GitHubRepository, tags: list[str]) -> TaggedVersion | None:
     """Get the release carrying the first of the tags that the repository released under."""
-    releases_by_tag = {release["tag_name"]: release for release in (_list_releases(owner, repository) or ())}
+    releases_by_tag = {release["tag_name"]: release for release in (_list_releases(repository) or ())}
     for tag in tags:
         if tag in releases_by_tag:
-            return TaggedVersion.from_release(owner, repository, releases_by_tag[tag])
+            return TaggedVersion.from_release(repository, releases_by_tag[tag])
     return None
 
 
@@ -703,20 +712,20 @@ def _package_names(package: str) -> list[str]:
     return [package] if unscoped == package else [package, unscoped]
 
 
-def changes_from_release(owner: str, repository: str, package: str, version: str) -> Changes:
+def changes_from_release(repository: GitHubRepository | None, package: str, version: str) -> Changes:
     """Return the body of the GitHub release matching the package and version."""
-    return changes_from_tagged_release(owner, repository, release_tags(package, version))
+    return changes_from_tagged_release(repository, release_tags(package, version))
 
 
-def changes_from_tagged_release(owner: str, repository: str, tags: list[str]) -> Changes:
+def changes_from_tagged_release(repository: GitHubRepository | None, tags: list[str]) -> Changes:
     """Return the body of the GitHub release carrying the first of the tags."""
-    if not (owner and repository):
+    if repository is None:
         return NO_CHANGES
-    release = _get_release(owner, repository, tags)
+    release = _get_release(repository, tags)
     return release.body if release else NO_CHANGES
 
 
-def changes_from_changelog_file(owner: str, repository: str, version: str, directory: str = "") -> Changes:
+def changes_from_changelog_file(repository: GitHubRepository | None, version: str, directory: str = "") -> Changes:
     """Return the version's changes from a changelog file in the repository, or nothing when there is none.
 
     A monorepo keeps a package's changelog in the directory it builds that package from, or keeps one changelog for all
@@ -724,14 +733,14 @@ def changes_from_changelog_file(owner: str, repository: str, version: str, direc
     the same number at the root, and those are then the changes returned. Some projects keep the changelog in a
     documentation directory, and leave a root file that only links to it.
     """
-    if not (owner and repository):
+    if repository is None:
         return NO_CHANGES
     if directory:
-        entries = _list_contents(owner, repository, directory) or ()
+        entries = _list_contents(repository, directory) or ()
         if changes := _changes_from_files(entries, version):
             return changes
-    root = _list_contents(owner, repository) or ()
-    return _changes_from_files(root, version) or _changes_from_documentation(owner, repository, root, version)
+    root = _list_contents(repository) or ()
+    return _changes_from_files(root, version) or _changes_from_documentation(repository, root, version)
 
 
 def _changes_from_files(entries: tuple[_ContentJSON, ...], version: str) -> Changes:
@@ -755,19 +764,19 @@ def _changelog_file(url: str) -> str:
     return response.text if response is not None else ""
 
 
-def _changes_from_documentation(owner: str, repository: str, root: tuple[_ContentJSON, ...], version: str) -> Changes:
+def _changes_from_documentation(repository: GitHubRepository, root: tuple[_ContentJSON, ...], version: str) -> Changes:
     """Return the version's changes from a changelog file below a documentation directory the root names."""
     for entry in root:
         if entry["name"].lower() in _DOCUMENTATION_DIRECTORY_NAMES and (
-            changes := _changes_from_tree(owner, repository, entry, version)
+            changes := _changes_from_tree(repository, entry, version)
         ):
             return changes
     return NO_CHANGES
 
 
-def _changes_from_tree(owner: str, repository: str, directory: _ContentJSON, version: str) -> Changes:
+def _changes_from_tree(repository: GitHubRepository, directory: _ContentJSON, version: str) -> Changes:
     """Return the version's changes from a changelog file below the directory, or nothing when none names them."""
-    root_url = f"{_RAW_GITHUB}/{owner}/{repository}/HEAD/{directory['name']}"
+    root_url = f"{_RAW_GITHUB}/{repository}/HEAD/{directory['name']}"
     for path in _list_tree(directory["git_url"]):
         name = path.rpartition("/")[2]
         if _is_changelog_file(name) and (changes := _changes_from_changelog_url(f"{root_url}/{path}", version)):

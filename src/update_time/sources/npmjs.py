@@ -10,9 +10,10 @@ from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.primitives.timestamp import parse_timestamp
 from update_time.sources.github import (
+    GitHubRepository,
     changes_from_changelog_file,
     changes_from_release,
-    github_owner_and_repository,
+    github_repository,
 )
 
 if TYPE_CHECKING:
@@ -65,23 +66,21 @@ def _expanded_shorthand(url: str) -> str:
 
 
 @dataclass(frozen=True)
-class _Repository:
-    """The GitHub repository an npm version document names, and the directory it builds the package from."""
+class _PackageSource:
+    """Where an npm version document says the package's source lives: a GitHub repository, and a directory in it."""
 
-    owner: str = ""
-    name: str = ""
+    repository: GitHubRepository | None = None
     directory: str = ""
 
     @classmethod
-    def from_metadata(cls, metadata: _VersionJSON) -> _Repository:
-        """Return the repository the metadata names."""
+    def from_metadata(cls, metadata: _VersionJSON) -> _PackageSource:
+        """Return the source the metadata names, the directory the repository builds the package from included."""
         repository = metadata.get("repository", "")
         if isinstance(repository, dict):
             url, directory = repository.get("url", ""), repository.get("directory", "")
         else:
             url, directory = repository, ""
-        owner, name = github_owner_and_repository(_expanded_shorthand(url) if isinstance(url, str) else "")
-        return cls(owner=owner, name=name, directory=directory)
+        return cls(github_repository(_expanded_shorthand(url) if isinstance(url, str) else ""), directory)
 
 
 @cache
@@ -90,9 +89,9 @@ def get_changes(package: str, version: str) -> Changes:
     response = fetch(f"{_REGISTRY}/{package}/{version}", _LOG)
     if response is None:
         return NO_CHANGES
-    repository = _Repository.from_metadata(response.json())
-    return changes_from_release(repository.owner, repository.name, package, version) or changes_from_changelog_file(
-        repository.owner, repository.name, version, repository.directory
+    source = _PackageSource.from_metadata(response.json())
+    return changes_from_release(source.repository, package, version) or changes_from_changelog_file(
+        source.repository, version, source.directory
     )
 
 

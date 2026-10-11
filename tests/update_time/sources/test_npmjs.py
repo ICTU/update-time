@@ -192,10 +192,9 @@ class GetChangesFallbackTest(LoggingTestCase):
     @kills(
         Mutation(
             npmjs.get_changes,
-            "return changes_from_release(repository.owner, repository.name, package, version) "
-            "or changes_from_changelog_file(\n"
-            "        repository.owner, repository.name, version, repository.directory\n    )",
-            "return changes_from_release(repository.owner, repository.name, package, version)",
+            "return changes_from_release(source.repository, package, version) or changes_from_changelog_file(\n"
+            "        source.repository, version, source.directory\n    )",
+            "return changes_from_release(source.repository, package, version)",
             "a package whose repository publishes no matching release reports no changelog",
         ),
     )
@@ -216,8 +215,8 @@ class GetChangesFallbackTest(LoggingTestCase):
     @kills(
         Mutation(
             npmjs.get_changes,
-            "repository.owner, repository.name, version, repository.directory",
-            'repository.owner, repository.name, version, ""',
+            "source.repository, version, source.directory",
+            'source.repository, version, ""',
             "the changelog file of a package a monorepo builds from a directory is looked for in the root",
         ),
     )

@@ -534,7 +534,7 @@ FROM python:3.12.1-bookworm-slim
 
 The levels are positional, not semantic: they refer to the component's position in the version, not to the project's compatibility promises. Projects may ship breaking changes in releases that bump the *second* component. So "stay on Python 3.12" is `ignore[minor-update]`, although Python 3.13 shipped breaking changes: it removed 19 legacy modules from the standard library. The same caution applies to projects using calendar versioning.
 
-A level bound reads the current version at the first numbers it holds. So a Maven `4.1.100.Final` anchors at `4.1.100`. For a Docker tag, those numbers are its main version, as with specifier bounds, so `python3.12-slim` anchors at `3.12`. The bound does not affect a version embedded in the suffix, such as the `3.23` in `alpine3.23`. A component the current version doesn't have counts as zero, so `ignore[minor-update]` on `node:22` blocks `22.1`.
+A level bound reads the current version up to the first character that is neither a digit nor a dot. So Jetty's `9.4.53.v20231009` anchors at `9.4.53`, leaving out the date. For a Docker tag, those numbers are its main version, as with specifier bounds, so `python3.12-slim` anchors at `3.12`. The bound does not affect a version embedded in the suffix, such as the `3.23` in `alpine3.23`. A component the current version doesn't have counts as zero, so `ignore[minor-update]` on `node:22` blocks `22.1`.
 
 ### Writing a marker
 
@@ -610,15 +610,17 @@ A `package.json` dependency takes no marker. Opt one out by declaring an upper b
 
 #### Confirming a marker was understood
 
-Run with `--log-level DEBUG` to confirm a marker is recognised. Update-time logs every recognised marker, every update it holds back, every pin kept floating, and every warning silenced, each on a line of its own. Update-time reports a marker it recognised as:
+Run with `--log-level DEBUG` to confirm a marker is recognised. Update-time reports a marker it recognised as:
 
 ```console
 @@RECOGNISED_MARKER@@
 ```
 
-That line reports the marker itself, and says it was read and understood. No `Recognised` line at all means the marker was not read. The prefix and the verbs are case-sensitive, and a field marker is read by name. So a typo in any of them leaves the reference updated as usual. Update-time logs a typo inside the brackets at `WARNING` as an invalid item instead (see [Invalid markers](#invalid-markers)).
+That line says the marker was read and understood. No `Recognised` line at all means the marker was not read. The prefix and the verbs are case-sensitive, and a field marker is read by name. So a typo in any of them leaves the reference updated as usual. Update-time logs a typo inside the brackets at `WARNING` as an invalid item instead (see [Invalid markers](#invalid-markers)).
 
-Update-time reports what the marker held back or silenced separately, in lines about the update, the pin, or the warning rather than about the marker. Each line names the directive it obeyed:
+### Seeing what a marker did
+
+Run with `--log-level DEBUG` to see what a marker held back or silenced. Update-time logs every update held back, every pin kept floating, and every warning silenced, each on a line of its own. Each line names the directive it obeyed:
 
 ```console
 @@SILENCED_WARNING@@
@@ -634,49 +636,53 @@ A line about a warning appears only when the marker actually silenced one, so an
 
 A directive is redundant when it decides nothing for the reference it sits on: a scope silencing a warning that reference never gets, or a bound narrowing nothing. Update-time reports each one at `WARNING`.
 
-Update-time reports every warning scope as redundant for a Python dependency PyPI does not serve a release for. That is a dependency pointing at a URL or a git repository, and one uv resolves through a `[tool.uv] sources` entry. Update-time asks PyPI about neither, so none of those warnings is ever given there.
-
-Update-time reports the `cooldown`, `stale`, and `archived` scopes as redundant for a `pom.xml` dependency or plugin that Maven Central does not serve. A project resolves such an artefact from a mirror or a private repository, and Update-time reads publication dates and poms from Maven Central alone. The `vulnerable` scope still applies, since OSV holds the advisories:
-
-```console
-@@REDUNDANT_UNSERVED_MAVEN_ARTEFACT_WARNING@@
-```
-
-A scanned pom can manage the version of a `pom.xml` dependency or plugin. Update-time then checks that version at the managing declaration, and the `stale`, `archived`, and `vulnerable` scopes belong on that declaration's line. Update-time reports them as redundant on each declaration that leaves its version to the managing declaration:
-
-```console
-@@REDUNDANT_SCOPE_ON_A_MANAGED_VERSION_WARNING@@
-```
-
-Update-time never reports a bare `# update-time: ignore` as redundant. It names no scope, so a warning would have no directive to name. Update-time does report a scope or item written beside it, so `# update-time: ignore ignore[yanked]` on a Docker image reports the `ignore[yanked]` as redundant.
+Update-time never reports a bare `# update-time: ignore` as redundant. It names no scope, so a warning would have no directive to name. Update-time does report a scope or item written beside it, so `# update-time: ignore ignore[yanked]` on a Docker image reports the `ignore[yanked]` as redundant, since a registry does not record a yank.
 
 #### The `stale` scope
 
-Staleness is measured against the publication date of a dependency's newest release. In all its forms, Update-time reports the `stale` scope as redundant for a reference whose source reports no such date. It updates the reference as usual:
+Staleness is measured against the publication date of a dependency's newest release. In all its forms, Update-time reports the `stale` scope as redundant where it does not measure the reference's staleness. It updates the reference as usual:
+
+| Dependency type | When `stale` is redundant |
+| :-------------- | :------------------------ |
+| [Python dependencies](#python-dependencies) | on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
+| [Maven dependencies](#maven-dependencies) | on an artefact Maven Central does not serve, and on a declaration that leaves its version to the declaration managing it |
+| [Node engine version](#node-engine-version-and-python-version) | on an engine that follows the project's Dockerfile, since Update-time checks the base image instead |
+| [Python version](#node-engine-version-and-python-version) | on an entry that follows the project's Dockerfile, since Update-time checks the base image instead |
+| [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, and on a reference a file accounts for itself |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | never |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | never |
+| [jsDelivr npm URLs](#jsdelivr-npm-urls) | never |
+
+Update-time does not ask a registry about a reference a file accounts for itself, such as a CircleCI machine-executor image or an image a Docker Compose file builds. Update-time reports a source without publication dates as:
 
 ```console
 @@REDUNDANT_STALE_SOURCE_WARNING@@
 ```
 
-Three kinds of reference get that warning. An image on a registry other than Docker Hub does, since only Docker Hub reports a push date. So Update-time does not report the same marker on a Docker Hub image. Update-time does not ask a registry about a reference a file accounts for itself, so that reference gets the warning too. A CircleCI machine-executor image and an image a Docker Compose file builds are such references. And a runtime version that follows the project's Dockerfile gets the warning as well, whether it is a `.python-version` entry or a Node engine. The staleness reported for it is the base image's, not its own.
-
 #### The `cooldown` scope
 
-Update-time reports the `cooldown` scope as redundant for a reference whose source does not report a publication date to measure a cooldown against:
+Where a cooldown holds nothing back, Update-time reports the `cooldown` scope as redundant:
+
+| Dependency type | When `cooldown` is redundant |
+| :-------------- | :--------------------------- |
+| [Python dependencies](#python-dependencies) | on a `pyproject.toml` or inline script metadata dependency, since uv takes a cooldown per run rather than per dependency, and on a `requirements.txt` requirement that pins no exact version, since Update-time resolves no update for it |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
+| [Maven dependencies](#maven-dependencies) | on a declaration whose version Maven does not update, and on an artefact Maven Central does not serve |
+| [Node engine version](#node-engine-version-and-python-version) | on an engine that follows the project's Dockerfile, since the base image's update applied the cooldown |
+| [Python version](#node-engine-version-and-python-version) | on an entry that follows the project's Dockerfile, since the base image's update applied the cooldown |
+| [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, and on a reference a file accounts for itself |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since Update-time never updates a commit |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since Update-time never updates a commit |
+| [jsDelivr npm URLs](#jsdelivr-npm-urls) | never |
+
+A short SHA that a version tag names is the exception. Update-time pins such a SHA as that version, and from the next run on the cooldown governs its updates. Update-time reports a source without publication dates as:
 
 ```console
 @@REDUNDANT_COOLDOWN_ITEM_WARNING@@
 ```
 
-Three kinds of reference get that warning. A runtime version that follows the project's Dockerfile gets it, whether it is a `.python-version` entry or a Node engine. Update-time already applied its cooldown when it updated the base image. An image on a registry other than Docker Hub gets the warning too. Only Docker Hub reports a push date to measure a cooldown against, so Update-time does not report the same marker on a Docker Hub image. Update-time does not ask a registry about a reference a file accounts for itself, so that reference gets the warning as well. A CircleCI machine-executor image and an image a Docker Compose file builds are such references.
-
-Update-time reports a `cooldown` on a `pyproject.toml` or inline script metadata dependency as redundant, since uv takes a cooldown per run rather than per dependency (see [Setting a cooldown period](#setting-a-cooldown-period)). It reports one on a `requirements.txt` requirement that pins no exact version too. PyPI dates its releases, but Update-time does not resolve an update for such a requirement, so the cooldown holds nothing back.
-
-Update-time reports a `cooldown` as redundant on a GitHub Action or pre-commit hook that names a commit SHA, rather than a version, tag, or branch. Update-time never updates a commit, and a commit cannot drift, so the cooldown holds nothing back. A short SHA that a version tag names is the exception. Update-time pins such a SHA as that version, and from the next run on the cooldown governs its updates.
-
-Update-time reports a `cooldown` as redundant on a `pom.xml` dependency or plugin whose version Maven does not update (see [Markers](#markers-2)). The cooldown holds back what Maven would adopt, and Maven adopts nothing there.
-
-Update-time reports those four cases as:
+It reports the cases particular to a dependency type as:
 
 ```console
 @@REDUNDANT_COOLDOWN_WARNINGS@@
@@ -684,29 +690,47 @@ Update-time reports those four cases as:
 
 #### The `yanked` scope
 
-A yank can only be observed where the dependency's source reports one. Of the references that accept a marker, that means `requirements.txt` pins, `pyproject.toml` and inline script metadata pins, and jsDelivr URLs (see [Yanked dependencies](#-yanked-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, a `.python-version` entry, a Node engine, or a `pom.xml` dependency or plugin, the scope can never suppress anything. So Update-time reports it as redundant:
+A yank can only be observed where the dependency's source reports one, and only for the version a reference is left on (see [Yanked dependencies](#-yanked-dependencies)). Where the scope can never suppress anything, Update-time reports it as redundant:
+
+| Dependency type | When `yanked` is redundant |
+| :-------------- | :------------------------- |
+| [Python dependencies](#python-dependencies) | on a dependency that pins no exact version, and on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
+| [Maven dependencies](#maven-dependencies) | always: Maven Central does not report a withdrawal |
+| [Node engine version](#node-engine-version-and-python-version) | always: its source does not record a yank |
+| [Python version](#node-engine-version-and-python-version) | always: its source does not record a yank |
+| [Docker images](#docker-images) | always: its source does not record a yank |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | always: its source does not record a yank |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | always: its source does not record a yank |
+| [jsDelivr npm URLs](#jsdelivr-npm-urls) | never |
+
+Update-time reports those cases as:
 
 ```console
 @@REDUNDANT_YANK_SCOPE_WARNING@@
-```
-
-Update-time reports a Python dependency that pins no exact version too. PyPI does report yanks, but a yank is about the version a reference is left on, and such a dependency pins none.
-
-```console
 @@REDUNDANT_YANK_WITHOUT_A_VERSION_WARNING@@
 ```
 
 #### The `vulnerable` scope
 
-A vulnerability can only be reported where OSV holds advisories for the dependency. Of the references that accept a marker, that means `requirements.txt` pins, `pyproject.toml` and inline script metadata pins, `pom.xml` dependencies and plugins, and jsDelivr URLs (see [Vulnerable dependencies](#-vulnerable-dependencies)). On a Docker image, a GitHub Action, a pre-commit hook, a `.python-version` entry, or a Node engine, the scope can never suppress anything. So Update-time reports it as redundant in all its forms:
+A vulnerability can only be reported where OSV holds advisories for the dependency, and an advisory is matched against a version (see [Vulnerable dependencies](#-vulnerable-dependencies)). Where the scope can never suppress anything, Update-time reports it as redundant in all its forms:
+
+| Dependency type | When `vulnerable` is redundant whatever the version |
+| :-------------- | :-------------------------------------------------- |
+| [Python dependencies](#python-dependencies) | on a dependency that pins no exact version, and on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
+| [Maven dependencies](#maven-dependencies) | on a declaration whose version Maven leaves unresolved, such as a managed version naming a property that the poms do not declare, and on a declaration that leaves its version to the declaration managing it |
+| [Node engine version](#node-engine-version-and-python-version) | always: its source does not report vulnerability information |
+| [Python version](#node-engine-version-and-python-version) | always: its source does not report vulnerability information |
+| [Docker images](#docker-images) | always: its source does not report vulnerability information |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | always: its source does not report vulnerability information |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | always: its source does not report vulnerability information |
+| [jsDelivr npm URLs](#jsdelivr-npm-urls) | never |
+
+Update-time reports those cases as:
 
 ```console
 @@REDUNDANT_VULNERABLE_SOURCE_WARNING@@
-```
-
-Update-time reports a Python dependency that does not pin an exact version here too, and a `pom.xml` dependency or plugin whose version Maven leaves unresolved, such as a managed version naming a property that the poms do not declare. An advisory is matched against a version, and neither of them gives one.
-
-```console
 @@REDUNDANT_VULNERABLE_WITHOUT_A_VERSION_WARNINGS@@
 ```
 
@@ -732,13 +756,27 @@ Update-time reports an `ignore[vulnerable<high]` as redundant when none of the v
 
 #### The `archived` scope
 
-Archival can only be observed where the dependency's source publishes an archival signal. Of the references that accept a marker, that means `requirements.txt` requirements, `pyproject.toml` and inline script metadata dependencies, `pom.xml` dependencies and plugins, GitHub Actions, and pre-commit hooks (see [Archived dependencies](#-archived-dependencies)). On a Docker image, a jsDelivr URL, a `.python-version` entry, or a Node engine, the scope can never suppress anything. So Update-time reports it as redundant:
+Archival can only be observed where the dependency's source publishes an archival signal (see [Archived dependencies](#-archived-dependencies)). Where the scope can never suppress anything, Update-time reports it as redundant:
+
+| Dependency type | When `archived` is redundant |
+| :-------------- | :--------------------------- |
+| [Python dependencies](#python-dependencies) | on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
+| [Maven dependencies](#maven-dependencies) | on an artefact Maven Central does not serve, on an artefact whose poms do not name a GitHub repository, and on a declaration that leaves its version to the declaration managing it |
+| [Node engine version](#node-engine-version-and-python-version) | always: its source does not publish an archival signal |
+| [Python version](#node-engine-version-and-python-version) | always: its source does not publish an archival signal |
+| [Docker images](#docker-images) | always: its source does not publish an archival signal |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | never |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | never |
+| [jsDelivr npm URLs](#jsdelivr-npm-urls) | always: its source does not publish an archival signal |
+
+Update-time reports a source without an archival signal as:
 
 ```console
 @@REDUNDANT_ARCHIVED_SCOPE_WARNING@@
 ```
 
-Update-time reports the scope as redundant for a `pom.xml` dependency or plugin whose poms do not name a GitHub repository, such as `org.apache.commons:commons-lang3`, whose pom names `gitbox.apache.org` (see [Archived dependencies](#archived-dependencies-2)). It does so only in a run that checks archival, since only that run reads the poms:
+The pom of `org.apache.commons:commons-lang3` names `gitbox.apache.org` rather than a GitHub repository, for example (see [Archived dependencies](#archived-dependencies-2)). Update-time reports such an artefact only in a run that checks archival:
 
 ```console
 @@REDUNDANT_ARCHIVED_WITHOUT_A_GITHUB_REPOSITORY_WARNING@@
@@ -923,6 +961,8 @@ An `ignore[update]` holds the dependency's update back, so Update-time leaves th
 
 Update-time checks a requirement that pins no exact version for staleness and archival, so such a requirement can carry a marker as well: `humanize>=4  # update-time: ignore[stale<1095]` warns once that package's newest release is more than three years old.
 
+Update-time reports every warning scope as redundant on a dependency PyPI does not serve a release for: one pointing at a URL or a git repository, or one uv resolves through a `[tool.uv] sources` entry.
+
 ### npm and pnpm dependencies
 
 #### What files are updated?
@@ -1021,7 +1061,7 @@ Update-time adds no hash pin to a Maven dependency, since a pom has nowhere to h
 
 The versions plugin does not filter releases by age, so Update-time names the versions the plugin may not adopt instead. It reads each artefact's publication dates from [Maven Central](https://repo1.maven.org/maven2/), and writes every version published inside the cooldown into a rule set the plugin reads. The plugin then picks the newest version left. Both goals honour the rule set, so it reaches both kinds of dependency: the one whose `<version>` holds a version, and the one whose `<version>` names a property. The rule set names the pom's plugins too, so a property that versions a plugin is held back like any other.
 
-Maven Central does not serve an artefact that a project resolves from a mirror or a private repository, so Update-time cannot read its publication date and holds nothing back for it. So Update-time reports a marker's `cooldown` on such an artefact as redundant.
+Maven Central does not serve an artefact that a project resolves from a mirror or a private repository. Update-time then cannot read its publication date, so it holds nothing back for that artefact. It reports a marker's `cooldown` on that artefact as redundant.
 
 The rule set names an artefact whose group or artifact the pom leaves to its parent as Maven resolves it, and holds back its versions like any other artefact's.
 
@@ -1033,7 +1073,7 @@ Update-time checks each dependency and plugin against the newest release Maven C
 
 Update-time asks Maven Central about an artefact by that artefact's `groupId:artifactId` coordinates alone. So it checks a dependency whose `<version>` names a property its parent declares. It also checks a dependency or plugin that leaves its `<version>` out, unless Update-time checks the declaration managing that version in its place. For a group or artifact the pom leaves to its parent, it asks about the artefact Maven resolves.
 
-Maven Central lists nothing for an artefact a project resolves from a mirror or a private repository. Update-time then has nothing to measure staleness against. So it reports a marker's `stale` scope on such an artefact as redundant.
+Maven Central lists nothing for an artefact a project resolves from a mirror or a private repository. Update-time then has nothing to measure staleness against, and reports a marker's `stale` scope on that artefact as redundant.
 
 #### Yanked dependencies
 
@@ -1089,13 +1129,23 @@ A Maven dependency or plugin takes a marker in an XML comment at the end of its 
   <dependency>  <!-- update-time: ignore[archived] -->
   ```
 
-The `stale`, `archived`, and `vulnerable` scopes steer the checks as they do elsewhere. Where a scanned pom manages a declaration's version, Update-time checks that version at the managing declaration. So those scopes go on the managing declaration's line. Update-time reports them as redundant on a declaration that leaves its version to the managing declaration (see [Redundant markers](#redundant-markers)).
+The `stale`, `archived`, and `vulnerable` scopes steer the checks as they do elsewhere. Where a scanned pom manages a declaration's version, Update-time checks that version at the managing declaration. So those scopes go on the managing declaration's line. Update-time reports them as redundant on a declaration that leaves its version to the managing declaration:
+
+```console
+@@REDUNDANT_SCOPE_ON_A_MANAGED_VERSION_WARNING@@
+```
+
+Update-time reports the `cooldown`, `stale`, and `archived` scopes as redundant for a dependency or plugin that Maven Central does not serve. A project resolves such an artefact from a mirror or a private repository, and Update-time reads publication dates and poms from Maven Central alone. The `vulnerable` scope still applies, since OSV holds the advisories:
+
+```console
+@@REDUNDANT_UNSERVED_MAVEN_ARTEFACT_WARNING@@
+```
 
 A marker steers the update only where Maven updates the version. Maven updates a dependency's version where the declaration's `<version>` element or one of the pom's own properties holds it. It updates a plugin's version only where one of the pom's own properties holds it, since the `use-latest-releases` goal leaves plugins alone. Maven does not update a version that a declaration leaves to a parent pom, an imported BOM, or its pom's `<dependencyManagement>` or `<pluginManagement>`. On a declaration whose version Maven does not update, Update-time reports an `ignore[update]`, a bound, and a `cooldown` as redundant (see [Redundant markers](#redundant-markers)).
 
 Where Maven updates the version, Update-time hands Maven a rule per artefact. An `ignore`, an `ignore[update]`, and an item Update-time cannot read each hold back every version of the artefact. Update-time reports the first two at `DEBUG` as holding the update back, and warns about the unreadable item as invalid. A `cooldown` holds back the versions published inside the cooldown it sets.
 
-A bound holds back the versions it drops, which the rule names as Maven ranges. Update-time reports those ranges at `DEBUG` (see [Confirming a marker was understood](#confirming-a-marker-was-understood)). A bound reads a version at the first numbers it holds, so `allow[update<=32.1.3]` keeps guava's `32.1.3-jre`. A bound that names a version other than a release, such as `34.1rc1`, holds back every version. So does a level bound on a version that does not hold a number, such as `RELEASE`.
+A bound holds back the versions it drops, which the rule names as Maven ranges. Update-time reports those ranges at `DEBUG` (see [Seeing what a marker did](#seeing-what-a-marker-did)). A bound reads a version up to the first character that is neither a digit nor a dot, so `allow[update<=32.1.3]` keeps guava's `32.1.3-jre`. A bound that names a version other than a release, such as `34.1rc1`, holds back every version. So does a level bound on a version that does not hold a number, such as `RELEASE`.
 
 A pom can declare an artefact more than once, and Update-time then hands Maven one rule for all those declarations. The rule holds back what each declaration whose version Maven updates holds back. So a marker on one of them that holds back every version holds back every declaration of the artefact in the pom. Without such a marker, the rule holds back the versions each declaration's bound drops, and the versions published inside the longest cooldown among the declarations. A declaration whose marker does not set a cooldown has the run's cooldown.
 
