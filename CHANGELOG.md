@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.43 - 2026-10-11
+
 ### Added
 
 - Read and apply markers in a `pom.xml`, in an XML comment at the end of a Maven dependency's or plugin's line. Part of [#382](https://github.com/ICTU/update-time/issues/382).
