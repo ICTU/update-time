@@ -419,6 +419,31 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.drift.assert_called_once_with(Logger.DIGEST_DRIFT, self.drifted())
         self.logger.invalid_bracket_item.assert_not_called()
 
+    def test_hash_drift_opt_in_on_a_version_tag_is_not_redundant(self):
+        """Test that `allow[hash-drift]` on an image's version tag is not reported, with or without a digest yet."""
+        marker = "  # update-time: allow[hash-drift]"
+        cases = {
+            "digest": (f"image: python:3.14@{OLD_DIGEST}", f"image: python:3.14@{OLD_DIGEST}"),
+            "no digest yet": ("image: python:3.14", f"image: python:3.14@{OLD_DIGEST}"),
+        }
+        for case, (line, rewritten) in cases.items():
+            with self.subTest(case):
+                self.logger.reset_mock()  # Judge each case on the calls of its own run.
+                new_lines = self.rewrite([line + marker], _SHA_REGEXP, new_version_getter("3.14", OLD_DIGEST))
+                self.assertEqual(new_lines, [rewritten + marker])
+                self.logger.redundant_directive.assert_not_called()
+
+    def test_hash_drift_opt_in_on_a_held_back_reference_is_redundant(self):
+        """Test that `allow[hash-drift]` on a pinned image is reported as never adopted, whatever freezes it."""
+        for directives in ("ignore[update] allow[hash-drift]", "ignore allow[hash-drift]"):
+            with self.subTest(directives=directives):
+                self.logger.reset_mock()  # Judge each case on the calls of its own run.
+                lines = [f"image: python:3.14@{OLD_DIGEST}  # update-time: {directives}"]
+                self.assertEqual(self.rewrite(lines, _SHA_REGEXP, new_version_getter("3.14", NEW_DIGEST)), lines)
+                self.logger.redundant_directive.assert_called_once_with(
+                    self.reference(), "allow[hash-drift]", Reason.DRIFT_NEVER_ADOPTED
+                )
+
     def test_ignore_floating_pin_wins_over_allow_floating_pin_flag(self):
         """Test that an `ignore[floating-pin]` marker pins its reference in a run keeping every other pin floating."""
         resolved = DependencyVersion(version="3.15", sha=DIGEST, floating=FloatingPin.RESOLVED)

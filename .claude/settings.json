@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command' | grep -qE 'just +(check|test|verify)[^|;]*\\|[^|;]*(grep +-[[:alpha:]]*c|wc\\b|grep[^|;]*\\b(PASS|FAIL)\\b)' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Run it once and read the output: the exit code already reports pass/fail, so counting the PASS lines or grepping for FAIL says nothing the exit status does not.\"}}' || true"
+            "command": "cmd=$(jq -r '.tool_input.command' | awk '/<<-?.?EOF/ {print; skip=1; next} skip && /^EOF$/ {skip=0; next} !skip'); printf '%s\\n' \"$cmd\" | grep -qE 'just +(test|verify|check|mutate)([[:space:]]|$)' && printf '%s\\n' \"$cmd\" | grep -qE '(^|[;&|(])[[:space:]]*(grep|head|tail|cut|wc)([[:space:]]|$)' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Write the output of just test, verify, check, or mutate to a file under /tmp and read that file with the Read tool, from the first failure or from the end: a filter can drop the line that matters (rule 6 of the TDD section in CLAUDE.md).\"}}' || true"
           },
           {
             "type": "command",
@@ -19,6 +19,10 @@
           {
             "type": "command",
             "command": "cmd=$(jq -r '.tool_input.command'); first=$(printf '%s\\n' \"$cmd\" | head -1); last=$(printf '%s\\n' \"$cmd\" | tail -1); printf '%s\\n' \"$first\" | grep -qE \"^just mutate [A-Za-z0-9_.:/-]+( just [a-z][a-z0-9-]*)?( > /tmp/[A-Za-z0-9_.-]+)?( 2>&1)?( <<'EOF')?( 2>&1)? *$\" && { ! printf '%s\\n' \"$first\" | grep -qF \"<<'EOF'\" || [ \"$last\" = \"EOF\" ]; } && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\",\"permissionDecisionReason\":\"A mutation probe: it replaces one snippet, runs the command, and restores the file whatever happens.\"}}' || true"
+          },
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command' | grep -qE 'PYTHONPATH=src[[:space:]]+uv[[:space:]]+run' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Run it with just py, which puts src on the path and runs through uv run (see the Running and rewriting code section of CLAUDE.md).\"}}' || true"
           }
         ]
       }

@@ -10,12 +10,13 @@ from typing import TYPE_CHECKING
 from update_time.domain.file_type import REQUIREMENTS_TXT
 from update_time.domain.reference import Reference
 from update_time.io.filesystem import glob_for
-from update_time.io.log import get_logger
+from update_time.io.log import get_logger, report_marker
 from update_time.manifests import requirements_txt as requirements_txt_format
 from update_time.markers.directive import DIRECTIVES, Reason
+from update_time.markers.marker import Scope
 from update_time.references.file import update_file
 from update_time.references.match import reference_matches
-from update_time.references.resolve import report_project_checks
+from update_time.references.resolve import report_project_checks, warn_if_the_opt_in_is_redundant
 from update_time.references.vulnerability import warn_about_vulnerable_references
 from update_time.sources.osv import Ecosystem
 from update_time.sources.pypi import get_latest_version, project
@@ -58,14 +59,19 @@ _ARCHIVE_SUFFIXES = (".zip", ".whl", ".tar.gz", ".tar.bz2", ".tar", ".tgz", ".ta
 def _warn_about_items_that_decide_nothing(marker: Marker, reference: Reference) -> None:
     """Warn about each item of the requirement's marker that decides nothing."""
     as_written = marker.as_written
-    if as_written.invalid_item is not None:
-        _LOG.invalid_bracket_item(reference.dependency, as_written.invalid_item, reference.location)
     _LOG.report_inverted_items(reference, marker)
     if bound_directive := as_written.bound_directive:
         _LOG.redundant_directive(reference, bound_directive, Reason.NO_VERSION_TO_UPDATE)
     for directive in DIRECTIVES:
         if directive.without_a_version is not None and (written := as_written.directive_for(directive.scope)):
             _LOG.redundant_directive(reference, written, directive.without_a_version)
+    # An `ignore[update]` holds nothing back on a requirement that does not pin a version.
+    warn_if_the_opt_in_is_redundant(
+        reference, marker, _LOG, Scope.FLOATING_PIN, Reason.RANGE_NEVER_PINNED, update_held_back=False
+    )
+    warn_if_the_opt_in_is_redundant(
+        reference, marker, _LOG, Scope.HASH_DRIFT, Reason.NO_HASH_PIN, update_held_back=False
+    )
 
 
 def _check_loose_requirements(lines: list[Line]) -> None:
@@ -74,7 +80,9 @@ def _check_loose_requirements(lines: list[Line]) -> None:
     Such a requirement pins no version to resolve an update for, so it takes the project checks instead. What its
     marker gets wrong is reported whether or not those checks run, since that needs no release.
     """
-    for line, match, marker in reference_matches(lines, _LOOSE_REQUIREMENT_RE, _LOG):
+    for line, match, marker in reference_matches(lines, _LOOSE_REQUIREMENT_RE):
+        # No pass before this one reads these lines, so their markers are reported here.
+        report_marker(_LOG, match["dependency"], marker, line.location, holds_the_update_back=False)
         if (dependency := match["dependency"]).endswith(_ARCHIVE_SUFFIXES):
             continue
         reference = Reference(dependency, "", line.location)

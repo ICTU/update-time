@@ -16,7 +16,7 @@ from update_time.domain.dependency import DependencyName, DependencyVersion
 from update_time.domain.downgrade import downgrades
 from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
 from update_time.markers.cooldown import cooldown_days
-from update_time.markers.directive import DIRECTIVES, Reason
+from update_time.markers.directive import DIRECTIVES, HELD_BACK_OPT_INS, Consequence, ImageNotPulledReason, Reason
 from update_time.markers.marker import Scope
 from update_time.markers.reference import SteeredResolvedReference
 
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from update_time.domain.dependency import ProjectGetter
     from update_time.domain.reference import Reference
     from update_time.io.log import Logger
+    from update_time.markers.directive import RedundancyReason
     from update_time.markers.marker import Marker
 
 
@@ -41,32 +42,52 @@ def report_directives_that_set_nothing(
             log.redundant_directive(reference, written, directive.reason)
 
 
-def floating_pin_redundancy(marker: Marker, *, floats: bool | None, asked: bool = True) -> Reason | None:
-    """Return why the marker's directive to keep the pin floating is redundant, or None when it keeps it floating.
+def opt_in_redundancy(
+    marker: Marker, scope: Scope, reason: RedundancyReason | None, *, update_held_back: bool
+) -> RedundancyReason | None:
+    """Return why the marker's opt-in to the scope is redundant, or None where the opt-in decides something.
 
-    `floats` says whether the reference's pin floats, and is None where the run resolved no version to tell from.
-    `asked` says whether Update-time asked a registry about the reference. A reference it did not ask about is
-    never pinned, whatever its tag does.
+    The reference's own `reason` wins, so removing a hold-back never changes it. Without one, the opt-in is redundant
+    only where the update is held back.
     """
-    if not marker.allows(Scope.FLOATING_PIN):
+    if not marker.allows(scope):
         return None
-    if marker.ignores(Scope.UPDATE):
-        return Reason.UPDATE_HELD_BACK
-    if not asked:
-        return Reason.NO_REGISTRY_ASKED
-    if floats is False:
-        return Reason.PIN_NOT_FLOATING
-    return None
+    if reason is not None or not update_held_back:
+        return reason
+    return HELD_BACK_OPT_INS[scope]
+
+
+def warn_if_the_opt_in_is_redundant(  # noqa: PLR0913 — whether the update is held back is the caller's to decide
+    reference: Reference,
+    marker: Marker,
+    log: Logger,
+    scope: Scope,
+    reason: RedundancyReason | None,
+    *,
+    update_held_back: bool,
+) -> None:
+    """Warn when the marker's opt-in to the scope is redundant, saying why (see `opt_in_redundancy`)."""
+    if (redundancy := opt_in_redundancy(marker, scope, reason, update_held_back=update_held_back)) is not None:
+        log.redundant_directive(reference, marker.allow_directive(scope), redundancy)
+
+
+def _why_the_pin_never_floats(latest: DependencyVersion | None) -> RedundancyReason | None:
+    """Return why the reference's pin never floats, or None where it may float or the run did not resolve a version."""
+    if latest is None:
+        return None
+    if latest.image_not_pulled is not None:
+        return ImageNotPulledReason(latest.image_not_pulled, Consequence.TAG_NEVER_PINNED)
+    return None if latest.floating is not None else Reason.PIN_NOT_FLOATING
 
 
 def _warn_if_the_floating_pin_is_redundant(
     marker: Marker, reference: Reference, log: Logger, latest: DependencyVersion | None
 ) -> None:
     """Warn when the marker's directive to keep the pin floating is redundant, saying why."""
-    floats = None if latest is None else latest.floating is not None
-    asked = latest is None or latest.accounted_for is None
-    if (reason := floating_pin_redundancy(marker, floats=floats, asked=asked)) is not None:
-        log.redundant_directive(reference, marker.allow_directive(Scope.FLOATING_PIN), reason)
+    reason = _why_the_pin_never_floats(latest)
+    warn_if_the_opt_in_is_redundant(
+        reference, marker, log, Scope.FLOATING_PIN, reason, update_held_back=marker.ignores(Scope.UPDATE)
+    )
 
 
 def staleness_threshold(marker: Marker) -> int:

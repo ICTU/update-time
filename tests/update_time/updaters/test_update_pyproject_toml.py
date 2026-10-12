@@ -153,16 +153,6 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_new_version_logged("other", _NEW_VERSION, Location(mock_pyproject_toml))
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            uv._update_dependencies,
-            "_with_reported_markers(pyproject_toml_format.declared_dependencies(file), log)",
-            "_with_reported_markers("
-            "pyproject_toml_format.declared_dependencies(file) if lines_with_updates else [], log)",
-            "only a file with an available update reports its markers, so a marker on a pin nothing updates is "
-            "reported nowhere and reads as unrecognised",
-        )
-    )
     def test_a_marker_on_a_pin_uv_reports_no_update_for_is_reported(self, run: Mock, get: Mock, glob: Mock):
         """Test that a marker is reported as recognised and as holding the update back, with no update available."""
         mock_pyproject_toml, location = self.updated_marked_pin(run, get, glob, "ignore", latest="")
@@ -228,6 +218,32 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
                 self.assert_no_new_version_logged()
                 self.assert_recognised_marker_logged("package", location, marker)
                 self.assert_ignored_logged("package", location, directive, among_others=True)
+
+    @kills(
+        Mutation(
+            uv._update_dependencies,
+            "declarations = _by_name(_with_reported_markers("
+            "pyproject_toml_format.declared_dependencies(file), log))\n"
+            "    outdated = run(uv_tree)\n"
+            "    if not outdated.ok:\n"
+            "        return False\n",
+            "outdated = run(uv_tree)\n"
+            "    if not outdated.ok:\n"
+            "        return False\n"
+            "    declarations = _by_name(_with_reported_markers("
+            "pyproject_toml_format.declared_dependencies(file), log))\n",
+            "a failed uv tree skips the marker report, so a marker on a pin reads as unrecognised",
+        )
+    )
+    def test_a_marker_is_reported_when_uv_tree_fails(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a pin's marker is reported as recognised, though uv tree fails."""
+        run.side_effect = subprocess.CalledProcessError(cmd="", returncode=2, output="", stderr="offline")
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0", marker="ignore[update]"))
+        glob.return_value = [mock_pyproject_toml]
+        update_pyproject_tomls()
+        get.assert_not_called()
+        marker = Marker(ignored_scopes=Scope.UPDATE)
+        self.assert_recognised_marker_logged("package", Location(mock_pyproject_toml, 2), marker)
 
     @kills(
         Mutation(

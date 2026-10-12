@@ -19,7 +19,7 @@ from packaging.version import Version
 
 import update_time
 from update_time.domain.archival import IGNORE_ARCHIVED
-from update_time.domain.dependency import AccountedFor, ArchivedSubject, DependencyVersion, FloatingPin, tag_of
+from update_time.domain.dependency import ArchivedSubject, DependencyVersion, FloatingPin, ImageNotPulled, tag_of
 from update_time.domain.reference import Reference, RefKind
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import Vulnerability
@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from update_time.domain.bound import Verb, VersionBound
     from update_time.domain.reference import DriftedPin
     from update_time.io.log import Drift
+    from update_time.markers.directive import RedundancyReason
 
 
 def declaration(dependency: str, version: str, path: Mock, line: int, position: int) -> Declaration:
@@ -356,12 +357,12 @@ class LoggingTestCase(CacheClearingTestCase):
             cause=cause,
         )
 
-    def assert_accounted_for_reference_logged(
-        self, dependency: str, tag: str, location: Location, reason: AccountedFor
+    def assert_image_not_pulled_logged(
+        self, dependency: str, tag: str, location: Location, reason: ImageNotPulled
     ) -> None:
-        """Assert that a reference the file itself accounts for was reported, with its reason, among the others."""
+        """Assert that a reference whose image the file does not pull was reported, with its reason, among others."""
         self.assert_logged_among_others(
-            Logger._MESSAGE_ACCOUNTED_FOR_REFERENCE,
+            Logger._MESSAGE_IMAGE_NOT_PULLED,
             dependency=dependency,
             tag=tag_of(tag),
             location=location,
@@ -518,9 +519,9 @@ class LoggingTestCase(CacheClearingTestCase):
         )
 
     def assert_redundant_directive_logged(
-        self, reason: Reason, dependency: str, location: Location, directive: object = ANY
+        self, reason: RedundancyReason, dependency: str, location: Location, directive: object = ANY
     ) -> None:
-        """Assert that a directive holding nothing back was warned about once for the file, saying why."""
+        """Assert that the run's only warning reports the directive as redundant, saying why."""
         self.assert_logged(
             Logger._MESSAGE_REDUNDANT_DIRECTIVE,
             directive=directive,

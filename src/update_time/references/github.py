@@ -21,10 +21,10 @@ from update_time.primitives.text import replace_match
 from update_time.references.drift import adopts_drift
 from update_time.references.match import matched_dependency
 from update_time.references.resolve import (
-    floating_pin_redundancy,
     latest_version,
     report_directives_that_set_nothing,
     report_project_checks,
+    warn_if_the_opt_in_is_redundant,
 )
 from update_time.sources.github import (
     commit_date,
@@ -112,6 +112,9 @@ class _PinResolver:
         if not current_sha and not self.marker.holds_back_source_checks:
             reference = replace(reference, current_version=version_at_tag(reference.dependency, current_version))
         latest = latest_version(reference, get_latest_version, self.marker, self.log)
+        warn_if_the_opt_in_is_redundant(
+            reference, self.marker, self.log, Scope.HASH_DRIFT, None, update_held_back=self.marker.ignores(Scope.UPDATE)
+        )
         if latest is None or not latest.sha:
             return None
         if not current_sha:
@@ -150,8 +153,15 @@ class _PinResolver:
         marker, log = self.marker, self.log
         report_directives_that_set_nothing(marker, get_latest_version, reference, log)
         report_project_checks(reference, marker, log, project)
-        if (reason := floating_pin_redundancy(marker, floats=not names_a_commit)) is not None:
-            log.redundant_directive(reference, marker.allow_directive(Scope.FLOATING_PIN), reason)
+        pin_does_not_float = Reason.PIN_NOT_FLOATING if names_a_commit else None
+        warn_if_the_opt_in_is_redundant(
+            reference,
+            marker,
+            log,
+            Scope.FLOATING_PIN,
+            pin_does_not_float,
+            update_held_back=marker.ignores(Scope.UPDATE),
+        )
 
     def _comment_names_no_ref(self, reference: Reference) -> bool:
         """Return whether the comment beside a commit SHA does not name a tag or branch, which leaves the SHA bare."""
@@ -162,7 +172,7 @@ class _PinResolver:
     def _report_redundant_directives(
         self, reference: Reference, pin: DependencyVersion | None, *, names_a_commit: bool
     ) -> None:
-        """Report a cooldown and a hash-drift opt-in on a commit SHA, and a bound on any ref, as redundant.
+        """Report as redundant a cooldown on a commit SHA, a bound on any ref, and a hash-drift opt-in adopting nothing.
 
         A pin to a version tag has its bound judged at that version instead.
         """
@@ -172,8 +182,10 @@ class _PinResolver:
             return
         if names_a_commit and (cooldown := marker.as_written.directive_for(Scope.COOLDOWN)):
             log.redundant_directive(reference, cooldown, Reason.NO_COOLDOWN_FOR_A_COMMIT)
-        if names_a_commit and (drift := marker.allow_directive(Scope.HASH_DRIFT)):
-            log.redundant_directive(reference, drift, Reason.NO_DRIFT_FOR_A_COMMIT)
+        no_drift = Reason.NO_DRIFT_FOR_A_COMMIT if names_a_commit else None
+        warn_if_the_opt_in_is_redundant(
+            reference, marker, log, Scope.HASH_DRIFT, no_drift, update_held_back=marker.ignores(Scope.UPDATE)
+        )
         if bound := marker.as_written.version_bound_directive:
             reason = Reason.PINS_A_COMMIT if names_a_commit else Reason.FOLLOWS_A_BRANCH
             log.redundant_directive(reference, bound, reason)

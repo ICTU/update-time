@@ -253,17 +253,6 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
             Reason.PIN_NOT_FLOATING, "python", Location(mock_file, 2), "allow[floating-pin]"
         )
 
-    def test_floating_pin_marker_on_a_frozen_reference_is_reported_as_redundant(self) -> None:
-        """Test that `allow[floating-pin]` on a frozen reference is reported, since the freeze keeps its tag too."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
-        marker = self.marker_line("ignore[update] allow[floating-pin]")
-        mock_file = mock_path(marker + self.reference(f"python:latest@{DIGEST1}"))
-        self.run_updater(mock_file)
-        mock_file.write_text.assert_not_called()
-        self.assert_redundant_directive_logged(
-            Reason.UPDATE_HELD_BACK, "python", Location(mock_file, 2), "allow[floating-pin]"
-        )
-
     def test_stale_image_names_the_newest_tag(self) -> None:
         """Test that a stale image is warned about by its newest tag."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2, tag_last_pushed=STALE_DATE))

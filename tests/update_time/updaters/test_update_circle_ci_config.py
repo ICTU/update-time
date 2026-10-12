@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock, patch
 
-from update_time.domain.dependency import AccountedFor, FloatingPin
+from update_time.domain.dependency import FloatingPin, ImageNotPulled
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters import update_circle_ci_config as circle_ci
@@ -85,8 +85,8 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
     @kills(
         Mutation(
             circle_ci.update_circle_ci_config,
-            "get_new_version_for=tag_getter_excluding_each(_machine_images, AccountedFor.MACHINE_EXECUTOR_IMAGE),\n",
-            "get_new_version_for=tag_getter_excluding_each(_machine_images, AccountedFor.BUILT_IMAGE),\n",
+            "get_new_version_for=tag_getter_excluding_each(_machine_images, ImageNotPulled.MACHINE_EXECUTOR_IMAGE),\n",
+            "get_new_version_for=tag_getter_excluding_each(_machine_images, ImageNotPulled.BUILT_IMAGE),\n",
             "a machine-executor image is reported as one a Compose file builds",
         )
     )
@@ -98,9 +98,7 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         # The machine image is recognised by parsing the YAML, so no registry is queried for it.
         self.requests.assert_not_called()
         location = Location(config_yml, 4)
-        self.assert_accounted_for_reference_logged(
-            "ubuntu-2204", "2024.01.1", location, AccountedFor.MACHINE_EXECUTOR_IMAGE
-        )
+        self.assert_image_not_pulled_logged("ubuntu-2204", "2024.01.1", location, ImageNotPulled.MACHINE_EXECUTOR_IMAGE)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 

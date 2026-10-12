@@ -13,13 +13,13 @@ from unittest.mock import ANY, Mock, patch
 
 from rich.logging import RichHandler
 
-from update_time.domain.bound import Redundancy, Verb
+from update_time.domain.bound import Verb, _Redundancy
 from update_time.domain.dependency import (
-    AccountedFor,
     Archival,
     Changes,
     DependencyVersion,
     FloatingPin,
+    ImageNotPulled,
     Project,
     Release,
     Yank,
@@ -87,7 +87,7 @@ class LogMessageTests(TestCase):
         ]
         # Two enums carry message fragments of their own, so the fragments are read off the enums rather than
         # off the logger: the `Reason` a warning reports, and the `Redundancy` a bound is reported with.
-        messages += [str(member) for enum in (Reason, Redundancy) for member in enum]
+        messages += [str(member) for enum in (Reason, _Redundancy) for member in enum]
         # Guard against the introspection silently covering the fragments alone, as it did when the messages stopped
         # being plain strings:
         self.assertIn(str(Logger._MESSAGE_NEW_VERSION), messages)
@@ -306,16 +306,16 @@ class LoggerTests(TestCase):
             log_module.Logger,
             '"Reference %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s",\n',
             '"Reference %(dependency)s%(tag)s in %(location)s was left as it is",\n',
-            "the line reports that a reference was left as it is without naming what accounts for it",
+            "the line reports that a reference was left as it is without naming why the file does not pull its image",
         )
     )
-    def test_accounted_for_reference(self, mock_log: Mock):
-        """Test that a reference the file itself accounts for is reported with what accounts for it."""
+    def test_image_not_pulled(self, mock_log: Mock):
+        """Test that a reference whose image the file does not pull is reported with the reason it does not."""
         location = create_location("docker-compose.yml", 4)
-        _new_logger().accounted_for_reference(reference("acme/api", location, "1.2.3"), AccountedFor.BUILT_IMAGE)
+        _new_logger().image_not_pulled(reference("acme/api", location, "1.2.3"), ImageNotPulled.BUILT_IMAGE)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_ACCOUNTED_FOR_REFERENCE,
+            Logger._MESSAGE_IMAGE_NOT_PULLED,
             f"Reference {dependency('acme/api')}:1.2.3 in {at('docker-compose.yml:4')} was left as it is: "
             "the Compose file builds this image",
         )

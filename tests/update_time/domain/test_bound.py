@@ -5,7 +5,7 @@ import unittest
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
-from update_time.domain.bound import NO_BOUND, Redundancy, UpdateLevel, Verb, VersionBound
+from update_time.domain.bound import NO_BOUND, UpdateLevel, Verb, VersionBound, _Redundancy
 
 
 class VersionBoundTest(unittest.TestCase):
@@ -29,15 +29,15 @@ class VersionBoundTest(unittest.TestCase):
 
     def test_redundancy_no_effect(self):
         """Test that a bound admitting the current version and everything above it is flagged as having no effect."""
-        self.assertEqual(Redundancy.NO_EFFECT, VersionBound(Verb.ALLOW, SpecifierSet(">=3.12")).redundancy("3.12"))
+        self.assertEqual(_Redundancy.NO_EFFECT, VersionBound(Verb.ALLOW, SpecifierSet(">=3.12")).redundancy("3.12"))
 
     def test_redundancy_blocks_all_via_ignore(self):
         """Test that an ignore bound dropping the current version and everything above it is flagged as blocking all."""
-        self.assertEqual(Redundancy.BLOCKS_ALL, VersionBound(Verb.IGNORE, SpecifierSet(">=3.12")).redundancy("3.12"))
+        self.assertEqual(_Redundancy.BLOCKS_ALL, VersionBound(Verb.IGNORE, SpecifierSet(">=3.12")).redundancy("3.12"))
 
     def test_redundancy_blocks_all_via_ceiling_below_current(self):
         """Test that an allow ceiling below the current version blocks every update."""
-        self.assertEqual(Redundancy.BLOCKS_ALL, VersionBound(Verb.ALLOW, SpecifierSet("<3.13")).redundancy("3.14"))
+        self.assertEqual(_Redundancy.BLOCKS_ALL, VersionBound(Verb.ALLOW, SpecifierSet("<3.13")).redundancy("3.14"))
 
     def test_redundancy_live_ceiling(self):
         """Test that a ceiling above the current version is live (not redundant)."""
@@ -58,7 +58,7 @@ class VersionBoundTest(unittest.TestCase):
     def test_redundancy_allow_range_above_current_blocks_all(self):
         """Test that an allow range entirely below the current version blocks every update."""
         self.assertEqual(
-            Redundancy.BLOCKS_ALL, VersionBound(Verb.ALLOW, SpecifierSet(">=3.13,<3.15")).redundancy("3.16")
+            _Redundancy.BLOCKS_ALL, VersionBound(Verb.ALLOW, SpecifierSet(">=3.13,<3.15")).redundancy("3.16")
         )
 
     def test_redundancy_star_range_below_current_is_live(self):
@@ -67,7 +67,7 @@ class VersionBoundTest(unittest.TestCase):
 
     def test_redundancy_hard_ceiling_at_current_blocks_all(self):
         """Test that a hard `<=` ceiling at the current version blocks every update (nothing above it survives)."""
-        self.assertEqual(Redundancy.BLOCKS_ALL, VersionBound(Verb.ALLOW, SpecifierSet("<=3.12")).redundancy("3.12"))
+        self.assertEqual(_Redundancy.BLOCKS_ALL, VersionBound(Verb.ALLOW, SpecifierSet("<=3.12")).redundancy("3.12"))
 
     def test_redundancy_with_post_release_current_version(self):
         """Test that a live bound on a pin with a post-release segment is classified without raising."""
@@ -80,13 +80,13 @@ class VersionBoundTest(unittest.TestCase):
     def test_redundancy_of_image_tag_with_suffix(self):
         """Test that a bound on an image tag with a variant suffix is classified against the tag's main version."""
         version_bound = VersionBound(Verb.ALLOW, SpecifierSet("<3.13"))
-        self.assertEqual(Redundancy.BLOCKS_ALL, version_bound.redundancy("3.14.1-bookworm-slim"))
+        self.assertEqual(_Redundancy.BLOCKS_ALL, version_bound.redundancy("3.14.1-bookworm-slim"))
         self.assertIsNone(version_bound.redundancy("3.12.1-bookworm-slim"))
 
     def test_redundancy_of_image_tag_with_label_prefix(self):
         """Test that a bound on an image tag with a label prefix is classified against the embedded version."""
         version_bound = VersionBound(Verb.ALLOW, SpecifierSet(">=3.12"))
-        self.assertEqual(Redundancy.NO_EFFECT, version_bound.redundancy("python3.14"))
+        self.assertEqual(_Redundancy.NO_EFFECT, version_bound.redundancy("python3.14"))
 
     def test_redundancy_invalid_current_version(self):
         """Test that an unparsable current version yields no redundancy verdict rather than raising."""
@@ -94,11 +94,11 @@ class VersionBoundTest(unittest.TestCase):
 
     def test_redundancy_of_no_bound(self):
         """Test that the keep-all NO_BOUND (an empty specifier) trivially never has an effect."""
-        self.assertEqual(Redundancy.NO_EFFECT, NO_BOUND.redundancy("3.12"))
+        self.assertEqual(_Redundancy.NO_EFFECT, NO_BOUND.redundancy("3.12"))
 
     def test_redundancy_with_non_pep440_boundary(self):
         """Test that a clause whose version isn't PEP 440 (arbitrary equality) is handled without raising."""
-        self.assertEqual(Redundancy.BLOCKS_ALL, VersionBound(Verb.ALLOW, SpecifierSet("===foobar")).redundancy("1.0"))
+        self.assertEqual(_Redundancy.BLOCKS_ALL, VersionBound(Verb.ALLOW, SpecifierSet("===foobar")).redundancy("1.0"))
 
 
 class LevelBoundTest(unittest.TestCase):
@@ -175,6 +175,8 @@ class LevelBoundTest(unittest.TestCase):
 
     def test_redundancy_of_level_bounds(self):
         """Test that a level bound is classified by its anchored equivalent (see the logger for the reporting)."""
-        self.assertEqual(Redundancy.NO_EFFECT, VersionBound(Verb.ALLOW, level=UpdateLevel.MAJOR).redundancy("3.12"))
-        self.assertEqual(Redundancy.BLOCKS_ALL, VersionBound(Verb.IGNORE, level=UpdateLevel.PATCH).redundancy("3.12.1"))
+        self.assertEqual(_Redundancy.NO_EFFECT, VersionBound(Verb.ALLOW, level=UpdateLevel.MAJOR).redundancy("3.12"))
+        self.assertEqual(
+            _Redundancy.BLOCKS_ALL, VersionBound(Verb.IGNORE, level=UpdateLevel.PATCH).redundancy("3.12.1")
+        )
         self.assertIsNone(VersionBound(Verb.IGNORE, level=UpdateLevel.MINOR).redundancy("3.12"))

@@ -622,6 +622,8 @@ The level applies to the reference carrying it, and every other reference in the
 
 `ignore[hash-drift]` is the opposite and the default. A reference carrying it keeps its pin exactly as one carrying no marker at all, in a run passing `--allow-hash-drift` as well.
 
+Update-time reports an `allow[hash-drift]` as redundant on a reference whose drift it never adopts (see [The `hash-drift` scope](#the-hash-drift-scope)).
+
 ### Keeping a pin floating
 
 `# update-time: allow[floating-pin]` keeps a floating pin as it is: a [floating image tag](#floating-image-tags) such as `python:latest`, a branch such as `actions/checkout@main`, or a tag such as `stable-2024`. Update-time would otherwise pin the image tag to the version and digest it serves, and the branch or tag to the commit it points at (see [GitHub Actions and pre-commit hooks](#github-actions-and-pre-commit-hooks)). Use the marker for a reference you want to follow a channel or a branch, such as an image you rebuild from `latest` on purpose. Run with `--log-level DEBUG` to see what the marker held back. That line names what dropping the marker would pin the reference to. For a floating tag, that is the version the tag resolves to. For a branch, it is the commit the branch points at, named by the version tag at that commit, or else by the branch:
@@ -798,12 +800,12 @@ Staleness is measured against the publication date of a dependency's newest rele
 | [Maven dependencies](#maven-dependencies) | on an artefact Maven Central does not serve, and on a declaration that leaves its version to the declaration managing it |
 | [Node engine version](#node-engine-version-and-python-version) | on an engine that follows the project's Dockerfile, since Update-time checks the base image instead |
 | [Python version](#node-engine-version-and-python-version) | on an entry that follows the project's Dockerfile, since Update-time checks the base image instead |
-| [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, and on a reference a file accounts for itself |
+| [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, and on an image the file does not pull |
 | [GitHub Actions](#github-actions-and-pre-commit-hooks) | never |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | never |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | never |
 
-Update-time does not ask a registry about a reference a file accounts for itself, such as a CircleCI machine-executor image or an image a Docker Compose file builds. Update-time reports a source without publication dates as:
+Update-time does not ask a registry about an image the file does not pull, such as a CircleCI machine-executor image or an image a Docker Compose file builds. Update-time reports a source without publication dates as:
 
 ```console
 WARNING Redundant update-time directive ignore[stale<90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure staleness against
@@ -820,7 +822,7 @@ Where a cooldown holds nothing back, Update-time reports the `cooldown` scope as
 | [Maven dependencies](#maven-dependencies) | on a declaration whose version Maven does not update, and on an artefact Maven Central does not serve |
 | [Node engine version](#node-engine-version-and-python-version) | on an engine that follows the project's Dockerfile, since the base image's update applied the cooldown |
 | [Python version](#node-engine-version-and-python-version) | on an entry that follows the project's Dockerfile, since the base image's update applied the cooldown |
-| [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, and on a reference a file accounts for itself |
+| [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, and on an image the file does not pull |
 | [GitHub Actions](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since Update-time never updates a commit |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since Update-time never updates a commit |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | never |
@@ -943,26 +945,55 @@ An `allow[floating-pin]` on a reference whose pin does not float keeps nothing f
 WARNING Redundant update-time directive allow[floating-pin] for python in Dockerfile:2: this reference's pin does not float
 ```
 
-An `ignore` or an `ignore[update]` keeps nothing floating either, since Update-time never pins a reference whose update it holds back. Update-time reports the `allow[floating-pin]` directive as redundant whether or not its pin floats:
+Update-time never pins a range such as `humanize>=4`, so an `allow[floating-pin]` on one is redundant as well:
+
+```console
+WARNING Redundant update-time directive allow[floating-pin] for humanize in docs/requirements.txt:12: this reference names a range, which Update-time never pins
+```
+
+On a reference whose pin floats, an `ignore`, or an `ignore[update]` that holds the update back, keeps nothing floating either, since Update-time never pins a reference whose update it holds back. Update-time reports the `allow[floating-pin]` directive as redundant there:
 
 ```console
 WARNING Redundant update-time directive allow[floating-pin] for python in Dockerfile:2: this reference's update is held back, so it is never pinned
 ```
 
-Update-time never pins a reference a file accounts for itself, so an `allow[floating-pin]` on one is redundant as well:
+Update-time never pins an image the file does not pull, so an `allow[floating-pin]` on one is redundant as well:
 
 ```console
-WARNING Redundant update-time directive allow[floating-pin] for acme/api in docker-compose.yml:4: Update-time does not ask a registry about this reference, so its tag is never pinned
+WARNING Redundant update-time directive allow[floating-pin] for acme/api in docker-compose.yml:4: the Compose file builds this image, so its tag is never pinned
 ```
 
 Update-time does not report a floating image tag, a branch, or a tag such as `stable-2024` it cannot pin, since its pin does float. It logs why instead: at `DEBUG` for a floating image tag (see [Floating image tags](#floating-image-tags)), and at `ERROR` for a branch or tag whose commit it cannot fetch (see [GitHub Actions and pre-commit hooks](#github-actions-and-pre-commit-hooks)). Where a floating tag's digest changed, Update-time reports the [hash drift](#hash-drift) instead.
 
 #### The `hash-drift` scope
 
-A commit cannot drift, so an `allow[hash-drift]` on a GitHub Action or pre-commit hook that names a commit SHA, rather than a tag or branch, adopts nothing. Update-time reports it as redundant:
+An `allow[hash-drift]` adopts what a drifted hash pin points at (see [Adopting hash drift](#adopting-hash-drift)). The directive adopts nothing on a reference without a hash pin that could drift, or on one whose drift Update-time never adopts. Update-time reports it as redundant there:
+
+| Dependency type | When `allow[hash-drift]` is redundant |
+| :-------------- | :------------------------------------ |
+| [Python dependencies](#python-dependencies) | always: a pin names a version, and Update-time writes no hash beside it |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
+| [Maven dependencies](#maven-dependencies) | always: a pom names a version, and Maven records an artefact's checksum beside the artefact |
+| [Node engine version](#node-engine-version-and-python-version) | always: it names a Node version, not an artefact that could be hashed |
+| [Python version](#node-engine-version-and-python-version) | always: it names a Python version, not an artefact that could be hashed |
+| [Docker images](#docker-images) | on an image the file does not pull, since Update-time does not ask a registry about its digest |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since a commit cannot drift |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since a commit cannot drift |
+| [jsDelivr npm URLs](#jsdelivr-npm-urls) | always: Update-time never adopts an integrity hash mismatch |
+
+Update-time reports those cases as:
 
 ```console
+WARNING Redundant update-time directive allow[hash-drift] for humanize in docs/requirements.txt:12: this reference does not carry a hash pin that could drift
+WARNING Redundant update-time directive allow[hash-drift] for clipboard in docs/conf.py:4: Update-time never adopts an integrity hash mismatch
+WARNING Redundant update-time directive allow[hash-drift] for acme/api in docker-compose.yml:4: the Compose file builds this image, so its digest is never checked for drift
 WARNING Redundant update-time directive allow[hash-drift] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a tag or branch, so it cannot drift
+```
+
+On a reference whose drift Update-time would otherwise adopt, an `ignore`, or an `ignore[update]` that holds the update back, leaves the directive adopting nothing as well, since Update-time never rewrites a reference whose update it holds back. Update-time reports the `allow[hash-drift]` directive as redundant there:
+
+```console
+WARNING Redundant update-time directive allow[hash-drift] for python in Dockerfile:2: this reference's update is held back, so its drift is never adopted
 ```
 
 #### A bound
@@ -1515,7 +1546,7 @@ Update-time reads a Dockerfile's `FROM` the way Docker reads it: in upper or low
 
 A Docker Compose service that declares a `build:` beside its `image:` names the image the file builds. That image is the file's output rather than a dependency to update, so Update-time leaves it alone. It leaves the other services naming that image alone as well, including the ones that build nothing themselves. The reference is matched by name and tag, so another tag of the same repository is a registry image like any other and is updated as one. Update-time reads one file at a time, so an image one Docker Compose file builds is updated in another file that pulls it.
 
-Update-time reports every reference a file accounts for itself at `DEBUG`, naming what accounts for it:
+Update-time reports at `DEBUG` why the file does not pull an image:
 
 ```console
 DEBUG Reference acme/api:1.2.3 in docker-compose.yml:4 was left as it is: the Compose file builds this image
@@ -1536,7 +1567,7 @@ A dated snapshot such as `debian:bookworm-20260803` names the day its image was 
 
 Update-time appends the `@sha256:digest` of the (latest) tag to an image referenced by tag only, so the image is reproducible. This covers base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, Docker Compose and Helm manifest images, and devcontainer base images and features. Update-time takes the image's registry from the reference, so it resolves images on Docker Hub and on other OCI registries (`ghcr.io`, `mcr.microsoft.com`, …) alike.
 
-Update-time ignores an image whose tag it cannot read, so a reference through a `{{ ... }}` template or `${VAR}` variable substitution gets no digest. Update-time does not ask a registry about a reference a file accounts for itself, so that reference gets none either. A CircleCI machine-executor image (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) and an image a Docker Compose file builds are such references.
+Update-time ignores an image whose tag it cannot read, so a reference through a `{{ ... }}` template or `${VAR}` variable substitution gets no digest. Update-time does not ask a registry about an image the file does not pull, so that image gets none either. Such images are a CircleCI machine-executor image (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`), an image a Docker Compose file builds, `scratch`, and one of the Dockerfile's own build stages.
 
 #### Cooldown
 

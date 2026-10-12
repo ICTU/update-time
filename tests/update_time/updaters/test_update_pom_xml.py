@@ -7,7 +7,7 @@ from subprocess import CalledProcessError  # nosec
 from typing import TYPE_CHECKING
 from unittest.mock import Mock, call, patch
 
-from update_time.domain.bound import Redundancy, Verb
+from update_time.domain.bound import Verb, _Redundancy
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import NO_CHANGES, Archival, ArchivedSubject, Changes, Project, Release
 from update_time.io.log import Logger
@@ -469,8 +469,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     def test_a_redundant_bound_on_a_version_maven_updates_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
         """Test that a bound that never has an effect or blocks every update is warned about."""
         for directives, redundancy in {
-            "allow[update>=33]": Redundancy.NO_EFFECT,
-            "ignore[update>=33]": Redundancy.BLOCKS_ALL,
+            "allow[update>=33]": _Redundancy.NO_EFFECT,
+            "ignore[update>=33]": _Redundancy.BLOCKS_ALL,
         }.items():
             with self.subTest(directives=directives):
                 pom = self.find_marked_pom(mock_run, mock_glob, directives)
@@ -558,6 +558,23 @@ class UpdatePomXmlTest(LoggingTestCase):
         update_pom_xmls()
         self.assert_redundant_directive_logged(Reason.VERSION_HELD_ELSEWHERE, GUAVA, Location(pom, 6), "ignore[update]")
 
+    def test_an_opt_in_beside_an_ignored_update_on_a_parents_property_keeps_its_own_reason(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that an opt-in beside an `ignore[update]` that holds nothing back is reported for its own reason."""
+        reasons = {"allow[hash-drift]": Reason.NO_HASH_PIN, "allow[floating-pin]": Reason.PIN_NOT_FLOATING}
+        for directive, reason in reasons.items():
+            with self.subTest(directive=directive):
+                pom = self.find_pom_versioned_by_a_parent(mock_run, mock_glob, f"ignore[update] {directive}")
+                update_pom_xmls()
+                redundant = Logger._MESSAGE_REDUNDANT_DIRECTIVE
+                fields = {"dependency": GUAVA, "location": Location(pom, 6)}
+                self.assert_logged_among_others(redundant, directive=directive, reason=reason, **fields)
+                self.assert_logged_among_others(
+                    redundant, directive="ignore[update]", reason=Reason.VERSION_HELD_ELSEWHERE, **fields
+                )
+                self.assertEqual(len(self.records_of(redundant, directive=directive)), 1)  # Not also as held back
+
     def test_a_marker_on_a_dependency_without_a_version_is_redundant(self, mock_run: Mock, mock_glob: Mock):
         """Test that a marker steering the update of a version the parent pom manages is redundant here."""
         unversioned = _marked_at_its_element(guava_element(None), "ignore[update]")
@@ -641,15 +658,18 @@ class UpdatePomXmlTest(LoggingTestCase):
                     Reason.NO_YANK_CONCEPT, GUAVA, Location(pom, 6), "ignore[yanked]"
                 )
 
-    def test_a_floating_pin_marker_is_reported_as_redundant(self, mock_run: Mock, mock_glob: Mock):
-        """Test that `allow[floating-pin]` is reported as a pin that does not float, with or without an `ignore`."""
-        for directives in ("allow[floating-pin]", "ignore[update] allow[floating-pin]"):
+    def test_an_opt_in_is_reported_as_redundant(self, mock_run: Mock, mock_glob: Mock):
+        """Test that each opt-in is reported for the reason it decides nothing, with or without an `ignore[update]`."""
+        cases = {
+            "allow[floating-pin]": ("allow[floating-pin]", Reason.PIN_NOT_FLOATING),
+            "ignore[update] allow[floating-pin]": ("allow[floating-pin]", Reason.PIN_NOT_FLOATING),
+            "allow[hash-drift]": ("allow[hash-drift]", Reason.NO_HASH_PIN),
+        }
+        for directives, (directive, reason) in cases.items():
             with self.subTest(directives=directives):
                 pom = self.find_marked_pom(mock_run, mock_glob, directives)
                 update_pom_xmls()
-                self.assert_redundant_directive_logged(
-                    Reason.PIN_NOT_FLOATING, GUAVA, Location(pom, 6), "allow[floating-pin]"
-                )
+                self.assert_redundant_directive_logged(reason, GUAVA, Location(pom, 6), directive)
 
     @kills(
         Mutation(

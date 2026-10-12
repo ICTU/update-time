@@ -11,6 +11,7 @@ from update_time.domain.yank import reports_yanks
 from update_time.markers.marker import Scope
 
 if TYPE_CHECKING:
+    from update_time.domain.dependency import ImageNotPulled
     from update_time.primitives.capability import HasCapability
 
 
@@ -33,6 +34,8 @@ class Reason(StrEnum):
     PINS_A_COMMIT = "this reference pins a commit rather than a version, so a bound decides nothing"
     NO_COOLDOWN_FOR_A_COMMIT = "this reference pins a commit rather than a version, so a cooldown holds nothing back"
     NO_DRIFT_FOR_A_COMMIT = "this reference pins a commit rather than a tag or branch, so it cannot drift"
+    NO_HASH_PIN = "this reference does not carry a hash pin that could drift"
+    INTEGRITY_MISMATCH_NEVER_ADOPTED = "Update-time never adopts an integrity hash mismatch"
     MANAGER_RESOLVES_THE_VERSION = "the package manager resolves this dependency's version"
     COOLDOWN_PER_RUN = "the package manager applies the cooldown per run rather than per dependency"
     NO_PYPI_RELEASE = "PyPI does not serve a release for this dependency"
@@ -49,8 +52,31 @@ class Reason(StrEnum):
         "Update-time checks this dependency at the declaration that manages its version"
     )
     PIN_NOT_FLOATING = "this reference's pin does not float"
-    UPDATE_HELD_BACK = "this reference's update is held back, so it is never pinned"
-    NO_REGISTRY_ASKED = "Update-time does not ask a registry about this reference, so its tag is never pinned"
+    RANGE_NEVER_PINNED = "this reference names a range, which Update-time never pins"
+    NEVER_PINNED = "this reference's update is held back, so it is never pinned"
+    DRIFT_NEVER_ADOPTED = "this reference's update is held back, so its drift is never adopted"
+
+
+class Consequence(StrEnum):
+    """What Update-time never does for a reference whose image the file does not pull, in the words reported."""
+
+    TAG_NEVER_PINNED = "its tag is never pinned"
+    DIGEST_NEVER_CHECKED = "its digest is never checked for drift"
+
+
+@dataclass(frozen=True)
+class ImageNotPulledReason:
+    """Why a directive is redundant on a reference whose image the file does not pull: the cause, and what follows."""
+
+    cause: ImageNotPulled
+    consequence: Consequence
+
+    def __str__(self) -> str:
+        """Return the reason in the words the warning reports it in."""
+        return f"{self.cause}, so {self.consequence}"
+
+
+type RedundancyReason = Reason | ImageNotPulledReason
 
 
 @dataclass(frozen=True)
@@ -106,3 +132,6 @@ DIRECTIVES = (
 
 # The directives whose scope steers a warning rather than the update, which is every one but the cooldown.
 WARNING_DIRECTIVES = tuple(directive for directive in DIRECTIVES if directive.scope is not Scope.COOLDOWN)
+
+# A held-back update makes each opt-in redundant, for the reason given beside the scope it opts into.
+HELD_BACK_OPT_INS = {Scope.FLOATING_PIN: Reason.NEVER_PINNED, Scope.HASH_DRIFT: Reason.DRIFT_NEVER_ADOPTED}
