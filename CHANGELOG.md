@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.44 - 2026-10-12
+
 ### Fixed
 
 - Report an `allow[hash-drift]` as redundant wherever it adopts nothing, not only beside a commit SHA. Closes [#408](https://github.com/ICTU/update-time/issues/408).
