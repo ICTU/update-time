@@ -28,7 +28,6 @@ A check a reference's marker can silence: the scope silencing it, its warning, a
 A check about the version a reference is left on has none to run on where the reference pins none, so its scope holds nothing back there.
 A class a framework discovers is found by scanning the module rather than by importing it, and an entry point is reached by running its file, so neither has a caller to find and reporting it would buy nothing.
 A component the current version doesn't have counts as zero, so `ignore[minor-update]` on `node:22` blocks `22.1`.
-A concrete suite supplies those two through `reference` and `run_updater`, inherits the common cases below, and adds its own format-specific tests (stage aliases, machine images, features, variable substitution).
 A condition rather than a rule of its own because archunitpython records a dependency on the module a name comes from, not on the name, and a source may use `cooldown.within_cooldown` while reading no setting.
 A constraint on the versions a reference may update to: keep the candidates it matches, or drop them.
 A dated snapshot the repository labels, such as `bookworm-20260803`: the line the snapshot was built for, and the day it was built.
@@ -68,7 +67,6 @@ A moderate vulnerability the advisory item does not name.
 A mutation is applied in memory, so no file on disk is touched and an interrupted run cannot leave a source file broken.
 A name a file declares twice is steered per declaration, so a marker steers the line it sits on and leaves the other line alone.
 A name mapped to None is an entry with no file to fetch, as a directory is.
-A name of its own per case: the source caches what it resolved, so a repeated name would let the second case pass on the first one's cache rather than on its own run.
 A non-PEP 440 boundary (e.g. an arbitrary-equality `===` clause) has no version to probe.
 A package the file declares nowhere is reported at the file rather than at a line guessed from elsewhere.
 A page that can't be fetched is logged and read as no tags at all, which ends the reading.
@@ -337,10 +335,8 @@ Test that a Node base image elsewhere in the repo is used when the package.json 
 Test that a Python base image elsewhere in the repo is used when the version file has no local one.
 Test that a URL whose attribute dictionary carries no integrity hash gains one, logged as a pin.
 Test that a `##` line in a fenced code block gets no entry, since it is sample content, not a chapter.
-Test that a `FROM image:${TAG}` names a tag Update-time cannot read, so no registry is queried.
 Test that a `FROM image` naming no tag is pinned to the version and digest `latest` serves.
 Test that a `FROM` naming one of the file's own build stages is left alone, no registry serving it.
-Test that a `FROM` taking its image name from a variable names no image, so no registry is queried.
 Test that a `FROM` that does not open its line introduces no base image, so prose is left as it is.
 Test that a `cooldown` marker on an image off Docker Hub is reported, since no tag there carries a date.
 Test that a `stale` marker on an image off Docker Hub is reported, since no tag there carries a date.
@@ -571,7 +567,6 @@ The line the URL sits on resolves the version and hands it down to the dictionar
 The lines a jsDelivr reference is declared with, formatted as Ruff would format them: the URL, and below it the attribute dictionary, either declaring the Subresource Integrity hash or, unpinned, declaring none.
 The lines below the three requirements each hold something a requirements file may carry that resolves to no PyPI release.
 The loop above already covers `updaters` for the manifest parsers; an updater parses no `json` either.
-The machine image is recognised by parsing the YAML, so no registry is queried for it.
 The marker a bare `# update-time: ignore` expresses: every check the marker can hold back is held back.
 The marker a bare `ignore` expresses: hold everything back.
 The marker comment itself carries no reference, so only the reference below it is logged as ignored.
@@ -669,7 +664,6 @@ Update-time checks each pin a Python file declares against the newest release of
 Update-time checks the version the run leaves the reference on.
 Update-time does not check an image, because OSV has no ecosystem for container images.
 Update-time does not check an image, because no OCI registry publishes an archival signal.
-Update-time ignores an image whose tag it cannot read, so a reference through a `{{ ... }}` template or `${VAR}` variable substitution gets no digest.
 Update-time reads it for each dependency a Python file declares, whether or not the dependency pins an exact version.
 Update-time still reports a new version for a dependency that pins no exact version, both in a `pyproject.toml` and in an inline script metadata block.
 Usable as a decorator on a test method or class (like `unittest.mock.patch`, by stacking one patch per method); it adds no mock argument.
@@ -775,7 +769,6 @@ a snapshot's label is read as no part of its tag, so the pin loses it and crosse
 a source is asked about a reference no check needs an answer for, so the run pays for the request.
 a tag naming neither a version nor a channel is dated by no release, whatever the registry serves.
 a tag the registry serves no manifest for is dated by the image's newest release.
-a tag written as a variable substitution is read as no tag at all, so the reference is rewritten.
 a traceback the probe passes over.
 a version a space and a comma follow still ends its specifier, so a requirement combining two of them is rewritten into one no version satisfies.
 a version of eight digits naming no calendar date is passed over as if it were a snapshot.

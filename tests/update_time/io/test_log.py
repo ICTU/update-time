@@ -19,7 +19,7 @@ from update_time.domain.dependency import (
     Changes,
     DependencyVersion,
     FloatingPin,
-    ImageNotPulled,
+    ImageNotLookedUp,
     Project,
     Release,
     Yank,
@@ -309,13 +309,13 @@ class LoggerTests(TestCase):
             "the line reports that a reference was left as it is without naming why the file does not pull its image",
         )
     )
-    def test_image_not_pulled(self, mock_log: Mock):
+    def test_image_not_looked_up(self, mock_log: Mock):
         """Test that a reference whose image the file does not pull is reported with the reason it does not."""
         location = create_location("docker-compose.yml", 4)
-        _new_logger().image_not_pulled(reference("acme/api", location, "1.2.3"), ImageNotPulled.BUILT_IMAGE)
+        _new_logger().image_not_looked_up(reference("acme/api", location, "1.2.3"), ImageNotLookedUp.BUILT_IMAGE)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_IMAGE_NOT_PULLED,
+            Logger._MESSAGE_IMAGE_NOT_LOOKED_UP,
             f"Reference {dependency('acme/api')}:1.2.3 in {at('docker-compose.yml:4')} was left as it is: "
             "the Compose file builds this image",
         )

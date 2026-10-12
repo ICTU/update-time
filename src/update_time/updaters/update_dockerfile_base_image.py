@@ -3,7 +3,7 @@
 import re
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import ImageNotPulled
+from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DOCKERFILES
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
@@ -37,14 +37,14 @@ def _update_dockerfile(dockerfile: Path) -> None:
     """Update the base images in one Dockerfile, leaving the references to an image it does not pull unchanged."""
     stages = _stage_names(dockerfile)
 
-    def image_not_pulled(pinned: PinnedDependency) -> ImageNotPulled | None:
+    def image_not_pulled(pinned: PinnedDependency) -> ImageNotLookedUp | None:
         """Return why the Dockerfile does not pull the image the reference names, or None when it does.
 
         Neither `scratch` nor a build stage carries a tag to tell one from another, so the version decides nothing.
         """
         if pinned.name == _SCRATCH:
-            return ImageNotPulled.EMPTY_BASE_IMAGE
-        return ImageNotPulled.BUILD_STAGE if pinned.name.lower() in stages else None
+            return ImageNotLookedUp.EMPTY_BASE_IMAGE
+        return ImageNotLookedUp.BUILD_STAGE if pinned.name.lower() in stages else None
 
     update_file(dockerfile, _IMAGE_RE, get_new_version=tag_getter(image_not_pulled), logger=_LOG)
 

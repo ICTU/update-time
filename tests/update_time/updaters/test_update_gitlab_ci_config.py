@@ -35,17 +35,6 @@ class UpdateGitLabCIConfigTest(registry.ImageUpdaterTestMixin):
         self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(config, 1))
         self.assert_no_warnings_logged()
 
-    def test_variable_reference_ignored(self):
-        """Test that an image referenced through variable substitution is not modified."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("3.14.2", DIGEST))
-        config = mock_path("image: $CI_REGISTRY_IMAGE:${CI_COMMIT_TAG}\n")
-        self.run_updater(config)
-        config.write_text.assert_not_called()
-        self.requests.assert_not_called()
-        self.assert_path_logged(config)
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
-
     def test_missing_config_file(self):
         """Test that a repository without a .gitlab-ci.yml is handled gracefully."""
         with patch("update_time.updaters.update_gitlab_ci_config.glob_for", return_value=[]):

@@ -99,13 +99,14 @@ def tag_of(version: VersionString, separator: str = ":") -> str:
     return f"{separator}{version}" if version else ""
 
 
-class ImageNotPulled(StrEnum):
-    """Why a file does not pull the image a reference names, so Update-time does not ask a registry about it."""
+class ImageNotLookedUp(StrEnum):
+    """Why Update-time does not ask a registry about the image a reference names."""
 
     BUILT_IMAGE = "the Compose file builds this image"
     MACHINE_EXECUTOR_IMAGE = "it names a CircleCI machine executor rather than an image a registry serves"
     EMPTY_BASE_IMAGE = "it names the empty base image Docker builds from, which no registry serves"
     BUILD_STAGE = "it names one of the Dockerfile's own build stages"
+    THROUGH_A_VARIABLE = "it names its image or tag through a variable or a template"
 
 
 @dataclass(frozen=True)
@@ -210,7 +211,7 @@ class DependencyVersion:
     project: Project = Project()  # What the source reports about the project behind the dependency
     floating: FloatingPin | None = None  # What happened to the floating pin if the reference had one
     served: bool = True  # Whether the source serves the version the reference names
-    image_not_pulled: ImageNotPulled | None = None  # Why the file does not pull the image
+    image_not_looked_up: ImageNotLookedUp | None = None  # Why Update-time does not ask a registry about the image
     tag_name: str = ""  # The version's tag as the repository spells it (`v6.0.0`), where the source reads tags
 
     @classmethod

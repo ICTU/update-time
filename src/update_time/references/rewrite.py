@@ -15,7 +15,7 @@ from update_time.domain.dependency import FloatingPin
 from update_time.domain.line import located_lines
 from update_time.domain.reference import DriftedPin, hash_drifted
 from update_time.io.log import Logger, report_marker
-from update_time.markers.directive import Consequence, ImageNotPulledReason, Reason
+from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.markers.floating import floating_pin_cause
 from update_time.markers.marker import Scope, parse_marker
 from update_time.primitives.text import rewrite_string
@@ -67,8 +67,8 @@ class _Rewriter:
         )
         if latest is None:
             return match.string
-        if latest.image_not_pulled is not None:
-            self.logger.image_not_pulled(reference, latest.image_not_pulled)
+        if latest.image_not_looked_up is not None:
+            self.logger.image_not_looked_up(reference, latest.image_not_looked_up)
             return match.string
         if latest.floating is not None and latest.floating is not FloatingPin.RESOLVED:
             return self._keep_unresolved_floating_reference(match, marker, latest, reference, latest.floating)
@@ -85,8 +85,8 @@ class _Rewriter:
         """Return why the reference cannot adopt drift, whatever its marker says, or None where it can."""
         if "sha" not in match.re.groupindex:
             return Reason.NO_HASH_PIN
-        if latest is not None and latest.image_not_pulled is not None:
-            return ImageNotPulledReason(latest.image_not_pulled, Consequence.DIGEST_NEVER_CHECKED)
+        if latest is not None and latest.image_not_looked_up is not None:
+            return ImageNotLookedUpReason(latest.image_not_looked_up, Consequence.DIGEST_NEVER_CHECKED)
         return None
 
     def _pin_floating_reference(

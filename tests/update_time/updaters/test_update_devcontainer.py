@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import ANY, Mock, patch
 
+from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DEVCONTAINER_CONFIGS
 from update_time.primitives.location import Location
 from update_time.updaters import update_devcontainer
@@ -53,6 +54,20 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
         devcontainer.write_text.assert_called_once_with(f'    "ghcr.io/devcontainers/features/node:2@{DIGEST}": {{}}\n')
         self.assert_pinned_logged("ghcr.io/devcontainers/features/node", "2", DIGEST, Location(devcontainer, 1))
         self.assert_no_warnings_logged()
+
+    def test_feature_through_a_variable_is_left_alone_and_reported(self):
+        """Test that a feature key whose image name or tag holds a variable is reported and not looked up."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("2.1", DIGEST))
+        cases = {
+            "a tag that is a variable": ("ghcr.io/devcontainers/features/node", "${localEnv:NODE_FEATURE}"),
+            "an image name holding a variable": ("ghcr.io/${ORG}/node", "1"),
+        }
+        for case, (feature, tag) in cases.items():
+            with self.subTest(case):
+                self.requests.reset_mock()
+                devcontainer = mock_path(f'    "{feature}:{tag}": {{}}\n')
+                self.run_updater(devcontainer)
+                self.assert_left_alone_unqueried(devcontainer, feature, tag, 1, ImageNotLookedUp.THROUGH_A_VARIABLE)
 
     def test_pin_tagless_image(self):
         """Test that an `"image"` naming no tag is pinned to the version and digest `latest` serves."""

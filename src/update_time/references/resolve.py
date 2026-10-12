@@ -14,9 +14,10 @@ from update_time.domain.archival import archival_is_checked, reports_archival
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.dependency import DependencyName, DependencyVersion
 from update_time.domain.downgrade import downgrades
+from update_time.domain.image_lookup import why_image_not_looked_up
 from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
 from update_time.markers.cooldown import cooldown_days
-from update_time.markers.directive import DIRECTIVES, HELD_BACK_OPT_INS, Consequence, ImageNotPulledReason, Reason
+from update_time.markers.directive import DIRECTIVES, HELD_BACK_OPT_INS, Consequence, ImageNotLookedUpReason, Reason
 from update_time.markers.marker import Scope
 from update_time.markers.reference import SteeredResolvedReference
 
@@ -35,11 +36,12 @@ def report_directives_that_set_nothing(
     """Report what sets nothing: each item with an inverted comparison, and each directive the source cannot apply."""
     log.report_inverted_items(reference, marker)
     as_written = marker.as_written
+    image_not_looked_up = why_image_not_looked_up(get_new_version, reference.pinned)
     for directive in DIRECTIVES:
         if (written := as_written.directive_for(directive.scope)) and not directive.is_applied_by(
             get_new_version, reference.pinned
         ):
-            log.redundant_directive(reference, written, directive.reason)
+            log.redundant_directive(reference, written, directive.reason_given(image_not_looked_up))
 
 
 def opt_in_redundancy(
@@ -75,8 +77,8 @@ def _why_the_pin_never_floats(latest: DependencyVersion | None) -> RedundancyRea
     """Return why the reference's pin never floats, or None where it may float or the run did not resolve a version."""
     if latest is None:
         return None
-    if latest.image_not_pulled is not None:
-        return ImageNotPulledReason(latest.image_not_pulled, Consequence.TAG_NEVER_PINNED)
+    if latest.image_not_looked_up is not None:
+        return ImageNotLookedUpReason(latest.image_not_looked_up, Consequence.TAG_NEVER_PINNED)
     return None if latest.floating is not None else Reason.PIN_NOT_FLOATING
 
 

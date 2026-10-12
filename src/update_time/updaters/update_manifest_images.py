@@ -2,12 +2,12 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import ImageNotPulled
+from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.references.file import update_file, update_yaml_files
-from update_time.sources.oci import YAML_IMAGE_REFERENCE, get_latest_tag, tag_getter_excluding_each
+from update_time.sources.oci import YAML_IMAGE_REFERENCE, tag_getter, tag_getter_excluding_each
 
 if TYPE_CHECKING:
     from update_time.formats.yaml import Document
@@ -36,11 +36,11 @@ def update_manifest_images() -> None:
     update_yaml_files(
         DOCKER_COMPOSE_FILES,
         regexp=YAML_IMAGE_REFERENCE,
-        get_new_version_for=tag_getter_excluding_each(_built_images, ImageNotPulled.BUILT_IMAGE),
+        get_new_version_for=tag_getter_excluding_each(_built_images, ImageNotLookedUp.BUILT_IMAGE),
         logger=_LOG,
     )
     for helm_chart in glob_for(HELM_CHARTS):
-        update_file(helm_chart, YAML_IMAGE_REFERENCE, get_new_version=get_latest_tag, logger=_LOG)
+        update_file(helm_chart, YAML_IMAGE_REFERENCE, get_new_version=tag_getter(), logger=_LOG)
 
 
 def main() -> None:  # pragma: no cover

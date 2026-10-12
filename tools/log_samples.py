@@ -18,7 +18,7 @@ from update_time.domain.dependency import (
     ArchivedSubject,
     DependencyVersion,
     FloatingPin,
-    ImageNotPulled,
+    ImageNotLookedUp,
     Project,
     Release,
     Yank,
@@ -27,7 +27,7 @@ from update_time.domain.reference import DriftedPin, RefKind
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.console import undelimited
 from update_time.io.log import Logger
-from update_time.markers.directive import Consequence, ImageNotPulledReason, Reason
+from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.primitives.location import Location
 from update_time.sources.github import BEYOND_THE_COMMITS_EXAMINED
@@ -137,6 +137,12 @@ def _redundant_directives(
     )
     redundant_stale_source = capture.take()
 
+    variable = reference("redis", Location(Path("docker-compose.yml"), 7))
+    through_a_variable = ImageNotLookedUp.THROUGH_A_VARIABLE
+    stale_never_checked = ImageNotLookedUpReason(through_a_variable, Consequence.STALENESS_NEVER_CHECKED)
+    log.redundant_directive(variable, "ignore[stale<90]", stale_never_checked)
+    redundant_stale_not_looked_up = capture.take()
+
     log.redundant_directive(reference("python", dockerfile), "allow[floating-pin]", Reason.PIN_NOT_FLOATING)
     redundant_floating_pin = capture.take()
 
@@ -151,7 +157,7 @@ def _redundant_directives(
 
     built = reference("acme/api", Location(Path("docker-compose.yml"), 4), "dev")
     log.redundant_directive(
-        built, "allow[floating-pin]", ImageNotPulledReason(ImageNotPulled.BUILT_IMAGE, Consequence.TAG_NEVER_PINNED)
+        built, "allow[floating-pin]", ImageNotLookedUpReason(ImageNotLookedUp.BUILT_IMAGE, Consequence.TAG_NEVER_PINNED)
     )
     return {
         "@@REDUNDANT_VULNERABLE_SCOPE_WARNING@@": redundant_vulnerable_scope,
@@ -167,6 +173,7 @@ def _redundant_directives(
         "@@REDUNDANT_SCOPE_ON_A_MANAGED_VERSION_WARNING@@": redundant_scope_on_a_managed_version,
         "@@REDUNDANT_COOLDOWN_ITEM_WARNING@@": redundant_cooldown_item,
         "@@REDUNDANT_STALE_SOURCE_WARNING@@": redundant_stale_source,
+        "@@REDUNDANT_STALE_NOT_LOOKED_UP_WARNING@@": redundant_stale_not_looked_up,
         "@@REDUNDANT_FLOATING_PIN_WARNING@@": redundant_floating_pin,
         "@@REDUNDANT_RANGE_FLOATING_PIN_WARNING@@": redundant_range_floating_pin,
         "@@REDUNDANT_FROZEN_FLOATING_PIN_WARNING@@": redundant_frozen_floating_pin,
@@ -189,6 +196,9 @@ def _redundant_for_the_dependency_type(
     log.redundant_directive(loose, "ignore[cooldown<30]", Reason.NO_VERSION_TO_UPDATE)
     log.redundant_directive(commit, "ignore[cooldown<30]", Reason.NO_COOLDOWN_FOR_A_COMMIT)
     log.redundant_directive(held_elsewhere, "ignore[cooldown<30]", Reason.VERSION_HELD_ELSEWHERE)
+    variable = reference("redis", Location(Path("docker-compose.yml"), 7))
+    never_updated = ImageNotLookedUpReason(ImageNotLookedUp.THROUGH_A_VARIABLE, Consequence.NEVER_UPDATED)
+    log.redundant_directive(variable, "ignore[cooldown<30]", never_updated)
     cooldowns = capture.take()
 
     log.redundant_directive(loose, "allow[hash-drift]", Reason.NO_HASH_PIN)
@@ -196,7 +206,9 @@ def _redundant_for_the_dependency_type(
     log.redundant_directive(clipboard, "allow[hash-drift]", Reason.INTEGRITY_MISMATCH_NEVER_ADOPTED)
     built = reference("acme/api", Location(Path("docker-compose.yml"), 4))
     log.redundant_directive(
-        built, "allow[hash-drift]", ImageNotPulledReason(ImageNotPulled.BUILT_IMAGE, Consequence.DIGEST_NEVER_CHECKED)
+        built,
+        "allow[hash-drift]",
+        ImageNotLookedUpReason(ImageNotLookedUp.BUILT_IMAGE, Consequence.DIGEST_NEVER_CHECKED),
     )
     log.redundant_directive(commit, "allow[hash-drift]", Reason.NO_DRIFT_FOR_A_COMMIT)
     drift = capture.take()
@@ -255,14 +267,16 @@ def _effective_pom_warnings(log: Logger, capture: _Capture) -> dict[str, str]:
     }
 
 
-def _images_not_pulled(log: Logger, capture: _Capture, dockerfile: Location) -> str:
-    """Log one reference of each kind whose image the file does not pull, and return the lines they render as."""
+def _images_not_looked_up(log: Logger, capture: _Capture, dockerfile: Location) -> str:
+    """Log one reference of each kind whose image Update-time does not look up, and return the lines they render as."""
     compose = reference("acme/api", Location(Path("docker-compose.yml"), 4), "1.2.3")
-    log.image_not_pulled(compose, ImageNotPulled.BUILT_IMAGE)
+    log.image_not_looked_up(compose, ImageNotLookedUp.BUILT_IMAGE)
     machine = reference("ubuntu-2204", Location(Path(".circleci/config.yml"), 4), "2024.01.1")
-    log.image_not_pulled(machine, ImageNotPulled.MACHINE_EXECUTOR_IMAGE)
-    log.image_not_pulled(reference("scratch", Location(Path("Dockerfile"), 1)), ImageNotPulled.EMPTY_BASE_IMAGE)
-    log.image_not_pulled(reference("deps", dockerfile), ImageNotPulled.BUILD_STAGE)
+    log.image_not_looked_up(machine, ImageNotLookedUp.MACHINE_EXECUTOR_IMAGE)
+    log.image_not_looked_up(reference("scratch", Location(Path("Dockerfile"), 1)), ImageNotLookedUp.EMPTY_BASE_IMAGE)
+    log.image_not_looked_up(reference("deps", dockerfile), ImageNotLookedUp.BUILD_STAGE)
+    variable = reference("redis", Location(Path("docker-compose.yml"), 7), "7.2-${VARIANT}")
+    log.image_not_looked_up(variable, ImageNotLookedUp.THROUGH_A_VARIABLE)
     return capture.take()
 
 
@@ -389,7 +403,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.no_release_metadata("humanize", "4.16.0", "4.15.0", "HTTP 503")
     no_release_metadata = capture.take()
 
-    images_not_pulled = _images_not_pulled(log, capture, dockerfile)
+    images_not_looked_up = _images_not_looked_up(log, capture, dockerfile)
 
     understood_markers = _understood_markers(log, capture, dockerfile, stale)
     return {
@@ -402,7 +416,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **github_refs,
         "@@NO_RELEASE_METADATA@@": no_release_metadata,
         "@@NO_PUSH_DATE@@": undated_pushes,
-        "@@IMAGES_NOT_PULLED@@": images_not_pulled,
+        "@@IMAGES_NOT_LOOKED_UP@@": images_not_looked_up,
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@VULNERABILITY_WARNING@@": vulnerable,

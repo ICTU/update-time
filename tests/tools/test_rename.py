@@ -135,6 +135,7 @@ class MainTest(unittest.TestCase):
         """Test that files the codemod rewrote, none of them left holding the name, pass without a report."""
         self.assertEqual(self.rename(_IMPORTS_AND_CALLS, "from m import old as alias\n\nalias()\n"), 0)
         self.assertEqual(self.reported.getvalue(), "")
+        self.assertEqual(self.paths["file1.py"].write_text.call_args_list, [call("from m import new\n\nnew()\n")])
 
     def test_a_qualified_name_none_of_the_files_defines(self):
         """Test that a qualified name whose module none of the files is fails before anything is renamed."""
@@ -152,6 +153,15 @@ class MainTest(unittest.TestCase):
         """Test that a new name given bare renames a qualified old one, as the usage spells a rename."""
         self.assertEqual(self.rename(_IMPORTS_AND_CALLS, old="m.old", new="new"), 0)
         self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call("from m import new\n\nnew()\n")])
+
+    def test_a_name_imported_alone_for_type_checking_is_renamed_where_it_is_imported(self):
+        """Test that the import of a name a `TYPE_CHECKING` block imports alone stays in that block, renamed."""
+        uses = (
+            "from typing import TYPE_CHECKING\n\nfrom m import other\n\nif TYPE_CHECKING:\n    from m import {0}\n\n\n"
+            "def use(value: {0}) -> None:\n    other(value)\n"
+        )
+        self.assertEqual(self.rename(uses.format("old")), 0)
+        self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call(uses.format("new"))])
 
     def test_the_module_the_qualified_name_names(self):
         """Test that the file the old name qualifies is renamed too, since the definition sits in it."""

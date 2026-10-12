@@ -2,12 +2,11 @@
 
 from unittest.mock import Mock, patch
 
-from update_time.domain.dependency import DependencyVersion, ImageNotPulled
+from update_time.domain.dependency import DependencyVersion, ImageNotLookedUp
 from update_time.domain.file_type import DOCKERFILES
 from update_time.io import log
 from update_time.markers.directive import Reason
 from update_time.primitives.location import Location
-from update_time.sources import oci
 from update_time.updaters import update_dockerfile_base_image
 from update_time.updaters.update_dockerfile_base_image import update_dockerfiles
 
@@ -68,18 +67,13 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
         mock_dockerfile = mock_path("FROM scratch AS base\n")
         self.run_updater(mock_dockerfile)
-        mock_dockerfile.write_text.assert_not_called()
-        self.requests.assert_not_called()
-        location = Location(mock_dockerfile, 1)
-        self.assert_image_not_pulled_logged("scratch", "", location, ImageNotPulled.EMPTY_BASE_IMAGE)
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
+        self.assert_left_alone_unqueried(mock_dockerfile, "scratch", "", 1, ImageNotLookedUp.EMPTY_BASE_IMAGE)
 
     @kills(
         Mutation(
             update_dockerfile_base_image._update_dockerfile,
-            "return ImageNotPulled.BUILD_STAGE if pinned.name.lower() in stages else None\n",
-            "return ImageNotPulled.BUILD_STAGE if pinned.name.lower() in frozenset() else None\n",
+            "return ImageNotLookedUp.BUILD_STAGE if pinned.name.lower() in stages else None\n",
+            "return ImageNotLookedUp.BUILD_STAGE if pinned.name.lower() in frozenset() else None\n",
             "a `FROM` naming a build stage is resolved as though a registry served an image of that name",
         )
     )
@@ -91,7 +85,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile.write_text.assert_called_once_with(f"FROM python:3.14.7@{DIGEST} AS deps\nFROM deps\n")
         requested = "".join(call.args[0] for call in self.requests.call_args_list)
         self.assertNotIn("deps", requested)
-        self.assert_image_not_pulled_logged("deps", "", Location(mock_dockerfile, 2), ImageNotPulled.BUILD_STAGE)
+        self.assert_image_not_looked_up_logged("deps", "", Location(mock_dockerfile, 2), ImageNotLookedUp.BUILD_STAGE)
         self.assert_new_version_logged("python", docker_hub_version("3.14.7"), Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
@@ -103,21 +97,18 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
             "a variable's name is read as an image, so its own name is queried as a registry host",
         )
     )
-    def test_image_name_from_a_variable_is_left_alone_and_not_queried(self):
-        """Test that a `FROM` taking its image name from a variable names no image, so no registry is queried.
+    def test_image_name_from_a_variable_is_left_alone_and_reported(self):
+        """Test that a `FROM` taking its image name from a variable is reported and not looked up.
 
         One case per spelling a Dockerfile takes, the braces being optional.
         """
-        # A name of its own per case: the source caches what it resolved, so a repeated name would let the
-        # second case pass on the first one's cache rather than on its own run.
         for reference in ("$BASE_IMAGE", "${OTHER_IMAGE}"):
             with self.subTest(reference=reference):
                 self.requests.reset_mock()
                 self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST))
                 mock_dockerfile = mock_path(f"FROM {reference}\n")
                 self.run_updater(mock_dockerfile)
-                mock_dockerfile.write_text.assert_not_called()
-                self.requests.assert_not_called()
+                self.assert_left_alone_unqueried(mock_dockerfile, reference, "", 1, ImageNotLookedUp.THROUGH_A_VARIABLE)
 
     @kills(
         Mutation(
@@ -139,23 +130,6 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile.write_text.assert_not_called()
         resolved = DependencyVersion(version="3.14.7", sha=DIGEST)
         self.assert_kept_floating_logged("python", "", resolved, Location(mock_dockerfile, 2))
-        self.assert_no_warnings_logged()
-
-    @kills(
-        Mutation(
-            oci,
-            r'rf"{_IMAGE_NAME}(?::(?=[\d\w\.\-]))?(?P<version>[\d\w\.\-]*){_IMAGE_DIGEST}(?![\w\d\./:@-])"',
-            r'rf"{_IMAGE_NAME}:?(?P<version>[\d\w\.\-]*){_IMAGE_DIGEST}"',
-            "a tag written as a variable substitution is read as no tag at all, so the reference is rewritten",
-        )
-    )
-    def test_variable_substitution_in_the_tag_is_left_alone(self):
-        """Test that a `FROM image:${TAG}` names a tag Update-time cannot read, so no registry is queried."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
-        mock_dockerfile = mock_path("FROM myrepo/app:${TAG}\n")
-        self.run_updater(mock_dockerfile)
-        mock_dockerfile.write_text.assert_not_called()
-        self.requests.assert_not_called()
         self.assert_no_warnings_logged()
 
     @kills(

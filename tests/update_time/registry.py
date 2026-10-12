@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
-from update_time.domain.dependency import DependencyVersion, FloatingPin
+from update_time.domain.dependency import DependencyVersion, FloatingPin, ImageNotLookedUp
 from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
-from update_time.markers.directive import Reason
+from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.primitives.location import Location
 from update_time.sources import oci
 
@@ -172,12 +172,12 @@ def mock_docker_registry(
 
 
 class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
-    """Shared tests for the updaters that rewrite `image:tag[@digest]` references via `update_file`/`get_latest_tag`.
+    """Shared tests for the updaters that rewrite `image:tag[@digest]` references via `update_file`/`tag_getter`.
 
     All these updaters do the same thing to a reference (leave it when already latest, bump the tag and digest, pin a
     tag-only reference); they differ only in how a reference is written in their file format and how the file is
-    discovered. A concrete suite supplies those two through `reference` and `run_updater`, inherits the common cases
-    below, and adds its own format-specific tests (stage aliases, machine images, features, variable substitution).
+    discovered. A concrete suite supplies those two through `reference` and `run_updater`. It inherits the common
+    cases below and adds tests of its own format, such as stage aliases, machine images, features, and templates.
     """
 
     def reference(self, image: str) -> str:
@@ -579,6 +579,63 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         resolved = DependencyVersion(version="3.14.7", sha=DIGEST)
         self.assert_kept_floating_logged("python", "latest", resolved, Location(mock_file, 1), "--allow-floating-pin")
         self.assert_no_warnings_logged()
+
+    def assert_left_alone_unqueried(
+        self, mock_file: Mock, image: str, tag: str, line: int, reason: ImageNotLookedUp
+    ) -> None:
+        """Assert that the run reported the reference at the line, and did not write, ask a registry, or report more."""
+        mock_file.write_text.assert_not_called()
+        self.requests.assert_not_called()
+        self.assert_image_not_looked_up_logged(image, tag, Location(mock_file, line), reason)
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+    def assert_left_alone_as_through_a_variable(
+        self, cases: dict[str, tuple[str, str]], run_updater: Callable[[Mock], None]
+    ) -> None:
+        """Assert that each case's image and tag are left alone, reported as through a variable, and not looked up."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        for case, (image, tag) in cases.items():
+            with self.subTest(case):
+                self.requests.reset_mock()
+                mock_file = mock_path(self.reference(f"{image}:{tag}"))
+                run_updater(mock_file)
+                self.assert_left_alone_unqueried(mock_file, image, tag, 1, ImageNotLookedUp.THROUGH_A_VARIABLE)
+
+    def test_reference_through_a_variable_is_left_alone_and_reported(self) -> None:
+        """Test that a reference whose image name or tag holds a variable is reported and not looked up."""
+        cases = {
+            "a tag that is a variable": ("app", "${TAG}"),
+            "a tag ending in $VAR": ("redis", "7.2-$VARIANT"),
+            "an image name ending in ${VAR}": ("ghcr.io/org/app-${ENV}", "1.0"),
+            "an image name ending in $VAR": ("registry/$APP", "1.0"),
+        }
+        self.assert_left_alone_as_through_a_variable(cases, self.run_updater)
+
+    def test_stale_and_cooldown_markers_on_a_reference_through_a_variable_are_redundant_because_of_it(self) -> None:
+        """Test that a `stale` or `cooldown` marker on a reference through a variable is reported as redundant."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
+        cases = {
+            "ignore[stale<90]": ("ignore[stale<90]", Consequence.STALENESS_NEVER_CHECKED),
+            "ignore[cooldown<30]": ("ignore[cooldown<30]", Consequence.NEVER_UPDATED),
+            "ignore ignore[stale<90]": ("ignore[stale<90]", Consequence.STALENESS_NEVER_CHECKED),
+        }
+        for marker, (directive, consequence) in cases.items():
+            with self.subTest(marker=marker):
+                mock_file = mock_path(self.marker_line(marker) + self.reference("app:${TAG}"))
+                self.run_updater(mock_file)
+                mock_file.write_text.assert_not_called()
+                reason = ImageNotLookedUpReason(ImageNotLookedUp.THROUGH_A_VARIABLE, consequence)
+                self.assert_redundant_directive_logged(reason, "app", Location(mock_file, 2), directive)
+
+    def test_reference_through_syntax_not_read_as_a_variable_is_left_alone(self) -> None:
+        """Test that a tag ending in syntax Update-time does not read as a variable, `$(VARIANT)`, is not queried."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_file = mock_path(self.reference("python:3.12-$(VARIANT)"))
+        self.run_updater(mock_file)
+        mock_file.write_text.assert_not_called()
+        self.requests.assert_not_called()
+        self.assert_path_logged(mock_file)
 
     def test_pin_unpinned_image_already_at_latest(self) -> None:
         """Test that an unpinned image already at the latest version is still pinned with its digest."""

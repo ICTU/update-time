@@ -120,7 +120,10 @@ coverage_command(tests) := if tests == "" { progress("test-coverage", measured_r
 mutations_command(tests) := if tests == "" { 'if ' + mutations_switched_off + '; then ' + skipped("test-mutations", "the registered mutations are switched off") + '; else ' + mutations_run(tests) + "; fi" } else { mutations_run(tests) }
 
 # Run the tests against the mutations they register, all of them or only the ones named, or as a plain test run when a caller switched the registered mutations off.
-mutations_run(tests) := 'label=test-mutations; if ' + mutations_switched_off + '; then label=test; fi; ' + progress('"$label"', python_m + " unittest --quiet " + tests)
+mutations_run(tests) := 'label=test-mutations; if ' + mutations_switched_off + '; then label=test; fi; ' + progress('"$label"', python_m + " unittest --quiet " + named_tests(tests))
+
+# The tests named, each test package among them expanded into its test modules, since `unittest` does not run the tests in a package it is handed.
+named_tests(tests) := if tests == "" { "" } else { "$(" + python_m + " tools.expand_tests " + tests + ")" }
 
 # Run the unit tests under coverage, with the registered mutations standing aside, so coverage is measured over the tests alone. A named subset is skipped rather than measured.
 [env("PYTHONDEVMODE", "1")]
@@ -128,13 +131,13 @@ mutations_run(tests) := 'label=test-mutations; if ' + mutations_switched_off + '
 test-coverage *tests: install-py-dependencies install-nltk-data
     {{ coverage_command(tests) }}
 
-# Run the unit tests against the mutations they register, all of them or only the ones named, e.g. `just test-mutations tests.update_time.io.test_log`.
+# Run the unit tests against the mutations they register, all of them or only the ones named, e.g. `just test-mutations tests.update_time.io.test_log`. A test package named runs every test module under it.
 [env("PYTHONDEVMODE", "1")]
 [env("PYTHONPATH", "src")]
 test-mutations *tests: install-py-dependencies install-nltk-data
     {{ mutations_command(tests) }}
 
-# Run the unit tests, all of them or only the ones named, e.g. `just test tests.update_time.io.test_log`. The two passes run at the same time, neither reading what the other writes.
+# Run the unit tests, all of them or only the ones named, e.g. `just test tests.update_time.io.test_log` or `just test tests.update_time.io`. The two passes run at the same time, neither reading what the other writes.
 [parallel]
 test *tests: (test-coverage tests) (test-mutations tests)
 

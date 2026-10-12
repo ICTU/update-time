@@ -24,7 +24,7 @@ from update_time.domain.dependency import (
     DependencyName,
     DependencyVersion,
     FloatingPin,
-    ImageNotPulled,
+    ImageNotLookedUp,
     PinnedDependency,
     Project,
     Release,
@@ -32,6 +32,7 @@ from update_time.domain.dependency import (
     first_eligible,
     tag_of,
 )
+from update_time.domain.image_lookup import explaining_skipped_lookups
 from update_time.domain.publication import publication_date_reporting, reports_publication_dates
 from update_time.io.fetch import fetch, next_page_url
 from update_time.io.log import get_logger
@@ -49,21 +50,28 @@ if TYPE_CHECKING:
 
 _LOG = get_logger("oci")
 
+# A variable or a template standing in for part of a reference, whose value Update-time does not know: a `$VAR` or
+# `${VAR}`, a Helm `{{ .Values.tag }}`, or a CircleCI `<< parameters.tag >>`. A `$VAR` takes every word character
+# after its `$` and gives none back. Otherwise the regex tries every split between a variable and the characters
+# around it, which takes seconds on a line that holds several variables and does not match.
+_VARIABLE = r"\$\w++|\$\{[^}]*\}|\{\{[^}]*\}\}|<<[^>]*>>"
+
 # A Docker image reference as it appears in files: `dependency:version` with an optional `@sha256:digest`.
 # Updaters prefix this with the keyword that introduces the reference in their file format (`FROM `, `image: `).
-_IMAGE_NAME = r"(?P<dependency>[\w\d\./-]+)"
+# The image name and the tag may hold a variable, which `tag_getter` reports rather than resolves.
+_IMAGE_NAME = rf"(?P<dependency>(?:[\w\d\./-]|{_VARIABLE})+)"
+_TAG_CHARACTER = rf"(?:[\d\w\.\-]|{_VARIABLE})"
 _IMAGE_DIGEST = rf"(?:@(?P<sha>{SHA256_DIGEST}))?"
 
-# The reference as most file formats write it, its digest optional but its tag required, so a reference through a
-# variable (`${VAR}`) doesn't match.
-IMAGE_REFERENCE = rf"{_IMAGE_NAME}:(?P<version>[\d\w\.\-]+){_IMAGE_DIGEST}"
+# The reference as most file formats write it, its digest optional but its tag required.
+IMAGE_REFERENCE = rf"{_IMAGE_NAME}:(?P<version>{_TAG_CHARACTER}+){_IMAGE_DIGEST}"
 
 # The reference for a file format that writes it without a tag as well, such as a Dockerfile's `FROM python`. The
-# tag then matches empty, at the position pinning writes it to. A colon is consumed only when a tag follows it, and
-# the reference has to end where a reference can end, so a tag through a variable (`app:${VAR}`) matches neither as
-# a tag Update-time can read nor as a reference without one.
+# tag then matches empty, at the position pinning writes it to. A colon is consumed only when a tag follows it. The
+# reference ends at whitespace, a double quote, the end of the line, or a YAML flow collection's `,`, `]`, or `}`, so
+# a reference holding syntax Update-time does not read as a variable does not match.
 OPTIONALLY_TAGGED_IMAGE_REFERENCE = (
-    rf"{_IMAGE_NAME}(?::(?=[\d\w\.\-]))?(?P<version>[\d\w\.\-]*){_IMAGE_DIGEST}(?![\w\d\./:@-])"
+    rf'{_IMAGE_NAME}(?::(?={_TAG_CHARACTER}))?(?P<version>{_TAG_CHARACTER}*){_IMAGE_DIGEST}(?=[\s",\]}}]|$)'
 )
 
 # The tag Docker resolves a reference naming no tag to, which floats like any other channel.
@@ -379,29 +387,40 @@ def _is_another_spelling(candidate: Tag, current: Tag) -> bool:
     return candidate.name != current.name and current.is_newer_or_equal(candidate)
 
 
-def tag_getter(image_not_pulled: Callable[[PinnedDependency], ImageNotPulled | None]) -> NewVersionGetter:
+def _pulled(_pinned: PinnedDependency) -> ImageNotLookedUp | None:
+    """Return no reason, for a file format that pulls every image it names."""
+    return None
+
+
+def tag_getter(image_not_pulled: Callable[[PinnedDependency], ImageNotLookedUp | None] = _pulled) -> NewVersionGetter:
     """Return a getter that resolves an image tag, leaving the references it asks no registry about unchanged."""
+
+    def image_not_looked_up(pinned: PinnedDependency) -> ImageNotLookedUp | None:
+        """Return why no registry is asked about the pinned image, or None when one is."""
+        if re.search(_VARIABLE, f"{pinned.name}:{pinned.version}"):
+            return ImageNotLookedUp.THROUGH_A_VARIABLE
+        return image_not_pulled(pinned)
 
     def dates_the_versions_of(pinned: PinnedDependency) -> bool:
         """Return whether the pinned image's versions carry a date, which they do not when no registry is asked."""
-        return image_not_pulled(pinned) is None and reports_publication_dates(get_latest_tag, pinned)
+        return image_not_looked_up(pinned) is None and reports_publication_dates(get_latest_tag, pinned)
 
     @partial(publication_date_reporting, when=dates_the_versions_of)
     def get_new_version(
         pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
     ) -> DependencyVersion:
-        if (reason := image_not_pulled(pinned)) is not None:
-            return DependencyVersion(version=pinned.version, image_not_pulled=reason)
+        if (reason := image_not_looked_up(pinned)) is not None:
+            return DependencyVersion(version=pinned.version, image_not_looked_up=reason)
         return get_latest_tag(pinned, version_bound, cooldown_days, check_archival=check_archival)
 
-    return get_new_version
+    return explaining_skipped_lookups(get_new_version, image_not_looked_up)
 
 
-def tag_getter_excluding(images: set[str], reason: ImageNotPulled) -> NewVersionGetter:
+def tag_getter_excluding(images: set[str], reason: ImageNotLookedUp) -> NewVersionGetter:
     """Return a getter resolving every image but the ones given, which it leaves unchanged."""
     without_digests = {image.partition("@")[0] for image in images}
 
-    def image_not_pulled(pinned: PinnedDependency) -> ImageNotPulled | None:
+    def image_not_pulled(pinned: PinnedDependency) -> ImageNotLookedUp | None:
         """Return the one reason when the reference is among the ones given, or None when it is not."""
         as_written = f"{pinned.name}{tag_of(pinned.version)}"
         return reason if as_written in without_digests else None
@@ -410,7 +429,7 @@ def tag_getter_excluding(images: set[str], reason: ImageNotPulled) -> NewVersion
 
 
 def tag_getter_excluding_each(
-    find_images: Callable[[Document], set[str]], reason: ImageNotPulled
+    find_images: Callable[[Document], set[str]], reason: ImageNotLookedUp
 ) -> Callable[[Document], NewVersionGetter]:
     """Return what builds one file's getter, leaving the images `find_images` reads from that file unchanged."""
     return lambda document: tag_getter_excluding(find_images(document), reason)
