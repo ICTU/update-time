@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from update_time.domain.bound import NO_BOUND, Redundancy, Verb, VersionBound
+from update_time.domain.bound import NO_BOUND, Verb, VersionBound, _Redundancy
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, PinnedDependency, Project, Release
 from update_time.domain.reference import DriftedPin, RefKind
@@ -256,6 +256,19 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         location = Location(workflow_yml, 1)
         self.assert_stale_dependency_logged("action/action", "1.2", location)  # but staleness is still checked
         self.assert_ignored_logged("action/action", location)
+
+    def test_hash_drift_marker_on_a_held_back_version_tag_is_reported(self, mock_glob: Mock, mock_latest: Mock):
+        """Test that a version tag whose update is held back keeps its drifted pin, its `allow[hash-drift]` reported."""
+        mock_latest.return_value = DependencyVersion(version="1.0", sha=NEW_SHA)
+        for marker in ("ignore[update] allow[hash-drift]", "ignore allow[hash-drift]"):
+            with self.subTest(marker=marker):
+                workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: {marker}\n")
+                mock_glob.side_effect = [[workflow_yml], []]
+                update_github_actions()
+                workflow_yml.write_text.assert_not_called()
+                self.assert_redundant_directive_logged(
+                    Reason.DRIFT_NEVER_ADOPTED, "action/action", Location(workflow_yml, 1), "allow[hash-drift]"
+                )
 
     def test_ignore_stale_marker_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
         """Test that `ignore[stale]` repins the action but skips the staleness check even for an old release."""
@@ -1260,14 +1273,27 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                 )
                 workflow_yml.write_text.assert_not_called()
                 self.assert_redundant_directive_logged(
-                    Reason.UPDATE_HELD_BACK, "actions/checkout", Location(workflow_yml, 1), "allow[floating-pin]"
+                    Reason.NEVER_PINNED, "actions/checkout", Location(workflow_yml, 1), "allow[floating-pin]"
+                )
+
+    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
+    def test_a_hash_drift_directive_on_a_held_back_branch_is_reported(self, mock_glob: Mock):
+        """Test that a pinned branch whose update is held back keeps its pin, its `allow[hash-drift]` reported."""
+        for marker in ("ignore[update] allow[hash-drift]", "ignore allow[hash-drift]"):
+            with self.subTest(marker=marker):
+                workflow_yml = self.scanned_workflow(
+                    mock_glob, f"uses: actions/checkout@{OLD_SHA} # main  # update-time: {marker}\n"
+                )
+                workflow_yml.write_text.assert_not_called()
+                self.assert_redundant_directive_logged(
+                    Reason.DRIFT_NEVER_ADOPTED, "actions/checkout", Location(workflow_yml, 1), "allow[hash-drift]"
                 )
 
     @kills(
         Mutation(
             references_github._PinResolver._report_redundant_directives,
-            "log.redundant_directive(reference, drift, Reason.NO_DRIFT_FOR_A_COMMIT)",
-            "pass",
+            "Reason.NO_DRIFT_FOR_A_COMMIT if",
+            "None if",
             "an `allow[hash-drift]` beside a commit SHA, which cannot drift, goes unreported",
         )
     )
@@ -1411,7 +1437,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
             location=Location(workflow_yml, 1),
             bound="allow[update<4]",
             version="5.0.0",
-            redundancy=Redundancy.BLOCKS_ALL,
+            redundancy=_Redundancy.BLOCKS_ALL,
         )
 
     @kills(
@@ -1442,7 +1468,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
             location=location,
             bound="allow[update<4.1]",
             version="4.3.0",
-            redundancy=Redundancy.BLOCKS_ALL,
+            redundancy=_Redundancy.BLOCKS_ALL,
         )
 
     @patch_github(

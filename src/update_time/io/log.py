@@ -22,10 +22,10 @@ if TYPE_CHECKING:
 
     from requests import Response
 
-    from update_time.domain.dependency import AccountedFor, Changes, DependencyVersion, FloatingPin, VersionString
+    from update_time.domain.dependency import Changes, DependencyVersion, FloatingPin, ImageNotPulled, VersionString
     from update_time.domain.reference import DriftedPin, Reference, RefKind, ResolvedReference
     from update_time.domain.vulnerability import Vulnerability
-    from update_time.markers.directive import Reason
+    from update_time.markers.directive import RedundancyReason
     from update_time.markers.marker import Marker
     from update_time.markers.opt_in import OptInCause
     from update_time.primitives.command import Command
@@ -311,15 +311,15 @@ class Logger:
         fields = self._tagged_fields(reference, reference.current_version)
         self._log(self._MESSAGE_UNPINNED_FLOATING_TAG, **fields, reason=reason.explained(release.version))
 
-    _MESSAGE_ACCOUNTED_FOR_REFERENCE = LogMessage(
+    _MESSAGE_IMAGE_NOT_PULLED = LogMessage(
         DEBUG,
         "Reference %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s",
     )
 
-    def accounted_for_reference(self, reference: Reference, reason: AccountedFor) -> None:
-        """Log that a reference the file itself accounts for was left as it is, explaining why."""
+    def image_not_pulled(self, reference: Reference, reason: ImageNotPulled) -> None:
+        """Log that a reference whose image the file does not pull was left as it is, explaining why."""
         fields = self._tagged_fields(reference, reference.current_version)
-        self._log(self._MESSAGE_ACCOUNTED_FOR_REFERENCE, **fields, reason=reason)
+        self._log(self._MESSAGE_IMAGE_NOT_PULLED, **fields, reason=reason)
 
     _MESSAGE_CANNOT_PIN = LogMessage(
         INFO,
@@ -567,7 +567,7 @@ class Logger:
 
     _MESSAGE_REDUNDANT_DIRECTIVE = LogMessage(WARNING, _redundant_directive("%(reason)s"))
 
-    def redundant_directive(self, reference: Reference, directive: str, reason: Reason) -> None:
+    def redundant_directive(self, reference: Reference, directive: str, reason: RedundancyReason) -> None:
         """Warn that a directive the marker carries decides nothing, saying why it cannot."""
         self._log(
             self._MESSAGE_REDUNDANT_DIRECTIVE, **self._reference_fields(reference, directive=directive, reason=reason)

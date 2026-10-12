@@ -5,7 +5,6 @@
 **In an `update-time` field**, for a reference in a file that can hold no comment.
 - the sample log lines the sections below quote, from `log_samples`, each filling the placeholder it names.
 A CVSS vector the `cvss` package refuses, since `AV:X` is not a value the metric can take.
-A CircleCI machine-executor image (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`) and an image a Docker Compose file builds are such references.
 A Compose override file writes `!reset` and `!override`, which the loader would otherwise refuse the document over.
 A Node base image whose tag carries no version to sync to, such as `node:lts` or `node:22.x`, is the exception to following the Dockerfile.
 A PEP 723 script has no lock file, so its pins carry no hash either.
@@ -51,7 +50,6 @@ A flag rather than a plain enum, so the scopes a marker steers combine into one 
 A floating tag's labels are kept where an alias carries them, so an alias carrying more of them outranks one carrying fewer, and a tag whose labels no single alias carries together still lands on one carrying some.
 A format that holds no comment beside a reference names the marker elsewhere, and names the reference the marker steers along with it.
 A format that holds no comment beside its reference names the marker elsewhere, and passes it in `reference_marker`.
-A frozen reference is left alone, so no source is asked about it.
 A known vulnerability in the version a dependency is pinned to.
 A label no alias carries names a channel, and requiring it would leave no alias to pick from, so it is left out.
 A level added to one and not the other would leave scores banding to a level nothing compares against, or a threshold no score can reach.
@@ -74,7 +72,6 @@ A name of its own per case: the source caches what it resolved, so a repeated na
 A non-PEP 440 boundary (e.g. an arbitrary-equality `===` clause) has no version to probe.
 A package the file declares nowhere is reported at the file rather than at a line guessed from elsewhere.
 A page that can't be fetched is logged and read as no tags at all, which ends the reading.
-A pass reading lines a rewrite walked first passes none, since `apply_marker` reported their markers as it rewrote them.
 A path the user named on the command line stays a plain `Path` instead (see `_render_field`).
 A pinned reference as a file records it: a dependency, the version it is pinned to, and the line it sits on.
 A printf-style interpolation, such as a log message's ``: a value rather than prose.
@@ -327,7 +324,6 @@ Test that `[tool.uv]` is created when the file has no `[tool]` section at all.
 Test that `allow[cooldown<30]` and `ignore[cooldown>=30]` set no cooldown, each carried as its item.
 Test that `allow[floating-pin]` is not reported for a floating pin the source resolved no version for.
 Test that `allow[floating-pin]` on a `FROM` naming no tag leaves it, naming what it resolves to.
-Test that `allow[floating-pin]` on a built image says no registry is asked, not that its pin is fixed.
 Test that `allow[stale<90]` and `ignore[stale>=90]` set no threshold, each carried as its inverted item.
 Test that `cooldown` without a day count sets no cooldown, whichever verb it follows.
 Test that `ignore[vulnerable=GHSA-…]` names that advisory alone, holding no other check back.
@@ -442,7 +438,6 @@ Test that a yank the maintainer gave no reason for renders as `reason not specif
 Test that advisories sharing no identifier are read as one vulnerability when a third names both.
 Test that an `"image"` naming no tag is pinned to the version and digest `latest` serves.
 Test that an `# update-time: ignore` comment above a jsDelivr URL holds it back, looking up no version.
-Test that an `allow[floating-pin]` is reported, since a Python dependency carries no tag that floats.
 Test that an `ignore[update]` on a dependency that pins no version is not reported as holding it back.
 Test that an `ignore[update]` on a dependency that pins no version is reported, since uv resolves it.
 Test that an `ignore[update]` on a dependency that pins no version leaves its new version reported.
@@ -603,7 +598,6 @@ The prefix is `!`, so `!!python/object` still reaches no constructor and the loa
 The project status PEP 792 defines for a project that expects no further release.
 The reason the source published, empty when it published none.
 The reference names no version: a `package.json` declares a range, and which version it resolves to is recorded in the lock file.
-The references a file accounts for itself, as it writes them: one naming a tag and one naming none.
 The registry dates the versions it lists, so one it does not list — a version published moments ago, or one it no longer serves — has no date to read.
 The registry publishes no archival signal, so no request answers it.
 The registry serves no manifest, so there is no digest to pin.
@@ -677,7 +671,6 @@ Update-time does not check an image, because OSV has no ecosystem for container 
 Update-time does not check an image, because no OCI registry publishes an archival signal.
 Update-time ignores an image whose tag it cannot read, so a reference through a `{{ ... }}` template or `${VAR}` variable substitution gets no digest.
 Update-time reads it for each dependency a Python file declares, whether or not the dependency pins an exact version.
-Update-time reports every reference a file accounts for itself at `DEBUG`, naming what accounts for it:.
 Update-time still reports a new version for a dependency that pins no exact version, both in a `pyproject.toml` and in an inline script metadata block.
 Usable as a decorator on a test method or class (like `unittest.mock.patch`, by stacking one patch per method); it adds no mock argument.
 Warn about a `cooldown` marker on a reference whose source reports no publication date to measure a cooldown against, instead of accepting it in silence.
@@ -701,7 +694,6 @@ What to ask for to be warned about no vulnerability at all, which switches the c
 Where possible, it [pins](#-pinning) references — no more `latest` — and adds hashes.
 Where the file declares no such entry, it is located at the file rather than at a line guessed from elsewhere.
 Which those are is read off the pom before and after the run, rather than from Maven's own report, which names no line to report a change at.
-Why Update-time asks no registry about a reference and leaves it as it is.
 Yield each dependency type, in the order this class declares them.
 Yield each line with its number, empty where the line is a code fence or sits inside a fenced code block.
 Yield each warning scope the reference's marker writes, with the reason no source answers any of them.
@@ -709,7 +701,6 @@ Yield each warning scope the reference's marker writes, with the reason no sourc
 `_TAG` reads no version in one, its prefix admitting no dash, so the label is read as the prefix here and the date as the version, which puts such a snapshot on the line its label names.
 `allow` naming one would keep that warning and drop the warning about every other advisory, which is a rule the language does not offer, so `allow[vulnerable=ID]` names no advisory.
 `allowed_scopes` are the scopes an `allow` directive opts the reference into, each off by default: `allow[hash-drift]` adopts a drifted hash pin, and `allow[floating-pin]` keeps a tag naming no version as it is rather than pinning it to the version it serves.
-`floats` says whether the reference's pin floats, and is None where the run resolved no version to tell from.
 `ignore[floating-pin]` is the opposite and the default, so Update-time pins a reference carrying it exactly as one carrying no marker at all.
 `inverted_item` is the item as the user spelled it when its comparison runs the wrong way, so the caller can warn and fall back to the global setting; None when the reference carries no such item.
 `marker` steers every dependency the file declares, since they share the array's line (see `pyproject`).
@@ -766,7 +757,6 @@ a reading of another length than its own pairs up all the same, taking the whole
 a reference naming no repository is read as one, ending the run over that single line.
 a reference naming no tag is matched with an empty tag, so it is looked up on a registry.
 a reference naming no tag is reported with the version it resolves to, as if it had named it.
-a reference no registry is asked about is reported as one whose pin does not float, which it may do.
 a registration naming no mutation is accepted, so the test it decorates checks nothing.
 a release tagged with something that is no version ends the run with a traceback.
 a repository naming its changelog file `history`, `news`, or `releases` reports no changes.

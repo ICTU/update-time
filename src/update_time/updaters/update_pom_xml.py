@@ -15,6 +15,7 @@ from update_time.markers.marker import Scope
 from update_time.package_managers import maven
 from update_time.primitives.iterables import unique
 from update_time.references.delegated import project_resolver, warn_about_projects
+from update_time.references.resolve import warn_if_the_opt_in_is_redundant
 from update_time.references.vulnerability import warn_about_vulnerable_dependencies
 from update_time.sources import maven_central
 from update_time.sources.osv import Ecosystem
@@ -84,10 +85,10 @@ def _report_markers(declared: list[Declaration]) -> None:
         if held_back:
             _LOG.holding_back_range(declaration, held_back, declaration.marker.version_bound_directive)
         _LOG.report_inverted_items(declaration, declaration.marker)
-        _report_redundant_directives(declaration)
+        _report_redundant_directives(declaration, update_held_back=held_back is None)
 
 
-def _report_redundant_directives(declaration: Declaration) -> None:
+def _report_redundant_directives(declaration: Declaration, *, update_held_back: bool) -> None:
     """Report as redundant each directive that decides nothing for the declaration."""
     as_written = declaration.marker.as_written
     if reason := _why_maven_leaves_the_version(declaration):
@@ -97,8 +98,13 @@ def _report_redundant_directives(declaration: Declaration) -> None:
         _LOG.warn_if_redundant_bound(declaration, declaration.marker)
     if yanked := as_written.directive_for(Scope.YANKED):
         _LOG.redundant_directive(declaration, yanked, Reason.NO_YANK_CONCEPT)
-    if floating_pin := declaration.marker.allow_directive(Scope.FLOATING_PIN):
-        _LOG.redundant_directive(declaration, floating_pin, Reason.PIN_NOT_FLOATING)
+    marker = declaration.marker
+    warn_if_the_opt_in_is_redundant(
+        declaration, marker, _LOG, Scope.FLOATING_PIN, Reason.PIN_NOT_FLOATING, update_held_back=update_held_back
+    )
+    warn_if_the_opt_in_is_redundant(
+        declaration, marker, _LOG, Scope.HASH_DRIFT, Reason.NO_HASH_PIN, update_held_back=update_held_back
+    )
 
 
 def _why_maven_leaves_the_version(declaration: Declaration) -> Reason | None:

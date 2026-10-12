@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock, patch
 
-from update_time.domain.dependency import AccountedFor, DependencyVersion
+from update_time.domain.dependency import DependencyVersion, ImageNotPulled
 from update_time.domain.file_type import DOCKERFILES
 from update_time.io import log
 from update_time.markers.directive import Reason
@@ -71,15 +71,15 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile.write_text.assert_not_called()
         self.requests.assert_not_called()
         location = Location(mock_dockerfile, 1)
-        self.assert_accounted_for_reference_logged("scratch", "", location, AccountedFor.EMPTY_BASE_IMAGE)
+        self.assert_image_not_pulled_logged("scratch", "", location, ImageNotPulled.EMPTY_BASE_IMAGE)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
     @kills(
         Mutation(
             update_dockerfile_base_image._update_dockerfile,
-            "return AccountedFor.BUILD_STAGE if pinned.name.lower() in stages else None\n",
-            "return AccountedFor.BUILD_STAGE if pinned.name.lower() in frozenset() else None\n",
+            "return ImageNotPulled.BUILD_STAGE if pinned.name.lower() in stages else None\n",
+            "return ImageNotPulled.BUILD_STAGE if pinned.name.lower() in frozenset() else None\n",
             "a `FROM` naming a build stage is resolved as though a registry served an image of that name",
         )
     )
@@ -91,7 +91,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile.write_text.assert_called_once_with(f"FROM python:3.14.7@{DIGEST} AS deps\nFROM deps\n")
         requested = "".join(call.args[0] for call in self.requests.call_args_list)
         self.assertNotIn("deps", requested)
-        self.assert_accounted_for_reference_logged("deps", "", Location(mock_dockerfile, 2), AccountedFor.BUILD_STAGE)
+        self.assert_image_not_pulled_logged("deps", "", Location(mock_dockerfile, 2), ImageNotPulled.BUILD_STAGE)
         self.assert_new_version_logged("python", docker_hub_version("3.14.7"), Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 

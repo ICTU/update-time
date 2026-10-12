@@ -132,6 +132,30 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt.write_text.assert_not_called()
         self.assert_no_warnings_logged()
 
+    def test_ignore_hash_drift_is_not_reported_as_redundant(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that `ignore[hash-drift]` on a pin is not reported as redundant."""
+        requirements_txt = self.discovered_requirements_txt(
+            mock_rglob, "flask==1.0  # update-time: ignore[hash-drift]\n"
+        )
+        mock_get.side_effect = self.pypi("1.0")
+        update_requirements_txts()
+        requirements_txt.write_text.assert_not_called()
+        self.assertEqual(self.queried_packages(mock_get), ["flask"])
+        self.assert_no_warnings_logged()
+
+    def test_hash_drift_opt_in_is_reported_as_redundant(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that an `allow[hash-drift]` on a pin is reported for its own reason, whether or not it is held back."""
+        for marker in ("allow[hash-drift]", "ignore[update] allow[hash-drift]", "ignore allow[hash-drift]"):
+            with self.subTest(marker=marker):
+                contents = f"flask==1.0  # update-time: {marker}\n"
+                requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
+                mock_get.side_effect = self.pypi("1.0")
+                update_requirements_txts()
+                requirements_txt.write_text.assert_not_called()
+                self.assert_redundant_directive_logged(
+                    Reason.NO_HASH_PIN, "flask", Location(requirements_txt, 1), "allow[hash-drift]"
+                )
+
     def test_stale_dependency_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin whose newest release is old is warned about, without being changed."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "humanize==4.15.0\n")
@@ -349,6 +373,44 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                     dependency="humanize",
                     location=Location(requirements_txt, 1),
                 )
+
+    def test_hash_drift_opt_in_is_redundant_on_a_loose_requirement(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that an `allow[hash-drift]` on a requirement naming a range is reported as redundant."""
+        requirements_txt = self.loose_requirement(mock_rglob, "allow[hash-drift]")
+        mock_get.side_effect = self.pypi("4.15.0")  # Undated, so the staleness warning is not given.
+        update_requirements_txts()
+        self.assert_redundant_directive_logged(
+            Reason.NO_HASH_PIN, "humanize", Location(requirements_txt, 1), "allow[hash-drift]"
+        )
+
+    def test_hash_drift_opt_in_beside_an_ignore_update_that_holds_nothing_back(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that an `allow[hash-drift]` on a range keeps its own reason beside an `ignore[update]`."""
+        requirements_txt = self.loose_requirement(mock_rglob, "ignore[update] allow[hash-drift]")
+        mock_get.side_effect = self.pypi("4.15.0")  # Undated, so the staleness warning is not given.
+        update_requirements_txts()
+        location = Location(requirements_txt, 1)
+        redundant = Logger._MESSAGE_REDUNDANT_DIRECTIVE
+        fields = {"dependency": "humanize", "location": location}
+        self.assert_logged_among_others(redundant, directive="allow[hash-drift]", reason=Reason.NO_HASH_PIN, **fields)
+        self.assert_logged_among_others(
+            redundant, directive="ignore[update]", reason=Reason.NO_VERSION_TO_UPDATE, **fields
+        )
+        self.assert_none_logged(redundant, "update held back", reason=Reason.DRIFT_NEVER_ADOPTED)
+
+    def test_floating_pin_opt_in_on_a_loose_requirement_is_reported_as_redundant(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that an `allow[floating-pin]` on a range is reported, with or without an `ignore[update]` beside it."""
+        reason = Reason.RANGE_NEVER_PINNED
+        for marker in ("allow[floating-pin]", "ignore[update] allow[floating-pin]"):
+            with self.subTest(marker=marker):
+                requirements_txt = self.loose_requirement(mock_rglob, marker)
+                mock_get.side_effect = self.pypi("4.15.0")  # Undated, so the staleness warning is not given.
+                update_requirements_txts()
+                redundant = Logger._MESSAGE_REDUNDANT_DIRECTIVE
+                fields = {"dependency": "humanize", "location": Location(requirements_txt, 1)}
+                self.assert_logged_among_others(redundant, directive="allow[floating-pin]", reason=reason, **fields)
+                self.assertEqual(len(self.records_of(redundant, directive="allow[floating-pin]")), 1)
 
     def test_a_loose_requirement_the_index_lists_no_version_for_is_not_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a requirement whose package the index lists no version for is not warned about.

@@ -99,8 +99,8 @@ def tag_of(version: VersionString, separator: str = ":") -> str:
     return f"{separator}{version}" if version else ""
 
 
-class AccountedFor(StrEnum):
-    """Why Update-time asks no registry about a reference and leaves it as it is."""
+class ImageNotPulled(StrEnum):
+    """Why a file does not pull the image a reference names, so Update-time does not ask a registry about it."""
 
     BUILT_IMAGE = "the Compose file builds this image"
     MACHINE_EXECUTOR_IMAGE = "it names a CircleCI machine executor rather than an image a registry serves"
@@ -210,7 +210,7 @@ class DependencyVersion:
     project: Project = Project()  # What the source reports about the project behind the dependency
     floating: FloatingPin | None = None  # What happened to the floating pin if the reference had one
     served: bool = True  # Whether the source serves the version the reference names
-    accounted_for: AccountedFor | None = None  # Why the file accounts for the reference, so no registry was asked
+    image_not_pulled: ImageNotPulled | None = None  # Why the file does not pull the image
     tag_name: str = ""  # The version's tag as the repository spells it (`v6.0.0`), where the source reads tags
 
     @classmethod

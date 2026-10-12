@@ -5,6 +5,7 @@ from unittest.mock import ANY, Mock, patch
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
 from update_time.io.log import Logger
+from update_time.markers.directive import Reason
 from update_time.primitives.location import Location
 from update_time.updaters.update_jsdelivr import update_jsdelivrs
 
@@ -114,6 +115,16 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         mock_conf = self.update(_conf(_entry(marked_url, _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_no_warnings_logged()
+
+    def test_hash_drift_marker_is_reported_as_redundant(self, mock_get: Mock, mock_glob: Mock):
+        """Test that an `allow[hash-drift]` on a URL is reported as redundant."""
+        self.offer_versions(mock_get, "2.0.11", served_hash=HASH1)
+        marked_url = f"{_URL}  # update-time: allow[hash-drift]"
+        mock_conf = self.update(_conf(_entry(marked_url, _INTEGRITY)), mock_glob)
+        mock_conf.write_text.assert_not_called()
+        self.assert_redundant_directive_logged(
+            Reason.INTEGRITY_MISMATCH_NEVER_ADOPTED, "clipboard", Location(mock_conf, 3), "allow[hash-drift]"
+        )
 
     def test_line_between_the_url_and_its_hash_is_left_untouched(self, mock_get: Mock, mock_glob: Mock):
         """Test that the hash still follows the URL across an intervening line, which is itself left alone."""

@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import AccountedFor
+from update_time.domain.dependency import ImageNotPulled
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
@@ -36,7 +36,7 @@ def update_manifest_images() -> None:
     update_yaml_files(
         DOCKER_COMPOSE_FILES,
         regexp=YAML_IMAGE_REFERENCE,
-        get_new_version_for=tag_getter_excluding_each(_built_images, AccountedFor.BUILT_IMAGE),
+        get_new_version_for=tag_getter_excluding_each(_built_images, ImageNotPulled.BUILT_IMAGE),
         logger=_LOG,
     )
     for helm_chart in glob_for(HELM_CHARTS):

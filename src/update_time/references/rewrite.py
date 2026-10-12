@@ -15,12 +15,13 @@ from update_time.domain.dependency import FloatingPin
 from update_time.domain.line import located_lines
 from update_time.domain.reference import DriftedPin, hash_drifted
 from update_time.io.log import Logger, report_marker
+from update_time.markers.directive import Consequence, ImageNotPulledReason, Reason
 from update_time.markers.floating import floating_pin_cause
 from update_time.markers.marker import Scope, parse_marker
 from update_time.primitives.text import rewrite_string
 from update_time.references.drift import adopts_drift
 from update_time.references.match import matched_dependency, matched_reference
-from update_time.references.resolve import latest_version
+from update_time.references.resolve import latest_version, warn_if_the_opt_in_is_redundant
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyVersion
     from update_time.domain.line import Line
     from update_time.domain.reference import Reference
+    from update_time.markers.directive import RedundancyReason
     from update_time.markers.marker import Marker, ReferenceMarker
     from update_time.primitives.location import Location
 
@@ -55,20 +57,37 @@ class _Rewriter:
         """
         reference = matched_reference(match, location, self.dependency)
         latest = latest_version(reference, self.get_new_version, marker, self.logger)
+        warn_if_the_opt_in_is_redundant(
+            reference,
+            marker,
+            self.logger,
+            Scope.HASH_DRIFT,
+            self._why_drift_is_never_adopted(match, latest),
+            update_held_back=marker.ignores(Scope.UPDATE),
+        )
         if latest is None:
             return match.string
-        if latest.accounted_for is not None:
-            self.logger.accounted_for_reference(reference, latest.accounted_for)
+        if latest.image_not_pulled is not None:
+            self.logger.image_not_pulled(reference, latest.image_not_pulled)
             return match.string
         if latest.floating is not None and latest.floating is not FloatingPin.RESOLVED:
             return self._keep_unresolved_floating_reference(match, marker, latest, reference, latest.floating)
         if latest.floating is FloatingPin.RESOLVED:
             return self._pin_floating_reference(match, marker, latest, reference)
-        has_sha_group = "sha" in match.groupdict()
+        has_sha_group = "sha" in match.re.groupindex
         pin_unpinned = has_sha_group and match.group("sha") is None and bool(latest.sha)
         if latest.version == reference.current_version and not pin_unpinned:
             return self._handle_drift(match, marker, latest, reference)
         return self._apply_update(match, latest, reference, pin_unpinned=pin_unpinned)
+
+    @staticmethod
+    def _why_drift_is_never_adopted(match: re.Match[str], latest: DependencyVersion | None) -> RedundancyReason | None:
+        """Return why the reference cannot adopt drift, whatever its marker says, or None where it can."""
+        if "sha" not in match.re.groupindex:
+            return Reason.NO_HASH_PIN
+        if latest is not None and latest.image_not_pulled is not None:
+            return ImageNotPulledReason(latest.image_not_pulled, Consequence.DIGEST_NEVER_CHECKED)
+        return None
 
     def _pin_floating_reference(
         self, match: re.Match[str], marker: Marker, latest: DependencyVersion, reference: Reference

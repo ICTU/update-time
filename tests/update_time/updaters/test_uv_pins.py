@@ -7,7 +7,7 @@ from unittest.mock import ANY, Mock, patch
 from update_time.domain.dependency import Yank
 from update_time.domain.vulnerability import NO_RISK_LEVEL, VULNERABILITY_LEVEL
 from update_time.formats import toml as toml_module
-from update_time.io.log import get_logger
+from update_time.io.log import Logger, get_logger
 from update_time.manifests.dependency_file import InlineScript, PyprojectToml
 from update_time.markers import reference as marker_reference_module
 from update_time.markers.directive import Reason
@@ -689,38 +689,36 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
     @kills(
         Mutation(
             delegated_module._redundant_floating_pin_directive,
-            "floating_pin_redundancy(reference.marker, floats=False)",
-            "floating_pin_redundancy(reference.marker, floats=None)",
+            "Reason.PIN_NOT_FLOATING if",
+            "None if",
             "a Python dependency's pin reads as one that might float, so an `allow[floating-pin]` keeping nothing "
             "floating is left unreported",
         )
     )
-    def test_a_floating_pin_directive_is_reported(self, get: Mock):
-        """Test that an `allow[floating-pin]` is reported, since a Python dependency carries no tag that floats."""
-        file = self.dependency_toml_file("package==1.0", marker="allow[floating-pin]")
-        self.check_dependencies(get, file)
-        self.assert_redundant_directive_logged(
-            Reason.PIN_NOT_FLOATING, "package", Location(file.path, 2), "allow[floating-pin]"
-        )
-
-    @kills(
-        Mutation(
-            delegated_module._redundant_floating_pin_directive,
-            "floating_pin_redundancy(reference.marker, floats=False)",
-            "floating_pin_redundancy(reference.marker.as_written, floats=False)",
-            "the rule reads the marker as written, so a bare `ignore` reads as holding the update back not, and its "
-            "`allow[floating-pin]` is reported as a pin that does not float",
-        )
-    )
-    def test_a_floating_pin_directive_is_reported_as_a_held_back_update(self, get: Mock):
-        """Test that a held-back update is the reason reported, whichever directive holds the update back."""
-        for marker in ("ignore[update] allow[floating-pin]", "ignore allow[floating-pin]"):
-            with self.subTest(marker=marker):
-                file = self.dependency_toml_file("package==1.0", marker=marker)
+    def test_an_opt_in_directive_is_reported(self, get: Mock):
+        """Test that each opt-in is reported for the reason it decides nothing, on an exact pin and on a range."""
+        cases = {
+            "floating pin on an exact pin": ("package==1.0", "allow[floating-pin]", Reason.PIN_NOT_FLOATING),
+            "floating pin on a range": ("package>=1.0", "allow[floating-pin]", Reason.RANGE_NEVER_PINNED),
+            "hash drift on an exact pin": ("package==1.0", "allow[hash-drift]", Reason.NO_HASH_PIN),
+        }
+        for case, (spec, directive, reason) in cases.items():
+            with self.subTest(case=case):
+                file = self.dependency_toml_file(spec, marker=directive)
                 self.check_dependencies(get, file)
-                self.assert_redundant_directive_logged(
-                    Reason.UPDATE_HELD_BACK, "package", Location(file.path, 2), "allow[floating-pin]"
-                )
+                self.assert_redundant_directive_logged(reason, "package", Location(file.path, 2), directive)
+
+    def test_a_hash_drift_directive_beside_an_ignore_update_that_holds_nothing_back(self, get: Mock):
+        """Test that an `allow[hash-drift]` on a range keeps its own reason beside an `ignore[update]`."""
+        file = self.dependency_toml_file("package>=1.0", marker="ignore[update] allow[hash-drift]")
+        self.check_dependencies(get, file)
+        redundant = Logger._MESSAGE_REDUNDANT_DIRECTIVE
+        fields = {"dependency": "package", "location": Location(file.path, 2)}
+        self.assert_logged_among_others(redundant, directive="allow[hash-drift]", reason=Reason.NO_HASH_PIN, **fields)
+        self.assert_logged_among_others(
+            redundant, directive="ignore[update]", reason=Reason.MANAGER_RESOLVES_THE_VERSION, **fields
+        )
+        self.assert_none_logged(redundant, "update held back", reason=Reason.DRIFT_NEVER_ADOPTED)
 
     @kills(
         Mutation(

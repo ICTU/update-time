@@ -14,11 +14,11 @@ from pathlib import Path
 
 from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
 from update_time.domain.dependency import (
-    AccountedFor,
     Archival,
     ArchivedSubject,
     DependencyVersion,
     FloatingPin,
+    ImageNotPulled,
     Project,
     Release,
     Yank,
@@ -27,7 +27,7 @@ from update_time.domain.reference import DriftedPin, RefKind
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.console import undelimited
 from update_time.io.log import Logger
-from update_time.markers.directive import Reason
+from update_time.markers.directive import Consequence, ImageNotPulledReason, Reason
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.primitives.location import Location
 from update_time.sources.github import BEYOND_THE_COMMITS_EXAMINED
@@ -140,11 +140,19 @@ def _redundant_directives(
     log.redundant_directive(reference("python", dockerfile), "allow[floating-pin]", Reason.PIN_NOT_FLOATING)
     redundant_floating_pin = capture.take()
 
-    log.redundant_directive(reference("python", dockerfile), "allow[floating-pin]", Reason.UPDATE_HELD_BACK)
+    log.redundant_directive(reference("humanize", requirements), "allow[floating-pin]", Reason.RANGE_NEVER_PINNED)
+    redundant_range_floating_pin = capture.take()
+
+    log.redundant_directive(reference("python", dockerfile), "allow[floating-pin]", Reason.NEVER_PINNED)
     redundant_frozen_floating_pin = capture.take()
 
+    log.redundant_directive(reference("python", dockerfile), "allow[hash-drift]", Reason.DRIFT_NEVER_ADOPTED)
+    redundant_frozen_hash_drift = capture.take()
+
     built = reference("acme/api", Location(Path("docker-compose.yml"), 4), "dev")
-    log.redundant_directive(built, "allow[floating-pin]", Reason.NO_REGISTRY_ASKED)
+    log.redundant_directive(
+        built, "allow[floating-pin]", ImageNotPulledReason(ImageNotPulled.BUILT_IMAGE, Consequence.TAG_NEVER_PINNED)
+    )
     return {
         "@@REDUNDANT_VULNERABLE_SCOPE_WARNING@@": redundant_vulnerable_scope,
         "@@REDUNDANT_VULNERABLE_ADVISORY_WARNING@@": redundant_vulnerable_advisory,
@@ -160,8 +168,10 @@ def _redundant_directives(
         "@@REDUNDANT_COOLDOWN_ITEM_WARNING@@": redundant_cooldown_item,
         "@@REDUNDANT_STALE_SOURCE_WARNING@@": redundant_stale_source,
         "@@REDUNDANT_FLOATING_PIN_WARNING@@": redundant_floating_pin,
+        "@@REDUNDANT_RANGE_FLOATING_PIN_WARNING@@": redundant_range_floating_pin,
         "@@REDUNDANT_FROZEN_FLOATING_PIN_WARNING@@": redundant_frozen_floating_pin,
-        "@@REDUNDANT_UNASKED_FLOATING_PIN_WARNING@@": capture.take(),
+        "@@REDUNDANT_FROZEN_HASH_DRIFT_WARNING@@": redundant_frozen_hash_drift,
+        "@@REDUNDANT_NOT_PULLED_FLOATING_PIN_WARNING@@": capture.take(),
     }
 
 
@@ -181,6 +191,13 @@ def _redundant_for_the_dependency_type(
     log.redundant_directive(held_elsewhere, "ignore[cooldown<30]", Reason.VERSION_HELD_ELSEWHERE)
     cooldowns = capture.take()
 
+    log.redundant_directive(loose, "allow[hash-drift]", Reason.NO_HASH_PIN)
+    clipboard = reference("clipboard", Location(Path("docs/conf.py"), 4))
+    log.redundant_directive(clipboard, "allow[hash-drift]", Reason.INTEGRITY_MISMATCH_NEVER_ADOPTED)
+    built = reference("acme/api", Location(Path("docker-compose.yml"), 4))
+    log.redundant_directive(
+        built, "allow[hash-drift]", ImageNotPulledReason(ImageNotPulled.BUILT_IMAGE, Consequence.DIGEST_NEVER_CHECKED)
+    )
     log.redundant_directive(commit, "allow[hash-drift]", Reason.NO_DRIFT_FOR_A_COMMIT)
     drift = capture.take()
 
@@ -193,7 +210,7 @@ def _redundant_for_the_dependency_type(
     log.redundant_directive(plugin, "allow[update<4]", Reason.PLUGIN_NOT_UPDATED)
     return {
         "@@REDUNDANT_COOLDOWN_WARNINGS@@": cooldowns,
-        "@@REDUNDANT_HASH_DRIFT_WARNING@@": drift,
+        "@@REDUNDANT_HASH_DRIFT_WARNINGS@@": drift,
         "@@REDUNDANT_BOUND_WARNINGS@@": capture.take(),
     }
 
@@ -238,14 +255,14 @@ def _effective_pom_warnings(log: Logger, capture: _Capture) -> dict[str, str]:
     }
 
 
-def _accounted_for_references(log: Logger, capture: _Capture, dockerfile: Location) -> str:
-    """Log one reference of each kind the file itself accounts for, and return the lines they render as."""
+def _images_not_pulled(log: Logger, capture: _Capture, dockerfile: Location) -> str:
+    """Log one reference of each kind whose image the file does not pull, and return the lines they render as."""
     compose = reference("acme/api", Location(Path("docker-compose.yml"), 4), "1.2.3")
-    log.accounted_for_reference(compose, AccountedFor.BUILT_IMAGE)
+    log.image_not_pulled(compose, ImageNotPulled.BUILT_IMAGE)
     machine = reference("ubuntu-2204", Location(Path(".circleci/config.yml"), 4), "2024.01.1")
-    log.accounted_for_reference(machine, AccountedFor.MACHINE_EXECUTOR_IMAGE)
-    log.accounted_for_reference(reference("scratch", Location(Path("Dockerfile"), 1)), AccountedFor.EMPTY_BASE_IMAGE)
-    log.accounted_for_reference(reference("deps", dockerfile), AccountedFor.BUILD_STAGE)
+    log.image_not_pulled(machine, ImageNotPulled.MACHINE_EXECUTOR_IMAGE)
+    log.image_not_pulled(reference("scratch", Location(Path("Dockerfile"), 1)), ImageNotPulled.EMPTY_BASE_IMAGE)
+    log.image_not_pulled(reference("deps", dockerfile), ImageNotPulled.BUILD_STAGE)
     return capture.take()
 
 
@@ -372,7 +389,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.no_release_metadata("humanize", "4.16.0", "4.15.0", "HTTP 503")
     no_release_metadata = capture.take()
 
-    accounted_for = _accounted_for_references(log, capture, dockerfile)
+    images_not_pulled = _images_not_pulled(log, capture, dockerfile)
 
     understood_markers = _understood_markers(log, capture, dockerfile, stale)
     return {
@@ -385,7 +402,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **github_refs,
         "@@NO_RELEASE_METADATA@@": no_release_metadata,
         "@@NO_PUSH_DATE@@": undated_pushes,
-        "@@ACCOUNTED_FOR_REFERENCES@@": accounted_for,
+        "@@IMAGES_NOT_PULLED@@": images_not_pulled,
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@VULNERABILITY_WARNING@@": vulnerable,

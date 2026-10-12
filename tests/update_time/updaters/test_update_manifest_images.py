@@ -3,9 +3,9 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from update_time.domain.dependency import AccountedFor, FloatingPin
+from update_time.domain.dependency import FloatingPin, ImageNotPulled
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
-from update_time.markers.directive import Reason
+from update_time.markers.directive import Consequence, ImageNotPulledReason
 from update_time.primitives.location import Location
 from update_time.references import file as references_file
 from update_time.references import resolve as references_resolve
@@ -100,10 +100,10 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.run_compose_updater(mock_manifest)
         mock_manifest.write_text.assert_not_called()
         self.requests.assert_not_called()
-        built = AccountedFor.BUILT_IMAGE
-        self.assert_accounted_for_reference_logged("acme/api", "1.2.3", Location(mock_manifest, 4), built)
-        self.assert_accounted_for_reference_logged("acme/api", "1.2.3", Location(mock_manifest, 6), built)
-        self.assert_accounted_for_reference_logged("acme/db", "2.0.0", Location(mock_manifest, 9), built)
+        built = ImageNotPulled.BUILT_IMAGE
+        self.assert_image_not_pulled_logged("acme/api", "1.2.3", Location(mock_manifest, 4), built)
+        self.assert_image_not_pulled_logged("acme/api", "1.2.3", Location(mock_manifest, 6), built)
+        self.assert_image_not_pulled_logged("acme/db", "2.0.0", Location(mock_manifest, 9), built)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -123,7 +123,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         mock_manifest.write_text.assert_not_called()
         self.requests.assert_not_called()
         location = Location(mock_manifest, 4)
-        self.assert_accounted_for_reference_logged("acme/api", "1.2.3", location, AccountedFor.BUILT_IMAGE)
+        self.assert_image_not_pulled_logged("acme/api", "1.2.3", location, ImageNotPulled.BUILT_IMAGE)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -236,22 +236,33 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            references_resolve.floating_pin_redundancy,
-            "if not asked:\n        return Reason.NO_REGISTRY_ASKED\n    if floats is False:\n",
-            "if floats is False:\n",
-            "a reference no registry is asked about is reported as one whose pin does not float, which it may do",
+            references_resolve._why_the_pin_never_floats,
+            "if latest.image_not_pulled is not None:\n"
+            "        return ImageNotPulledReason(latest.image_not_pulled, Consequence.TAG_NEVER_PINNED)\n"
+            "    return None",
+            "return None",
+            "the warning names a pin that does not float, where it should name the image the file does not pull",
         )
     )
-    def test_floating_pin_marker_on_a_built_image_says_no_registry_is_asked(self):
-        """Test that `allow[floating-pin]` on a built image says no registry is asked, not that its pin is fixed."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("1.3.0", DIGEST))
-        marker = "# update-time: allow[floating-pin]"
-        mock_manifest = mock_path(f"services:\n  api:\n    build: .\n    image: acme/api:dev  {marker}\n")
-        self.run_compose_updater(mock_manifest)
-        mock_manifest.write_text.assert_not_called()
-        self.assert_redundant_directive_logged(
-            Reason.NO_REGISTRY_ASKED, "acme/api", Location(mock_manifest, 4), "allow[floating-pin]"
-        )
+    def test_an_opt_in_on_a_built_image_names_why_the_image_is_not_pulled(self):
+        """Test that an opt-in on an image the Compose file builds is reported as redundant, naming the build."""
+        cases = {
+            "allow[floating-pin]": ("dev", Consequence.TAG_NEVER_PINNED),
+            "allow[hash-drift]": ("1.2.3", Consequence.DIGEST_NEVER_CHECKED),
+        }
+        for directive, (tag, consequence) in cases.items():
+            with self.subTest(directive=directive):
+                self.requests.side_effect = mock_docker_registry(docker_tag("1.3.0", DIGEST))
+                marker = f"# update-time: {directive}"
+                mock_manifest = mock_path(f"services:\n  api:\n    build: .\n    image: acme/api:{tag}  {marker}\n")
+                self.run_compose_updater(mock_manifest)
+                mock_manifest.write_text.assert_not_called()
+                self.assert_redundant_directive_logged(
+                    ImageNotPulledReason(ImageNotPulled.BUILT_IMAGE, consequence),
+                    "acme/api",
+                    Location(mock_manifest, 4),
+                    directive,
+                )
 
     def test_helm_chart_that_does_not_parse_is_updated(self):
         """Test that a Helm chart whose YAML does not parse is updated, a Go-templated chart being no valid YAML."""

@@ -21,10 +21,10 @@ from update_time.domain.dependency import (
     LOWEST_VERSION,
     MAIN_VERSION,
     UNDATED,
-    AccountedFor,
     DependencyName,
     DependencyVersion,
     FloatingPin,
+    ImageNotPulled,
     PinnedDependency,
     Project,
     Release,
@@ -379,38 +379,38 @@ def _is_another_spelling(candidate: Tag, current: Tag) -> bool:
     return candidate.name != current.name and current.is_newer_or_equal(candidate)
 
 
-def tag_getter(accounted_for: Callable[[PinnedDependency], AccountedFor | None]) -> NewVersionGetter:
+def tag_getter(image_not_pulled: Callable[[PinnedDependency], ImageNotPulled | None]) -> NewVersionGetter:
     """Return a getter that resolves an image tag, leaving the references it asks no registry about unchanged."""
 
     def dates_the_versions_of(pinned: PinnedDependency) -> bool:
         """Return whether the pinned image's versions carry a date, which they do not when no registry is asked."""
-        return accounted_for(pinned) is None and reports_publication_dates(get_latest_tag, pinned)
+        return image_not_pulled(pinned) is None and reports_publication_dates(get_latest_tag, pinned)
 
     @partial(publication_date_reporting, when=dates_the_versions_of)
     def get_new_version(
         pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
     ) -> DependencyVersion:
-        if (reason := accounted_for(pinned)) is not None:
-            return DependencyVersion(version=pinned.version, accounted_for=reason)
+        if (reason := image_not_pulled(pinned)) is not None:
+            return DependencyVersion(version=pinned.version, image_not_pulled=reason)
         return get_latest_tag(pinned, version_bound, cooldown_days, check_archival=check_archival)
 
     return get_new_version
 
 
-def tag_getter_excluding(images: set[str], reason: AccountedFor) -> NewVersionGetter:
+def tag_getter_excluding(images: set[str], reason: ImageNotPulled) -> NewVersionGetter:
     """Return a getter resolving every image but the ones given, which it leaves unchanged."""
     without_digests = {image.partition("@")[0] for image in images}
 
-    def accounted_for(pinned: PinnedDependency) -> AccountedFor | None:
+    def image_not_pulled(pinned: PinnedDependency) -> ImageNotPulled | None:
         """Return the one reason when the reference is among the ones given, or None when it is not."""
         as_written = f"{pinned.name}{tag_of(pinned.version)}"
         return reason if as_written in without_digests else None
 
-    return tag_getter(accounted_for)
+    return tag_getter(image_not_pulled)
 
 
 def tag_getter_excluding_each(
-    find_images: Callable[[Document], set[str]], reason: AccountedFor
+    find_images: Callable[[Document], set[str]], reason: ImageNotPulled
 ) -> Callable[[Document], NewVersionGetter]:
     """Return what builds one file's getter, leaving the images `find_images` reads from that file unchanged."""
     return lambda document: tag_getter_excluding(find_images(document), reason)

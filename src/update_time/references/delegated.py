@@ -11,7 +11,7 @@ from update_time.markers.directive import WARNING_DIRECTIVES, Reason
 from update_time.markers.marker import Scope
 from update_time.markers.reference import SteeredReference, SteeredResolvedReference
 from update_time.references.resolve import (
-    floating_pin_redundancy,
+    opt_in_redundancy,
     project_is_checked,
     report_project,
     staleness_threshold,
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from update_time.domain.dependency import ProjectGetter
     from update_time.domain.reference import ReferenceResolver
     from update_time.io.log import Logger
+    from update_time.markers.directive import RedundancyReason
 
 
 def project_resolver(get_project: ProjectGetter) -> ReferenceResolver[SteeredReference, SteeredResolvedReference]:
@@ -82,7 +83,7 @@ def _checked_references[ReferenceT: SteeredReference](
     ]
 
 
-def _scopes_that_need_a_version(reference: SteeredReference) -> Iterator[tuple[str, Reason]]:
+def _scopes_that_need_a_version(reference: SteeredReference) -> Iterator[tuple[str, RedundancyReason]]:
     """Yield each directive whose check needs a version the reference pins none of, with the reason it is redundant.
 
     A check about the version a reference is left on has none to run on where the reference pins none, so its scope
@@ -96,7 +97,7 @@ def _scopes_that_need_a_version(reference: SteeredReference) -> Iterator[tuple[s
             yield written, directive.without_a_version
 
 
-def _redundant_update_directives(reference: SteeredReference) -> Iterator[tuple[str, Reason]]:
+def _redundant_update_directives(reference: SteeredReference) -> Iterator[tuple[str, RedundancyReason]]:
     """Yield each redundant directive steering the update, with the reason it is redundant.
 
     An `ignore[update]` freezes the version the file records. So it holds something back for a reference that pins
@@ -110,22 +111,40 @@ def _redundant_update_directives(reference: SteeredReference) -> Iterator[tuple[
         yield bound, Reason.BOUND_DECIDES_NOTHING
 
 
-def _redundant_cooldown_directive(reference: SteeredReference) -> Iterator[tuple[str, Reason]]:
+def _redundant_cooldown_directive(reference: SteeredReference) -> Iterator[tuple[str, RedundancyReason]]:
     """Yield the cooldown the marker sets, which the package manager applies per run rather than per reference."""
     if cooldown := reference.marker.as_written.cooldown_directive:
         yield cooldown, Reason.COOLDOWN_PER_RUN
 
 
-def _redundant_floating_pin_directive(reference: SteeredReference) -> Iterator[tuple[str, Reason]]:
-    """Yield the floating-pin directive the reference's marker writes, with the reason it keeps nothing floating.
+def _holds_the_update_back(reference: SteeredReference) -> bool:
+    """Return whether the reference's marker holds its update back, which it does only for a pinned version.
 
     The marker is read whole rather than as written, since a bare `ignore` holds the update back without naming it.
     """
-    if (floating := floating_pin_redundancy(reference.marker, floats=False)) is not None:
+    return bool(reference.current_version) and reference.marker.ignores(Scope.UPDATE)
+
+
+def _redundant_floating_pin_directive(reference: SteeredReference) -> Iterator[tuple[str, RedundancyReason]]:
+    """Yield the floating-pin directive the reference's marker writes, with the reason it keeps nothing floating."""
+    held_back = _holds_the_update_back(reference)
+    reason = Reason.PIN_NOT_FLOATING if reference.current_version else Reason.RANGE_NEVER_PINNED
+    if (
+        floating := opt_in_redundancy(reference.marker, Scope.FLOATING_PIN, reason, update_held_back=held_back)
+    ) is not None:
         yield reference.marker.allow_directive(Scope.FLOATING_PIN), floating
 
 
-def _warning_scopes(reference: SteeredReference, reason: Reason) -> Iterator[tuple[str, Reason]]:
+def _redundant_hash_drift_directive(reference: SteeredReference) -> Iterator[tuple[str, RedundancyReason]]:
+    """Yield the hash-drift directive the reference's marker writes, with the reason it adopts nothing."""
+    held_back = _holds_the_update_back(reference)
+    if (
+        drift := opt_in_redundancy(reference.marker, Scope.HASH_DRIFT, Reason.NO_HASH_PIN, update_held_back=held_back)
+    ) is not None:
+        yield reference.marker.allow_directive(Scope.HASH_DRIFT), drift
+
+
+def _warning_scopes(reference: SteeredReference, reason: Reason) -> Iterator[tuple[str, RedundancyReason]]:
     """Yield each warning scope the reference's marker writes, with the reason no source answers any of them."""
     as_written = reference.marker.as_written
     for directive in WARNING_DIRECTIVES:
@@ -133,11 +152,14 @@ def _warning_scopes(reference: SteeredReference, reason: Reason) -> Iterator[tup
             yield written, reason
 
 
-def _redundant_directives(reference: SteeredReference, no_source: Reason | None) -> Iterator[tuple[str, Reason]]:
+def _redundant_directives(
+    reference: SteeredReference, no_source: Reason | None
+) -> Iterator[tuple[str, RedundancyReason]]:
     """Yield each redundant directive of the reference's marker, with the reason it is redundant."""
     yield from _redundant_update_directives(reference)
     yield from _redundant_cooldown_directive(reference)
     yield from _redundant_floating_pin_directive(reference)
+    yield from _redundant_hash_drift_directive(reference)
     if no_source is None:
         yield from _scopes_that_need_a_version(reference)
     else:

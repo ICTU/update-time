@@ -211,11 +211,11 @@ def _update_dependencies(uv_tree: Command, file: DependencyTomlFile, log: Logger
     can skip any follow-up work that would fail the same way.
     """
     log.path(file.path)
+    declarations = _by_name(_with_reported_markers(pyproject_toml_format.declared_dependencies(file), log))
     outdated = run(uv_tree)
     if not outdated.ok:
         return False
     lines_with_updates = [line for line in outdated.stdout.splitlines() if " (latest: " in line]
-    declarations = _by_name(_with_reported_markers(pyproject_toml_format.declared_dependencies(file), log))
     latest_versions: dict[Declaration, VersionString] = {}
     for line in lines_with_updates:
         package, version = _parse_line_with_update(line)
