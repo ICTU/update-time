@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.45 - 2026-10-13
+
 ### Changed
 
 - Update the Node engine version and the Python version from the latest release on Docker Hub, instead of following the base image in the project's Dockerfile. A project that holds its base image back with a marker needs the same marker on the Node engine version or the Python version. Closes [#419](https://github.com/ICTU/update-time/issues/419).
