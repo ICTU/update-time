@@ -11,13 +11,12 @@ from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
-from update_time.domain.cooldown import within_cooldown
+from update_time.domain.cooldown import CooldownWalk, first_eligible
 from update_time.domain.dependency import (
     DependencyName,
     DependencyVersion,
     PinnedDependency,
     VersionString,
-    first_eligible,
     is_valid,
 )
 from update_time.domain.publication import publication_date_reporting
@@ -64,8 +63,10 @@ def version_getter(filename: str) -> NewVersionGetter:
         candidates = _candidate_versions(pinned, version_bound)
         latest = first_eligible(
             candidates,
-            lambda version: _eligible_version(pinned, version, filename, cooldown_days),
+            lambda version, walk: _eligible_version(pinned, version, filename, walk),
+            lambda _: False,
             pinned.version,
+            cooldown_days,
         )
         latest = with_yank_state(latest, pinned.version, partial(deprecation, pinned.name))
         return replace(latest, project=npm_project(pinned.name, check_archival=check_archival))
@@ -74,7 +75,7 @@ def version_getter(filename: str) -> NewVersionGetter:
 
 
 def _eligible_version(
-    pinned: PinnedDependency, version: Version, filename: str, cooldown_days: int
+    pinned: PinnedDependency, version: Version, filename: str, walk: CooldownWalk
 ) -> DependencyVersion | None:
     """Return the version with its integrity hash when it's eligible, or None when it's too fresh or deprecated.
 
@@ -83,11 +84,11 @@ def _eligible_version(
     Subresource Integrity check. A version the npm registry dates nowhere counts as too fresh, since a version it
     has yet to date is one it has just received.
     """
-    published = get_publication_datetime(pinned.name, str(version))
-    if published is None or within_cooldown(published, cooldown_days):
-        return None
     version_string = str(version)
     if deprecation(pinned.name, version_string).yanked:
+        return None
+    published = get_publication_datetime(pinned.name, version_string)
+    if published is None or walk.holds_back(version_string, published):
         return None
     if integrity := integrity_hash(pinned.name, version_string, filename):
         return DependencyVersion(version_string, sha=integrity, publication=LookedUp(published))

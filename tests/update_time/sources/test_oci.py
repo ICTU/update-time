@@ -391,8 +391,8 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             oci._eligible_tag,
-            "if not is_current and not walk.past(latest.pushed, report_undated):",
-            "if not is_current and not (walk.past(latest.pushed, report_undated) or latest._is_dated_snapshot):",
+            "if not is_current and not walk.past(name, latest.pushed, report_undated):",
+            "if not is_current and not (walk.past(name, latest.pushed, report_undated) or latest._is_dated_snapshot):",
             "a dated snapshot is adopted however freshly it was pushed",
         )
     )
@@ -526,10 +526,10 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            oci._eligible_tag,
-            "if walk.stopped and not is_current:",
-            "if False:",
-            "a rate-limited push date costs a request and an error for every tag in between",
+            oci._resolved_tag,
+            "lambda candidate: candidate.name == current.name,",
+            "lambda candidate: False,",
+            "a rate-limited push date leaves the reference unpinned, holding back its own tag as well",
         )
     )
     def test_tag_whose_push_date_cannot_be_fetched_holds_back_the_tags_in_between(self):

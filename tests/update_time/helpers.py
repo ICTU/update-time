@@ -19,6 +19,7 @@ from packaging.version import Version
 
 import update_time
 from update_time.domain.archival import IGNORE_ARCHIVED
+from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import ArchivedSubject, DependencyVersion, FloatingPin, ImageNotLookedUp, tag_of
 from update_time.domain.reference import Reference, RefKind
 from update_time.domain.staleness import STALE_AFTER
@@ -35,6 +36,7 @@ from update_time.markers.marker import Marker
 from update_time.markers.reference import SteeredResolvedReference
 from update_time.primitives.location import Location
 from update_time.primitives.lookup import LookedUp
+from update_time.primitives.timestamp import utc_date_and_time
 
 from tests.helpers import mock_path, mock_response, patch_environ
 from tests.update_time.fixtures import COMMIT_SHA, FRESH_DATE, PAST_COOLDOWN_DATE
@@ -565,6 +567,25 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that ignoring a reference's update was logged, by default as the last record."""
         assert_logged = self.assert_logged_among_others if among_others else self._assert_last_logged
         assert_logged(Logger._MESSAGE_IGNORED, dependency=dependency, location=location, directive=directive)
+
+    def assert_held_back_by_cooldown_logged(
+        self, dependency: str, version: str, location: Location, *, days: int = COOLDOWN.default, directive: str = ""
+    ) -> None:
+        """Assert that the version published at `FRESH_DATE` was logged as held back, among the other records.
+
+        A `directive` is the marker's directive that sets the cooldown, which the line names.
+        """
+        fields = {"directive": directive} if directive else {}
+        self.assert_logged_among_others(
+            Logger._MESSAGE_HELD_BACK_BY_MARKER_COOLDOWN if directive else Logger._MESSAGE_HELD_BACK_BY_COOLDOWN,
+            dependency=dependency,
+            location=location,
+            version=version,
+            published=utc_date_and_time(FRESH_DATE),
+            days=days,
+            until=utc_date_and_time(FRESH_DATE + timedelta(days=days)),
+            **fields,
+        )
 
     def assert_ignored_staleness_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
         """Assert that a staleness warning silenced by a marker was logged, among the other records."""

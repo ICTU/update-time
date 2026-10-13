@@ -4,7 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta, timezone
 
 from update_time.domain import dependency
-from update_time.domain.dependency import DependencyVersion, Release, Yank, first_eligible, is_valid
+from update_time.domain.dependency import DependencyVersion, Release, Yank, is_valid
 from update_time.primitives.lookup import LookedUp
 
 from tests.mutation import Mutation, kills
@@ -83,28 +83,3 @@ class DependencyVersionTest(unittest.TestCase):
         """Test that a version can carry a yank state."""
         yank = Yank(yanked=True, reason="broke Python 3.10 support")
         self.assertEqual(DependencyVersion(version="1.0", yank=yank).yank, yank)
-
-
-class FirstEligibleTest(unittest.TestCase):
-    """Unit tests for the first_eligible walk."""
-
-    def test_no_candidates(self):
-        """Test that the current version is returned unchanged when there are no candidates."""
-        self.assertEqual(DependencyVersion(version="1.0"), first_eligible([], DependencyVersion, "1.0"))
-
-    def test_first_candidate_eligible(self):
-        """Test that the first eligible candidate is returned."""
-        self.assertEqual(DependencyVersion("3.0"), first_eligible(["3.0", "2.0"], DependencyVersion, "1.0"))
-
-    def test_skips_ineligible_candidates(self):
-        """Test that candidates that resolve to None are skipped in favour of the next one."""
-
-        def resolve(candidate: str) -> DependencyVersion | None:
-            """Resolve only the "2.0" candidate, skipping the rest."""
-            return DependencyVersion(candidate) if candidate == "2.0" else None
-
-        self.assertEqual(DependencyVersion("2.0"), first_eligible(["3.0", "2.0"], resolve, "1.0"))
-
-    def test_no_eligible_candidate(self):
-        """Test that the current version is returned unchanged when no candidate is eligible."""
-        self.assertEqual(DependencyVersion(version="1.0"), first_eligible(["3.0", "2.0"], lambda _: None, "1.0"))

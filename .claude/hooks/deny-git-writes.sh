@@ -7,7 +7,7 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
 # Heredoc bodies are text, not commands, so a probe that mentions `git reset` is not judged as running it.
 command=$(printf '%s' "$input" | jq -r '.tool_input.command' |
     awk '/<<-?.?EOF/ {print; skip=1; next} skip && /^EOF$/ {skip=0; next} !skip')
-review_worktree='/\.claude/worktrees/'
+review_worktree='(^|[[:space:]/])\.claude/worktrees/'
 
 deny() {
     jq -nc --arg reason "Run only the git commands that read, such as status, diff, log, and show: $1 (see the Git section of CLAUDE.md)." \

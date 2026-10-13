@@ -10,7 +10,7 @@ from update_time.primitives.location import Location
 from update_time.updaters.update_jsdelivr import update_jsdelivrs
 
 from tests.helpers import mock_path, mock_response
-from tests.update_time.fixtures import HASH1, HASH2, STALE_DATE
+from tests.update_time.fixtures import FRESH_DATE, HASH1, HASH2, STALE_DATE
 from tests.update_time.helpers import LoggingTestCase, days_ago, jsdelivr_versions, npm_registry
 from tests.update_time.updaters.helpers import no_vulnerabilities, osv, osv_vulnerability
 
@@ -115,6 +115,17 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         mock_conf = self.update(_conf(_entry(marked_url, _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_no_warnings_logged()
+
+    def test_version_inside_the_cooldown_is_logged_as_held_back(self, mock_get: Mock, mock_glob: Mock):
+        """Test that the newest version published inside the cooldown is logged as held back, past a deprecated one."""
+        fresh, deprecated = FRESH_DATE.isoformat(), {"2.0.13": _DEPRECATION_REASON}
+        cases = {"a release": ("2.0.12", "2.0.11"), "a release below a deprecated one": ("2.0.13", "2.0.12", "2.0.11")}
+        for case, versions in cases.items():
+            with self.subTest(case):
+                self.offer_versions(mock_get, *versions, published=fresh, deprecated=deprecated, served_hash=HASH1)
+                mock_conf = self.update(_CONF, mock_glob)
+                mock_conf.write_text.assert_not_called()
+                self.assert_held_back_by_cooldown_logged("clipboard", "2.0.12", Location(mock_conf, 3))
 
     def test_hash_drift_marker_is_reported_as_redundant(self, mock_get: Mock, mock_glob: Mock):
         """Test that an `allow[hash-drift]` on a URL is reported as redundant."""

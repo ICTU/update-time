@@ -109,9 +109,10 @@ def latest_version(
         _warn_if_the_floating_pin_is_redundant(marker, reference, log, latest=None)
         return None
     version_bound = BLOCK_ALL_UPDATES if marker.ignores(Scope.UPDATE) else marker.version_bound
-    latest = get_new_version(
-        reference.pinned, version_bound, cooldown_days(marker), check_archival=archival_is_checked()
-    )
+    days = cooldown_days(marker)
+    latest = get_new_version(reference.pinned, version_bound, days, check_archival=archival_is_checked())
+    if (fresh := latest.fresh_release) is not None:
+        log.held_back_by_cooldown(reference, fresh, days, marker.cooldown_directive)
     resolved = SteeredResolvedReference.from_reference(reference, release=latest, marker=marker)
     report_project(resolved, log)
     log.report_yank(resolved, marker)

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, cast
 
 from packaging.version import InvalidVersion, Version
 
-from update_time.domain.cooldown import CooldownWalk
+from update_time.domain.cooldown import CooldownWalk, first_eligible
 from update_time.domain.dependency import (
     LOWEST_VERSION,
     MAIN_VERSION,
@@ -29,7 +29,6 @@ from update_time.domain.dependency import (
     Project,
     Release,
     VersionString,
-    first_eligible,
     tag_of,
 )
 from update_time.domain.image_lookup import explaining_skipped_lookups
@@ -374,8 +373,13 @@ def _resolved_tag(
         and version_bound.keeps(cast("Version", tag.version), current_tag)
         and not _is_another_spelling(tag, current)
     ]
-    walk = CooldownWalk(cooldown_days)
-    return first_eligible(candidates, lambda candidate: _eligible_tag(image, current, candidate, walk), current_tag)
+    return first_eligible(
+        candidates,
+        lambda candidate, walk: _eligible_tag(image, current, candidate, walk),
+        lambda candidate: candidate.name == current.name,
+        current_tag,
+        cooldown_days,
+    )
 
 
 def _is_another_spelling(candidate: Tag, current: Tag) -> bool:
@@ -620,15 +624,13 @@ def _eligible_tag(image: str, current: Tag, candidate: Tag, walk: CooldownWalk) 
     holds back a candidate whose push date Docker Hub failed to report, and every tag between it and the current one.
     """
     is_current = candidate.name == current.name
-    if walk.stopped and not is_current:
-        return None
     latest = _get_tag(image, candidate.name)
     if latest is None:
         return None
     report_undated = partial(_LOG.undated_push, image, candidate.name, current.name)
-    if not is_current and not walk.past(latest.pushed, report_undated):
-        return None
     name = current.name if is_current else current.with_version(cast("Version", latest.version), latest.suffix).name
+    if not is_current and not walk.past(name, latest.pushed, report_undated):
+        return None
     return DependencyVersion(version=name, sha=latest.digest, publication=latest.pushed)
 
 
