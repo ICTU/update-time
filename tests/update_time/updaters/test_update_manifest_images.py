@@ -3,9 +3,9 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from update_time.domain.dependency import FloatingPin, ImageNotPulled
+from update_time.domain.dependency import FloatingPin, ImageNotLookedUp
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
-from update_time.markers.directive import Consequence, ImageNotPulledReason
+from update_time.markers.directive import Consequence, ImageNotLookedUpReason
 from update_time.primitives.location import Location
 from update_time.references import file as references_file
 from update_time.references import resolve as references_resolve
@@ -98,14 +98,10 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         )
         mock_manifest = mock_path(compose)
         self.run_compose_updater(mock_manifest)
-        mock_manifest.write_text.assert_not_called()
-        self.requests.assert_not_called()
-        built = ImageNotPulled.BUILT_IMAGE
-        self.assert_image_not_pulled_logged("acme/api", "1.2.3", Location(mock_manifest, 4), built)
-        self.assert_image_not_pulled_logged("acme/api", "1.2.3", Location(mock_manifest, 6), built)
-        self.assert_image_not_pulled_logged("acme/db", "2.0.0", Location(mock_manifest, 9), built)
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
+        built = ImageNotLookedUp.BUILT_IMAGE
+        self.assert_left_alone_unqueried(mock_manifest, "acme/api", "1.2.3", 4, built)
+        self.assert_left_alone_unqueried(mock_manifest, "acme/api", "1.2.3", 6, built)
+        self.assert_left_alone_unqueried(mock_manifest, "acme/db", "2.0.0", 9, built)
 
     @kills(
         Mutation(
@@ -120,12 +116,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.requests.side_effect = mock_docker_registry(docker_tag("1.3.0", DIGEST))
         mock_manifest = mock_path(f"services:\n  api:\n    build: .\n    image: acme/api:1.2.3@{DIGEST}\n")
         self.run_compose_updater(mock_manifest)
-        mock_manifest.write_text.assert_not_called()
-        self.requests.assert_not_called()
-        location = Location(mock_manifest, 4)
-        self.assert_image_not_pulled_logged("acme/api", "1.2.3", location, ImageNotPulled.BUILT_IMAGE)
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
+        self.assert_left_alone_unqueried(mock_manifest, "acme/api", "1.2.3", 4, ImageNotLookedUp.BUILT_IMAGE)
 
     @kills(
         Mutation(
@@ -237,8 +228,8 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
     @kills(
         Mutation(
             references_resolve._why_the_pin_never_floats,
-            "if latest.image_not_pulled is not None:\n"
-            "        return ImageNotPulledReason(latest.image_not_pulled, Consequence.TAG_NEVER_PINNED)\n"
+            "if latest.image_not_looked_up is not None:\n"
+            "        return ImageNotLookedUpReason(latest.image_not_looked_up, Consequence.TAG_NEVER_PINNED)\n"
             "    return None",
             "return None",
             "the warning names a pin that does not float, where it should name the image the file does not pull",
@@ -258,7 +249,7 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
                 self.run_compose_updater(mock_manifest)
                 mock_manifest.write_text.assert_not_called()
                 self.assert_redundant_directive_logged(
-                    ImageNotPulledReason(ImageNotPulled.BUILT_IMAGE, consequence),
+                    ImageNotLookedUpReason(ImageNotLookedUp.BUILT_IMAGE, consequence),
                     "acme/api",
                     Location(mock_manifest, 4),
                     directive,
@@ -274,15 +265,28 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
         self.assert_new_version_logged("python", docker_hub_version("3.15"), Location(mock_chart, 3))
         self.assert_no_warnings_logged()
 
-    def test_variable_substitution_ignored(self):
-        """Test that image tags using ${...} substitution are not modified."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("999.0", DIGEST))
-        mock_manifest = mock_path(self.reference("ictu/quality-time_proxy:${QUALITY_TIME_VERSION}"))
-        self.run_compose_updater(mock_manifest)
-        mock_manifest.write_text.assert_not_called()
-        self.assert_path_logged(mock_manifest)
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
+    def test_helm_template_in_the_reference_is_left_alone_and_reported(self):
+        """Test that a Helm chart's reference whose image name or tag holds a template is reported and not looked up."""
+        cases = {
+            "a tag that is a template": ("app", "{{ .Values.tag }}"),
+            "an image name ending in a template": ("registry/{{ .Values.app }}", "1.0"),
+        }
+        self.assert_left_alone_as_through_a_variable(cases, self.run_helm_updater)
+
+    def test_reference_in_a_flow_mapping_is_updated(self):
+        """Test that a reference a flow mapping or sequence closes or continues right after it is still updated."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
+        cases = {
+            "followed by a comma": "containers: [{image: python:3.14, name: app}]\n",
+            "followed by a closing brace": "containers: [{name: app, image: python:3.14}]\n",
+            "followed by a closing bracket": "containers: [image: python:3.14]\n",
+        }
+        for case, chart in cases.items():
+            with self.subTest(case):
+                mock_chart = mock_path(chart)
+                self.run_helm_updater(mock_chart)
+                mock_chart.write_text.assert_called_once_with(chart.replace("python:3.14", f"python:3.15@{DIGEST}"))
+                self.assert_new_version_logged("python", docker_hub_version("3.15"), Location(mock_chart, 1))
 
 
 class ScannedManifestsTest(unittest.TestCase):

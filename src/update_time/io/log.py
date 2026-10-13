@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from requests import Response
 
-    from update_time.domain.dependency import Changes, DependencyVersion, FloatingPin, ImageNotPulled, VersionString
+    from update_time.domain.dependency import Changes, DependencyVersion, FloatingPin, ImageNotLookedUp, VersionString
     from update_time.domain.reference import DriftedPin, Reference, RefKind, ResolvedReference
     from update_time.domain.vulnerability import Vulnerability
     from update_time.markers.directive import RedundancyReason
@@ -311,15 +311,15 @@ class Logger:
         fields = self._tagged_fields(reference, reference.current_version)
         self._log(self._MESSAGE_UNPINNED_FLOATING_TAG, **fields, reason=reason.explained(release.version))
 
-    _MESSAGE_IMAGE_NOT_PULLED = LogMessage(
+    _MESSAGE_IMAGE_NOT_LOOKED_UP = LogMessage(
         DEBUG,
         "Reference %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s",
     )
 
-    def image_not_pulled(self, reference: Reference, reason: ImageNotPulled) -> None:
-        """Log that a reference whose image the file does not pull was left as it is, explaining why."""
+    def image_not_looked_up(self, reference: Reference, reason: ImageNotLookedUp) -> None:
+        """Log that a reference whose image Update-time does not look up was left as it is, explaining why."""
         fields = self._tagged_fields(reference, reference.current_version)
-        self._log(self._MESSAGE_IMAGE_NOT_PULLED, **fields, reason=reason)
+        self._log(self._MESSAGE_IMAGE_NOT_LOOKED_UP, **fields, reason=reason)
 
     _MESSAGE_CANNOT_PIN = LogMessage(
         INFO,

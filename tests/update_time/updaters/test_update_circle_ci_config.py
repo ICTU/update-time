@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock, patch
 
-from update_time.domain.dependency import FloatingPin, ImageNotPulled
+from update_time.domain.dependency import FloatingPin, ImageNotLookedUp
 from update_time.io.log import Logger
 from update_time.primitives.location import Location
 from update_time.updaters import update_circle_ci_config as circle_ci
@@ -56,6 +56,14 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
+    def test_pipeline_parameter_in_the_reference_is_left_alone_and_reported(self):
+        """Test that a reference whose image name or tag holds a pipeline parameter is reported and not looked up."""
+        cases = {
+            "a tag that is a parameter": ("cimg/node", "<< parameters.tag >>"),
+            "an image name ending in a parameter": ("cimg/<< parameters.image >>", "3.12"),
+        }
+        self.assert_left_alone_as_through_a_variable(cases, self.run_updater)
+
     def test_pin_tagless_image(self):
         """Test that an `image:` naming no tag is pinned to the version and digest `latest` serves."""
         self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
@@ -85,8 +93,8 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
     @kills(
         Mutation(
             circle_ci.update_circle_ci_config,
-            "get_new_version_for=tag_getter_excluding_each(_machine_images, ImageNotPulled.MACHINE_EXECUTOR_IMAGE),\n",
-            "get_new_version_for=tag_getter_excluding_each(_machine_images, ImageNotPulled.BUILT_IMAGE),\n",
+            "ImageNotLookedUp.MACHINE_EXECUTOR_IMAGE",
+            "ImageNotLookedUp.BUILT_IMAGE",
             "a machine-executor image is reported as one a Compose file builds",
         )
     )
@@ -94,13 +102,8 @@ class UpdateCircleCIConfigTest(registry.ImageUpdaterTestMixin):
         """Test that a machine-executor image is left unchanged, not looked up on Docker Hub, and reported."""
         config_yml = mock_path("jobs:\n  build:\n    machine:\n      image: ubuntu-2204:2024.01.1\n")
         self.run_updater(config_yml)
-        config_yml.write_text.assert_not_called()
-        # The machine image is recognised by parsing the YAML, so no registry is queried for it.
-        self.requests.assert_not_called()
-        location = Location(config_yml, 4)
-        self.assert_image_not_pulled_logged("ubuntu-2204", "2024.01.1", location, ImageNotPulled.MACHINE_EXECUTOR_IMAGE)
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
+        reason = ImageNotLookedUp.MACHINE_EXECUTOR_IMAGE
+        self.assert_left_alone_unqueried(config_yml, "ubuntu-2204", "2024.01.1", 4, reason)
 
     def test_docker_image_with_auth_before_image(self):
         """Test that a Docker image is updated even when its list item lists `auth:` before `image:`."""

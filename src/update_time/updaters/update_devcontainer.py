@@ -11,7 +11,7 @@ from update_time.domain.file_type import DEVCONTAINER_CONFIGS
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
-from update_time.sources.oci import IMAGE_REFERENCE, OPTIONALLY_TAGGED_IMAGE_REFERENCE, get_latest_tag
+from update_time.sources.oci import IMAGE_REFERENCE, OPTIONALLY_TAGGED_IMAGE_REFERENCE, tag_getter
 
 _LOG = get_logger("devcontainer")
 
@@ -29,7 +29,7 @@ _FEATURE_RE = rf'"{IMAGE_REFERENCE}":\s*{{'
 def update_devcontainers() -> None:
     """Update the base image and feature references in the repository's devcontainer.json files."""
     for devcontainer in glob_for(DEVCONTAINER_CONFIGS):
-        update_file(devcontainer, _IMAGE_RE, _FEATURE_RE, get_new_version=get_latest_tag, logger=_LOG)
+        update_file(devcontainer, _IMAGE_RE, _FEATURE_RE, get_new_version=tag_getter(), logger=_LOG)
 
 
 def main() -> None:  # pragma: no cover

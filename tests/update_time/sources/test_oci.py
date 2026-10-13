@@ -9,7 +9,7 @@ import requests
 
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion, FloatingPin, ImageNotPulled, PinnedDependency, Release
+from update_time.domain.dependency import DependencyVersion, FloatingPin, ImageNotLookedUp, PinnedDependency, Release
 from update_time.domain.publication import reports_publication_dates
 from update_time.io.log import Logger
 from update_time.sources import oci
@@ -85,7 +85,7 @@ class TagGetterExcludingTest(RegistryRequestsMixin, unittest.TestCase):
 
     # How a file writes a reference to an image it does not pull: one naming a tag and one naming none.
     EXCLUDED = ("ubuntu-2204:2024.01.1", "default")
-    REASON = ImageNotPulled.MACHINE_EXECUTOR_IMAGE
+    REASON = ImageNotLookedUp.MACHINE_EXECUTOR_IMAGE
 
     def getter(self) -> NewVersionGetter:
         """Return a getter excluding those references, as an updater builds it from what its file declares."""
@@ -99,7 +99,7 @@ class TagGetterExcludingTest(RegistryRequestsMixin, unittest.TestCase):
     def test_an_excluded_reference_keeps_its_version_where_another_resolves(self):
         """Test that an excluded reference is left as it is, saying why, where one the getter resolves moves on."""
         excluded = self.resolve("ubuntu-2204", "2024.01.1")
-        self.assertEqual(excluded, DependencyVersion(version="2024.01.1", image_not_pulled=self.REASON))
+        self.assertEqual(excluded, DependencyVersion(version="2024.01.1", image_not_looked_up=self.REASON))
         self.requests.assert_not_called()
         self.assertEqual(self.resolve("python", "3.14").version, "9.9")
 
@@ -114,7 +114,7 @@ class TagGetterExcludingTest(RegistryRequestsMixin, unittest.TestCase):
     def test_an_excluded_reference_naming_no_tag_is_left_as_it_is(self):
         """Test that an entry listed without a tag matches the reference that names none."""
         resolved = self.resolve("default", "")
-        self.assertEqual(resolved, DependencyVersion(version="", image_not_pulled=self.REASON))
+        self.assertEqual(resolved, DependencyVersion(version="", image_not_looked_up=self.REASON))
         self.requests.assert_not_called()
 
     def test_an_excluded_reference_is_dated_by_nothing(self):

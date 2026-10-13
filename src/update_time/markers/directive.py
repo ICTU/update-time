@@ -11,7 +11,7 @@ from update_time.domain.yank import reports_yanks
 from update_time.markers.marker import Scope
 
 if TYPE_CHECKING:
-    from update_time.domain.dependency import ImageNotPulled
+    from update_time.domain.dependency import ImageNotLookedUp
     from update_time.primitives.capability import HasCapability
 
 
@@ -58,17 +58,19 @@ class Reason(StrEnum):
 
 
 class Consequence(StrEnum):
-    """What Update-time never does for a reference whose image the file does not pull, in the words reported."""
+    """What Update-time never does for a reference whose image it does not look up, in the words reported."""
 
     TAG_NEVER_PINNED = "its tag is never pinned"
     DIGEST_NEVER_CHECKED = "its digest is never checked for drift"
+    STALENESS_NEVER_CHECKED = "its staleness is never checked"
+    NEVER_UPDATED = "it is never updated"
 
 
 @dataclass(frozen=True)
-class ImageNotPulledReason:
-    """Why a directive is redundant on a reference whose image the file does not pull: the cause, and what follows."""
+class ImageNotLookedUpReason:
+    """Why a directive is redundant on a reference whose image Update-time does not look up: cause and consequence."""
 
-    cause: ImageNotPulled
+    cause: ImageNotLookedUp
     consequence: Consequence
 
     def __str__(self) -> str:
@@ -76,7 +78,7 @@ class ImageNotPulledReason:
         return f"{self.cause}, so {self.consequence}"
 
 
-type RedundancyReason = Reason | ImageNotPulledReason
+type RedundancyReason = Reason | ImageNotLookedUpReason
 
 
 @dataclass(frozen=True)
@@ -89,12 +91,21 @@ class _Directive:
     which answers per subject (see `capability`).
     `reason` is why the source cannot apply it, and `without_a_version` why it holds nothing back for a reference
     that pins no version, which is None for a directive such a reference still steers something with.
+    `consequence` is what Update-time never does for a reference whose image it does not look up, which is None for
+    a directive whose source cannot apply it whether or not the image is looked up.
     """
 
     scope: Scope
     is_applied_by: HasCapability
     reason: Reason
     without_a_version: Reason | None = None
+    consequence: Consequence | None = None
+
+    def reason_given(self, image_not_looked_up: ImageNotLookedUp | None) -> RedundancyReason:
+        """Return why the source cannot apply the directive, naming why the image was not looked up where it was not."""
+        if image_not_looked_up is None or self.consequence is None:
+            return self.reason
+        return ImageNotLookedUpReason(image_not_looked_up, self.consequence)
 
 
 # Every directive a source may be unable to apply, in the order their warnings are reported. `update` is the one
@@ -122,11 +133,13 @@ DIRECTIVES = (
         reports_publication_dates,
         Reason.NO_COOLDOWN_DATES,
         Reason.NO_VERSION_TO_UPDATE,  # a cooldown steers an update, and no update is resolved for such a reference
+        consequence=Consequence.NEVER_UPDATED,
     ),
     _Directive(
         Scope.STALE,
         reports_publication_dates,
         Reason.NO_STALENESS_DATES,
+        consequence=Consequence.STALENESS_NEVER_CHECKED,
     ),
 )
 

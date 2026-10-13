@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import libcst
 from libcst.codemod import CodemodContext
 from libcst.codemod.commands.rename import RenameCommand
+from libcst.helpers import get_full_name_for_node
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -94,9 +95,31 @@ def _sources(paths: list[str]) -> dict[str, str]:
     return {path: Path(path).read_text() for path in paths}
 
 
+class _InPlaceRenameCommand(RenameCommand):
+    """Rename a name as `RenameCommand` does, but rename a line importing it alone, unaliased, where it stands.
+
+    `RenameCommand` deletes such a line and imports the new name at the top of the module instead, which moves an
+    import out of the `if TYPE_CHECKING:` block it sat in.
+    """
+
+    def leave_ImportFrom(  # noqa: N802
+        self, original_node: libcst.ImportFrom, updated_node: libcst.ImportFrom
+    ) -> libcst.Import | libcst.ImportFrom:
+        """Return the import with the old name renamed in place when it imports that name alone."""
+        names = updated_node.names
+        if updated_node.module is None or isinstance(names, libcst.ImportStar) or len(names) != 1 or names[0].asname:
+            return super().leave_ImportFrom(original_node, updated_node)
+        imported = f"{get_full_name_for_node(updated_node.module)}.{get_full_name_for_node(names[0].name)}"
+        if imported != self.old_name:
+            return super().leave_ImportFrom(original_node, updated_node)
+        self.bypass_import = True  # The import stands renamed, so `leave_Module` does not import the new name again
+        new_name = libcst.Name(self.new_name.rpartition(".")[-1])
+        return updated_node.with_changes(names=[names[0].with_changes(name=new_name)])
+
+
 def _renamed(old: str, new: str, source: str) -> str:
     """Return the source with the old name renamed to the new one, resolved against the source's own scopes."""
-    return RenameCommand(CodemodContext(), old, new).transform_module(libcst.parse_module(source)).code
+    return _InPlaceRenameCommand(CodemodContext(), old, new).transform_module(libcst.parse_module(source)).code
 
 
 class _AttributeRenamer(libcst.CSTTransformer):

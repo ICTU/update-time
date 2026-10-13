@@ -19,7 +19,7 @@ from packaging.version import Version
 
 import update_time
 from update_time.domain.archival import IGNORE_ARCHIVED
-from update_time.domain.dependency import ArchivedSubject, DependencyVersion, FloatingPin, ImageNotPulled, tag_of
+from update_time.domain.dependency import ArchivedSubject, DependencyVersion, FloatingPin, ImageNotLookedUp, tag_of
 from update_time.domain.reference import Reference, RefKind
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import Vulnerability
@@ -357,12 +357,12 @@ class LoggingTestCase(CacheClearingTestCase):
             cause=cause,
         )
 
-    def assert_image_not_pulled_logged(
-        self, dependency: str, tag: str, location: Location, reason: ImageNotPulled
+    def assert_image_not_looked_up_logged(
+        self, dependency: str, tag: str, location: Location, reason: ImageNotLookedUp
     ) -> None:
-        """Assert that a reference whose image the file does not pull was reported, with its reason, among others."""
+        """Assert that a reference Update-time does not look up was reported, with its reason, among others."""
         self.assert_logged_among_others(
-            Logger._MESSAGE_IMAGE_NOT_PULLED,
+            Logger._MESSAGE_IMAGE_NOT_LOOKED_UP,
             dependency=dependency,
             tag=tag_of(tag),
             location=location,

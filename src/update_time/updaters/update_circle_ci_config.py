@@ -6,7 +6,7 @@ Docker Hub and have no registry to query, so they are detected by parsing the YA
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import ImageNotPulled
+from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import CIRCLE_CI_CONFIGS
 from update_time.io.log import get_logger
 from update_time.references.file import update_yaml_files
@@ -41,7 +41,7 @@ def update_circle_ci_config() -> None:
     update_yaml_files(
         CIRCLE_CI_CONFIGS,
         regexp=YAML_IMAGE_REFERENCE,
-        get_new_version_for=tag_getter_excluding_each(_machine_images, ImageNotPulled.MACHINE_EXECUTOR_IMAGE),
+        get_new_version_for=tag_getter_excluding_each(_machine_images, ImageNotLookedUp.MACHINE_EXECUTOR_IMAGE),
         logger=_LOG,
     )
 
