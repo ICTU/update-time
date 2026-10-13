@@ -128,8 +128,9 @@ def _redundant_directives(
     log.redundant_directive(held_elsewhere, "ignore[stale]", Reason.CHECKED_AT_THE_MANAGING_DECLARATION)
     redundant_scope_on_a_managed_version = capture.take()
 
-    cooldown_reference = reference("python", Location(Path(".python-version"), 2))
-    log.redundant_directive(cooldown_reference, "ignore[cooldown<30]", Reason.NO_COOLDOWN_DATES)
+    log.redundant_directive(
+        reference("ghcr.io/astral-sh/uv", dockerfile), "ignore[cooldown<30]", Reason.NO_COOLDOWN_DATES
+    )
     redundant_cooldown_item = capture.take()
 
     log.redundant_directive(

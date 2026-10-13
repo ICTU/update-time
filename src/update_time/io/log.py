@@ -866,15 +866,6 @@ class Logger:
         """Report that the file an updater rewrote declares more or fewer dependencies and plugins than before."""
         self._log_file(self._MESSAGE_DECLARATIONS_CHANGED, path, before=before, after=after)
 
-    _MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG = LogMessage(
-        WARNING,
-        "Cannot derive the Node engine version from the non-numeric base image tag 'node:%(tag)s' in %(location)s",
-    )
-
-    def non_numeric_node_base_image(self, dockerfile: Path, tag: str) -> None:
-        """Log that the Node base image tag is not a concrete version, so the Node engine can't be derived."""
-        self._log_file(self._MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG, dockerfile, tag=tag)
-
     # --- HTTP fetching ---
 
     _MESSAGE_NOT_OK_RESPONSE = LogMessage(WARNING, "Could not fetch %(url)s: HTTP %(status)s %(reason)s")

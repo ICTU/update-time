@@ -230,8 +230,8 @@ Update-time updates the following types of dependencies, found in the listed fil
 | [Python dependencies](#python-dependencies) | `pyproject.toml`, `requirements.txt`, and PEP 723 inline script metadata (`# /// script` blocks in `*.py` files) | [PyPI](https://pypi.org) | Update-time for `requirements.txt`. For the other two, uv resolves the versions and Update-time writes the pins |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | `package.json` (and their lock files) | [npm registry](https://registry.npmjs.org) | delegated to npm or pnpm, whichever manages the `package.json` |
 | [Maven dependencies](#maven-dependencies) | `pom.xml` | the repositories the project's Maven build resolves from | delegated to Maven's [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/) |
-| [Node engine version](#node-engine-version-and-python-version) | `package.json` | the Node base image in the project's Dockerfile, or the latest [Node](https://hub.docker.com/_/node) release on Docker Hub | Update-time |
-| [Python version](#node-engine-version-and-python-version) | `.python-version` | the Python base image in the project's Dockerfile, or the latest [Python](https://hub.docker.com/_/python) release on Docker Hub | Update-time |
+| [Node engine version](#node-engine-version-and-python-version) | `package.json` | the latest [Node](https://hub.docker.com/_/node) release on Docker Hub | Update-time |
+| [Python version](#node-engine-version-and-python-version) | `.python-version` | the latest [Python](https://hub.docker.com/_/python) release on Docker Hub | Update-time |
 | [Docker images](#docker-images) | Dockerfiles, CircleCI configs, `.gitlab-ci.yml`, Docker Compose files, Helm charts, and devcontainer configs | OCI registries ([Docker Hub](https://hub.docker.com), `ghcr.io`, `mcr.microsoft.com`, …) | Update-time |
 | [GitHub Actions](#github-actions-and-pre-commit-hooks) | YAML files under `.github/` | [GitHub API](https://api.github.com) | Update-time |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | `.pre-commit-config.yaml` | [GitHub API](https://api.github.com) | Update-time |
@@ -354,8 +354,8 @@ To avoid adopting releases that are too fresh to trust, Update-time honours a co
 | [Python dependencies](#python-dependencies) | Update-time for `requirements.txt`, uv for the rest | the release's publication date on PyPI |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | npm and pnpm | the release's age on the npm registry |
 | [Maven dependencies](#maven-dependencies) | Update-time, for the artefacts Maven Central serves | the version's publication date on Maven Central |
-| [Node engine version](#node-engine-version-and-python-version) | Update-time, or already applied via the Dockerfile | the Node image tag's push date |
-| [Python version](#node-engine-version-and-python-version) | Update-time, or already applied via the Dockerfile | the Python image tag's push date |
+| [Node engine version](#node-engine-version-and-python-version) | Update-time | the Node image tag's push date |
+| [Python version](#node-engine-version-and-python-version) | Update-time | the Python image tag's push date |
 | [Docker images](#docker-images) | Update-time, on Docker Hub only | the image tag's push date |
 | [GitHub Actions](#github-actions-and-pre-commit-hooks) | Update-time | the release's publication date, or the date of the commit a tag or branch points at |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | Update-time | the release's publication date, or the date of the commit a tag or branch points at |
@@ -394,8 +394,8 @@ Update-time checks the dependencies it asks a source about for staleness, agains
 | [Python dependencies](#python-dependencies) | the newest release of the package on PyPI |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | the newest release on the npm registry, for the dependencies that resolve to one |
 | [Maven dependencies](#maven-dependencies) | the newest release on Maven Central, of each `pom.xml` dependency and plugin |
-| [Node engine version](#node-engine-version-and-python-version) | the base image it follows, or the newest Node release on Docker Hub when no Dockerfile declares one |
-| [Python version](#node-engine-version-and-python-version) | the base image it follows, or the newest Python release on Docker Hub when no Dockerfile declares one |
+| [Node engine version](#node-engine-version-and-python-version) | the newest Node release on Docker Hub |
+| [Python version](#node-engine-version-and-python-version) | the newest Python release on Docker Hub |
 | [Docker images](#docker-images) | the image's newest release, and on Docker Hub only, since other registries expose no publication date |
 | [GitHub Actions](#github-actions-and-pre-commit-hooks) | the newest release of the action's repository |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | the newest release of the hook's repository |
@@ -483,8 +483,8 @@ Which dependencies are checked follows from where an archival declaration can be
 | [Python dependencies](#python-dependencies) | the project status PyPI publishes for the package a Python file declares |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: the npm registry does not publish an archival signal |
 | [Maven dependencies](#maven-dependencies) | whether GitHub reports the source repository of each `pom.xml` dependency and plugin as archived |
-| [Node engine version](#node-engine-version-and-python-version) | none: it follows a Docker image, and no registry publishes an archival signal |
-| [Python version](#node-engine-version-and-python-version) | none: it follows a Docker image, and no registry publishes an archival signal |
+| [Node engine version](#node-engine-version-and-python-version) | none: Docker Hub does not publish an archival signal |
+| [Python version](#node-engine-version-and-python-version) | none: Docker Hub does not publish an archival signal |
 | [Docker images](#docker-images) | none: no OCI registry publishes an archival signal |
 | [GitHub Actions](#github-actions-and-pre-commit-hooks) | whether GitHub reports the action's repository as archived |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | whether GitHub reports the hook's repository as archived |
@@ -798,8 +798,8 @@ Staleness is measured against the publication date of a dependency's newest rele
 | [Python dependencies](#python-dependencies) | on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
 | [Maven dependencies](#maven-dependencies) | on an artefact Maven Central does not serve, and on a declaration that leaves its version to the declaration managing it |
-| [Node engine version](#node-engine-version-and-python-version) | on an engine that follows the project's Dockerfile, since Update-time checks the base image instead |
-| [Python version](#node-engine-version-and-python-version) | on an entry that follows the project's Dockerfile, since Update-time checks the base image instead |
+| [Node engine version](#node-engine-version-and-python-version) | never |
+| [Python version](#node-engine-version-and-python-version) | never |
 | [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, on an image the file does not pull, and on a reference through a variable or a template |
 | [GitHub Actions](#github-actions-and-pre-commit-hooks) | never |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | never |
@@ -826,8 +826,8 @@ Where a cooldown holds nothing back, Update-time reports the `cooldown` scope as
 | [Python dependencies](#python-dependencies) | on a `pyproject.toml` or inline script metadata dependency, since uv takes a cooldown per run rather than per dependency, and on a `requirements.txt` requirement that pins no exact version, since Update-time resolves no update for it |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
 | [Maven dependencies](#maven-dependencies) | on a declaration whose version Maven does not update, and on an artefact Maven Central does not serve |
-| [Node engine version](#node-engine-version-and-python-version) | on an engine that follows the project's Dockerfile, since the base image's update applied the cooldown |
-| [Python version](#node-engine-version-and-python-version) | on an entry that follows the project's Dockerfile, since the base image's update applied the cooldown |
+| [Node engine version](#node-engine-version-and-python-version) | never |
+| [Python version](#node-engine-version-and-python-version) | never |
 | [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, on an image the file does not pull, and on a reference through a variable or a template |
 | [GitHub Actions](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since Update-time never updates a commit |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since Update-time never updates a commit |
@@ -836,7 +836,7 @@ Where a cooldown holds nothing back, Update-time reports the `cooldown` scope as
 A short SHA that a version tag names is the exception. Update-time pins such a SHA as that version, and from the next run on the cooldown governs its updates. Update-time reports a source without publication dates as:
 
 ```console
-WARNING Redundant update-time directive ignore[cooldown<30] for python in .python-version:2: this dependency's source does not report a publication date to measure a cooldown against
+WARNING Redundant update-time directive ignore[cooldown<30] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure a cooldown against
 ```
 
 It reports the cases particular to a dependency type as:
@@ -1449,7 +1449,7 @@ rev: <sha>  # frozen: v4.5.0  # update-time: ignore
 
 ### Node engine version and Python version
 
-Both name the runtime a project runs on, rather than a package it depends on. Both follow the project's Dockerfile where there is one, so the runtime you develop against and the one you ship stay in step.
+Both name the runtime a project runs on, rather than a package it depends on. Both take their version from Docker Hub.
 
 #### What files are updated?
 
@@ -1467,13 +1467,11 @@ Update-time leaves other Python version pins untouched too. The `requires-python
 
 #### What versions are updated?
 
-Update-time takes the new version from the matching base image in the project's Dockerfile. That needs a Dockerfile in the same folder, whose base image has a numeric version. When no Dockerfile declares one, Update-time takes the version from the latest [Node](https://hub.docker.com/_/node) or [Python](https://hub.docker.com/_/python) release on Docker Hub.
+Update-time takes the new version from the latest [Node](https://hub.docker.com/_/node) or [Python](https://hub.docker.com/_/python) release on Docker Hub.
 
-Update-time updates the Node engine version only when it contains a specific version, for example `26.4`. It leaves a range or other non-numeric value untouched. A Node base image whose tag carries no version to sync to, such as `node:lts` or `node:22.x`, is the exception to following the Dockerfile. Update-time then leaves the engine alone, rather than overriding it with a mismatched concrete version.
+Update-time updates the Node engine version only when it contains a specific version, for example `26.4`. It leaves a range or other non-numeric value untouched.
 
-Update-time moves a `.python-version` entry forward to a fuller version. The entry adopts the image's version at the precision the tag provides, so `python:3.14.2-slim` yields `3.14.2` and a bare `python:3.14` yields `3.14`. Update-time leaves an entry already ahead of the image alone, rather than downgrading it.
-
-The Node engine goes the other way, since it declares the runtime the project ships. Update-time brings an engine ahead of its base image back to the image's version. Docker Hub always names a full version, so an entry that follows Docker Hub gains precision it didn't have. Both `3.12.6` and `3.12` become `3.13.2`, or whatever the latest is.
+An entry or an engine gains precision as it updates, like any other version pin (see [Version precision](#version-precision)).
 
 #### Pinning
 
@@ -1481,11 +1479,11 @@ Neither can carry a hash pin. Both name a version rather than one artefact, and 
 
 #### Cooldown
 
-A version taken from Docker Hub honours the cooldown through the Node or Python image tag's push date. A version that instead follows the project's Dockerfile needs no cooldown of its own, since Update-time already applied one when it updated the base image.
+Update-time honours the cooldown through the push date of the Node or Python image tag on Docker Hub.
 
 #### Stale dependencies
 
-Both are indirect cases. When the version comes from the project's Dockerfile, Update-time reports the staleness of the base image alone. It checks neither the entry nor the engine itself then. It checks a version taken from Docker Hub against the newest Node or Python release there.
+Update-time checks both against the newest Node or Python release on Docker Hub.
 
 #### Yanked dependencies
 
@@ -1497,7 +1495,7 @@ Update-time checks neither. Both name a version of a runtime rather than a relea
 
 #### Archived dependencies
 
-Update-time checks neither. Both take their version from a Docker base image or from Docker Hub, and no OCI registry publishes an archival signal.
+Update-time checks neither. Both take their version from Docker Hub, which does not publish an archival signal.
 
 #### Markers
 
@@ -1519,9 +1517,9 @@ The Node engine version takes a marker too, but not as a comment: `package.json`
 
 The field holds the directives a comment holds, without the `# update-time:` prefix that introduces them there. npm and pnpm keep a field they do not know, so the marker survives an `npm update` and a `pnpm update`. Both rewrite the file onto one key per line, so the field appears spread over several lines rather than on the one shown here. Update-time reports a field of the wrong shape as an invalid item, and leaves the engine as it is (see [Invalid markers](#invalid-markers)).
 
-Two kinds of engine are never updated: one declared as a range, and one whose base image tag names no version to sync to. `node:lts` is such a tag. A marker steers an update, so on either engine it has nothing to steer, and Update-time has nothing to report.
+Update-time never updates an engine declared as a range. A marker steers an update, so on such an engine it has nothing to steer, and Update-time has nothing to report.
 
-Either way a marker wins over a version derived from the Dockerfile. So an image update never drags a deliberately held-back development version forward.
+A marker on a base image steers that image alone. To keep the Node engine version or the Python version in step with a base image you hold back, give that version the same marker. Say a Dockerfile's `FROM node:24-alpine` carries `ignore[major-update]`. The engine then stays on 24 only when its `update-time` field holds `ignore[major-update]` as well.
 
 ### Docker images
 

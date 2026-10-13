@@ -408,6 +408,21 @@ class ParseMarkerPrecedenceTest(unittest.TestCase):
                 marker = parse_marker(_line(f"image: python:3.12  # update-time: {inline}", f"# update-time: {above}"))
                 self.assertEqual(marker, expected)
 
+    @kills(
+        Mutation(
+            Threshold.merge,
+            "directive=sets_value.directive,",
+            "directive=other.directive or self.directive,",
+            "the directive on the line above is named for the value the inline one set",
+        )
+    )
+    def test_the_inline_directive_is_named_for_the_value_it_set(self):
+        """Test that where both placements set a cooldown, the merged marker names the inline directive."""
+        marker = parse_marker(
+            _line("image: python:3.12  # update-time: allow[cooldown>=30]", "# update-time: ignore[cooldown<90]")
+        )
+        self.assertEqual(marker.cooldown_directive, "allow[cooldown>=30]")
+
     def test_every_field_that_cannot_combine_has_a_case(self):
         """Test that the cases pin every field `Marker.merge` takes from one marker."""
         cannot_combine = _fields_that_cannot_combine()

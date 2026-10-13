@@ -902,17 +902,6 @@ class LoggerTests(TestCase):
             "Path vendor passed to --exclude-path does not exist",
         )
 
-    def test_non_numeric_node_base_image(self, mock_log: Mock):
-        """Test that a non-numeric Node base image tag is warned about, reporting its Dockerfile as a location."""
-        dockerfile = Path.cwd() / "docker" / "Dockerfile"
-        _new_logger().non_numeric_node_base_image(dockerfile, "lts")
-        self.assert_message(
-            mock_log,
-            Logger._MESSAGE_NON_NUMERIC_NODE_BASE_IMAGE_TAG,
-            "Cannot derive the Node engine version from the non-numeric base image tag 'node:lts' in "
-            f"{at('docker/Dockerfile')}",
-        )
-
     def test_response(self, mock_log: Mock):
         """Test that a response that is not OK is warned about, with its URL, status code, and reason phrase."""
         response = Mock(url="https://pypi.org/pypi/humanize/json", status_code=404, reason="Not Found")

@@ -21,10 +21,9 @@ from tests.helpers import patch_environ, patch_pathlib_path
 from tests.mutation import Mutation, kills
 
 # The scripts that may not run beside another, spelled out so this pins which ones rather than echoing the registry
-# back at itself: node_engine and package_json both rewrite package.json, and node_engine and python_version_file
-# read the base image that dockerfile_base_image updates. The parallel ones need no list of their own, since which
-# scripts exist at all is pinned against the files on disk.
-_SEQUENTIAL_SCRIPT_NAMES = ("node_engine", "package_json", "python_version_file")
+# back at itself: package_json rewrites the package.json files that node_engine rewrites too. The parallel ones need
+# no list of their own, since which scripts exist at all is pinned against the files on disk.
+_SEQUENTIAL_SCRIPT_NAMES = ("package_json",)
 
 
 def _registration_problems(registered: _Scripts, on_disk: set[str]) -> list[str]:

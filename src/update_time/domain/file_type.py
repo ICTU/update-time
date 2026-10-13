@@ -15,11 +15,6 @@ class FileType:
 
 
 _YAML_PATTERNS = ("*.yml", "*.yaml")
-# Dockerfiles are conventionally named `Dockerfile`, or `<purpose>.Dockerfile` / `Dockerfile.<purpose>` when a
-# project has more than one (e.g. `python.Dockerfile`, `Dockerfile.dev`). The three patterns don't overlap for any
-# realistic name, so a file is discovered once.
-DOCKERFILE_NAME = "Dockerfile"
-_DOCKERFILE_GLOB_PATTERNS = (DOCKERFILE_NAME, f"*.{DOCKERFILE_NAME}", f"{DOCKERFILE_NAME}.*")
 
 PYPROJECT_TOML = FileType("pyproject.toml", ("pyproject.toml",))
 # A requirements file is named `requirements.txt`, `requirements-<purpose>.txt` or `<purpose>-requirements.txt`, or
@@ -33,7 +28,10 @@ INLINE_SCRIPT_METADATA = FileType("PEP 723 inline script metadata", ("*.py",))
 PACKAGE_JSON = FileType("package.json", ("package.json",))
 POM_XML = FileType("pom.xml", ("pom.xml",))
 PYTHON_VERSION_FILE = FileType(".python-version", (".python-version",))
-DOCKERFILES = FileType("Dockerfiles", _DOCKERFILE_GLOB_PATTERNS, case_sensitive=False)  # A `dockerfile` counts
+# Dockerfiles are conventionally named `Dockerfile`, or `<purpose>.Dockerfile` / `Dockerfile.<purpose>` when a
+# project has more than one (e.g. `python.Dockerfile`, `Dockerfile.dev`). The three patterns don't overlap for any
+# realistic name, so a file is discovered once. The patterns ignore case, so a `dockerfile` counts too.
+DOCKERFILES = FileType("Dockerfiles", ("Dockerfile", "*.Dockerfile", "Dockerfile.*"), case_sensitive=False)
 CIRCLE_CI_CONFIGS = FileType("CircleCI configs", _YAML_PATTERNS, start=".circleci")
 # GitLab CI reads one file at the repository root, so the scan root is read as it stands: walking it would also
 # find a nested `.gitlab-ci.yml`, which GitLab itself never reads.
