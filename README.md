@@ -147,14 +147,16 @@ options:
                         scan root, to exclude from the scan, for example
                         vendor,packages/legacy. Every file under an excluded
                         directory is skipped, on top of the always-ignored
-                        build, target, node_modules, __pycache__, and hidden
-                        folders. Directories are matched by relative path, not
-                        by name: --exclude-path vendor excludes vendor/ at the
-                        root but not sub/vendor/. Directories that don't exist
-                        are ignored and logged at log-level WARNING. Absolute
-                        paths, or paths that escape the scan root (../…), are
-                        rejected. Run with --log-level DEBUG to see excluded
-                        directories
+                        directories build, target, node_modules, and
+                        __pycache__. Hidden directories and files are skipped
+                        too, except the ones Update-time looks for, such as
+                        .github/ and .devcontainer/. Directories are matched
+                        by relative path, not by name: --exclude-path vendor
+                        excludes vendor/ at the root but not sub/vendor/.
+                        Directories that don't exist are ignored and logged at
+                        log-level WARNING. Absolute paths, or paths that
+                        escape the scan root (../…), are rejected. Run with
+                        --log-level DEBUG to see excluded directories
   --allow-hash-drift    adopt hash drift instead of only warning about it.
                         Hash drift is an image tag re-pushed with another
                         digest, or a tag or branch moved to another commit.
@@ -1529,7 +1531,7 @@ Update-time looks for these files, each with its own globs and in its own folder
 
 | Files | Globs | Folder | Recursive |
 | :---- | :---- | :----- | :-------: |
-| Dockerfiles | `Dockerfile`, `*.Dockerfile`, `Dockerfile.*` | the scan root | ✅ |
+| Dockerfiles | `Dockerfile`, `*.Dockerfile`, `Dockerfile.*`, `.*.Dockerfile`, `.devcontainer/Dockerfile`, `.devcontainer/*/Dockerfile` | the scan root | ✅ |
 | CircleCI configs | `*.yml`, `*.yaml` | `.circleci/` | ✅ |
 | .gitlab-ci.yml | `.gitlab-ci.yml` | the scan root |  |
 | Docker Compose files | `docker-compose*.yml` | the scan root | ✅ |
