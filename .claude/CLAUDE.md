@@ -8,7 +8,7 @@ Consult the justfile to learn how to run tests and checks:
 
 ## Git
 
-I create the branches, commit, and push. Never do any of that, and never offer to. A piece of work is finished when you report it with the tests and checks green, not when you propose a commit.
+I create the branches, commit, and push. Never do any of that, and never offer to. Run only the git commands that read, such as `status`, `diff`, `log`, and `show`. Change neither the index, nor `HEAD`, nor a branch or tag, except to remove a review worktree and its branch. A piece of work is finished when you report it with the tests and checks green, not when you propose a commit.
 
 Run `git status` before you edit, whenever you come back to the tree. I may have committed or switched branch meanwhile, and an edit onto a tree that moved is lost without a word. Don't mention a clean branch.
 

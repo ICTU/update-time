@@ -69,9 +69,8 @@ class _Scripts:
         return max(results, default=0)
 
 
-# The updater scripts serving each dependency type. node_engine and package_json both rewrite the package.json
-# files, and node_engine and python_version_file read the base image that dockerfile_base_image updates, so
-# those three may not run beside another script. They have no order among themselves.
+# The updater scripts serving each dependency type. package_json rewrites the package.json files that node_engine
+# rewrites too, so package_json may not run beside another script.
 _SCRIPTS = _Scripts(
     {
         DEPENDENCY_TYPES.python_dependencies: (
@@ -81,8 +80,8 @@ _SCRIPTS = _Scripts(
         ),
         DEPENDENCY_TYPES.npm_dependencies: (_Script("package_json", parallel=False),),
         DEPENDENCY_TYPES.maven_dependencies: (_Script("pom_xml"),),
-        DEPENDENCY_TYPES.node_engine_version: (_Script("node_engine", parallel=False),),
-        DEPENDENCY_TYPES.python_version: (_Script("python_version_file", parallel=False),),
+        DEPENDENCY_TYPES.node_engine_version: (_Script("node_engine"),),
+        DEPENDENCY_TYPES.python_version: (_Script("python_version_file"),),
         DEPENDENCY_TYPES.docker_images: (
             _Script("dockerfile_base_image"),
             _Script("circle_ci_config"),

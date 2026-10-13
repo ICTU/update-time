@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 from update_time.domain.archival import archival_is_checked, reports_archival
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.dependency import DependencyName, DependencyVersion
-from update_time.domain.downgrade import downgrades
 from update_time.domain.image_lookup import why_image_not_looked_up
 from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
 from update_time.markers.cooldown import cooldown_days
@@ -104,8 +103,7 @@ def latest_version(
     log: Logger,
 ) -> DependencyVersion | None:
     """Return the latest version to update the reference to, or None when the marker holds the update back."""
-    if not downgrades(get_new_version, reference.pinned):
-        log.warn_if_redundant_bound(reference, marker)
+    log.warn_if_redundant_bound(reference, marker)
     report_directives_that_set_nothing(marker, get_new_version, reference, log)
     if marker.holds_back_source_checks:
         _warn_if_the_floating_pin_is_redundant(marker, reference, log, latest=None)

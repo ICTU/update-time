@@ -6,12 +6,10 @@
 - the sample log lines the sections below quote, from `log_samples`, each filling the placeholder it names.
 A CVSS vector the `cvss` package refuses, since `AV:X` is not a value the metric can take.
 A Compose override file writes `!reset` and `!override`, which the loader would otherwise refuse the document over.
-A Node base image whose tag carries no version to sync to, such as `node:lts` or `node:22.x`, is the exception to following the Dockerfile.
 A PEP 723 script has no lock file, so its pins carry no hash either.
 A URL the mapping doesn't cover raises a KeyError, so a request the test did not expect fails loudly rather than being answered.
 A URL whose attribute dictionary declares no `integrity` entry gains one, so the browser verifies the script the CDN serves before running it.
 A `*.py` file without such a block stays untouched and never invokes uv.
-A `.python-version` entry and a Node engine both follow the base image in the project's Dockerfile, so the runtime a project develops against and the runtime it ships stay in step.
 A `node` version another section declares — a Volta pin, a dependency of that name — is neither taken for the engine nor steered by the engine's marker.
 A `package.json` dependency takes no marker, because npm and pnpm update it rather than Update-time rewriting its lines.
 A `package.json` dependency takes no marker.
@@ -61,7 +59,6 @@ A log message: the level it is logged at and the format string the arguments are
 A loop that asserts nothing has no cases to name.
 A marker holding back every check that source answers leaves nothing to ask it for, so the reference is left out and costs no request.
 A marker that holds a scope back carries no text, because the scope has one spelling, which the warning spells out.
-A missing Dockerfile, or one without a numeric `FROM python:<version>` base image, yields no version, so when none is found `''` is returned and the caller updates the entry from Docker Hub instead.
 A mock records every argument it was called with, and Update-time passes its credentials to `requests` as arguments, so a failing assertion about a mocked request would print them.
 A moderate vulnerability the advisory item does not name.
 A mutation is applied in memory, so no file on disk is touched and an interrupted run cannot leave a source file broken.
@@ -125,7 +122,6 @@ A test whose own registered mutation names a line this probe rewrote would repor
 A variable the test doesn't bind can't be recognised.
 A vector the `cvss` package refuses is a fault in the advisory, not in the project being scanned, so it is warned about and leaves the advisory without a level, rather than ending the run over it.
 A version a dependency's source published, and the date it was published on.
-A version that instead follows the project's Dockerfile needs no cooldown of its own, since Update-time already applied one when it updated the base image.
 A version that is eligible but whose referenced file has no integrity hash ends the walk: it returns the current version unchanged rather than skipping to an older one, since bumping without a matching hash would break the Subresource Integrity check.
 A version the npm registry dates nowhere counts as too fresh, since a version it has yet to date is one it has just received.
 A version the run moved to comes back unchanged, since a source skips a withdrawn release when picking a new version, so only a version a reference stayed on can be withdrawn.
@@ -159,12 +155,10 @@ Assert that a repository GitHub declares archived was warned about, GitHub publi
 Assert that of the two constants a module assigns, only the one the reader leaves alone is reported.
 Assert that the lines below the message sit in a box, and that the box holds these lines and no others.
 Assert that the run reported no archival, having asked the given URLs and GitHub nothing.
-Assert the engine is updated to the latest Node release on Docker Hub, with no local version to derive.
 Assert uv tree/lock carry no `--exclude-newer` flag (the cooldown lives in config), nor `--frozen`.
 Both name a version of a runtime rather than a release of a package, which is not something OSV matches an advisory against.
 Both name a version rather than one artefact, and a version covers every build ever published for it.
 Both npm and pnpm update a dependency to the newest version that satisfies the range declared in the `package.json`.
-Both take their version from a Docker base image or from Docker Hub, and no OCI registry publishes an archival signal.
 Cannot pin in : the URL is declared as a bare string, so it has no attribute dictionary to hold an integrity hash.
 Check each requirement that pins no exact version.
 CircleCI machine-executor images (the `image:` under a `machine:` key, e.g. `ubuntu-2204:2024.01.1`) are not on Docker Hub and have no registry to query, so they are detected by parsing the YAML and left unchanged.
@@ -182,7 +176,6 @@ Each check the decision reports on, keyed by the scope silencing it.
 Each directive a source may be unable to apply, keyed by the text the warning names it with.
 Each pass locates the lines afresh, so the text a marker is read from is the text the pass before it left; the file they belong to is the one they already record, so no path has to be passed alongside them.
 Each request is answered by the URL it names, so a test needs no expectation about the order they are made in.
-Either way a marker wins over a version derived from the Dockerfile.
 Empty when the reference sets no value, and left out of comparisons, so thresholds that set the same value compare as equal however they were spelled.
 Every directive a source may be unable to apply, in the order their warnings are reported.
 Every module logs, so `get_logger` reads the log level for each of them, and how a run logs is no decision a module takes about what it resolves.
@@ -194,7 +187,6 @@ For example, if `python:3.12.1` is the current version pin and `python:3.13` is 
 GitHub publishes no reason beside the flag, so the warning gives none.
 GitHub serves its sponsorship pages under this path, which it reserves, so no owner can go by this name.
 Given no titles, the chapter documents every declared dependency type, so `_problems` reports nothing.
-If no Node base image is found at all, returns the local Dockerfile path; the caller finds no version on it and falls back to the latest Node release instead.
 Ignore a dated snapshot, which is no update for a tag naming a release.
 In a `requirements.txt` it reports no new version, because it resolves none for a requirement that pins no exact version.
 In a file that can hold no comment, the directives are the value of an `update-time` field instead.
@@ -299,7 +291,6 @@ Return the version parsed, or the lowest there is when the source spells it as n
 Return where the section's own entry for the name starts, or None where the document declares no such entry.
 Return whether the marker leaves no check to run, so no source need be queried for the reference at all.
 Return whether the pinned image's versions carry a date, which they do not when no registry is asked.
-Returns an empty string if the Dockerfile is missing, has no Node base image, or its Node base image carries no version to derive one from: a non-numeric tag such as 'node:lts', and one whose digits do not form a version, such as the '22.'
 Rich SVG has no viewBox to size the <img> from.
 Run `uv tree --outdated`, log every new version no marker holds back, and rewrite the file's exact `==` pins.
 Run every script with `just py`, which puts the package on the path, or with `uv run` where no recipe fits.
@@ -331,8 +322,6 @@ Test that a Helm chart whose YAML does not parse is updated, a Go-templated char
 Test that a JSON key naming no version is left alone, a feature reference always naming one.
 Test that a Link header without a `next` relation (e.g. only `last`) yields no next page.
 Test that a Markdown link's URL reaches an output that can hold no clickable link, such as a CI log.
-Test that a Node base image elsewhere in the repo is used when the package.json has no local Dockerfile.
-Test that a Python base image elsewhere in the repo is used when the version file has no local one.
 Test that a URL whose attribute dictionary carries no integrity hash gains one, logged as a pin.
 Test that a `##` line in a fenced code block gets no entry, since it is sample content, not a chapter.
 Test that a `FROM image` naming no tag is pinned to the version and digest `latest` serves.
@@ -366,7 +355,6 @@ Test that a document declaring no such entry has no offset to report.
 Test that a document with nothing to check is reported, naming every type that has no section.
 Test that a documentation directory whose changelog names another version supplies no changes.
 Test that a failed token request (after a valid auth challenge) yields no token instead of crashing.
-Test that a field marker holds the engine back when no Dockerfile derives its version.
 Test that a file jsDelivr doesn't list leaves nothing to compare, so no mismatch is reported.
 Test that a floating tag naming no variant lands on the alias that adds none, versioned or not.
 Test that a floating tag no version tag near the top of the listing serves is left as it is.
@@ -486,8 +474,6 @@ Test that the changes are empty when the release GitHub answers carries no body.
 Test that the changes are returned when the changelog URL's server sends no Content-Type header.
 Test that the current tag is returned if the image has no tags.
 Test that the current version is returned unchanged when no candidate is eligible.
-Test that the engine falls back to the latest Node release when no Dockerfile has a Node base image.
-Test that the entry is updated to the latest `python` release on Docker Hub when no Dockerfile derives it.
 Test that the field named `dependency` is wrapped, so no log method has to render one itself.
 Test that the filter keeps the record, so pinning the time drops no line from the screenshot.
 Test that the full digest gets a single `repr.digest` span and no leftover fragment sub-spans inside it.
@@ -533,7 +519,6 @@ The concepts the tool reasons about, and what a source must be able to answer ab
 The contract every updater binds and every source implements, resolving the version to update to.
 The contract the project checks bind and a source implements, answering what it reports about a project.
 The converse of the rules above: a name spelled with a leading underscore claims no caller outside its module, so an import elsewhere means the spelling and the fact have parted company.
-The cooldown and the staleness check have already been applied to the image, so the version carries no dates and is neither held back nor flagged here.
 The cooldown probe returns a value, so Update-time adds no cooldown of its own:.
 The cooldown still only applies to Docker Hub, because the OCI protocol exposes no publication date.
 The copy a mutation check imports inside the test it checks is left alone, since it never writes to `_SURVIVALS`.
@@ -580,7 +565,6 @@ The names a repository gives the changelog file, and the extensions it carries, 
 The names a repository gives the directory it keeps its documentation in, compared in lower case.
 The names an updater hands its file type to: `glob_for` where it walks the files itself, `update_yaml_files` where the walk is done for it because each file is parsed before its references are rewritten.
 The newest release is 100 days old, which is stale against the 90 the item names and not against the run's 365, so the silence shows the item set no threshold of its own.
-The node version another section declares, which is neither the engine's nor the base image's.
 The null download URL of the `news` directory answers a text naming no version, rather than raising.
 The number of lines a version's changes are cut at where no later version ends them.
 The number of positional arguments an equality assertion compares, and so the fewest it can be reported on.
@@ -624,8 +608,6 @@ The two ways a version bound can be redundant for the current version (see `Vers
 The upload after it names no version, and the file without an upload time names no date.
 The verb's other operator names the fresh ages rather than the old ones, which neither item can express, so an inverted item of either keyword is returned for the caller to report.
 The verb's other operator names the levels below the threshold rather than the ones from it up, which the item cannot express, so an inverted item is returned for the caller to report.
-The version a runtime reference takes from the base image it follows.
-The version comes from the Python base image in a Dockerfile, or from Docker Hub when no Dockerfile declares one.
 The versions no goal may adopt.
 The volta pin is steered by no marker.
 The warning costs no request, the item being unreadable on its own.
@@ -636,14 +618,12 @@ Then the most precise version of a variant the floating tag names, so `node:lts-
 These have no registry to query and are now recognised and left unchanged, instead of being looked up on Docker Hub and logged as unfetchable on every run.
 These warnings are informational, so they change no file and do not affect the exit status.
 They are sorted, since a `frozenset` keeps no order, and a marker split over two placements reaches them in the order they merged rather than the order they were written.
-They have no order among themselves.
 This Code of Conduct applies within all community spaces, and also applies when an individual is officially representing the community in public spaces.
 This is needed because uv has no [command to upgrade dependencies](https://github.com/astral-sh/uv/issues/6794).
 This message renders no version the reference is pinned to, so the reference names none.
 This mirrors SonarCloud rule S3415 and the Python documentation's convention (`self.assertEqual('foo'.upper(), 'FOO')`): when an assertion compares a computed value against one written out in the test, the computed (actual) value comes first.
 Track an annotated assignment the same way as a plain one, when it carries a value to bind.
 Track every name the statement binds, since `first = second = value` binds more than one.
-Two kinds of engine are never updated: one declared as a range, and one whose base image tag names no version to sync to.
 Unit tests for reading a directive list that carries no `# update-time:` prefix.
 Unit tests for resolving a tag that names no version: a floating tag, a snapshot, or a tag that is neither.
 Unit tests for the changelog file read when the repository publishes no matching release.
@@ -776,10 +756,8 @@ a version that is no `.0` release reports the changes of the release one compone
 a version the registry dates nowhere in its time map ends the run with a traceback.
 adopts a release only while it is fresh and holds it back once it is old, so it sets no cooldown.
 an `ignore[update]` holds back a dependency that pins no version, whose version uv resolves whatever the marker says, so the new version reaches nobody.
-an engine the scan cannot find is passed over in silence, as it was before.
 an unknown tag reaches no constructor, so a Compose override file reads as unparsable.
 each table is compared with itself, so no table is held to the declared dependency types.
-every line the pattern matches is read, not the one the file names.
 every mutation the test did not kill is reported with the first one's regression.
 it names the empty base image Docker builds from, which no registry serves.
 nltk ships no `py.typed` marker, so mypy has no types to resolve for it.

@@ -28,3 +28,4 @@
 - 2026-10-10 `tests.update_time.updaters.test_update_pom_xml.UpdatePomXmlTest.test_a_marker_ignoring_or_bounding_the_update_holds_every_version_back` — a bare `ignore` does not name the update, so reading the marker as written lets Maven move the version
 - 2026-10-11 `tests.update_time.updaters.test_update_pom_xml.UpdatePomXmlTest.test_a_scope_on_an_artefact_maven_central_does_not_serve_is_redundant` — an `archived` on an unserved artefact is reported twice, once for each reason
 - 2026-10-11 `tests.update_time.sources.test_maven_central.GetChangesTest.test_the_changes_are_those_of_the_release_matching_the_version` — the newest release's changes are reported for a version the run left behind it
+- 2026-10-13 `tests.update_time.updaters.test_update_node_engine.UpdateNodeEnginesTest.test_a_node_version_outside_the_engines_section_is_left_as_it_is` — the pattern reads every line it matches, rather than the line the file names

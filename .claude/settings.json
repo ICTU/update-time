@@ -23,6 +23,10 @@
           {
             "type": "command",
             "command": "jq -r '.tool_input.command' | grep -qE 'PYTHONPATH=src[[:space:]]+uv[[:space:]]+run' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Run it with just py, which puts src on the path and runs through uv run (see the Running and rewriting code section of CLAUDE.md).\"}}' || true"
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/deny-git-writes.sh"
           }
         ]
       }
