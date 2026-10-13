@@ -1,12 +1,12 @@
 """Find the files to scan for references."""
 
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING
 
 from update_time.primitives.environment import EnvVar
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
 
     from update_time.domain.file_type import FileType
 
@@ -19,20 +19,21 @@ EXCLUDE_PATHS: EnvVar[list[Path]] = EnvVar(
     serialize=lambda paths: ",".join(str(path) for path in paths),
 )
 
-# Directories whose contents `glob_for` always skips, on top of hidden (dot-prefixed) folders and the directories
-# passed to --exclude-path. The --exclude-path help in `io.cli` lists them, so it stays in step with this tuple.
+# Directories whose contents `glob_for` always skips.
 ALWAYS_IGNORED_DIRECTORIES = ("build", "target", "node_modules", "__pycache__")
 
 
-def _named_hidden_parts(glob_pattern: str) -> set[str]:
-    """Return the hidden (dot-prefixed) path segments a glob pattern names, e.g. `.devcontainer`.
+def _hidden(names: Iterable[str]) -> list[str]:
+    """Return the hidden (dot-prefixed) names."""
+    return [name for name in names if name.startswith(".")]
 
-    Hidden folders and files are skipped by default (see `glob_for`), but a pattern that names one (like
-    `.devcontainer/devcontainer.json` or `.github/workflows/*.yml`) is asking for it, so it should be visited.
-    A wildcard segment such as `.*` needs no special handling: these are compared to real path segments by exact
-    equality, which a wildcard never satisfies, so including it grants no exception anyway.
-    """
-    return {part for part in Path(glob_pattern).parts if part.startswith(".")}
+
+def _skipped_as_hidden(relative_path: Path, hidden_segments: list[str], *, case_sensitive: bool | None) -> bool:
+    """Return whether a hidden part of the path does not match any of the pattern's hidden segments."""
+    return any(
+        not any(PurePath(part).full_match(segment, case_sensitive=case_sensitive) for segment in hidden_segments)
+        for part in _hidden(relative_path.parts)
+    )
 
 
 def inside_git_repository(start: Path | None = None) -> bool:
@@ -50,20 +51,20 @@ def glob_for(file_type: FileType) -> Iterator[Path]:
     """Return an iterator over the paths of this kind of file, walked where and how its declaration says.
 
     Hidden folders and files (dot-prefixed, e.g. `.git`, `.venv`) and build-output folders are skipped, so a broad
-    pattern like `*.yml` doesn't reach into them. A hidden folder or file named literally in the pattern itself is
-    the exception: a `.devcontainer/devcontainer.json` pattern visits `.devcontainer`, so a file type can target a
-    hidden location directly instead of working around the default skip. Directories passed to `--exclude-path`
-    (see `EXCLUDE_PATHS`) are skipped on top of these built-in ignores. A walk that is not recursive searches the
-    start directory alone, which is what a file its format keeps in one place needs.
+    pattern like `*.yml` doesn't reach into them. A hidden folder or file that a hidden segment of the pattern matches
+    is the exception: a `.devcontainer/devcontainer.json` pattern visits `.devcontainer`, and a `.*.Dockerfile` pattern
+    visits `.gitpod.Dockerfile`. Directories passed to `--exclude-path` (see `EXCLUDE_PATHS`) are skipped on top of
+    these built-in ignores. A walk that is not recursive searches the start directory alone, which is what a file its
+    format keeps in one place needs.
     """
     start = Path.cwd() / file_type.start
     excluded = EXCLUDE_PATHS.get()
     for glob_pattern in file_type.patterns:
-        named_hidden = _named_hidden_parts(glob_pattern)
+        hidden_segments = _hidden(PurePath(glob_pattern).parts)
         walk = start.rglob if file_type.recursive else start.glob
         for path in walk(glob_pattern, case_sensitive=file_type.case_sensitive):
             relative_path = path.relative_to(start)
-            if any(part.startswith(".") and part not in named_hidden for part in relative_path.parts):
+            if _skipped_as_hidden(relative_path, hidden_segments, case_sensitive=file_type.case_sensitive):
                 continue
             if any(part in ALWAYS_IGNORED_DIRECTORIES for part in relative_path.parts):
                 continue

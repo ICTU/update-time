@@ -16,6 +16,7 @@ from tests.helpers import patch_environ, patch_pathlib_path
 # The file types the walk is exercised with: the patterns and the declaration each test needs, and nothing else.
 _TEXT_FILES = FileType("text files", ("*.txt",))
 _TEXT_FILES_IN_EXAMPLE = FileType("text files", ("*.txt",), start="example")
+_HIDDEN_TEXT_FILES = FileType("hidden text files", (".*.txt",), case_sensitive=False)
 _YAML_FILES = FileType("YAML files", ("*.yml", "*.yaml"))
 _DEVCONTAINER_IN_FOLDER = FileType("devcontainer configs", (".devcontainer/devcontainer.json",))
 _DEVCONTAINER_AT_ROOT = FileType("devcontainer configs", (".devcontainer.json",))
@@ -90,6 +91,16 @@ class GlobForTest(unittest.TestCase):
         """Test that a top-level hidden file named literally in the pattern is visited."""
         mock_glob.return_value = [Path("/.devcontainer.json")]
         self.assertEqual(list(glob_for(_DEVCONTAINER_AT_ROOT)), [Path("/.devcontainer.json")])
+
+    def test_hidden_file_not_matched_by_a_hidden_segment_is_skipped(self, mock_glob: Mock):
+        """Test that a hidden file a broad pattern matches is skipped, while a file beside it is returned."""
+        mock_glob.return_value = [Path("/.env.txt"), Path("/file.txt")]
+        self.assertEqual(list(glob_for(_TEXT_FILES)), [Path("/file.txt")])
+
+    def test_hidden_file_matched_by_a_wildcard_in_pattern_is_visited_in_any_case(self, mock_glob: Mock):
+        """Test that a hidden file a wildcard segment of the pattern matches is visited, whatever its case."""
+        mock_glob.return_value = [Path("/.NOTES.TXT")]
+        self.assertEqual(list(glob_for(_HIDDEN_TEXT_FILES)), [Path("/.NOTES.TXT")])
 
     def test_hidden_folder_not_named_in_pattern_is_still_skipped(self, mock_glob: Mock):
         """Test that hidden folders the pattern does not name are still skipped, even next to one it does."""

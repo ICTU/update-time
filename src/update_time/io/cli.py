@@ -4,6 +4,7 @@ import argparse
 import os
 from importlib.metadata import version
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
@@ -18,16 +19,23 @@ from update_time.io.filesystem import ALWAYS_IGNORED_DIRECTORIES, inside_git_rep
 from update_time.io.log import LOG_LEVEL, LOG_LEVELS
 from update_time.primitives.iterables import unique
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+
+def _listed(names: Sequence[str]) -> str:
+    """Return the names comma-separated, with `and` before the last."""
+    return f"{', '.join(names[:-1])}, and {names[-1]}"
+
 
 def _scanned_file_types() -> str:
-    """Return the file types the dependency types declare, comma-separated, with `and` before the last.
+    """Return the file types the dependency types declare, listed.
 
     A file type two dependency types declare, such as the `package.json` holding both npm dependencies and the Node
     engine version, is named once.
     """
     names = (file_type.name for dependency_type in DEPENDENCY_TYPES for file_type in dependency_type.file_types)
-    file_types = unique(names)
-    return f"{', '.join(file_types[:-1])}, and {file_types[-1]}"
+    return _listed(unique(names))
 
 
 def days(value: str) -> int:
@@ -145,7 +153,8 @@ def parse_args() -> argparse.Namespace:
         metavar="PATHS",
         help="comma-separated list of directories, relative to the scan root, to exclude from the scan, for example "
         "vendor,packages/legacy. Every file under an excluded directory is skipped, on top of the always-ignored "
-        f"{', '.join(ALWAYS_IGNORED_DIRECTORIES)}, and hidden folders. "
+        f"directories {_listed(ALWAYS_IGNORED_DIRECTORIES)}. Hidden directories and files are skipped too, except the "
+        "ones Update-time looks for, such as .github/ and .devcontainer/. "
         "Directories are matched by relative path, not by name: "
         "--exclude-path vendor excludes vendor/ at the root but not sub/vendor/. Directories that don't exist are "
         "ignored and logged at log-level WARNING. Absolute paths, or paths that escape the scan root (../…), "

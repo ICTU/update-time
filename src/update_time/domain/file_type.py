@@ -15,6 +15,9 @@ class FileType:
 
 
 _YAML_PATTERNS = ("*.yml", "*.yaml")
+# A devcontainer keeps its config and its Dockerfile in these folders. A config can also sit at the root, as
+# `.devcontainer.json`.
+_DEVCONTAINER_FOLDERS = (".devcontainer", ".devcontainer/*")
 
 PYPROJECT_TOML = FileType("pyproject.toml", ("pyproject.toml",))
 # A requirements file is named `requirements.txt`, `requirements-<purpose>.txt` or `<purpose>-requirements.txt`, or
@@ -29,9 +32,20 @@ PACKAGE_JSON = FileType("package.json", ("package.json",))
 POM_XML = FileType("pom.xml", ("pom.xml",))
 PYTHON_VERSION_FILE = FileType(".python-version", (".python-version",))
 # Dockerfiles are conventionally named `Dockerfile`, or `<purpose>.Dockerfile` / `Dockerfile.<purpose>` when a
-# project has more than one (e.g. `python.Dockerfile`, `Dockerfile.dev`). The three patterns don't overlap for any
-# realistic name, so a file is discovered once. The patterns ignore case, so a `dockerfile` counts too.
-DOCKERFILES = FileType("Dockerfiles", ("Dockerfile", "*.Dockerfile", "Dockerfile.*"), case_sensitive=False)
+# project has more than one (e.g. `python.Dockerfile`, `Dockerfile.dev`). Some are hidden: Gitpod builds a
+# `.gitpod.Dockerfile`, and a devcontainer builds the `Dockerfile` beside its config, in a hidden folder. The patterns
+# ignore case, so a `dockerfile` counts too.
+DOCKERFILES = FileType(
+    "Dockerfiles",
+    (
+        "Dockerfile",
+        "*.Dockerfile",
+        "Dockerfile.*",
+        ".*.Dockerfile",
+        *(f"{folder}/Dockerfile" for folder in _DEVCONTAINER_FOLDERS),
+    ),
+    case_sensitive=False,
+)
 CIRCLE_CI_CONFIGS = FileType("CircleCI configs", _YAML_PATTERNS, start=".circleci")
 # GitLab CI reads one file at the repository root, so the scan root is read as it stands: walking it would also
 # find a nested `.gitlab-ci.yml`, which GitLab itself never reads.
@@ -40,7 +54,7 @@ DOCKER_COMPOSE_FILES = FileType("Docker Compose files", ("docker-compose*.yml",)
 HELM_CHARTS = FileType("Helm charts", _YAML_PATTERNS, start="helm")
 DEVCONTAINER_CONFIGS = FileType(
     "devcontainer configs",
-    (".devcontainer.json", ".devcontainer/devcontainer.json", ".devcontainer/*/devcontainer.json"),
+    (".devcontainer.json", *(f"{folder}/devcontainer.json" for folder in _DEVCONTAINER_FOLDERS)),
 )
 GITHUB_WORKFLOWS = FileType("YAML files under .github/", _YAML_PATTERNS, start=".github")
 PRE_COMMIT_CONFIG = FileType(".pre-commit-config.yaml", (".pre-commit-config.yaml",))

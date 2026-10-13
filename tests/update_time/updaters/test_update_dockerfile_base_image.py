@@ -1,10 +1,13 @@
 """Unit tests for the Dockerfile base image update script."""
 
+import unittest
+from pathlib import Path, PurePath
 from unittest.mock import Mock, patch
 
+from update_time.domain import file_type
 from update_time.domain.dependency import DependencyVersion, ImageNotLookedUp
-from update_time.domain.file_type import DOCKERFILES
 from update_time.io import log
+from update_time.io.filesystem import glob_for
 from update_time.markers.directive import Reason
 from update_time.primitives.location import Location
 from update_time.updaters import update_dockerfile_base_image
@@ -39,11 +42,6 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
         with patch("pathlib.Path.rglob", side_effect=rglob):
             update_dockerfiles()
-
-    def test_alternate_filenames_are_declared(self):
-        """Test that `*.Dockerfile` and `Dockerfile.*` are declared too, not only an exact `Dockerfile`."""
-        self.assertEqual(DOCKERFILES.patterns, ("Dockerfile", "*.Dockerfile", "Dockerfile.*"))
-        self.assertFalse(DOCKERFILES.case_sensitive)  # A `dockerfile` is found as well
 
     def test_pin_tagless_base_image(self):
         """Test that a `FROM image` naming no tag is pinned to the version and digest `latest` serves."""
@@ -312,3 +310,44 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile.write_text.assert_called_with(f"FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim@{DIGEST}\n")
         self.assert_new_version_logged("ghcr.io/astral-sh/uv", "python3.13-bookworm-slim", Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
+
+
+def _scanned_dockerfiles(*tree: str) -> list[str]:
+    """Return the files of the tree that the Dockerfile scan finds, once for each pattern that keeps the file."""
+
+    def glob(self: Path, pattern: str, *, case_sensitive: bool | None = None, **_: object) -> list[Path]:
+        return [self / path for path in tree if PurePath(path).full_match(pattern, case_sensitive=case_sensitive)]
+
+    with patch("pathlib.Path.cwd", return_value=Path("/")), patch("pathlib.Path.glob", autospec=True, side_effect=glob):
+        return [str(path.relative_to("/")) for path in glob_for(file_type.DOCKERFILES)]
+
+
+class ScannedDockerfilesTest(unittest.TestCase):
+    """Unit tests for which Dockerfiles are scanned."""
+
+    def test_the_conventional_names_are_scanned(self):
+        """Test that a `Dockerfile`, a `<purpose>.Dockerfile`, and a `Dockerfile.<purpose>` are scanned, in any case."""
+        tree = "Dockerfile", "python.Dockerfile", "Dockerfile.dev", "app/dockerfile"
+        self.assertCountEqual(_scanned_dockerfiles(*tree), tree)
+
+    def test_a_devcontainer_dockerfile_is_scanned(self):
+        """Test that a `Dockerfile` in a `.devcontainer` folder or in one of its configuration folders is scanned."""
+        tree = ".devcontainer/Dockerfile", ".devcontainer/python/Dockerfile"
+        self.assertCountEqual(_scanned_dockerfiles(*tree), tree)
+
+    def test_a_hidden_dockerfile_is_scanned(self):
+        """Test that a hidden `.<purpose>.Dockerfile` is scanned, in any case."""
+        tree = ".gitpod.dockerfile", "pkg/.web.Dockerfile"
+        self.assertCountEqual(_scanned_dockerfiles(*tree), tree)
+
+    @kills(
+        Mutation(
+            file_type,
+            'Dockerfile" for folder in _DEVCONTAINER_FOLDERS',
+            'Dockerfile" for folder in (".*", ".*/*")',
+            "the Dockerfiles in every hidden folder are scanned, such as the ones under `.git`",
+        )
+    )
+    def test_a_dockerfile_in_another_hidden_folder_is_skipped(self):
+        """Test that a `Dockerfile` in a hidden folder other than `.devcontainer` is skipped."""
+        self.assertEqual(_scanned_dockerfiles("Dockerfile", ".docker/Dockerfile"), ["Dockerfile"])

@@ -125,7 +125,6 @@ A version a dependency's source published, and the date it was published on.
 A version that is eligible but whose referenced file has no integrity hash ends the walk: it returns the current version unchanged rather than skipping to an older one, since bumping without a matching hash would break the Subresource Integrity check.
 A version the npm registry dates nowhere counts as too fresh, since a version it has yet to date is one it has just received.
 A version the run moved to comes back unchanged, since a source skips a withdrawn release when picking a new version, so only a version a reference stayed on can be withdrawn.
-A wildcard segment such as `.*` needs no special handling: these are compared to real path segments by exact equality, which a wildcard never satisfies, so including it grants no exception anyway.
 A word a string spells out is data, whatever the code binds beside it.
 A word the module's strings spell out is data it works with, whatever the code binds beside it, so a docstring quoting that word is left alone.
 Aliasing the import swaps the file type without changing its shape, so no other test can notice.

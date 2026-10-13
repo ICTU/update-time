@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Fixed
 
+- Update the base image of a `Dockerfile` in a `.devcontainer` folder, and of a hidden Dockerfile such as `.gitpod.Dockerfile`, instead of skipping that Dockerfile as hidden. Closes [#413](https://github.com/ICTU/update-time/issues/413).
 - Leave a Docker image reference whose image name or tag holds a variable or a template, such as `redis:7.2-${VARIANT}`, as it is and report it at `DEBUG`, instead of updating and pinning the part before the variable. Closes [#412](https://github.com/ICTU/update-time/issues/412).
 
 ## 0.0.44 - 2026-10-12
