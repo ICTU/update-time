@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from update_time.domain import dependency
+from update_time.domain import cooldown, dependency
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.changelog import is_markdown
 from update_time.domain.cooldown import COOLDOWN
@@ -226,15 +226,6 @@ class GetLatestVersionTest(LoggingTestCase):
         message = Logger._MESSAGE_NO_COMMIT_SHA
         self.assert_error_logged(message, dependency="owner/no sha", version="1.1", reason="HTTP 404", url=url)
 
-    @kills(
-        Mutation(
-            github.get_latest_version,
-            "return replace(latest, project=repository_project)",
-            "return replace(latest, project=Project(newest=replace(repository_project.newest, "
-            "version=latest.version) if repository_project.newest else None))",
-            "the release attached names the version the run leaves the reference on, not the repository's newest",
-        )
-    )
     @patch_github(
         releases=[
             github_release_json("2.0", published_at=FRESH_DATE),
@@ -365,22 +356,36 @@ class GetLatestVersionTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            github._eligible_version,
-            "if walk.stopped and not is_current:",
-            "if False:",
-            "a rate-limited commit costs a request and an error for every tag in between",
-        )
+            github.get_latest_version,
+            "lambda version: version.version == current,",
+            "lambda version: False,",
+            "a rate-limited commit leaves the reference unpinned, holding back its own version as well",
+        ),
+        Mutation(
+            cooldown.CooldownWalk.past,
+            "if publication.value is not None:",
+            "if True:",
+            "a rate-limited commit is remembered as held back without a date, which the held-back line cannot render",
+        ),
     )
     @patch_github(
         releases=[],
-        tags=[github_tag_json("v1.2", sha=COMMIT_SHA2), github_tag_json("v1.1", sha=COMMIT_SHA1)],
+        tags=[
+            github_tag_json("v1.2", sha=COMMIT_SHA2),
+            github_tag_json("v1.1", sha=COMMIT_SHA1),
+            github_tag_json("v1.0", sha=COMMIT_SHA),
+        ],
         commit=github_rate_limited(),
     )
     def test_rate_limited_commit_holds_back_the_tags_in_between(self):
-        """Test that a tag whose commit is rate limited holds back the tags in between, GitHub's reason logged."""
+        """Test that a tag whose commit is rate limited holds back the tags in between, but not the current one.
+
+        The rate-limited tag itself is not reported as held back by the cooldown.
+        """
         dependency = "owner/rate-limited"
         latest = get_latest_version(dependency, "1.0")
-        self.assert_version(latest, "1.0", "", "")
+        self.assert_version(latest, "1.0", "", COMMIT_SHA)
+        self.assertIsNone(latest.fresh_release)
         commits = f"https://api.github.com/repos/{dependency}/commits/{COMMIT_SHA2}"
         self.assertEqual(github_requests("commits"), [commits])
         reason = GITHUB_RATE_LIMITED_REASON

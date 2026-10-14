@@ -12,7 +12,7 @@ from packaging.version import Version
 
 from update_time.domain.archival import archival_reporting
 from update_time.domain.changelog import MARKDOWN_EXTENSION, get_version_changes_from_changelog, is_markdown_file
-from update_time.domain.cooldown import CooldownWalk, within_cooldown
+from update_time.domain.cooldown import CooldownWalk, first_eligible, within_cooldown
 from update_time.domain.dependency import (
     NO_CHANGES,
     Archival,
@@ -24,7 +24,6 @@ from update_time.domain.dependency import (
     Project,
     Release,
     VersionString,
-    first_eligible,
     is_valid,
 )
 from update_time.domain.publication import publication_date_reporting
@@ -407,7 +406,7 @@ def _newest_on_the_line(commits: list[_CommitJSON], cooldown_days: int) -> _Comm
     """
     listed = {commit["sha"]: commit for commit in commits}
     commit = commits[0] if commits else None
-    while commit is not None and cooldown_days > 0 and within_cooldown(_committer_date(commit).value, cooldown_days):
+    while commit is not None and within_cooldown(_committer_date(commit).value, cooldown_days):
         parents = commit["parents"]
         commit = listed.get(parents[0]["sha"]) if parents else None
     return commit
@@ -588,11 +587,12 @@ def get_latest_version(
     ]
     changes_by_version = {version.version: version.body for version in valid_versions if version.body}
 
-    walk = CooldownWalk(cooldown_days)
     latest = first_eligible(
         candidates,
-        lambda version: _eligible_version(version, walk, changes_by_version, current_version),
+        lambda version, walk: _eligible_version(version, walk, changes_by_version, current_version),
+        lambda version: version.version == current,
         current_version,
+        cooldown_days,
     )
     return replace(latest, project=repository_project)
 
@@ -611,18 +611,15 @@ def _eligible_version(
     equal version.
     """
     is_current = tagged_version.version == Version(current_version)
-    if walk.stopped and not is_current:
-        return None
     dependency, tag_name = tagged_version.dependency, tagged_version.tag_name
     report_undated = partial(_LOG.undated_commit, dependency, tag_name, current_version)
-    if not is_current and not walk.past(tagged_version.publication, report_undated):
+    version = str(tagged_version.version)
+    if not is_current and not walk.past(version, tagged_version.publication, report_undated):
         return None
     if (sha := tagged_version.commit_sha) is None:
         return None
     changes = changes_by_version.get(tagged_version.version, NO_CHANGES)
-    return DependencyVersion(
-        str(tagged_version.version), changes, sha, tagged_version.publication, tag_name=tagged_version.tag_name
-    )
+    return DependencyVersion(version, changes, sha, tagged_version.publication, tag_name=tagged_version.tag_name)
 
 
 def _newest_tag_beyond_releases(repository: GitHubRepository) -> _TagJSON | None:

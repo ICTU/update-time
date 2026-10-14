@@ -2,7 +2,6 @@
 
 import re
 from dataclasses import dataclass
-from datetime import UTC
 from enum import StrEnum, auto
 from functools import total_ordering
 from typing import TYPE_CHECKING, Self
@@ -10,13 +9,12 @@ from typing import TYPE_CHECKING, Self
 from packaging.version import InvalidVersion, Version
 
 from update_time.primitives.lookup import LookedUp
+from update_time.primitives.timestamp import utc_date_and_time
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Iterable
     from datetime import datetime
     from typing import Protocol
-
-    from _typeshed import SupportsRichComparison
 
     from update_time.primitives.lookup import Lookup
 
@@ -213,6 +211,7 @@ class DependencyVersion:
     served: bool = True  # Whether the source serves the version the reference names
     image_not_looked_up: ImageNotLookedUp | None = None  # Why Update-time does not ask a registry about the image
     tag_name: str = ""  # The version's tag as the repository spells it (`v6.0.0`), where the source reads tags
+    fresh_release: Release | None = None  # The newest release inside the cooldown, if any
 
     @classmethod
     def unpinned(cls, project: Project) -> DependencyVersion:
@@ -223,21 +222,4 @@ class DependencyVersion:
         """Render the version as its version string, followed by its publication date in UTC when that is known."""
         if (published := self.publication.value) is None:
             return self.version
-        return f"{self.version}, published: {published.astimezone(UTC):%Y-%m-%d %H:%M}"
-
-
-def first_eligible[Candidate: SupportsRichComparison](
-    candidates: Iterable[Candidate],
-    resolve: Callable[[Candidate], DependencyVersion | None],
-    current_version: VersionString,
-) -> DependencyVersion:
-    """Return the highest candidate that resolves to an eligible version, or the current version unchanged.
-
-    The candidates are comparable, so they are walked newest-first. Eligibility can only be decided once the
-    candidate's metadata has been fetched, so `resolve` does that and answers with the version, or None to skip
-    the candidate and try the next.
-    """
-    for candidate in sorted(candidates, reverse=True):
-        if (version := resolve(candidate)) is not None:
-            return version
-    return DependencyVersion(version=current_version)
+        return f"{self.version}, published: {utc_date_and_time(published)}"

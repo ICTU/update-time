@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
+from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, FloatingPin, ImageNotLookedUp
 from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
@@ -211,14 +212,21 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    def test_cooldown_marker_is_not_reported_as_redundant(self) -> None:
-        """Test that a `cooldown` marker on a Docker Hub image holds a freshly pushed tag back, unreported."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2, tag_last_pushed=FRESH_DATE))
-        marked = self.marker_line("ignore[cooldown<30]") + self.reference(f"python:3.14@{DIGEST1}")
-        mock_file = mock_path(marked)
-        self.run_updater(mock_file)
-        mock_file.write_text.assert_not_called()  # 3.15 was pushed inside the marker's 30-day cooldown
-        self.assert_no_warnings_logged()
+    def test_tag_inside_the_cooldown_is_logged_as_held_back(self) -> None:
+        """Test that a tag pushed inside the cooldown is logged as held back, naming the marker that sets a cooldown."""
+        cases = {"the run's cooldown": ("", COOLDOWN.default, 1), "a marker's cooldown": ("ignore[cooldown<30]", 30, 2)}
+        for case, (directive, days, line) in cases.items():
+            with self.subTest(case):
+                self.requests.side_effect = mock_docker_registry(
+                    docker_tag("3.15", DIGEST2, tag_last_pushed=FRESH_DATE)
+                )
+                marker = self.marker_line(directive) if directive else ""
+                mock_file = mock_path(marker + self.reference(f"python:3.14@{DIGEST1}"))
+                self.run_updater(mock_file)
+                mock_file.write_text.assert_not_called()
+                location = Location(mock_file, line)
+                self.assert_held_back_by_cooldown_logged("python", "3.15", location, days=days, directive=directive)
+                self.assert_no_warnings_logged()
 
     def test_cooldown_marker_outside_docker_hub_is_reported_as_redundant(self) -> None:
         """Test that a `cooldown` marker on an image off Docker Hub is reported, since no tag there carries a date."""

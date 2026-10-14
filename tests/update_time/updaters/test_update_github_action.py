@@ -3,7 +3,7 @@
 import itertools
 from datetime import timedelta
 from logging import ERROR, WARNING
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 
 import requests
@@ -49,6 +49,9 @@ from tests.update_time.helpers import (
 )
 from tests.update_time.updaters.helpers import github_version
 
+if TYPE_CHECKING:
+    from unittest.mock import _patch
+
 # The directives the tests write in a marker, and expect named as what opted a reference in.
 _ALLOW_HASH_DRIFT = "update-time: allow[hash-drift]"
 _ALLOW_FLOATING_PIN = "update-time: allow[floating-pin]"
@@ -61,6 +64,18 @@ def _drifted(
 ) -> DriftedPin:
     """Return the drift of the workflow's first reference, pinned to the old commit, onto the new one by default."""
     return DriftedPin(dependency, version, Location(workflow_yml, 1), OLD_SHA, new_sha=new_sha)
+
+
+def _patch_github_with_a_fresh_release() -> _patch:
+    """Patch GitHub to serve release 1.1 inside the cooldown, beside release 1.0 past it, both at the same commit."""
+    return patch_github(
+        releases=[
+            github_release_json("v1.1", published_at=FRESH_DATE),
+            github_release_json("v1.0", published_at=PAST_COOLDOWN_DATE),
+        ],
+        tags=[],
+        commit=github_commits_json(NEW_SHA),
+    )
 
 
 def _commits_url(ref: str, dependency: str = "actions/checkout") -> str:
@@ -518,6 +533,15 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
         workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # v4.3.0\n")
 
+    @_patch_github_with_a_fresh_release()
+    def test_version_inside_the_cooldown_is_logged_as_held_back(self, mock_glob: Mock):
+        """Test that the newest version inside the cooldown is logged as held back, while the reference is pinned."""
+        workflow_yml = self.scanned_workflow(mock_glob, "uses: action/action@v1.0\n")
+        location = Location(workflow_yml, 1)
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0\n")
+        self.assert_pinned_logged("action/action", "1.0", NEW_SHA, location)
+        self.assert_held_back_by_cooldown_logged("action/action", "1.1", location)
+
     @kills(
         Mutation(
             references_github._PinResolver._report_unfetched_commit,
@@ -547,14 +571,6 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                 self.assert_unpinned_ref_logged("actions/checkout", branch, Location(workflow_yml, 1), reason)
                 self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            sources_github._newest_on_the_line,
-            "cooldown_days > 0 and within_cooldown(",
-            "within_cooldown(",
-            "a zero-day cooldown skips the head of a branch when its committer dated it in the future",
-        )
-    )
     @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA, date=FRESH_DATE + timedelta(days=1)))
     def test_branch_under_a_zero_day_cooldown_moves_to_its_head_whatever_its_date(self, mock_glob: Mock):
         """Test that a branch under a zero-day cooldown lists its head alone, and moves to it however it is dated."""

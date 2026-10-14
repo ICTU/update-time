@@ -975,14 +975,21 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_held_back_by_cooldown(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a newer version published within the cooldown period is not picked up."""
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, "flask==1.0\n")
-        mock_get.side_effect = self.pypi("1.0", "1.1", bump=True, upload_time=PYPI_RECENT_UPLOAD)
-        update_requirements_txts()
-        requirements_txt.write_text.assert_not_called()
-        self.assert_path_logged(requirements_txt)
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
+        """Test that the newest version published within the cooldown is logged as held back, past a yanked one."""
+        fresh_and_yanked = pypi_release(PYPI_RECENT_UPLOAD, yanked=True)
+        cases = {
+            "a release": [pypi_index("1.0", "1.1")],
+            "a release below a yanked one": [pypi_index("1.0", "1.1", "1.2"), fresh_and_yanked],
+        }
+        for case, responses in cases.items():
+            with self.subTest(case):
+                requirements_txt = self.discovered_requirements_txt(mock_rglob, "flask==1.0\n")
+                mock_get.side_effect = [*responses, pypi_release(PYPI_RECENT_UPLOAD)]
+                update_requirements_txts()
+                requirements_txt.write_text.assert_not_called()
+                self.assert_held_back_by_cooldown_logged("flask", "1.1", Location(requirements_txt, 1))
+                self.assert_no_new_version_logged()
+                self.assert_no_warnings_logged()
 
     def test_a_compiled_file_is_skipped_entirely(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a compiled file is skipped whole, its pins left as the file wrote them.

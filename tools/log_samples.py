@@ -10,6 +10,7 @@ two of them differ, and their full length would wrap the line several times over
 """
 
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
@@ -404,6 +405,8 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.no_release_metadata("humanize", "4.16.0", "4.15.0", "HTTP 503")
     no_release_metadata = capture.take()
 
+    held_back_by_cooldown = _held_back_by_cooldown(log, capture, dockerfile)
+
     images_not_looked_up = _images_not_looked_up(log, capture, dockerfile)
 
     understood_markers = _understood_markers(log, capture, dockerfile, stale)
@@ -416,6 +419,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
         **github_refs,
         "@@NO_RELEASE_METADATA@@": no_release_metadata,
+        "@@HELD_BACK_BY_COOLDOWN@@": held_back_by_cooldown,
         "@@NO_PUSH_DATE@@": undated_pushes,
         "@@IMAGES_NOT_LOOKED_UP@@": images_not_looked_up,
         "@@STALE_WARNING@@": staleness,
@@ -428,6 +432,18 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **inverted,
         **understood_markers,
     }
+
+
+def _held_back_by_cooldown(log: Logger, capture: _Capture, dockerfile: Location) -> str:
+    """Log a version the run's cooldown holds back, and one a marker's cooldown holds back.
+
+    The publication date is fixed rather than counted back from now, so the README renders the same on every run.
+    """
+    published = datetime(2026, 10, 8, 13, 1, tzinfo=UTC)
+    workflow = Location(Path(".github/workflows/ci.yml"), 5)
+    log.held_back_by_cooldown(reference("github/codeql-action/init", workflow), Release("4.38.3", published), 7, "")
+    log.held_back_by_cooldown(reference("python", dockerfile), Release("3.15.0", published), 30, "ignore[cooldown<30]")
+    return capture.take()
 
 
 def _understood_markers(

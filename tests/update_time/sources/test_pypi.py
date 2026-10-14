@@ -895,12 +895,6 @@ class GetLatestVersionTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi._eligible_release,
-            "if walk.stopped:",
-            "if False:",
-            "unreachable release metadata costs a request and an error for every release in between",
-        ),
-        Mutation(
-            pypi._eligible_release,
             "walk.stop()",
             "pass",
             "unreachable release metadata lets the walk try the releases in between",
@@ -942,16 +936,6 @@ class GetLatestVersionTest(LoggingTestCase):
         mock_get.side_effect = [pypi_index("1.0", "1.2", "1.1"), pypi_release()]
         self.assertEqual(get_latest_version("highest", "1.0").version, "1.2")
 
-    @kills(
-        Mutation(
-            pypi.get_latest_version,
-            "return replace(latest, project=project(package, check_archival=check_archival))",
-            "_p = project(package, check_archival=check_archival)\n"
-            "    return replace(latest, project=Project("
-            "newest=Release(latest.version, _p.newest.published) if _p.newest else None, archival=_p.archival))",
-            "the release attached names the version the run leaves the pin on, not the package's newest",
-        )
-    )
     def test_newest_release_attached(self, mock_get: Mock):
         """Test that the newest release is attached, and not the version the run leaves the pin on.
 

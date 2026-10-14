@@ -15,7 +15,7 @@ from update_time.domain.changelog import (
     is_markdown_content_type,
     is_markdown_file,
 )
-from update_time.domain.cooldown import CooldownWalk, within_cooldown
+from update_time.domain.cooldown import CooldownWalk, first_eligible
 from update_time.domain.dependency import (
     NO_CHANGES,
     Archival,
@@ -26,7 +26,6 @@ from update_time.domain.dependency import (
     Project,
     Release,
     Yank,
-    first_eligible,
     is_valid,
     normalized_python_name,
 )
@@ -235,9 +234,12 @@ def get_latest_version(
         for version in _stable_versions(package)
         if version > current and version_bound.keeps(version, current_version)
     ]
-    walk = CooldownWalk(cooldown_days)
     latest = first_eligible(
-        candidates, lambda version: _eligible_release(package, version, current_version, walk), current_version
+        candidates,
+        lambda version, walk: _eligible_release(package, version, current_version, walk),
+        lambda _: False,
+        current_version,
+        cooldown_days,
     )
     latest = with_yank_state(latest, current_version, partial(yank_state, package))
     # Always attach what PyPI reports about the project, so a pin that is already up to date can still be reported
@@ -277,17 +279,15 @@ def _eligible_release(
     A release whose metadata can't be fetched can't be checked for a yank, so it stops the walk. A release without
     distribution files can't be installed, so it is skipped.
     """
-    if walk.stopped:
-        return None
     found = release_metadata(package, str(version))
     if (metadata := found.value) is None:
         walk.stop()
         _LOG.no_release_metadata(package, str(version), current_version, found.reason)
         return None
     publication = LookedUp(_release_datetime(metadata["urls"]))
-    if publication.value is None or within_cooldown(publication.value, walk.days):
-        return None
     if metadata["info"].get("yanked"):
+        return None
+    if publication.value is None or walk.holds_back(str(version), publication.value):
         return None
     latest = str(version)
     return DependencyVersion(latest, changes=get_changes(package, latest), publication=publication)

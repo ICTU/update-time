@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from rich.console import Console
 
 from update_time.domain.bound import NO_BOUND
+from update_time.domain.cooldown import cooldown_end
 from update_time.domain.dependency import tag_of
 from update_time.domain.staleness import stale_release
 from update_time.io.console import CHANGES, LOG_THEME, NOTE, configure_logging, delimit_dependency, delimit_location
@@ -15,14 +16,21 @@ from update_time.markers.bound import spell
 from update_time.markers.marker import Scope
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
-from update_time.primitives.timestamp import days_since
+from update_time.primitives.timestamp import days_since, utc_date_and_time
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from requests import Response
 
-    from update_time.domain.dependency import Changes, DependencyVersion, FloatingPin, ImageNotLookedUp, VersionString
+    from update_time.domain.dependency import (
+        Changes,
+        DependencyVersion,
+        FloatingPin,
+        ImageNotLookedUp,
+        Release,
+        VersionString,
+    )
     from update_time.domain.reference import DriftedPin, Reference, RefKind, ResolvedReference
     from update_time.domain.vulnerability import Vulnerability
     from update_time.markers.directive import RedundancyReason
@@ -62,6 +70,14 @@ class _Check:
     scope: Scope
     warning: LogMessage
     ignored: LogMessage
+
+
+@dataclass(frozen=True)
+class _SetBy:
+    """Two forms of one report: for a setting from the run, and for one from a marker, which the report names."""
+
+    run: LogMessage
+    marker: LogMessage
 
 
 @dataclass(frozen=True)
@@ -227,6 +243,29 @@ class Logger:
             self._log_changes(self._MESSAGE_NEW_VERSION, version.changes, **fields)
         else:
             self._log_note(self._MESSAGE_NEW_VERSION, self._NO_CHANGELOG, **fields)
+
+    _HELD_BACK_BY_COOLDOWN = (
+        "Holding back version %(version)s of %(dependency)s in %(location)s: published %(published)s, within the "
+        "cooldown of %(days)d days until %(until)s"
+    )
+    _MESSAGE_HELD_BACK_BY_COOLDOWN = LogMessage(DEBUG, _HELD_BACK_BY_COOLDOWN)
+    _MESSAGE_HELD_BACK_BY_MARKER_COOLDOWN = LogMessage(DEBUG, f"{_HELD_BACK_BY_COOLDOWN} (update-time: %(directive)s)")
+
+    _HELD_BACK = _SetBy(_MESSAGE_HELD_BACK_BY_COOLDOWN, _MESSAGE_HELD_BACK_BY_MARKER_COOLDOWN)
+
+    def held_back_by_cooldown(self, reference: Reference, fresh: Release, days: int, directive: str) -> None:
+        """Log a release held back by the cooldown, naming the marker's directive where a marker sets the cooldown."""
+        fields = self._reference_fields(
+            reference,
+            version=fresh.version,
+            published=utc_date_and_time(fresh.published),
+            days=days,
+            until=utc_date_and_time(cooldown_end(fresh.published, days)),
+        )
+        if directive:
+            self._log(self._HELD_BACK.marker, **fields, directive=directive)
+        else:
+            self._log(self._HELD_BACK.run, **fields)
 
     _MESSAGE_PINNED = LogMessage(INFO, "Pinned %(dependency)s in %(location)s to %(version)s@%(sha)s")
 

@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Log at `DEBUG` the newest version held back by the cooldown, and the date its cooldown ends. Closes [#414](https://github.com/ICTU/update-time/issues/414).
 
 ## 0.0.45 - 2026-10-13
 
