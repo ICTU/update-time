@@ -16,7 +16,9 @@ help recipe="":
 # warning is suppressed by the --quiet flag on `uv sync`. See https://astral.sh/blog/uv-audit.
 export UV_MALWARE_CHECK := "1"
 
-uv_run := "uv run --quiet"
+# Run a tool from the environment without syncing it first, since the malware check makes every sync ask a server.
+# So every recipe running it depends on `install-py-dependencies`, which syncs where the environment is out of date.
+uv_run := "uv run --quiet --no-sync"
 fixit := uv_run + " fixit --quiet"
 just_fmt := "just --unstable --fmt"
 pyproject_fmt := uv_run + " pyproject-fmt --no-generate-python-version-classifiers"
@@ -113,36 +115,51 @@ progress(name, command) := start_progress() + " " + command + " " + end_progress
 # The registered mutations stand aside while coverage runs, so coverage is measured over the tests alone and a line that only a mutated re-run reaches shows up as a gap.
 measured_run := switch_mutations_off + " " + coverage + " run -m unittest --quiet"
 
-# A measured run must reach 100%: the text and HTML reports are written first, then `xml` applies the gate. A named subset is skipped rather than measured, since it reaches too little of the tree to meet the gate and its report names every file it never imports.
-coverage_command(tests) := if tests == "" { progress("test-coverage", measured_run + " && " + coverage + " report --show-missing --fail-under=0 && " + coverage + " html --quiet --fail-under=0 && " + coverage + " xml --quiet") } else { skipped("test-coverage", "a named subset is not measured") }
+# A measured run must reach 100%. The text report applies that gate and lists the lines no test reaches. A named subset is skipped rather than measured, since it reaches too little of the tree to meet the gate and its report names every file it never imports.
+coverage_command(tests) := if tests == "" { progress("test-coverage", measured_run + " && " + coverage + " report --show-missing") } else { skipped("test-coverage", "a named subset is not measured") }
 
-# The tests run again, unmeasured, against the mutations they register. A caller that switched the registered mutations off already, as `just mutate` does, leaves this pass nothing to add to the coverage pass, so it says so rather than running the whole suite twice. A named subset, which the coverage pass skips, runs here either way, labelled a plain `test` run when the registered mutations are off.
+# The tests carrying a kills decorator run again, unmeasured, against the mutations they register. A caller that switched the registered mutations off already, as `just mutate` does, leaves this pass nothing to add to the coverage pass, so it says so rather than running those tests twice. A named subset, which the coverage pass skips, runs here whole either way, labelled a plain `test` run when the registered mutations are off.
 mutations_command(tests) := if tests == "" { 'if ' + mutations_switched_off + '; then ' + skipped("test-mutations", "the registered mutations are switched off") + '; else ' + mutations_run(tests) + "; fi" } else { mutations_run(tests) }
 
-# Run the tests against the mutations they register, all of them or only the ones named, or as a plain test run when a caller switched the registered mutations off.
-mutations_run(tests) := 'label=test-mutations; if ' + mutations_switched_off + '; then label=test; fi; ' + progress('"$label"', python_m + " unittest --quiet " + named_tests(tests))
+# Run the mutations pass's tests, labelled a plain `test` run when a caller switched the registered mutations off.
+mutations_run(tests) := 'label=test-mutations; if ' + mutations_switched_off + '; then label=test; fi; ' + progress('"$label"', mutations_tests(tests))
+
+# The tests the mutations pass runs. A full run loads the tests carrying a kills decorator alone, since the coverage pass runs every other test already.
+mutations_tests(tests) := if tests == "" { uv_run + " python -c 'import unittest; from tests.mutation import KillsTestLoader; unittest.main(module=None, testLoader=KillsTestLoader())' --quiet" } else { python_m + " unittest --quiet " + named_tests(tests) }
 
 # The tests named, each test package among them expanded into its test modules, since `unittest` does not run the tests in a package it is handed.
-named_tests(tests) := if tests == "" { "" } else { "$(" + python_m + " tools.expand_tests " + tests + ")" }
+named_tests(tests) := "$(" + python_m + " tools.expand_tests " + tests + ")"
 
 # Run the unit tests under coverage, with the registered mutations standing aside, so coverage is measured over the tests alone. A named subset is skipped rather than measured.
-[env("PYTHONDEVMODE", "1")]
-[env("PYTHONPATH", "src")]
-test-coverage *tests: install-py-dependencies install-nltk-data
-    {{ coverage_command(tests) }}
+test-coverage *tests: install-py-dependencies install-nltk-data (coverage-pass tests)
 
-# Run the unit tests against the mutations they register, all of them or only the ones named, e.g. `just test-mutations tests.update_time.io.test_log`. A test package named runs every test module under it.
-[env("PYTHONDEVMODE", "1")]
-[env("PYTHONPATH", "src")]
-test-mutations *tests: install-py-dependencies install-nltk-data
-    {{ mutations_command(tests) }}
+# Run the unit tests against the mutations they register: every test carrying a kills decorator, or every test named, e.g. `just test-mutations tests.update_time.io.test_log`. A test package named runs every test module under it.
+test-mutations *tests: install-py-dependencies install-nltk-data (mutations-pass tests)
 
 # Run the unit tests, all of them or only the ones named, e.g. `just test tests.update_time.io.test_log` or `just test tests.update_time.io`. The two passes run at the same time, neither reading what the other writes.
+test *tests: install-py-dependencies install-nltk-data (test-passes tests)
+
+# The pass of `test-coverage`, without the installs it needs, so a nested `just` can run it after the outer one installed.
+[env("PYTHONDEVMODE", "1")]
+[env("PYTHONPATH", "src")]
+[private]
+coverage-pass *tests:
+    {{ coverage_command(tests) }}
+
+# The pass of `test-mutations`, without the installs it needs.
+[env("PYTHONDEVMODE", "1")]
+[env("PYTHONPATH", "src")]
+[private]
+mutations-pass *tests:
+    {{ mutations_command(tests) }}
+
+# Both passes at the same time, without the installs they need.
 [parallel]
-test *tests: (test-coverage tests) (test-mutations tests)
+[private]
+test-passes *tests: (coverage-pass tests) (mutations-pass tests)
 
 # Check that a test guards a behaviour: break the code it names, run the tests, and restore the file. See `just help mutate`.
-mutate file *command:
+mutate file *command: install-py-dependencies
     # FORCE_COLOR is unset rather than emptied: a tool reads it as set whatever its value, and the probe pipes
     # what the command writes, so colour there would only stand between the words the probe reads back.
     env -u FORCE_COLOR {{ python_m }} tools.mutate "$@"
@@ -181,7 +198,7 @@ mutate-help:
 
 # Run Python with the package importable, to probe how it behaves. See `just help py`.
 [env("PYTHONPATH", "src")]
-py *args:
+py *args: install-py-dependencies
     {{ uv_run }} python "$@"
 
 [private]
@@ -196,7 +213,7 @@ py-help:
     @echo "\nARGS goes to the interpreter untouched, so a script path and its arguments work too."
 
 # Report where a name is called, and how many places call it. See `just help callers`.
-callers name:
+callers name: install-py-dependencies
     {{ python_m }} tools.callers "$@"
 
 [private]
@@ -225,9 +242,24 @@ ty: (py-check "ty" f"{{ ty }} {{ code }}")
 [private]
 mypy: (py-check "mypy" f"{{ uv_run }} mypy {{ code }}")
 
-# Run fixit to lint Python code, after checking the local fixit rules with their own test cases.
+# The Python files under the code folders, as git pathspecs.
+code_globs := replace_regex(code, '(\S+)', "'$1/*.py'")
+
+# Lint the files with fixit, after checking the local fixit rules with their own test cases.
+fixit_command(files) := fixit + " test .tools.fixit_rules && " + fixit + " lint " + files
+
+# Run fixit to lint Python code.
 [private]
-fixit: (py-check "fixit" f"{{ fixit }} test .tools.fixit_rules && {{ fixit }} lint {{ code }}")
+fixit: (py-check "fixit" fixit_command(code))
+
+# Run fixit over the Python files that changed since it last passed.
+[private]
+fixit-if-changed: install-py-dependencies
+    {{ lint_if_changed("fixit", "tools/fixit_rules.py pyproject.toml uv.lock justfile", "fixit-files") }}
+
+[private]
+fixit-files *files:
+    {{ start_capture() }} {{ fixit_command('"$@"') }} {{ end_capture("fixit") }}
 
 # Run ruff to lint and check the formatting of Python code.
 [private]
@@ -257,11 +289,24 @@ pip-audit: install-py-dependencies
 
 # Run uv audit to check Python dependencies for known security vulnerabilities.
 [private]
-uv-audit: (py-check "uv-audit" f"uv audit --locked --quiet --ignore-until-fixed {{ nltk_advisory_for_uv_audit }}")
+uv-audit: install-py-dependencies
+    {{ start_capture() }} uv audit --locked --quiet --ignore-until-fixed {{ nltk_advisory_for_uv_audit }} {{ end_capture("uv-audit") }}
 
 # Run bandit to check Python code for security vulnerabilities.
 [private]
-bandit: (py-check "bandit" f"{{ uv_run }} bandit --configfile pyproject.toml --quiet --recursive --format {{ when_color("screen", "txt") }} {{ code }}")
+bandit: (py-check "bandit" bandit_command(code))
+
+# Run bandit over the Python files that changed since it last passed.
+[private]
+bandit-if-changed: install-py-dependencies
+    {{ lint_if_changed("bandit", "pyproject.toml uv.lock justfile", "bandit-files") }}
+
+[private]
+bandit-files *files:
+    {{ start_capture() }} {{ bandit_command('"$@"') }} {{ end_capture("bandit") }}
+
+# Check the files with bandit for security issues.
+bandit_command(files) := uv_run + " bandit --configfile pyproject.toml --quiet --recursive --format " + when_color("screen", "txt") + " " + files
 
 # Run vulture to check for dead Python code.
 [private]
@@ -278,12 +323,12 @@ vale: (py-check "vale" f"{{ uv_run }} vale sync && {{ uv_run }} vale --no-wrap -
 
 # Run yamllint to lint YAML files such as workflow definitions.
 [private]
-yamllint:
+yamllint: install-py-dependencies
     {{ start_capture() }} {{ uv_run }} yamllint --strict -c tools/yamllint.yml -f {{ when_color("colored", "auto") }} . {{ end_capture("yamllint") }}
 
 # Run zizmor to audit GitHub Action workflows.
 [private]
-zizmor:
+zizmor: install-py-dependencies
     {{ start_capture() }} {{ uv_run }} zizmor --no-progress --quiet .github/workflows {{ end_capture("zizmor") }}
 
 # Check the justfile for correct formatting.
@@ -297,7 +342,7 @@ check-readme-is-up-to-date: (py-check "check-readme-is-up-to-date" f"{{ python_m
 
 # Check that the README documents every dependency type the same way, and that its internal links resolve.
 [private]
-check-readme-structure:
+check-readme-structure: install-py-dependencies
     {{ start_capture() }} {{ python_m }} tools.readme_structure_check docs/README.md.in {{ end_capture("check-readme-structure") }}
 
 # Check the readability of the prose in the code and the documentation.
@@ -307,28 +352,62 @@ check-readability: install-nltk-data
 
 # Run the quality checks. Run one by name for a quicker loop, e.g. `just ruff` or `just mypy`.
 [parallel]
-check: ty mypy fixit ruff pyproject-fmt troml pip-audit uv-audit bandit vulture codespell check-justfile check-readme-is-up-to-date check-readme-structure check-readability vale yamllint zizmor
+check: fixit bandit pip-audit uv-audit zizmor unconditional-checks
 
-# The exit status `run_if_code_changed` gives where it skips the tests, which `just test` itself never exits with.
-tests_skipped := "3"
-
-# Run the tests where Python code changed since they last passed, and skip them where none did.
-[private]
-test-if-python-changed:
-    status=0; {{ python_m }} tools.run_if_code_changed --skipped-status {{ tests_skipped }} -- just test || status=$?; if [ "$status" -eq {{ tests_skipped }} ]; then {{ skipped("test", "no Python code changed") }}; else exit "$status"; fi
-
-# Run the checks, and the tests where Python code changed, at the same time; neither reads what the other writes.
+# The quality checks that run whatever changed.
 [parallel]
 [private]
-test-and-check: test-if-python-changed check
+unconditional-checks: ty mypy ruff pyproject-fmt troml vulture codespell check-justfile check-readme-is-up-to-date check-readme-structure check-readability vale yamllint
 
-# Format the code, then run the checks, and the tests where Python code changed: what a TDD step ends with.
+# The exit status `run_if_changed` gives where it skips a command. A command it runs that exits with this status makes
+# the tool exit with 1, so the failure never reads as a skip.
+skipped_status := "99"
+
+# Run the command where the inputs changed since it last passed, keeping their fingerprints under the step's name, and
+# say the step was skipped where they did not. A command running a nested `just` passes it `--no-deps` where the
+# recipe needs none of its dependencies, since this `just` installed them already.
+# The tool reads the standard library alone, so it runs outside the project's environment, which it may be installing.
+if_changed(name, inputs, command) := 'status=0; uv run --no-project --quiet python -m tools.run_if_changed --skipped-status ' + skipped_status + ' --record ' + name + ' --inputs ' + inputs + ' -- ' + command + ' || status=$?; if [ "$status" -eq ' + skipped_status + ' ]; then ' + skipped(name, "its inputs did not change since it last passed") + '; else exit "$status"; fi'
+
+# Lint the Python files that changed since the linter last passed, reading them whole, as a linter reads its comments.
+# A change to another input lints every Python file.
+lint_if_changed(name, inputs, recipe) := if_changed(name, inputs + " --pass-changed " + code_globs + " --whole-files", "just --no-deps " + recipe)
+
+# Run the tests where their inputs changed since they last passed.
+[private]
+test-if-changed: install-py-dependencies install-nltk-data
+    {{ if_changed("test", "'*.py' justfile pyproject.toml uv.lock .python-version README.md docs/README.md.in 'src/*.xml'", "just test-passes") }}
+
+# Audit the Python dependencies where their inputs changed since they last passed. The advisory database is not an
+# input, so `just check` and CI report a new advisory against an unchanged lock, since they audit on every run.
+[private]
+pip-audit-if-changed: install-py-dependencies
+    {{ if_changed("pip-audit", "uv.lock justfile", "just --no-deps pip-audit") }}
+
+# The same for uv audit.
+[private]
+uv-audit-if-changed: install-py-dependencies
+    {{ if_changed("uv-audit", "uv.lock justfile", "just --no-deps uv-audit") }}
+
+# Audit the workflows where their inputs changed since they last passed.
+[private]
+zizmor-if-changed: install-py-dependencies
+    {{ if_changed("zizmor", "'.github/workflows/*' uv.lock justfile", "just --no-deps zizmor") }}
+
+# Run the checks, with fixit, the audits, and the tests where their inputs changed, at the same time; none reads what
+# another writes.
+[parallel]
+[private]
+test-and-check: test-if-changed fixit-if-changed bandit-if-changed pip-audit-if-changed uv-audit-if-changed zizmor-if-changed unconditional-checks
+
+# Format the code, then run the checks, with fixit, the audits, and the tests where their inputs changed: what a TDD step
+# ends with.
 verify: format test-and-check
 
 # === Fix issues ===
 
 # Rename a module-level name, a method, or an attribute, and every reference to it, in the files named. See `just help rename`.
-rename old new +files:
+rename old new +files: install-py-dependencies
     {{ python_m }} tools.rename "$@"
 
 [private]
@@ -394,15 +473,21 @@ update-whitelists: install-py-dependencies
 install-nltk-data: install-py-dependencies
     {{ start_capture() }} {{ python_m }} tools.readability_check --install-data {{ end_capture("install-nltk-data") }}
 
-# Install Python dependencies from the lock file.
+# Install Python dependencies from the lock file, where their inputs changed since they last synced. The malware check
+# asks a server on every sync, so skipping an unchanged one saves a request each time.
 [private]
 install-py-dependencies:
+    {{ if_changed("install-py-dependencies", "uv.lock pyproject.toml .venv/pyvenv.cfg justfile", "just --no-deps uv-sync") }}
+
+# Sync the environment with the lock file.
+[private]
+uv-sync:
     {{ start_capture() }} uv sync --no-progress --locked --all-extras --all-groups {{ end_capture("install-py-dependencies") }}
 
 # === Update dependencies ===
 
 # Update direct and indirect dependencies. Set GITHUB_TOKEN, DOCKER_HUB_USERNAME, and DOCKER_HUB_TOKEN to prevent hitting rate limits. Without Maven on the path, the run reports an error for each pom.xml it finds and leaves that pom as it is.
-update-dependencies:
+update-dependencies: install-py-dependencies
     {{ uv_run }} src/update_time/updaters/update.py
 
 alias update-deps := update-dependencies
@@ -410,7 +495,7 @@ alias update-deps := update-dependencies
 # === Documentation ===
 
 # Regenerate README.md from docs/README.md.in (fills in `update-time -h` and the log output; rewrites the screenshot).
-readme:
+readme: install-py-dependencies
     {{ python_m }} tools.generate_readme
 
 # === CI ===
@@ -438,13 +523,13 @@ prose := "docs *.md .claude/CLAUDE.md"
 # Pick a tool-flag value based on `$_color` set by `start_capture`. Useful for tools whose color flag values aren't `auto`/`always`/`never` (e.g. bandit's `screen`/`txt`, yamllint's `colored`/`auto`).
 when_color(yes, no) := f'$([ "$_color" = always ] && echo {{ yes }} || echo {{ no }})'
 
-# Prefix and suffix that wrap a command (such as a check): `{{ start_capture() }} <cmd> {{ end_capture(name) }}` captures stdout+stderr, prints `<recipe-name> PASS` or `FAIL`, and replays the captured output on failure. Neither token contains the other, so a run's outcome cannot be misread by matching on a substring. The word is coloured only on a terminal, so a run whose output is piped or captured is plain throughout and a reader of it needs no escape codes stripped.
-start_capture() := f'_color=auto; _green=; _red=; _normal=; [ -t 1 ] && { _color=always; _green="{{ GREEN }}"; _red="{{ RED }}"; _normal="{{ NORMAL }}"; export FORCE_COLOR=1; }; output=$({'
-end_capture(name) := f'; } 2>&1) || { status=$?; printf "%s ${_red}FAIL${_normal}\n%s\n" {{ name }} "$output"; exit "$status"; }; printf "%s ${_green}PASS${_normal}\n" {{ name }}'
+# Prefix and suffix that wrap a command (such as a check): `{{ start_capture() }} <cmd> {{ end_capture(name) }}` captures stdout+stderr, prints `<recipe-name> PASS` or `FAIL`, and replays the captured output on failure. These lines, the SKIP line, and the spinner go to stderr, so stdout holds only what a recipe's command writes, such as the output of `just py`. Neither token contains the other, so a run's outcome cannot be misread by matching on a substring. The word is coloured only on a terminal, so a run whose output is piped or captured is plain throughout and a reader of it needs no escape codes stripped.
+start_capture() := f'_color=auto; _green=; _red=; _normal=; [ -t 2 ] && { _color=always; _green="{{ GREEN }}"; _red="{{ RED }}"; _normal="{{ NORMAL }}"; export FORCE_COLOR=1; }; output=$({'
+end_capture(name) := f'; } 2>&1) || { status=$?; printf "%s ${_red}FAIL${_normal}\n%s\n" {{ name }} "$output" >&2; exit "$status"; }; printf "%s ${_green}PASS${_normal}\n" {{ name }} >&2'
 
 # A line saying the step was skipped, and why. The word is coloured only on a terminal, as PASS and FAIL are.
-skipped(name, reason) := f'if [ -t 1 ]; then _yellow="{{ YELLOW }}"; _normal="{{ NORMAL }}"; else _yellow=; _normal=; fi; printf "%s ${_yellow}SKIP${_normal} (%s)\n" {{ name }} "{{ reason }}"'
+skipped(name, reason) := f'if [ -t 2 ]; then _yellow="{{ YELLOW }}"; _normal="{{ NORMAL }}"; else _yellow=; _normal=; fi; printf "%s ${_yellow}SKIP${_normal} (%s)\n" {{ name }} "{{ reason }}" >&2'
 
 # Like start_capture/end_capture, but for slow commands (e.g. tests): run them in the background and animate a spinner while they run. The spinner only shows on a terminal, and leaves the cursor at the start of its line, so a PASS line printed beside it overwrites it instead of being prefixed by it. `verify` prints such lines, running the tests and the checks at the same time.
-start_progress() := f'if [ -t 1 ]; then spin=1; _green="{{ GREEN }}"; _red="{{ RED }}"; _normal="{{ NORMAL }}"; else spin=; _green=; _red=; _normal=; fi; tmp=$(mktemp); trap "rm -f $tmp" EXIT; { '
-end_progress(name) := f'; } > "$tmp" 2>&1 & pid=$!; sp="|/-\\"; while kill -0 "$pid" 2>/dev/null; do [ -n "$spin" ] && printf "%c\r" "$sp"; sp="${sp#?}${sp%???}"; sleep 0.1; done; [ -n "$spin" ] && printf " \r"; wait "$pid"; status=$?; if [ "$status" -eq 0 ]; then count=$(grep -m1 "^Ran " "$tmp" | cut -d" " -f2); printf "%s ${_green}PASS${_normal} (%s tests)\n" {{ name }} "${count:-?}"; else printf "%s ${_red}FAIL${_normal}\n%s\n" {{ name }} "$(cat "$tmp")"; exit "$status"; fi'
+start_progress() := f'if [ -t 2 ]; then spin=1; _green="{{ GREEN }}"; _red="{{ RED }}"; _normal="{{ NORMAL }}"; else spin=; _green=; _red=; _normal=; fi; tmp=$(mktemp); trap "rm -f $tmp" EXIT; { '
+end_progress(name) := f'; } > "$tmp" 2>&1 & pid=$!; sp="|/-\\"; while kill -0 "$pid" 2>/dev/null; do [ -n "$spin" ] && printf "%c\r" "$sp" >&2; sp="${sp#?}${sp%???}"; sleep 0.1; done; [ -n "$spin" ] && printf " \r" >&2; wait "$pid"; status=$?; if [ "$status" -eq 0 ]; then count=$(grep -m1 "^Ran " "$tmp" | cut -d" " -f2); printf "%s ${_green}PASS${_normal} (%s tests)\n" {{ name }} "${count:-?}" >&2; else printf "%s ${_red}FAIL${_normal}\n%s\n" {{ name }} "$(cat "$tmp")" >&2; exit "$status"; fi'

@@ -1,16 +1,17 @@
 """Test helpers that name nothing of this project's domain, so tests of any part of it can share them."""
 
+import contextlib
 import logging
 import os
 from logging import INFO
+from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, cast
 from unittest.mock import Mock, patch
 
 from tests.mutation import CHECKED_TEST, CHECKS_OFF
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
-    from pathlib import Path
+    from collections.abc import Callable, Iterator, Mapping
     from unittest.mock import _patch, _patch_dict
 
 _Decorated = TypeVar("_Decorated", bound="Callable[..., object]")
@@ -85,3 +86,44 @@ def mock_path(content: str, parent: Path | None = None, name: str = "f.py") -> M
     if parent is not None:
         path.parent = parent
     return path
+
+
+class FakeFiles:
+    """A file system in memory, which holds the text of each file under the file's path."""
+
+    def __init__(self, files: Mapping[str | Path, str] | None = None, *, failing_write: OSError | None = None) -> None:
+        """Hold the files, and the error each write raises after leaving half its text behind, if any."""
+        self.files = {str(path): text for path, text in (files or {}).items()}
+        self._failing_write = failing_write
+
+    def __getitem__(self, path: str | Path) -> str:
+        """Return the text of the file."""
+        return self.files[str(path)]
+
+    @contextlib.contextmanager
+    def patched(self) -> Iterator[None]:
+        """Stand in for the `Path` methods that look up, read, write, replace, and make files and folders."""
+        with (
+            patch.object(Path, "read_text", autospec=True, side_effect=self._read_text),
+            patch.object(Path, "write_text", autospec=True, side_effect=self._write_text),
+            patch.object(Path, "replace", autospec=True, side_effect=self._replace),
+            patch.object(Path, "exists", autospec=True, side_effect=lambda path: str(path) in self.files),
+            patch.object(Path, "mkdir", autospec=True),
+        ):
+            yield
+
+    def _read_text(self, path: Path, *_arguments: object, **_options: object) -> str:
+        if str(path) not in self.files:
+            raise FileNotFoundError(2, "No such file or directory", str(path))
+        return self.files[str(path)]
+
+    def _write_text(self, path: Path, text: str, *_arguments: object, **_options: object) -> int:
+        if self._failing_write is not None:
+            self.files[str(path)] = text[: len(text) // 2]
+            raise self._failing_write
+        self.files[str(path)] = text
+        return len(text)
+
+    def _replace(self, path: Path, target: Path) -> Path:
+        self.files[str(target)] = self.files.pop(str(path))
+        return target

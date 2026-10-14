@@ -520,7 +520,6 @@ The contract the project checks bind and a source implements, answering what it 
 The converse of the rules above: a name spelled with a leading underscore claims no caller outside its module, so an import elsewhere means the spelling and the fact have parted company.
 The cooldown probe returns a value, so Update-time adds no cooldown of its own:.
 The cooldown still only applies to Docker Hub, because the OCI protocol exposes no publication date.
-The copy a mutation check imports inside the test it checks is left alone, since it never writes to `_SURVIVALS`.
 The declared hash is passed in rather than read from `reference`, because the URL's line carries no hash — only the dictionary's line does.
 The default for a release fixture no test asks project URLs of.
 The definitions a call reaches: a function, a method, and a class.

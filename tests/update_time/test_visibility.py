@@ -5,7 +5,7 @@ import pathlib
 import unittest
 from typing import TYPE_CHECKING
 
-from tests.update_time.helpers import module_level_assignments, project
+from tests.update_time.helpers import module_level_assignments, project, syntax_tree
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -114,7 +114,7 @@ def _module_local_names(
     path rather than by module name, so the two `helpers.py` modules are told apart. Attributes and strings are
     matched by name alone, which can only hide a name, never invent one.
     """
-    trees = {path: ast.parse(path.read_text()) for path in files}
+    trees = {path: syntax_tree(path.read_text()) for path in files}
     imported: set[tuple[str, str]] = set()
     mentioned: set[str] = set()
     for tree in trees.values():
@@ -157,7 +157,7 @@ def _privates_imported_elsewhere(files: list[pathlib.Path]) -> list[str]:
     """
     reported: list[str] = []
     for path in files:
-        for node in ast.walk(ast.parse(path.read_text())):
+        for node in ast.walk(syntax_tree(path.read_text())):
             if not isinstance(node, ast.ImportFrom) or not node.module or node.level:
                 continue
             module_file = node.module.replace(".", "/") + ".py"

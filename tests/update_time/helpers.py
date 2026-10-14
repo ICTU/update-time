@@ -58,6 +58,12 @@ def declaration(dependency: str, version: str, path: Mock, line: int, position: 
     return Declaration(dependency, version, Location(path, line), uv_sourced=False, direct_url=False, position=position)
 
 
+@cache
+def syntax_tree(source: str) -> ast.Module:
+    """Return the syntax tree of the source, parsing each source once."""
+    return ast.parse(source)
+
+
 def module_level_assignments(tree: ast.Module) -> Iterator[tuple[list[ast.expr], ast.expr | None]]:
     """Yield the targets and assigned value of each module-level assignment, annotated or not.
 
@@ -905,6 +911,7 @@ def _github_api(  # noqa: PLR0913 — what each endpoint answers
     return Mock(side_effect=serve)
 
 
+@contextlib.contextmanager
 def patch_github(  # noqa: PLR0913 — what each endpoint answers
     releases: list | None = None,
     tags: list | None = None,
@@ -914,8 +921,11 @@ def patch_github(  # noqa: PLR0913 — what each endpoint answers
     comparison_status: str | Mock = "ahead",
     archived: bool = False,
     tag_ref: Mock | Exception | None = None,
-) -> _patch:
-    """Patch requests.get to serve the GitHub API endpoints from the given values (see `_github_api`)."""
+) -> Generator[None]:
+    """Patch requests.get to serve the GitHub API endpoints from the given values (see `_github_api`).
+
+    A test decorated with it gets a fresh mock on every run, so each run sees only its own requests.
+    """
     api = _github_api(
         releases,
         tags,
@@ -925,7 +935,8 @@ def patch_github(  # noqa: PLR0913 — what each endpoint answers
         archived=archived,
         tag_ref=tag_ref,
     )
-    return patch("requests.get", api)
+    with patch("requests.get", api):
+        yield
 
 
 def github_requests(endpoint: str) -> list[str]:

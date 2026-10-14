@@ -2,8 +2,10 @@
 
 import argparse
 import ast
+import hashlib
 import inspect
 import io
+import json
 import re
 import sys
 import textwrap
@@ -42,6 +44,9 @@ _ABBREVIATIONS = frozenset({"e.g", "i.e", "etc"})
 _NLTK_DATA = ".nltk"
 _TAGGER = "averaged_perceptron_tagger_eng"
 _SPLITTER = "punkt_tab"
+
+# Where the check keeps each sentence's verdict for the next run, which reads it rather than scoring the sentence again.
+_CACHE = Path("build/readability-verdicts.json")
 
 # A subject reaching its own verb opens one noun phrase; a second one before that verb is a clause wedged between.
 _SPLIT_SUBJECT_DETERMINERS = 2
@@ -124,11 +129,13 @@ def _string_fragments(source_code: str) -> Iterator[_Fragment]:
     the interpolations between them, and those parts are not yielded again on their own.
     """
     tree = ast.parse(source_code)
+    # The parser counts a column in UTF-8 bytes, and ends a line only where `bytes.splitlines` does.
+    source_lines = source_code.encode().splitlines()
     interpolated = {id(part) for node in ast.walk(tree) if isinstance(node, ast.JoinedStr) for part in node.values}
     for node in ast.walk(tree):
-        if isinstance(node, ast.JoinedStr) and _is_prose_string(node, source_code):
+        if isinstance(node, ast.JoinedStr) and _is_prose_string(node, source_lines):
             yield _Fragment(node.lineno, _literal_text(node))
-        elif isinstance(node, ast.Constant) and (text := _own_prose(node, source_code, interpolated)) is not None:
+        elif isinstance(node, ast.Constant) and (text := _own_prose(node, source_lines, interpolated)) is not None:
             yield _Fragment(node.lineno, text)
 
 
@@ -138,16 +145,16 @@ def _literal_text(node: ast.JoinedStr) -> str:
     return "".join(parts)
 
 
-def _own_prose(node: ast.Constant, source_code: str, interpolated: set[int]) -> str | None:
+def _own_prose(node: ast.Constant, source_lines: list[bytes], interpolated: set[int]) -> str | None:
     """Return the prose the constant holds as a literal in its own right, or None when it holds none."""
-    if not isinstance(node.value, str) or id(node) in interpolated or not _is_prose_string(node, source_code):
+    if not isinstance(node.value, str) or id(node) in interpolated or not _is_prose_string(node, source_lines):
         return None
     return inspect.cleandoc(node.value)
 
 
-def _is_prose_string(node: ast.expr, source_code: str) -> bool:
+def _is_prose_string(node: ast.expr, source_lines: list[bytes]) -> bool:
     """Return whether the node is a string literal holding prose rather than a regexp."""
-    prefix = _STRING_PREFIX.match(ast.get_source_segment(source_code, node) or "")
+    prefix = _STRING_PREFIX.match(source_lines[node.lineno - 1][node.col_offset :].decode())
     return prefix is not None and "r" not in prefix.group("prefix").lower()
 
 
@@ -400,13 +407,75 @@ def _whitelisted_sentences(whitelist: Path | None) -> set[str]:
 type _Flagged = Iterable[tuple[Prose, str, str]]
 
 
-def _flagged(paths: list[Path], limits: _Limits) -> _Flagged:
+class _Verdicts:
+    """Faults per sentence, as an earlier run judged them and as this run reaches them."""
+
+    def __init__(self, earlier_run: dict[str, str]) -> None:
+        """Hold the verdicts an earlier run left, and none of this run's yet."""
+        self._earlier_run = earlier_run
+        self.this_run: dict[str, str] = {}
+
+    def faults(self, sentence: str, limits: _Limits) -> str:
+        """Return what makes the sentence hard to read, scoring it where neither this run nor an earlier one did."""
+        key = _normalized(sentence)
+        faults = self.this_run.get(key, self._earlier_run.get(key))
+        if faults is None:
+            faults = _faults(sentence, limits)
+        self.this_run[key] = faults
+        return faults
+
+
+def _flagged(paths: list[Path], limits: _Limits, verdicts: _Verdicts) -> _Flagged:
     """Yield each sentence over a limit, with the prose holding it and what makes it hard to read."""
     tokenizer = _sentence_tokenizer()
     for prose in extract_prose(*paths):
         for sentence in _sentences(tokenizer, prose.text):
-            if faults := _faults(sentence, limits):
+            if faults := verdicts.faults(sentence, limits):
                 yield prose, sentence, faults
+
+
+def _cache_key(limits: _Limits) -> str:
+    """Return a hash of what a verdict depends on besides its sentence: this check's source, the limits, and nltk."""
+    source = inspect.getsource(sys.modules[__name__])
+    return hashlib.sha256(repr((source, limits, nltk.__version__)).encode()).hexdigest()
+
+
+def _cached_verdicts(key: str) -> dict[str, str]:
+    """Return the faults of each sentence an earlier run judged under the key, or none where the cache is unusable.
+
+    A cache that is missing, unreadable, or written under another key is unusable.
+    """
+    try:
+        cache = json.loads(_CACHE.read_text())
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as error:
+        _report_unread_cache(f"does not parse: {error}")
+        return {}
+    if not isinstance(cache, dict) or not isinstance(cache.get("verdicts"), dict):
+        _report_unread_cache("does not hold a mapping of verdicts")
+        return {}
+    return cache["verdicts"] if cache.get("key") == key else {}
+
+
+def _report_unread_cache(reason: str) -> None:
+    """Write why the check scores every sentence: the cache an earlier run left cannot be read."""
+    sys.stderr.write(f"Scoring every sentence, since {_CACHE} {reason}\n")
+
+
+def _write_cache(key: str, verdicts: dict[str, str]) -> None:
+    """Write the verdicts under the key for the next run to read, in place of the ones an earlier run left.
+
+    The verdicts go to a file of their own first, which then replaces the cache, so a write that fails partway leaves
+    the cache as the earlier run left it.
+    """
+    staging_file = _CACHE.with_name(f"{_CACHE.name}.tmp")
+    try:
+        _CACHE.parent.mkdir(parents=True, exist_ok=True)
+        staging_file.write_text(json.dumps({"key": key, "verdicts": verdicts}, indent=0, sort_keys=True))
+        staging_file.replace(_CACHE)
+    except OSError as error:
+        sys.stderr.write(f"Keeping {_CACHE} as an earlier run left it, since writing it failed: {error}\n")
 
 
 def main() -> int:
@@ -426,12 +495,18 @@ def main() -> int:
     arguments = parser.parse_args()
     if arguments.install_data:
         return _install_data()
-    flagged = _flagged(arguments.paths, _Limits())
+    limits = _Limits()
+    key = _cache_key(limits)
+    verdicts = _Verdicts(_cached_verdicts(key))
+    flagged = _flagged(arguments.paths, limits, verdicts)
     if arguments.make_whitelist:
-        return _write_whitelist(flagged, arguments.make_whitelist)
-    if arguments.check_whitelist:
-        return _check_whitelist(flagged, arguments.check_whitelist)
-    return _report(flagged, arguments.whitelist)
+        exit_code = _write_whitelist(flagged, arguments.make_whitelist)
+    elif arguments.check_whitelist:
+        exit_code = _check_whitelist(flagged, arguments.check_whitelist)
+    else:
+        exit_code = _report(flagged, arguments.whitelist)
+    _write_cache(key, verdicts.this_run)
+    return exit_code
 
 
 def _install_data() -> int:
