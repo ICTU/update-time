@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
+from update_time.domain import dependency
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, FloatingPin, ImageNotLookedUp, PinnedDependency, Release
@@ -188,13 +189,28 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
             "return (self._suffix_tag.prefix, self._suffix_tag.suffix)",
             'return (self._suffix_tag.prefix, "")',
             "a suffix's remainder is dropped from its label, so a slim reference drifts onto the fat image",
-        )
+        ),
+        Mutation(
+            oci.Tag._date_spelling,
+            're.sub(r"\\d", "0", cast("re.Match[str]", self._match).group("version"))',
+            '""',
+            "every snapshot spells its date the same way, so a reference on a date moves onto a timestamp",
+        ),
+        Mutation(
+            oci.Tag._date_spelling,
+            'cast("re.Match[str]", self._match).group("version")',
+            "str(self.version)",
+            "a snapshot's date spelling is read from its parsed version, so an undashed date moves onto a dashed one",
+        ),
+        Mutation(
+            dependency,
+            r'(?:-\d{2}-\d{2}-\d{2})?)(?P<suffix>)$"',
+            r'(?:-\d{2}-\d{2}-\d{2})?)(?P<suffix>)"',
+            "a dashed date is read wherever it starts the tag, so a slim reference drifts onto the fat image",
+        ),
     )
     def test_which_listed_tags_leave_the_reference_as_it_is(self):
-        """Test which listed tags leave the reference on the tag it already names.
-
-        Each case names an image of its own, since the tag listing is cached per image.
-        """
+        """Test which listed tags leave the reference on the tag it already names."""
         cases = {
             "a lower version": ("lower", "1.1", "1.0"),
             "an unparsable version": ("invalid-version", "1.3", "1.2.invalid"),
@@ -204,6 +220,10 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
             "another suffix label": ("other-suffix-label", "3.14.6-alpine3.23", "3.15.0-debian12"),
             "a suffix that drops the remainder": ("suffix-remainder", "3.14.6-alpine3.19-slim", "3.15.0-alpine3.19"),
             "another label prefix": ("ghcr.io/astral-sh/uv", "python3.12-bookworm-slim", "pypy3.99-bookworm-slim"),
+            "a timestamp for a date": ("date", "2023-10-20", "2023-10-21-08-00-00"),
+            "a release for a snapshot": ("release-for-snapshot", "2023-10-19", "20240101.1"),
+            "a dashed date for an undashed one": ("debian", "bookworm-20240110", "bookworm-2024-01-11"),
+            "a date without the label after it": ("dated-slim", "2023-10-19-slim", "2023-10-20"),
         }
         for case, (image, current_tag, listed_tag) in cases.items():
             with self.subTest(case=case):
@@ -302,11 +322,23 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         url = "https://registry-1.docker.io/v2/library/manifest_not_found/manifests/2.2"
         self.assert_could_not_fetch_logged(url, status=HTTPStatus.NOT_FOUND)
 
+    @kills(
+        Mutation(
+            oci.Tag._is_dated_snapshot,
+            ".re is _DASHED_SNAPSHOT",
+            ".re is None",
+            "a timestamp is read as a release, so a release pin moves onto it",
+        )
+    )
     def test_dated_snapshot_tag_is_no_candidate_for_a_release(self):
-        """Test that a tag naming a date, such as `20260805`, loses to a release tag it sorts above."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("20260805", DIGEST1), docker_tag("3.25.0", DIGEST2))
-        latest = get_latest_tag("dated_snapshot", "3.24.1")
-        self.assertEqual(latest.version, "3.25.0")
+        """Test that a tag naming a date, or a date and a time, loses to a release tag it sorts above."""
+        cases = {"a date": ("dated_snapshot", "20260805"), "a timestamp": ("timestamped", "2026-02-12-23-06-03")}
+        for case, (image, snapshot) in cases.items():
+            with self.subTest(case=case):
+                self.requests.side_effect = mock_docker_registry(
+                    docker_tag(snapshot, DIGEST1), docker_tag("3.25.0", DIGEST2)
+                )
+                self.assertEqual(get_latest_tag(image, "3.24.1").version, "3.25.0")
 
     @kills(
         Mutation(
@@ -348,10 +380,10 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertEqual(latest.version, "python3.13-bookworm-slim")
         self.assertEqual(DIGEST, latest.sha)
 
-    def test_version_prefix_preserved(self):
-        """Test that a 'v'-prefixed tag keeps its 'v' when bumped (v3.12 -> v3.13, not 3.13)."""
-        self.requests.side_effect = mock_docker_registry(docker_tag("v3.13", DIGEST))
-        self.assertEqual(get_latest_tag("prefixed", "v3.12").version, "v3.13")
+    def test_update_writes_the_listed_spelling(self):
+        """Test that an update writes the tag as the registry lists it, such as the leading zero in `2024.01`."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("2024.01", DIGEST))
+        self.assertEqual(get_latest_tag("cimg/base", "2023.12").version, "2024.01")
 
     def test_outside_cooldown(self):
         """Test that tags pushed before the cooldown are considered, with the push date as publication date."""
@@ -388,14 +420,6 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         newest = latest.project.newest
         self.assertEqual(Release("3.14.7", recent), newest)  # ...staleness does not.
 
-    @kills(
-        Mutation(
-            oci._eligible_tag,
-            "if not is_current and not walk.past(name, latest.pushed, report_undated):",
-            "if not is_current and not (walk.past(name, latest.pushed, report_undated) or latest._is_dated_snapshot):",
-            "a dated snapshot is adopted however freshly it was pushed",
-        )
-    )
     def test_dated_snapshot_within_the_cooldown_is_held_back(self):
         """Test that a snapshot pushed too recently is held back, and the sibling below it adopted instead."""
         fresh = days_ago(2)
@@ -415,25 +439,32 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
             oci,
             '_DATED_SNAPSHOT = re.compile(r"(?P<prefix>.+-)(?P<version>\\d{8})(?P<suffix>)$")',
             '_DATED_SNAPSHOT = re.compile(r"(?P<prefix>).+-(?P<version>\\d{8})(?P<suffix>)$")',
-            "a snapshot's label is read as no part of its tag, so the pin loses it and crosses to another line",
-        )
+            "a snapshot's prefix leaves out its label, so the reference crosses to another line",
+        ),
+        Mutation(
+            dependency,
+            r'r"(?P<prefix>(?:.+-)?)(?P<version>\d{4}-',
+            r'r"(?P<prefix>)(?:.+-)?(?P<version>\d{4}-',
+            "a dashed date's prefix leaves out its label, so the reference crosses to another line",
+        ),
     )
-    def test_dated_snapshot_stays_on_its_own_line(self):
-        """Test that a dated snapshot is not moved onto another label's line, however much newer that line is.
-
-        `trixie-20260803` is newer than every bookworm snapshot, and the reference stays on the bookworm line.
-        """
-        current = days_ago(955)
-        sibling = days_ago(200)
-        other_line = days_ago(20)
-        self.requests.side_effect = mock_docker_registry(
-            docker_tag("trixie-20260803", DIGEST3, tag_last_pushed=other_line),
-            docker_tag("bookworm-20250101", DIGEST2, tag_last_pushed=sibling),
-            docker_tag("bookworm-20240110", DIGEST1, tag_last_pushed=current),
-        )
-        latest = get_latest_tag("debian", "bookworm-20240110")
-        self.assertEqual(latest.version, "bookworm-20250101")
-        self.assertEqual(latest.sha, DIGEST2)
+    def test_dated_snapshot_moves_to_the_newest_snapshot_on_its_own_line(self):
+        """Test that a dated snapshot moves to the newest snapshot on its own line, whatever another line holds."""
+        cases = {
+            "a date": ("debian", "bookworm-20240110", "bookworm-20250101", "trixie-20260803"),
+            "a labelled dashed date": ("jupyter/base-notebook", "x86_64-2023-10-19", "x86_64-2023-10-20", "2023-10-21"),
+            "a timestamp": ("gitpod/workspace-full", "2025-11-14-10-05-32", "2026-02-12-23-06-03", "x86_64-2026-03-01"),
+        }
+        for case, (image, current_tag, sibling_tag, other_line_tag) in cases.items():
+            with self.subTest(case=case):
+                self.requests.side_effect = mock_docker_registry(
+                    docker_tag(other_line_tag, DIGEST3),
+                    docker_tag(sibling_tag, DIGEST2),
+                    docker_tag(current_tag, DIGEST1),
+                )
+                latest = get_latest_tag(image, current_tag)
+                self.assertEqual(latest.version, sibling_tag)
+                self.assertEqual(latest.sha, DIGEST2)
 
     def test_listing_read_once_for_two_references(self):
         """Test that a second reference to one image is dated by the listing the first one already read."""

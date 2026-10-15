@@ -1403,7 +1403,7 @@ When updating an image tag, Update-time keeps the non-numeric parts of the tag a
 
 A floating tag such as `latest` or `trixie`, or a reference without a tag, is pinned rather than updated (see [Floating image tags](#floating-image-tags)).
 
-A dated snapshot such as `debian:bookworm-20260803` names the day its image was built. Update-time updates it to the newest snapshot under its label, so a reference on `bookworm-20240110` moves to `bookworm-20260803`. A repository can also name a snapshot by the date alone, as Alpine names one `20260805` beside its `3.24.1` release. Update-time updates such a tag to the newest snapshot as well. A reference on a release keeps following releases, and a reference on a snapshot keeps following snapshots.
+A dated snapshot such as `debian:bookworm-20260803` names the day its image was built. A repository can also name a snapshot by the date alone, as Alpine names one `20260805` beside its `3.24.1` release. A snapshot can spell the date with dashes, as `jupyter/base-notebook:2023-10-20` does, and add the time of the build, as `gitpod/workspace-full:2026-02-12-23-06-03` does. Update-time updates a snapshot to the newest snapshot under its label that spells the date the same way. So a reference on `bookworm-20240110` moves to `bookworm-20260803`, and a reference on `2023-10-19` moves to `2023-10-20` rather than to a snapshot naming a time. A reference on a release keeps following releases, and a reference on a snapshot keeps following snapshots.
 
 #### Pinning
 

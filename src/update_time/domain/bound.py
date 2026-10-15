@@ -9,6 +9,7 @@ from packaging.specifiers import SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from update_time.domain.dependency import (
+    DASHED_SNAPSHOT,
     MAIN_VERSION,
     DependencyVersion,
     PinnedDependency,
@@ -44,13 +45,20 @@ _SENTINEL_VERSION = Version("9" * 18)
 
 _MAIN_VERSION_COMPONENT = re.compile(MAIN_VERSION)
 
+_DASHED_SNAPSHOT = re.compile(DASHED_SNAPSHOT)
+
 # A version's first numbers end at a qualifier PEP 440 cannot read, such as the `.Final` of `4.1.100.Final` or the
 # `_7` of `21.0.4_7-jdk`.
 _NUMBERS = re.compile(r"\d+(?:\.\d+)*")
 
 
 def _parse_version(version: VersionString) -> Version | None:
-    """Parse the version, its main version component (e.g. for an image tag), or the first numbers it holds, if any."""
+    """Parse the version, its main version component (e.g. for an image tag), or the first numbers it holds, if any.
+
+    An image tag naming a date with dashes reads as the date without them, as its candidates read.
+    """
+    if (snapshot := _DASHED_SNAPSHOT.match(version)) is not None:
+        return Version(snapshot.group("version").replace("-", ""))
     if is_valid(version):
         return Version(version)
     component = _MAIN_VERSION_COMPONENT.search(version)

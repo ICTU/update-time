@@ -186,7 +186,6 @@ For example, if `python:3.12.1` is the current version pin and `python:3.13` is 
 GitHub publishes no reason beside the flag, so the warning gives none.
 GitHub serves its sponsorship pages under this path, which it reserves, so no owner can go by this name.
 Given no titles, the chapter documents every declared dependency type, so `_problems` reports nothing.
-Ignore a dated snapshot, which is no update for a tag naming a release.
 In a `requirements.txt` it reports no new version, because it resolves none for a requirement that pins no exact version.
 In a file that can hold no comment, the directives are the value of an `update-time` field instead.
 Incorrect 'cooldown>=30' in the update-time marker for in : this comparison adopts a release only while it is fresh and holds it back once it is old, so it sets no cooldown.
@@ -743,7 +742,6 @@ a section of the details chapter that documents no dependency type goes unreport
 a section that is not the object it should be reads as naming no marker.
 a service declared with no body is read as a mapping, ending the run.
 a service has no body.
-a snapshot's label is read as no part of its tag, so the pin loses it and crosses to another line.
 a source is asked about a reference no check needs an answer for, so the run pays for the request.
 a tag naming neither a version nor a channel is dated by no release, whatever the registry serves.
 a tag the registry serves no manifest for is dated by the image's newest release.

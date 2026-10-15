@@ -88,6 +88,11 @@ class VersionBoundTest(unittest.TestCase):
         version_bound = VersionBound(Verb.ALLOW, SpecifierSet(">=3.12"))
         self.assertEqual(_Redundancy.NO_EFFECT, version_bound.redundancy("python3.14"))
 
+    def test_redundancy_of_image_tag_naming_a_dashed_date(self):
+        """Test that a bound on a tag such as `2023-10-19` is classified against the whole date, as `20231019`."""
+        version_bound = VersionBound(Verb.ALLOW, SpecifierSet("<2024"))
+        self.assertEqual(version_bound.redundancy("2023-10-19"), _Redundancy.BLOCKS_ALL)
+
     def test_redundancy_invalid_current_version(self):
         """Test that an unparsable current version yields no redundancy verdict rather than raising."""
         self.assertIsNone(VersionBound(Verb.ALLOW, SpecifierSet("<3.13")).redundancy("not-a-version"))
