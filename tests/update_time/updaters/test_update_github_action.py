@@ -50,7 +50,7 @@ from tests.update_time.helpers import (
 from tests.update_time.updaters.helpers import github_version
 
 if TYPE_CHECKING:
-    from unittest.mock import _patch
+    from contextlib import ContextDecorator
 
 # The directives the tests write in a marker, and expect named as what opted a reference in.
 _ALLOW_HASH_DRIFT = "update-time: allow[hash-drift]"
@@ -66,7 +66,7 @@ def _drifted(
     return DriftedPin(dependency, version, Location(workflow_yml, 1), OLD_SHA, new_sha=new_sha)
 
 
-def _patch_github_with_a_fresh_release() -> _patch:
+def _patch_github_with_a_fresh_release() -> ContextDecorator:
     """Patch GitHub to serve release 1.1 inside the cooldown, beside release 1.0 past it, both at the same commit."""
     return patch_github(
         releases=[

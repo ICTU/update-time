@@ -18,11 +18,31 @@ from update_time.primitives import timestamp
 from tests import helpers, mutation_subject
 from tests import mutation as checker
 from tests.helpers import patch_environ
-from tests.mutation import CHECKED_TEST, CHECKS_OFF, Mutation, Outcome, Result, _failure, _record_survival, kills
-from tests.mutation_subject import Doubler, is_even, is_multiple_of_three, is_positive_even
+from tests.mutation import (
+    CHECKED_TEST,
+    CHECKS_OFF,
+    KillsTestLoader,
+    Mutation,
+    Outcome,
+    Result,
+    _failure,
+    _record_survival,
+    kills,
+)
+from tests.mutation_subject import (
+    Banner,
+    DelegatingDoubler,
+    Doubler,
+    Greeter,
+    is_even,
+    is_multiple_of_three,
+    is_odd,
+    is_positive_even,
+    scaled,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 _EVEN = "number % 2 == 0"
 _ODD = "number % 2 != 0"
@@ -38,9 +58,18 @@ _DOUBLER_TEST_NAME = "tests.test_mutation.DoublerTest.test_a_doubled_value"
 _ONE_DOUBLED_TEST_NAME = "tests.test_mutation.DoublerTest.test_one_doubled"
 _TWO_DOUBLED_TEST_NAME = "tests.test_mutation.DoublerTest.test_two_doubled"
 _THREE_DOUBLED_TEST_NAME = "tests.test_mutation.DoublerTest.test_three_doubled"
-# The `IsEvenTest` tests `KillsTest` runs to exercise the decorator: one registers a single mutation, one several.
+_ODD_TEST_NAME = "tests.test_mutation.IsOddTest.test_an_odd_number"
+_DELEGATING_TEST_NAME = "tests.test_mutation.DelegatingDoublerTest.test_a_doubled_value"
+_GREETER_TEST_NAME = "tests.test_mutation.GreeterTest.test_a_greeting"
+_SCALED_TEST_NAME = "tests.test_mutation.ScaledTest.test_a_value_scaled_by_the_defaults"
+_INDENTED_BANNER_TEST_NAME = "tests.test_mutation.BannerTest.test_an_indented_banner"
+_FLUSH_LEFT_BANNER_TEST_NAME = "tests.test_mutation.BannerTest.test_a_flush_left_banner"
+# The `IsEvenTest` tests `KillsTest` runs to exercise the decorator: one registers a single mutation, one several,
+# one asserts inside a subTest, and one has a patch above its decorator.
 _DECORATED_TEST = "test_an_odd_number"
 _SEVERAL_MUTATIONS_TEST = "test_an_odd_number_against_several_mutations"
+_SUBTEST_DECORATED_TEST = "test_an_odd_number_in_a_subtest"
+_PATCHED_ABOVE_TEST = "test_an_odd_number_patched_above_the_decorator"
 _REGRESSION = "an odd number is reported as even"
 _RAISING_REGRESSION = "deciding whether a number is even raises instead of answering"
 _ONLY_THREE = "number == 3"
@@ -88,6 +117,12 @@ class IsEvenTest(unittest.TestCase):
         self.assertFalse(is_even(3))
 
     @kills(_ODD_REPORTED_AS_EVEN)
+    def test_an_odd_number_in_a_subtest(self):
+        """Test that an odd number is not even, asserting inside a subTest."""
+        with self.subTest(number=3):
+            self.assertFalse(is_even(3))
+
+    @kills(_ODD_REPORTED_AS_EVEN)
     @patch("tests.mutation_subject.is_even")
     def test_an_odd_number_patched_beneath_the_decorator(self, patched_subject: Mock):
         """Test that an odd number is not even, with a patch handing this test a mock from beneath the decorator.
@@ -131,6 +166,50 @@ class IsMultipleOfThreeTest(unittest.TestCase):
         self.assertTrue(is_multiple_of_three(3))
 
 
+class IsOddTest(unittest.TestCase):
+    """Unit tests for deciding whether a number is odd, whose answers are cached, which a cached anchor targets."""
+
+    def test_an_odd_number(self):
+        """Test that three is odd."""
+        self.assertTrue(is_odd(3))
+
+
+class ScaledTest(unittest.TestCase):
+    """Unit tests for scaling a value, whose defaults a mutation can change."""
+
+    def test_a_value_scaled_by_the_defaults(self):
+        """Test that two scaled by the default factor and offset is six."""
+        self.assertEqual(scaled(2), 6)
+
+
+class BannerTest(unittest.TestCase):
+    """Unit tests for the banner, whose methods hold a string spanning lines."""
+
+    def test_an_indented_banner(self):
+        """Test that the indented banner keeps the indentation of its second line."""
+        self.assertEqual(Banner().indented(), "first\n        second")
+
+    def test_a_flush_left_banner(self):
+        """Test that the flush-left banner starts its second line at the left margin."""
+        self.assertEqual(Banner().flush_left(), "first\nsecond")
+
+
+class GreeterTest(unittest.TestCase):
+    """Unit tests for the greeter, whose method's default names a constant of its class."""
+
+    def test_a_greeting(self):
+        """Test that the greeting addresses the name with the class's greeting."""
+        self.assertEqual(Greeter().greeting("world"), "hello, world")
+
+
+class DelegatingDoublerTest(unittest.TestCase):
+    """Unit tests for the doubler that delegates to the one it extends, whose method's code needs its class."""
+
+    def test_a_doubled_value(self):
+        """Test that two doubled is four."""
+        self.assertEqual(DelegatingDoubler().doubled(2), 4)
+
+
 class DoublerTest(unittest.TestCase):
     """Unit tests for the doubler's methods, which an anchored mutation targets."""
 
@@ -155,13 +234,19 @@ class DoublerTest(unittest.TestCase):
         self.assertEqual(Doubler().three_doubled, 6)
 
 
+def _checked(mutation: Mutation, test_name: str) -> tuple[Result, int]:
+    """Return what checking the mutation showed, and how many times the check executed the module afresh."""
+    with patch.object(checker, "_executed_module", wraps=checker._executed_module) as executed:
+        return mutation.check(test_name), executed.call_count
+
+
 class CheckTest(unittest.TestCase):
     """Unit tests for checking a test against the mutation it is meant to kill."""
 
     @kills(_SPAN_STOPS_BEFORE_THE_NEWLINE)
     def test_a_mutation_anchored_to_a_function_is_applied_inside_it(self):
         """Test that a mutation anchored to a function is applied to it, up to the newline after its last line."""
-        self.assertEqual(Mutation(is_even, _EVEN, _ODD).check(_SUBJECT_TEST_NAME), Result(Outcome.KILLED))
+        self.assertEqual(_checked(Mutation(is_even, _EVEN, _ODD), _SUBJECT_TEST_NAME), (Result(Outcome.KILLED), 0))
         self.assertEqual(Mutation(is_even, f"{_EVEN}\n", f"{_ODD}\n").check(_SUBJECT_TEST_NAME), Result(Outcome.KILLED))
 
     @kills(
@@ -179,7 +264,7 @@ class CheckTest(unittest.TestCase):
         whole_file = Mutation(mutation_subject, _DOUBLING, _TRIPLING)
         self.assertEqual(whole_file.check(_DOUBLER_TEST_NAME), ambiguous)
         anchored = Mutation(Doubler.doubled, _DOUBLING, _TRIPLING)
-        self.assertEqual(anchored.check(_DOUBLER_TEST_NAME), Result(Outcome.KILLED))
+        self.assertEqual(_checked(anchored, _DOUBLER_TEST_NAME), (Result(Outcome.KILLED), 0))
 
     @kills(
         Mutation(
@@ -193,7 +278,7 @@ class CheckTest(unittest.TestCase):
     def test_a_mutation_anchored_to_a_property_is_applied_inside_its_getter(self):
         """Test that a mutation anchored to a property reaches the getter, which is what carries its names."""
         mutation = Mutation(Doubler.one_doubled, "self.doubled(1)", "self.doubled(2)")
-        self.assertEqual(mutation.check(_ONE_DOUBLED_TEST_NAME), Result(Outcome.KILLED))
+        self.assertEqual(_checked(mutation, _ONE_DOUBLED_TEST_NAME), (Result(Outcome.KILLED), 0))
 
     @kills(
         Mutation(
@@ -210,7 +295,7 @@ class CheckTest(unittest.TestCase):
     def test_a_mutation_anchored_to_a_cached_property_is_applied_inside_its_function(self):
         """Test that a mutation anchored to a cached property reaches its function, which is what carries its names."""
         mutation = Mutation(Doubler.three_doubled, "self.doubled(3)", "self.doubled(4)")
-        self.assertEqual(mutation.check(_THREE_DOUBLED_TEST_NAME), Result(Outcome.KILLED))
+        self.assertEqual(_checked(mutation, _THREE_DOUBLED_TEST_NAME), (Result(Outcome.KILLED), 0))
 
     @kills(
         Mutation(
@@ -225,10 +310,51 @@ class CheckTest(unittest.TestCase):
         mutation = Mutation(Doubler, "A value doubler", "A doubler")
         self.assertEqual(mutation.check(_DOUBLER_TEST_NAME), Result(Outcome.SURVIVED))
 
-    def test_a_mutation_anchored_to_a_classmethod_is_applied_inside_it(self):
-        """Test that a mutation anchored to a classmethod is applied to it, so its test is reported as killed."""
-        mutation = Mutation(Doubler.two_doubled, "cls().doubled(2)", "cls().doubled(3)")
-        self.assertEqual(mutation.check(_TWO_DOUBLED_TEST_NAME), Result(Outcome.KILLED))
+    def test_a_mutation_anchored_to_a_function_is_checked_without_executing_its_module_afresh(self):
+        """Test that a mutation of a classmethod, cached function, or default kills its test in the loaded module."""
+        is_odd(3)  # A check must not serve this cached answer to the test of the mutated function.
+        cases = (
+            (
+                "classmethod",
+                Mutation(Doubler.two_doubled, "cls().doubled(2)", "cls().doubled(3)"),
+                _TWO_DOUBLED_TEST_NAME,
+            ),
+            ("cached function", Mutation(is_odd, _ODD, _EVEN), _ODD_TEST_NAME),
+            ("a default", Mutation(scaled, "factor: int = 3", "factor: int = 4"), _SCALED_TEST_NAME),
+            ("a keyword-only default", Mutation(scaled, "offset: int = 0", "offset: int = 1"), _SCALED_TEST_NAME),
+        )
+        for case, mutation, test_name in cases:
+            with self.subTest(case):
+                self.assertEqual(_checked(mutation, test_name), (Result(Outcome.KILLED), 0))
+
+    def test_a_mutation_leaves_a_string_spanning_the_methods_lines_as_it_is(self):
+        """Test that a mutation of a method holding a string spanning lines changes nothing in the string."""
+        cases = (
+            ("indented", Banner.indented, "indented as the body is", _INDENTED_BANNER_TEST_NAME),
+            ("at the left margin", Banner.flush_left, "flush left", _FLUSH_LEFT_BANNER_TEST_NAME),
+        )
+        for case, method, remark, test_name in cases:
+            with self.subTest(case):
+                mutation = Mutation(method, remark, f"{remark}, reworded")
+                self.assertEqual(_checked(mutation, test_name), (Result(Outcome.SURVIVED), 0))
+
+    def test_a_mutation_of_a_method_whose_definition_needs_its_class_executes_its_module_afresh(self):
+        """Test that a mutation of a method whose definition needs its class executes its module afresh."""
+        cases = (
+            (
+                "a method calling super()",
+                Mutation(DelegatingDoubler.doubled, "super().doubled(value)", "super().doubled(value + 1)"),
+                _DELEGATING_TEST_NAME,
+            ),
+            (
+                "a default naming a class constant",
+                Mutation(Greeter.greeting, "{greeting}, {name}", "{greeting}; {name}"),
+                _GREETER_TEST_NAME,
+            ),
+        )
+        for case, mutation, test_name in cases:
+            with self.subTest(case):
+                self.assertEqual(_checked(mutation, test_name), (Result(Outcome.KILLED), 1))
 
     def test_a_snippet_the_anchored_function_holds_once_and_the_file_twice(self):
         """Test that a snippet the anchored function holds once is applied there, and nowhere else in the file."""
@@ -303,6 +429,11 @@ class CheckTest(unittest.TestCase):
                 "SyntaxError",
             ),
             ("the test errors", Mutation(mutation_subject.is_even, _EVEN, _ERRORING), "NameError"),
+            (
+                "the mutated definition raises when executed",
+                Mutation(mutation_subject.is_even, "number: int)", "number: int = 1 // 0)"),
+                "ZeroDivisionError",
+            ),
             ("the test module raises when imported", deletes_the_registration, "AttributeError"),
         ):
             with self.subTest(case=case):
@@ -363,7 +494,7 @@ class CheckTest(unittest.TestCase):
     )
     def test_a_defect_in_the_checker_itself(self):
         """Test that an error from the checker is raised, rather than reported as the mutation being broken."""
-        with patch.object(Mutation, "_purge", Mock(side_effect=RuntimeError("the checker is broken"))):
+        with patch.object(Mutation, "_run_test", Mock(side_effect=RuntimeError("the checker is broken"))):
             self.assertRaises(RuntimeError, Mutation(mutation_subject.is_even, _EVEN, _ODD).check, _SUBJECT_TEST_NAME)
 
     def test_the_modules_are_left_as_they_were(self):
@@ -392,10 +523,16 @@ class CheckTest(unittest.TestCase):
     def test_a_mutation_whose_file_cannot_be_read(self):
         """Test that a mutation naming a file that cannot be read is reported as stale, and says so."""
         unreadable = Mock(side_effect=FileNotFoundError(2, "No such file or directory"))
-        with patch("pathlib.Path.read_text", unreadable):
+        with patch.object(checker, "_READ_TEXT", unreadable):
             result = Mutation(mutation_subject.is_even, _EVEN, _ODD).check(_SUBJECT_TEST_NAME)
         self.assertEqual(result.outcome, Outcome.STALE)
         self.assertIn("FileNotFoundError: [Errno 2] No such file or directory", result.reason)
+
+    def test_a_mutation_checked_while_the_test_patches_reading_a_file_reads_the_real_source(self):
+        """Test that a mutation checked while `Path.read_text` is patched is applied to the source on disk."""
+        with patch("pathlib.Path.read_text", Mock(return_value="a fixture the test being checked reads")):
+            result = Mutation(mutation_subject.is_even, _EVEN, _ODD).check(_SUBJECT_TEST_NAME)
+        self.assertEqual(result, Result(Outcome.KILLED))
 
     @kills(
         Mutation(
@@ -412,14 +549,14 @@ class CheckTest(unittest.TestCase):
             ("function anchor", Mutation(Doubler.doubled, _DOUBLING, _TRIPLING)),
             ("module anchor", Mutation(mutation_subject, "def broken(", "def mended(")),
         ):
-            with self.subTest(case=case), patch("pathlib.Path.read_text", Mock(return_value="def broken(")):
+            with self.subTest(case=case), patch.object(checker, "_READ_TEXT", Mock(return_value="def broken(")):
                 result = mutation.check(_DOUBLER_TEST_NAME)
                 self.assertEqual(result.outcome, Outcome.STALE)
                 self.assertIn("SyntaxError", result.reason)
 
     def test_a_module_anchor_on_the_last_function_of_a_file_without_a_final_newline(self):
         """Test that a module anchor on the last function's snippet is stale, though the file lacks a final newline."""
-        with patch("pathlib.Path.read_text", Mock(return_value="def last():\n    return 1")):
+        with patch.object(checker, "_READ_TEXT", Mock(return_value="def last():\n    return 1")):
             result = Mutation(mutation_subject, "return 1", "return 2").check(_SUBJECT_TEST_NAME)
         self.assertEqual(result, Result(Outcome.STALE, "the snippet lies inside last, so anchor the mutation on last"))
 
@@ -437,7 +574,7 @@ class CheckTest(unittest.TestCase):
             "class A:\n    @property\n    def x(self):\n        return self._x + 1\n\n"
             "    @x.setter\n    def x(self, value):\n        self._x = value\n"
         )
-        with patch("pathlib.Path.read_text", Mock(return_value=source)):
+        with patch.object(checker, "_READ_TEXT", Mock(return_value=source)):
             result = Mutation(mutation_subject, "self._x + 1", "self._x + 2").check(_DOUBLER_TEST_NAME)
         self.assertEqual(result, Result(Outcome.STALE, "the snippet lies inside A.x, so anchor the mutation on A.x"))
 
@@ -574,7 +711,7 @@ class CheckTest(unittest.TestCase):
         """Test that a snippet the anchor holds never, or more than once, is reported as stale, saying how often."""
         for case, anchor, old, occurrences in (
             ("absent from the file", mutation_subject, "number % 3 == 0", 0),
-            ("repeated in the file", mutation_subject, "number", 3),
+            ("repeated in the file", mutation_subject, "number", 6),
             ("in the file but outside the anchored function", is_multiple_of_three, _EVEN, 0),
         ):
             with self.subTest(case=case):
@@ -594,7 +731,7 @@ class CheckTest(unittest.TestCase):
     def test_an_anchor_the_source_does_not_define(self):
         """Test that an anchor the source does not define is reported as stale, naming the anchor."""
         moved_on = Mock(return_value='"""A source defining nothing that an anchor names."""\n')
-        with patch("pathlib.Path.read_text", moved_on):
+        with patch.object(checker, "_READ_TEXT", moved_on):
             result = Mutation(Doubler.doubled, _DOUBLING, _TRIPLING).check(_DOUBLER_TEST_NAME)
         self.assertEqual(result.outcome, Outcome.STALE)
         self.assertEqual(result.reason, "the source does not define Doubler.doubled")
@@ -734,14 +871,18 @@ class KillsTest(unittest.TestCase):
     """Unit tests for the decorator that makes a test check its mutations."""
 
     def run_decorated_test(
-        self, checked: Result, test_name: str = _DECORATED_TEST, sentinels: dict[str, str] | None = None
+        self,
+        checked: Result | Callable[..., Result],
+        test_name: str = _DECORATED_TEST,
+        sentinels: dict[str, str] | None = None,
     ) -> unittest.TestResult:
         """Run the named decorated test with the check answering as given, and return what unittest recorded.
 
         The check is stood in for, so that a test of the decorator does not pay for a real one; the decorated test
         the suite runs of its own accord is what exercises the real check. The run sees the sentinels named and no
         others, so what holds the decorated test back is what the test asked for rather than what a `just mutate`
-        run set.
+        run set. A function given as the answer runs when the check is called, so a test can look at the state it is
+        called in.
         """
         result = unittest.TestResult()
         decorated = IsEvenTest(test_name)
@@ -750,7 +891,10 @@ class KillsTest(unittest.TestCase):
             os.environ.pop(CHECKED_TEST, None)
             os.environ.pop(CHECKS_OFF, None)
             os.environ.update(sentinels or {})
-            self.checked.return_value = checked
+            if callable(checked):
+                self.checked.side_effect = checked
+            else:
+                self.checked.return_value = checked
             decorated.run(result)
         return result
 
@@ -800,14 +944,14 @@ class KillsTest(unittest.TestCase):
     @kills(
         Mutation(
             checker._fail_unless_killed,
-            "with test_case.subTest(regression=mutation.regression):",
+            "with unittest.TestCase.subTest(test_case, regression=mutation.regression):",
             "if True:",
             "a test stops at the first mutation it did not kill, leaving every mutation after it unreported",
         ),
         Mutation(
             checker._fail_unless_killed,
-            "with test_case.subTest(regression=mutation.regression):",
-            "with test_case.subTest():",
+            "with unittest.TestCase.subTest(test_case, regression=mutation.regression):",
+            "with unittest.TestCase.subTest(test_case):",
             "a mutation the test did not kill is reported without naming which mutation it was",
         ),
         Mutation(
@@ -850,12 +994,34 @@ class KillsTest(unittest.TestCase):
                     message,
                 )
 
+    def test_a_test_checks_its_mutations_once_a_patch_above_its_decorator_has_stopped(self):
+        """Test that a test with a patch above its kills decorator checks its mutations outside that patch."""
+        patched_while_checking: list[bool] = []
+
+        def check(*_args: object) -> Result:
+            patched_while_checking.append(isinstance(mutation_subject.is_even, Mock))
+            return Result(Outcome.KILLED)
+
+        result = self.run_decorated_test(check, _PATCHED_ABOVE_TEST)
+        self.assertEqual((result.failures, result.errors), ([], []))
+        self.assertEqual(patched_while_checking, [False])
+
+    def test_a_test_class_overriding_subtest_takes_no_part_in_the_checks(self):
+        """Test that the checks run in unittest's own subTests, rather than in the one the test's class overrides."""
+        with patch.object(IsEvenTest, "subTest") as overridden:
+            result = self.run_decorated_test(Result(Outcome.KILLED))
+        self.assertEqual((result.failures, result.errors), ([], []))
+        self.checked.assert_called_once()
+        overridden.assert_not_called()
+
     def test_a_test_failing_of_its_own_accord_is_not_checked(self):
         """Test that a test already failing fails on that, rather than its mutation being reported as killed."""
-        with patch("tests.test_mutation.is_even", Mock(return_value=True)):
-            result = self.run_decorated_test(Result(Outcome.KILLED))
-        self.assertEqual(len(result.failures), 1)
-        self.checked.assert_not_called()
+        for case, test_name in (("raised", _DECORATED_TEST), ("in a subTest", _SUBTEST_DECORATED_TEST)):
+            with self.subTest(case=case):
+                with patch("tests.test_mutation.is_even", Mock(return_value=True)):
+                    result = self.run_decorated_test(Result(Outcome.KILLED), test_name)
+                self.assertEqual(len(result.failures), 1)
+                self.checked.assert_not_called()
 
     @kills(
         Mutation(
@@ -972,3 +1138,23 @@ class KillsTest(unittest.TestCase):
         method = IsEvenTest.test_an_even_number
         wrapped = kills(_ODD_REPORTED_AS_EVEN)(method)
         self.assertEqual((wrapped.__qualname__, wrapped.__doc__), (method.__qualname__, method.__doc__))
+
+
+class KillsTestLoaderTest(unittest.TestCase):
+    """Unit tests for the loader of the tests that carry a kills decorator."""
+
+    def test_only_the_tests_carrying_a_kills_decorator_are_loaded(self):
+        """Test that the loader loads only the tests carrying a kills decorator, beneath a patch or not."""
+        self.assertEqual(
+            sorted(KillsTestLoader().getTestCaseNames(IsEvenTest)),
+            sorted(
+                (
+                    _DECORATED_TEST,
+                    _SUBTEST_DECORATED_TEST,
+                    "test_an_odd_number_patched_beneath_the_decorator",
+                    _PATCHED_ABOVE_TEST,
+                    _SEVERAL_MUTATIONS_TEST,
+                    "test_an_odd_number_against_a_mutation_that_raises",
+                )
+            ),
+        )

@@ -1,6 +1,8 @@
 """Unit tests for the readability check."""
 
+import errno
 import io
+import json
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -10,12 +12,15 @@ from unittest.mock import Mock, patch
 from tools import readability_check
 from tools.readability_check import (
     _ABBREVIATIONS,
+    _CACHE,
     Prose,
+    _cache_key,
     _faults,
     _is_code,
     _Limits,
     _sentence_tokenizer,
     _tagged,
+    _Verdicts,
     _whitelisted_sentences,
     extract_prose,
     extract_prose_from_markdown,
@@ -24,11 +29,16 @@ from tools.readability_check import (
     sentence_complexity,
 )
 
-from tests.helpers import mock_path
+from tests.helpers import FakeFiles, mock_path
 from tests.mutation import Mutation, kills
 
 # Every fixture below stays under these limits, so a case reports the rule under test alone.
 _RELAXED = _Limits(complexity=10, words=50, density=1.0)
+
+
+def _cache_text(verdicts: dict[str, str], key: str = "") -> str:
+    """Return the text of a cache holding the verdicts under the key, or under the current key where none is given."""
+    return json.dumps({"key": key or _cache_key(_Limits()), "verdicts": verdicts})
 
 
 class IsCodeTest(unittest.TestCase):
@@ -75,9 +85,13 @@ class ExtractProseFromPythonTest(unittest.TestCase):
         self.assertEqual(self.prose(source_code), ["'s widgets."])
 
     def test_raw_string_is_not_prose(self):
-        """Test that a raw string is left out whether it interpolates or not, and whatever the case of its prefix."""
+        """Test that a raw string is left out whether it interpolates or not, and whatever the case of its prefix.
+
+        A raw string after a non-ASCII name on its line is left out as well.
+        """
         source_code = (
             'pattern = r"the raw string"\n'
+            'café = r"the raw string after a non-ASCII name"\n'
             'comment = "the quoted string"\n'
             'interpolated = rf"the raw f-string {name}"\n'
             'message = f"the quoted f-string {name}"\n'
@@ -386,6 +400,18 @@ class WhitelistedSentencesTest(unittest.TestCase):
         self.assertEqual(_whitelisted_sentences(Mock(exists=Mock(return_value=False))), set())
 
 
+class VerdictsTest(unittest.TestCase):
+    """Unit tests for the verdicts a run reaches."""
+
+    def test_a_sentence_repeated_within_a_run_is_scored_once(self):
+        """Test that a sentence the run meets twice, and the cache does not hold, is scored the first time alone."""
+        verdicts = _Verdicts({})
+        with patch.object(readability_check, "_faults", return_value="complexity 9") as scored:
+            faults = [verdicts.faults("A sentence.", _RELAXED) for _ in range(2)]
+        self.assertEqual(faults, ["complexity 9", "complexity 9"])
+        scored.assert_called_once()
+
+
 @patch("tools.readability_check.extract_prose")
 @patch("tools.readability_check._sentence_tokenizer")
 class MainTest(unittest.TestCase):
@@ -397,7 +423,7 @@ class MainTest(unittest.TestCase):
     WRAPPED = NESTED.replace("asides (", "asides\n(")
     ASIDE = r"Another sentence (with an aside (nested in it))."
 
-    def check(
+    def check(  # noqa: PLR0913 — what the run reads
         self,
         tokenizer: Mock,
         extract: Mock,
@@ -405,16 +431,17 @@ class MainTest(unittest.TestCase):
         arguments: tuple[str, ...] = ("src",),
         whitelist: tuple[str, ...] | None = (),
         option: str = "--whitelist",
+        files: FakeFiles | None = None,
     ) -> tuple[int, str]:
-        """Run the check over the runs of prose, and return its exit code and output."""
+        """Run the check over the runs of prose with the files given, and return its exit code and output."""
         extract.return_value = [Prose(Path("conf.py"), text, 1) for text in texts]
         tokenizer.return_value.span_tokenize.side_effect = lambda masked: [(0, len(masked))]
-        written = io.StringIO()
-        files = {} if whitelist is None else {Path("prose.txt"): "".join(f"{sentence}\n" for sentence in whitelist)}
-        read = patch.object(Path, "read_text", autospec=True, side_effect=lambda path: files[path])
-        found = patch.object(Path, "exists", autospec=True, side_effect=lambda path: path in files)
+        files = FakeFiles() if files is None else files
+        if whitelist is not None:
+            files.files["prose.txt"] = "".join(f"{sentence}\n" for sentence in whitelist)
         argv = ["check", *(() if whitelist is None else (option, "prose.txt")), *arguments]
-        with redirect_stdout(written), patch.object(sys, "argv", argv), read, found:
+        written = io.StringIO()
+        with redirect_stdout(written), patch.object(sys, "argv", argv), files.patched():
             return main(), written.getvalue()
 
     def test_a_stale_whitelist_entry_is_reported(self, tokenizer: Mock, extract: Mock):
@@ -437,6 +464,75 @@ class MainTest(unittest.TestCase):
         )
         self.assertEqual(exit_code, 0)
         self.assertEqual(written, "")
+
+    def test_a_sentence_the_cache_holds_a_verdict_for_is_reported_as_the_cache_says(
+        self, tokenizer: Mock, extract: Mock
+    ):
+        """Test that a sentence the cache holds a verdict for is reported with that verdict instead of being scored."""
+        sentence = "A short sentence."
+        exit_code, written = self.check(
+            tokenizer, extract, sentence, files=FakeFiles({_CACHE: _cache_text({sentence: "complexity 9"})})
+        )
+        self.assertEqual(exit_code, 1)
+        self.assertIn("conf.py:1: complexity 9:", written)
+
+    def test_a_run_caches_the_verdict_of_each_sentence_it_saw_and_no_other(self, tokenizer: Mock, extract: Mock):
+        """Test that a run leaves the cache holding a verdict for each sentence of the prose, flagged or not."""
+        short = "A short sentence."
+        stale = {r"A sentence the prose no longer holds.": "complexity 9"}
+        files = FakeFiles({_CACHE: _cache_text(stale)})
+        self.check(tokenizer, extract, self.NESTED, short, files=files)
+        verdicts = json.loads(files[_CACHE])["verdicts"]
+        self.assertEqual(verdicts, {self.NESTED: _faults(self.NESTED, _Limits()), short: ""})
+
+    def test_a_cache_written_under_another_key_counts_as_empty(self, tokenizer: Mock, extract: Mock):
+        """Test that a cache another checker source, other limits, or another nltk wrote is passed over."""
+        sentence = "A short sentence."
+        with patch.object(readability_check.inspect, "getsource", return_value="another checker"):
+            another_checker = _cache_key(_Limits())
+        with patch.object(readability_check.nltk, "__version__", "0.0"):
+            another_nltk = _cache_key(_Limits())
+        keys = {
+            "another checker source": another_checker,
+            "other limits": _cache_key(_Limits(complexity=99)),
+            "another nltk": another_nltk,
+        }
+        for case, key in keys.items():
+            with self.subTest(case=case):
+                exit_code, written = self.check(
+                    tokenizer,
+                    extract,
+                    sentence,
+                    files=FakeFiles({_CACHE: _cache_text({sentence: "complexity 9"}, key)}),
+                )
+                self.assertEqual((exit_code, written), (0, ""))
+
+    def test_a_cache_of_another_shape_counts_as_empty_and_says_why(self, tokenizer: Mock, extract: Mock):
+        """Test that a cache that does not parse, or does not hold its mappings, is passed over and named."""
+        sentence = "A short sentence."
+        caches = {
+            "not JSON": "{",
+            "not a mapping": "[]",
+            "verdicts not a mapping": json.dumps({"key": _cache_key(_Limits()), "verdicts": []}),
+        }
+        for case, cache_file in caches.items():
+            stderr = io.StringIO()
+            with self.subTest(case=case):
+                with redirect_stderr(stderr):
+                    exit_code, written = self.check(tokenizer, extract, sentence, files=FakeFiles({_CACHE: cache_file}))
+                self.assertEqual((exit_code, written), (0, ""))
+                self.assertIn(str(_CACHE), stderr.getvalue())
+
+    def test_a_cache_write_that_fails_leaves_the_old_cache_and_says_why(self, tokenizer: Mock, extract: Mock):
+        """Test that a write that fails keeps the cache an earlier run left, names it, and keeps the check's verdict."""
+        old = _cache_text({"A short sentence.": ""})
+        full_disk = FakeFiles({_CACHE: old}, failing_write=OSError(errno.ENOSPC, "No space left on device"))
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            exit_code, _written = self.check(tokenizer, extract, self.NESTED, files=full_disk)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(full_disk[_CACHE], old)
+        self.assertIn(str(_CACHE), stderr.getvalue())
 
     def test_hard_to_read_sentence(self, tokenizer: Mock, extract: Mock):
         """Test that a sentence over a threshold is written out with its location, and fails the run."""
@@ -489,20 +585,18 @@ class MainTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(written, "")
 
-    def make_whitelist(
-        self, tokenizer: Mock, extract: Mock, *texts: str, whitelist: tuple[str, ...]
-    ) -> tuple[Path, str]:
-        """Make the whitelist from the given runs of prose, and return the file the run wrote and its text."""
-        with patch.object(Path, "write_text", autospec=True) as write_text:
-            exit_code, written = self.check(tokenizer, extract, *texts, whitelist=whitelist, option="--make-whitelist")
+    def make_whitelist(self, tokenizer: Mock, extract: Mock, *texts: str, whitelist: tuple[str, ...]) -> str:
+        """Make the whitelist from the given runs of prose, and return the text the run left in the whitelist file."""
+        files = FakeFiles()
+        exit_code, written = self.check(
+            tokenizer, extract, *texts, whitelist=whitelist, option="--make-whitelist", files=files
+        )
         self.assertEqual((exit_code, written), (0, ""))
-        path, text = write_text.call_args.args
-        return path, text
+        return files["prose.txt"]
 
     def test_making_the_whitelist(self, tokenizer: Mock, extract: Mock):
         """Test that the file `--make-whitelist` names keeps a flagged sentence on one line only where it holds it."""
-        path, text = self.make_whitelist(tokenizer, extract, self.WRAPPED, self.ASIDE, whitelist=(self.NESTED,))
-        self.assertEqual(path, Path("prose.txt"))
+        text = self.make_whitelist(tokenizer, extract, self.WRAPPED, self.ASIDE, whitelist=(self.NESTED,))
         self.assertEqual(text, f"{self.NESTED}\n")
 
     def test_the_whitelist_holds_each_sentence_once(self, tokenizer: Mock, extract: Mock):
@@ -511,5 +605,5 @@ class MainTest(unittest.TestCase):
         Regenerating the whitelist then rewrites the lines that changed rather than reshuffling the whole file.
         """
         texts = (self.ASIDE, self.NESTED, self.ASIDE)
-        _path, text = self.make_whitelist(tokenizer, extract, *texts, whitelist=(self.ASIDE, self.NESTED))
+        text = self.make_whitelist(tokenizer, extract, *texts, whitelist=(self.ASIDE, self.NESTED))
         self.assertEqual(text, f"{self.NESTED}\n{self.ASIDE}\n")

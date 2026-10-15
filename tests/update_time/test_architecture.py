@@ -11,7 +11,7 @@ from archunitpython import assert_passes, project_files
 from archunitpython.files.assertion import CustomFileViolation
 
 from tests.update_time import fixtures
-from tests.update_time.helpers import module_level_assignments, project
+from tests.update_time.helpers import module_level_assignments, project, syntax_tree
 
 if TYPE_CHECKING:
     from archunitpython.files.assertion import CustomFileCondition, FileInfo
@@ -74,7 +74,7 @@ def _setting_globals(files: list[pathlib.Path]) -> set[str]:
     """Return the names assigned a setting: what the command line configures a run with."""
     names: set[str] = set()
     for path in files:
-        for targets, value in module_level_assignments(ast.parse(path.read_text())):
+        for targets, value in module_level_assignments(syntax_tree(path.read_text())):
             if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id in _SETTING_CALLS:
                 names.update(target.id for target in targets if isinstance(target, ast.Name))
     return names
@@ -99,7 +99,7 @@ def _setting_readers(files: list[pathlib.Path], settings: set[str]) -> set[str]:
     """Return the functions that read one of the settings, since calling one reads it as surely as naming it does."""
     readers: set[str] = set()
     for path in files:
-        for node in ast.walk(ast.parse(path.read_text())):
+        for node in ast.walk(syntax_tree(path.read_text())):
             if isinstance(node, ast.FunctionDef) and any(_reads_setting(inner, settings) for inner in ast.walk(node)):
                 readers.add(node.name)
     return readers
@@ -126,7 +126,7 @@ def _reads_one_of(names: set[str]) -> CustomFileCondition:
     """
 
     def reads_one_of(file_info: FileInfo) -> bool:
-        tree = ast.parse(file_info.content)
+        tree = syntax_tree(file_info.content)
         modules = _imported_modules(tree)
         return any(
             (isinstance(node, ast.ImportFrom) and any(alias.name in names for alias in node.names))
@@ -223,7 +223,7 @@ class LayeringTest(unittest.TestCase):
 
         A rule scoped to a mistyped folder is caught whether or not whoever wrote it thought about the check.
         """
-        tree = ast.parse(pathlib.Path(__file__).read_text())
+        tree = syntax_tree(pathlib.Path(__file__).read_text())
         named = [
             node.args[0].value
             for node in ast.walk(tree)

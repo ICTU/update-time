@@ -9,6 +9,7 @@ mutation is applied in memory, so no file on disk is touched and an interrupted 
 
 import ast
 import functools
+import inspect
 import os
 import sys
 import types
@@ -21,12 +22,13 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 from unittest.mock import patch
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Sequence
 
 # Holds the id of the test being re-run against its own mutation. That test must run its body and stop there:
 # checking its mutations again would check them against themselves, without end. Only the test it names stands
 # aside, so a decorated test the re-run reaches on its way is checked as usual. An environment variable rather than
-# a global, because checking a mutation drops this module from `sys.modules` and imports it afresh.
+# a global, because a check that executes the mutated module afresh drops this module from `sys.modules` and imports
+# it again.
 CHECKED_TEST = "_UPDATE_TIME_MUTATION_CHECKED_TEST"
 
 # Set for the whole of a `just mutate` run, which applies a mutation of its own: the registered mutations stand aside,
@@ -142,7 +144,7 @@ class Mutation:
     def _mutated(self) -> str:
         """Return the file's source with the snippet replaced inside the anchor's span."""
         try:
-            source = Path(self._path).read_text()
+            source = _READ_TEXT(Path(self._path))
         except OSError as error:
             raise StaleError(_reason(error)) from error
         mutated = mutated_source(source, self._qualified_name, self.old, self.new)
@@ -171,7 +173,73 @@ class Mutation:
             return Result(Outcome.KILLED) if raised == self.raises else Result(Outcome.BROKEN, raised)
         return Result(Outcome.KILLED if test_result.failures else Outcome.SURVIVED)
 
+    def _function(self) -> types.FunctionType | None:
+        """Return the function whose code the mutation changes, or None for a module or a class anchor.
+
+        A mutation of this module gets None as well: swapping its code in place would change the check that runs it.
+        """
+        anchor = self._unwrapped
+        unbound = anchor.__func__ if isinstance(anchor, types.MethodType) else anchor
+        function = inspect.unwrap(unbound) if callable(unbound) else unbound
+        if not isinstance(function, types.FunctionType) or function.__module__ == __name__:
+            return None
+        return function
+
+    def _mutated_function(self, mutated: str) -> types.FunctionType | None:
+        """Return the anchored function as the mutated source defines it, or None where that won't parse or execute."""
+        try:
+            start, end = _span(mutated, self._qualified_name)
+        except StaleError:
+            return None
+        line_start = mutated.rfind("\n", 0, start) + 1
+        lines_above = mutated.count("\n", 0, line_start)
+        # An indented definition is nested in an `if` on the line above it, so its strings keep their indentation.
+        header = "\n" * (lines_above - 1) + "if True:\n" if start > line_start else "\n" * lines_above
+        definition = header + mutated[line_start:end]
+        namespace = dict(vars(self._module))
+        try:
+            exec(compile(definition, self._path, "exec"), namespace)  # noqa: S102 # nosec
+        except Exception:  # noqa: BLE001  # Executing the module afresh reports what the definition raises.
+            return None
+        return namespace[self._qualified_name.rsplit(".", maxsplit=1)[-1]]
+
     def _run_test(self, test_name: str, mutated: str) -> unittest.TestResult:
+        """Run the test against the mutated source, with the anchored function's definition swapped in place.
+
+        The module is executed afresh instead where the definition cannot be swapped: for a module or a class anchor,
+        for a function of this module, and for a mutated definition that does not parse, raises when executed, or needs
+        other free variables than the function has.
+        """
+        function = self._function()
+        mutated_function = None if function is None else self._mutated_function(mutated)
+        if function is None or mutated_function is None:
+            return self._run_test_afresh(test_name, mutated)
+        original = _definition(function)
+        try:
+            _define(function, _definition(mutated_function))
+        except ValueError:  # The code needs other free variables than the function has, such as a method's class.
+            return self._run_test_afresh(test_name, mutated)
+        try:
+            return self._run_test_in_place(test_name)
+        finally:
+            _define(function, original)
+
+    def _run_test_in_place(self, test_name: str) -> unittest.TestResult:
+        """Run the test with its modules loaded as they are, a cached anchor forgetting its answers before and after."""
+        self._clear_cache()
+        try:
+            result = unittest.TestResult()
+            _loaded_test(test_name).run(result)
+        finally:
+            self._clear_cache()
+        return result
+
+    def _clear_cache(self) -> None:
+        """Forget the answers a cached anchor remembers, so the test is not served one the other code gave."""
+        if cache_clear := getattr(self._unwrapped, "cache_clear", None):
+            cache_clear()
+
+    def _run_test_afresh(self, test_name: str, mutated: str) -> unittest.TestResult:
         """Run the test with the mutated source installed under the module's name.
 
         The module is read before the purge drops it, and `sys.modules` is put back however the run ends, so a
@@ -198,6 +266,20 @@ class Mutation:
         roots = {_root(self._module.__name__), _root(test_name)}
         for name in [name for name in sys.modules if _root(name) in roots]:
             del sys.modules[name]
+
+
+# What a function's definition sets apart from its name: its code, and the defaults its signature evaluates.
+type _Definition = tuple[types.CodeType, tuple[object, ...] | None, dict[str, object] | None]
+
+
+def _definition(function: types.FunctionType) -> _Definition:
+    """Return the code and the defaults the function was defined with."""
+    return function.__code__, function.__defaults__, function.__kwdefaults__
+
+
+def _define(function: types.FunctionType, definition: _Definition) -> None:
+    """Give the function the code and the defaults of the definition, the code first, which Python may refuse."""
+    function.__code__, function.__defaults__, function.__kwdefaults__ = definition
 
 
 def _root(name: str) -> str:
@@ -308,9 +390,9 @@ def _executed_module(source: str, module: types.ModuleType) -> types.ModuleType:
 
 
 def _loaded_test(test_name: str) -> unittest.TestSuite:
-    """Return the named test, loaded afresh so that it imports the mutated module.
+    """Return the named test, importing its module where a purge dropped it, so that the module gets the mutated one.
 
-    Loading executes the test module's body, so a mutation that breaks it raises here rather than while the test runs.
+    Importing executes the test module's body, so a mutation that breaks it raises here rather than while the test runs.
     """
     try:
         return unittest.TestLoader().loadTestsFromName(test_name)
@@ -348,8 +430,9 @@ _SURVIVALS = Path("tests/mutation-survivals.md")
 def _captured[Method](method: Method, name: str) -> Method:
     """Return the `Path` method, raising when a patch has already replaced it.
 
-    A patch made with `autospec` reads as a function all the same, so the plain form is what this catches. The copy
-    a mutation check imports inside the test it checks is left alone, since it never writes to `_SURVIVALS`.
+    A patch made with `autospec` reads as a function all the same, so the plain form is what this catches. Checking a
+    mutation runs its test again, which imports this module afresh. That run does not check the test's mutations, so
+    its copy of this module is exempt.
     """
     if not isinstance(method, types.FunctionType) and not os.environ.get(CHECKED_TEST):
         message = f"tests/mutation.py was imported while Path.{name} was patched, so the record it keeps is not safe"
@@ -357,8 +440,9 @@ def _captured[Method](method: Method, name: str) -> Method:
     return method
 
 
-# The methods that look up, read, and write `_SURVIVALS`. They are taken from `Path` here, at import, because
-# recording runs inside the test whose registration survived, and that test may have patched them.
+# The methods that look up, read, and write `_SURVIVALS`, and read the source a mutation changes. They are taken from
+# `Path` here, at import, because checking and recording run inside the test that registers the mutation, and that
+# test may have patched them.
 _EXISTS = _captured(Path.exists, "exists")
 _READ_TEXT = _captured(Path.read_text, "read_text")
 _WRITE_TEXT = _captured(Path.write_text, "write_text")
@@ -385,12 +469,13 @@ def _fail_unless_killed(test_case: unittest.TestCase, mutations: tuple[Mutation,
 
     Checking re-runs the very test this is called from, so the sentinel names that test for the duration, telling
     the re-run to run its body and stop there. The re-run loads the test afresh by name, since the running test case
-    belongs to a class the unmutated module was imported into.
+    belongs to a class the unmutated module was imported into. Each check is a subTest of `unittest`'s own, since a
+    test class that overrides `subTest` does so for its own subTests.
     """
     test_name = test_case.id()
     with patch.dict(os.environ, {CHECKED_TEST: test_name}):
         for mutation in mutations:
-            with test_case.subTest(regression=mutation.regression):
+            with unittest.TestCase.subTest(test_case, regression=mutation.regression):
                 result = mutation.check(test_name)
                 if result.outcome is Outcome.SURVIVED:
                     _record_survival(test_name, mutation)
@@ -410,8 +495,9 @@ def _failing(method: Callable[..., object], complaint: str) -> Callable[..., obj
 def kills(*mutations: Mutation) -> Callable[[_Method], _Method]:
     """Return a decorator making the decorated test kill the mutations it is meant to kill.
 
-    The test runs its own body first and then checks the mutations, so a test already failing for a reason of its
-    own never reports a mutation as killed. One decorator holds every mutation a test kills, so there is never a
+    The test runs its own body first, so a test already failing for a reason of its own never reports a mutation as
+    killed. It checks the mutations once it has finished, when the patches decorating it have stopped, since checking
+    a mutation runs the test again. One decorator holds every mutation a test kills, so there is never a
     reason to write two. A second decorator on the same test fails it, as does one given no mutation at all.
     """
 
@@ -424,12 +510,23 @@ def kills(*mutations: Mutation) -> Callable[[_Method], _Method]:
         @functools.wraps(method)
         def wrapper(self: unittest.TestCase, *args: object, **kwargs: object) -> object:
             result = method(self, *args, **kwargs)
+            if not self._outcome.success:  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+                return result
             if os.environ.get(CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":
                 return result
-            _fail_unless_killed(self, mutations)
+            self.addCleanup(_fail_unless_killed, self, mutations)
             return result
 
         setattr(wrapper, _REGISTERED, mutations)
         return cast("_Method", wrapper)
 
     return decorate
+
+
+class KillsTestLoader(unittest.TestLoader):
+    """A test loader that loads only the tests carrying a kills decorator."""
+
+    def getTestCaseNames(self, testCaseClass: type[unittest.TestCase]) -> Sequence[str]:  # noqa: N802, N803
+        """Return the names of the class's test methods that carry a kills decorator."""
+        names = super().getTestCaseNames(testCaseClass)
+        return [name for name in names if hasattr(getattr(testCaseClass, name), _REGISTERED)]
