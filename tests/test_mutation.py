@@ -42,7 +42,7 @@ from tests.mutation_subject import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator
 
 _EVEN = "number % 2 == 0"
 _ODD = "number % 2 != 0"
@@ -772,7 +772,7 @@ class RecordSurvivalTest(unittest.TestCase):
     _HEADING = "# Registrations that survived\n\n"
 
     @contextlib.contextmanager
-    def survivals(self, recorded: str | None = None) -> Iterator[pathlib.Path]:
+    def survivals(self, recorded: str | None = None) -> Generator[pathlib.Path]:
         """Yield the file `_record_survival` writes to, holding `recorded`, or standing for one that is not there.
 
         A real file, since a stand-in answers with its own methods rather than the patched ones to get past.

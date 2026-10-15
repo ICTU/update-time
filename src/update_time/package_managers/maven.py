@@ -18,7 +18,7 @@ from update_time.primitives.iterables import unique
 from update_time.sources.maven_central import versions_held_back
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
     from update_time.domain.dependency import DependencyName
     from update_time.formats.xml import XmlElement
@@ -151,7 +151,7 @@ def _run(pom_xml: Path, options: tuple[str, ...], goals: tuple[str, ...]) -> Res
 
 
 @contextmanager
-def _versions_options(declarations: list[Declaration]) -> Iterator[tuple[str, ...]]:
+def _versions_options(declarations: list[Declaration]) -> Generator[tuple[str, ...]]:
     """Yield the options the versions plugin's goals take, naming a rule set where anything is held back."""
     rules = _rules(declarations)
     if not rules:
@@ -245,7 +245,7 @@ def _rule(artefact: DependencyName, *ignore_versions: str) -> str:
 
 
 @contextmanager
-def _rule_set_file(rule_set: str) -> Iterator[Path]:
+def _rule_set_file(rule_set: str) -> Generator[Path]:
     """Write the rule set to a file for the Maven run, and remove the file once the run is over."""
     with tempfile.NamedTemporaryFile("w", suffix=".xml", delete_on_close=False) as file:
         file.write(rule_set)
@@ -254,7 +254,7 @@ def _rule_set_file(rule_set: str) -> Iterator[Path]:
 
 
 @contextmanager
-def _effective_pom_file() -> Iterator[Path]:
+def _effective_pom_file() -> Generator[Path]:
     """Name a file for Maven to write the effective pom to, and remove the file once the run is over."""
     with tempfile.NamedTemporaryFile(suffix=".xml", delete_on_close=False) as file:
         file.close()

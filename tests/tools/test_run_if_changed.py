@@ -16,7 +16,8 @@ from tests.helpers import FakeFiles
 from tests.mutation import Mutation, kills
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
+
 
 # A module with a docstring of its own and one in its function.
 _MODULE = '''"""Answer questions."""
@@ -59,7 +60,7 @@ def _git_failing(failure: subprocess.CompletedProcess[str] | OSError) -> Mock:
 
 
 @contextlib.contextmanager
-def _patched(run: Mock, files: FakeFiles) -> Iterator[None]:
+def _patched(run: Mock, files: FakeFiles) -> Generator[None]:
     """Patch the tool's `subprocess.run` with the stub, and `Path` with the files."""
     with patch("tools.run_if_changed.subprocess.run", run), files.patched():
         yield

@@ -67,7 +67,8 @@ from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
 from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulnerabilities, osv
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
+
 
 # The tests discover each pom in this directory. The scan runs in `/`, so a Maven run in the wrong one shows.
 _PROJECT = Path("/project")
@@ -278,7 +279,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         written = mock_path(effective_pom, name=_EFFECTIVE_POM)
 
         @contextlib.contextmanager
-        def effective_pom_file() -> Iterator[Mock]:
+        def effective_pom_file() -> Generator[Mock]:
             yield written
 
         self.enterContext(patch.object(maven_module, "_effective_pom_file", effective_pom_file))
@@ -349,7 +350,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         self.assert_redundant_directive_logged(Reason.VERSION_HELD_ELSEWHERE, GUAVA, location, directive)
 
     @contextlib.contextmanager
-    def asked_about(self) -> Iterator[list[str]]:
+    def asked_about(self) -> Generator[list[str]]:
         """Collect the artefacts the cooldown asks the repository about, and do not hold any version back."""
         asked: list[str] = []
 
@@ -361,7 +362,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             yield asked
 
     @contextlib.contextmanager
-    def written_rule_sets(self) -> Iterator[list[str]]:
+    def written_rule_sets(self) -> Generator[list[str]]:
         """Collect the rule sets Update-time writes for Maven.
 
         The rule set file of a real run is gone by the time the run ends, so the file is stood in for here.
@@ -369,7 +370,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         written: list[str] = []
 
         @contextlib.contextmanager
-        def rule_set_file(rule_set: str) -> Iterator[Path]:
+        def rule_set_file(rule_set: str) -> Generator[Path]:
             written.append(rule_set)
             yield _RULES
 
@@ -377,7 +378,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             yield written
 
     @contextlib.contextmanager
-    def maven_central_answering(self, pom: str, *, archived: bool = False) -> Iterator[Mock]:
+    def maven_central_answering(self, pom: str, *, archived: bool = False) -> Generator[Mock]:
         """Let Maven Central answer for itself, serving guava's listing and the pom, and yield the mock requests.get."""
         with (
             patch.object(maven_central_module, "project", maven_central_project),
@@ -390,7 +391,7 @@ class UpdatePomXmlTest(LoggingTestCase):
     @contextlib.contextmanager
     def hold_back(
         self, versions: dict[str, tuple[str, ...]], cooldown_days: int = COOLDOWN.default
-    ) -> Iterator[list[str]]:
+    ) -> Generator[list[str]]:
         """Hold the named versions back per artefact, and collect the rule sets Update-time writes for Maven.
 
         The stub answers with the named versions only where the cooldown is `cooldown_days`, and with an empty tuple
