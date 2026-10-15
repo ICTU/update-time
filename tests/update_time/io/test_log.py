@@ -47,7 +47,7 @@ from tests.update_time.helpers import bound, reference, resolved_reference, vuln
 from tests.update_time.io.helpers import at, create_location, dependency
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 
 class GetLoggerTests(TestCase):
@@ -140,7 +140,7 @@ class LoggerTests(TestCase):
     """Unit tests for the logger class."""
 
     @contextlib.contextmanager
-    def subTest(self, *args: object, **kwargs: object) -> Iterator[None]:  # noqa: N802
+    def subTest(self, *args: object, **kwargs: object) -> Generator[None]:  # noqa: N802
         """Run the case on records of its own, so a table cannot forget to reset the log."""
         cast("Mock", logging.Logger.log).reset_mock()  # The class-level patch makes the method the mock
         with super().subTest(*args, **kwargs):

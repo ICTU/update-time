@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 from tests.mutation import CHECKED_TEST, CHECKS_OFF
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping
+    from collections.abc import Callable, Generator, Mapping
     from unittest.mock import _patch, _patch_dict
 
 _Decorated = TypeVar("_Decorated", bound="Callable[..., object]")
@@ -101,7 +101,7 @@ class FakeFiles:
         return self.files[str(path)]
 
     @contextlib.contextmanager
-    def patched(self) -> Iterator[None]:
+    def patched(self) -> Generator[None]:
         """Stand in for the `Path` methods that look up, read, write, replace, and make files and folders."""
         with (
             patch.object(Path, "read_text", autospec=True, side_effect=self._read_text),

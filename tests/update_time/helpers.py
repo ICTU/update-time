@@ -169,7 +169,7 @@ class LoggingTestCase(CacheClearingTestCase):
         self._assert_no_unexpected_error()
 
     @contextlib.contextmanager
-    def subTest(self, *args: object, **kwargs: object) -> Iterator[None]:  # noqa: N802
+    def subTest(self, *args: object, **kwargs: object) -> Generator[None]:  # noqa: N802
         """Run the case as a run of its own, so a table cannot forget to start one."""
         self._start_new_run()
         with super().subTest(*args, **kwargs):
