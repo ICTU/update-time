@@ -9,7 +9,7 @@ from unittest.mock import Mock, call, patch
 
 import libcst
 from tools import rename as rename_module
-from tools.rename import _PROSE_ROOTS, _prose_files, main, stale_mentions, surviving_occurrences
+from tools.rename import _PROSE_ROOTS, _prose_files, _renamed, main, stale_mentions, surviving_occurrences
 
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
@@ -102,6 +102,15 @@ class ProseFilesTest(unittest.TestCase):
             found = _prose_files()
         self.assertEqual(found, [Path("src/update_time/oci.py"), Path("docs/README.md.in")])
         self.assertEqual(run.call_args.args[0], ["git", "ls-files", "-z", *_PROSE_ROOTS])
+
+
+class RenamedTest(unittest.TestCase):
+    """Unit tests for renaming a name in one source."""
+
+    def test_a_source_reaching_the_module_but_not_the_name_is_left_as_it_is(self):
+        """Test that a source importing the name's module, but never using the name, does not gain an import of it."""
+        source = "from pkg import m\n\nm.other()\n"
+        self.assertEqual(_renamed("pkg.m.old", "pkg.m.new", source), source)
 
 
 class MainTest(unittest.TestCase):

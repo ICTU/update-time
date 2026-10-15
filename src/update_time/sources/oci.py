@@ -18,6 +18,7 @@ from packaging.version import InvalidVersion, Version
 
 from update_time.domain.cooldown import CooldownWalk, first_eligible
 from update_time.domain.dependency import (
+    DASHED_SNAPSHOT,
     LOWEST_VERSION,
     MAIN_VERSION,
     UNDATED,
@@ -114,6 +115,10 @@ _TAG = re.compile(rf"(?P<prefix>[^\d-]*+)(?P<version>{MAIN_VERSION})-?(?P<suffix
 # here and the date as the version, which puts such a snapshot on the line its label names.
 _DATED_SNAPSHOT = re.compile(r"(?P<prefix>.+-)(?P<version>\d{8})(?P<suffix>)$")
 
+# A snapshot named by a date spelled with dashes. `_TAG` would read its year as the version and the rest as a suffix,
+# so this is tried first.
+_DASHED_SNAPSHOT = re.compile(DASHED_SNAPSHOT)
+
 # What orders two tags: each version axis, and the number of components it is spelled with.
 type _SortKey = tuple[Version, Version, int, int]
 
@@ -134,26 +139,24 @@ class Tag:
     @cached_property
     def _match(self) -> re.Match[str] | None:
         """Parse the tag name into its prefix, version, and suffix once, or None when the tag has no version."""
-        return _TAG.match(self.name) or _DATED_SNAPSHOT.match(self.name)
+        return _DASHED_SNAPSHOT.match(self.name) or _TAG.match(self.name) or _DATED_SNAPSHOT.match(self.name)
 
     @property
     def prefix(self) -> str:
-        """Return the non-numeric text before the version (e.g. 'python' in 'python3.12-slim'), or '' if none.
-
-        This is the prefix of one label, where `_labels` splits a tag into the labels its dashes separate.
-        """
+        """Return the label before the version, as `python` in `python3.12` or `x86_64-` in `x86_64-2023-10-20`."""
         return self._match.group("prefix") if self._match else ""
 
     @cached_property
     def version(self) -> Version | None:
         """Return the parsed version, or None if the tag does not contain a valid version.
 
-        A leading label prefix (e.g. the `python` in `python3.12`) is stripped before parsing the version.
+        A leading label prefix (e.g. the `python` in `python3.12`) is stripped before parsing the version. A date drops
+        its dashes, so `2023-10-20` reads as `20231020`, and `2026-02-12-23-06-03` as `20260212230603`.
         """
         if not (match := self._match):
             return None
         try:
-            return Version(match.group("version"))
+            return Version(match.group("version").replace("-", ""))
         except InvalidVersion:
             return None
 
@@ -229,17 +232,6 @@ class Tag:
         """
         return self._sort_key < other._sort_key
 
-    def with_version(self, version: Version, suffix: str) -> Tag:
-        """Return a new Tag with this tag's prefix, the given main version, and the given suffix.
-
-        The suffix comes from the resolved candidate, so a bumped embedded suffix version (`alpine3.23` ->
-        `alpine3.24`) is carried through rather than the current suffix being reattached verbatim.
-        """
-        name = f"{self.prefix}{version}"
-        if suffix:
-            name += f"-{suffix}"
-        return Tag(name=name)
-
     def is_newer_or_equal(self, tag: Tag) -> bool:
         """Return whether this tag is at least as new as `tag` on every version axis.
 
@@ -259,8 +251,10 @@ class Tag:
         """Return whether the tag's version is a date rather than a release.
 
         A repository can publish dated snapshots of a development branch beside its releases, in one tag namespace.
-        Examples are `20260805` and `bookworm-20260803`.
+        Examples are `20260805`, `bookworm-20260803`, and `2026-02-12-23-06-03`.
         """
+        if cast("re.Match[str]", self._match).re is _DASHED_SNAPSHOT:
+            return True
         release = cast("Version", self.version).release
         if len(release) != 1:
             return False
@@ -269,6 +263,13 @@ class Tag:
         except ValueError:
             return False
         return True
+
+    @property
+    def _date_spelling(self) -> str | None:
+        """Return how the snapshot spells its date, as `0000-00-00` for `2023-10-20`, or None for a release."""
+        if not self._is_dated_snapshot:
+            return None
+        return re.sub(r"\d", "0", cast("re.Match[str]", self._match).group("version"))
 
     def is_candidate_for(self, current: Tag) -> bool:
         """Return whether this tag (known by name only) is a possible update of the current tag.
@@ -280,8 +281,8 @@ class Tag:
             return False  # Ignore tags if the version is not valid
         if self.version.is_prerelease:
             return False  # Ignore tags if the version is a prerelease
-        if self._is_dated_snapshot and not current._is_dated_snapshot:
-            return False  # Ignore a dated snapshot, which is no update for a tag naming a release
+        if self._date_spelling != current._date_spelling:
+            return False  # Ignore a snapshot for a release and vice versa, and a timestamp for a date and vice versa
         if self.prefix != current.prefix:
             return False  # Ignore tags with a different prefix so e.g. python3.x isn't replaced by pypy3.x
         if self.suffix_label != current.suffix_label:
@@ -628,10 +629,9 @@ def _eligible_tag(image: str, current: Tag, candidate: Tag, walk: CooldownWalk) 
     if latest is None:
         return None
     report_undated = partial(_LOG.undated_push, image, candidate.name, current.name)
-    name = current.name if is_current else current.with_version(cast("Version", latest.version), latest.suffix).name
-    if not is_current and not walk.past(name, latest.pushed, report_undated):
+    if not is_current and not walk.past(candidate.name, latest.pushed, report_undated):
         return None
-    return DependencyVersion(version=name, sha=latest.digest, publication=latest.pushed)
+    return DependencyVersion(version=candidate.name, sha=latest.digest, publication=latest.pushed)
 
 
 def _registry_host(image: str) -> str:

@@ -118,8 +118,13 @@ class _InPlaceRenameCommand(RenameCommand):
 
 
 def _renamed(old: str, new: str, source: str) -> str:
-    """Return the source with the old name renamed to the new one, resolved against the source's own scopes."""
-    return _InPlaceRenameCommand(CodemodContext(), old, new).transform_module(libcst.parse_module(source)).code
+    """Return the source with the old name renamed to the new one, resolved against the source's own scopes.
+
+    A source that never uses the old name stays as it is. `RenameCommand` would import the new name into it when the
+    source imports the old name's module.
+    """
+    renamed = _InPlaceRenameCommand(CodemodContext(), old, new).transform_module(libcst.parse_module(source)).code
+    return renamed if surviving_occurrences(old.rpartition(".")[-1], source) else source
 
 
 class _AttributeRenamer(libcst.CSTTransformer):
