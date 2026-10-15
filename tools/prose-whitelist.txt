@@ -28,7 +28,6 @@ A class a framework discovers is found by scanning the module rather than by imp
 A component the current version doesn't have counts as zero, so `ignore[minor-update]` on `node:22` blocks `22.1`.
 A condition rather than a rule of its own because archunitpython records a dependency on the module a name comes from, not on the name, and a source may use `cooldown.within_cooldown` while reading no setting.
 A constraint on the versions a reference may update to: keep the candidates it matches, or drop them.
-A dated snapshot the repository labels, such as `bookworm-20260803`: the line the snapshot was built for, and the day it was built.
 A declaration pinning no exact version has none to replace, so its spec comes back as it was.
 A declaration that pins no exact version has no pin to freeze, so an `ignore[update]` on it holds nothing back.
 A dependency PyPI serves no release for takes no check, and its marker is reported all the same, since a redundant directive is what the reader has to hear about.

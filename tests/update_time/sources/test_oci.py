@@ -204,9 +204,9 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         ),
         Mutation(
             dependency,
-            r'(?:-\d{2}-\d{2}-\d{2})?)(?P<suffix>)$"',
-            r'(?:-\d{2}-\d{2}-\d{2})?)(?P<suffix>)"',
-            "a dashed date is read wherever it starts the tag, so a slim reference drifts onto the fat image",
+            r'r"(?:-|$)(?P<suffix>',
+            r'r"-?(?P<suffix>',
+            "a date is read from the first eight of a longer run of digits, so a tag naming an hour moves to another",
         ),
     )
     def test_which_listed_tags_leave_the_reference_as_it_is(self):
@@ -223,7 +223,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
             "a timestamp for a date": ("date", "2023-10-20", "2023-10-21-08-00-00"),
             "a release for a snapshot": ("release-for-snapshot", "2023-10-19", "20240101.1"),
             "a dashed date for an undashed one": ("debian", "bookworm-20240110", "bookworm-2024-01-11"),
-            "a date without the label after it": ("dated-slim", "2023-10-19-slim", "2023-10-20"),
+            "digits running past a date": ("nightly", "nightly-2026080312", "nightly-2026080412"),
         }
         for case, (image, current_tag, listed_tag) in cases.items():
             with self.subTest(case=case):
@@ -436,9 +436,9 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            oci,
-            '_DATED_SNAPSHOT = re.compile(r"(?P<prefix>.+-)(?P<version>\\d{8})(?P<suffix>)$")',
-            '_DATED_SNAPSHOT = re.compile(r"(?P<prefix>).+-(?P<version>\\d{8})(?P<suffix>)$")',
+            dependency,
+            r'r"(?P<prefix>.+-)(?P<version>\d{8})',
+            r'r"(?P<prefix>).+-(?P<version>\d{8})',
             "a snapshot's prefix leaves out its label, so the reference crosses to another line",
         ),
         Mutation(
@@ -447,18 +447,36 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
             r'r"(?P<prefix>)(?:.+-)?(?P<version>\d{4}-',
             "a dashed date's prefix leaves out its label, so the reference crosses to another line",
         ),
+        Mutation(
+            dependency,
+            r'(?:-\d{2}-\d{2}-\d{2})?)" + _LABEL_AFTER_A_DATE',
+            r'(?:-\d{2}-\d{2}-\d{2})?)(?P<suffix>)"',
+            "a dashed date is read wherever it starts the tag, so a slim reference drifts onto the fat image",
+        ),
     )
-    def test_dated_snapshot_moves_to_the_newest_snapshot_on_its_own_line(self):
-        """Test that a dated snapshot moves to the newest snapshot on its own line, whatever another line holds."""
+    def test_dated_snapshot_moves_to_the_newest_snapshot_under_its_own_labels(self):
+        """Test that a dated snapshot moves to the newest snapshot under its own labels, whatever other labels hold."""
         cases = {
             "a date": ("debian", "bookworm-20240110", "bookworm-20250101", "trixie-20260803"),
+            "a date with a label after it": (
+                "debian",
+                "trixie-20260803-slim",
+                "trixie-20261005-slim",
+                "trixie-20261020",
+            ),
             "a labelled dashed date": ("jupyter/base-notebook", "x86_64-2023-10-19", "x86_64-2023-10-20", "2023-10-21"),
+            "a dashed date with a label after it": (
+                "jupyter/base-notebook",
+                "2023-10-19-slim",
+                "2023-10-20-slim",
+                "2023-10-21",
+            ),
             "a timestamp": ("gitpod/workspace-full", "2025-11-14-10-05-32", "2026-02-12-23-06-03", "x86_64-2026-03-01"),
         }
-        for case, (image, current_tag, sibling_tag, other_line_tag) in cases.items():
+        for case, (image, current_tag, sibling_tag, other_labels_tag) in cases.items():
             with self.subTest(case=case):
                 self.requests.side_effect = mock_docker_registry(
-                    docker_tag(other_line_tag, DIGEST3),
+                    docker_tag(other_labels_tag, DIGEST3),
                     docker_tag(sibling_tag, DIGEST2),
                     docker_tag(current_tag, DIGEST1),
                 )

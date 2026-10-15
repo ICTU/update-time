@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Log at `DEBUG` the newest version held back by the cooldown, and the date its cooldown ends. Closes [#414](https://github.com/ICTU/update-time/issues/414).
 - Update a Docker image to the tag as the registry spells it, such as `cimg/base:2024.01`, instead of to a tag the registry does not serve, such as `cimg/base:2024.1`. Found while working on [#415](https://github.com/ICTU/update-time/issues/415).
 - Update a Docker image whose tag spells a date with dashes, such as `2023-10-20`, or a date and a time, such as `2026-02-12-23-06-03`, to the newest such tag. Closes [#415](https://github.com/ICTU/update-time/issues/415).
+- Update a Docker image whose tag names a label after a date, such as `trixie-20260803-slim`, to the newest such tag. Closes [#426](https://github.com/ICTU/update-time/issues/426).
 
 ## 0.0.45 - 2026-10-13
 

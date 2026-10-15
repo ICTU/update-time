@@ -19,6 +19,7 @@ from packaging.version import InvalidVersion, Version
 from update_time.domain.cooldown import CooldownWalk, first_eligible
 from update_time.domain.dependency import (
     DASHED_SNAPSHOT,
+    DATED_SNAPSHOT,
     LOWEST_VERSION,
     MAIN_VERSION,
     UNDATED,
@@ -110,10 +111,9 @@ _MANIFEST_MEDIA_TYPES = (
 # it to salvage a failing match, which keeps matching linear.
 _TAG = re.compile(rf"(?P<prefix>[^\d-]*+)(?P<version>{MAIN_VERSION})-?(?P<suffix>.*)$")
 
-# A dated snapshot the repository labels, such as `bookworm-20260803`: the line the snapshot was built for, and the
-# day it was built. `_TAG` reads no version in one, its prefix admitting no dash, so the label is read as the prefix
-# here and the date as the version, which puts such a snapshot on the line its label names.
-_DATED_SNAPSHOT = re.compile(r"(?P<prefix>.+-)(?P<version>\d{8})(?P<suffix>)$")
+# A dated snapshot the repository labels. `_TAG` reads no version in one, its prefix admitting no dash, so the label
+# is read as the prefix here and the date as the version, which puts such a snapshot on the line its label names.
+_DATED_SNAPSHOT = re.compile(DATED_SNAPSHOT)
 
 # A snapshot named by a date spelled with dashes. `_TAG` would read its year as the version and the rest as a suffix,
 # so this is tried first.
