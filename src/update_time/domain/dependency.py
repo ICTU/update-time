@@ -63,10 +63,16 @@ def normalized_python_name(name: DependencyName) -> DependencyName:
 # (`*+`) so the engine never backtracks into it, giving back characters to salvage a failing match.
 MAIN_VERSION = r"\d[^-]*+"
 
+# A label after a snapshot's date, such as the `slim` of `trixie-20260803-slim`. A dash separates it from the date.
+_LABEL_AFTER_A_DATE = r"(?:-|$)(?P<suffix>.*)$"
+
+# A snapshot named by the date it was built, such as `bookworm-20260803`, after the label of its line.
+DATED_SNAPSHOT = r"(?P<prefix>.+-)(?P<version>\d{8})" + _LABEL_AFTER_A_DATE
+
 # A snapshot named by the date it was built, such as `2023-10-20`, or by the date and time, such as
 # `2026-02-12-23-06-03`, after an optional label, such as the `x86_64-` of `x86_64-2023-10-20`. Its version is the
 # date with the dashes dropped.
-DASHED_SNAPSHOT = r"(?P<prefix>(?:.+-)?)(?P<version>\d{4}-\d{2}-\d{2}(?:-\d{2}-\d{2}-\d{2})?)(?P<suffix>)$"
+DASHED_SNAPSHOT = r"(?P<prefix>(?:.+-)?)(?P<version>\d{4}-\d{2}-\d{2}(?:-\d{2}-\d{2}-\d{2})?)" + _LABEL_AFTER_A_DATE
 
 
 def is_valid(version: VersionString) -> bool:

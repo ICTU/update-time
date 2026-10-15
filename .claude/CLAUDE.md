@@ -6,11 +6,15 @@ Consult the justfile to learn how to run tests and checks:
 
 @../justfile
 
+Consult the hooks to learn which rules they enforce:
+
+@settings.json
+
 ## Git
 
 I create the branches, commit, and push. Never do any of that, and never offer to. Run only the git commands that read, such as `status`, `diff`, `log`, and `show`. Change neither the index, nor `HEAD`, nor a branch or tag, except to remove a review worktree and its branch. A piece of work is finished when you report it with the tests and checks green, not when you propose a commit.
 
-Run `git status` before you edit, whenever you come back to the tree. I may have committed or switched branch meanwhile, and an edit onto a tree that moved is lost without a word. Don't mention a clean branch.
+Run `git status` at the start of every turn in which you edit. I may have committed or switched branch meanwhile, and an edit onto a tree that moved is lost without a word. Don't mention a clean branch.
 
 Never run a command that throws away work I have not committed: `git checkout <path>`, `git restore`, `git stash`. Undo your own experiment by editing the file back, or run it on a copy.
 
