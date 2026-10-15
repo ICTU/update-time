@@ -15,7 +15,14 @@ from update_time.sources.osv import _RISK_LEVEL_BANDS, Ecosystem, get_vulnerabil
 
 from tests.helpers import mock_response
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import LoggingTestCase, osv_advisory, osv_api, vulnerability
+from tests.update_time.helpers import (
+    LoggingTestCase,
+    osv_action_entry,
+    osv_action_package,
+    osv_advisory,
+    osv_api,
+    vulnerability,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -258,13 +265,13 @@ class GetVulnerabilitiesTest(LoggingTestCase):
                 self.assert_vulnerabilities(mock_post, advisories, expected)
 
     def test_unreachable_advisories(self, mock_post: Mock):
-        """Test that a pin the batch reports as affected is left unanswered when its advisories can't be read."""
+        """Test that a pin the batch reports advisories for is left unanswered when they can't be read."""
         status = HTTPStatus.SERVICE_UNAVAILABLE
         unreachable = mock_response(ok=False, status_code=status, reason=status.phrase, url="https://osv")
-        affected = mock_response({"results": [{"vulns": [{"id": _ADVISORY}]}]})
+        with_advisories = mock_response({"results": [{"vulns": [{"id": _ADVISORY}]}]})
 
         def serve(url: str, **_kwargs: object) -> Mock:
-            return affected if url.endswith("/querybatch") else unreachable
+            return with_advisories if url.endswith("/querybatch") else unreachable
 
         mock_post.side_effect = serve
         self.assertEqual(get_vulnerabilities([_REFERENCE], Ecosystem.PYPI), [None])
@@ -281,6 +288,203 @@ class GetVulnerabilitiesTest(LoggingTestCase):
             [None, None],
         )
         self.assert_could_not_fetch_logged("https://osv", status=status, reason=status.phrase)
+
+
+_ACTION = "tj-actions/changed-files"
+_ACTION_PACKAGE = osv_action_package(_ACTION)
+# What OSV reports for an action version an advisory names.
+_ACTION_VULNERABILITIES = [_expected_vulnerability(_GHSA, "high")]
+
+
+def _action_vulnerabilities(version: str) -> list[list[Vulnerability] | None]:
+    """Return what OSV is read as reporting for a reference to the action at the version."""
+    return get_vulnerabilities(
+        [Reference(_ACTION, version, Location(Path(".github/workflows/ci.yml"), 1))], Ecosystem.GITHUB_ACTIONS
+    )
+
+
+def _advisory_affecting(advisory: str, entry: dict[str, object]) -> dict[str, object]:
+    """Return an OSV advisory record whose one `affected` entry is the given one."""
+    return osv_advisory(advisory, _SUMMARY, level="HIGH") | {"affected": [entry]}
+
+
+def _action_advisory(advisory: str, *events: dict[str, str], **fields: object) -> dict[str, object]:
+    """Return an OSV advisory record whose one `affected` entry names the action (see `osv_action_entry`)."""
+    return _advisory_affecting(advisory, osv_action_entry(_ACTION, *events, **fields))
+
+
+@patch("requests.post")
+class GitHubActionVulnerabilitiesTest(LoggingTestCase):
+    """Unit tests for getting the vulnerabilities of the version a GitHub Action is pinned to."""
+
+    def assert_cases(self, cases: dict[str, tuple[str, list[Vulnerability]]]) -> None:
+        """Assert that each case's action version is read as its expected vulnerabilities."""
+        for case, (version, expected) in cases.items():
+            with self.subTest(case=case):
+                self.assertEqual(_action_vulnerabilities(version), [expected])
+
+    def test_references_to_one_action_share_the_request_for_its_advisories(self, mock_post: Mock):
+        """Test that OSV is asked about an action without a version, once in full for references at two versions."""
+        mock_post.side_effect = osv_api(_action_advisory(_GHSA, {"introduced": "0"}, {"fixed": "46.0.1"}))
+        self.assertEqual(_action_vulnerabilities("v45.0.0"), [_ACTION_VULNERABILITIES])
+        self.assertEqual(_action_vulnerabilities("v46.0.1"), [[]])
+        query = {"package": _ACTION_PACKAGE}
+        batch = {"queries": [query]}
+        self.assertEqual([call.kwargs["json"] for call in mock_post.call_args_list], [batch, query, batch])
+
+    def test_a_version_is_reported_from_the_introduction_up_to_the_fix(self, mock_post: Mock):
+        """Test that an action version is reported from the range's introduction on, and no longer at its fix."""
+        mock_post.side_effect = osv_api(_action_advisory(_GHSA, {"introduced": "2.0.0"}, {"fixed": "46.0.1"}))
+        self.assert_cases(
+            {
+                "at the introduction": ("v2.0.0", _ACTION_VULNERABILITIES),
+                "below the introduction": ("v1.9.9", []),
+                "at the fix": ("v46.0.1", []),
+                "past the fix": ("v47", []),
+            }
+        )
+
+    def test_a_version_is_reported_up_to_and_including_the_last_affected_one(self, mock_post: Mock):
+        """Test that an action version is reported up to the range's last affected version, and no longer past it."""
+        mock_post.side_effect = osv_api(_action_advisory(_GHSA, {"introduced": "2.0.0"}, {"last_affected": "45.0.7"}))
+        self.assert_cases(
+            {"at the last affected version": ("v45.0.7", _ACTION_VULNERABILITIES), "past it": ("v45.0.8", [])}
+        )
+
+    @kills(
+        Mutation(
+            osv._events_name,
+            "named = False\n    return named",
+            "return False\n    return named",
+            "a range is read as ending at its first fix, so a version after a reintroduction goes unreported",
+        )
+    )
+    def test_a_version_is_reported_where_a_range_reintroduces_the_vulnerability_after_a_fix(self, mock_post: Mock):
+        """Test that an action version is reported between a range's second introduction and its second fix."""
+        events = ({"introduced": "1.0.0"}, {"fixed": "2.0.0"}, {"introduced": "3.0.0"}, {"fixed": "4.0.0"})
+        mock_post.side_effect = osv_api(_action_advisory(_GHSA, *events))
+        self.assertEqual(_action_vulnerabilities("v3.5.0"), [_ACTION_VULNERABILITIES])
+
+    def test_an_entry_for_another_package_or_for_none_is_passed_over(self, mock_post: Mock):
+        """Test that an advisory's entry for another ecosystem, another action, or no package passes the action over."""
+        ranges = [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}]}]
+        entries: dict[str, dict[str, object]] = {
+            "another ecosystem": {"package": {"name": _ACTION, "ecosystem": "npm"}, "ranges": ranges},
+            "another action": {
+                "package": {"name": "tj-actions/branch-names", "ecosystem": "GitHub Actions"},
+                "ranges": ranges,
+            },
+            "no package": {"ranges": ranges},
+        }
+        for case, entry in entries.items():
+            with self.subTest(case=case):
+                mock_post.side_effect = osv_api(_advisory_affecting(_GHSA, entry))
+                self.assertEqual(_action_vulnerabilities("v45.0.0"), [[]])
+
+    @kills(
+        Mutation(
+            osv._entry_names,
+            ' if range_["type"] == "ECOSYSTEM"',
+            "",
+            "a range of commits is read as a range of versions, and its commit SHA warned about as unreadable",
+        )
+    )
+    def test_a_git_range_is_passed_over(self, mock_post: Mock):
+        """Test that a `GIT` range is passed over, so a version the `ECOSYSTEM` range fixes stays unreported."""
+        versions = {"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "0.1.22"}]}
+        commits = {
+            "type": "GIT",
+            "events": [{"introduced": "0"}, {"fixed": "f77273f4c914e4bf38440cf36a0369cb64a37489"}],
+        }
+        mock_post.side_effect = osv_api(_action_advisory(_GHSA, ranges=[versions, commits]))
+        self.assertEqual(_action_vulnerabilities("v0.1.22"), [[]])
+        self.assert_no_warnings_logged()
+
+    def test_an_affected_version_that_does_not_parse_is_passed_over_with_a_warning(self, mock_post: Mock):
+        """Test that the check reads what it can of an advisory whose affected versions do not all parse."""
+        unreadable_bound = {"last_known_affected_version_range": "unknown"}
+        cases = {
+            "a listed version": (_action_advisory(_GHSA, versions=["latest", "1"]), _ACTION_VULNERABILITIES),
+            "a range's version": (_action_advisory(_GHSA, {"introduced": "0"}, {"fixed": "unknown"}), []),
+            "a last known affected version range": (
+                _action_advisory(_GHSA, {"introduced": "0"}, database_specific=unreadable_bound),
+                _ACTION_VULNERABILITIES,
+            ),
+        }
+        for case, (advisory, expected) in cases.items():
+            with self.subTest(case=case):
+                mock_post.side_effect = osv_api(advisory)
+                self.assertEqual(_action_vulnerabilities("v1"), [expected])
+                self.assert_logged(Logger._MESSAGE_UNREADABLE_AFFECTED_VERSIONS, advisory=_GHSA, error=ANY)
+
+    def test_an_unreadable_version_is_warned_about_once_however_many_references_meet_it(self, mock_post: Mock):
+        """Test that two references to one action, whose advisory states a version that does not parse, warn once."""
+        advisories = {
+            "a listed version": _action_advisory(_GHSA, versions=["latest", "1"]),
+            "a range's version": _action_advisory(_GHSA, {"introduced": "0"}, {"fixed": "unknown"}),
+        }
+        for case, advisory in advisories.items():
+            with self.subTest(case=case):
+                mock_post.side_effect = osv_api(advisory)
+                for version in ("v1", "v2"):
+                    _action_vulnerabilities(version)
+                self.assert_logged(Logger._MESSAGE_UNREADABLE_AFFECTED_VERSIONS, advisory=_GHSA, error=ANY)
+
+    def test_a_closed_range_leaves_an_unreadable_last_known_affected_version_range_unread(self, mock_post: Mock):
+        """Test that a closed range warns about nothing beside a last known affected version range it cannot read."""
+        unreadable_bound = {"last_known_affected_version_range": "unknown"}
+        mock_post.side_effect = osv_api(
+            _action_advisory(_GHSA, {"introduced": "0"}, {"fixed": "2"}, database_specific=unreadable_bound)
+        )
+        self.assertEqual(_action_vulnerabilities("v1"), [_ACTION_VULNERABILITIES])
+        self.assert_no_warnings_logged()
+
+    def test_a_listed_version_is_reported_however_precisely_it_is_spelled(self, mock_post: Mock):
+        """Test that an action version an advisory lists is reported, spelled with or without its zero components."""
+        mock_post.side_effect = osv_api(_action_advisory(_GHSA, versions=["1"]))
+        self.assert_cases(
+            {
+                "as listed": ("v1", _ACTION_VULNERABILITIES),
+                "with zero components": ("v1.0.0", _ACTION_VULNERABILITIES),
+                "another version": ("v1.1", []),
+            }
+        )
+
+    @kills(
+        Mutation(
+            osv._in_range,
+            'if kind == "introduced" and at <= version:',
+            'if kind == "introduced":',
+            "an open range names a version below its introduction, wherever the last known affected range holds it",
+        )
+    )
+    def test_the_last_known_affected_version_range_bounds_an_open_range(self, mock_post: Mock):
+        """Test that an open range reports an action version only within its last known affected version range."""
+        bounded = {"last_known_affected_version_range": "< 3.0.0"}
+        mock_post.side_effect = osv_api(_action_advisory(_GHSA, {"introduced": "2.26.11"}, database_specific=bounded))
+        self.assert_cases(
+            {
+                "below the introduction": ("v2.26.10", []),
+                "below the bound": ("v2.27.0", _ACTION_VULNERABILITIES),
+                "at the bound": ("v3.0.0", []),
+            }
+        )
+
+    @kills(
+        Mutation(
+            osv._entry_names,
+            '"")',
+            '"<0")',
+            "an action version in an open range goes unreported where the advisory leaves out its last known affected "
+            "version range",
+        )
+    )
+    def test_an_open_range_without_a_last_known_affected_version_range_reports_every_later_version(
+        self, mock_post: Mock
+    ):
+        """Test that an open range without a last known affected version range reports a version long after it opens."""
+        mock_post.side_effect = osv_api(_action_advisory(_GHSA, {"introduced": "2.26.11"}))
+        self.assertEqual(_action_vulnerabilities("v4.0.0"), [_ACTION_VULNERABILITIES])
 
 
 class RiskLevelBandTest(unittest.TestCase):

@@ -14,8 +14,10 @@ from update_time.domain.dependency import (
 )
 from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
+from update_time.markers.directive import Reason
 from update_time.primitives import digest
 from update_time.primitives.location import Location
+from update_time.references import github as references_github
 from update_time.updaters.update_pre_commit_config import update_pre_commit_configs
 
 from tests.helpers import mock_path
@@ -444,3 +446,29 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         config_file.write_text.assert_not_called()
         self.assert_resolved(mock_get_latest_version, "v4.5.0", BLOCK_ALL_UPDATES)
         self.assert_invalid_bracket_item_logged(self.HOOK, ANY, "@@@")
+
+
+@patch("pathlib.Path.glob")
+class UpdatePreCommitConfigsThroughTheSourceTest(LoggingTestCase):
+    """Unit tests for the pre-commit config updater, resolving versions through the GitHub source itself."""
+
+    @kills(
+        Mutation(
+            references_github._PinResolver._report_redundant_directives,
+            "reports_vulnerabilities(self.source, reference.pinned) and ",
+            "",
+            "an `ignore[vulnerable]` on a pre-commit hook naming a branch is reported twice",
+        )
+    )
+    @patch_github(releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(NEW_SHA))
+    def test_ignore_vulnerable_marker_is_reported_as_redundant(self, mock_glob: Mock):
+        """Test that `ignore[vulnerable]` on a pre-commit hook, at a version or a branch, is reported once."""
+        for case, rev in {"version": f"{OLD_SHA}  # frozen: v1.0", "branch": "main"}.items():
+            with self.subTest(case):
+                config_file = mock_path(config(f"rev: {rev}  # update-time: ignore[vulnerable]\n"))
+                mock_glob.return_value = [config_file]
+                update_pre_commit_configs()
+                location = Location(config_file, 3)
+                self.assert_redundant_directive_logged(
+                    Reason.NO_VULNERABILITY_REPORTS, "pre-commit/pre-commit-hooks", location, "ignore[vulnerable]"
+                )

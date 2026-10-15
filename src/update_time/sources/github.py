@@ -287,7 +287,7 @@ def github_repository(url: str) -> GitHubRepository | None:
     return None
 
 
-def _repository(dependency: DependencyName) -> GitHubRepository:
+def repository_of(dependency: DependencyName) -> GitHubRepository:
     """Return the repository the dependency names, dropping any path below the repository.
 
     `actions/checkout/sub-action` names an action in a subdirectory of the `actions/checkout` repository.
@@ -363,7 +363,7 @@ def _get_commit(repository: GitHubRepository, ref: _GitRef) -> LookedUp[_CommitJ
 
 def pinned_ref(dependency: DependencyName, ref: _GitRef) -> LookedUp[DependencyVersion]:
     """Return the commit the ref points at, named by the highest version tag at it, or else by the ref."""
-    repository = _repository(dependency)
+    repository = repository_of(dependency)
     found = _get_commit(repository, ref)
     if (commit := found.value) is None:
         return LookedUp(None, found.reason, absent=found.absent)
@@ -378,7 +378,7 @@ def newest_commit_past_cooldown(
     The ref's own line runs from its head through the first parent of each commit. So it leaves out the commits of a
     merged branch, however their committers dated them.
     """
-    repository = _repository(dependency)
+    repository = repository_of(dependency)
     # Without a cooldown the head is the newest commit, so the listing needs to hold the head alone.
     query = urlencode({"sha": ref, "per_page": _PER_PAGE if cooldown_days > 0 else 1})
     url = f"{_GITHUB_API}/{repository}/commits?{query}"
@@ -417,7 +417,7 @@ def moved_on(dependency: DependencyName, pinned: str, commit: str) -> LookedUp[b
 
     A branch moves on by adding commits to its history, or by a force-push that rewrites it.
     """
-    repository = _repository(dependency)
+    repository = repository_of(dependency)
     # A comparison lists the commits between the two, which the answer needs none of.
     url = f"{_GITHUB_API}/{repository}/compare/{pinned}...{commit}?per_page=1"
     response = _fetch_github(url, require_ok=False)
@@ -436,7 +436,7 @@ def _named_commit(repository: GitHubRepository, ref: _GitRef, commit: _CommitJSO
 
 def full_sha(dependency: DependencyName, ref: _GitRef) -> str | None:
     """Return the full SHA of the commit the ref names, or None when the commit can't be fetched."""
-    commit = _get_commit(_repository(dependency), ref).value
+    commit = _get_commit(repository_of(dependency), ref).value
     return None if commit is None else commit["sha"]
 
 
@@ -445,7 +445,7 @@ def is_tag(dependency: DependencyName, ref: _GitRef) -> bool | None:
 
     The listing holds the first page of tags alone, so a ref a full page leaves out is looked up by name.
     """
-    repository = _repository(dependency)
+    repository = repository_of(dependency)
     if (tags := _list_tags(repository)) is None:
         return None
     if any(tag["name"] == ref for tag in tags):
@@ -471,7 +471,7 @@ def _looked_up_tag(repository: GitHubRepository, ref: _GitRef) -> bool | None:
 
 def version_at_tag(dependency: DependencyName, version: VersionString) -> VersionString:
     """Return the highest version tagging the commit the version's own tag points at, or the version itself."""
-    repository = _repository(dependency)
+    repository = repository_of(dependency)
     own_tag = _own_tag(_tagged_versions(repository) or (), Version(version))
     if own_tag is None or (highest := _highest_version_at(repository, own_tag.sha)) is None:
         return version
@@ -507,7 +507,7 @@ def _highest_version_at(repository: GitHubRepository, sha: str) -> TaggedVersion
 
 def commit_date(dependency: DependencyName, ref: _GitRef) -> LookedUp[datetime]:
     """Return the committer date of the commit the ref points to, in the repository the dependency names."""
-    return _commit_date(_repository(dependency), ref)
+    return _commit_date(repository_of(dependency), ref)
 
 
 def _commit_date(repository: GitHubRepository, ref: _GitRef) -> LookedUp[datetime]:
@@ -568,7 +568,7 @@ def get_latest_version(
     Neither the cooldown nor a bound holds the current version back, since the reference uses it already.
     """
     action, current_version = pinned.name, pinned.version
-    repository = _repository(action)
+    repository = repository_of(action)
     repository_project = project(action, check_archival=check_archival)
     tagged_versions = _tagged_versions(repository)
     if tagged_versions is None:  # Couldn't reach GitHub; the fetches already logged a warning.
@@ -646,7 +646,7 @@ def _newest_tag_beyond_releases(repository: GitHubRepository) -> _TagJSON | None
 @archival_reporting
 def project(dependency: DependencyName, *, check_archival: bool) -> Project:
     """Return what GitHub reports about the repository the dependency names: its newest release, and its archival."""
-    repository = _repository(dependency)
+    repository = repository_of(dependency)
     newest = _newest_release(repository)
     return Project(newest=newest, archival=archival(repository, check_archival=check_archival))
 

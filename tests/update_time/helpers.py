@@ -1244,6 +1244,20 @@ def osv_advisory(
     return {"id": advisory, "summary": summary, **reviewed, **named, **scored}
 
 
+def osv_action_package(action: str) -> dict[str, str]:
+    """Return the package OSV files the action's advisories under."""
+    return {"name": action, "ecosystem": "GitHub Actions"}
+
+
+def osv_action_entry(action: str, *events: dict[str, str], **fields: object) -> dict[str, object]:
+    """Return an OSV `affected` entry naming the action, stating its affected versions as one range of the events.
+
+    The fields add to the entry, such as the versions it lists, or replace its range with ranges of their own.
+    """
+    ranges = [{"type": "ECOSYSTEM", "events": list(events)}] if events else []
+    return {"package": osv_action_package(action), "ranges": ranges, **fields}
+
+
 def vulnerability(advisory: str, summary: str, level: str, aliases: list[str] | None = None) -> Vulnerability:
     """Return the vulnerability Update-time reads an advisory as, known by the aliases where it has them."""
     return Vulnerability(advisory, summary, level, f"https://osv.dev/{advisory}", frozenset(aliases or []))

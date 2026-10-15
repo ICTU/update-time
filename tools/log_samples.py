@@ -13,6 +13,8 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
+from packaging.version import InvalidVersion
+
 from tools.log_fixtures import VULNERABILITY, reference, resolved, stale_publication_date
 from update_time.domain.dependency import (
     Archival,
@@ -122,6 +124,11 @@ def _redundant_directives(
         reference("nl.example:internal-lib", Location(Path("pom.xml"), 12)),
         "ignore[vulnerable]",
         Reason.NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
+    )
+    log.redundant_directive(
+        reference("actions/checkout", Location(Path(".github/workflows/ci.yml"), 17)),
+        "ignore[vulnerable]",
+        Reason.NO_NAMED_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
     )
     redundant_vulnerable_without_a_version = capture.take()
 
@@ -368,6 +375,9 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.vulnerable_dependency(reference("django", requirements, "3.2.0"), VULNERABILITY)
     vulnerable = capture.take()
 
+    log.unreadable_affected_versions("GHSA-1111-2222-3333", InvalidVersion("Invalid version: 'unknown'"))
+    unreadable_affected_versions = capture.take()
+
     archived_project = DependencyVersion.unpinned(Project(archival=Archival(archived=True)))
     log.report_archival(resolved("aioredis", requirements, archived_project), Marker())
     repository = Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
@@ -425,6 +435,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@VULNERABILITY_WARNING@@": vulnerable,
+        "@@UNREADABLE_AFFECTED_VERSIONS_WARNING@@": unreadable_affected_versions,
         "@@ARCHIVED_WARNING@@": archival,
         **redundant,
         **redundant_for_the_type,

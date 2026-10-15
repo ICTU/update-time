@@ -4,7 +4,7 @@ import itertools
 from datetime import timedelta
 from logging import ERROR, WARNING
 from typing import TYPE_CHECKING, cast
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import requests
 
@@ -44,10 +44,13 @@ from tests.update_time.helpers import (
     github_unknown_ref,
     hash_drift_allowed,
     no_other_version_at_the_tag,
+    osv_action_entry,
+    osv_action_package,
     patch_github,
     staleness_disabled,
 )
-from tests.update_time.updaters.helpers import github_version
+from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
+from tests.update_time.updaters.helpers import OSV_BATCH_URL, github_version, no_vulnerabilities, osv
 
 if TYPE_CHECKING:
     from contextlib import ContextDecorator
@@ -57,6 +60,15 @@ _ALLOW_HASH_DRIFT = "update-time: allow[hash-drift]"
 _ALLOW_FLOATING_PIN = "update-time: allow[floating-pin]"
 # As many tags as GitHub lists on its first page, naming neither a version nor a ref a test pins.
 _FULL_PAGE_OF_TAGS = [github_tag_json(f"build-{index:03}", PAST_COOLDOWN_SHA) for index in range(100)]
+
+
+def _action_advisory(repository: str, *events: dict[str, str]) -> dict[str, object]:
+    """Return an advisory naming the versions of the repository's actions that the range of the events covers."""
+    return ADVISORY | {"affected": [osv_action_entry(repository, *events)]}
+
+
+# An advisory naming the versions of tj-actions/changed-files from 45.0.0 up to 46.0.1.
+_CHANGED_FILES_ADVISORY = _action_advisory("tj-actions/changed-files", {"introduced": "45.0.0"}, {"fixed": "46.0.1"})
 
 
 def _drifted(
@@ -83,6 +95,7 @@ def _commits_url(ref: str, dependency: str = "actions/checkout") -> str:
     return f"https://api.github.com/repos/{dependency}/commits/{ref}"
 
 
+@no_vulnerabilities
 @patch("update_time.references.github.get_latest_version")
 @no_other_version_at_the_tag
 @patch("pathlib.Path.glob")
@@ -128,6 +141,47 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_path_logged(dependabot_yml)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
+
+    def assert_changed_files_warned_about(self, workflow_yml: Mock) -> None:
+        """Assert that the workflow's tj-actions/changed-files was warned about at 45.0.0, which the advisory names."""
+        location = Location(workflow_yml, 1)
+        self.assert_vulnerable_dependency_logged("tj-actions/changed-files", "45.0.0", VULNERABILITY, location)
+
+    def test_vulnerable_action_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that an action is warned about when an advisory names the version the run updates it to."""
+        mock_get_latest_version.return_value = github_version("45.0.0")
+        workflow_yml = mock_path(f"uses: tj-actions/changed-files@{OLD_SHA} # v44.0.0\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        with osv(_CHANGED_FILES_ADVISORY):
+            update_github_actions()
+        workflow_yml.write_text.assert_called_once_with(f"uses: tj-actions/changed-files@{NEW_SHA} # v45.0.0\n")
+        self.assert_changed_files_warned_about(workflow_yml)
+
+    def test_held_back_action_is_checked_at_the_version_its_tag_names(
+        self, mock_glob: Mock, mock_get_latest_version: Mock
+    ):
+        """Test that an unpinned action whose update a marker holds back is checked at the version its tag names."""
+        mock_get_latest_version.return_value = github_version("46.0.1")
+        workflow_yml = mock_path("uses: tj-actions/changed-files@v45.0.0  # update-time: ignore[update]\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        with osv(_CHANGED_FILES_ADVISORY):
+            update_github_actions()
+        workflow_yml.write_text.assert_not_called()
+        self.assert_changed_files_warned_about(workflow_yml)
+
+    def test_action_in_a_subdirectory_is_looked_up_as_its_repository(
+        self, mock_glob: Mock, mock_get_latest_version: Mock
+    ):
+        """Test that an action in a subdirectory is looked up by its repository, and warned about as written."""
+        mock_get_latest_version.return_value = DependencyVersion(version="3.28.0", sha=OLD_SHA)
+        workflow_yml = mock_path(f"uses: github/codeql-action/init@{OLD_SHA} # v3.28.0\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        with osv(_action_advisory("github/codeql-action", {"introduced": "0"})) as mock_post:
+            update_github_actions()
+        location = Location(workflow_yml, 1)
+        self.assert_vulnerable_dependency_logged("github/codeql-action/init", "3.28.0", VULNERABILITY, location)
+        query = {"package": osv_action_package("github/codeql-action")}
+        mock_post.assert_any_call(OSV_BATCH_URL, timeout=ANY, json={"queries": [query]})
 
     def test_pinned_action_up_to_date(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an already pinned action that is up to date is left unchanged."""
@@ -335,6 +389,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
 
+@no_vulnerabilities
 @patch("pathlib.Path.glob")
 class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     """Unit tests for the GitHub Actions updater, resolving versions through the GitHub source itself."""
@@ -422,6 +477,19 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                 workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@{ref}{marker}\n")
                 workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{pinned}{marker}\n")
                 self.assert_no_warnings_logged()
+
+    @patch_github(releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(NEW_SHA))
+    def test_ignore_vulnerable_marker_silences_the_warning(self, mock_glob: Mock):
+        """Test that `ignore[vulnerable]` on an action silences its warning, and the action is still updated."""
+        marker = "  # update-time: ignore[vulnerable]"
+        with osv(_action_advisory("action/action", {"introduced": "0"})):
+            workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@{OLD_SHA} # v1.0{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.1{marker}\n")
+        location = Location(workflow_yml, 1)
+        self.assert_ignored_vulnerability_logged(
+            "action/action", location, VULNERABILITY.advisory, "ignore[vulnerable]"
+        )
+        self.assert_no_warnings_logged()
 
     @patch_github(releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(NEW_SHA), archived=True)
     def test_archived_repository_warned(self, mock_glob: Mock):
@@ -1519,6 +1587,46 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         """Test that a version tag of hex digits alone, missing from the listed tags, is updated as a version."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: owner/repo@20240101\n")
         workflow_yml.write_text.assert_called_once_with(f"uses: owner/repo@{NEW_SHA} # 20240301\n")
+
+    @patch_github(releases=[], tags=[], commit=github_commits_json(full_commit_sha("1234567")))
+    def test_a_held_back_short_commit_sha_of_digits_is_not_checked_as_a_version(self, mock_glob: Mock):
+        """Test that a short commit SHA that parses as a version, held back by a marker, is not checked."""
+        with osv(_action_advisory("actions/checkout", {"introduced": "0"})) as mock_post:
+            self.scanned_workflow(mock_glob, "uses: actions/checkout@1234567  # update-time: ignore[update]\n")
+        mock_post.assert_not_called()
+        self.assert_no_warnings_logged()
+
+    def test_an_ignore_vulnerable_marker_on_a_reference_naming_no_version_is_reported(self, mock_glob: Mock):
+        """Test that `ignore[vulnerable]` on a branch or a bare commit SHA is reported as redundant."""
+        cases = {
+            "branch": "actions/checkout@main",
+            "bare commit SHA": f"actions/checkout@{OLD_SHA}",
+        }
+        commit = github_commits_json(OLD_SHA)
+        for case, uses in cases.items():
+            with self.subTest(case), patch_github(releases=[], tags=[], commit=commit):
+                workflow_yml = self.scanned_workflow(mock_glob, f"uses: {uses}  # update-time: ignore[vulnerable]\n")
+                self.assert_redundant_directive_logged(
+                    Reason.NO_NAMED_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
+                    "actions/checkout",
+                    Location(workflow_yml, 1),
+                    "ignore[vulnerable]",
+                )
+
+    @patch_github(releases=[], tags=[github_tag_json("v5.0.0", OLD_SHA)], commit=github_commits_json(OLD_SHA))
+    def test_an_ignore_vulnerable_marker_on_a_branch_pinned_to_a_version_tag_is_judged_at_that_version(
+        self, mock_glob: Mock
+    ):
+        """Test that `ignore[vulnerable]` on a branch this run pins to a version tag silences the warning there."""
+        marker = "  # update-time: ignore[vulnerable]"
+        with osv(_action_advisory("actions/checkout", {"introduced": "0"})):
+            workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@main{marker}\n")
+        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{OLD_SHA} # v5.0.0{marker}\n")
+        location = Location(workflow_yml, 1)
+        self.assert_ignored_vulnerability_logged(
+            "actions/checkout", location, VULNERABILITY.advisory, "ignore[vulnerable]"
+        )
+        self.assert_no_warnings_logged()
 
     def test_a_bound_on_a_branch_is_reported(self, mock_glob: Mock):
         """Test that a bound on a branch is reported as redundant.

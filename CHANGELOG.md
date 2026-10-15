@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Warn about a GitHub Action left on a version an OSV advisory names. Closes [#411](https://github.com/ICTU/update-time/issues/411).
 
 ## 0.0.46 - 2026-10-15
 

@@ -21,7 +21,7 @@ class Reason(StrEnum):
     `Redundancy` names the two further ways a bound can be redundant, once there is a version to judge it against.
     """
 
-    NO_VULNERABILITY_REPORTS = "this dependency's source does not report vulnerability information"
+    NO_VULNERABILITY_REPORTS = "OSV does not hold advisories for this kind of dependency"
     NO_COOLDOWN_DATES = "this dependency's source does not report a publication date to measure a cooldown against"
     NO_STALENESS_DATES = "this dependency's source does not report a publication date to measure staleness against"
     NO_YANK_CONCEPT = "this dependency's source does not record a yank"
@@ -45,6 +45,9 @@ class Reason(StrEnum):
     NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY = "this requirement does not pin a version to check for a vulnerability"
     NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY = (
         "this dependency does not resolve to a version to check for a vulnerability"
+    )
+    NO_NAMED_VERSION_TO_CHECK_FOR_A_VULNERABILITY = (
+        "this reference does not name a version to check for a vulnerability"
     )
     VERSION_HELD_ELSEWHERE = "this declaration does not hold its version, so Maven does not update that version here"
     PLUGIN_NOT_UPDATED = "Maven does not update this plugin's version"
