@@ -55,7 +55,7 @@ _UV_SOURCE = '[tool.uv.sources]\nlocal = {path = "../local"}\n'
 
 # The yank pass asks PyPI for every pin, whichever of the checks a test is about, so the tests that are about
 # another check answer it with an index that lists no version and no distribution file to read a yank from.
-_no_yanks = patch("requests.get", Mock(return_value=pypi_index()))
+_no_yanks = patch("requests.Session.get", Mock(return_value=pypi_index()))
 
 
 class DependencyTomlFileTestCase(LoggingTestCase):
@@ -78,7 +78,7 @@ class DependencyTomlFileTestCase(LoggingTestCase):
 
 
 @no_vulnerabilities
-@patch("requests.get")
+@patch("requests.Session.get")
 class StaleDependencyTest(DependencyTomlFileTestCase):
     """Unit tests for the staleness check, which reads the newest release PyPI lists for each dependency."""
 
@@ -199,7 +199,7 @@ class StaleDependencyTest(DependencyTomlFileTestCase):
 
 
 @no_vulnerabilities
-@patch("requests.get")
+@patch("requests.Session.get")
 class YankedPinTest(DependencyTomlFileTestCase):
     """Unit tests for the yank check, which reads the yank state PyPI reports for the version each pin is left on."""
 
@@ -399,7 +399,7 @@ class VulnerablePinTest(DependencyTomlFileTestCase):
 
 
 @no_vulnerabilities
-@patch("requests.get")
+@patch("requests.Session.get")
 class ArchivedDependencyTest(DependencyTomlFileTestCase):
     """Unit tests for the archival check, which reads the project status PyPI publishes for each dependency."""
 
@@ -508,7 +508,7 @@ class ArchivedDependencyTest(DependencyTomlFileTestCase):
 
 
 @no_vulnerabilities
-@patch("requests.get")
+@patch("requests.Session.get")
 class RedundantDirectiveTest(DependencyTomlFileTestCase):
     """Unit tests for the directives that hold nothing back for the dependency carrying them."""
 
@@ -740,7 +740,7 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
         )
 
 
-@patch("requests.get")
+@patch("requests.Session.get")
 class UvSourcedDependencyTest(DependencyTomlFileTestCase):
     """Unit tests for the dependencies uv resolves from a source of its own, which PyPI serves no release for."""
 

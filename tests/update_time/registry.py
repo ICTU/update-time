@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 
 class RegistryRequestsMixin(unittest.TestCase):
-    """Mix in to patch requests.get and requests.head with one shared mock, exposed as `self.requests`.
+    """Mix in to patch Session.get and Session.head with one shared mock, exposed as `self.requests`.
 
     The OCI client resolves a digest with HEAD and does everything else (auth probe, token, tag listing, push date)
     with GET. Routing both verbs through a single mock lets a test install one `mock_docker_registry` dispatcher via
@@ -46,10 +46,10 @@ class RegistryRequestsMixin(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        """Patch requests.get and requests.head with a single shared mock for the duration of the test."""
+        """Patch Session.get and Session.head with a single shared mock for the duration of the test."""
         super().setUp()
         self.requests = Mock()
-        for target in ("requests.get", "requests.head"):
+        for target in ("requests.Session.get", "requests.Session.head"):
             patcher = patch(target, self.requests)
             self.addCleanup(patcher.stop)
             patcher.start()
@@ -132,7 +132,7 @@ def mock_docker_registry(
     challenge: bool = True,
     page_size: int | None = None,
 ) -> Callable[..., Mock]:
-    """Return a requests.get/.head side effect that mimics an OCI registry plus Docker Hub's per-tag metadata.
+    """Return a Session.get/.head side effect that mimics an OCI registry plus Docker Hub's per-tag metadata.
 
     It models the full flow. The `/v2/` probe answers the OCI auth challenge pointing at the registry's token
     endpoint, the token request returns a token, and `tags/list` returns the names of the given tags unless
@@ -140,7 +140,7 @@ def mock_docker_registry(
     proprietary per-tag request returns that tag's push date. Each of the last two answers 404 for a tag it
     doesn't know. Docker Hub's proprietary tag listing returns the given tags with their digests, a page at a
     time, reading the page and its size off the URL as Docker Hub does.
-    The same callable is assigned to both `requests.get` and `requests.head`; it routes purely on the URL.
+    The same callable is assigned to both `Session.get` and `Session.head`; it routes purely on the URL.
 
     Knobs for the less common flows:
     - `unavailable` makes the named endpoint answer 404. The tag names then model a reference that doesn't resolve,

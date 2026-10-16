@@ -494,7 +494,7 @@ class ArchivalTest(LoggingTestCase):
             "the repository is asked for at a URL GitHub answers 404, so no repository ever reads as archived",
         )
     )
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_archived_flag(self, mock_get: Mock):
         """Test that a repository reads as archived exactly when GitHub's repository endpoint flags it archived.
 
@@ -528,7 +528,7 @@ class ArchivalTest(LoggingTestCase):
             "check it does not make",
         )
     )
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_a_source_told_not_to_check_asks_github_nothing(self, mock_get: Mock):
         """Test that a source told not to check asks GitHub nothing and reads the repository as active."""
         mock_get.return_value = mock_response({"archived": True})
@@ -693,7 +693,7 @@ class GetReleaseTest(LoggingTestCase):
             _get_release(GitHubRepository("owner", "repo with non matching tag"), release_tags("any", "1.1"))
         )
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_repo_without_releases(self, mock_get: Mock):
         """Test that a non-OK response yields no release, and is reported as a failed fetch."""
         mock_get.return_value = mock_response([], ok=False)
@@ -702,7 +702,7 @@ class GetReleaseTest(LoggingTestCase):
         )
         self.assert_could_not_fetch_logged(mock_get().url, status=mock_get().status_code)
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_timeout(self, mock_get: Mock):
         """Test that a timed-out request yields no release, and is reported as a timeout."""
         mock_get.side_effect = requests.exceptions.Timeout
@@ -716,7 +716,7 @@ class GetReleaseTest(LoggingTestCase):
 class ChangesFromReleaseTest(CacheClearingTestCase):
     """Unit tests for getting the changelog from a GitHub release."""
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_no_repository(self, mock_get: Mock):
         """Test that the changes are empty, without querying GitHub, when there is no repository."""
         self.assertEqual(changes_from_release(None, "any", "1.0"), "")
@@ -769,7 +769,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
     CHANGES = markdown_changes("1.1")
 
     def create_responses(self, mock_get: Mock, listings: dict[str, tuple[str, ...]]) -> None:
-        """Point the mock requests.get at a listing per directory, each giving the files that directory holds.
+        """Point the mock Session.get at a listing per directory, each giving the files that directory holds.
 
         A file named like a changelog answers the changelog naming version 1.1.
         """
@@ -788,7 +788,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
             "a package whose own directory holds its changelog costs a listing of the repository's root as well",
         ),
     )
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_changelog_file_in_a_directory(self, mock_get: Mock):
         """Test that a changelog file in the package's directory supplies the changes, leaving the root unread."""
         self.create_responses(mock_get, {"packages/package": ("CHANGELOG.md",), "": ("README.md",)})
@@ -796,7 +796,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
         self.assertEqual(changes, self.CHANGES)
         self.assertNotIn(contents_url(self.MONOREPO), requested_urls(mock_get))
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_directory_without_a_changelog_file(self, mock_get: Mock):
         """Test that a directory naming no changelog file leaves the repository's root to supply the changes."""
         self.create_responses(mock_get, {"packages/package": ("README.md",), "": ("CHANGELOG.md",)})
@@ -812,7 +812,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
             "a Markdown changelog in a repository's root is read as text, so its markup is shown raw",
         ),
     )
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_the_extension_says_whether_the_changes_are_markdown(self, mock_get: Mock):
         """Test that a changelog file's extension says whether the changes it holds are written in Markdown."""
         for name, markdown in {"CHANGELOG.md": True, "CHANGELOG.rst": False, "CHANGELOG": False}.items():
@@ -834,7 +834,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
             "a changelog file is downloaded again for every package that falls back to it",
         ),
     )
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_changelog_file_is_fetched_once(self, mock_get: Mock):
         """Test that two packages falling back to one changelog file cost a single fetch of it between them."""
         self.create_responses(mock_get, {"packages/one": (), "packages/two": (), "": ("CHANGELOG.md",)})
@@ -850,7 +850,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
             "a package whose registry metadata names a directory that moved warns on every run",
         ),
     )
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_directory_the_repository_does_not_serve(self, mock_get: Mock):
         """Test that a directory the repository doesn't serve leaves the root to supply the changes, without warning."""
         not_found = mock_response(ok=False, status_code=404, reason="Not Found", url="https://not/found")
@@ -875,7 +875,7 @@ class ChangesFromChangelogFileTest(LoggingTestCase):
             raises="TypeError: string indices must be integers, not 'str'",
         ),
     )
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_directory_answered_as_a_file(self, mock_get: Mock):
         """Test that a directory GitHub answers with a file leaves the repository's root to supply the changes."""
         file_json = {"name": "package", "download_url": file_url("package"), "git_url": "https://tree/package"}
@@ -909,7 +909,7 @@ class GitHubHeadersTest(CacheClearingTestCase):
         )
     )
     @patch_environ({"GITHUB_TOKEN": "pat123"})  # nosec
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_authorization_header_when_a_token_is_set(self, mock_get: Mock):
         """Test that a request carries a bearer authorization header when GITHUB_TOKEN is set."""
         self.assert_request_headers(mock_get, {"Authorization": "Bearer pat123"})
@@ -923,7 +923,7 @@ class GitHubHeadersTest(CacheClearingTestCase):
         )
     )
     @patch_environ()
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_no_authorization_header_without_a_token(self, mock_get: Mock):
         """Test that a request carries no authorization header when GITHUB_TOKEN is not set."""
         self.assert_request_headers(mock_get, {})

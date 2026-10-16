@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 # Reusable class decorator that mocks the Docker Hub auth token request made by sources.docker_hub.api_headers
 # when DOCKER_HUB_USERNAME/DOCKER_HUB_TOKEN are set, so the image updater tests never make a real network call.
-mock_docker_hub_auth = patch("requests.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec
+mock_docker_hub_auth = patch("requests.Session.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec
 
 
 # The default project for the versions a test builds without one.
@@ -62,18 +62,18 @@ def assert_osv_asked_about(mock_post: Mock, *pins: tuple[str, str], ecosystem: s
 
 def osv(*advisories: dict[str, object]) -> _patch:
     """Return a patch answering OSV with the advisories affecting a version, and with none when given none."""
-    return patch("requests.post", osv_api(*advisories))
+    return patch("requests.Session.post", osv_api(*advisories))
 
 
 def unreachable_osv() -> _patch:
     """Return a patch failing every OSV request, as an OSV a run cannot reach does."""
     status = HTTPStatus.SERVICE_UNAVAILABLE
     unreachable = mock_response(ok=False, status_code=status, reason=status.phrase, url="https://api.osv.dev")
-    return patch("requests.post", Mock(return_value=unreachable))
+    return patch("requests.Session.post", Mock(return_value=unreachable))
 
 
 # Reusable class decorator that answers OSV with no advisories, for update tests that focus on the update flow.
-# Without it their pins are looked up at OSV for real, since nothing else in those tests patches `requests.post`.
+# Without it their pins are looked up at OSV for real, since nothing else in those tests patches `Session.post`.
 no_vulnerabilities = osv()
 
 # Reusable decorator that switches the vulnerability check off, for update tests that focus on the update flow and

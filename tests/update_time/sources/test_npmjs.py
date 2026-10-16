@@ -137,7 +137,7 @@ class GetChangesRepositoryTest(LoggingTestCase):
                 self.assertEqual(get_changes(package, "1.0"), "")
                 self.assertEqual(requested_urls(mock_get), [_version_url(package)])
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_repository_naming_a_github_repository(self, mock_get: Mock):
         """Test that every spelling of a GitHub repository npm allows is used to find the changelog."""
         release = github_release_json("1.0", body="Changelog")
@@ -170,7 +170,7 @@ class GetChangesFallbackTest(LoggingTestCase):
     def create_responses(
         self, mock_get: Mock, name: str, releases: list, listings: Mapping[str, str], repository: dict | str = ""
     ) -> None:
-        """Point the mock requests.get at the package's registry document, its releases, and a listing per directory.
+        """Point the mock Session.get at the package's registry document, its releases, and a listing per directory.
 
         The repository called `name` serves the releases and the listings, each giving the file that directory
         holds, keyed by directory and by the empty string for its root. A file named like a changelog answers the
@@ -198,13 +198,13 @@ class GetChangesFallbackTest(LoggingTestCase):
             "a package whose repository publishes no matching release reports no changelog",
         ),
     )
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_changelog_file_when_no_release_matches(self, mock_get: Mock):
         """Test that a repository publishing no release for the version has its changelog file read."""
         self.create_responses(mock_get, _REPOSITORY, [], {"": "CHANGELOG.md"})
         self.assertEqual(get_changes("package", "1.0"), self.CHANGES)
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_no_changelog_file_when_a_release_matches(self, mock_get: Mock):
         """Test that a repository publishing a release for the version has no changelog file read."""
         release = github_release_json("1.0", body="Release notes")
@@ -220,7 +220,7 @@ class GetChangesFallbackTest(LoggingTestCase):
             "the changelog file of a package a monorepo builds from a directory is looked for in the root",
         ),
     )
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_changelog_file_in_the_directory_the_registry_names(self, mock_get: Mock):
         """Test that the directory the registry names is where the package's changelog file is looked for."""
         repository = {"url": "https://github.com/org/monorepo", "directory": "packages/package"}

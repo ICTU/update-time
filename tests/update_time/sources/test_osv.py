@@ -48,7 +48,7 @@ def _expected_vulnerability(
     return vulnerability(advisory, summary, level, aliases)
 
 
-@patch("requests.post")
+@patch("requests.Session.post")
 class GetVulnerabilitiesTest(LoggingTestCase):
     """Unit tests for getting the vulnerabilities of the version a reference is pinned to."""
 
@@ -313,7 +313,7 @@ def _action_advisory(advisory: str, *events: dict[str, str], **fields: object) -
     return _advisory_affecting(advisory, osv_action_entry(_ACTION, *events, **fields))
 
 
-@patch("requests.post")
+@patch("requests.Session.post")
 class GitHubActionVulnerabilitiesTest(LoggingTestCase):
     """Unit tests for getting the vulnerabilities of the version a GitHub Action is pinned to."""
 

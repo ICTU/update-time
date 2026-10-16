@@ -45,7 +45,7 @@ def _discovered_pyproject_toml(glob: Mock, spec: str) -> Mock:
 @patch("update_time.updaters.update_pyproject_toml.warn_about_pins", Mock())
 @patch("update_time.package_managers.uv.configure_cooldown", Mock())
 @patch_pathlib_path("rglob", cwd=Path("/"))
-@patch("requests.get")
+@patch("requests.Session.get")
 @patch("subprocess.run")
 class UpdatePyprojectTomlsTest(LoggingTestCase):
     """Unit tests for the update pyproject.tomls function."""
@@ -492,7 +492,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
 @patch("update_time.package_managers.uv.configure_cooldown", Mock())
 @patch_pathlib_path("rglob", cwd=Path("/"))
-@patch("requests.get")
+@patch("requests.Session.get")
 @patch("subprocess.run")
 class CheckedPinsTest(LoggingTestCase):
     """Unit test for handing the discovered manifests to the checks uv-delegated updaters share."""

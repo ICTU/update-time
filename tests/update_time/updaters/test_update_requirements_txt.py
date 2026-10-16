@@ -62,7 +62,7 @@ _PYPI_INDEX_URL = "https://pypi.org/simple/"
 
 
 @no_vulnerabilities
-@patch("requests.get")
+@patch("requests.Session.get")
 @patch("pathlib.Path.rglob")
 class UpdateRequirementsTxtTest(LoggingTestCase):
     """Unit tests for the update requirements.txt function."""

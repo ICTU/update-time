@@ -79,7 +79,7 @@ NULL_PROJECT_URLS_READ_AS_A_DICT = Mutation(
 )
 
 
-@patch("requests.get")
+@patch("requests.Session.get")
 class GetChangesTest(LoggingTestCase):
     """Unit tests for getting the changes."""
 
@@ -91,7 +91,7 @@ class GetChangesTest(LoggingTestCase):
         status_code: int = HTTPStatus.OK,
         content_type: str | None = "text/text",
     ) -> None:
-        """Point the mock requests.get at one response whose successive `.json()` calls return the given payloads.
+        """Point the mock Session.get at one response whose successive `.json()` calls return the given payloads.
 
         The changelog heuristics make several requests off one release (the PyPI metadata, then a changelog URL or
         GitHub releases); the shared response returns the next JSON payload on each `.json()` and the same text and
@@ -104,7 +104,7 @@ class GetChangesTest(LoggingTestCase):
         mock_get.return_value = response
 
     def create_description_responses(self, mock_get: Mock, description: str, body: str | None = None) -> None:
-        """Point the mock requests.get at the PyPI metadata carrying that description, and at one GitHub release.
+        """Point the mock Session.get at the PyPI metadata carrying that description, and at one GitHub release.
 
         The release stands for what a repository linked in the description answers for version 1.1, so its body
         is the changelog such a link supplies, or the null GitHub reports for a release published without notes.
@@ -114,7 +114,7 @@ class GetChangesTest(LoggingTestCase):
         )
 
     def create_mock_response_per_url(self, mock_get: Mock, metadata: dict, unreachable_url: str) -> None:
-        """Point the mock requests.get at the release metadata, answering the unreachable URL with an HTTP error."""
+        """Point the mock Session.get at the release metadata, answering the unreachable URL with an HTTP error."""
         unreachable = mock_response(status_code=HTTPStatus.NOT_FOUND, ok=False)
         reachable = mock_response(metadata, status_code=HTTPStatus.OK, ok=True)
         mock_get.side_effect = lambda url, **_kwargs: unreachable if url == unreachable_url else reachable
@@ -155,7 +155,7 @@ class GetChangesTest(LoggingTestCase):
         description: str = "Package description",
         extra: Mapping[str | None, Mock] | None = None,
     ) -> None:
-        """Point the mock requests.get at the responses for packages whose metadata names one GitHub repository.
+        """Point the mock Session.get at the responses for packages whose metadata names one GitHub repository.
 
         The repository's root lists an entry per name in `files`. A name mapped to a text is a file answering that
         text. A name mapped to None is an entry with no file to fetch, as a directory is. A name mapped to a
@@ -826,7 +826,7 @@ class ArchivalTest(LoggingTestCase):
             "a reason PyPI serves as null is carried as None in the field that holds the words to quote",
         ),
     )
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_project_status(self, mock_get: Mock):
         """Test that a project reads as archived exactly when the Index API declares that status for it.
 
@@ -855,7 +855,7 @@ class ArchivalTest(LoggingTestCase):
                 self.assertEqual(_archival(package, check_archival=True), expected)
 
 
-@patch("requests.get")
+@patch("requests.Session.get")
 class GetLatestVersionTest(LoggingTestCase):
     """Unit tests for getting the latest version from PyPI.
 
