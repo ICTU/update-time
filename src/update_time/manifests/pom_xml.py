@@ -4,8 +4,10 @@ This module owns what a pom's elements mean, whether Update-time scans the pom o
 XML itself is the formats layer's concern.
 """
 
+import os
 import re
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from update_time.domain.dependency import PinnedDependency
@@ -18,7 +20,6 @@ from update_time.primitives.location import Location
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
 
     from update_time.domain.dependency import DependencyName
     from update_time.formats.xml import XmlElement
@@ -39,6 +40,9 @@ _SCM_PREFIX = re.compile(r"^scm:[^:]+:")
 
 # Update-time reads these children of `<scm>`, in this order, to find where the project's source lives.
 _SCM_URL_TAGS = ("url", "connection", "developerConnection")
+
+# The name of the file holding a pom.
+_POM_XML = "pom.xml"
 
 # The children that name an artefact and its version, in the order `groupId:artifactId` names them.
 _COORDINATE_TAGS = ("groupId", "artifactId", "version")
@@ -84,6 +88,22 @@ def pom_name(path: Path) -> str:
     parent_element = project.child("parent")
     parts = [_coordinate(project, tag) or _coordinate(parent_element, tag) for tag in _COORDINATE_TAGS]
     return ":".join(parts) if all(parts) else ""
+
+
+def module_directories(path: Path) -> list[Path]:
+    """Return the directory of each module the pom's own `<modules>` element lists.
+
+    A profile's modules are left out, since they join the reactor only where Maven activates that profile.
+    """
+    project = xml.read(path)
+    listed = None if project is None else project.child("modules")
+    return [] if listed is None else [_module_directory(path.parent / module.text) for module in listed.children]
+
+
+def _module_directory(module: Path) -> Path:
+    """Return the module's directory, whether the path names that directory or its pom, with each `..` collapsed."""
+    normalized = Path(os.path.normpath(module))
+    return normalized.parent if normalized.name == _POM_XML else normalized
 
 
 def _coordinate(element: XmlElement | None, tag: str) -> str:

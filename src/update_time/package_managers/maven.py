@@ -3,6 +3,7 @@
 import re
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass
 from itertools import starmap
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -90,7 +91,7 @@ def _variant_pattern(version: VersionString) -> str:
 
 
 # Every Maven run takes these options, whichever goals it runs.
-_OPTIONS = ("--batch-mode", "--no-transfer-progress", "--non-recursive")
+_OPTIONS = ("--batch-mode", "--no-transfer-progress")
 
 # The versions plugin's goals take these options. `generateBackupPoms` stops the versions plugin writing a backup pom
 # beside the one it rewrites.
@@ -125,48 +126,62 @@ _RULE_SET = (
 )
 
 
-# The wrapper script a project ships beside its pom, which runs the Maven version that project builds with.
+# A project ships this wrapper script beside its root pom. The script runs the Maven version that project builds with.
 _WRAPPER = "mvnw"
 
 
-def _maven(pom_xml: Path) -> str:
-    """Return the Maven to run for the pom: the project's own wrapper, or the mvn on the path where it ships none."""
-    return f"./{_WRAPPER}" if (pom_xml.parent / _WRAPPER).exists() else "mvn"
+def _maven(directory: Path) -> str:
+    """Return the Maven to run in the directory: the project's wrapper, or the mvn on the path where it ships none."""
+    return f"./{_WRAPPER}" if (directory / _WRAPPER).exists() else "mvn"
 
 
-def update_pom_xml(pom_xml: Path) -> XmlElement | None:
-    """Update the dependencies and plugins the pom declares, running Maven in the pom's own directory.
+@dataclass(frozen=True)
+class _ReactorModule:
+    """A pom, and the root directory of the reactor Maven builds it in."""
+
+    pom_xml: Path
+    root: Path
+
+    @property
+    def selection(self) -> tuple[str, ...]:
+        """Return the options that select the pom in the reactor, by its directory relative to the root."""
+        return ("--projects", str(self.pom_xml.parent.relative_to(self.root, walk_up=True)))
+
+
+def update_pom_xml(pom_xml: Path, reactor_root: Path) -> XmlElement | None:
+    """Update the dependencies and plugins the pom declares, running Maven in the root directory of its reactor.
 
     Return the effective pom Maven wrote before it updated the pom, or None where it wrote none. A pom leaving a group
     or an artifact to its parent gets the effective pom in a Maven run of its own, so the rule set names the
     coordinates Maven resolves.
     """
+    module = _ReactorModule(pom_xml, reactor_root)
     if not pom_xml_format.leaves_coordinates_unresolved(pom_xml):
         with _versions_options(pom_xml_format.versioned_declarations(pom_xml)) as options:
-            _, effective_pom = _run_writing_effective_pom(pom_xml, options, _VERSIONS_GOALS)
+            _, effective_pom = _run_writing_effective_pom(module, options, _VERSIONS_GOALS)
             return effective_pom
-    succeeded, effective_pom = _run_writing_effective_pom(pom_xml)
+    succeeded, effective_pom = _run_writing_effective_pom(module)
     if succeeded:  # A single run failing at the same point would not reach the updates either.
         with _versions_options(pom_xml_format.versioned_declarations(pom_xml, effective_pom)) as options:
-            _run(pom_xml, options, _VERSIONS_GOALS)
+            _run(module, options, _VERSIONS_GOALS)
     return effective_pom
 
 
 def _run_writing_effective_pom(
-    pom_xml: Path, options: tuple[str, ...] = (), goals: tuple[str, ...] = ()
+    module: _ReactorModule, options: tuple[str, ...] = (), goals: tuple[str, ...] = ()
 ) -> tuple[bool, XmlElement | None]:
     """Run Maven over the pom, the effective pom's goal first, and return whether it succeeded and the effective pom."""
     with _effective_pom_file() as output:
         effective_pom_options = (_EFFECTIVE_POM_OPTION, f"-Doutput={output}")
-        result = _run(pom_xml, (*options, *effective_pom_options), (_EFFECTIVE_POM_GOAL, *goals))
+        result = _run(module, (*options, *effective_pom_options), (_EFFECTIVE_POM_GOAL, *goals))
         # Maven builds the model before any goal runs, so the effective pom holds even when a later goal fails.
         effective_pom = xml.read(output)
     if effective_pom is None:
         effective_pom = _effective_pom_written_elsewhere(result.stdout)
     if result.succeeded and effective_pom is None:
-        _LOG.effective_pom_unreadable(pom_xml)
+        _LOG.effective_pom_unreadable(module.pom_xml)
     if effective_pom is not None and not pom_xml_format.has_input_locations(effective_pom):
-        _LOG.effective_pom_without_input_locations(pom_xml)
+        _LOG.effective_pom_without_input_locations(module.pom_xml)
     return result.succeeded, effective_pom
 
 
@@ -176,10 +191,10 @@ def _effective_pom_written_elsewhere(stdout: str) -> XmlElement | None:
     return None if written is None else xml.read(Path(written["path"]))
 
 
-def _run(pom_xml: Path, options: tuple[str, ...], goals: tuple[str, ...]) -> Result:
+def _run(module: _ReactorModule, options: tuple[str, ...], goals: tuple[str, ...]) -> Result:
     """Run Maven over the pom, and return what the run wrote and whether it succeeded."""
-    command = Command(_maven(pom_xml), *_OPTIONS, *options, *goals)
-    result = run(command, cwd=pom_xml.parent)
+    command = Command(_maven(module.root), *_OPTIONS, *module.selection, *options, *goals)
+    result = run(command, cwd=module.root)
     # Maven writes its [ERROR] lines to stdout and leaves stderr empty, so `run` surfaces nothing for a failed run.
     # A run whose executable was missing wrote nothing at all, and `run` reported that itself.
     if not result.succeeded and result.stdout:
