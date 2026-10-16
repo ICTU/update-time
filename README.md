@@ -194,7 +194,7 @@ Update-time logs at four levels. `--log-level` sets the lowest one shown, which 
 | :-: | :---- | :------------- |
 | 🔍 | `DEBUG` | what Update-time is doing: files it checks, [markers](#-controlling-updates-and-warnings-per-reference) it recognises, updates held back, warnings silenced, and more |
 | ℹ️ | `INFO` | what Update-time changed: a version updated, a [hash pinned](#-pinning) |
-| ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a source it cannot reach, a file it cannot parse, a marker that is [invalid](#invalid-markers), [incorrect](#incorrect-markers), or [redundant](#redundant-markers) |
+| ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a source it cannot reach, a file it cannot parse, an advisory it cannot read, a marker that is [invalid](#invalid-markers), [incorrect](#incorrect-markers), or [redundant](#redundant-markers) |
 | ❌ | `ERROR` | failures that stop an update, such as a package manager that is not installed |
 
 ### Workflow
@@ -458,7 +458,7 @@ To silence one advisory across the whole run, rather than on the one reference t
 
 Update-time warns about every risk level by default. To hear only about the more severe ones, raise the threshold with `--vulnerability-level`, for example `--vulnerability-level high`. Update-time warns about a vulnerability whose risk level it cannot read, whatever the threshold is. Pass `--vulnerability-level none` to switch the check off.
 
-Which dependencies are checked follows from what OSV can match a pinned version against:
+Which dependencies are checked follows from what OSV holds advisories for:
 
 | Dependency type | Vulnerability check |
 | :-------------- | :------------------ |
@@ -468,7 +468,7 @@ Which dependencies are checked follows from what OSV can match a pinned version 
 | [Node engine version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
 | [Python version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
 | [Docker images](#docker-images) | none: OSV has no ecosystem for container images |
-| [GitHub Actions](#github-actions-and-pre-commit-hooks) | none: OSV matches no version against its advisories for actions |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | the version each `uses:` is left on, against OSV's GitHub Actions advisories |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | none: a hook repository is not an OSV package |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | the version in the URL, against OSV's npm advisories |
 
@@ -892,19 +892,20 @@ A vulnerability can only be reported where OSV holds advisories for the dependen
 | [Python dependencies](#python-dependencies) | on a dependency that pins no exact version, and on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
 | [Maven dependencies](#maven-dependencies) | on a declaration whose version Maven leaves unresolved, such as a managed version naming a property that the poms do not declare, and on a declaration that leaves its version to the declaration managing it |
-| [Node engine version](#node-engine-version-and-python-version) | always: its source does not report vulnerability information |
-| [Python version](#node-engine-version-and-python-version) | always: its source does not report vulnerability information |
-| [Docker images](#docker-images) | always: its source does not report vulnerability information |
-| [GitHub Actions](#github-actions-and-pre-commit-hooks) | always: its source does not report vulnerability information |
-| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | always: its source does not report vulnerability information |
+| [Node engine version](#node-engine-version-and-python-version) | always: OSV does not hold advisories for this kind of dependency |
+| [Python version](#node-engine-version-and-python-version) | always: OSV does not hold advisories for this kind of dependency |
+| [Docker images](#docker-images) | always: OSV does not hold advisories for this kind of dependency |
+| [GitHub Actions](#github-actions-and-pre-commit-hooks) | on a reference that names a branch, a tag such as `stable-2024`, or a commit SHA rather than a version, and that the run does not pin to a version tag |
+| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | always: OSV does not hold advisories for this kind of dependency |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | never |
 
 Update-time reports those cases as:
 
 ```console
-WARNING Redundant update-time directive ignore[vulnerable] for python in Dockerfile:2: this dependency's source does not report vulnerability information
+WARNING Redundant update-time directive ignore[vulnerable] for python in Dockerfile:2: OSV does not hold advisories for this kind of dependency
 WARNING Redundant update-time directive ignore[vulnerable] for humanize in docs/requirements.txt:12: this requirement does not pin a version to check for a vulnerability
 WARNING Redundant update-time directive ignore[vulnerable] for nl.example:internal-lib in pom.xml:12: this dependency does not resolve to a version to check for a vulnerability
+WARNING Redundant update-time directive ignore[vulnerable] for actions/checkout in .github/workflows/ci.yml:17: this reference does not name a version to check for a vulnerability
 ```
 
 Update-time reports an `ignore[vulnerable=…]` as redundant when none of the version's vulnerabilities answers to the identifier. An update fixed the vulnerability, or the identifier was mistyped:
@@ -1359,7 +1360,7 @@ A pom can declare an artefact more than once, and Update-time then hands Maven o
 
 ### GitHub Actions and pre-commit hooks
 
-Both resolve their versions from the same source: a GitHub repository's releases and tags. So they behave the same way, except where the file format differs.
+Both resolve their versions from the same source: a GitHub repository's releases and tags. So they behave the same way, except where the file format differs and in the vulnerability check.
 
 #### What files are updated?
 
@@ -1444,7 +1445,21 @@ GitHub does not record a yank, so Update-time checks neither an action nor a hoo
 
 #### Vulnerable dependencies
 
-Update-time checks neither. OSV does hold advisories for actions, but their affected entries enumerate no versions. So a question to OSV about a version of an action returns nothing, however that version is spelled. Silence there says nothing about whether the action is safe. A hook repository is not an OSV package at all.
+Update-time checks an action against OSV's GitHub Actions advisories. It checks the version the run leaves the action on. OSV does not match a version of an action against its advisories, so Update-time asks OSV for every advisory about the action and matches the version itself. It reads `v4.1.1` as `4.1.1`, and `v4` as `4.0.0`. OSV files an action under its repository. So Update-time checks an action in a subdirectory, such as `github/codeql-action/init`, as `github/codeql-action`, and a reusable workflow, such as `octo-org/example-repo/.github/workflows/reusable.yml`, as `octo-org/example-repo`.
+
+Update-time does not check a reference that names a branch, a tag such as `stable-2024`, or a commit SHA rather than a version. A run that pins such a reference to a version tag checks it at that version.
+
+An advisory can state an open-ended range. Where its reviewers record which versions they last knew to be affected, Update-time ends the range there. GHSA-vqf5-2xx6-9wfm states a range of `github/codeql-action` versions that starts at `2.26.11` and does not end. Its reviewers record `< 3.0.0` as the versions last known to be affected. So Update-time does not report `v4`. Without that record, Update-time reports every version from the start of the range on.
+
+Update-time reads what it can of an advisory, and warns about a value it cannot read:
+
+```console
+WARNING Could not read the affected versions of advisory GHSA-1111-2222-3333 (Invalid version: 'unknown'), so the vulnerability check passes over that part of the advisory
+```
+
+The check matches the version alone. Take GHSA-mrrh-fwg8-r2c3: an attacker moved the tags of `tj-actions/changed-files`, and the advisory names the versions behind those tags. So a reference pinned to a commit from before the attack gets the warning too. Once you have verified the commit, silence the warning with an `ignore[vulnerable=…]` marker.
+
+A hook repository is not an OSV package, so Update-time does not check a pre-commit hook.
 
 #### Archived dependencies
 

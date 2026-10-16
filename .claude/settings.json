@@ -27,6 +27,10 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/deny-git-writes.sh"
+          },
+          {
+            "type": "command",
+            "command": "cmd=$(jq -r '.tool_input.command'); printf '%s\\n' \"$cmd\" | grep -qE '(^|[;&|(]|[[:space:]])(grep|awk|head|tail|cut)[[:space:]][^;&|]*/tmp/[^[:space:]]*\\.txt|/tmp/[^[:space:]]*\\.txt[^;&]*\\|[[:space:]]*(grep|awk|head|tail|cut)([[:space:]]|$)' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Read a report under /tmp with the Read tool, from the first failure or from the end, rather than through a filter: a filter can drop the line that matters. To find the end, wc -l the file and read from near there.\"}}' || true"
           }
         ]
       }

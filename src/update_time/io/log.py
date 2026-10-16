@@ -517,6 +517,16 @@ class Logger:
         """Warn that an advisory's CVSS vector could not be scored, so its risk level could not be derived."""
         self._log(self._MESSAGE_MALFORMED_CVSS_VECTOR, advisory=advisory, error=error)
 
+    _MESSAGE_UNREADABLE_AFFECTED_VERSIONS = LogMessage(
+        WARNING,
+        "Could not read the affected versions of advisory %(advisory)s (%(error)s), so the vulnerability check "
+        "passes over that part of the advisory",
+    )
+
+    def unreadable_affected_versions(self, advisory: str, error: Exception) -> None:
+        """Warn that the affected versions an advisory states do not all parse."""
+        self._log(self._MESSAGE_UNREADABLE_AFFECTED_VERSIONS, advisory=advisory, error=error)
+
     _MESSAGE_VULNERABLE_DEPENDENCY = LogMessage(
         WARNING,
         "Vulnerable dependency %(dependency)s in %(location)s: version %(version)s has %(vulnerability)s "

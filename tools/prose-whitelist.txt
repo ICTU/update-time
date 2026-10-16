@@ -99,7 +99,6 @@ A script has no lockfile, so — unlike the pyproject.toml path, which persists 
 A script's direct dependencies carry no tree prefix (each is its own tree root), so the line is just `package v<current>[ (latest: v<latest>)]` — the exact shape the updater parses.
 A second decorator on the same test fails it, as does one given no mutation at all.
 A section whose version is named in prose sits under no heading, so any heading ends it.
-A set of references OSV reports nothing for therefore costs a single request, however many it holds.
 A severity an advisory reports, as a CVSS vector string of the named version.
 A single directive in a marker's directive list: a verb, optionally followed by a bracket.
 A source given it finds no candidate and keeps the current version, so a yanked pin on a frozen reference is still detected.
@@ -219,7 +218,6 @@ Neither patch is ever stopped: no test may lift the refusal.
 No newer version; the pin's own release is yanked.
 No newer version; the pin's release is vulnerable.
 Null for an entry that is no file to fetch, such as a directory: pip's root keeps its `news` fragments in one.
-OSV does hold advisories for actions, but their affected entries enumerate no versions.
 On a `pyproject.toml` or inline script metadata dependency, Update-time reports every bound as redundant, since uv answers with one version rather than the candidates a bound would narrow.
 On a `requirements.txt` requirement that pins no exact version, Update-time reports every bound as redundant, `ignore[update]` included, since it resolves no update to bound.
 One holding every check back does not, since a bare `ignore` queries no source at all, OSV included.
@@ -628,7 +626,6 @@ Unit tests for the checks a reference the run resolves no update for still gets.
 Unit tests for the dependencies uv resolves from a source of its own, which PyPI serves no release for.
 Unit tests for the patterns that tell an exact pin from a requirement pinning no version.
 Unit tests for the versions the declarations a file makes pin.
-Unlike the registries the other sources talk to, OSV resolves no versions: it answers which advisories affect the version a reference is pinned to, whichever ecosystem that version comes from.
 Update a Python dependency whose PyPI metadata reports no project URLs, instead of ending the run with a traceback and leaving every pin in the file it was rewriting unchanged.
 Update every docstring and comment the change makes untrue.
 Update the Node engine to the latest [Node](https://hub.docker.com/_/node) release on Docker Hub when no Dockerfile declares a numeric Node base image to derive it from, instead of logging an error.
