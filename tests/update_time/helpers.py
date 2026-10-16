@@ -875,7 +875,7 @@ def _github_api(  # noqa: PLR0913 — what each endpoint answers
     archived: bool = False,
     tag_ref: Mock | Exception | None = None,
 ) -> Mock:
-    """Return a requests.get mock serving the GitHub releases, tags, commits, compare, and repository endpoints.
+    """Return a Session.get mock serving the GitHub releases, tags, commits, compare, and repository endpoints.
 
     Each request is answered by the endpoint it names. An endpoint given as None answers non-OK, so a test can make it
     unreachable. The commits endpoint serves the same commit for every ref. A listing of commits serves the listed
@@ -922,7 +922,7 @@ def patch_github(  # noqa: PLR0913 — what each endpoint answers
     archived: bool = False,
     tag_ref: Mock | Exception | None = None,
 ) -> Generator[None]:
-    """Patch requests.get to serve the GitHub API endpoints from the given values (see `_github_api`).
+    """Patch Session.get to serve the GitHub API endpoints from the given values (see `_github_api`).
 
     A test decorated with it gets a fresh mock on every run, so each run sees only its own requests.
     """
@@ -935,13 +935,13 @@ def patch_github(  # noqa: PLR0913 — what each endpoint answers
         archived=archived,
         tag_ref=tag_ref,
     )
-    with patch("requests.get", api):
+    with patch("requests.Session.get", api):
         yield
 
 
 def github_requests(endpoint: str) -> list[str]:
     """Return the URLs requested from the GitHub API endpoint."""
-    requests_get = cast("Mock", requests.get)
+    requests_get = cast("Mock", requests.Session.get)
     urls = [request.args[0] for request in requests_get.call_args_list]
     return [url for url in urls if _github_endpoint(url) == endpoint]
 
@@ -1191,7 +1191,7 @@ def effective_pom_declaring(*dependencies: str, properties: str = "", managed: s
 
 
 def _maven_central_api(listing: str, pom: str | None, *, archived: bool, releases: list | None) -> Mock:
-    """Return a requests.get mock serving an artefact's listing, a version's pom, and the GitHub repository it names.
+    """Return a Session.get mock serving an artefact's listing, a version's pom, and the GitHub repository it names.
 
     GitHub serves the given releases for every repository, and answers the releases request non-OK where none are given.
 
@@ -1215,8 +1215,8 @@ def _maven_central_api(listing: str, pom: str | None, *, archived: bool, release
 def patch_maven_central(
     listing: str, pom: str | None, *, archived: bool = False, releases: list | None = None
 ) -> _patch:
-    """Patch requests.get to serve a Maven artefact's listing and pom (see `_maven_central_api`)."""
-    return patch("requests.get", _maven_central_api(listing, pom, archived=archived, releases=releases))
+    """Patch Session.get to serve a Maven artefact's listing and pom (see `_maven_central_api`)."""
+    return patch("requests.Session.get", _maven_central_api(listing, pom, archived=archived, releases=releases))
 
 
 def jsdelivr_versions(*version_strings: str) -> Mock:
@@ -1269,7 +1269,7 @@ def _osv_response(*advisories: dict[str, object]) -> Mock:
 
 
 def osv_api(*advisories: dict[str, object]) -> Mock:
-    """Return a requests.post mock serving both OSV endpoints, reporting the advisories for every version queried.
+    """Return a Session.post mock serving both OSV endpoints, reporting the advisories for every version queried.
 
     Routing by URL keeps tests independent of how many of each request the source makes: the batch endpoint answers
     which of the queried versions are affected, and the details endpoint answers with the advisories in full.

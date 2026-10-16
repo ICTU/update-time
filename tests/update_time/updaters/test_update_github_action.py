@@ -512,7 +512,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         """Test that a `uses:` naming no owner and repository is left alone rather than ending the run."""
         workflow_yml = self.scanned_workflow(mock_glob, "uses: myaction@v1\n")
         workflow_yml.write_text.assert_not_called()
-        cast("Mock", requests.get).assert_not_called()  # A reference naming no repository asks GitHub nothing.
+        cast("Mock", requests.Session.get).assert_not_called()  # A reference naming no repository asks GitHub nothing.
         self.assert_no_warnings_logged()
 
     def test_a_bare_ignore_asks_github_nothing(self, mock_glob: Mock):
@@ -525,7 +525,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                     mock_glob, f"uses: actions/checkout@{ref}  # update-time: ignore\n"
                 )
                 workflow_yml.write_text.assert_not_called()
-                cast("Mock", requests.get).assert_not_called()
+                cast("Mock", requests.Session.get).assert_not_called()
                 self.assert_ignored_logged("actions/checkout", Location(workflow_yml, 1))
 
     @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA))

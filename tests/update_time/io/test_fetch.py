@@ -19,7 +19,7 @@ class FetchTest(unittest.TestCase):
         super().setUp()
         self.logger = Mock()
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_ok_response_is_returned(self, mock_get: Mock):
         """Test that an OK response is returned and the timeout is applied."""
         response = mock_response({"key": "value"}, ok=True)
@@ -27,15 +27,15 @@ class FetchTest(unittest.TestCase):
         self.assertIs(response, fetch("https://example.org", self.logger))
         mock_get.assert_called_once_with("https://example.org", timeout=10)
 
-    @patch("requests.head")
+    @patch("requests.Session.head")
     def test_method_and_kwargs_are_forwarded(self, mock_head: Mock):
-        """Test that the method selects the requests function and extra kwargs are forwarded verbatim."""
+        """Test that the method selects the session method and extra kwargs are forwarded verbatim."""
         response = mock_response({}, ok=True)
         mock_head.return_value = response
         self.assertIs(response, fetch("https://example.org", self.logger, method="head", headers={"A": "b"}))
         mock_head.assert_called_once_with("https://example.org", timeout=10, headers={"A": "b"})
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_non_ok_response_is_logged_and_dropped(self, mock_get: Mock):
         """Test that a non-OK response is logged and reported as None by default."""
         response = mock_response({}, ok=False)
@@ -43,7 +43,7 @@ class FetchTest(unittest.TestCase):
         self.assertIsNone(fetch("https://example.org", self.logger))
         self.logger.response.assert_called_once_with(response)
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_non_ok_response_is_returned_when_status_is_not_required(self, mock_get: Mock):
         """Test that a non-OK response is returned unlogged when the caller inspects the status itself."""
         response = mock_response({}, ok=False)
@@ -51,14 +51,14 @@ class FetchTest(unittest.TestCase):
         self.assertIs(response, fetch("https://example.org", self.logger, require_ok=False))
         self.logger.response.assert_not_called()
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_timeout_is_logged_and_dropped(self, mock_get: Mock):
         """Test that a timeout is logged and reported as None rather than raised."""
         mock_get.side_effect = requests.exceptions.Timeout
         self.assertIsNone(fetch("https://example.org", self.logger))
         self.logger.timeout.assert_called_once_with("https://example.org")
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_network_error_is_logged_and_dropped(self, mock_get: Mock):
         """Test that a connection error (or any other network error) is logged and reported as None."""
         error = requests.exceptions.ConnectionError("connection refused")

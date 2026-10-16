@@ -21,7 +21,7 @@ _PNPM_UNSET = "undefined\n"  # what `pnpm config get minimumReleaseAge` prints w
 
 
 def _package_lookup_responses() -> Mock:
-    """Return a `requests.get` mock for the npmjs/GitHub lookups that describe an update to version 1.1.
+    """Return a `Session.get` mock for the npmjs/GitHub lookups that describe an update to version 1.1.
 
     After a manager reports a package updated to 1.1, Update-time resolves its changelog and push date via four
     sequential requests: the package's repository URL (npm registry), the GitHub releases (the changelog), the npm
@@ -89,7 +89,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    @patch("requests.get", _package_lookup_responses())
+    @patch("requests.Session.get", _package_lookup_responses())
     def test_update(self, mock_run: Mock, mock_glob: Mock):
         """Test that the installed version is logged, even when it is older than the latest version."""
         mock_package_json = self.create_package_json()
@@ -109,7 +109,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         )
         self.assert_no_warnings_logged()
 
-    @patch("requests.get", _package_lookup_responses())
+    @patch("requests.Session.get", _package_lookup_responses())
     def test_new_version_is_logged_at_the_line_declaring_the_dependency(self, mock_run: Mock, mock_glob: Mock):
         """Test that the new version is logged at the line declaring the dependency npm updated."""
         mock_package_json = self.create_package_json('{\n  "dependencies": {\n    "package": "^1.0.0"\n  }\n}\n')
@@ -124,7 +124,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
             "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json, 3), "Changelog"
         )
 
-    @patch("requests.get", _package_lookup_responses())
+    @patch("requests.Session.get", _package_lookup_responses())
     def test_new_version_is_logged_at_each_line_declaring_the_dependency(self, mock_run: Mock, mock_glob: Mock):
         """Test that a dependency two sections declare has its new version logged at each of those lines."""
         contents = (
@@ -147,7 +147,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         )
         self.assert_new_version_logged_among_others("package", published, Location(mock_package_json, 6), ANY)
 
-    @patch("requests.get", _package_lookup_responses())
+    @patch("requests.Session.get", _package_lookup_responses())
     def test_new_version_of_a_dependency_the_manifest_declares_without_a_registry_spec(
         self, mock_run: Mock, mock_glob: Mock
     ):
@@ -193,7 +193,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    @patch("requests.get", _package_lookup_responses())
+    @patch("requests.Session.get", _package_lookup_responses())
     def test_manifest_kept_when_a_dependency_is_updated(self, mock_run: Mock, mock_glob: Mock):
         """Test that npm's manifest (including any specs it normalized) is kept when a dependency is updated."""
         mock_package_json = self.create_package_json()
@@ -307,7 +307,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    @patch("requests.get", _package_lookup_responses())
+    @patch("requests.Session.get", _package_lookup_responses())
     def test_update(self, mock_run: Mock, mock_glob: Mock):
         """Test that a dev dependency's installed version is logged, using pnpm's list and outdated JSON shapes."""
         mock_package_json = self.create_package_json()
@@ -426,7 +426,7 @@ class StaleDependencyTest(LoggingTestCase):
         glob.return_value = [package_json]
         return package_json
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_stale_dependency_warned(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that a direct dependency whose newest release is old is warned about, at the line it is declared on."""
         self.stub_no_update(mock_run)
@@ -435,7 +435,7 @@ class StaleDependencyTest(LoggingTestCase):
         update_package_jsons()
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4))
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_dependency_declared_in_two_sections(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that a dependency two sections declare is warned about at each of the lines declaring it."""
         self.stub_no_update(mock_run)
@@ -451,7 +451,7 @@ class StaleDependencyTest(LoggingTestCase):
         update_package_jsons()
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 3), Location(package_json, 6))
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_recent_dependency_not_warned(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that a direct dependency whose newest release is recent is not warned about as stale."""
         self.stub_no_update(mock_run)
@@ -460,7 +460,7 @@ class StaleDependencyTest(LoggingTestCase):
         update_package_jsons()
         self.assert_no_warnings_logged()
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_dependency_without_release_skipped(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that a declared dependency the registry has no release for is skipped without warning or crashing."""
         self.stub_no_update(mock_run)
@@ -470,7 +470,7 @@ class StaleDependencyTest(LoggingTestCase):
         self.assert_no_warnings_logged()
 
     @staleness_disabled
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_disabled_makes_no_registry_request(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that `--stale-after 0` skips the staleness pass entirely, so it makes no npm registry request."""
         self.stub_no_update(mock_run)

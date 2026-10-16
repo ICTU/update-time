@@ -17,12 +17,12 @@ _TREE = "https://tree"
 
 
 def requested_urls(mock_get: Mock) -> list[str]:
-    """Return the URLs the mock requests.get was asked for, in the order they were asked for."""
+    """Return the URLs the mock Session.get was asked for, in the order they were asked for."""
     return [call.args[0] for call in mock_get.call_args_list]
 
 
 def respond_per_url(mock_get: Mock, responses: Mapping[Any, Mock]) -> None:
-    """Point the mock requests.get at the response each URL maps to.
+    """Point the mock Session.get at the response each URL maps to.
 
     A URL the mapping doesn't cover raises a KeyError, so a request the test did not expect fails loudly rather
     than being answered.

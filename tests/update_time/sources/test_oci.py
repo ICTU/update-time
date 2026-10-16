@@ -541,7 +541,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertIsNone(get_latest_tag("no_tags", "1.0").project.newest)
 
     @patch_environ({"DOCKER_HUB_USERNAME": "joe_doe", "DOCKER_HUB_TOKEN": "pat123"})  # nosec
-    @patch("requests.post")
+    @patch("requests.Session.post")
     def test_user_bearer_token(self, mock_post: Mock):
         """Test that the credentials are used for both the per-tag metadata and the OCI registry token requests."""
         self.requests.side_effect = mock_docker_registry(docker_tag("2.1", DIGEST))
@@ -956,12 +956,12 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
 class RegistryTokenTest(LoggingTestCase):
     """Unit tests for discovering and fetching a registry pull token."""
 
-    @patch("requests.get", Mock(side_effect=requests.exceptions.ConnectionError))
+    @patch("requests.Session.get", Mock(side_effect=requests.exceptions.ConnectionError))
     def test_probe_network_error(self):
         """Test that a network error probing the registry yields no token (anonymous) instead of crashing."""
         self.assertIsNone(_registry_token("ghcr.io", "owner/repo"))
 
-    @patch("requests.get")
+    @patch("requests.Session.get")
     def test_token_request_failure(self, mock_get: Mock):
         """Test that a failed token request (after a valid auth challenge) yields no token instead of crashing."""
         challenge = 'Bearer realm="https://ghcr.io/token",service="ghcr.io"'

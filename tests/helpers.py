@@ -29,11 +29,11 @@ def mock_response(json: Mapping | list | str | None = None, **kwargs: object) ->
 
 
 def patch_get(json: Mapping | list | None = None, **kwargs: object) -> _patch:
-    """Patch requests.get to return a mock requests Response whose .json() returns the given value.
+    """Patch Session.get to return a mock requests Response whose .json() returns the given value.
 
     Extra response attributes (text, status_code, headers, ...) can be set via keyword arguments.
     """
-    return patch("requests.get", Mock(return_value=mock_response(json, **kwargs)))
+    return patch("requests.Session.get", Mock(return_value=mock_response(json, **kwargs)))
 
 
 def patch_environ(environment_variables: dict[str, str] | None = None, *, clear: bool | None = None) -> _patch_dict:

@@ -32,7 +32,7 @@ def _discovered_script(glob: Mock, spec: str) -> Mock:
 # the scripts found is `CheckedInlineScriptPinsTest`'s below.
 @patch("update_time.updaters.update_python_inline_script_metadata.warn_about_pins", Mock())
 @patch_pathlib_path("rglob", cwd=Path("/"))
-@patch("requests.get")
+@patch("requests.Session.get")
 @patch("subprocess.run")
 class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
     """Unit tests for the update python-inline-script-metadatas function."""
@@ -157,7 +157,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
 
 
 @patch_pathlib_path("rglob", cwd=Path("/"))
-@patch("requests.get")
+@patch("requests.Session.get")
 @patch("subprocess.run")
 class CheckedInlineScriptPinsTest(LoggingTestCase):
     """Unit test for handing the discovered scripts to the checks uv-delegated updaters share."""

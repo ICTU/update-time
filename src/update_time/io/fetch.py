@@ -2,13 +2,12 @@
 
 Every source talks to a flaky external registry, so a single slow or unreachable host must not abort the whole run
 with a traceback. `fetch` turns transport-level failures (timeouts, connection errors) into a logged `None`, so the
-caller can leave the reference unchanged and the run continues. By default a non-OK status is treated as a failure
-too, logged and reported as `None`. Callers that inspect the status themselves — such as the OCI auth probe, which
-expects a `401` — pass `require_ok=False` to get the response back whatever its status. It lives in `io` (next to the
-file and process I/O) so that network access is centralized: sources and updaters go through it rather than calling
-`requests` directly, which the architecture tests enforce.
+caller can leave the reference unchanged and the run continues. It lives in `io` (next to the file and process I/O)
+so that network access is centralized: sources and updaters go through it rather than calling `requests` directly,
+which the architecture tests enforce.
 """
 
+import threading
 from contextlib import suppress
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin
@@ -20,18 +19,28 @@ if TYPE_CHECKING:
 
 _TIMEOUT = 10  # Seconds to wait for a registry before giving up on the request.
 
+# A session reuses its connections. Each thread gets a session of its own, since requests does not document a session
+# as thread-safe.
+_SESSIONS = threading.local()
+
 type Fetched = requests.Response | None
+
+
+def _session() -> requests.Session:
+    """Return the current thread's session."""
+    if not hasattr(_SESSIONS, "session"):
+        _SESSIONS.session = requests.Session()
+    return _SESSIONS.session
 
 
 def fetch(url: str, logger: Logger, *, method: str = "get", require_ok: bool = True, **kwargs: object) -> Fetched:
     """Make an HTTP request and return the response, or None (logged) on a network error or non-OK status.
 
-    `method` selects the requests function (`get`, `head`, `post`); `kwargs` (headers, params, auth, json, ...) are
-    forwarded to it verbatim. The requests function is looked up on the module at call time so test patches on
-    `requests.get`/`.head`/`.post` still apply. Pass `require_ok=False` to receive the response regardless of status.
+    `method` selects the session method (`get`, `head`, `post`); `kwargs` (headers, params, auth, json, ...) are
+    forwarded to it verbatim. Pass `require_ok=False` to receive the response regardless of status.
     """
     try:
-        response = getattr(requests, method)(url, timeout=_TIMEOUT, **kwargs)
+        response = getattr(_session(), method)(url, timeout=_TIMEOUT, **kwargs)
     except requests.exceptions.Timeout:
         logger.timeout(url)
         return None

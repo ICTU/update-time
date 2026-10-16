@@ -33,7 +33,7 @@ _ELIGIBLE = PAST_COOLDOWN_DATE.isoformat()
 _FRESH = FRESH_DATE.isoformat()
 
 
-@patch("requests.get")
+@patch("requests.Session.get")
 class GetLatestVersionTest(LoggingTestCase):
     """Unit tests for the get latest jsdelivr version function.
 

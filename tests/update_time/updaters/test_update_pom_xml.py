@@ -379,7 +379,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @contextlib.contextmanager
     def maven_central_answering(self, pom: str, *, archived: bool = False) -> Generator[Mock]:
-        """Let Maven Central answer for itself, serving guava's listing and the pom, and yield the mock requests.get."""
+        """Let Maven Central answer for itself, serving guava's listing and the pom, and yield the mock Session.get."""
         with (
             patch.object(maven_central_module, "project", maven_central_project),
             patch.object(maven_central_module, "serves", maven_central_serves),

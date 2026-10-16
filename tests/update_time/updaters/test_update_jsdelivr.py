@@ -59,7 +59,7 @@ _CONF = _conf(_entry(_URL, _INTEGRITY))
 
 @no_vulnerabilities
 @patch("pathlib.Path.rglob")
-@patch("requests.get")
+@patch("requests.Session.get")
 class UpdateJsdelivrsTest(LoggingTestCase):
     """Unit tests for updating the version and integrity hash in the Sphinx configs found under docs/."""
 
