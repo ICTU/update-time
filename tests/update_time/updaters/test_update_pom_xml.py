@@ -109,14 +109,19 @@ def _plugin_version(plugin: str) -> str:
     return declared["version"] if declared else ""
 
 
-def _rule(group: str, artifact: str, *versions: str) -> str:
-    """Return the rule Update-time writes for the artefact, naming the given versions."""
-    return _rule_ignoring(group, artifact, *map(_exact_version_element, versions))
+def _rule(group: str, artifact: str, current: str, *versions: str) -> str:
+    """Return the rule Update-time writes for the artefact on the current version, naming the given versions."""
+    return _rule_ignoring(group, artifact, _variant_element(current), *map(_exact_version_element, versions))
 
 
 def _exact_version_element(version: str) -> str:
     """Return the `<ignoreVersion>` element matching the version exactly."""
     return f"<ignoreVersion>{version}</ignoreVersion>"
+
+
+def _variant_element(*currents: str) -> str:
+    """Return the `<ignoreVersion>` element matching every version on another variant than the current versions."""
+    return f'<ignoreVersion type="regex">{maven_module._other_variants(*currents)}</ignoreVersion>'
 
 
 def _rule_ignoring(group: str, artifact: str, *ignore_versions: str) -> str:
@@ -146,13 +151,22 @@ _GUAVA_HELD_BACK = _rule_set(
 
 
 def _guava_range_held_back(*maven_ranges: str, versions: tuple[str, ...] = ()) -> str:
-    """Return the rule set a run writes for guava: the ranges its markers drop, then the versions its cooldown holds."""
+    """Return the rule set a run writes for guava: its markers' ranges, its variant, then the cooldown's versions.
+
+    Each guava the callers declare is on the `-jre` variant, so one variant element serves each current version.
+    """
     ranges = (f'<ignoreVersion type="range">{maven_range}</ignoreVersion>' for maven_range in maven_ranges)
-    return _rule_set(_rule_ignoring("com.google.guava", "guava", *ranges, *map(_exact_version_element, versions)))
+    variant = _variant_element("33.0.0-jre")
+    return _rule_set(
+        _rule_ignoring("com.google.guava", "guava", *ranges, variant, *map(_exact_version_element, versions))
+    )
 
 
 # The rule set a run writes where the cooldown holds back guava 33.7.1-jre.
-_GUAVA_33_7_1_HELD_BACK = _rule_set(_rule("com.google.guava", "guava", "33.7.1-jre"))
+_GUAVA_33_7_1_HELD_BACK = _rule_set(_rule("com.google.guava", "guava", "33.0.0-jre", "33.7.1-jre"))
+
+# The rule set a run writes where nothing but guava's `-jre` variant holds a version back.
+_GUAVA_ON_ITS_VARIANT = _rule_set(_rule("com.google.guava", "guava", "33.0.0-jre"))
 
 
 # The options that open every Maven command these tests expect.
@@ -270,19 +284,27 @@ class UpdatePomXmlTest(LoggingTestCase):
         """Discover a mock pom.xml per given contents, with Maven stubbed to print nothing and its past runs forgotten.
 
         The file Maven writes the effective pom to holds `effective_pom`. That file of a real run is gone by the time
-        the run ends, so the file is stood in for here.
+        the run ends, so the file is stood in for here. The rule set file is stood in for too, and `rule_sets` collects
+        the rule set each Maven run reads.
         """
         poms = [mock_path(text, parent=_PROJECT, name="pom.xml") for text in contents]
         mock_glob.return_value = poms
         mock_run.reset_mock()
         mock_run.return_value = Mock(stdout="", stderr="")
         written = mock_path(effective_pom, name=_EFFECTIVE_POM)
+        self.rule_sets: list[str] = []
 
         @contextlib.contextmanager
         def effective_pom_file() -> Generator[Mock]:
             yield written
 
+        @contextlib.contextmanager
+        def rule_set_file(rule_set: str) -> Generator[Path]:
+            self.rule_sets.append(rule_set)
+            yield _RULES
+
         self.enterContext(patch.object(maven_module, "_effective_pom_file", effective_pom_file))
+        self.enterContext(patch.object(maven_module, "_rule_set_file", rule_set_file))
         return poms
 
     def find_pom(
@@ -362,22 +384,6 @@ class UpdatePomXmlTest(LoggingTestCase):
             yield asked
 
     @contextlib.contextmanager
-    def written_rule_sets(self) -> Generator[list[str]]:
-        """Collect the rule sets Update-time writes for Maven.
-
-        The rule set file of a real run is gone by the time the run ends, so the file is stood in for here.
-        """
-        written: list[str] = []
-
-        @contextlib.contextmanager
-        def rule_set_file(rule_set: str) -> Generator[Path]:
-            written.append(rule_set)
-            yield _RULES
-
-        with patch.object(maven_module, "_rule_set_file", rule_set_file):
-            yield written
-
-    @contextlib.contextmanager
     def maven_central_answering(self, pom: str, *, archived: bool = False) -> Generator[Mock]:
         """Let Maven Central answer for itself, serving guava's listing and the pom, and yield the mock Session.get."""
         with (
@@ -389,10 +395,8 @@ class UpdatePomXmlTest(LoggingTestCase):
             yield mock_get
 
     @contextlib.contextmanager
-    def hold_back(
-        self, versions: dict[str, tuple[str, ...]], cooldown_days: int = COOLDOWN.default
-    ) -> Generator[list[str]]:
-        """Hold the named versions back per artefact, and collect the rule sets Update-time writes for Maven.
+    def hold_back(self, versions: dict[str, tuple[str, ...]], cooldown_days: int = COOLDOWN.default) -> Generator[None]:
+        """Hold the named versions back per artefact.
 
         The stub answers with the named versions only where the cooldown is `cooldown_days`, and with an empty tuple
         otherwise.
@@ -401,8 +405,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         def versions_held_back(artefact: str, days: int) -> tuple[str, ...]:
             return versions.get(artefact, ()) if days == cooldown_days else ()
 
-        with patch.object(maven_module, "versions_held_back", versions_held_back), self.written_rule_sets() as written:
-            yield written
+        with patch.object(maven_module, "versions_held_back", versions_held_back):
+            yield
 
     def test_a_marker_holding_every_version_back_is_reported_as_holding_it_back(self, mock_run: Mock, mock_glob: Mock):
         """Test that a marker holding every version back is reported as holding the update, naming its directive."""
@@ -618,12 +622,12 @@ class UpdatePomXmlTest(LoggingTestCase):
     def test_an_inverted_cooldown_is_reported_and_leaves_the_runs_cooldown(self, mock_run: Mock, mock_glob: Mock):
         """Test that a cooldown comparing the wrong way is reported as incorrect, and the run's cooldown applies."""
         pom = self.find_marked_pom(mock_run, mock_glob, "ignore[cooldown>=30]")
-        with self.hold_back({GUAVA: ("33.7.1-jre",)}) as rule_sets:
+        with self.hold_back({GUAVA: ("33.7.1-jre",)}):
             update_pom_xmls()
         self.assert_logged(
             Logger._MESSAGE_INVERTED_COOLDOWN_ITEM, item="cooldown>=30", dependency=GUAVA, location=Location(pom, 6)
         )
-        self.assertEqual(rule_sets, [_GUAVA_33_7_1_HELD_BACK])
+        self.assertEqual(self.rule_sets, [_GUAVA_33_7_1_HELD_BACK])
 
     def test_a_marker_silences_the_staleness_warning(self, mock_run: Mock, mock_glob: Mock):
         """Test that a dependency whose marker ignores staleness is reported as silenced rather than as stale."""
@@ -877,7 +881,7 @@ class UpdatePomXmlTest(LoggingTestCase):
                 mock_project = Mock(return_value=Project())
                 with osv() as mock_post, patch.object(maven_central_module, "project", mock_project):
                     update_pom_xmls()
-                self.assert_command_failed_logged(_maven_command(), output)
+                self.assert_command_failed_logged(_maven_command(rules=_RULES), output)
                 # Guava is asked about, so the dependency beside it going unasked says something about its version.
                 assert_osv_asked_about(mock_post, (GUAVA, "33.0.0-jre"), ecosystem="Maven")
                 # Staleness judges the coordinates alone, so the dependency OSV skips still reaches Maven Central.
@@ -1214,6 +1218,46 @@ class UpdatePomXmlTest(LoggingTestCase):
         mock_project.assert_called_once_with(GUAVA, check_archival=False)
         self.assert_no_warnings_logged()
 
+    def test_an_artefact_holding_nothing_back_gets_a_rule_keeping_it_on_its_variant(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that the rule set Maven reads keeps an artefact on its variant where nothing else is held back."""
+        self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("33.0.0-jre")))
+        update_pom_xmls()
+        self.assertEqual(self.rule_sets, [_GUAVA_ON_ITS_VARIANT])
+        self.assert_maven_ran(mock_run, rules=_RULES)
+
+    @kills(
+        Mutation(
+            maven_module._artefact_rule,
+            'return _rule(artefact, *ignored) if ignored else ""',
+            "return _rule(artefact, *ignored)",
+            "a pom holding nothing back gets a rule set holding an empty rule",
+        )
+    )
+    def test_a_pom_holding_nothing_back_gets_no_rule_set(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a run over a pom where nothing holds a version back does not write a rule set or hand Maven one."""
+        self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("r09")))
+        update_pom_xmls()
+        self.assertEqual(self.rule_sets, [])
+        self.assert_maven_ran(mock_run)
+
+    @kills(
+        Mutation(
+            maven_module._variant_versions,
+            ",) if other_variants else ()",
+            ",)",
+            "an artefact on a version without a number gets an empty pattern that Maven reads as matching nothing",
+        )
+    )
+    def test_a_version_without_a_number_puts_no_variant_in_its_rule(self, mock_run: Mock, mock_glob: Mock):
+        """Test that the rule for an artefact on a version without a number holds the cooldown's versions alone."""
+        self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("r09")))
+        with self.hold_back({GUAVA: ("33.7.1-jre",)}):
+            update_pom_xmls()
+        held_back_rule = _rule_ignoring("com.google.guava", "guava", _exact_version_element("33.7.1-jre"))
+        self.assertEqual(self.rule_sets, [_rule_set(held_back_rule)])
+
     def test_each_artefact_gets_a_rule_naming_its_own_held_back_versions(self, mock_run: Mock, mock_glob: Mock):
         """Test that the rule set Maven reads names each artefact's held-back versions under that artefact alone."""
         pom = pom_declaring(
@@ -1224,10 +1268,11 @@ class UpdatePomXmlTest(LoggingTestCase):
             GUAVA: ("33.7.0-jre", "33.7.1-jre"),
             "org.springframework:spring-core": ("7.1.0",),
         }
-        with self.hold_back(held_back) as rule_sets:
+        with self.hold_back(held_back):
             update_pom_xmls()
-        guava = _rule("com.google.guava", "guava", "33.7.0-jre", "33.7.1-jre")
-        self.assertEqual(rule_sets, [_rule_set(guava, _rule("org.springframework", "spring-core", "7.1.0"))])
+        guava = _rule("com.google.guava", "guava", "33.0.0-jre", "33.7.0-jre", "33.7.1-jre")
+        spring = _rule("org.springframework", "spring-core", "6.1.0", "7.1.0")
+        self.assertEqual(self.rule_sets, [_rule_set(guava, spring)])
         self.assert_maven_ran(mock_run, rules=_RULES)
 
     def test_a_marker_holding_every_version_back_gets_a_rule_for_every_version(self, mock_run: Mock, mock_glob: Mock):
@@ -1242,9 +1287,9 @@ class UpdatePomXmlTest(LoggingTestCase):
         ):
             with self.subTest(directives=directives):
                 self.find_marked_pom(mock_run, mock_glob, directives)
-                with self.written_rule_sets() as rule_sets, self.asked_about() as asked:
+                with self.asked_about() as asked:
                     update_pom_xmls()
-                self.assertEqual(rule_sets, [_GUAVA_HELD_BACK])
+                self.assertEqual(self.rule_sets, [_GUAVA_HELD_BACK])
                 self.assertEqual(asked, [])  # The repository is not asked which versions to hold back.
                 self.assert_maven_ran(mock_run, rules=_RULES)
 
@@ -1264,9 +1309,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         }.items():
             with self.subTest(directive=directive):
                 self.find_marked_pom(mock_run, mock_glob, directive)
-                with self.hold_back({}) as rule_sets:
-                    update_pom_xmls()
-                self.assertEqual(rule_sets, [_guava_range_held_back(maven_range)])
+                update_pom_xmls()
+                self.assertEqual(self.rule_sets, [_guava_range_held_back(maven_range)])
                 self.assert_maven_ran(mock_run, rules=_RULES)
 
     @kills(
@@ -1281,13 +1325,12 @@ class UpdatePomXmlTest(LoggingTestCase):
         """Test that a bound of several clauses holds back the versions every clause matches, and nothing where none."""
         for directive, rule_sets_written in {
             "ignore[update!=34.1,<35]": [_guava_range_held_back("(,34.1),[34.1.0.0.0.1,35)")],
-            "ignore[update===34.1,!=34.1]": [],
+            "ignore[update===34.1,!=34.1]": [_GUAVA_ON_ITS_VARIANT],
         }.items():
             with self.subTest(directive=directive):
                 self.find_marked_pom(mock_run, mock_glob, directive)
-                with self.hold_back({}) as rule_sets:
-                    update_pom_xmls()
-                self.assertEqual(rule_sets, rule_sets_written)
+                update_pom_xmls()
+                self.assertEqual(self.rule_sets, rule_sets_written)
 
     @kills(
         Mutation(
@@ -1305,9 +1348,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         }.items():
             with self.subTest(directive=directive):
                 self.find_marked_pom(mock_run, mock_glob, directive)
-                with self.hold_back({}) as rule_sets:
-                    update_pom_xmls()
-                self.assertEqual(rule_sets, [_guava_range_held_back(maven_range)])
+                update_pom_xmls()
+                self.assertEqual(self.rule_sets, [_guava_range_held_back(maven_range)])
 
     @kills(
         Mutation(
@@ -1335,15 +1377,14 @@ class UpdatePomXmlTest(LoggingTestCase):
             ),
             "a level keeping every version": (
                 pom_declaring(marked_at_its_version(guava_element("33.0.0-jre"), "allow[major-update]")),
-                [],
+                [_GUAVA_ON_ITS_VARIANT],
             ),
         }
         for case, (pom, rule_sets_written) in cases.items():
             with self.subTest(case=case):
                 self.find_pom(mock_run, mock_glob, pom)
-                with self.hold_back({}) as rule_sets:
-                    update_pom_xmls()
-                self.assertEqual(rule_sets, rule_sets_written)
+                update_pom_xmls()
+                self.assertEqual(self.rule_sets, rule_sets_written)
 
     def test_the_range_a_bound_holds_back_is_reported(self, mock_run: Mock, mock_glob: Mock):
         """Test that the range of versions a bound holds back is reported at its declaration, naming the bound."""
@@ -1366,6 +1407,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             "a parent's property": (
                 pom_declaring(guava_element("32.0.0-jre"), managed=dependency_management_element(parents)),
                 GUAVA,
+                "32.0.0-jre",
                 "33.7.1-jre",
             ),
             "a plugin's literal version": (
@@ -1374,44 +1416,51 @@ class UpdatePomXmlTest(LoggingTestCase):
                     build=build_element(marked_surefire, managed=surefire_by_its_pom_property),
                 ),
                 SUREFIRE,
+                "3.5.0",
                 "3.5.1",
             ),
         }
-        for case, (pom, artefact, held_back) in cases.items():
+        for case, (pom, artefact, current, held_back) in cases.items():
             with self.subTest(case=case):
                 self.find_pom(mock_run, mock_glob, pom)
-                with self.hold_back({artefact: (held_back,)}) as rule_sets:
+                with self.hold_back({artefact: (held_back,)}):
                     update_pom_xmls()
-                self.assertEqual(rule_sets, [_rule_set(_rule(*artefact.split(":"), held_back))])
+                self.assertEqual(self.rule_sets, [_rule_set(_rule(*artefact.split(":"), current, held_back))])
 
     @kills(
         Mutation(
-            maven_module._longest_cooldowns,
-            "max(days, cooldowns.get(declaration.dependency, days))",
-            "days",
+            maven_module._artefact_rule,
+            "max(cooldown_days(declaration.marker) for declaration in declarations)",
+            "cooldown_days(declarations[-1].marker)",
             "the last declaration of an artefact sets its cooldown, so a shorter one undoes a longer one before it",
         ),
         Mutation(
-            maven_module._longest_cooldowns,
-            "max(days, cooldowns.get(declaration.dependency, days))",
-            "cooldowns.get(declaration.dependency, days)",
+            maven_module._artefact_rule,
+            "max(cooldown_days(declaration.marker) for declaration in declarations)",
+            "cooldown_days(declarations[0].marker)",
             "the first declaration of an artefact sets its cooldown, so a shorter one undoes a longer one after it",
         ),
         Mutation(
-            maven_module._ranges_held_back_by_markers,
-            "ranges.setdefault(declaration.dependency, []).append(held_back)",
-            "ranges[declaration.dependency] = [held_back]",
+            maven_module._artefact_rule,
+            "for declaration in declarations if",
+            "for declaration in declarations[-1:] if",
             "the last declaration's bound replaces the ones before it, so Maven crosses an earlier declaration's bound",
         ),
         Mutation(
             maven_module._artefact_rule,
-            "unique((*range_elements, *_cooldown_versions(artefact, days)))",
-            "(*range_elements, *_cooldown_versions(artefact, days))",
+            "ignored = unique(",
+            "ignored = (",
             "two declarations setting one bound name its range twice in the artefact's rule",
+        ),
+        Mutation(
+            maven_module._variant_versions,
+            "_other_variants(*(declaration.current_version for declaration in declarations))",
+            "_other_variants(declarations[0].current_version)",
+            "the first declaration of an artefact sets its variant, so the second declaration's variant is held back",
         ),
     )
     def test_an_artefact_declared_twice_gets_one_rule_for_both_declarations(self, mock_run: Mock, mock_glob: Mock):
-        """Test that an artefact declared twice gets one rule, holding back the versions either declaration does."""
+        """Test that a twice-declared artefact's rule holds back what either marker does, and keeps either variant."""
         guava = guava_element("33.0.0-jre")
         ignoring = marked_at_its_version(guava, "ignore[update]")
         shorter = marked_at_its_version(guava, "allow[cooldown>=0]")
@@ -1434,22 +1483,35 @@ class UpdatePomXmlTest(LoggingTestCase):
                 from_34,
                 [_guava_range_held_back("[34,)", versions=("33.7.1-jre",))],
             ),
+            "the declarations on two variants": (
+                guava,
+                guava_element("33.0.0-android"),
+                [
+                    _rule_set(
+                        _rule_ignoring(
+                            "com.google.guava",
+                            "guava",
+                            _variant_element("33.0.0-jre", "33.0.0-android"),
+                            _exact_version_element("33.7.1-jre"),
+                        )
+                    )
+                ],
+            ),
         }
         for case, (managed, declared, rule_set) in cases.items():
             with self.subTest(case=case):
                 pom = pom_declaring(declared, managed=dependency_management_element(managed))
                 self.find_pom(mock_run, mock_glob, pom)
-                with self.hold_back({GUAVA: ("33.7.1-jre",)}) as rule_sets:
+                with self.hold_back({GUAVA: ("33.7.1-jre",)}):
                     update_pom_xmls()
-                self.assertEqual(rule_sets, rule_set)
+                self.assertEqual(self.rule_sets, rule_set)
 
     @patch_environ({COOLDOWN.name: "0"})
     def test_a_marker_holds_the_update_back_with_the_cooldown_switched_off(self, mock_run: Mock, mock_glob: Mock):
         """Test that the rule set holds back every version of a marked artefact when the cooldown holds nothing back."""
         self.find_marked_pom(mock_run, mock_glob, "ignore[update]")
-        with self.hold_back({}) as rule_sets:
-            update_pom_xmls()
-        self.assertEqual(rule_sets, [_GUAVA_HELD_BACK])
+        update_pom_xmls()
+        self.assertEqual(self.rule_sets, [_GUAVA_HELD_BACK])
         self.assert_maven_ran(mock_run, rules=_RULES)
 
     @kills(
@@ -1542,18 +1604,18 @@ class UpdatePomXmlTest(LoggingTestCase):
     def test_the_repository_is_asked_about_the_window_the_run_sets(self, mock_run: Mock, mock_glob: Mock):
         """Test that the cooldown the repository is asked about is the one --cooldown sets, not the default one."""
         self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("33.0.0-jre")))
-        with self.hold_back({GUAVA: ("33.7.1-jre",)}, cooldown_days=30) as rule_sets:
+        with self.hold_back({GUAVA: ("33.7.1-jre",)}, cooldown_days=30):
             update_pom_xmls()
-        self.assertEqual(rule_sets, [_GUAVA_33_7_1_HELD_BACK])
+        self.assertEqual(self.rule_sets, [_GUAVA_33_7_1_HELD_BACK])
 
     def test_a_marker_cooldown_holds_back_the_versions_inside_its_window(self, mock_run: Mock, mock_glob: Mock):
         """Test that the rule names the versions inside the cooldown the marker sets, whatever cooldown the run sets."""
         for case, run_cooldown in {"no cooldown": "0", "a longer cooldown": "60"}.items():
             with self.subTest(case=case), patch_environ({COOLDOWN.name: run_cooldown}):
                 self.find_marked_pom(mock_run, mock_glob, "ignore[cooldown<30]")
-                with self.hold_back({GUAVA: ("33.7.1-jre",)}, cooldown_days=30) as rule_sets:
+                with self.hold_back({GUAVA: ("33.7.1-jre",)}, cooldown_days=30):
                     update_pom_xmls()
-                self.assertEqual(rule_sets, [_GUAVA_33_7_1_HELD_BACK])
+                self.assertEqual(self.rule_sets, [_GUAVA_33_7_1_HELD_BACK])
 
     @kills(
         Mutation(
@@ -1579,25 +1641,25 @@ class UpdatePomXmlTest(LoggingTestCase):
             "a dependency's group": (
                 pom_declaring(_SPRING_LEAVING_ITS_GROUP),
                 effective_spring,
-                _rule("org.springframework", "spring-core", "7.1.0"),
+                _rule("org.springframework", "spring-core", "6.1.0", "7.1.0"),
             ),
             "a dependency's artifact": (
                 pom_declaring(dependency_element("org.springframework", "${spring.artifact}", "6.1.0")),
                 effective_spring,
-                _rule("org.springframework", "spring-core", "7.1.0"),
+                _rule("org.springframework", "spring-core", "6.1.0", "7.1.0"),
             ),
             "a plugin's group": (
                 _POM_LEAVING_THE_VERSIONS_PLUGINS_GROUP,
                 _EFFECTIVE_VERSIONS,
-                _rule("org.codehaus.mojo", "versions-maven-plugin", "2.19.0"),
+                _rule("org.codehaus.mojo", "versions-maven-plugin", "2.18.0", "2.19.0"),
             ),
         }
         for case, (declared, effective_pom, rule) in cases.items():
             with self.subTest(case=case):
                 self.find_pom(mock_run, mock_glob, declared, effective_pom)
-                with self.hold_back({spring: ("7.1.0",), _VERSIONS: ("2.19.0",)}) as rule_sets:
+                with self.hold_back({spring: ("7.1.0",), _VERSIONS: ("2.19.0",)}):
                     update_pom_xmls()
-                self.assertEqual(rule_sets, [_rule_set(rule)])
+                self.assertEqual(self.rule_sets, [_rule_set(rule)])
                 self.assert_maven_runs(mock_run, _effective_pom_command(), _versions_command(_RULES))
 
     @kills(
@@ -1643,7 +1705,7 @@ class UpdatePomXmlTest(LoggingTestCase):
                 # Asserting Maven ran, so the cooldown rather than a pom that was never read is what left the artefacts
                 # alone. The staleness check asks the repository whatever the cooldown is, so this says nothing about
                 # that request.
-                self.assert_maven_ran(mock_run)
+                self.assert_maven_ran(mock_run, rules=_RULES)
 
     def test_a_failed_maven_run_is_reported_with_its_output(self, mock_run: Mock, mock_glob: Mock):
         """Test that a Maven run exiting non-zero is reported with what it wrote, and with nothing else."""
@@ -1653,7 +1715,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         output = "[ERROR] Non-readable POM /project/pom.xml"
         mock_run.side_effect = _maven_failed(output)
         update_pom_xmls()
-        self.assert_command_failed_logged(_maven_command(), output)
+        self.assert_command_failed_logged(_maven_command(rules=_RULES), output)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -1773,7 +1835,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         self.find_rewritten_pom(mock_run, mock_glob, unchanged, unchanged, effective_pom)
         with patch.object(maven_central_module, "get_changes") as get_changes:
             update_pom_xmls()
-        self.assert_maven_ran(mock_run)  # The pom was examined, so reporting nothing says something.
+        self.assert_maven_ran(mock_run, rules=_RULES)  # The pom was examined, so reporting nothing says something.
         self.assert_no_new_version_logged()
         get_changes.assert_not_called()
 
@@ -1793,7 +1855,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         update_pom_xmls()
         self.assert_invalid_file_logged(broken, "XML")
         self.assert_path_logged(second)
-        self.assert_maven_ran(mock_run)  # Maven ran for the pom that parsed, and not for the one that did not.
+        # Maven ran for the pom that parsed, and not for the one that did not.
+        self.assert_maven_ran(mock_run, rules=_RULES)
 
     @kills(
         Mutation(

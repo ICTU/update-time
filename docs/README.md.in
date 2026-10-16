@@ -1095,6 +1095,10 @@ Update-time checks the managing pom's own declarations only where it can read th
 
 The versions plugin picks the newest release of each dependency and plugin it advances, and it never adopts a snapshot. The plugin reads every other version as a release, a release candidate included. So Update-time excludes the pre-releases, which the plugin would otherwise adopt.
 
+Some projects publish a release in several variants, which a suffix after the version tells apart. Byte Buddy publishes `1.18.14-jdk5` beside `1.18.14`, and Spock publishes `2.5-groovy-4.0` beside `2.5-groovy-5.0`. Maven orders a version with such a suffix above the plain release. It also orders the suffixes among themselves, so `2.5-groovy-5.0` comes after `2.5-groovy-4.0`. The plugin would then move a dependency to another variant. Update-time keeps each dependency and plugin on its variant instead: `1.18.10` moves to `1.18.14`, and `2.4-groovy-4.0` to `2.5-groovy-4.0`. A suffix marking a release, such as `.Final`, `-GA`, or `.RELEASE`, does not name a variant. Neither does a date, such as the `.v20250814` of Jetty's `9.4.58.v20250814`.
+
+Update-time hands Maven one rule for all declarations of an artefact in a pom. So a pom declaring guava on both `33.0.0-jre` and `33.0.0-android` keeps guava on those two variants. Both declarations then move to the newest version on either variant, such as `33.7.2-jre`.
+
 #### Pinning
 
 Update-time adds no hash pin to a Maven dependency, since a pom has nowhere to hold one: a `<version>` element names a version. The checksum of an artefact lives beside that artefact, in the repository Maven downloads it from.
@@ -1189,7 +1193,7 @@ Where Maven updates the version, Update-time hands Maven a rule per artefact. An
 
 A bound holds back the versions it drops, which the rule names as Maven ranges. Update-time reports those ranges at `DEBUG` (see [Seeing what a marker did](#seeing-what-a-marker-did)). A bound reads a version up to the first character that is neither a digit nor a dot, so `allow[update<=32.1.3]` keeps guava's `32.1.3-jre`. A bound that names a version other than a release, such as `34.1rc1`, holds back every version. So does a level bound on a version that does not hold a number, such as `RELEASE`.
 
-A pom can declare an artefact more than once, and Update-time then hands Maven one rule for all those declarations. The rule holds back what each declaration whose version Maven updates holds back. So a marker on one of them that holds back every version holds back every declaration of the artefact in the pom. Without such a marker, the rule holds back the versions each declaration's bound drops, and the versions published inside the longest cooldown among the declarations. A declaration whose marker does not set a cooldown has the run's cooldown.
+A pom can declare an artefact more than once, and Update-time then hands Maven one rule for all those declarations. The rule holds back what the marker of each declaration whose version Maven updates holds back. So a marker on one of them that holds back every version holds back every declaration of the artefact in the pom. Without such a marker, the rule holds back the versions each declaration's bound drops, and the versions published inside the longest cooldown among the declarations. A declaration whose marker does not set a cooldown has the run's cooldown.
 
 ### GitHub Actions and pre-commit hooks
 
