@@ -31,3 +31,4 @@
 - 2026-10-13 `tests.update_time.updaters.test_update_node_engine.UpdateNodeEnginesTest.test_a_node_version_outside_the_engines_section_is_left_as_it_is` — the pattern reads every line it matches, rather than the line the file names
 - 2026-10-14 `tests.update_time.updaters.test_update_github_action.UpdateGitHubActionsThroughTheSourceTest.test_branch_under_a_zero_day_cooldown_moves_to_its_head_whatever_its_date` — a zero-day cooldown skips the head of a branch when its committer dated it in the future
 - 2026-10-15 `tests.update_time.sources.test_oci.GetLatestTagTest.test_dated_snapshot_stays_on_its_own_line` — a snapshot's prefix leaves out its label, so the reference crosses to another line
+- 2026-10-16 `tests.update_time.package_managers.test_maven.OtherVariantsPatternTest.test_the_pattern_leaves_a_version_on_the_same_variant_alone` — a dependency on a plain release ignores a release dated without v

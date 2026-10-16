@@ -69,6 +69,124 @@ class PreReleasePatternTest(unittest.TestCase):
                 self.assertIsNone(re.fullmatch(maven._PRE_RELEASES, version))
 
 
+class OtherVariantsPatternTest(unittest.TestCase):
+    """Unit tests for the pattern of the versions on a variant none of the current versions is on."""
+
+    @kills(
+        Mutation(
+            maven._other_variants,
+            "({same_variants})$",
+            "({same_variants})?$",
+            "a dependency on a variant moves to the plain release",
+        ),
+        Mutation(maven._variant_pattern, "re.escape(variant)", "variant", "a dot in a variant matches any character"),
+    )
+    def test_the_pattern_matches_a_version_on_another_variant(self):
+        """Test that the pattern matches a version on another variant, on none, on a respelled one, or a pre-release."""
+        for current, version in (
+            ("1.18.10", "1.18.14-jdk5"),
+            ("2.4-groovy-4.0", "2.5"),
+            ("2.4-groovy-4.0", "2.5-groovy-6.0"),
+            ("2.0.62.android8", "2.0.65-android8"),
+            ("2.4-groovy-4.0", "2.5-M1-groovy-4.0"),
+        ):
+            with self.subTest(current=current, version=version):
+                self.assertIsNotNone(re.fullmatch(maven._other_variants(current), version))
+
+    @kills(
+        Mutation(maven, "(?i:", "(?:", "a release qualifier spelled in capitals counts as a variant"),
+        Mutation(maven, "ga|", "", "a dependency on a plain release ignores a release qualified as GA"),
+        Mutation(maven, "|final", "", "a dependency on a plain release ignores a release qualified as Final"),
+        Mutation(maven, "|release", "", "a dependency on a release qualified as RELEASE ignores the plain releases"),
+        Mutation(maven, "|v[0-9]{8}", "|[0-9]{8}", "a dependency on a release dated after a v holds back every update"),
+        Mutation(maven, "(-[0-9]{4})?", "", "a dependency on a release dated to the minute holds back every update"),
+        Mutation(maven, "|sp[0-9]*", "", "a dependency on a service pack holds back every later release"),
+        Mutation(maven, "|-[0-9]+)?", ")?", "a dependency on a revision holds back every release but that revision"),
+        Mutation(
+            maven._variant_pattern,
+            r"({_PRE_RELEASE_QUALIFIER}(?![a-z]))?",
+            "",
+            "a dependency on a pre-release never moves to its release",
+        ),
+        Mutation(
+            maven._variant_pattern,
+            "(?![a-z]))?",
+            ".*)?",
+            "a dependency on a pre-release of a variant moves to the plain release",
+        ),
+        Mutation(
+            maven._variant_pattern,
+            "(?![a-z]))?",
+            ")?",
+            "a variant starting with an m is read as a milestone",
+        ),
+        Mutation(
+            maven._variant_pattern,
+            "(?![a-z]))?",
+            "(?=[-._]))?",
+            "a dependency on a pre-release ending its version never moves to its release",
+        ),
+        Mutation(
+            maven._variant_pattern,
+            "version.removesuffix(_SNAPSHOT)",
+            "version",
+            "a property on a snapshot never moves to a release",
+        ),
+    )
+    def test_the_pattern_leaves_a_version_on_the_same_variant_alone(self):
+        """Test that the pattern leaves a version on the current variant alone.
+
+        A qualified release, such as `7.0.0.Final`, is on the plain variant. A pre-release and a snapshot are on the
+        variant of their release.
+        """
+        for current, version in (
+            ("1.18.10", "1.18.14"),
+            ("2.4-groovy-4.0", "2.5-groovy-4.0"),
+            ("1.18.10", "1.18.14.Final"),
+            ("1.18.10", "1.18.14-GA"),
+            ("5.2.9.RELEASE", "5.3.0"),
+            ("9.4.58.v20250814", "9.4.59.v20251001"),
+            ("3.10.0.v20140604-1726", "3.11.0.v20150212-0800"),
+            ("2.0.0-rc1", "2.0.0"),
+            ("2.4-M1-groovy-4.0", "2.4-groovy-4.0"),
+            ("4.0-mysql", "4.1-mysql"),
+            ("1.18.10-SNAPSHOT", "1.18.15"),
+            ("2.4-groovy-4.0-SNAPSHOT", "2.5-groovy-4.0"),
+            ("5.1.1.SP2", "7.0.0.Final"),
+            ("3.3.7-1", "5.3.8"),
+        ):
+            with self.subTest(current=current, version=version):
+                self.assertIsNone(re.fullmatch(maven._other_variants(current), version))
+
+    @kills(
+        Mutation(
+            maven._other_variants,
+            '"|".join(unique(map(_variant_pattern, versions)))',
+            "_variant_pattern(versions[0])",
+            "an artefact declared on two variants holds back every version on the second",
+        )
+    )
+    def test_the_pattern_for_two_variants_leaves_a_version_on_either_alone(self):
+        """Test that the pattern for versions on two variants matches a version on neither, and leaves either alone."""
+        pattern = maven._other_variants("33.0.0-jre", "33.0.0-android")
+        self.assertIsNotNone(re.fullmatch(pattern, "33.1.0"))
+        self.assertIsNone(re.fullmatch(pattern, "33.1.0-jre"))
+        self.assertIsNone(re.fullmatch(pattern, "33.1.0-android"))
+
+    @kills(
+        Mutation(
+            maven._other_variants,
+            "if not all(",
+            "if not any(",
+            "a declaration without a number holds back what its artefact's other declaration does not keep",
+        )
+    )
+    def test_the_pattern_for_a_version_without_a_number_is_empty(self):
+        """Test that the pattern is empty for a version that does not start with a number, and beside one that does."""
+        self.assertEqual(maven._other_variants("v1.2.3"), "")
+        self.assertEqual(maven._other_variants("v1.2.3", "1.2.3"), "")
+
+
 class RuleSetFileTest(unittest.TestCase):
     """Unit tests for the file Update-time writes the rule set to."""
 
