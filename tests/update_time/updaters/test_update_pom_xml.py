@@ -156,7 +156,7 @@ _GUAVA_33_7_1_HELD_BACK = _rule_set(_rule("com.google.guava", "guava", "33.7.1-j
 
 
 # The options that open every Maven command these tests expect.
-_OPTIONS = ("--batch-mode", "--no-transfer-progress", "--non-recursive", "--update-snapshots")
+_OPTIONS = ("--batch-mode", "--no-transfer-progress", "--non-recursive")
 
 # The goal writing the effective pom, and its options. Each goal names the plugin release the shipped pom declares.
 _EFFECTIVE_POM_GOAL = f"org.apache.maven.plugins:maven-help-plugin:{_plugin_version('help')}:effective-pom"

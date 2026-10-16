@@ -51,9 +51,8 @@ _VERSIONS_PLUGIN = f"org.codehaus.mojo:versions-maven-plugin:{_declared_plugin_v
 # https://maven.apache.org/pom.html#version-order-specification.
 _PRE_RELEASES = "(?i).*[-.](alpha|beta|milestone|rc|cr|m|pre|preview|[ab][0-9])[-.]?[0-9]*"
 
-# Every Maven run takes these options, whichever goals it runs. `--update-snapshots` forces a fresh read of what Maven
-# caches for a day: the version metadata the versions plugin reads, and a parent pom it could not resolve before.
-_OPTIONS = ("--batch-mode", "--no-transfer-progress", "--non-recursive", "--update-snapshots")
+# Every Maven run takes these options, whichever goals it runs.
+_OPTIONS = ("--batch-mode", "--no-transfer-progress", "--non-recursive")
 
 # The versions plugin's goals take these options. `generateBackupPoms` stops the versions plugin writing a backup pom
 # beside the one it rewrites.
