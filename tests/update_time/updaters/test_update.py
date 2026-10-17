@@ -4,11 +4,12 @@ import logging
 import os
 import platform
 import signal
+import sys
 import threading
 import unittest
 from importlib.metadata import version
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, call, patch
 
 from update_time.domain.archival import IGNORE_ARCHIVED
@@ -16,6 +17,7 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES
 from update_time.io import log as log_module
+from update_time.io import process as process_module
 from update_time.io.filesystem import EXCLUDE_PATHS
 from update_time.io.log import LOG_LEVEL
 from update_time.io.process import Processes
@@ -26,6 +28,9 @@ from update_time.updaters.update import _SCRIPTS, _SRC, _Script, _Scripts, main
 
 from tests.helpers import patch_environ, patch_pathlib_path
 from tests.mutation import Mutation, kills
+
+if TYPE_CHECKING:
+    from update_time.primitives.command import Command
 
 # The scripts that may not run beside another, spelled out so this pins which ones rather than echoing the registry
 # back at itself: package_json rewrites the package.json files that node_engine rewrites too. The parallel ones need
@@ -61,7 +66,7 @@ class _Updaters:
         """Start with none."""
         self.started: list[_Updater] = []
 
-    def start(self, _command: list[str], **_kwargs: object) -> _Updater:
+    def start(self, _command: Command, **_kwargs: object) -> _Updater:
         """Start a stand-in for the command."""
         self.started.append(updater := _Updater(pid=len(self.started)))
         if len(self.started) == _STARTED_WHEN_SIGNALLED:
@@ -127,16 +132,14 @@ class RegistrationTest(unittest.TestCase):
                 self.assertEqual(_registration_problems(_Scripts(registered), on_disk), expected)
 
 
-@patch("subprocess.Popen")
 class ScriptTest(unittest.TestCase):
-    """Unit tests for running one updater script."""
+    """Unit tests for an updater script."""
 
-    def test_run(self, mock_popen: Mock):
-        """Test that a script is run and its exit code is returned."""
-        mock_popen.return_value.wait.return_value = 0
-        self.assertEqual(_Script("dockerfile_base_image").run(Processes()), 0)
-        args = mock_popen.call_args.args[0]
-        self.assertEqual(args[-1].split("/")[-1], "update_dockerfile_base_image.py")
+    def test_command(self):
+        """Test that a script's command runs the script's file with the interpreter running the run."""
+        command = _Script("dockerfile_base_image").command
+        self.assertEqual(command.executable, sys.executable)
+        self.assertEqual(command[-1].split("/")[-1], "update_dockerfile_base_image.py")
 
 
 @patch("subprocess.Popen")
@@ -425,10 +428,16 @@ class UpdateMainTest(unittest.TestCase):
     @kills(
         Mutation(
             update_module._Scripts.run,
-            ">= 0 or processes.stopping:",
-            ">= 0:",
+            "exit_code >= 0 or processes.stop_signal is not None:",
+            "exit_code >= 0:",
             "the run logs a stopped update for every updater it stopped itself",
-        )
+        ),
+        Mutation(
+            process_module.Processes._start,
+            "if self.stop_signal is not None:  #",
+            "if False:  #",
+            "a signal that lands while an updater starts leaves that updater running",
+        ),
     )
     def test_a_stopped_run_stops_the_updaters_still_running(self, mock_popen: Mock):
         """Test that the run stops every updater it started on a signal, rather than waiting for them."""
@@ -444,34 +453,6 @@ class UpdateMainTest(unittest.TestCase):
         self.assertGreaterEqual(len(updaters.started), _STARTED_WHEN_SIGNALLED)
         self.assertEqual([updater for updater in updaters.started if not updater.stopped.is_set()], [])
         mock_logger.update_stopped.assert_not_called()
-
-    @kills(
-        Mutation(
-            update_module._Scripts.run,
-            "executor.submit(run_script, script).result()",
-            "run_script(script)",
-            "a signal that lands while the main thread starts the updater running alone leaves that updater running",
-        )
-    )
-    def test_a_signal_while_the_updater_running_alone_starts_stops_it(self, mock_popen: Mock):
-        """Test that a signal arriving while the updater that runs alone starts still stops that updater."""
-        stopped = threading.Event()
-
-        def start(command: list[str], **_kwargs: object) -> Mock:
-            if not command[-1].endswith("update_package_json.py"):
-                return Mock(pid=0, wait=Mock(return_value=0))
-            os.kill(os.getpid(), signal.SIGTERM)
-            return Mock(pid=1, wait=lambda: -signal.SIGTERM if stopped.wait(_PATIENCE) else 0)
-
-        mock_killpg = Mock(side_effect=lambda _pid, _signal: stopped.set())
-        with (
-            patch("subprocess.Popen", start),
-            patch("os.killpg", mock_killpg),
-            patch("update_time.updaters.update.get_logger", Mock()),
-        ):
-            exit_code, _ = self.run_main(mock_popen)
-        self.assertEqual(exit_code, 128 + signal.SIGTERM)
-        mock_killpg.assert_called_once_with(1, signal.SIGTERM)
 
     @kills(
         Mutation(

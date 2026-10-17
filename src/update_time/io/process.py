@@ -2,7 +2,6 @@
 
 import os
 import subprocess  # nosec
-import threading
 from contextlib import suppress
 from functools import cache
 from pathlib import Path
@@ -58,37 +57,47 @@ def _execute(command: Command, cwd: Path | None) -> Result | OSError:
 
 
 class Processes:
-    """The processes a run started, which the run can stop all at once."""
+    """The processes a run started, which a signal can stop all at once."""
 
     def __init__(self) -> None:
         """Start with no processes."""
-        self._lock = threading.RLock()  # Re-entrant, so stop cannot deadlock a thread that already holds the lock
         self._running: set[subprocess.Popen] = set()
-        self._stopping = False
+        self.stop_signal: Signals | None = None
 
-    def run(self, command: Command) -> int:
-        """Run the command and return its exit code, or the exit code of SIGTERM once the run stops."""
-        with self._lock:
-            if self._stopping:
-                return -Signals.SIGTERM
-            process = subprocess.Popen(command, process_group=0)  # noqa: S603 # nosec: B603
-            self._running.add(process)
+    def run(self, *commands: Command) -> list[int]:
+        """Run the commands at the same time and return their exit codes, that of SIGTERM for one kept from starting."""
+        started = [self._start(command) for command in commands]
+        return [self._wait(process) for process in started]
+
+    def _start(self, command: Command) -> subprocess.Popen | None:
+        """Start the command in a process group of its own, unless a signal stopped the run."""
+        if self.stop_signal is not None:
+            return None
+        process = subprocess.Popen(command, process_group=0)  # noqa: S603 # nosec: B603
+        self._running.add(process)
+        if self.stop_signal is not None:  # The signal arrived while the process started, so stop did not see it
+            _stop_group(process)
+        return process
+
+    def _wait(self, process: subprocess.Popen | None) -> int:
+        """Wait for the process to end and return its exit code, or that of SIGTERM for one that never started."""
+        if process is None:
+            return -Signals.SIGTERM
         try:
             return process.wait()
         finally:
-            with self._lock:
-                self._running.discard(process)
+            self._running.discard(process)
 
-    @property
-    def stopping(self) -> bool:
-        """Return whether the run is stopping its processes."""
-        return self._stopping
-
-    def stop(self) -> None:
+    def stop(self, signal: Signals) -> None:
         """Send SIGTERM to the process group of every process still running, and start none after."""
-        with self._lock:
-            self._stopping = True
-            for process in self._running:
-                # A process group that is gone belongs to a process that ended by itself, which is what stopping wants
-                with suppress(ProcessLookupError):
-                    os.killpg(process.pid, Signals.SIGTERM)
+        self.stop_signal = signal
+        for process in self._running:
+            _stop_group(process)
+
+
+def _stop_group(process: subprocess.Popen) -> None:
+    """Send SIGTERM to the process group the process leads."""
+    # A process group that is gone belongs to a process that ended by itself, which is what stopping wants. macOS
+    # refuses to signal the group of a process that ended but was not waited for yet, rather than reporting it gone.
+    with suppress(ProcessLookupError, PermissionError):
+        os.killpg(process.pid, Signals.SIGTERM)

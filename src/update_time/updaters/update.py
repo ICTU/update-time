@@ -4,12 +4,11 @@ import os
 import platform
 import signal
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from signal import Signals
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING
 
 from update_time.domain.archival import IGNORE_ARCHIVED
 from update_time.domain.cooldown import COOLDOWN
@@ -41,9 +40,10 @@ class _Script:
     name: str
     parallel: bool = True
 
-    def run(self, processes: Processes) -> int:
-        """Run the script in a subprocess and return its exit code."""
-        return processes.run(Command(sys.executable, str(_SRC / f"update_{self.name}.py")))
+    @property
+    def command(self) -> Command:
+        """Return the command that runs the script."""
+        return Command(sys.executable, str(_SRC / f"update_{self.name}.py"))
 
 
 @dataclass(frozen=True)
@@ -76,16 +76,15 @@ class _Scripts:
         The scripts that may run beside another go first and run concurrently; the rest follow one at a time.
         """
 
-        def run_script(script: _Script) -> int:
-            if (exit_code := script.run(processes)) >= 0 or processes.stopping:
+        def result(script: _Script, exit_code: int) -> int:
+            if exit_code >= 0 or processes.stop_signal is not None:
                 return exit_code
             logger.update_stopped(self.dependency_type(script).name, Signals(-exit_code))
             return 1
 
-        with ThreadPoolExecutor() as executor:
-            results = list(executor.map(run_script, self.parallel_scripts))
-            # The pool runs the rest too, so the main thread only waits: a signal never lands while it starts a process
-            results.extend(executor.submit(run_script, script).result() for script in self.sequential_scripts)
+        parallel = self.parallel_scripts
+        results = list(map(result, parallel, processes.run(*(script.command for script in parallel)), strict=True))
+        results.extend(result(script, *processes.run(script.command)) for script in self.sequential_scripts)
         return max(results, default=0)
 
 
@@ -130,11 +129,10 @@ def _report_context(logger: Logger) -> None:
     report_network_settings(logger)
 
 
-def _stop(processes: Processes, logger: Logger, signal_number: int, _frame: object) -> NoReturn:
-    """Stop the run and its updaters on the signal, exiting as a shell reports a signal."""
+def _stop(processes: Processes, logger: Logger, signal_number: int, _frame: object) -> None:
+    """Log the signal, and stop the updaters running and the ones still to start."""
     logger.stopped(Signals(signal_number))
-    processes.stop()
-    raise SystemExit(128 + signal_number)
+    processes.stop(Signals(signal_number))
 
 
 def _configure_excluded_paths(paths: list[Path]) -> None:
@@ -183,7 +181,9 @@ def main() -> int:
     processes = Processes()
     for signal_number in _STOP_SIGNALS:
         signal.signal(signal_number, partial(_stop, processes, logger))
-    return _SCRIPTS.run(processes, logger)
+    exit_code = _SCRIPTS.run(processes, logger)
+    # A stopped run exits as a shell reports a signal
+    return exit_code if processes.stop_signal is None else 128 + processes.stop_signal
 
 
 if __name__ == "__main__":  # pragma: no cover

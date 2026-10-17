@@ -4,6 +4,7 @@ import logging
 import signal
 import subprocess  # nosec
 import unittest
+from functools import partial
 from logging import DEBUG, WARNING
 from pathlib import Path
 from unittest.mock import Mock, call, patch
@@ -219,43 +220,46 @@ class ProcessesTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            process_module.Processes.run,
-            "if self._stopping:",
-            "if False:",
+            process_module.Processes._start,
+            "if self.stop_signal is not None:\n            return None",
+            "if False:\n            return None",
             "a process starts after the run stopped, and outlives the run",
         )
     )
-    def test_a_stopped_run_starts_no_further_process(self, mock_popen: Mock):
+    @patch("os.killpg")
+    def test_a_stopped_run_starts_no_further_process(self, _mock_killpg: Mock, mock_popen: Mock):
         """Test that once the run stops, a process about to start does not, and reports the exit code of SIGTERM."""
         processes = Processes()
-        processes.stop()
-        self.assertEqual(processes.run(Command("tool")), -signal.SIGTERM)
+        processes.stop(signal.SIGINT)
+        self.assertEqual(processes.run(Command("tool")), [-signal.SIGTERM])
         mock_popen.assert_not_called()
 
     @patch("os.killpg")
     def test_a_process_runs_and_stops_as_a_process_group_of_its_own(self, mock_killpg: Mock, mock_popen: Mock):
         """Test that a process runs in a process group of its own, which stopping the run sends a SIGTERM."""
         processes = Processes()
-        mock_popen.return_value.wait.side_effect = processes.stop
+        mock_popen.return_value.wait.side_effect = partial(processes.stop, signal.SIGINT)
         processes.run(Command("tool"))
         mock_popen.assert_called_once_with(Command("tool"), process_group=0)
         mock_killpg.assert_called_once_with(mock_popen.return_value.pid, signal.SIGTERM)
 
     @patch("os.killpg")
     def test_stopping_passes_over_a_process_whose_process_group_ended(self, mock_killpg: Mock, mock_popen: Mock):
-        """Test that stopping the run passes over a process whose process group ended, and stops the others."""
-        processes = Processes()
-        ended, running = Mock(pid=1), Mock(pid=2)
-        mock_popen.side_effect = [ended, running]
-        ended.wait.side_effect = lambda: processes.run(Command("running"))
-        running.wait.side_effect = processes.stop
+        """Test that stopping the run passes over a process that ended, waited for or not, and stops the others."""
+        for case, refusal in (("waited for", ProcessLookupError), ("not waited for", PermissionError)):
+            with self.subTest(case):
+                mock_killpg.reset_mock()
+                processes = Processes()
+                ended, running = Mock(pid=1), Mock(pid=2)
+                mock_popen.side_effect = [ended, running]
+                ended.wait.side_effect = partial(processes.stop, signal.SIGINT)
 
-        def killpg(pid: int, _signal: int) -> None:
-            if pid == ended.pid:
-                raise ProcessLookupError
+                def killpg(pid: int, _signal: int, ended: Mock = ended, refusal: type[OSError] = refusal) -> None:
+                    if pid == ended.pid:
+                        raise refusal
 
-        mock_killpg.side_effect = killpg
-        processes.run(Command("ended"))
-        self.assertCountEqual(
-            mock_killpg.call_args_list, [call(ended.pid, signal.SIGTERM), call(running.pid, signal.SIGTERM)]
-        )
+                mock_killpg.side_effect = killpg
+                processes.run(Command("ended"), Command("running"))
+                self.assertCountEqual(
+                    mock_killpg.call_args_list, [call(ended.pid, signal.SIGTERM), call(running.pid, signal.SIGTERM)]
+                )
