@@ -24,6 +24,7 @@ def mock_response(json: Mapping | list | str | None = None, **kwargs: object) ->
     """
     response = Mock(json=Mock(return_value=json))
     response.links = {}  # requests parses the Link header into `.links`; default to none, override per test.
+    response.headers = {}  # A real response always carries a mapping of headers; default to none, override per test.
     response.configure_mock(**kwargs)
     return response
 

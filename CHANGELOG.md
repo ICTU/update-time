@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Log at `DEBUG` the version of Update-time, its command-line arguments, which credentials are set, the proxies and CA bundle it uses, the OS, and the versions of Python and of each tool it runs. Log at `ERROR` when GitHub's rate limit is used up. Stop a run on Ctrl-C, Ctrl-\, SIGTERM, or SIGHUP, logging which signal stopped it. Closes [#437](https://github.com/ICTU/update-time/issues/437).
 
 ## 0.0.48 - 2026-10-17
 

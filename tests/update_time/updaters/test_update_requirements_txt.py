@@ -29,6 +29,7 @@ from tests.update_time.helpers import (
     LoggingTestCase,
     archival_check_disabled,
     osv_advisory,
+    published_version,
     pypi_index,
     pypi_release,
     requirements_file,
@@ -55,7 +56,7 @@ from tests.update_time.updaters.helpers import (
     vulnerability_check_disabled,
 )
 
-_PUBLISHED = "1.1, published: 2020-01-01 00:00"  # How PYPI_OLD_UPLOAD is rendered in the log.
+_PUBLISHED = published_version("1.1", PYPI_OLD_UPLOAD)
 
 # The endpoint a package's versions and release dates are read from; `queried_packages` reads its name back off it.
 _PYPI_INDEX_URL = "https://pypi.org/simple/"
@@ -935,7 +936,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt.write_text.assert_called_once_with("certifi == 2020.4.5.2          # used by requests\n")
         self.assert_path_logged(requirements_txt)
         self.assert_new_version_logged(
-            "certifi", "2020.4.5.2, published: 2020-01-01 00:00", Location(requirements_txt, 1)
+            "certifi", published_version("2020.4.5.2", PYPI_OLD_UPLOAD), Location(requirements_txt, 1)
         )
         self.assert_no_warnings_logged()
 

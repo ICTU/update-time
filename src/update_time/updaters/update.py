@@ -1,11 +1,13 @@
 """Update all dependencies by running the individual updater scripts."""
 
 import os
-import subprocess  # nosec B404
+import platform
+import signal
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
+from signal import Signals
 from typing import TYPE_CHECKING
 
 from update_time.domain.archival import IGNORE_ARCHIVED
@@ -13,14 +15,20 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES, DependencyType
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
-from update_time.io.cli import parse_args
+from update_time.io.cli import VERSION, parse_args
 from update_time.io.filesystem import EXCLUDE_PATHS, inside_git_repository
-from update_time.io.log import LOG_LEVEL, get_logger
+from update_time.io.log import get_logger, set_log_level
+from update_time.io.network import report_network_settings
+from update_time.io.process import Processes
 from update_time.markers.drift import ALLOW_HASH_DRIFT
 from update_time.markers.floating import ALLOW_FLOATING_PIN
+from update_time.primitives.command import Command
+from update_time.sources import docker_hub, github
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
+
+    from update_time.io.log import Logger
 
 _SRC = Path(__file__).parent
 
@@ -32,10 +40,10 @@ class _Script:
     name: str
     parallel: bool = True
 
-    def run(self) -> int:
-        """Run the script in a subprocess and return its exit code."""
-        script = str(_SRC / f"update_{self.name}.py")
-        return subprocess.run([sys.executable, script], check=False).returncode  # noqa: S603 # nosec: B603
+    @property
+    def command(self) -> Command:
+        """Return the command that runs the script."""
+        return Command(sys.executable, str(_SRC / f"update_{self.name}.py"))
 
 
 @dataclass(frozen=True)
@@ -58,14 +66,25 @@ class _Scripts:
         """Return each script that may not run beside another."""
         return tuple(script for script in self if not script.parallel)
 
-    def run(self) -> int:
-        """Run every updater script and return the highest exit code.
+    def dependency_type(self, script: _Script) -> DependencyType:
+        """Return the dependency type the script serves."""
+        return next(dependency_type for dependency_type, scripts in self.scripts.items() if script in scripts)
+
+    def run(self, processes: Processes, logger: Logger) -> int:
+        """Run every updater script and return the highest exit code, counting a script a signal stopped as 1.
 
         The scripts that may run beside another go first and run concurrently; the rest follow one at a time.
         """
-        with ThreadPoolExecutor() as executor:
-            results = list(executor.map(_Script.run, self.parallel_scripts))
-        results.extend(script.run() for script in self.sequential_scripts)
+
+        def result(script: _Script, exit_code: int) -> int:
+            if exit_code >= 0 or processes.stop_signal is not None:
+                return exit_code
+            logger.update_stopped(self.dependency_type(script).name, Signals(-exit_code))
+            return 1
+
+        parallel = self.parallel_scripts
+        results = list(map(result, parallel, processes.run(*(script.command for script in parallel)), strict=True))
+        results.extend(result(script, *processes.run(script.command)) for script in self.sequential_scripts)
         return max(results, default=0)
 
 
@@ -94,6 +113,26 @@ _SCRIPTS = _Scripts(
         DEPENDENCY_TYPES.jsdelivr_npm_urls: (_Script("jsdelivr"),),
     }
 )
+
+
+_STOP_SIGNALS = (Signals.SIGINT, Signals.SIGQUIT, Signals.SIGTERM, Signals.SIGHUP)
+
+# The environment variables holding the credentials that raise the rate limits of GitHub and Docker Hub.
+_CREDENTIALS = (github.TOKEN_VARIABLE, docker_hub.USERNAME_VARIABLE, docker_hub.TOKEN_VARIABLE)
+
+
+def _report_context(logger: Logger) -> None:
+    """Log the version, the platform, the arguments, the credentials, and the network settings the run starts with."""
+    logger.running(VERSION, platform.platform(), platform.python_version())
+    logger.arguments(sys.argv[1:])
+    logger.credentials({name: bool(os.environ.get(name)) for name in _CREDENTIALS})
+    report_network_settings(logger)
+
+
+def _stop(processes: Processes, logger: Logger, signal_number: int, _frame: object) -> None:
+    """Log the signal, and stop the updaters running and the ones still to start."""
+    logger.stopped(Signals(signal_number))
+    processes.stop(Signals(signal_number))
 
 
 def _configure_excluded_paths(paths: list[Path]) -> None:
@@ -128,16 +167,23 @@ def main() -> int:
     VULNERABILITY_LEVEL.set(args.vulnerability_level)
     IGNORE_VULNERABILITIES.set(args.ignore_vulnerability)
     IGNORE_ARCHIVED.set(args.ignore_archived)
-    LOG_LEVEL.set(args.log_level)
+    set_log_level(args.log_level)
     ALLOW_HASH_DRIFT.set(args.allow_hash_drift)
     ALLOW_FLOATING_PIN.set(args.allow_floating_pin)
+    logger = get_logger(__name__)
+    _report_context(logger)
     # parse_args has already refused to run outside a git repository unless --force was given; when it was, warn that
-    # the in-place rewrites cannot be reverted. The log level is exported above, so the warning honours --log-level.
+    # the in-place rewrites cannot be reverted.
     scan_root = Path.cwd()
     if not inside_git_repository(scan_root):
-        get_logger(__name__).forced_outside_git_repository(scan_root)
+        logger.forced_outside_git_repository(scan_root)
     _configure_excluded_paths(args.exclude_path)
-    return _SCRIPTS.run()
+    processes = Processes()
+    for signal_number in _STOP_SIGNALS:
+        signal.signal(signal_number, partial(_stop, processes, logger))
+    exit_code = _SCRIPTS.run(processes, logger)
+    # A stopped run exits as a shell reports a signal
+    return exit_code if processes.stop_signal is None else 128 + processes.stop_signal
 
 
 if __name__ == "__main__":  # pragma: no cover

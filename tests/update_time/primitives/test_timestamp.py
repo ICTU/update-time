@@ -3,7 +3,10 @@
 import unittest
 from datetime import UTC, datetime, timedelta, timezone
 
-from update_time.primitives.timestamp import days_since, newest_timestamp, parse_timestamp
+from update_time.primitives import timestamp as timestamp_module
+from update_time.primitives.timestamp import days_since, newest_timestamp, parse_timestamp, utc_date_and_time
+
+from tests.mutation import Mutation, kills
 
 
 class DaysSinceTest(unittest.TestCase):
@@ -62,3 +65,20 @@ class NewestTimestampTest(unittest.TestCase):
     def test_all_timestamps_absent(self):
         """Test that timestamps that are all absent yield None, as no timestamps at all do."""
         self.assertIsNone(newest_timestamp([None, ""]))
+
+
+class UTCDateAndTimeTest(unittest.TestCase):
+    """Unit tests for the utc_date_and_time helper."""
+
+    @kills(
+        Mutation(
+            timestamp_module.utc_date_and_time,
+            "timestamp.astimezone(UTC)",
+            "timestamp",
+            "a timestamp in another timezone is logged at its own clock time, labelled UTC",
+        )
+    )
+    def test_utc_date_and_time_converts_to_utc_and_says_so(self):
+        """Test that a timestamp in another timezone renders as its date and time in UTC, labelled UTC."""
+        timestamp = datetime(2026, 10, 17, 17, 42, 30, tzinfo=timezone(timedelta(hours=2)))
+        self.assertEqual(utc_date_and_time(timestamp), "2026-10-17 15:42 UTC")

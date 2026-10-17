@@ -30,11 +30,15 @@ _REGISTRY = "https://registry.hub.docker.com"
 # not on the _REGISTRY host above.
 _AUTH_URL = "https://hub.docker.com/v2/auth/token"
 
+# The environment variables holding the credentials, which raise the rate limit.
+USERNAME_VARIABLE = "DOCKER_HUB_USERNAME"
+TOKEN_VARIABLE = "DOCKER_HUB_TOKEN"  # noqa: S105 # nosec: B105
+
 
 def credentials() -> tuple[str, str] | None:
     """Return the (username, token) Docker Hub credentials if both DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN are set."""
-    username = os.environ.get("DOCKER_HUB_USERNAME")
-    token = os.environ.get("DOCKER_HUB_TOKEN")
+    username = os.environ.get(USERNAME_VARIABLE)
+    token = os.environ.get(TOKEN_VARIABLE)
     return (username, token) if username and token else None
 
 

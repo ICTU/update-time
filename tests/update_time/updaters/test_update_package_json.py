@@ -12,12 +12,22 @@ from update_time.updaters.update_package_json import update_package_jsons
 
 from tests.helpers import mock_path, mock_response, patch_pathlib_path
 from tests.update_time.fixtures import FRESH_DATE, STALE_DATE
-from tests.update_time.helpers import LoggingTestCase, github_commits_json, github_release_json, staleness_disabled
+from tests.update_time.helpers import (
+    LoggingTestCase,
+    github_commits_json,
+    github_release_json,
+    published_version,
+    staleness_disabled,
+)
 
 _NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN.default}"  # the cooldown npm option Update-time adds by default
 _PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN.default * 24 * 60}"  # pnpm's, in minutes
 _NPM_UNSET = "null\n"  # what `npm config get <cooldown key>` prints when the key is not set
 _PNPM_UNSET = "undefined\n"  # what `pnpm config get minimumReleaseAge` prints when the key is not set
+
+
+# When the registry fixture below says version 1.1 was published.
+_PUBLICATION_TIME = "20260530T10:26:45.543Z"
 
 
 def _package_lookup_responses() -> Mock:
@@ -32,7 +42,7 @@ def _package_lookup_responses() -> Mock:
         side_effect=[
             mock_response({"repository": {"url": "https://github.com/package/1.1"}}),
             mock_response([github_release_json("v1.1", body="Changelog")]),
-            mock_response({"time": {"1.1": "20260530T10:26:45.543Z"}}),
+            mock_response({"time": {"1.1": _PUBLICATION_TIME}}),
             mock_response(github_commits_json()),
         ]
     )
@@ -105,7 +115,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         self.assert_npm_called(mock_run)
         self.assert_path_logged(mock_package_json)
         self.assert_new_version_logged_with_changes(
-            "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json), "Changelog"
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(mock_package_json), "Changelog"
         )
         self.assert_no_warnings_logged()
 
@@ -121,7 +131,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         )
         update_package_jsons()
         self.assert_new_version_logged_with_changes(
-            "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json, 3), "Changelog"
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(mock_package_json, 3), "Changelog"
         )
 
     @patch("requests.Session.get", _package_lookup_responses())
@@ -141,7 +151,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
             Mock(stdout='{"dependencies": {"package": {"version": "1.1"}}}'),
         )
         update_package_jsons()
-        published = "1.1, published: 2026-05-30 10:26"
+        published = published_version("1.1", _PUBLICATION_TIME)
         self.assert_new_version_logged_among_others_with_changes(
             "package", published, Location(mock_package_json, 3), ANY
         )
@@ -162,7 +172,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         )
         update_package_jsons()
         self.assert_new_version_logged_with_changes(
-            "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json), "Changelog"
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(mock_package_json), "Changelog"
         )
 
     def test_restore_git_url_dependencies(self, mock_run: Mock, mock_glob: Mock):
@@ -208,7 +218,7 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
         self.assert_npm_called(mock_run)
         self.assert_path_logged(mock_package_json)
         self.assert_new_version_logged_with_changes(
-            "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json), "Changelog"
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(mock_package_json), "Changelog"
         )
         self.assert_no_warnings_logged()
 
@@ -324,7 +334,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         self.assert_pnpm_called(mock_run)
         self.assert_path_logged(mock_package_json)
         self.assert_new_version_logged_with_changes(
-            "package", "1.1, published: 2026-05-30 10:26", Location(mock_package_json), "Changelog"
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(mock_package_json), "Changelog"
         )
         self.assert_no_warnings_logged()
 

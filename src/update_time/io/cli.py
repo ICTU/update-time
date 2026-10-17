@@ -22,6 +22,8 @@ from update_time.primitives.iterables import unique
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+VERSION = version("update-time")
+
 
 def _listed(names: Sequence[str]) -> str:
     """Return the names comma-separated, with `and` before the last."""
@@ -89,10 +91,11 @@ def parse_args() -> argparse.Namespace:
         " too fresh to trust.",
         epilog="Update-time exits with status 0 when it ran successfully, 1 when an error prevented it from finishing, "
         "and 2 when any command-line argument was invalid, including a PATH that is not inside a git repository "
-        "(unless --force is passed). Exit status does not indicate whether anything was updated. Inspect the diff or "
-        "the INFO-level log for that.",
+        "(unless --force is passed). When a signal stops the run, Update-time exits with status 128 plus the signal's "
+        "number, such as 130 for Ctrl-C. Exit status does not indicate whether anything was updated. Inspect the "
+        "diff or the INFO-level log for that.",
     )
-    parser.add_argument("-V", "--version", action="version", version=f"v{version('update-time')}")
+    parser.add_argument("-V", "--version", action="version", version=f"v{VERSION}")
     parser.add_argument(
         "path",
         nargs="?",

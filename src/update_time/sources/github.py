@@ -3,6 +3,7 @@
 import os
 import re
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from functools import cache, cached_property, partial, total_ordering
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
@@ -27,19 +28,21 @@ from update_time.domain.dependency import (
     is_valid,
 )
 from update_time.domain.publication import publication_date_reporting
-from update_time.io.fetch import Fetched, failure_reason, fetch, next_page_url
+from update_time.io.fetch import Fetched, Response, failure_reason, fetch, next_page_url
 from update_time.io.log import get_logger
 from update_time.primitives.lookup import DeferredLookup, LookedUp
 from update_time.primitives.timestamp import parse_timestamp
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
-    from datetime import datetime
+    from collections.abc import Callable, Iterable, Mapping
 
     from update_time.domain.bound import VersionBound
     from update_time.primitives.lookup import Lookup
 
 _LOG = get_logger("github")
+
+# The environment variable holding the token that authenticates the requests, which raises the rate limit.
+TOKEN_VARIABLE = "GITHUB_TOKEN"  # noqa: S105 # nosec: B105
 
 # The GitHub commits endpoint fetches a commit by a tag, a branch, or a commit SHA, which this type names.
 type _GitRef = str
@@ -303,7 +306,29 @@ def _fetch_github(url: str, *, require_ok: bool = True) -> Fetched:
     Omitting the authorization header or the cache spends rate limit rather than failing, which nothing but an
     exhausted run catches, so every API request goes through here.
     """
-    return fetch(url, _LOG, headers=_github_headers(), require_ok=require_ok)
+    headers = _github_headers()
+    report = _LOG.github_token_rate_limit_used_up if "Authorization" in headers else _LOG.github_rate_limit_used_up
+    on_response = partial(_report_used_up_rate_limit, report=report)
+    return fetch(url, _LOG, headers=headers, require_ok=require_ok, on_response=on_response)
+
+
+def _report_used_up_rate_limit(response: Response, *, report: Callable[[int, datetime], None]) -> None:
+    """Report when the response says the rate limit of the GitHub API is used up."""
+    if response.headers.get("X-RateLimit-Remaining") != "0":
+        return
+    try:
+        limit = int(response.headers["X-RateLimit-Limit"])
+        reset = datetime.fromtimestamp(int(response.headers["X-RateLimit-Reset"]), UTC)
+    except (KeyError, ValueError) as error:
+        _LOG.unreadable_github_rate_limit(error)
+        return
+    _log_used_up_rate_limit(report, limit, reset)
+
+
+@cache
+def _log_used_up_rate_limit(report: Callable[[int, datetime], None], limit: int, reset: datetime) -> None:
+    """Report that GitHub's API rate limit is used up until the reset, once per rate limit window in each process."""
+    report(limit, reset)
 
 
 def _list(repository: GitHubRepository, path: str, *, require_ok: bool = True) -> tuple[Any, ...] | None:
@@ -792,4 +817,4 @@ def _list_tree(git_url: str) -> tuple[str, ...]:
 
 def _github_headers() -> dict[str, str]:
     """Return GitHub API request headers, including authorization if GITHUB_TOKEN is set."""
-    return {"Authorization": f"Bearer {github_token}"} if (github_token := os.environ.get("GITHUB_TOKEN")) else {}
+    return {"Authorization": f"Bearer {github_token}"} if (github_token := os.environ.get(TOKEN_VARIABLE)) else {}

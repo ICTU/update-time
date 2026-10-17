@@ -415,6 +415,8 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.no_release_metadata("humanize", "4.16.0", "4.15.0", "HTTP 503")
     no_release_metadata = capture.take()
 
+    rate_limits = _rate_limits(log, capture)
+
     held_back_by_cooldown = _held_back_by_cooldown(log, capture, dockerfile)
 
     images_not_looked_up = _images_not_looked_up(log, capture, dockerfile)
@@ -429,6 +431,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
         **github_refs,
         "@@NO_RELEASE_METADATA@@": no_release_metadata,
+        **rate_limits,
         "@@HELD_BACK_BY_COOLDOWN@@": held_back_by_cooldown,
         "@@NO_PUSH_DATE@@": undated_pushes,
         "@@IMAGES_NOT_LOOKED_UP@@": images_not_looked_up,
@@ -443,6 +446,14 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **inverted,
         **understood_markers,
     }
+
+
+def _rate_limits(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log which credential variables are set, and that the anonymous GitHub rate limit is used up."""
+    log.credentials({"GITHUB_TOKEN": True, "DOCKER_HUB_USERNAME": True, "DOCKER_HUB_TOKEN": False})  # nosec B105
+    credentials = capture.take()
+    log.github_rate_limit_used_up(60, datetime(2026, 10, 17, 15, 42, tzinfo=UTC))
+    return {"@@CREDENTIALS@@": credentials, "@@GITHUB_RATE_LIMIT_USED_UP@@": capture.take()}
 
 
 def _held_back_by_cooldown(log: Logger, capture: _Capture, dockerfile: Location) -> str:

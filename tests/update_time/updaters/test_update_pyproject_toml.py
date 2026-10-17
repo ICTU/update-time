@@ -20,7 +20,13 @@ from tests.update_time.helpers import (
     LoggingTestCase,
     github_commits_json,
     github_release_json,
+    published_version,
     pyproject,
+)
+from tests.update_time.updaters.helpers import (
+    UPLOAD_TIME_WITH_CHANGELOG,
+    UPLOAD_TIME_WITHOUT_CHANGELOG,
+    pypi_metadata_without_changelog,
 )
 
 if TYPE_CHECKING:
@@ -28,7 +34,7 @@ if TYPE_CHECKING:
 
 
 # What the log renders for the new version `updated_pyproject_toml` has uv and PyPI report.
-_NEW_VERSION = "1.1, published: 2026-05-30 12:08"
+_NEW_VERSION = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
 
 
 def _discovered_pyproject_toml(glob: Mock, spec: str) -> Mock:
@@ -61,15 +67,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             project_urls["Changelog"] = changelog_url
         return {
             "info": {"description": "Package description", "project_urls": project_urls},
-            "urls": [{"upload_time_iso_8601": "2026-05-30T12:07:03.123456Z"}],
-        }
-
-    @staticmethod
-    def pypi_metadata_without_changelog() -> ReleaseMetadata:
-        """Create PyPI release metadata without project URLs, so the test needs no changelog response mocked."""
-        return {
-            "info": {"description": "Package", "project_urls": {}},
-            "urls": [{"upload_time_iso_8601": "2026-05-30T12:08:53.123321Z"}],
+            "urls": [{"upload_time_iso_8601": UPLOAD_TIME_WITH_CHANGELOG}],
         }
 
     def create_pyproject_toml(self, contents: str) -> Mock:
@@ -90,7 +88,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         answers with metadata naming no changelog, so the log renders an available new version as `_NEW_VERSION`.
         """
         run.return_value = self.mock_update_on_stdout(package, latest)
-        get.return_value = mock_response(self.pypi_metadata_without_changelog())
+        get.return_value = mock_response(pypi_metadata_without_changelog())
         pyproject_toml = self.create_pyproject_toml(contents)
         glob.return_value = [pyproject_toml]
         update_pyproject_tomls()
@@ -371,7 +369,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged_with_changes(
             "package_with_changelog",
-            "1.1, published: 2026-05-30 12:07",
+            published_version("1.1", UPLOAD_TIME_WITH_CHANGELOG),
             Location(mock_pyproject_toml, 2),
             CHANGELOG,
         )
@@ -392,7 +390,9 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_html_changelog==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
-            "package_with_html_changelog", "1.1, published: 2026-05-30 12:07", Location(mock_pyproject_toml, 2)
+            "package_with_html_changelog",
+            published_version("1.1", UPLOAD_TIME_WITH_CHANGELOG),
+            Location(mock_pyproject_toml, 2),
         )
         self.assert_no_warnings_logged()
 
@@ -411,7 +411,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged_with_changes(
             "package_with_github_releases",
-            "1.1, published: 2026-05-30 12:07",
+            published_version("1.1", UPLOAD_TIME_WITH_CHANGELOG),
             Location(mock_pyproject_toml, 2),
             CHANGELOG,
         )
@@ -428,7 +428,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
         self.assert_new_version_logged(
             "package_without_github_releases",
-            "1.1, published: 2026-05-30 12:07",
+            published_version("1.1", UPLOAD_TIME_WITH_CHANGELOG),
             Location(mock_pyproject_toml, 2),
         )
         self.assert_no_warnings_logged()
