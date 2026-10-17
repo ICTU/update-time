@@ -487,8 +487,8 @@ uv-sync:
 # === Update dependencies ===
 
 # Update direct and indirect dependencies. Set GITHUB_TOKEN, DOCKER_HUB_USERNAME, and DOCKER_HUB_TOKEN to prevent hitting rate limits. Without Maven on the path, the run reports an error for each pom.xml it finds and leaves that pom as it is.
-update-dependencies: install-py-dependencies
-    {{ uv_run }} src/update_time/updaters/update.py
+update-dependencies *args: install-py-dependencies
+    {{ uv_run }} src/update_time/updaters/update.py {{ args }}
 
 alias update-deps := update-dependencies
 
