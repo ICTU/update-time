@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.48 - 2026-10-17
+
 ### Fixed
 
 - Keep a Maven dependency or plugin on the variant its version names. Closes [#433](https://github.com/ICTU/update-time/issues/433).
