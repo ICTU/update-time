@@ -606,7 +606,6 @@ The versions no goal may adopt.
 The volta pin is steered by no marker.
 The warning costs no request, the item being unreadable on its own.
 The warning names where the marker would sit rather than the value that is wrong.
-The wrapper script a project ships beside its pom, which runs the Maven version that project builds with.
 The yank pass asks PyPI for every pin, whichever of the checks a test is about, so the tests that are about another check answer it with an index that lists no version and no distribution file to read a yank from.
 Then the most precise version of a variant the floating tag names, so `node:lts-alpine` lands on `24.19.0-alpine3.24` rather than on `24.19.0-alpine`.
 These have no registry to query and are now recognised and left unchanged, instead of being looked up on Docker Hub and logged as unfetchable on every run.

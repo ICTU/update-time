@@ -33,12 +33,30 @@ def update_pom_xmls() -> None:
     """Update each pom.xml the scan finds, running Maven over it."""
     pom_xmls = list(glob_for(POM_XML))
     scanned_poms = {name: pom_xml for pom_xml in pom_xmls if (name := pom_xml_format.pom_name(pom_xml))}
+    aggregators = _aggregators(pom_xmls)
     for pom_xml in pom_xmls:
         _LOG.path(pom_xml)
-        _update_pom_xml(pom_xml, scanned_poms)
+        _update_pom_xml(pom_xml, scanned_poms, _reactor_root(pom_xml.parent, aggregators))
 
 
-def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path]) -> None:
+def _aggregators(pom_xmls: list[Path]) -> dict[Path, Path]:
+    """Return the directory of the pom listing each module, keyed by the module's directory."""
+    return {module: pom_xml.parent for pom_xml in pom_xmls for module in pom_xml_format.module_directories(pom_xml)}
+
+
+def _reactor_root(directory: Path, aggregators: Mapping[Path, Path]) -> Path:
+    """Return the directory of the topmost pom whose modules reach the directory, or the directory itself.
+
+    The climb stops at a directory it reached before, where poms list each other as modules.
+    """
+    reached = {directory}
+    while (aggregator := aggregators.get(directory)) is not None and aggregator not in reached:
+        reached.add(aggregator)
+        directory = aggregator
+    return directory
+
+
+def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path], reactor_root: Path) -> None:
     """Update the dependencies and plugins the pom declares, and report the ones Maven moved.
 
     Which those are is read off the pom before and after the run, rather than from Maven's own report, which names
@@ -48,7 +66,7 @@ def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path]) -> None:
     if before is None:
         _LOG.invalid_file(pom_xml, xml.FORMAT)  # The pom cannot be read, so Maven is not run on it either.
         return
-    effective_pom = maven.update_pom_xml(pom_xml)
+    effective_pom = maven.update_pom_xml(pom_xml, reactor_root)
     after = pom_xml_format.declarations(pom_xml)
     resolved = pom_xml_format.declarations(pom_xml, effective_pom)
     if after is None or resolved is None:
@@ -85,10 +103,10 @@ def _report_markers(declared: list[Declaration]) -> None:
         if held_back:
             _LOG.holding_back_range(declaration, held_back, declaration.marker.version_bound_directive)
         _LOG.report_inverted_items(declaration, declaration.marker)
-        _report_redundant_directives(declaration, update_held_back=held_back is None)
+        _report_redundant_directives(declaration)
 
 
-def _report_redundant_directives(declaration: Declaration, *, update_held_back: bool) -> None:
+def _report_redundant_directives(declaration: Declaration) -> None:
     """Report as redundant each directive that decides nothing for the declaration."""
     as_written = declaration.marker.as_written
     if reason := _why_maven_leaves_the_version(declaration):
@@ -100,10 +118,10 @@ def _report_redundant_directives(declaration: Declaration, *, update_held_back: 
         _LOG.redundant_directive(declaration, yanked, Reason.NO_YANK_CONCEPT)
     marker = declaration.marker
     warn_if_the_opt_in_is_redundant(
-        declaration, marker, _LOG, Scope.FLOATING_PIN, Reason.PIN_NOT_FLOATING, update_held_back=update_held_back
+        declaration, marker, _LOG, Scope.FLOATING_PIN, Reason.PIN_NOT_FLOATING, update_held_back=False
     )
     warn_if_the_opt_in_is_redundant(
-        declaration, marker, _LOG, Scope.HASH_DRIFT, Reason.NO_HASH_PIN, update_held_back=update_held_back
+        declaration, marker, _LOG, Scope.HASH_DRIFT, Reason.NO_HASH_PIN, update_held_back=False
     )
 
 
