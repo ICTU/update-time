@@ -1,11 +1,12 @@
 """Unit tests for the dependency module."""
 
 import unittest
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 
 from update_time.domain import dependency
 from update_time.domain.dependency import DependencyVersion, Release, Yank, is_valid
 from update_time.primitives.lookup import LookedUp
+from update_time.primitives.timestamp import utc_date_and_time
 
 from tests.mutation import Mutation, kills
 
@@ -68,11 +69,12 @@ class DependencyVersionTest(unittest.TestCase):
         """Test that a version whose publication date is unknown renders as its version alone."""
         self.assertEqual(str(DependencyVersion("4.15.0")), "4.15.0")
 
-    def test_str_appends_the_publication_date_in_utc(self):
-        """Test that a known publication date is appended, converted to UTC whatever timezone it was given in."""
-        published = datetime(2026, 5, 29, 15, 54, tzinfo=timezone(timedelta(hours=2)))
+    def test_str_appends_the_publication_date(self):
+        """Test that a known publication date is appended to the version."""
+        published = datetime(2026, 5, 29, 13, 54, tzinfo=UTC)
         self.assertEqual(
-            str(DependencyVersion("1.0", publication=LookedUp(published))), "1.0, published: 2026-05-29 13:54"
+            str(DependencyVersion("1.0", publication=LookedUp(published))),
+            f"1.0, published: {utc_date_and_time(published)}",
         )
 
     def test_not_yanked_by_default(self):

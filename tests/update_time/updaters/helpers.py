@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from unittest.mock import _patch
 
     from update_time.domain.vulnerability import Vulnerability
+    from update_time.sources.pypi import ReleaseMetadata
 
 # Reusable class decorator that mocks the Docker Hub auth token request made by sources.docker_hub.api_headers
 # when DOCKER_HUB_USERNAME/DOCKER_HUB_TOKEN are set, so the image updater tests never make a real network call.
@@ -23,6 +24,18 @@ mock_docker_hub_auth = patch("requests.Session.post", Mock(return_value=mock_res
 
 # The default project for the versions a test builds without one.
 _NO_PROJECT = Project()
+
+# The upload times of the PyPI release metadata the uv updater tests answer with, with a changelog URL and without one.
+UPLOAD_TIME_WITH_CHANGELOG = "2026-05-30T12:07:03.123456Z"
+UPLOAD_TIME_WITHOUT_CHANGELOG = "2026-05-30T12:08:53.123321Z"
+
+
+def pypi_metadata_without_changelog() -> ReleaseMetadata:
+    """Create PyPI release metadata without project URLs, so the test needs no changelog response mocked."""
+    return {
+        "info": {"description": "Package", "project_urls": {}},
+        "urls": [{"upload_time_iso_8601": UPLOAD_TIME_WITHOUT_CHANGELOG}],
+    }
 
 
 def github_version(version: str, project: Project = _NO_PROJECT) -> DependencyVersion:

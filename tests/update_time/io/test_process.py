@@ -1,13 +1,20 @@
 """Unit tests for running processes."""
 
+import logging
+import signal
 import subprocess  # nosec
+import unittest
+from logging import DEBUG, WARNING
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
+from update_time.io import process as process_module
 from update_time.io.log import Logger
-from update_time.io.process import run
+from update_time.io.process import Processes, run
 from update_time.primitives.command import Command
+from update_time.primitives.location import Location
 
+from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase
 
 
@@ -93,4 +100,162 @@ class RunTests(LoggingTestCase):
         self.assertFalse(result.ok)
         self.assert_error_logged(
             Logger._MESSAGE_COMMAND_NOT_FOUND, command=Command("npm", "outdated"), executable="npm"
+        )
+
+
+@patch("subprocess.run")
+class ToolVersionTests(LoggingTestCase):
+    """Unit tests for logging the version of each tool the run invokes."""
+
+    def setUp(self) -> None:
+        """Log at debug level, where the tool versions are logged."""
+        super().setUp()
+        root = logging.getLogger()
+        self.addCleanup(root.setLevel, root.level)
+        root.setLevel(DEBUG)
+
+    @staticmethod
+    def commands_run(mock_run: Mock) -> list[tuple[Command, Path | None]]:
+        """Return each command the stub for subprocess.run received, with the directory it ran in."""
+        return [(each.args[0], each.kwargs["cwd"]) for each in mock_run.call_args_list]
+
+    def test_version_is_logged_with_the_directory_the_command_runs_in(self, mock_run: Mock):
+        """Test that the version of the executable is logged with the directory the command runs in."""
+        mock_run.return_value = Mock(stdout="11.19.1\n", stderr="")
+        run(Command("npm", "outdated"), cwd=Path("/project"))
+        self.assert_logged(
+            Logger._MESSAGE_TOOL_VERSION,
+            executable="npm",
+            directory=Location(Path("/project")),
+            version="11.19.1",
+        )
+
+    def test_version_of_a_command_run_in_no_directory_names_the_scan_root(self, mock_run: Mock):
+        """Test that the version of an executable run in no particular directory names the scan root it runs in."""
+        mock_run.return_value = Mock(stdout="uv 0.13.1\n", stderr="")
+        run(Command("uv", "lock"))
+        self.assert_logged(
+            Logger._MESSAGE_TOOL_VERSION,
+            executable="uv",
+            directory=Location(Path.cwd()),
+            version="uv 0.13.1",
+        )
+
+    def test_version_is_asked_once_per_executable_and_directory(self, mock_run: Mock):
+        """Test that an executable is asked for its version before its first command in each directory alone."""
+        mock_run.return_value = Mock(stdout="11.19.1\n", stderr="")
+        project, frontend = Path("/project"), Path("/project/frontend")
+        run(Command("npm", "outdated"), cwd=project)
+        run(Command("npm", "update"), cwd=project)
+        run(Command("npm", "list"), cwd=frontend)
+        run(Command("uv", "lock"))
+        self.assertEqual(
+            self.commands_run(mock_run),
+            [
+                (Command("npm", "--version"), project),
+                (Command("npm", "outdated"), project),
+                (Command("npm", "update"), project),
+                (Command("npm", "--version"), frontend),
+                (Command("npm", "list"), frontend),
+                (Command("uv", "--version"), Path.cwd()),
+                (Command("uv", "lock"), None),
+            ],
+        )
+
+    def test_no_directory_and_the_working_directory_share_one_version_query(self, mock_run: Mock):
+        """Test that a command run in no directory and one run in the working directory ask for the version once."""
+        mock_run.return_value = Mock(stdout="uv 0.13.1\n", stderr="")
+        run(Command("uv", "lock"))
+        run(Command("uv", "sync"), cwd=Path.cwd())
+        commands = [command for command, _directory in self.commands_run(mock_run)]
+        self.assertEqual(commands.count(Command("uv", "--version")), 1)
+
+    def test_a_version_that_cannot_be_determined_is_warned_about(self, mock_run: Mock):
+        """Test that a failing version query is warned about with its reason, while the command itself still runs."""
+        unknown_option = subprocess.CalledProcessError(1, "", output="", stderr="unknown option: --version\n")
+        no_java = subprocess.CalledProcessError(
+            1, "", output="The JAVA_HOME environment variable is not set\n", stderr=""
+        )
+        for case, outcome, reason in (
+            ("non-zero exit", unknown_option, "unknown option: --version"),
+            ("non-zero exit, error on stdout", no_java, "The JAVA_HOME environment variable is not set"),
+            ("nothing on stdout", Mock(stdout="", stderr=""), "it did not print a version"),
+            (
+                "non-zero exit, no output",
+                subprocess.CalledProcessError(1, "", output="", stderr=""),
+                "it failed without saying why",
+            ),
+        ):
+            with self.subTest(case):
+                mock_run.side_effect = [outcome, Mock(stdout="output", stderr="")]
+                self.assertEqual(run(Command("pnpm", "outdated"), cwd=Path("/project")).stdout, "output")
+                self.assert_logged(
+                    Logger._MESSAGE_TOOL_VERSION_UNKNOWN,
+                    executable="pnpm",
+                    directory=Location(Path("/project")),
+                    reason=reason,
+                )
+                self.assertEqual(self.records(DEBUG), [])
+
+    def test_a_tool_that_cannot_run_is_reported_once(self, mock_run: Mock):
+        """Test that a tool the system cannot run is reported by its command alone, not by its version query too."""
+        refused = PermissionError(13, "Permission denied")
+        for case, error, message, fields in (
+            ("not installed", FileNotFoundError(), Logger._MESSAGE_COMMAND_NOT_FOUND, {"executable": "pnpm"}),
+            ("refused", refused, Logger._MESSAGE_COMMAND_ERROR, {"error": refused}),
+        ):
+            with self.subTest(case):
+                mock_run.reset_mock()
+                mock_run.side_effect = error
+                run(Command("pnpm", "outdated"), cwd=Path("/project"))
+                self.assertEqual(mock_run.call_count, 2)
+                self.assertEqual(self.records(WARNING), [])
+                self.assert_error_logged(message, command=Command("pnpm", "outdated"), **fields)
+
+
+@patch("subprocess.Popen")
+class ProcessesTest(unittest.TestCase):
+    """Unit tests for the processes a run started."""
+
+    @kills(
+        Mutation(
+            process_module.Processes.run,
+            "if self._stopping:",
+            "if False:",
+            "a process starts after the run stopped, and outlives the run",
+        )
+    )
+    def test_a_stopped_run_starts_no_further_process(self, mock_popen: Mock):
+        """Test that once the run stops, a process about to start does not, and reports the exit code of SIGTERM."""
+        processes = Processes()
+        processes.stop()
+        self.assertEqual(processes.run(Command("tool")), -signal.SIGTERM)
+        mock_popen.assert_not_called()
+
+    @patch("os.killpg")
+    def test_a_process_runs_and_stops_as_a_process_group_of_its_own(self, mock_killpg: Mock, mock_popen: Mock):
+        """Test that a process runs in a process group of its own, which stopping the run sends a SIGTERM."""
+        processes = Processes()
+        mock_popen.return_value.wait.side_effect = processes.stop
+        processes.run(Command("tool"))
+        mock_popen.assert_called_once_with(Command("tool"), process_group=0)
+        mock_killpg.assert_called_once_with(mock_popen.return_value.pid, signal.SIGTERM)
+
+    @patch("os.killpg")
+    def test_stopping_passes_over_a_process_whose_process_group_ended(self, mock_killpg: Mock, mock_popen: Mock):
+        """Test that stopping the run passes over a process whose process group ended, and stops the others."""
+        processes = Processes()
+        ended, running = Mock(pid=1), Mock(pid=2)
+        mock_popen.side_effect = [ended, running]
+        ended.wait.side_effect = lambda: processes.run(Command("running"))
+        running.wait.side_effect = processes.stop
+
+        def killpg(pid: int, _signal: int) -> None:
+            if pid == ended.pid:
+                raise ProcessLookupError
+
+        mock_killpg.side_effect = killpg
+        processes.run(Command("ended"))
+        self.assertCountEqual(
+            mock_killpg.call_args_list, [call(ended.pid, signal.SIGTERM), call(running.pid, signal.SIGTERM)]
         )

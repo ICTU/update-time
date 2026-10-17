@@ -1,7 +1,8 @@
 """Unit tests for the GitHub source."""
 
 import unittest
-from logging import WARNING
+from datetime import UTC, datetime
+from logging import ERROR, WARNING
 from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, patch
 
@@ -13,6 +14,7 @@ from update_time.domain.changelog import is_markdown
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Archival, ArchivedSubject, PinnedDependency, Release
 from update_time.io.log import Logger
+from update_time.primitives.timestamp import utc_date_and_time
 from update_time.sources import github
 from update_time.sources.github import (
     GitHubRepository,
@@ -54,6 +56,8 @@ from tests.update_time.sources.helpers import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from update_time.domain.bound import VersionBound
     from update_time.domain.dependency import DependencyVersion, VersionString
 
@@ -917,8 +921,8 @@ class GitHubHeadersTest(CacheClearingTestCase):
     @kills(
         Mutation(
             github._github_headers,
-            '("GITHUB_TOKEN")) else {}',
-            '("GITHUB_TOKEN")) else {"Authorization": "Bearer"}',
+            "(TOKEN_VARIABLE)) else {}",
+            '(TOKEN_VARIABLE)) else {"Authorization": "Bearer"}',
             "a run given no token sends an empty bearer header instead of asking anonymously",
         )
     )
@@ -927,3 +931,88 @@ class GitHubHeadersTest(CacheClearingTestCase):
     def test_no_authorization_header_without_a_token(self, mock_get: Mock):
         """Test that a request carries no authorization header when GITHUB_TOKEN is not set."""
         self.assert_request_headers(mock_get, {})
+
+
+class GitHubRateLimitTest(LoggingTestCase):
+    """Unit tests for warning that GitHub's API rate limit is used up."""
+
+    RESET = datetime(2026, 10, 17, 15, 42, tzinfo=UTC)
+
+    def refused_response(self, overrides: Mapping[str, str | None] | None = None) -> Mock:
+        """Return the 403 GitHub sends, with headers saying the limit of 60 requests is used up until `RESET`.
+
+        An override replaces a header, or leaves it out where its value is None.
+        """
+        defaults: dict[str, str | None] = {
+            "X-RateLimit-Limit": "60",
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": str(int(self.RESET.timestamp())),
+        }
+        merged = {**defaults, **(overrides or {})}
+        headers = {name: value for name, value in merged.items() if value is not None}
+        return mock_response(
+            {"message": "API rate limit exceeded"}, ok=False, status_code=403, reason="Forbidden", headers=headers
+        )
+
+    @patch("requests.Session.get")
+    def test_a_used_up_rate_limit_is_reported_as_an_error(self, mock_get: Mock):
+        """Test that a response saying the rate limit is used up is reported as an error, in the token's form."""
+        mock_get.return_value = self.refused_response()
+        for case, environment, message in (
+            ("anonymous", {}, Logger._MESSAGE_GITHUB_RATE_LIMIT_USED_UP),
+            ("with a token", {"GITHUB_TOKEN": "a-token"}, Logger._MESSAGE_GITHUB_TOKEN_RATE_LIMIT_USED_UP),  # nosec B105
+        ):
+            with self.subTest(case), patch_environ(environment, clear=True):
+                archival(GitHubRepository("owner", "repository"), check_archival=True)
+                self.assert_error_logged(message, limit=60, reset=utc_date_and_time(self.RESET))
+
+    @kills(
+        Mutation(
+            github,
+            "@cache\ndef _log_used_up_rate_limit(",
+            "def _log_used_up_rate_limit(",
+            "a used-up rate limit is reported once for every request GitHub refuses",
+        )
+    )
+    @patch_environ()
+    @patch("requests.Session.get")
+    def test_a_used_up_rate_limit_is_reported_once(self, mock_get: Mock):
+        """Test that a process reports the used-up rate limit once, however many responses say so."""
+        mock_get.return_value = self.refused_response()
+        for name in ("first", "second"):
+            archival(GitHubRepository("owner", name), check_archival=True)
+        self.assertEqual(mock_get.call_count, 2)
+        self.assert_error_logged(
+            Logger._MESSAGE_GITHUB_RATE_LIMIT_USED_UP, limit=60, reset=utc_date_and_time(self.RESET)
+        )
+
+    @kills(
+        Mutation(
+            github._report_used_up_rate_limit,
+            'if response.headers.get("X-RateLimit-Remaining") != "0":',
+            "if response.ok:",
+            "every request GitHub refuses is reported as a used-up rate limit, whatever the reason",
+        )
+    )
+    @patch_environ()
+    @patch("requests.Session.get")
+    def test_a_rate_limit_that_is_not_used_up_is_not_reported(self, mock_get: Mock):
+        """Test that a failed response is not reported as a used-up rate limit while requests remain."""
+        mock_get.return_value = self.refused_response({"X-RateLimit-Remaining": "59"})
+        archival(GitHubRepository("owner", "repository"), check_archival=True)
+        mock_get.assert_called_once()
+        self.assertEqual(self.records(ERROR), [])
+
+    @patch_environ()
+    @patch("requests.Session.get")
+    def test_an_unreadable_rate_limit_header_is_logged_at_debug(self, mock_get: Mock):
+        """Test that a rate-limit header that is missing or not a whole number is logged at debug level."""
+        for case, overrides, error in (
+            ("limit", {"X-RateLimit-Limit": "sixty"}, "invalid literal for int() with base 10: 'sixty'"),
+            ("reset", {"X-RateLimit-Reset": "soon"}, "invalid literal for int() with base 10: 'soon'"),
+            ("missing limit", {"X-RateLimit-Limit": None}, "'X-RateLimit-Limit'"),
+        ):
+            with self.subTest(case):
+                mock_get.return_value = self.refused_response(overrides)
+                archival(GitHubRepository("owner", "repository"), check_archival=True)
+                self.assert_logged(Logger._MESSAGE_UNREADABLE_GITHUB_RATE_LIMIT, error=error)

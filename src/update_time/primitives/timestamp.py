@@ -17,8 +17,8 @@ def days_since(timestamp: datetime) -> int:
 
 
 def utc_date_and_time(timestamp: datetime) -> str:
-    """Return the timestamp's date and time in UTC, without the seconds."""
-    return f"{timestamp.astimezone(UTC):%Y-%m-%d %H:%M}"
+    """Return the timestamp's date and time in UTC, without the seconds, labelled UTC."""
+    return f"{timestamp.astimezone(UTC):%Y-%m-%d %H:%M} UTC"
 
 
 def parse_timestamp(timestamp: str | None) -> datetime | None:

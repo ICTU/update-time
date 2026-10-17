@@ -182,8 +182,9 @@ options:
 Update-time exits with status 0 when it ran successfully, 1 when an error
 prevented it from finishing, and 2 when any command-line argument was invalid,
 including a PATH that is not inside a git repository (unless --force is
-passed). Exit status does not indicate whether anything was updated. Inspect
-the diff or the INFO-level log for that.
+passed). When a signal stops the run, Update-time exits with status 128 plus
+the signal's number, such as 130 for Ctrl-C. Exit status does not indicate
+whether anything was updated. Inspect the diff or the INFO-level log for that.
 ```
 
 </details>
@@ -192,10 +193,10 @@ Update-time logs at four levels. `--log-level` sets the lowest one shown, which 
 
 | | Level | What is logged |
 | :-: | :---- | :------------- |
-| 🔍 | `DEBUG` | what Update-time is doing: files it checks, [markers](#-controlling-updates-and-warnings-per-reference) it recognises, updates held back, warnings silenced, and more |
+| 🔍 | `DEBUG` | what Update-time is doing: its version and command-line arguments, which [credentials](#increasing-rate-limits) are set, the OS and Python version it runs on, the version of each tool it runs and a warning for a tool that reports none, the proxies and CA bundle it uses, files it checks, [markers](#-controlling-updates-and-warnings-per-reference) it recognises, updates held back, warnings silenced, and more |
 | ℹ️ | `INFO` | what Update-time changed: a version updated, a [hash pinned](#-pinning) |
 | ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a source it cannot reach, a file it cannot parse, an advisory it cannot read, a marker that is [invalid](#invalid-markers), [incorrect](#incorrect-markers), or [redundant](#redundant-markers) |
-| ❌ | `ERROR` | failures that stop an update, such as a package manager that is not installed |
+| ❌ | `ERROR` | failures that stop an update, such as a package manager that is not installed or a [GitHub rate limit](#increasing-rate-limits) that is used up, and a signal such as Ctrl-C that stops the run |
 
 ### Workflow
 
@@ -218,6 +219,18 @@ To raise API rate limits while updating, set the following environment variables
 
 - `GITHUB_TOKEN` — increases the GitHub API rate limit when updating GitHub Actions and pre-commit hooks, and when checking whether a repository is archived. The token only needs to read public data about a repository, its releases, and its commits, so it does not need a specific scope. A classic token with no scopes selected works. So does a fine-grained token with default read-only access to public repositories.
 - `DOCKER_HUB_USERNAME` and `DOCKER_HUB_TOKEN` — authenticate to the Docker Hub API (both must be set) to increase its rate limit when updating Docker images.
+
+Once GitHub's rate limit is used up, Update-time reports it, saying when the limit resets:
+
+```console
+ERROR GitHub's API rate limit of 60 requests is used up until 2026-10-17 15:42 UTC; set GITHUB_TOKEN to raise it
+```
+
+Run with `--log-level DEBUG` to see which of these variables are set. The line names each variable but not its value:
+
+```console
+DEBUG Credentials: GITHUB_TOKEN set, DOCKER_HUB_USERNAME set, DOCKER_HUB_TOKEN not set
+```
 
 ## 🔄 Updating
 
@@ -366,8 +379,8 @@ To avoid adopting releases that are too fresh to trust, Update-time honours a co
 Where Update-time applies the cooldown itself, it holds back every version published inside the cooldown. For every dependency type but Maven, it logs the newest version it holds back at `DEBUG`, with the date the cooldown ends for it. Where a marker sets the cooldown, the line names the marker's directive:
 
 ```console
-DEBUG Holding back version 4.38.3 of github/codeql-action/init in .github/workflows/ci.yml:5: published 2026-10-08 13:01, within the cooldown of 7 days until 2026-10-15 13:01
-DEBUG Holding back version 3.15.0 of python in Dockerfile:2: published 2026-10-08 13:01, within the cooldown of 30 days until 2026-11-07 13:01 (update-time: ignore[cooldown<30])
+DEBUG Holding back version 4.38.3 of github/codeql-action/init in .github/workflows/ci.yml:5: published 2026-10-08 13:01 UTC, within the cooldown of 7 days until 2026-10-15 13:01 UTC
+DEBUG Holding back version 3.15.0 of python in Dockerfile:2: published 2026-10-08 13:01 UTC, within the cooldown of 30 days until 2026-11-07 13:01 UTC (update-time: ignore[cooldown<30])
 ```
 
 Where a package manager applies the cooldown, Update-time hands the value to uv, npm, or pnpm. Each of them takes the value per run rather than per dependency. Each of them also leaves a cooldown your project already configures in place. [Python dependencies](#python-dependencies) and [npm and pnpm dependencies](#npm-and-pnpm-dependencies) describe what that means per dependency type.

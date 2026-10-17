@@ -957,6 +957,12 @@ def github_refs_whose_commits_were_listed() -> list[str]:
     return [ref for query in github_commit_listing_queries() for ref in query["sha"]]
 
 
+def published_version(version: str, published: str | datetime) -> str:
+    """Return how the log renders the version published at the timestamp, given as a datetime or in ISO 8601."""
+    timestamp = published if isinstance(published, datetime) else datetime.fromisoformat(published)
+    return str(DependencyVersion(version, publication=LookedUp(timestamp)))
+
+
 def maven_central_dated_row(name: str, published: str, size: str) -> str:
     """Return a row of an artefact's directory listing, dated exactly as given rather than by an instant."""
     link = f'<a href="{name}" title="{name}">{name}</a>'
@@ -1343,4 +1349,4 @@ def docker_tag(
 
 def docker_hub_version(version: str) -> str:
     """Return the version as a new-version line renders it for a tag `docker_tag` dates by default."""
-    return str(DependencyVersion(version, publication=LookedUp(PAST_COOLDOWN_DATE)))
+    return published_version(version, PAST_COOLDOWN_DATE)

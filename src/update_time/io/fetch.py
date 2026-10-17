@@ -15,6 +15,8 @@ from urllib.parse import urljoin
 import requests
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from update_time.io.log import Logger
 
 _TIMEOUT = 10  # Seconds to wait for a registry before giving up on the request.
@@ -23,7 +25,8 @@ _TIMEOUT = 10  # Seconds to wait for a registry before giving up on the request.
 # as thread-safe.
 _SESSIONS = threading.local()
 
-type Fetched = requests.Response | None
+type Response = requests.Response
+type Fetched = Response | None
 
 
 def _session() -> requests.Session:
@@ -33,7 +36,15 @@ def _session() -> requests.Session:
     return _SESSIONS.session
 
 
-def fetch(url: str, logger: Logger, *, method: str = "get", require_ok: bool = True, **kwargs: object) -> Fetched:
+def fetch(
+    url: str,
+    logger: Logger,
+    *,
+    method: str = "get",
+    require_ok: bool = True,
+    on_response: Callable[[Response], None] | None = None,
+    **kwargs: object,
+) -> Fetched:
     """Make an HTTP request and return the response, or None (logged) on a network error or non-OK status.
 
     `method` selects the session method (`get`, `head`, `post`); `kwargs` (headers, params, auth, json, ...) are
@@ -47,6 +58,8 @@ def fetch(url: str, logger: Logger, *, method: str = "get", require_ok: bool = T
     except requests.exceptions.RequestException as error:
         logger.request_error(url, error)
         return None
+    if on_response is not None:
+        on_response(response)
     if require_ok and not response.ok:
         logger.response(response)
         return None
@@ -64,7 +77,7 @@ def failure_reason(response: Fetched) -> str:
     return f"HTTP {response.status_code}" + (f", {message}" if message else "")
 
 
-def next_page_url(response: requests.Response) -> str | None:
+def next_page_url(response: Response) -> str | None:
     """Return the next-page URL from a paginated response's `Link` header (RFC 5988), or None if there is none.
 
     `requests` parses the `Link` header into `response.links`; the next link may be relative (registries commonly

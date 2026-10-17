@@ -246,12 +246,20 @@ class LayeringTest(unittest.TestCase):
         folders = [path.name for path in pathlib.Path("src/update_time").iterdir() if path.is_dir()]
         self.assertEqual(sorted(name for name in folders if not name.startswith("__")), sorted(_LAYERS))
 
-    def test_network_access_goes_through_io(self):
-        """Test that no layer but io imports `requests`, so all HTTP goes through `io.fetch`."""
+    def assert_only_io_imports(self, module: str) -> None:
+        """Assert that no layer but io imports the module."""
         for layer in (name for name in _LAYERS if name != "io"):
             with self.subTest(layer=layer):
                 rule = project_files("src/").in_folder(layer).should_not().depend_on_external_modules()
-                assert_passes(rule.matching(_module_pattern("requests")))
+                assert_passes(rule.matching(_module_pattern(module)))
+
+    def test_network_access_goes_through_io(self):
+        """Test that no layer but io imports `requests`, so all HTTP goes through `io.fetch`."""
+        self.assert_only_io_imports("requests")
+
+    def test_process_access_goes_through_io(self):
+        """Test that no layer but io imports `subprocess`, so every process runs through `io.process`."""
+        self.assert_only_io_imports("subprocess")
 
     def test_registry_access_goes_through_sources(self):
         """Test that updaters reach registries through the sources layer, never fetching from them directly."""

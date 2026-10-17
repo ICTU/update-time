@@ -1,8 +1,10 @@
 """Log helpers."""
 
 import logging
+import shlex
 from dataclasses import dataclass
 from logging import DEBUG, ERROR, INFO, WARNING
+from signal import SIGINT, SIGQUIT, Signals
 from typing import TYPE_CHECKING
 
 from rich.console import Console
@@ -19,6 +21,8 @@ from update_time.primitives.location import Location
 from update_time.primitives.timestamp import days_since, utc_date_and_time
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from datetime import datetime
     from pathlib import Path
 
     from requests import Response
@@ -45,6 +49,9 @@ if TYPE_CHECKING:
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 # Private channel that passes the log level from the CLI to the updater subprocesses.
 LOG_LEVEL = EnvVar("_UPDATE_TIME_LOG_LEVEL", default="INFO", parse=str)
+
+# The log names the key beside the signal a terminal sends for it.
+_KEYS = {SIGINT: "Ctrl-C", SIGQUIT: "Ctrl-\\"}
 
 
 @dataclass(frozen=True)
@@ -147,6 +154,10 @@ class Logger:
         self.log = logging.getLogger(name)
         self._logged_changes: set[tuple[str, DependencyVersion]] = set()
 
+    def logs_debug(self) -> bool:
+        """Return whether the logger shows debug messages."""
+        return self.log.isEnabledFor(DEBUG)
+
     def forget_shown_changelogs(self) -> None:
         """Forget which changelogs were shown, so reporting one of them again shows it rather than suppressing it."""
         self._logged_changes.clear()
@@ -213,7 +224,57 @@ class Logger:
         """
         self._log(message, location=Location(path), **fields)
 
-    # --- Run gating ---
+    # --- The run ---
+
+    _MESSAGE_RUNNING = LogMessage(DEBUG, "Running Update-time v%(version)s on %(platform)s with Python %(python)s")
+
+    def running(self, version: str, platform: str, python: str) -> None:
+        """Log the version of Update-time, and the OS and Python version it runs on."""
+        self._log(self._MESSAGE_RUNNING, version=version, platform=platform, python=python)
+
+    _MESSAGE_ARGUMENTS = LogMessage(DEBUG, "Command-line arguments: %(arguments)s")
+
+    def arguments(self, arguments: Sequence[str]) -> None:
+        """Log the command-line arguments, quoted as a shell reads them."""
+        self._log(self._MESSAGE_ARGUMENTS, arguments=shlex.join(arguments) or "none")
+
+    _MESSAGE_CREDENTIALS = LogMessage(DEBUG, "Credentials: %(credentials)s")
+
+    def credentials(self, credentials: Mapping[str, bool]) -> None:
+        """Log which of the credential environment variables are set."""
+        listed = ", ".join(f"{name} {'set' if is_set else 'not set'}" for name, is_set in credentials.items())
+        self._log(self._MESSAGE_CREDENTIALS, credentials=listed)
+
+    _MESSAGE_NETWORK_SETTINGS = LogMessage(DEBUG, "Network settings: %(settings)s")
+
+    def network_settings(self, proxies: Mapping[str, str], no_proxy: str, ca_bundle: str) -> None:
+        """Log the proxies, the hosts they skip, and the CA bundle."""
+        listed = ", ".join(f"{scheme}={proxy}" for scheme, proxy in proxies.items())
+        if not listed:
+            connections = "direct connections"
+        elif no_proxy:
+            connections = f"proxies {listed}, except for {no_proxy}"
+        else:
+            connections = f"proxies {listed}"
+        certificates = f"CA bundle {ca_bundle}" if ca_bundle else "the default CA bundle"
+        self._log(self._MESSAGE_NETWORK_SETTINGS, settings=f"{connections}; {certificates}")
+
+    _MESSAGE_STOPPED = LogMessage(
+        ERROR,
+        "%(signal)s stopped Update-time before it finished; review the files it changed, since a file it was writing "
+        "may be incomplete",
+    )
+
+    def stopped(self, signal: Signals) -> None:
+        """Log that a signal stopped the run before it finished."""
+        name = f"{signal.name} ({key})" if (key := _KEYS.get(signal)) else signal.name
+        self._log(self._MESSAGE_STOPPED, signal=name)
+
+    _MESSAGE_UPDATE_STOPPED = LogMessage(ERROR, "Could not finish updating %(dependency_type)s: %(signal)s stopped it")
+
+    def update_stopped(self, dependency_type: str, signal: Signals) -> None:
+        """Log that a signal stopped the update of a dependency type before it finished."""
+        self._log(self._MESSAGE_UPDATE_STOPPED, dependency_type=dependency_type, signal=signal.name)
 
     _MESSAGE_FORCED_OUTSIDE_GIT_REPOSITORY = LogMessage(
         WARNING,
@@ -955,7 +1016,54 @@ class Logger:
         """Log a network error (connection failure, too many redirects, ...) while fetching a URL."""
         self._log(self._MESSAGE_REQUEST_ERROR, url=url, error=error)
 
+    _MESSAGE_GITHUB_RATE_LIMIT_USED_UP = LogMessage(
+        ERROR,
+        "GitHub's API rate limit of %(limit)s requests is used up until %(reset)s; set GITHUB_TOKEN to raise it",
+    )
+
+    def github_rate_limit_used_up(self, limit: int, reset: datetime) -> None:
+        """Report that the anonymous GitHub rate limit is used up until the reset."""
+        self._log(self._MESSAGE_GITHUB_RATE_LIMIT_USED_UP, limit=limit, reset=utc_date_and_time(reset))
+
+    _MESSAGE_GITHUB_TOKEN_RATE_LIMIT_USED_UP = LogMessage(
+        ERROR, "GitHub's API rate limit of %(limit)s requests for GITHUB_TOKEN is used up until %(reset)s"
+    )
+
+    def github_token_rate_limit_used_up(self, limit: int, reset: datetime) -> None:
+        """Report that the GitHub rate limit of the token is used up until the reset."""
+        self._log(self._MESSAGE_GITHUB_TOKEN_RATE_LIMIT_USED_UP, limit=limit, reset=utc_date_and_time(reset))
+
+    _MESSAGE_UNREADABLE_GITHUB_RATE_LIMIT = LogMessage(DEBUG, "Could not read GitHub's rate-limit headers: %(error)s")
+
+    def unreadable_github_rate_limit(self, error: KeyError | ValueError) -> None:
+        """Log that GitHub's rate-limit headers could not be read, and why."""
+        self._log(self._MESSAGE_UNREADABLE_GITHUB_RATE_LIMIT, error=str(error))
+
     # --- External commands ---
+
+    _MESSAGE_TOOL_VERSION = LogMessage(DEBUG, "Version of %(executable)s in %(directory)s: %(version)s")
+
+    def tool_version(self, executable: str, directory: Path, version: str) -> None:
+        """Log the version an executable reports in a directory."""
+        self._log(
+            self._MESSAGE_TOOL_VERSION,
+            executable=executable,
+            directory=Location(directory),
+            version=version,
+        )
+
+    _MESSAGE_TOOL_VERSION_UNKNOWN = LogMessage(
+        WARNING, "Could not determine the version of %(executable)s in %(directory)s: %(reason)s"
+    )
+
+    def tool_version_unknown(self, executable: str, directory: Path, reason: str) -> None:
+        """Warn that an executable reports no version in a directory, and why."""
+        self._log(
+            self._MESSAGE_TOOL_VERSION_UNKNOWN,
+            executable=executable,
+            directory=Location(directory),
+            reason=reason,
+        )
 
     _MESSAGE_COMMAND_NOT_FOUND = LogMessage(ERROR, "Could not run %(command)s: is %(executable)s installed?")
 
@@ -1001,15 +1109,26 @@ def reset_changelog_suppression() -> None:
         logger.forget_shown_changelogs()
 
 
-def get_logger(name: str) -> Logger:
-    """Initialize a logger, configuring the root logger to send all diagnostics to stderr on the first call.
+def _configure_root_logger() -> None:
+    """Send all diagnostics to stderr, at the run's log level.
 
     Update-time's real output is the files it rewrites in place; everything it logs — the new-version report as much
     as the warnings and errors — is diagnostics about the run, so it all goes to stderr. That keeps stdout clean for
     the argparse-handled `--version`/`--help` output, so e.g. `v=$(update-time -V)` isn't polluted with log lines.
     """
+    configure_logging(Console(stderr=True, theme=LOG_THEME), LOG_LEVEL.get())
+
+
+def set_log_level(level: str) -> None:
+    """Log at the level from now on, in this process and in the processes it starts."""
+    LOG_LEVEL.set(level)
+    _configure_root_logger()
+
+
+def get_logger(name: str) -> Logger:
+    """Initialize a logger, configuring the root logger on the first call."""
     if not logging.getLogger().handlers:
-        configure_logging(Console(stderr=True, theme=LOG_THEME), LOG_LEVEL.get())
+        _configure_root_logger()
     logger = Logger(name)
     _LOGGERS.append(logger)
     return logger

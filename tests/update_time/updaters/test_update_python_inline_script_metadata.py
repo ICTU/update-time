@@ -12,7 +12,13 @@ from tests.helpers import mock_path, mock_response, patch_pathlib_path
 from tests.update_time.fixtures import CHANGELOG
 from tests.update_time.helpers import (
     LoggingTestCase,
+    published_version,
     script,
+)
+from tests.update_time.updaters.helpers import (
+    UPLOAD_TIME_WITH_CHANGELOG,
+    UPLOAD_TIME_WITHOUT_CHANGELOG,
+    pypi_metadata_without_changelog,
 )
 
 if TYPE_CHECKING:
@@ -45,15 +51,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
                 "description": "Package description",
                 "project_urls": {"Homepage": "https://home", "Changelog": "https://changelog"},
             },
-            "urls": [{"upload_time_iso_8601": "2026-05-30T12:07:03.123456Z"}],
-        }
-
-    @staticmethod
-    def pypi_metadata_without_changelog() -> ReleaseMetadata:
-        """Create PyPI release metadata without project URLs, so the test needs no changelog response mocked."""
-        return {
-            "info": {"description": "Package", "project_urls": {}},
-            "urls": [{"upload_time_iso_8601": "2026-05-30T12:08:53.123321Z"}],
+            "urls": [{"upload_time_iso_8601": UPLOAD_TIME_WITH_CHANGELOG}],
         }
 
     def create_script(self, contents: str) -> Mock:
@@ -76,23 +74,27 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
     def test_update(self, run: Mock, get: Mock, glob: Mock):
         """Test bumping an exact pin in an inline `# /// script` block."""
         run.return_value = self.mock_update_on_stdout("package", "v1.1")
-        get.return_value = mock_response(self.pypi_metadata_without_changelog())
+        get.return_value = mock_response(pypi_metadata_without_changelog())
         mock_script = self.create_script(script("package==1.0"))
         glob.return_value = [mock_script]
         update_python_inline_script_metadatas()
         mock_script.write_text.assert_called_with(script("package==1.1"))
-        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 12:08", Location(mock_script, 4))
+        self.assert_new_version_logged(
+            "package", published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG), Location(mock_script, 4)
+        )
         self.assert_no_warnings_logged()
 
     def test_update_of_a_dependency_without_an_exact_pin(self, run: Mock, get: Mock, glob: Mock):
         """Test that a dependency the block doesn't `==`-pin has its new version logged at its own line."""
         run.return_value = self.mock_update_on_stdout("package", "v1.1")
-        get.return_value = mock_response(self.pypi_metadata_without_changelog())
+        get.return_value = mock_response(pypi_metadata_without_changelog())
         mock_script = self.create_script(script("package>=1.0"))
         glob.return_value = [mock_script]
         update_python_inline_script_metadatas()
         mock_script.write_text.assert_not_called()
-        self.assert_new_version_logged("package", "1.1, published: 2026-05-30 12:08", Location(mock_script, 4))
+        self.assert_new_version_logged(
+            "package", published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG), Location(mock_script, 4)
+        )
         self.assert_no_warnings_logged()
 
     def test_update_with_changelog(self, run: Mock, get: Mock, glob: Mock):
@@ -107,7 +109,10 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         update_python_inline_script_metadatas()
         mock_script.write_text.assert_called_with(script("package_with_changelog==1.1"))
         self.assert_new_version_logged_with_changes(
-            "package_with_changelog", "1.1, published: 2026-05-30 12:07", Location(mock_script, 4), CHANGELOG
+            "package_with_changelog",
+            published_version("1.1", UPLOAD_TIME_WITH_CHANGELOG),
+            Location(mock_script, 4),
+            CHANGELOG,
         )
         self.assert_no_warnings_logged()
 
