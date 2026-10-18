@@ -30,13 +30,25 @@ _LOG = get_logger("pom.xml")
 
 
 def update_pom_xmls() -> None:
-    """Update each pom.xml the scan finds, running Maven over it."""
+    """Update each pom.xml the scan finds, running Maven over it as a module of its reactor."""
     pom_xmls = list(glob_for(POM_XML))
     scanned_poms = {name: pom_xml for pom_xml in pom_xmls if (name := pom_xml_format.pom_name(pom_xml))}
-    aggregators = _aggregators(pom_xmls)
+    reactors = _reactors(pom_xmls)
     for pom_xml in pom_xmls:
         _LOG.path(pom_xml)
-        _update_pom_xml(pom_xml, scanned_poms, _reactor_root(pom_xml.parent, aggregators))
+        _update_pom_xml(pom_xml, scanned_poms, reactors[pom_xml])
+
+
+def _reactors(pom_xmls: list[Path]) -> dict[Path, maven.Reactor]:
+    """Return the reactor each pom is part of, which holds its poms in the scan's order."""
+    aggregators = _aggregators(pom_xmls)
+    pom_xmls_by_root: dict[Path, list[Path]] = {}
+    for pom_xml in pom_xmls:
+        pom_xmls_by_root.setdefault(_reactor_root(pom_xml.parent, aggregators), []).append(pom_xml)
+    reactors: dict[Path, maven.Reactor] = {}
+    for root, reactor_pom_xmls in pom_xmls_by_root.items():
+        reactors |= dict.fromkeys(reactor_pom_xmls, maven.Reactor(root, reactor_pom_xmls))
+    return reactors
 
 
 def _aggregators(pom_xmls: list[Path]) -> dict[Path, Path]:
@@ -56,7 +68,7 @@ def _reactor_root(directory: Path, aggregators: Mapping[Path, Path]) -> Path:
     return directory
 
 
-def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path], reactor_root: Path) -> None:
+def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path], reactor: maven.Reactor) -> None:
     """Update the dependencies and plugins the pom declares, and report the ones Maven moved.
 
     Which those are is read off the pom before and after the run, rather than from Maven's own report, which names
@@ -66,7 +78,7 @@ def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path], reactor_roo
     if before is None:
         _LOG.invalid_file(pom_xml, xml.FORMAT)  # The pom cannot be read, so Maven is not run on it either.
         return
-    effective_pom = maven.update_pom_xml(pom_xml, reactor_root)
+    effective_pom = reactor.update(pom_xml)
     after = pom_xml_format.declarations(pom_xml)
     resolved = pom_xml_format.declarations(pom_xml, effective_pom)
     if after is None or resolved is None:

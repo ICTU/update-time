@@ -40,6 +40,12 @@ class ReadTest(unittest.TestCase):
         project = xml.read(mock_path(prefixed))
         self.assertEqual([name.text for name in project.descendants("name")] if project else [], ["probe"])
 
+    def test_an_entity_the_document_does_not_declare_is_skipped(self):
+        """Test that an entity the document does not declare drops out of its element's text."""
+        undeclared = "<project>\n  <description>&copy; Acme</description>\n  <name>probe</name>\n</project>\n"
+        project = xml.read(mock_path(undeclared))
+        self.assertEqual([child.text for child in project.children] if project else [], ["Acme", "probe"])
+
     def test_a_file_that_cannot_be_read(self):
         """Test that a file the filesystem refuses is read as unparsable, rather than ending the run."""
         self.assertIsNone(xml.read(Mock(read_bytes=Mock(side_effect=OSError))))

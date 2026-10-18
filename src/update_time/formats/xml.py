@@ -118,6 +118,10 @@ def parse(document: bytes) -> XmlElement | None:
     parser.CharacterDataHandler = data
     parser.EndElementHandler = end
     parser.CommentHandler = comment
+    # Expat rejects an entity a document without a DTD does not declare, such as the `&nbsp;` of an HTML description,
+    # where Maven reads the document. Expat skips the entity instead once the parser assumes a DTD, which it never
+    # loads.
+    parser.UseForeignDTD(True)  # noqa: FBT003 # the flag is positional
     try:
         parser.Parse(document, True)  # noqa: FBT003 # `isfinal` is positional: pyexpat takes no keyword
     except expat.ExpatError, LookupError:  # A `LookupError` names an encoding the document declares but Python lacks.

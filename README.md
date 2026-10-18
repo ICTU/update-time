@@ -1247,6 +1247,27 @@ Update-time delegates updating Maven dependencies to Maven. Maven runs over each
 
 The `use-latest-releases` goal leaves a plugin alone, so a plugin whose `<version>` element holds a version stays on that version. Update-time reports no new version for such a plugin.
 
+Maven reads every pom of the reactor before it runs a goal. When it cannot read one, every Maven run over the reactor fails the same way. A module that declares a dependency without its version breaks the reactor, for example, once the BOM managing that version drops the dependency. So once a run fails like that, Update-time runs Maven over none of the reactor's poms after it. It still checks those poms, as the sections below describe. Beside Maven's error, Update-time names the pom whose update broke the reactor, or says that the reactor was unreadable before Update-time changed it:
+
+```console
+ERROR Maven cannot read the reactor in . since Update-time updated dubbo-dependencies-bom/pom.xml, so Update-time does not run Maven over the 50 poms left in it; revert that pom and hold the update that broke the reactor back with a marker, or fix what Maven reports
+ERROR Maven cannot read the reactor in . as the scan found it, so Update-time does not run Maven over its 118 other poms
+```
+
+Reverting the pom and holding the update back with a [marker](#markers-2) loses the update. Declaring the version a module lacks keeps it.
+
+Update-time names the pom it changed in its latest Maven run that read the reactor. Where that run left every pom as it was, something outside the poms broke the reactor, such as a repository Maven cannot reach. The error then leaves the cause out:
+
+```console
+ERROR Maven cannot read the reactor in ., so Update-time does not run Maven over the 50 poms left in it
+```
+
+A pom that does not parse is one Maven cannot read either. Update-time finds such a pom before it runs Maven over the reactor, and then runs Maven over none of the reactor's poms:
+
+```console
+ERROR Update-time cannot read the reactor in . since sub/pom.xml does not parse, so Update-time does not run Maven over its 118 other poms
+```
+
 Before the versions plugin's goals, Update-time runs the `effective-pom` goal of the [help plugin](https://maven.apache.org/plugins/maven-help-plugin/), which changes nothing. That goal writes the effective pom: the pom as Maven builds it, with what its parent poms and imported BOMs contribute filled in. Update-time takes two things from the effective pom:
 
 - The pom can leave a group or artifact to its parent. It then names a property its parent declares, or it names `${project.groupId}` while it inherits its group. The cooldown and every check then name the artefact Maven resolves.
@@ -1256,7 +1277,7 @@ Update-time runs the `effective-pom` goal and the versions plugin's goals in one
 
 Without an effective pom to read, the cooldown holds nothing back for a group or artifact the pom leaves to its parent. The checks then pass that dependency or plugin over, and the vulnerability check passes over a version the pom leaves to another pom or to Maven. That happens in three cases:
 
-1. Maven cannot build the pom, or another pom of its reactor. Maven then does not write an effective pom or update any pom of that reactor, and Update-time reports Maven's error for each of them.
+1. Maven cannot read the pom, or another pom of its reactor. Maven then does not write an effective pom or update the pom, and Update-time runs Maven over none of the reactor's poms after it, as described above.
 2. The project sets the help plugin's `<output>`, and Maven then writes the effective pom to that path. Maven reports the path in a line of its own, where Update-time reads it. A `--quiet` in the project's Maven config hides that line, so Update-time cannot find the effective pom, and warns:
 
    ```console

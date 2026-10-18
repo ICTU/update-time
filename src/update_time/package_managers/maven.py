@@ -1,4 +1,4 @@
-"""The Maven runs Update-time makes over a pom.xml: the effective pom, the versions plugin's goals, and options."""
+"""The Maven runs Update-time makes over the poms of a reactor, and the goals, options, and rule sets they take."""
 
 import re
 import tempfile
@@ -143,63 +143,132 @@ class _ReactorModule:
     root: Path
 
     @property
-    def selection(self) -> tuple[str, ...]:
+    def _selection(self) -> tuple[str, ...]:
         """Return the options that select the pom in the reactor, by its directory relative to the root."""
         return ("--projects", str(self.pom_xml.parent.relative_to(self.root, walk_up=True)))
 
+    def _run_goals(self, options: tuple[str, ...], goals: tuple[str, ...]) -> Result:
+        """Run Maven over the pom, and return what the run wrote and whether it succeeded."""
+        command = Command(_maven(self.root), *_OPTIONS, *self._selection, *options, *goals)
+        result = run(command, cwd=self.root)
+        # Maven writes its [ERROR] lines to stdout and leaves stderr empty, so `run` surfaces nothing for a failed run.
+        # A run whose executable was missing wrote nothing at all, and `run` reported that itself.
+        if not result.succeeded and result.stdout:
+            _LOG.command_failed(command, result.stdout)
+        return result
 
-def update_pom_xml(pom_xml: Path, reactor_root: Path) -> XmlElement | None:
-    """Update the dependencies and plugins the pom declares, running Maven in the root directory of its reactor.
+    def _run_goals_writing_effective_pom(
+        self, options: tuple[str, ...] = (), goals: tuple[str, ...] = ()
+    ) -> tuple[Result, XmlElement | None]:
+        """Run Maven over the pom, the effective pom's goal first, and return the run's result and the effective pom."""
+        with _effective_pom_file() as output:
+            effective_pom_options = (_EFFECTIVE_POM_OPTION, f"-Doutput={output}")
+            result = self._run_goals((*options, *effective_pom_options), (_EFFECTIVE_POM_GOAL, *goals))
+            # Maven builds the model before any goal runs, so the effective pom holds even when a later goal fails.
+            effective_pom = xml.read(output)
+        if effective_pom is None:
+            effective_pom = _effective_pom_written_elsewhere(result.stdout)
+        if result.succeeded and effective_pom is None:
+            _LOG.effective_pom_unreadable(self.pom_xml)
+        if effective_pom is not None and not pom_xml_format.has_input_locations(effective_pom):
+            _LOG.effective_pom_without_input_locations(self.pom_xml)
+        return result, effective_pom
 
-    Return the effective pom Maven wrote before it updated the pom, or None where it wrote none. A pom leaving a group
-    or an artifact to its parent gets the effective pom in a Maven run of its own, so the rule set names the
-    coordinates Maven resolves.
-    """
-    module = _ReactorModule(pom_xml, reactor_root)
-    if not pom_xml_format.leaves_coordinates_unresolved(pom_xml):
-        with _versions_options(pom_xml_format.versioned_declarations(pom_xml)) as options:
-            _, effective_pom = _run_writing_effective_pom(module, options, _VERSIONS_GOALS)
-            return effective_pom
-    succeeded, effective_pom = _run_writing_effective_pom(module)
-    if succeeded:  # A single run failing at the same point would not reach the updates either.
-        with _versions_options(pom_xml_format.versioned_declarations(pom_xml, effective_pom)) as options:
-            _run(module, options, _VERSIONS_GOALS)
-    return effective_pom
+    def update(self) -> tuple[Result, XmlElement | None]:
+        """Update the dependencies and plugins the pom declares, and return the first run's result and effective pom.
+
+        The effective pom is the one Maven wrote before it updated the pom. A pom leaving a group or an artifact to its
+        parent gets the effective pom in a Maven run of its own, so the rule set names the coordinates Maven resolves.
+        """
+        if not pom_xml_format.leaves_coordinates_unresolved(self.pom_xml):
+            with _versions_options(pom_xml_format.versioned_declarations(self.pom_xml)) as options:
+                return self._run_goals_writing_effective_pom(options, _VERSIONS_GOALS)
+        result, effective_pom = self._run_goals_writing_effective_pom()
+        if result.succeeded:  # A single run failing at the same point would not reach the updates either.
+            with _versions_options(pom_xml_format.versioned_declarations(self.pom_xml, effective_pom)) as options:
+                self._run_goals(options, _VERSIONS_GOALS)
+        return result, effective_pom
 
 
-def _run_writing_effective_pom(
-    module: _ReactorModule, options: tuple[str, ...] = (), goals: tuple[str, ...] = ()
-) -> tuple[bool, XmlElement | None]:
-    """Run Maven over the pom, the effective pom's goal first, and return whether it succeeded and the effective pom."""
-    with _effective_pom_file() as output:
-        effective_pom_options = (_EFFECTIVE_POM_OPTION, f"-Doutput={output}")
-        result = _run(module, (*options, *effective_pom_options), (_EFFECTIVE_POM_GOAL, *goals))
-        # Maven builds the model before any goal runs, so the effective pom holds even when a later goal fails.
-        effective_pom = xml.read(output)
-    if effective_pom is None:
-        effective_pom = _effective_pom_written_elsewhere(result.stdout)
-    if result.succeeded and effective_pom is None:
-        _LOG.effective_pom_unreadable(module.pom_xml)
-    if effective_pom is not None and not pom_xml_format.has_input_locations(effective_pom):
-        _LOG.effective_pom_without_input_locations(module.pom_xml)
-    return result.succeeded, effective_pom
+# Maven reads every pom of the reactor before any goal runs. This line opens its report of the poms it cannot read.
+_UNREADABLE_REACTOR = re.compile(r"The build could not read \d+ projects?")
+
+
+class Reactor:
+    """The poms Maven builds together, from the root directory of the topmost pom whose modules reach them."""
+
+    def __init__(self, root: Path, pom_xmls: list[Path]) -> None:
+        """Start with the reactor's readability unknown, until the first update reads its poms."""
+        self._root = root
+        self._pom_xmls = pom_xmls
+        self._readable: bool | None = None
+        self._changed_pom: Path | None = None
+        self._first_run = True
+
+    def update(self, pom_xml: Path) -> XmlElement | None:
+        """Update the dependencies and plugins the pom declares, and return the effective pom Maven wrote, if any.
+
+        Maven reads every pom of the reactor in each run, so once a run cannot read them, Maven runs over none of the
+        reactor's poms after it. Each run that reads the reactor reads every pom the runs before it changed. So the pom
+        that broke the reactor is the one changed by the latest run that read the reactor.
+        """
+        if self._readable is None:
+            self._readable = self._every_pom_parses()
+        if not self._readable:
+            _LOG.maven_not_run(pom_xml)
+            return None
+        before = _lines(pom_xml)
+        result, effective_pom = _ReactorModule(pom_xml, self._root).update()
+        self._readable = not _UNREADABLE_REACTOR.search(result.stdout)
+        if self._readable:
+            self._changed_pom = pom_xml if _lines(pom_xml) != before else None
+        else:
+            self._report_unreadable(pom_xml)
+        self._first_run = False
+        return effective_pom
+
+    def _every_pom_parses(self) -> bool:
+        """Return whether every pom of the reactor parses, reporting the first one that does not.
+
+        Maven cannot read a reactor holding a pom that does not parse, so every Maven run over that reactor fails.
+        """
+        unparsable = next((pom_xml for pom_xml in self._pom_xmls if _lines(pom_xml) is None), None)
+        if unparsable is not None:
+            _LOG.unparsable_reactor(self._root, unparsable, len(self._pom_xmls) - 1)
+        return unparsable is None
+
+    def _report_unreadable(self, pom_xml: Path) -> None:
+        """Report that Maven cannot read the reactor, naming the cause and the poms left, where there are any.
+
+        When the reactor's first run fails, Maven could not read the reactor before Update-time changed any of its poms.
+        Update-time does not add to Maven's error where the run was over the reactor's last pom and an update did not
+        break the reactor.
+        """
+        poms_left = len(self._pom_xmls_after(pom_xml))
+        if self._changed_pom is not None and poms_left:
+            _LOG.unreadable_reactor_since_update(self._root, self._changed_pom, poms_left)
+        elif self._changed_pom is not None:
+            _LOG.unreadable_reactor_since_update_without_poms_left(self._root, self._changed_pom)
+        elif poms_left and self._first_run:
+            _LOG.unreadable_reactor_as_found(self._root, poms_left)
+        elif poms_left:
+            _LOG.unreadable_reactor(self._root, poms_left)
+
+    def _pom_xmls_after(self, pom_xml: Path) -> list[Path]:
+        """Return the reactor's poms that the scan reaches after the pom."""
+        return self._pom_xmls[self._pom_xmls.index(pom_xml) + 1 :]
+
+
+def _lines(pom_xml: Path) -> list[str] | None:
+    """Return the lines of the pom, or None where it cannot be read or does not parse."""
+    document = xml.read_document(pom_xml)
+    return None if document is None else document.lines
 
 
 def _effective_pom_written_elsewhere(stdout: str) -> XmlElement | None:
     """Return the effective pom at the path the help plugin reports writing it to, or None where it reports none."""
     written = _EFFECTIVE_POM_WRITTEN.search(stdout)
     return None if written is None else xml.read(Path(written["path"]))
-
-
-def _run(module: _ReactorModule, options: tuple[str, ...], goals: tuple[str, ...]) -> Result:
-    """Run Maven over the pom, and return what the run wrote and whether it succeeded."""
-    command = Command(_maven(module.root), *_OPTIONS, *module.selection, *options, *goals)
-    result = run(command, cwd=module.root)
-    # Maven writes its [ERROR] lines to stdout and leaves stderr empty, so `run` surfaces nothing for a failed run.
-    # A run whose executable was missing wrote nothing at all, and `run` reported that itself.
-    if not result.succeeded and result.stdout:
-        _LOG.command_failed(command, result.stdout)
-    return result
 
 
 @contextmanager

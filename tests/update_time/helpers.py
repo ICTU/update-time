@@ -219,8 +219,13 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_error_logged(self, message: LogMessage, **fields: object) -> None:
         """Assert an error was logged, and mark it expected so tearDown's strict no-error check passes."""
+        self.assert_errors_logged((message, fields))
+
+    def assert_errors_logged(self, *errors: tuple[LogMessage, dict[str, object]]) -> None:
+        """Assert the errors were the run's only errors, in this order, and mark them expected."""
         self._error_expected = True
-        self.assert_logged(message, **fields)
+        expected = [self._expected_call(message, fields) for message, fields in errors]
+        self.assertEqual(self.records(ERROR), expected)
 
     @staticmethod
     def _new_version_fields(

@@ -10,7 +10,7 @@ from unittest.mock import Mock, call, patch
 from update_time.domain.bound import Verb, _Redundancy
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import NO_CHANGES, Archival, ArchivedSubject, Changes, Project, Release
-from update_time.io.log import Logger
+from update_time.io.log import Logger, LogMessage
 from update_time.manifests import pom_xml as pom_xml_module
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
@@ -223,14 +223,24 @@ def _maven_run(command: Command, directory: Path = _PROJECT) -> object:
     return call(command, capture_output=True, text=True, check=True, cwd=directory)
 
 
-def _aggregator(path: str) -> str:
-    """Return a pom listing a module at the path in its own `<modules>` element."""
-    return f"<project><modules><module>{path}</module></modules></project>"
+def _aggregator(*paths: str) -> str:
+    """Return a pom listing a module at each of the paths in its own `<modules>` element."""
+    modules = "".join(f"<module>{path}</module>" for path in paths)
+    return f"<project><modules>{modules}</modules></project>"
+
+
+def _maven_succeeded() -> Mock:
+    """Return the result of a Maven run that exits zero, having written nothing."""
+    return Mock(stdout="", stderr="")
 
 
 def _maven_failed(output: str) -> CalledProcessError:
     """Return the error a Maven run raises when it exits non-zero, having written its output to stdout."""
     return CalledProcessError(cmd="", returncode=1, output=output, stderr="")
+
+
+# What a Maven run writes where it cannot read a pom of its reactor.
+_UNREADABLE_REACTOR_OUTPUT = "[ERROR] The build could not read 1 project -> [Help 1]"
 
 
 def _marked_property(name: str, value: str, directives: str) -> str:
@@ -262,6 +272,24 @@ def _guava_twice_by_property(properties: str) -> str:
 def _versions_goals_ran(mock_run: Mock) -> bool:
     """Return whether a Maven run so far ran the versions plugin's goals, which rewrite the pom."""
     return any(_VERSIONS_GOALS[0] in run.args[0] for run in mock_run.call_args_list)
+
+
+def _rewrite_on_its_own_run(mock_run: Mock, pom: Mock, after: str) -> None:
+    """Have the pom read as it does until a Maven run selects its directory, and as `after` from then on."""
+    before = pom.read_bytes.return_value
+    directory = str(pom.parent.relative_to(_PROJECT))
+
+    def contents() -> bytes:
+        """Return what the pom holds, which the run selecting its directory changes."""
+        selected = any(_selected_directory(run.args[0]) == directory for run in mock_run.call_args_list)
+        return after.encode() if selected else before
+
+    pom.read_bytes = Mock(side_effect=contents)
+
+
+def _selected_directory(command: Command) -> str:
+    """Return the directory the Maven command selects in the reactor."""
+    return command[command.index("--projects") + 1]
 
 
 def _artefacts_asked(mock: Mock) -> list[str]:
@@ -336,7 +364,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         poms = [mock_path(text, parent=_PROJECT, name="pom.xml") for text in contents]
         mock_glob.return_value = poms
         mock_run.reset_mock()
-        mock_run.return_value = Mock(stdout="", stderr="")
+        mock_run.return_value = _maven_succeeded()
         written = mock_path(effective_pom, name=_EFFECTIVE_POM)
         self.rule_sets: list[str] = []
 
@@ -359,10 +387,25 @@ class UpdatePomXmlTest(LoggingTestCase):
         """Discover a single mock pom.xml holding the contents, with Maven stubbed to print nothing."""
         return self.find_poms(mock_run, mock_glob, contents, effective_pom=effective_pom)[0]
 
-    def find_reactor(self, mock_run: Mock, mock_glob: Mock, poms: dict[str, str]) -> None:
+    def find_reactor(self, mock_run: Mock, mock_glob: Mock, poms: dict[str, str]) -> list[Mock]:
         """Discover a mock pom.xml per directory below the project directory, holding the contents given for it."""
-        for pom, directory in zip(self.find_poms(mock_run, mock_glob, *poms.values()), poms, strict=True):
+        found = self.find_poms(mock_run, mock_glob, *poms.values())
+        for pom, directory in zip(found, poms, strict=True):
             pom.parent = _PROJECT / directory
+        return found
+
+    def find_reactor_updated_by_bom(self, mock_run: Mock, mock_glob: Mock, *later: str, failing: str) -> Mock:
+        """Discover a reactor whose run over `bom` moves guava, and whose run over `failing` cannot read it.
+
+        The other runs change nothing. The poms in the `later` directories, `failing` among them, come after `bom`, in
+        this order.
+        """
+        poms = {".": _aggregator("bom", *later), "bom": _POM_DECLARING_GUAVA}
+        _, bom, *_ = self.find_reactor(mock_run, mock_glob, poms | dict.fromkeys(later, "<project/>"))
+        _rewrite_on_its_own_run(mock_run, bom, pom_declaring(guava_element("33.7.1-jre")))
+        runs_read = [_maven_succeeded()] * (".", "bom", *later).index(failing)
+        mock_run.side_effect = [*runs_read, _maven_failed(_UNREADABLE_REACTOR_OUTPUT)]
+        return bom
 
     def find_marked_pom(self, mock_run: Mock, mock_glob: Mock, directives: str) -> Mock:
         """Discover a single mock pom.xml declaring guava, with a marker carrying the directives at its version."""
@@ -412,6 +455,22 @@ class UpdatePomXmlTest(LoggingTestCase):
     def assert_maven_runs(self, mock_run: Mock, *commands: Command, directory: Path = _PROJECT) -> None:
         """Assert that Maven ran the given commands, in this order, in the directory."""
         self.assertEqual(mock_run.call_args_list, [_maven_run(command, directory) for command in commands])
+
+    def assert_unreadable_reactor_logged(
+        self, message: LogMessage, directory: str = ".", output: str = _UNREADABLE_REACTOR_OUTPUT, **fields: object
+    ) -> None:
+        """Assert that the run's errors were the failed run over the directory, then the message about the reactor."""
+        failed = _maven_command(directory=directory)
+        self.assert_errors_logged(
+            (Logger._MESSAGE_COMMAND_FAILED, {"command": failed, "output": output}),
+            (message, {"location": Location(_PROJECT), **fields}),
+        )
+
+    def assert_maven_not_run_logged(self, *poms: Mock) -> None:
+        """Assert that the poms, and no others, were logged as left without a Maven run, in this order."""
+        message = Logger._MESSAGE_MAVEN_NOT_RUN
+        expected = [self._expected_call(message, {"location": Location(pom)}) for pom in poms]
+        self.assertEqual(self.records_of(message), expected)
 
     def assert_no_redundant_directive_logged(self) -> None:
         """Assert that no directive was reported as redundant, whatever else was logged."""
@@ -1089,8 +1148,8 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._run_writing_effective_pom,
-            "_LOG.effective_pom_unreadable(module.pom_xml)",
+            maven_module._ReactorModule._run_goals_writing_effective_pom,
+            "_LOG.effective_pom_unreadable(self.pom_xml)",
             "pass",
             "Update-time says nothing when it cannot read the effective pom, so the unchecked versions go unnoticed",
         )
@@ -1103,8 +1162,8 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._run_writing_effective_pom,
-            "_LOG.effective_pom_without_input_locations(module.pom_xml)",
+            maven_module._ReactorModule._run_goals_writing_effective_pom,
+            "_LOG.effective_pom_without_input_locations(self.pom_xml)",
             "pass",
             "an effective pom without input locations resolves nothing, and Update-time says nothing about it",
         ),
@@ -1134,7 +1193,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._run_writing_effective_pom,
+            maven_module._ReactorModule._run_goals_writing_effective_pom,
             "effective_pom = xml.read(output)",
             "effective_pom = xml.read(output) if result.succeeded else None",
             "a failed run discards the effective pom it wrote, so the versions the parent declares go unchecked",
@@ -1157,13 +1216,13 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._run_writing_effective_pom,
+            maven_module._ReactorModule._run_goals_writing_effective_pom,
             "effective_pom = _effective_pom_written_elsewhere(result.stdout)",
             "effective_pom = None",
             "the effective pom of a project configuring the help plugin's output goes unread",
         ),
         Mutation(
-            maven_module._run_writing_effective_pom,
+            maven_module._ReactorModule._run_goals_writing_effective_pom,
             "_effective_pom_written_elsewhere(result.stdout)",
             "_effective_pom_written_elsewhere(result.stdout) if result.succeeded else None",
             "a failed run discards the effective pom it wrote elsewhere, so what the parent declares goes unchecked",
@@ -1556,8 +1615,8 @@ class UpdatePomXmlTest(LoggingTestCase):
             "Maven Central is asked for the changes of coordinates holding an unresolved property",
         ),
         Mutation(
-            maven_module.update_pom_xml,
-            "if succeeded:",
+            maven_module._ReactorModule.update,
+            "if result.succeeded:",
             "if effective_pom is not None:",
             "Update-time skips the updates wherever it cannot read the effective pom, although the run succeeded",
         ),
@@ -1647,15 +1706,15 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module.update_pom_xml,
-            "_run(module, options, _VERSIONS_GOALS)",
-            "_run(module, _VERSIONS_OPTIONS, _VERSIONS_GOALS)",
+            maven_module._ReactorModule.update,
+            "self._run_goals(options, _VERSIONS_GOALS)",
+            "self._run_goals(_VERSIONS_OPTIONS, _VERSIONS_GOALS)",
             "the rule set stays out of the versions run, so a group the parent declares escapes the cooldown",
         ),
         Mutation(
-            maven_module.update_pom_xml,
-            "_run(module, options, _VERSIONS_GOALS)",
-            "_run_writing_effective_pom(module, options, _VERSIONS_GOALS)",
+            maven_module._ReactorModule.update,
+            "self._run_goals(options, _VERSIONS_GOALS)",
+            "self._run_goals_writing_effective_pom(options, _VERSIONS_GOALS)",
             "the updates write the effective pom again, costing a goal per pom that the first run already paid for",
         ),
     )
@@ -1692,8 +1751,8 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module.update_pom_xml,
-            "if succeeded:",
+            maven_module._ReactorModule.update,
+            "if result.succeeded:",
             "if True:",
             "the updates run on a model Maven could not build, so its failure is reported a second time",
         )
@@ -1875,14 +1934,13 @@ class UpdatePomXmlTest(LoggingTestCase):
     )
     def test_an_unparsable_pom_is_skipped(self, mock_run: Mock, mock_glob: Mock):
         """Test that a pom whose XML does not parse is warned about, and leaves the next pom checked as usual."""
-        broken, second = self.find_poms(
-            mock_run, mock_glob, "<project><broken>", pom_declaring(guava_element("33.7.1-jre"))
-        )
+        poms = {"broken": "<project><broken>", "app": pom_declaring(guava_element("33.7.1-jre"))}
+        broken, second = self.find_reactor(mock_run, mock_glob, poms)
         update_pom_xmls()
         self.assert_invalid_file_logged(broken, "XML")
         self.assert_path_logged(second)
         # Maven ran for the pom that parsed, and not for the one that did not.
-        self.assert_maven_ran(mock_run, rules=_RULES)
+        self.assert_maven_runs(mock_run, _maven_command(rules=_RULES), directory=_PROJECT / "app")
 
     @kills(
         Mutation(
@@ -1932,7 +1990,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._run,
+            maven_module._ReactorModule._run_goals,
             " and result.stdout:",
             ":",
             "a missing Maven is reported twice: once by `run`, and again as a failed run that wrote nothing",
@@ -1941,7 +1999,7 @@ class UpdatePomXmlTest(LoggingTestCase):
     def test_a_missing_maven_is_reported_and_the_next_pom_is_still_checked(self, mock_run: Mock, mock_glob: Mock):
         """Test that a missing Maven executable is reported once, and leaves the next pom checked as usual."""
         second = self.find_poms(mock_run, mock_glob, "<project/>", "<project/>")[1]
-        mock_run.side_effect = [FileNotFoundError, Mock(stdout="", stderr="")]
+        mock_run.side_effect = [FileNotFoundError, _maven_succeeded()]
         update_pom_xmls()
         self.assert_error_logged(Logger._MESSAGE_COMMAND_NOT_FOUND, command=_maven_command(), executable="mvn")
         self.assertEqual(mock_run.call_count, 2)
@@ -1961,9 +2019,9 @@ class UpdatePomXmlTest(LoggingTestCase):
             "the wrapper is looked for in the directory the scan runs in, so a reactor's own wrapper goes unused",
         ),
         Mutation(
-            maven_module._run,
-            "_maven(module.root)",
-            "_maven(module.pom_xml.parent)",
+            maven_module._ReactorModule._run_goals,
+            "_maven(self.root)",
+            "_maven(self.pom_xml.parent)",
             "the wrapper is looked for beside the module, so a module's run from the reactor root passes it over",
         ),
     )
@@ -2013,3 +2071,111 @@ class UpdatePomXmlTest(LoggingTestCase):
         self.find_reactor(mock_run, mock_glob, reactor)
         update_pom_xmls()
         self.assert_maven_runs(mock_run, *(_maven_command(directory=directory) for directory in reactor))
+
+    @kills(
+        Mutation(
+            maven_module,
+            r"\d+ projects?",
+            "1 project",
+            "a reactor holding more than one pom Maven cannot read is taken for a readable one",
+        )
+    )
+    def test_an_unreadable_reactor_stops_maven_for_its_later_poms_alone(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a run that cannot read its reactor stops Maven for the reactor's later poms, not another's."""
+        poms = {".": _aggregator("app", "lib"), "app": "<project/>", "lib": "<project/>", "other": "<project/>"}
+        _, *later_poms, _ = self.find_reactor(mock_run, mock_glob, poms)
+        output = "[ERROR] The build could not read 2 projects -> [Help 1]"
+        mock_run.side_effect = [_maven_failed(output), *[_maven_succeeded()] * (len(poms) - 1)]
+        update_pom_xmls()
+        message = Logger._MESSAGE_UNREADABLE_REACTOR_AS_FOUND
+        self.assert_unreadable_reactor_logged(message, output=output, poms="2 other poms")
+        runs = [_maven_run(_maven_command()), _maven_run(_maven_command(), _PROJECT / "other")]
+        self.assertEqual(mock_run.call_args_list, runs)
+        self.assert_maven_not_run_logged(*later_poms)
+
+    def test_an_unreadable_reactor_is_reported_as_broken_by_the_pom_update_time_updated(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that the error names the pom an earlier run changed, and the poms left where there are any."""
+        cases = {
+            "poms left": (("app", "lib"), Logger._MESSAGE_UNREADABLE_REACTOR_SINCE_UPDATE, {"poms": "1 pom"}),
+            "the reactor's last pom": (("app",), Logger._MESSAGE_UNREADABLE_REACTOR_SINCE_UPDATE_WITHOUT_POMS_LEFT, {}),
+        }
+        for case, (later, message, fields) in cases.items():
+            with self.subTest(case=case):
+                bom = self.find_reactor_updated_by_bom(mock_run, mock_glob, *later, failing="app")
+                update_pom_xmls()
+                self.assert_unreadable_reactor_logged(message, "app", updated=Location(bom), **fields)
+
+    @kills(
+        Mutation(
+            maven_module.Reactor.update,
+            "else None",
+            "else self._changed_pom",
+            "the error blames an update that a later run read the reactor after",
+        ),
+        Mutation(
+            maven_module.Reactor._report_unreadable,
+            "and self._first_run",
+            "and True",
+            "the error says the scan found the reactor unreadable, although an earlier run read it",
+        ),
+    )
+    def test_a_reactor_read_after_the_update_is_reported_without_a_cause(self, mock_run: Mock, mock_glob: Mock):
+        """Test that the error leaves the update out where a later run read the reactor without changing a pom."""
+        self.find_reactor_updated_by_bom(mock_run, mock_glob, "app", "lib", "web", failing="lib")
+        update_pom_xmls()
+        self.assert_unreadable_reactor_logged(Logger._MESSAGE_UNREADABLE_REACTOR, "lib", poms="1 pom")
+
+    def test_a_reactor_holding_a_pom_that_does_not_parse_runs_maven_over_none_of_its_poms(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a pom that does not parse leaves every pom of its reactor without a Maven run, logging why once."""
+        poms = {".": _aggregator("app", "lib"), "app": "<project>", "lib": "<project/>"}
+        root, app, lib = self.find_reactor(mock_run, mock_glob, poms)
+        update_pom_xmls()
+        self.assertEqual(mock_run.call_args_list, [])
+        self.assert_error_logged(
+            Logger._MESSAGE_UNPARSABLE_REACTOR,
+            location=Location(_PROJECT),
+            unparsable=Location(app),
+            poms="2 other poms",
+        )
+        self.assert_maven_not_run_logged(root, lib)
+
+    def test_a_single_pom_maven_cannot_read_gets_mavens_error_alone(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a pom forming a reactor of its own, which Maven cannot read, gets Maven's error alone."""
+        self.find_pom(mock_run, mock_glob)
+        mock_run.side_effect = _maven_failed(_UNREADABLE_REACTOR_OUTPUT)
+        update_pom_xmls()
+        self.assert_command_failed_logged(_maven_command(), _UNREADABLE_REACTOR_OUTPUT)
+
+    def test_a_pom_left_without_a_maven_run_is_still_checked(self, mock_run: Mock, mock_glob: Mock):
+        """Test that the dependencies of a pom Maven does not run over still reach Maven Central and OSV."""
+        self.find_reactor(mock_run, mock_glob, {".": _aggregator("app"), "app": _POM_DECLARING_GUAVA})
+        mock_run.side_effect = _maven_failed(_UNREADABLE_REACTOR_OUTPUT)
+        mock_project = Mock(return_value=Project())
+        with osv() as mock_post, patch.object(maven_central_module, "project", mock_project):
+            update_pom_xmls()
+        self.assert_unreadable_reactor_logged(Logger._MESSAGE_UNREADABLE_REACTOR_AS_FOUND, poms="1 other pom")
+        self.assert_maven_runs(mock_run, _maven_command())
+        _assert_osv_asked_about_maven(mock_post, (GUAVA, "33.0.0-jre"))
+        self.assertEqual(_artefacts_asked(mock_project), [GUAVA])
+
+    @kills(
+        Mutation(
+            maven_module,
+            r'"The build could not read \d+ projects?"',
+            r'"\[ERROR\]"',
+            "any failed run that reports an error stops Maven for the rest of its reactor",
+        )
+    )
+    def test_a_goal_failing_for_one_pom_still_runs_maven_over_the_next(self, mock_run: Mock, mock_glob: Mock):
+        """Test that Maven still runs over the next pom of the reactor after a run that failed a goal."""
+        self.find_reactor(mock_run, mock_glob, {".": _aggregator("app"), "app": "<project/>"})
+        output = "[ERROR] Failed to execute goal org.codehaus.mojo:versions-maven-plugin on project root"
+        mock_run.side_effect = [_maven_failed(output), _maven_succeeded()]
+        update_pom_xmls()
+        self.assert_command_failed_logged(_maven_command(), output)
+        self.assert_maven_runs(mock_run, _maven_command(), _maven_command(directory="app"))
+        self.assert_maven_not_run_logged()
