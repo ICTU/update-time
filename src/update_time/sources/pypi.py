@@ -348,7 +348,7 @@ def _changelog_from_url(url: str, version: str) -> Changes:
     if content_type.startswith("text/html"):
         return NO_CHANGES
     changes = get_version_changes_from_changelog(changelog_response.text, version)
-    return Changes(changes, markdown=is_markdown_content_type(content_type) or is_markdown_file(url))
+    return Changes(changes, markdown=is_markdown_content_type(content_type) or is_markdown_file(url), url=url)
 
 
 def _changelog_from_description(info: _Info, package: str, version: str) -> Changes:
@@ -356,7 +356,9 @@ def _changelog_from_description(info: _Info, package: str, version: str) -> Chan
     description = info["description"]
     content_type = info.get("description_content_type") or ""
     changes = Changes(
-        get_version_changes_from_changelog(description, version), markdown=is_markdown_content_type(content_type)
+        get_version_changes_from_changelog(description, version),
+        markdown=is_markdown_content_type(content_type),
+        url=f"{_PYPI}/project/{package}/{version}/",
     )
     return changes or _changelog_from_github_url_in_description(description, package, version)
 

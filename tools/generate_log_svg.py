@@ -77,6 +77,7 @@ def generate() -> LogOutput:
         "- :zap: Fantastic new features\n"
         "- A few bugs squashed ([#42](https://github.com/python-humanize/humanize/issues/42))",
         markdown=True,
+        url="https://github.com/python-humanize/humanize/releases/tag/4.15.0",
     )
     requirements = Location(Path("docs/requirements.txt"), 12)
     log.new_version(reference("humanize", requirements), DependencyVersion("4.15.0", changelog))

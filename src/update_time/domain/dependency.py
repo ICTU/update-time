@@ -186,21 +186,23 @@ class Project:
 
 
 class Changes(str):
-    """The changes a changelog records for one version, and whether the changelog writes them in Markdown."""
+    """A version's changes as a changelog records them, with the markup they are in and the page they come from."""
 
-    __slots__ = ("markdown",)
+    __slots__ = ("markdown", "url")
 
     markdown: bool
+    url: str
 
-    def __new__(cls, changes: str, *, markdown: bool) -> Self:
-        """Create the changes, remembering whether the changelog writes them in Markdown."""
+    def __new__(cls, changes: str, *, markdown: bool, url: str) -> Self:
+        """Create the changes."""
         instance = super().__new__(cls, changes)
         instance.markdown = markdown
+        instance.url = url
         return instance
 
 
 # The changes of a version no changelog records, which no markup is written in.
-NO_CHANGES = Changes("", markdown=False)
+NO_CHANGES = Changes("", markdown=False, url="")
 
 # What a version carries when its source does not date it.
 UNDATED: LookedUp[datetime] = LookedUp(None)
@@ -213,7 +215,7 @@ class DependencyVersion:
     # The version the source offers (PyPI, Docker Hub, GitHub releases, ...), or else the tag or branch the reference
     # names, such as `latest` or `main`, and nothing for a commit that only its SHA names
     version: VersionString
-    changes: Changes = NO_CHANGES  # What the changelog records for this version, and the markup it writes it in
+    changes: Changes = NO_CHANGES  # What the changelog records for this version
     sha: str = ""
     publication: Lookup[datetime] = UNDATED  # When the source says the version was published, or why it can't say
     yank: Yank = Yank()  # The version's withdrawal state (yanked on PyPI, deprecated on npm)

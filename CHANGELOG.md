@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Link a new version's changes to the page they come from. Closes [#399](https://github.com/ICTU/update-time/issues/399).
 
 ## 0.0.49 - 2026-10-18
 

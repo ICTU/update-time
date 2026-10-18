@@ -788,7 +788,15 @@ def days_ago(days: int) -> datetime:
 def github_release_json(tag_name: str, published_at: datetime | None = None, **extra: object) -> dict[str, object]:
     """Return a GitHub release API result for the tag, eligible (not a draft or prerelease) unless overridden."""
     published = published_at.isoformat() if published_at else None
-    return {"draft": False, "prerelease": False, "tag_name": tag_name, "body": None, "published_at": published, **extra}
+    return {
+        "draft": False,
+        "prerelease": False,
+        "tag_name": tag_name,
+        "body": None,
+        "html_url": f"https://github.com/releases/tag/{tag_name}",
+        "published_at": published,
+        **extra,
+    }
 
 
 def github_tag_json(name: str, sha: str = COMMIT_SHA) -> dict[str, object]:

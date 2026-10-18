@@ -19,6 +19,7 @@ Update-time rewrites the files in place and logs what it did:
                     │  • ⚡ Fantastic new features                                                 │
                     │  • A few bugs squashed (#42)                                                 │
                     ╰──────────────────────────────────────────────────────────────────────────────╯
+                    Changelog: https://github.com/python-humanize/humanize/releases/tag/4.15.0
            INFO     Pinned python in Dockerfile:1 to
                     3.14.6@sha256:9f2c1e7bd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4
            INFO     New version available for actions/checkout in .github/workflows/ci.yml:17: 4.3.0
