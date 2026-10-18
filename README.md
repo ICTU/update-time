@@ -1042,7 +1042,7 @@ On a `pyproject.toml` or inline script metadata dependency, Update-time reports 
 
 On a GitHub Action or pre-commit hook that names a branch, a tag such as `stable-2024`, or a commit SHA, Update-time reports every bound as redundant, since none of them names a version to bound. In the run that pins a branch, a tag, or a short SHA to a version tag, Update-time judges the bound at that version instead. It never pins a full SHA, so a bound on one is always redundant.
 
-On a `pom.xml` dependency or plugin whose version Maven does not update, Update-time reports every bound as redundant, `ignore[update]` included (see [Markers](#markers-2)).
+On a `pom.xml` dependency or plugin whose version Maven does not update, Update-time reports every bound as redundant, `ignore[update]` included (see [What dependencies are updated?](#what-dependencies-are-updated-2)).
 
 Update-time reports those bounds as:
 
@@ -1160,21 +1160,15 @@ Update-time skips a package published only as `.egg` files, since PyPI no longer
 
 #### Yanked dependencies
 
-Update-time checks each exact pin a Python file declares against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI. It skips a yanked release when picking a new version. The version checked is the one the file holds when the run ends.
-
-Update-time reports a `requirements.txt` pin the run leaves on a yanked release, unless an `ignore[yanked]` marker silences that warning. It reports a `pyproject.toml` or inline script metadata pin left on a yanked release the same way. It does not check a dependency those files declare without an exact pin. A yank is about the version a reference is left on, and such a declaration names none.
+Update-time checks each exact pin a Python file declares against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI. It skips a yanked release when picking a new version. The version checked is the one the file holds when the run ends. Update-time does not check a dependency declared without an exact pin. A yank is about the version a reference is left on, and such a declaration names none.
 
 #### Vulnerable dependencies
 
-Update-time checks each exact pin a Python file declares against OSV's PyPI advisories.
-
-Update-time reports a vulnerable `requirements.txt` pin, unless an `ignore[vulnerable]` marker silences that warning. It reports a vulnerable `pyproject.toml` or inline script metadata pin the same way. It does not check a dependency those files declare without an exact pin either. An advisory is matched against a version, and such a declaration names none.
+Update-time checks each exact pin a Python file declares against OSV's PyPI advisories. It does not check a dependency declared without an exact pin. An advisory is matched against a version, and such a declaration names none.
 
 #### Archived dependencies
 
 PyPI publishes a project status. Update-time reads it for each dependency a Python file declares, whether or not the dependency pins an exact version. Archival is a fact about the project, so the package's name alone is enough to find that status.
-
-Update-time reports a `requirements.txt` requirement whose project is archived, unless an `ignore[archived]` marker silences that warning. It reports a `pyproject.toml` or inline script metadata dependency the same way.
 
 #### Markers
 
@@ -1236,70 +1230,40 @@ A `package.json` dependency takes no marker, because npm and pnpm update it rath
 
 Update-time looks for `pom.xml` files recursively from the starting path.
 
+Update-time delegates updating Maven dependencies to Maven. Maven runs over each pom in turn, as a module of its reactor: the poms that the topmost pom's `<modules>` reach. So Maven reads a BOM of the same project from the working tree, rather than a copy from a repository. The Maven it runs is the project's own `./mvnw` wrapper when one sits beside the topmost pom, and the `mvn` on your path where the project ships none.
+
+Once Maven cannot read a pom of the reactor, every later Maven run over that reactor fails the same way. Update-time then runs Maven over none of the reactor's poms, and still checks them, as the sections below describe. A module that declares a dependency without its version breaks the reactor, for example, once the BOM managing that version drops the dependency. A pom that does not parse breaks it as well. Update-time names the pom whose update broke the reactor, or the pom that does not parse. Where the reactor was unreadable before Update-time changed it, the error says so. Where something outside the poms broke the reactor, such as a repository Maven cannot reach, the error does not name a cause:
+
+```console
+ERROR Maven cannot read the reactor in . since Update-time updated dubbo-dependencies-bom/pom.xml, so Update-time does not run Maven over the 50 poms left in it; revert that pom and hold the update that broke the reactor back with a marker, or fix what Maven reports
+ERROR Maven cannot read the reactor in . as the scan found it, so Update-time does not run Maven over its 118 other poms
+ERROR Maven cannot read the reactor in ., so Update-time does not run Maven over the 50 poms left in it
+ERROR Update-time cannot read the reactor in . since sub/pom.xml does not parse, so Update-time does not run Maven over its 118 other poms
+```
+
+To keep the update, declare the version the module lacks. Otherwise, revert the pom and hold the update back with a [marker](#markers-2).
+
 #### What dependencies are updated?
 
 Update-time reads every `<dependency>` element the pom declares, wherever it sits: under `<dependencies>`, under `<dependencyManagement>`, in a `<profile>`, and in a plugin's own `<dependencies>`. A pom can leave a dependency's `<version>` out, when a parent pom, an imported BOM, or its own `<dependencyManagement>` manages that version. Update-time does not update such a dependency, since the pom does not hold a version to advance. Update-time still checks such a dependency, as the sections below describe.
 
 Update-time also reads every `<plugin>` element the pom declares: under `<plugins>`, under `<pluginManagement>`, and in a `<profile>`. It checks each plugin as it checks a dependency.
 
+For each pom, Maven runs two goals of the [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/). The `use-latest-releases` goal advances a dependency whose `<version>` element holds a version. That goal leaves a plugin alone, so a plugin whose `<version>` element holds a version stays on that version. The `update-properties` goal advances a dependency or plugin whose `<version>` element names one of the pom's properties, by advancing that property. Update-time reports the new version of each dependency and plugin that Maven moved, so two artefacts that name the same property get a report each.
+
+Update-time tells the versions plugin which versions it may not adopt: pre-releases, versions of another variant, versions inside the cooldown, and versions a marker holds back. The sections below describe each.
+
 Update-time warns once about a version that a scanned pom manages, at the declaration managing it. It skips the checks for each declaration that leaves its `<version>` to that pom, whether in the managing pom itself, in a module inheriting from it, or in a module importing it as a BOM. A module can override a property that the managed `<version>` names, and so resolve another version. Update-time then checks the module's declaration at that version. It also checks the module's declaration where the managing pom leaves that property to a pom above it. A pom outside the scan can manage the version as well, such as a released parent pom or an imported BOM. Update-time then checks each declaration that leaves its `<version>` out.
 
-Update-time delegates updating Maven dependencies to Maven. Maven runs over each pom in turn, as a module of its reactor: the poms that the topmost pom's `<modules>` reach. So Maven reads a BOM of the same project from the working tree, rather than a copy from a repository. The Maven it runs is the project's own `./mvnw` wrapper when one sits beside the topmost pom, and the `mvn` on your path where the project ships none. For each pom, it runs two goals of the [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/). The `use-latest-releases` goal advances a dependency whose `<version>` element holds a version. The `update-properties` goal advances a dependency or plugin whose `<version>` element names one of the pom's properties, by advancing that property. Update-time reports the new version of each dependency and plugin that Maven moved, so two artefacts that name the same property get a report each. Update-time reports each new version under the group and artifact Maven resolves.
-
-The `use-latest-releases` goal leaves a plugin alone, so a plugin whose `<version>` element holds a version stays on that version. Update-time reports no new version for such a plugin.
-
-Maven reads every pom of the reactor before it runs a goal. When it cannot read one, every Maven run over the reactor fails the same way. A module that declares a dependency without its version breaks the reactor, for example, once the BOM managing that version drops the dependency. So once a run fails like that, Update-time runs Maven over none of the reactor's poms after it. It still checks those poms, as the sections below describe. Beside Maven's error, Update-time names the pom whose update broke the reactor, or says that the reactor was unreadable before Update-time changed it:
-
-```console
-ERROR Maven cannot read the reactor in . since Update-time updated dubbo-dependencies-bom/pom.xml, so Update-time does not run Maven over the 50 poms left in it; revert that pom and hold the update that broke the reactor back with a marker, or fix what Maven reports
-ERROR Maven cannot read the reactor in . as the scan found it, so Update-time does not run Maven over its 118 other poms
-```
-
-Reverting the pom and holding the update back with a [marker](#markers-2) loses the update. Declaring the version a module lacks keeps it.
-
-Update-time names the pom it changed in its latest Maven run that read the reactor. Where that run left every pom as it was, something outside the poms broke the reactor, such as a repository Maven cannot reach. The error then leaves the cause out:
-
-```console
-ERROR Maven cannot read the reactor in ., so Update-time does not run Maven over the 50 poms left in it
-```
-
-A pom that does not parse is one Maven cannot read either. Update-time finds such a pom before it runs Maven over the reactor, and then runs Maven over none of the reactor's poms:
-
-```console
-ERROR Update-time cannot read the reactor in . since sub/pom.xml does not parse, so Update-time does not run Maven over its 118 other poms
-```
-
-Before the versions plugin's goals, Update-time runs the `effective-pom` goal of the [help plugin](https://maven.apache.org/plugins/maven-help-plugin/), which changes nothing. That goal writes the effective pom: the pom as Maven builds it, with what its parent poms and imported BOMs contribute filled in. Update-time takes two things from the effective pom:
-
-- The pom can leave a group or artifact to its parent. It then names a property its parent declares, or it names `${project.groupId}` while it inherits its group. The cooldown and every check then name the artefact Maven resolves.
-- The pom can leave a version to another pom or to Maven. It then names a property its parent declares, or it omits the `<version>` element. A dependency without one takes its version from the parent's `<dependencyManagement>` or from an imported BOM. A plugin without one takes it from the parent's `<pluginManagement>`, from the release Maven binds to its build lifecycle, or else from the newest release. The vulnerability check then checks the version Maven resolves.
-
-Update-time runs the `effective-pom` goal and the versions plugin's goals in one Maven run. A pom that leaves a group or artifact to its parent gets the `effective-pom` goal in a Maven run of its own, so the cooldown's rule set can name the artefact Maven resolves. Update-time names the release of both plugins in every goal it runs, so which release runs is Update-time's decision rather than the scanned project's.
-
-Without an effective pom to read, the cooldown holds nothing back for a group or artifact the pom leaves to its parent. The checks then pass that dependency or plugin over, and the vulnerability check passes over a version the pom leaves to another pom or to Maven. That happens in three cases:
-
-1. Maven cannot read the pom, or another pom of its reactor. Maven then does not write an effective pom or update the pom, and Update-time runs Maven over none of the reactor's poms after it, as described above.
-2. The project sets the help plugin's `<output>`, and Maven then writes the effective pom to that path. Maven reports the path in a line of its own, where Update-time reads it. A `--quiet` in the project's Maven config hides that line, so Update-time cannot find the effective pom, and warns:
-
-   ```console
-   WARNING Could not read the effective pom of pom.xml, so the cooldown and the checks passed over any group or artifact the pom leaves to its parent, and the vulnerability check passed over any version the pom leaves to another pom or to Maven; perhaps a --quiet in the project's Maven config hid where Maven wrote it
-   ```
-
-3. The project sets the help plugin's `<verbose>` to false. The effective pom then lacks its input locations: the pom and the line that declare each element. Update-time cannot match such an effective pom to the pom's declarations, and warns:
-
-   ```console
-   WARNING The effective pom of pom.xml lacks the input locations Update-time reads, so the cooldown and the checks passed over any group or artifact the pom leaves to its parent, and the vulnerability check passed over any version the pom leaves to another pom or to Maven; the project's help plugin configuration sets verbose to false
-   ```
-
-Update-time checks the managing pom's own declarations only where it can read that pom back after Maven's run. Maven can leave that pom unparsable, or holding another number of declarations, and Update-time then reports an error. A module still skips the declarations that leave their version to that pom, unless the managing pom no longer parses by the time the module's run reads it. So those declarations can go unchecked in that run, and the next run checks them.
+For a group or artifact the pom leaves to its parent, such as `${project.groupId}`, Update-time names the artefact Maven resolves: in the new versions it reports, in the cooldown, and in every check.
 
 #### What versions are updated?
 
-The versions plugin picks the newest release of each dependency and plugin it advances, and it never adopts a snapshot. The plugin reads every other version as a release, a release candidate included. So Update-time excludes the pre-releases, which the plugin would otherwise adopt.
+Maven moves each dependency and plugin it advances to the newest release. Maven never adopts a snapshot, and Update-time keeps it from adopting a pre-release, such as a release candidate.
 
-Some projects publish a release in several variants, which a suffix after the version tells apart. Byte Buddy publishes `1.18.14-jdk5` beside `1.18.14`, and Spock publishes `2.5-groovy-4.0` beside `2.5-groovy-5.0`. Maven orders a version with such a suffix above the plain release. It also orders the suffixes among themselves, so `2.5-groovy-5.0` comes after `2.5-groovy-4.0`. The plugin would then move a dependency to another variant. Update-time keeps each dependency and plugin on its variant instead: `1.18.10` moves to `1.18.14`, and `2.4-groovy-4.0` to `2.5-groovy-4.0`. A suffix marking a release, such as `.Final`, `-GA`, or `.RELEASE`, does not name a variant. Neither does a date, such as the `.v20250814` of Jetty's `9.4.58.v20250814`.
+Some projects publish a release in several variants, which a suffix after the version tells apart. Byte Buddy publishes `1.18.14-jdk5` beside `1.18.14`, and Spock publishes `2.5-groovy-4.0` beside `2.5-groovy-5.0`. Update-time keeps each dependency and plugin on its variant: `1.18.10` moves to `1.18.14`, and `2.4-groovy-4.0` to `2.5-groovy-4.0`. A suffix marking a release, such as `.Final`, `-GA`, or `.RELEASE`, does not name a variant. Neither does a date, such as the `.v20250814` of Jetty's `9.4.58.v20250814`.
 
-Update-time hands Maven one rule for all declarations of an artefact in a pom. So a pom declaring guava on both `33.0.0-jre` and `33.0.0-android` keeps guava on those two variants. Both declarations then move to the newest version on either variant, such as `33.7.2-jre`.
+The versions plugin takes the versions it may not adopt per artefact, rather than per declaration. So Maven moves all declarations of an artefact in a pom to the same version: the newest on any of their variants. A pom declaring guava on both `33.0.0-jre` and `33.0.0-android` moves both declarations to a version such as `33.7.2-jre`.
 
 #### Pinning
 
@@ -1307,21 +1271,19 @@ Update-time adds no hash pin to a Maven dependency, since a pom has nowhere to h
 
 #### Cooldown
 
-The versions plugin does not filter releases by age, so Update-time names the versions the plugin may not adopt instead. It reads each artefact's publication dates from [Maven Central](https://repo1.maven.org/maven2/), and writes every version published inside the cooldown into a rule set the plugin reads. The plugin then picks the newest version left. Both goals honour the rule set, so it reaches both kinds of dependency: the one whose `<version>` holds a version, and the one whose `<version>` names a property. The rule set names the pom's plugins too, so a property that versions a plugin is held back like any other.
+Update-time reads each artefact's publication dates from [Maven Central](https://repo1.maven.org/maven2/). It holds back every version published inside the cooldown, for each dependency and plugin whose version Maven updates.
 
-Maven Central does not serve an artefact that a project resolves from a mirror or a private repository. Update-time then cannot read its publication date, so it holds nothing back for that artefact. It reports a marker's `cooldown` on that artefact as redundant.
+Maven Central does not serve an artefact that a project resolves from a mirror or a private repository. Update-time then cannot read its publication date, so it holds nothing back for that artefact.
 
-The rule set names an artefact whose group or artifact the pom leaves to its parent as Maven resolves it, and holds back its versions like any other artefact's.
-
-A marker can set a cooldown of its own, and the rule set then holds back the versions published inside that cooldown. A marker that ignores the update holds back every version of its artefact instead. A bound holds back the versions it drops, beside the ones inside the cooldown (see [Markers](#markers-2)).
+A marker can set a cooldown of its own, and Update-time then holds back the versions published inside that cooldown.
 
 #### Stale dependencies
 
 Update-time checks each dependency and plugin against the newest release Maven Central lists for it.
 
-Update-time asks Maven Central about an artefact by that artefact's `groupId:artifactId` coordinates alone. So it checks a dependency whose `<version>` names a property its parent declares. It also checks a dependency or plugin that leaves its `<version>` out, unless Update-time checks the declaration managing that version in its place. For a group or artifact the pom leaves to its parent, it asks about the artefact Maven resolves.
+Update-time asks Maven Central about an artefact by that artefact's `groupId:artifactId` coordinates alone. So it checks a dependency whose `<version>` names a property its parent declares. It also checks a dependency or plugin that leaves its `<version>` out.
 
-Maven Central lists nothing for an artefact a project resolves from a mirror or a private repository. Update-time then has nothing to measure staleness against, and reports a marker's `stale` scope on that artefact as redundant.
+Maven Central lists nothing for an artefact a project resolves from a mirror or a private repository. Update-time then has nothing to measure staleness against.
 
 #### Yanked dependencies
 
@@ -1329,35 +1291,29 @@ Maven Central does not report a withdrawal, so Update-time never warns that a Ma
 
 #### Vulnerable dependencies
 
-Update-time checks the pom's dependencies and plugins against OSV's Maven advisories. Where the pom holds the version of a dependency or plugin itself, Update-time checks the version the pom holds once Maven has run. The pom holds that version in the declaration's own `<version>` element, in one of its own properties, or in its own `<dependencyManagement>` or `<pluginManagement>`. So the run never reports a vulnerability it updated such a dependency or plugin away from.
+Update-time checks the pom's dependencies and plugins against OSV's Maven advisories.
 
-For a version the pom leaves to another pom or to Maven, Update-time checks the version the effective pom gives the dependency or plugin. Maven wrote that effective pom before it updated the pom. Update-time skips a dependency or plugin that leaves its `<version>` out where it checks the declaration managing that version in its place.
-
-In two cases, Update-time warns about a version the same run updates away from. The scan can reach a child pom before its parent pom, and the parent's own Maven run can then still move that version. And the Maven run over a pom can move the version of a BOM that pom imports itself, while the effective pom lists the versions the BOM held before. In both cases, the next run checks the version the first run moved to.
+For a version the pom leaves to another pom or to Maven, Update-time checks the version the effective pom gives the dependency or plugin. The effective pom is the pom as Maven builds it, with what its parent poms and imported BOMs contribute filled in. Maven writes the effective pom before it updates the pom. So where a parent pom or an imported BOM moves that version later in the same run, the warning names the version the run moved away from. The next run checks the new version.
 
 Update-time does not check a dependency or plugin whose `<version>` element is empty, since OSV needs a version to match an advisory to. It does not check a dependency or plugin whose version Maven leaves unresolved either, such as one in `<dependencyManagement>` naming an undeclared property.
 
-Update-time reports a vulnerable dependency or plugin, unless an `ignore[vulnerable]` marker silences that warning.
-
 #### Archived dependencies
 
-Maven Central does not publish an archival signal of its own. So Update-time looks up the repository of each dependency and plugin on GitHub, and warns when GitHub reports that repository as archived. For a dependency or plugin whose group or artifact the pom leaves to its parent, it looks up the artefact Maven resolves, as the staleness check does.
+Maven Central does not publish an archival signal of its own. So Update-time looks up the repository of each dependency and plugin on GitHub, and warns when GitHub reports that repository as archived.
 
 Update-time finds the repository in the pom that Maven Central serves beside the artefact's newest release. It reads the newest release's pom whatever version the reference pins, because archival is a fact about the project rather than about one of its versions. Update-time looks in these places, in this order, and takes the first one that names a GitHub repository:
 
-1. The `<url>`, `<connection>`, and `<developerConnection>` of the `<scm>` element of the newest release's pom. That element names where the project's source lives.
-2. The `<url>` element of the newest release's pom, although it names the project's website more often than its repository. Update-time tries it after `<scm>`, because a module's `<url>` may name the repository of the larger project the module is part of. The `<url>` of `com.fasterxml.jackson.core:jackson-databind` names `FasterXML/jackson`, while its `<scm>` names `FasterXML/jackson-databind`.
-3. The `<scm>` and `<url>` of the parent pom that the `<parent>` element of the newest release's pom names. A project that consists of several modules often names its repository once, in the pom that all its modules inherit from. Update-time reads the parent pom only when the `<scm>` element of the newest release's pom does not name a URL.
+1. The `<url>`, `<connection>`, and `<developerConnection>` of the `<scm>` element of the newest release's pom.
+2. The `<url>` element of the newest release's pom.
+3. The `<scm>` and `<url>` of the parent pom. Update-time reads the parent pom only when the `<scm>` element of the newest release's pom does not name a URL, and does not read the parent pom's own parent.
 
-Update-time reads one parent pom, and does not read the parent pom's own parent. The poms higher up usually belong to an organisation rather than to a project. Every Apache project inherits from `org.apache:apache`, for example, which names the repository `apache/maven-apache-parent`. For the same reason, Update-time does not read the parent pom when the `<scm>` element of the newest release's pom names a repository outside GitHub. That parent is often an organisation's pom, too.
+Update-time warns about archival only where it finds a GitHub repository to ask about. The newest release's pom and its parent pom may leave the repository unnamed. They may also name a host other than GitHub, as `org.apache.commons:commons-lang3` names `gitbox.apache.org`. And Maven Central does not serve a pom at all for an artefact a project resolves from a mirror or a private repository.
 
-Update-time warns only where it finds a GitHub repository to ask about. The newest release's pom and its parent pom may leave the repository unnamed. They may also name a host other than GitHub, as `org.apache.commons:commons-lang3` names `gitbox.apache.org`. And Maven Central may not serve a pom at all, for an artefact a project resolves from a mirror or a private repository. Update-time warns about a pom it cannot fetch or cannot parse. Where the poms it reads do not name a GitHub repository, it reports a marker's `archived` scope as redundant.
-
-Update-time reports a dependency or plugin whose repository is archived, unless an `ignore[archived]` marker silences that warning.
+Where Maven Central lists a release, but Update-time cannot fetch or parse the pom beside it, Update-time warns that it could not read that pom.
 
 #### Markers
 
-A Maven dependency or plugin takes a marker in an XML comment at the end of its own line. Update-time does not read a marker on the line above. The dependency's or plugin's own line is the line Update-time reports it at:
+A Maven dependency or plugin takes a marker in an XML comment at the end of its own line. Update-time does not read a marker on the line above. A dependency's or plugin's own line is:
 
 - The `<version>` line, for a declaration whose `<version>` holds a version:
 
@@ -1377,25 +1333,23 @@ A Maven dependency or plugin takes a marker in an XML comment at the end of its 
   <dependency>  <!-- update-time: ignore[archived] -->
   ```
 
-The `stale`, `archived`, and `vulnerable` scopes steer the checks as they do elsewhere. Where a scanned pom manages a declaration's version, Update-time checks that version at the managing declaration. So those scopes go on the managing declaration's line. Update-time reports them as redundant on a declaration that leaves its version to the managing declaration:
+Where a scanned pom manages a declaration's version, Update-time checks that version at the managing declaration. So the `stale`, `archived`, and `vulnerable` scopes go on the managing declaration's line. Update-time reports them as redundant on a declaration that leaves its version to the managing declaration:
 
 ```console
 WARNING Redundant update-time directive ignore[stale] for commons-io:commons-io in child/pom.xml:5: Update-time checks this dependency at the declaration that manages its version
 ```
 
-Update-time reports the `cooldown`, `stale`, and `archived` scopes as redundant for a dependency or plugin that Maven Central does not serve. A project resolves such an artefact from a mirror or a private repository, and Update-time reads publication dates and poms from Maven Central alone. The `vulnerable` scope still applies, since OSV holds the advisories:
+Update-time reports the `cooldown`, `stale`, and `archived` scopes as redundant for a dependency or plugin that Maven Central does not serve. The `vulnerable` scope still applies, since OSV holds the advisories:
 
 ```console
 WARNING Redundant update-time directive ignore[cooldown<30] for nl.example:internal-lib in pom.xml:12: Maven Central does not serve this dependency
 ```
 
-A marker steers the update only where Maven updates the version. Maven updates a dependency's version where the declaration's `<version>` element or one of the pom's own properties holds it. It updates a plugin's version only where one of the pom's own properties holds it, since the `use-latest-releases` goal leaves plugins alone. Maven does not update a version that a declaration leaves to a parent pom, an imported BOM, or its pom's `<dependencyManagement>` or `<pluginManagement>`. On a declaration whose version Maven does not update, Update-time reports an `ignore[update]`, a bound, and a `cooldown` as redundant (see [Redundant markers](#redundant-markers)).
+A marker steers the update only where Maven updates the version (see [What dependencies are updated?](#what-dependencies-are-updated-2)). There, an `ignore`, an `ignore[update]`, and an item Update-time cannot read each hold back every version of the artefact.
 
-Where Maven updates the version, Update-time hands Maven a rule per artefact. An `ignore`, an `ignore[update]`, and an item Update-time cannot read each hold back every version of the artefact. Update-time reports the first two at `DEBUG` as holding the update back, and warns about the unreadable item as invalid. A `cooldown` holds back the versions published inside the cooldown it sets.
+A bound holds back the versions it drops. Update-time reports those versions at `DEBUG`, as Maven ranges (see [Seeing what a marker did](#seeing-what-a-marker-did)). A bound reads a version up to the first character that is neither a digit nor a dot, so `allow[update<=32.1.3]` keeps guava's `32.1.3-jre`. A bound that names a version other than a release, such as `34.1rc1`, holds back every version. So does a level bound on a version that does not hold a number, such as `RELEASE`.
 
-A bound holds back the versions it drops, which the rule names as Maven ranges. Update-time reports those ranges at `DEBUG` (see [Seeing what a marker did](#seeing-what-a-marker-did)). A bound reads a version up to the first character that is neither a digit nor a dot, so `allow[update<=32.1.3]` keeps guava's `32.1.3-jre`. A bound that names a version other than a release, such as `34.1rc1`, holds back every version. So does a level bound on a version that does not hold a number, such as `RELEASE`.
-
-A pom can declare an artefact more than once, and Update-time then hands Maven one rule for all those declarations. The rule holds back what the marker of each declaration whose version Maven updates holds back. So a marker on one of them that holds back every version holds back every declaration of the artefact in the pom. Without such a marker, the rule holds back the versions each declaration's bound drops, and the versions published inside the longest cooldown among the declarations. A declaration whose marker does not set a cooldown has the run's cooldown.
+A pom can declare an artefact more than once. The versions plugin takes the versions it may not adopt per artefact (see [What versions are updated?](#what-versions-are-updated-2)). So a marker on one of those declarations steers all of them, provided Maven updates the version of the declaration it sits on. A marker on one of them that holds back every version, such as an `ignore`, holds back every declaration of the artefact in the pom. Without such a marker, Update-time holds back the versions each declaration's bound drops, and the versions published inside the longest cooldown among the declarations. A declaration whose marker does not set a cooldown has the run's cooldown.
 
 ### GitHub Actions and pre-commit hooks
 
@@ -1502,7 +1456,7 @@ A hook repository is not an OSV package, so Update-time does not check a pre-com
 
 #### Archived dependencies
 
-Update-time checks both against the `archived` flag GitHub publishes for a repository. Archival is a fact about the repository rather than about one of its versions. So Update-time reads the flag whatever the reference names: a version, a branch, or a commit. GitHub publishes no reason beside the flag, so the warning gives none. Update-time reports an action or a hook whose repository is archived, unless an `ignore[archived]` marker silences that warning.
+Update-time checks both against the `archived` flag GitHub publishes for a repository. Archival is a fact about the repository rather than about one of its versions. So Update-time reads the flag whatever the reference names: a version, a branch, or a commit. GitHub publishes no reason beside the flag, so the warning gives none.
 
 #### Markers
 
@@ -1715,7 +1669,7 @@ Update-time checks the version in the URL against the npm registry's deprecation
 
 #### Vulnerable dependencies
 
-Update-time checks the version in the URL against OSV's npm advisories. It warns about a URL the run leaves on a version an advisory names, unless an `ignore[vulnerable]` marker silences that warning.
+Update-time checks the version in the URL against OSV's npm advisories. It warns about a URL the run leaves on a version an advisory names.
 
 #### Archived dependencies
 
