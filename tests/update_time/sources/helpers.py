@@ -14,6 +14,8 @@ _GITHUB_API = "https://api.github.com/repos"
 _RAW = "https://raw"
 # The host these tests serve a repository's trees at, one URL per directory name.
 _TREE = "https://tree"
+# The host of a file's page in these tests, one page per file name.
+_PAGE = "https://page"
 
 
 def requested_urls(mock_get: Mock) -> list[str]:
@@ -45,6 +47,11 @@ def file_url(name: str) -> str:
     return f"{_RAW}/{name}"
 
 
+def page_url(name: str) -> str:
+    """Return the URL of the page a repository shows the file of that name on."""
+    return f"{_PAGE}/{name}"
+
+
 def git_url(name: str) -> str:
     """Return the URL a contents listing gives as the endpoint of an entry: its tree for a directory."""
     return f"{_TREE}/{name}"
@@ -57,7 +64,12 @@ def tree_url(directory: str) -> str:
 
 def contents_entry(name: str, *, is_file: bool = True) -> dict[str, str | None]:
     """Return a GitHub contents listing entry for the name, one with no file to fetch when it is a directory."""
-    return {"name": name, "download_url": file_url(name) if is_file else None, "git_url": git_url(name)}
+    return {
+        "name": name,
+        "download_url": file_url(name) if is_file else None,
+        "html_url": page_url(name),
+        "git_url": git_url(name),
+    }
 
 
 def markdown_changelog(version: str) -> str:

@@ -176,16 +176,16 @@ class LoggerTests(TestCase):
         available = f"New version available for {dependency('dependency')} in {at('pyproject.toml:5')}: 1.0"
         logger = get_logger("reset suppression")
         logger.new_version(
-            reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False))
+            reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False, url=""))
         )
         logger.new_version(
-            reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False))
+            reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False, url=""))
         )
         self.assert_last_message(mock_log, message, logging.INFO, available)
         self.assert_note(mock_log, "Suppressing changelog already shown, see above")
         reset_changelog_suppression()
         logger.new_version(
-            reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False))
+            reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False, url=""))
         )
         self.assert_last_message(mock_log, message, logging.INFO, available)
         self.assert_changes(mock_log, "Changelog")
@@ -194,7 +194,7 @@ class LoggerTests(TestCase):
         """Test that the version is logged without a publication date when it is unknown."""
         location = create_location("a.txt", 3)
         _new_logger().new_version(
-            reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False))
+            reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False, url=""))
         )
         self.assert_message(
             mock_log,
@@ -1123,7 +1123,9 @@ class LoggerTests(TestCase):
     def test_new_version_with_publication_date(self, mock_log: Mock):
         """Test that the publication date is appended to the version when it is known."""
         published = datetime(2026, 5, 29, 13, 54, tzinfo=UTC)
-        version = DependencyVersion("1.0", Changes("Changelog", markdown=False), publication=LookedUp(published))
+        version = DependencyVersion(
+            "1.0", Changes("Changelog", markdown=False, url=""), publication=LookedUp(published)
+        )
         location = create_location("a.txt", 3)
         _new_logger().new_version(reference("dependency", location), version)
         self.assert_message(

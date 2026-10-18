@@ -502,7 +502,6 @@ The bare form of a scope, which neither a threshold nor a bound can express: `ig
 The bases a framework finds by scanning rather than by importing: `unittest` discovers a test case, fixit a rule.
 The bound an `ignore[update]` expresses: the complement of `NO_BOUND`, dropping every version.
 The bound on which versions a reference may update to, and the contract every source implements to resolve one.
-The changes a changelog records for one version, and whether the changelog writes them in Markdown.
 The changes of a version no changelog records, which no markup is written in.
 The characters a Python distribution's name treats as one and the same separator (see `normalized_python_name`).
 The characters a version holds, and the lookahead that requires it to end its specifier: nothing a version or a wildcard could go on with may follow, and no comma introducing a second specifier, which PEP 440 lets space precede.

@@ -1836,7 +1836,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         pom = self.find_rewritten_pom(mock_run, mock_glob, before, after, effective_pom)
 
         def changes(artefact: str, version: str) -> Changes:
-            return Changes(f"Changes in {artefact} {version}", markdown=False)
+            return Changes(f"Changes in {artefact} {version}", markdown=False, url="")
 
         with patch.object(maven_central_module, "get_changes", changes):
             update_pom_xmls()

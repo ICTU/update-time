@@ -22,7 +22,6 @@ from update_time.io.console import (
 from update_time.io.log import Logger, get_logger
 from update_time.primitives.command import Command
 
-from tests.helpers import patch_environ
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, DIGEST2
 from tests.update_time.helpers import reference
@@ -43,8 +42,10 @@ _BOX_SIDE = "│"
 class RecordRenderingTests(TestCase):
     """Unit tests for what the console shows for a record."""
 
+    RELEASE_PAGE = "https://github.com/python-humanize/humanize/releases/tag/4.15.0"
+
     @staticmethod
-    def rendered(report: Callable[[Logger], None], level: str = "INFO") -> str:
+    def rendered(report: Callable[[Logger], None], level: str = "INFO", *, styles: bool = False) -> str:
         """Return what the console shows at the level for the records `report` logs through the logger it is handed."""
         console = Console(width=100, file=io.StringIO(), record=True, theme=LOG_THEME, force_terminal=False)
         root, parser = logging.getLogger(), logging.getLogger(_MARKDOWN_PARSER)
@@ -57,7 +58,7 @@ class RecordRenderingTests(TestCase):
         ):
             configure_logging(console, level)
             report(Logger("rendering"))
-        return console.export_text()
+        return console.export_text(styles=styles)
 
     @staticmethod
     def report_new_version(log: Logger, changes: Changes = NO_CHANGES) -> None:
@@ -71,9 +72,9 @@ class RecordRenderingTests(TestCase):
         cls.report_new_version(log)
         cls.report_new_version(log)
 
-    def rendered_changes(self, changes: Changes, level: str = "INFO") -> str:
+    def rendered_changes(self, changes: Changes, level: str = "INFO", *, styles: bool = False) -> str:
         """Return what the console shows at the level when a new version of `pkg` reports the changes."""
-        return self.rendered(lambda log: self.report_new_version(log, changes), level)
+        return self.rendered(lambda log: self.report_new_version(log, changes), level, styles=styles)
 
     def assert_boxed(self, rendered: str, contents: list[str]) -> None:
         """Assert that the lines below the message sit in a box, and that the box holds these lines and no others."""
@@ -95,9 +96,7 @@ class RecordRenderingTests(TestCase):
     def test_a_links_url_is_printed_where_nothing_can_be_clicked(self):
         """Test that a Markdown link's URL reaches an output that can hold no clickable link, such as a CI log."""
         url = "https://github.com/python-humanize/humanize/issues/42"
-        # Rich reads FORCE_COLOR as a terminal, and a CI runner sets it to keep the colour in its log.
-        with patch_environ({"FORCE_COLOR": "1"}):
-            rendered = self.rendered_changes(Changes(f"- A fix ([#42]({url}))", markdown=True))
+        rendered = self.rendered_changes(Changes(f"- A fix ([#42]({url}))", markdown=True, url=""))
         self.assertIn(url, rendered)
 
     @kills(
@@ -128,7 +127,7 @@ class RecordRenderingTests(TestCase):
     )
     def test_an_html_comment_is_not_shown(self):
         """Test that a comment a changelog hides in its markup stays hidden."""
-        changes = Changes("## 1.2.0\n\n<!-- towncrier release notes start -->\n\n- A fix\n", markdown=True)
+        changes = Changes("## 1.2.0\n\n<!-- towncrier release notes start -->\n\n- A fix\n", markdown=True, url="")
         rendered = self.rendered_changes(changes)
         self.assertNotIn("towncrier", rendered)
         self.assertIn("• A fix", rendered)
@@ -150,7 +149,9 @@ class RecordRenderingTests(TestCase):
     def test_raw_html_in_a_markdown_changelog_is_shown_as_written(self):
         """Test that a Markdown changelog's raw HTML block reaches the reader as the project wrote it."""
         html = "<details>\n<summary>Dependency updates</summary>\n"
-        rendered = self.rendered_changes(Changes(f"## 1.2.0\n\n{html}\n- bump foo\n</details>\n", markdown=True))
+        rendered = self.rendered_changes(
+            Changes(f"## 1.2.0\n\n{html}\n- bump foo\n</details>\n", markdown=True, url="")
+        )
         block = ["1.2.0", "", "<details>", "<summary>Dependency updates</summary>", "", "• bump foo", "", "</details>"]
         self.assert_boxed(rendered, block)
 
@@ -172,7 +173,7 @@ class RecordRenderingTests(TestCase):
         }
         for case, (markup, contents) in cases.items():
             with self.subTest(case=case):
-                self.assert_boxed(self.rendered_changes(Changes(markup, markdown=True)), contents)
+                self.assert_boxed(self.rendered_changes(Changes(markup, markdown=True, url="")), contents)
 
     @kills(
         Mutation(
@@ -184,14 +185,14 @@ class RecordRenderingTests(TestCase):
     )
     def test_the_markdown_parser_logs_nothing_at_debug_level(self):
         """Test that rendering a Markdown changelog at debug level adds no record of its own to the output."""
-        rendered = self.rendered_changes(Changes("## 1.2.0\n\n- A fix\n", markdown=True), level="DEBUG")
+        rendered = self.rendered_changes(Changes("## 1.2.0\n\n- A fix\n", markdown=True, url=""), level="DEBUG")
         self.assertIn("New version available for pkg in requirements.txt:3: 1.2.0", rendered)
         self.assertNotIn("DEBUG", rendered)
 
     def test_changes_render_as_markdown(self):
         """Test that a Markdown link in the changes renders as its text, under the header naming the new version."""
         url = "https://pypi.org/project/coverage/7.16.0"
-        rendered = self.rendered_changes(Changes(f"PyPI page: [coverage 7.16.0]({url}).", markdown=True))
+        rendered = self.rendered_changes(Changes(f"PyPI page: [coverage 7.16.0]({url}).", markdown=True, url=""))
         self.assertIn("New version available for pkg in requirements.txt:3: 1.2.0", rendered)
         self.assertIn("PyPI page: coverage 7.16.0", rendered)
         self.assertNotIn("[coverage 7.16.0]", rendered)
@@ -226,7 +227,7 @@ class RecordRenderingTests(TestCase):
         }
         for case, (markup, title) in cases.items():
             with self.subTest(case=case):
-                rendered = self.rendered_changes(Changes(markup, markdown=True))
+                rendered = self.rendered_changes(Changes(markup, markdown=True, url=""))
                 self.assertIn(f"{_BOX_SIDE} {title}", rendered)
 
     @kills(
@@ -240,7 +241,7 @@ class RecordRenderingTests(TestCase):
     def test_a_shortcode_in_a_raw_html_block_renders_as_its_emoji(self):
         """Test that a shortcode a raw HTML block holds reaches the reader as its emoji, as one in the prose does."""
         html = "<details>\n<summary>:zap: Dependency updates</summary>\n"
-        rendered = self.rendered_changes(Changes(f"{html}\n- :zap: bump foo\n</details>\n", markdown=True))
+        rendered = self.rendered_changes(Changes(f"{html}\n- :zap: bump foo\n</details>\n", markdown=True, url=""))
         self.assertIn("<summary>⚡ Dependency updates</summary>", rendered)
         self.assertNotIn(":zap:", rendered)
 
@@ -254,7 +255,7 @@ class RecordRenderingTests(TestCase):
     )
     def test_a_shortcode_renders_as_its_emoji_except_inside_code(self):
         """Test that a shortcode in the prose reaches the reader as its emoji, and one inside code as written."""
-        changes = Changes(":zap: fixed `:zap:` in\n\n```yaml\nlabel: ':zap:'\n```\n", markdown=True)
+        changes = Changes(":zap: fixed `:zap:` in\n\n```yaml\nlabel: ':zap:'\n```\n", markdown=True, url="")
         rendered = self.rendered_changes(changes)
         self.assertIn("⚡ fixed :zap: in", rendered)  # the prose has its emoji, the code span keeps its shortcode
         self.assertIn("label: ':zap:'", rendered)  # and so does the fenced block
@@ -263,7 +264,7 @@ class RecordRenderingTests(TestCase):
         Mutation(
             console_module._ChangelogHandler.render_message,
             "return Group(rendered, Text(note))",
-            "return Group(rendered, self._rendered_changes(note))",
+            "return Group(rendered, Panel(Text(note)))",
             "Update-time's own note about a changelog is boxed as if it were a changelog's changes",
         )
     )
@@ -281,9 +282,31 @@ class RecordRenderingTests(TestCase):
 
     def test_changes_that_are_not_markdown_render_as_written(self):
         """Test that a changelog that is not Markdown is boxed too, keeping its lines and its markup as written."""
-        changes = Changes("Fixed bug A\nFixed bug B\n- and a dash that is no bullet", markdown=False)
+        changes = Changes("Fixed bug A\nFixed bug B\n- and a dash that is no bullet", markdown=False, url="")
         rendered = self.rendered_changes(changes)
         self.assert_boxed(rendered, changes.splitlines())
+
+    def test_the_changes_url_is_shown_in_full_below_the_box(self):
+        """Test that the URL of the page the changes come from is shown in full below the box, folded if it's long."""
+        urls = {
+            "short": self.RELEASE_PAGE,
+            "wider than the console": "https://github.com/open-telemetry/opentelemetry-python-contrib/releases/tag/"
+            "opentelemetry-instrumentation-requests==0.48b0",
+        }
+        for case, url in urls.items():
+            with self.subTest(case=case):
+                lines = self.rendered_changes(Changes("Fixed bug A", markdown=False, url=url)).splitlines()
+                box_end = next(index for index, line in enumerate(lines) if line.strip().startswith(_BOX_BOTTOM_LEFT))
+                label, *fragments = lines[box_end + 1].split()
+                fragments += [line.strip() for line in lines[box_end + 2 :]]
+                self.assertEqual((label, "".join(fragments)), ("Changelog:", url))
+                self.assert_boxed("\n".join(lines[: box_end + 1]), ["Fixed bug A"])
+
+    def test_the_changes_url_is_a_hyperlink(self):
+        """Test that the URL of the page the changes come from is a link a terminal can open."""
+        url = self.RELEASE_PAGE
+        rendered = self.rendered_changes(Changes("Fixed bug A", markdown=False, url=url), styles=True)
+        self.assertIn(f";{url}\x1b\\{url}", rendered)
 
     @kills(
         Mutation(

@@ -13,10 +13,12 @@ from rich.logging import RichHandler
 from rich.markdown import Markdown, MarkdownElement
 from rich.panel import Panel
 from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from rich.theme import Theme
 
 from update_time.domain.changelog import is_markdown
+from update_time.domain.dependency import NO_CHANGES
 from update_time.primitives.digest import SHA256_DIGEST
 
 if TYPE_CHECKING:
@@ -24,6 +26,8 @@ if TYPE_CHECKING:
 
     from markdown_it.token import Token
     from rich.console import ConsoleOptions, ConsoleRenderable, RenderResult
+
+    from update_time.domain.dependency import Changes
 
 
 # A Private Use Area code point, which never occurs in real content and which Rich does not strip, so it survives
@@ -112,6 +116,9 @@ NOTE = "note"
 
 _CHANGES_BORDER = "dim"
 
+# The label of the line naming the page the changes come from.
+_CHANGELOG_LABEL = "Changelog"
+
 
 class _RawHtml(MarkdownElement):
     """A block of raw HTML in a changelog, shown as the project wrote it.
@@ -179,15 +186,18 @@ class _ChangelogHandler(RichHandler):
     def render_message(self, record: logging.LogRecord, message: str) -> ConsoleRenderable:
         """Return the message Rich renders, with the changes or the note the record carries below it."""
         rendered = super().render_message(record, message)
-        if changes := getattr(record, CHANGES, ""):
+        if changes := getattr(record, CHANGES, NO_CHANGES):
             return Group(rendered, self._rendered_changes(changes))
         if note := getattr(record, NOTE, ""):
             return Group(rendered, Text(note))
         return rendered
 
-    def _rendered_changes(self, changes: str) -> ConsoleRenderable:
-        """Return the changes in a box, so the blank lines a changelog holds do not read as breaks in the log."""
-        return Panel(self._changes_markup(changes), border_style=_CHANGES_BORDER)
+    def _rendered_changes(self, changes: Changes) -> ConsoleRenderable:
+        """Box the changes, so their blank lines do not read as breaks in the log, and name their page below the box."""
+        box = Panel(self._changes_markup(changes), border_style=_CHANGES_BORDER)
+        if not changes.url:
+            return box
+        return Group(box, Text.assemble(f"{_CHANGELOG_LABEL}: ", (changes.url, Style(link=changes.url))))
 
     def _changes_markup(self, changes: str) -> ConsoleRenderable:
         """Return the changes as Markdown when the changelog writes them in it, and as text otherwise.

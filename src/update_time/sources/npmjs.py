@@ -10,6 +10,7 @@ from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
 from update_time.primitives.timestamp import parse_timestamp
 from update_time.sources.github import (
+    GITHUB,
     GitHubRepository,
     changes_from_changelog_file,
     changes_from_release,
@@ -28,7 +29,6 @@ _REGISTRY = "https://registry.npmjs.org"
 _TIME_BOOKKEEPING_KEYS = frozenset({"created", "modified"})
 
 
-_GITHUB_URL = "https://github.com/"
 # Matches `github:` in npm's `github:owner/repo` host shorthand.
 _HOST_SHORTHAND_RE = re.compile(r"^github:")
 # Matches npm's bare `owner/repo` shorthand in full, e.g. `bower/bower`. A git URL and git's scp-like
@@ -61,8 +61,8 @@ class _PackageJSON(TypedDict):
 def _expanded_shorthand(url: str) -> str:
     """Return npm's `github:owner/repo` and bare `owner/repo` shorthands as GitHub URLs, leaving others unchanged."""
     if _BARE_SHORTHAND_RE.match(url):
-        return f"{_GITHUB_URL}{url}"
-    return _HOST_SHORTHAND_RE.sub(_GITHUB_URL, url)
+        return f"{GITHUB}/{url}"
+    return _HOST_SHORTHAND_RE.sub(f"{GITHUB}/", url)
 
 
 @dataclass(frozen=True)

@@ -65,6 +65,8 @@ _NO_COMMIT_BY_THAT_NAME = HTTPStatus.UNPROCESSABLE_ENTITY
 _MOVED_ON = frozenset({"ahead", "diverged"})
 # The host serving a repository's files as raw content.
 _RAW_GITHUB = "https://raw.githubusercontent.com"
+# The host showing a repository's pages to a person.
+GITHUB = "https://github.com"
 # The names a repository gives the changelog file, and the extensions it carries, compared in lower case.
 _CHANGELOG_FILE_NAMES = frozenset({"changes", "changelog", "history", "news", "releases"})
 _CHANGELOG_FILE_EXTENSIONS = frozenset({"", MARKDOWN_EXTENSION, ".rst", ".txt"})
@@ -83,6 +85,7 @@ class _ReleaseJSON(TypedDict):
 
     tag_name: str
     body: NotRequired[str | None]  # Optional in GitHub's schema, and null for a release published without notes
+    html_url: str  # The release's page on GitHub
     draft: bool
     prerelease: bool
     published_at: str | None  # None for a draft, which hasn't been published
@@ -107,6 +110,7 @@ class _ContentJSON(TypedDict):
     name: str
     # Null for an entry that is no file to fetch, such as a directory: pip's root keeps its `news` fragments in one.
     download_url: str | None
+    html_url: str | None  # The entry's page on GitHub, which GitHub's schema lets be null
     # The endpoint listing the entry: its tree for a directory, its blob for a file.
     git_url: str
 
@@ -180,7 +184,7 @@ class TaggedVersion:
         return cls(
             repository=repository,
             tag_name=release["tag_name"],
-            body=Changes(release.get("body") or "", markdown=True),
+            body=Changes(release.get("body") or "", markdown=True, url=release["html_url"]),
             draft=release["draft"],
             prerelease=release["prerelease"],
             published_at=parse_timestamp(release["published_at"]),
@@ -228,7 +232,7 @@ class TaggedVersion:
         found = _get_commit(self.repository, self.tag_name)
         if (commit := found.value) is None:
             _LOG.no_commit_sha(
-                dependency, self.tag_name, found.reason, f"https://github.com/{dependency}/releases/tag/{self.tag_name}"
+                dependency, self.tag_name, found.reason, f"{GITHUB}/{dependency}/releases/tag/{self.tag_name}"
             )
             return None
         return commit["sha"]
@@ -770,7 +774,7 @@ def _changes_from_files(entries: tuple[_ContentJSON, ...], version: str) -> Chan
     for entry in entries:
         url = entry["download_url"]
         if _is_changelog_file(entry["name"]) and url and (changes := _changes_from_changelog_url(url, version)):
-            return Changes(changes, markdown=is_markdown_file(entry["name"]))
+            return Changes(changes, markdown=is_markdown_file(entry["name"]), url=entry["html_url"] or "")
     return NO_CHANGES
 
 
@@ -799,10 +803,11 @@ def _changes_from_documentation(repository: GitHubRepository, root: tuple[_Conte
 def _changes_from_tree(repository: GitHubRepository, directory: _ContentJSON, version: str) -> Changes:
     """Return the version's changes from a changelog file below the directory, or nothing when none names them."""
     root_url = f"{_RAW_GITHUB}/{repository}/HEAD/{directory['name']}"
+    page_root_url = f"{GITHUB}/{repository}/blob/HEAD/{directory['name']}"
     for path in _list_tree(directory["git_url"]):
         name = path.rpartition("/")[2]
         if _is_changelog_file(name) and (changes := _changes_from_changelog_url(f"{root_url}/{path}", version)):
-            return Changes(changes, markdown=is_markdown_file(name))
+            return Changes(changes, markdown=is_markdown_file(name), url=f"{page_root_url}/{path}")
     return NO_CHANGES
 
 
