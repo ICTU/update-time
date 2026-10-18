@@ -264,18 +264,6 @@ def _inverted_items(log: Logger, capture: _Capture, requirements: Location, dock
     }
 
 
-def _effective_pom_warnings(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log a sample per warning about an effective pom Update-time cannot use, paired with the block's placeholder."""
-    log.effective_pom_unreadable(Path("pom.xml"))
-    unreadable = capture.take()
-
-    log.effective_pom_without_input_locations(Path("pom.xml"))
-    return {
-        "@@EFFECTIVE_POM_UNREADABLE_WARNING@@": unreadable,
-        "@@EFFECTIVE_POM_WITHOUT_INPUT_LOCATIONS_WARNING@@": capture.take(),
-    }
-
-
 def _unreadable_reactors(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log a sample per error about a reactor Maven cannot read, paired with the block's placeholder."""
     log.unreadable_reactor_since_update(Path(), Path("dubbo-dependencies-bom/pom.xml"), 50)
@@ -418,7 +406,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.pinned(reference("clipboard", Location(Path("docs/conf.py"), 4)), pinned_url)
     pinned_integrity_hash = capture.take()
 
-    maven_runs = _effective_pom_warnings(log, capture) | _unreadable_reactors(log, capture)
+    maven_runs = _unreadable_reactors(log, capture)
 
     unpinned_floating_tag = _unpinned_floating_tags(log, capture)
 
