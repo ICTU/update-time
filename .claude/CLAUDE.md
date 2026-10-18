@@ -79,7 +79,9 @@ Each cycle has three steps:
    - End the step with `just verify`, green. When the smallest change that passes the test leaves a check failing, the step is too small: widen it rather than ending red.
 3. **Refactor**:
    - Review and refactor the production code and the tests. A fix that a linter flagged is not this review.
-   - Review the whole diff against the review criteria above, comments and docstrings included: the ones you wrote, and the ones that stayed the same while the code they describe changed. Ask of each whether it should exist at all, not only whether it is still true. A sentence you edited is yours entire, so judge the words you kept as hard as the words you added.
+   - Review against the review criteria above.
+   - Review the whole diff, and include the code around the change.
+   - Review comments and docstrings: the ones you wrote, and the ones that stayed the same while the code they describe changed. Ask of each whether it should exist at all, not only whether it is still true. A sentence you edited is yours entire, so judge the words you kept as hard as the words you added.
    - Review the call sites of anything whose signature, fields, or behaviour the step changed, and their docstrings. The diff doesn't show them.
    - Review the architecture. A step that adds a dependency between modules, or widens what a module exposes, wants a new or a tightened architecture test.
    - Work through the findings one at a time, running `just verify` after all findings have been fixed.
@@ -100,6 +102,7 @@ A few rules that keep the cycle honest:
 6. A green run proves nothing by itself, so check that it ran what you think it ran.
    - Write the output of `just test`, `just check`, `just verify`, and `just mutate` to a file under `/tmp`, and read that file with the Read tool, from the first failure or from the end. To find the end of a long report, `wc -l` the file and read from near there. Then you can read another slice of a long run without running it again. Don't grep the output, count its matches, or cut it short: a filter that prints nothing has told you nothing, and a pipe hides the exit status.
    - Compare the test count whenever imports move or test methods are renamed. A module that fails to import, or a method whose new name collides with an existing one, drops tests without a word.
+   - A step `just verify` skips because its inputs did not change ran what you meant; don't run it again.
 7. Settle a "could we do X?" question by trying X, not by reasoning about it. Settle a "there is no X" the same way: a search you stopped is not a proof.
    - Report the errors the tools name, and what the alternative costs. Bring me numbers, whether the question is one you mean to put to me or one about your own first draft. Count the call sites with `just callers` before you put the size of a change to me; a guess at what it touches is not a number.
    - Try a library the project already depends on before you hand-roll one. Before you design or price a change, find where the code already solves the same shape of problem and follow it.
@@ -124,7 +127,7 @@ When every candidate test passes, propose an increment review before you propose
 
 Review everything the increment changed, against the same criteria, fix any trivial issues, and report the remaining issues as its own numbered list. Read the files it touched end to end rather than its diff: a finding can span cycles and show up in no single one, such as a helper the second cycle duplicated, a module head grown long with constants, or a name that restates the line beside it.
 
-A bug fix or a small diff gets that one review. An increment of several cycles gets a second review with fresh context, from subagents you give the criteria and the diff but not the reasoning that produced the code, because a review in the context that wrote the code misses what a fresh one catches. Run each in a git worktree of its own, so the mutations they run rewrite neither your tree nor each other's. A worktree starts at the default branch, so tell each subagent to `git checkout --detach` the branch head first. Remove the worktrees and their branches once they report. Tell the subagents to check each finding against the code before reporting it, and judge what they report against the criteria yourself before it reaches my list.
+A bug fix or a small diff gets that one review. An increment of several cycles gets a second review with fresh context, from subagents you give the criteria and the diff but not the reasoning that produced the code, because a review in the context that wrote the code misses what a fresh one catches. Run each in a git worktree of its own, so the mutations they run rewrite neither your tree nor each other's. A worktree starts at the default branch, so tell each subagent to `git checkout --detach` the branch head first. Remove each worktree and its branch once they report, with one command per worktree that names it literally. Tell the subagents to check each finding against the code before reporting it, and judge what they report against the criteria yourself before it reaches my list.
 
 Merge both reviews into one numbered list. A finding only one review reached belongs in it as much as one they both reached, which you state once. Every finding sits in that list, so each can be referred to by its number, and the text around the list holds none. Group the list, the findings that change behaviour first and the rest by file or subject.
 

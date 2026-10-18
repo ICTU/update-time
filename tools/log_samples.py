@@ -276,6 +276,23 @@ def _effective_pom_warnings(log: Logger, capture: _Capture) -> dict[str, str]:
     }
 
 
+def _unreadable_reactors(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log a sample per error about a reactor Maven cannot read, paired with the block's placeholder."""
+    log.unreadable_reactor_since_update(Path(), Path("dubbo-dependencies-bom/pom.xml"), 50)
+    log.unreadable_reactor_as_found(Path(), 118)
+    with_a_cause = capture.take()
+
+    log.unreadable_reactor(Path(), 50)
+    without_a_cause = capture.take()
+
+    log.unparsable_reactor(Path(), Path("sub/pom.xml"), 118)
+    return {
+        "@@UNREADABLE_REACTORS@@": with_a_cause,
+        "@@UNREADABLE_REACTOR_WITHOUT_A_CAUSE@@": without_a_cause,
+        "@@UNPARSABLE_REACTOR@@": capture.take(),
+    }
+
+
 def _images_not_looked_up(log: Logger, capture: _Capture, dockerfile: Location) -> str:
     """Log one reference of each kind whose image Update-time does not look up, and return the lines they render as."""
     compose = reference("acme/api", Location(Path("docker-compose.yml"), 4), "1.2.3")
@@ -401,7 +418,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.pinned(reference("clipboard", Location(Path("docs/conf.py"), 4)), pinned_url)
     pinned_integrity_hash = capture.take()
 
-    effective_pom = _effective_pom_warnings(log, capture)
+    maven_runs = _effective_pom_warnings(log, capture) | _unreadable_reactors(log, capture)
 
     unpinned_floating_tag = _unpinned_floating_tags(log, capture)
 
@@ -426,7 +443,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@DRIFT_WARNINGS@@": drift,
         "@@PINNED_FLOATING_TAG@@": pinned_floating_tag,
         "@@PINNED_INTEGRITY_HASH@@": pinned_integrity_hash,
-        **effective_pom,
+        **maven_runs,
         "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
         **github_refs,

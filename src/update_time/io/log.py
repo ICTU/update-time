@@ -112,6 +112,22 @@ def _effective_pom_unused(problem: str, cause: str) -> str:
     )
 
 
+# The parts of the errors about a reactor Maven cannot read.
+_CANNOT_READ_THE_REACTOR = "Maven cannot read the reactor in %(location)s"
+_SINCE_UPDATE = " since Update-time updated %(updated)s"
+_AS_FOUND = " as the scan found it"
+_POMS_LEFT = ", so Update-time does not run Maven over the %(poms)s left in it"
+_OTHER_POMS = ", so Update-time does not run Maven over its %(poms)s"
+_FIX = "; revert that pom and hold the update that broke the reactor back with a marker, or fix what Maven reports"
+_UPDATE_TIME_CANNOT_READ_THE_REACTOR = "Update-time cannot read the reactor in %(location)s"
+_SINCE_UNPARSABLE = " since %(unparsable)s does not parse"
+
+
+def _poms(count: int, *qualifiers: str) -> str:
+    """Return the count of poms, with the qualifiers between, such as `1 pom` or `2 other poms`."""
+    return " ".join((str(count), *qualifiers, "pom" if count == 1 else "poms"))
+
+
 def _ignoring(subject: str, cause: str = "update-time: %(directive)s") -> str:
     """Return a message saying what is being ignored, and why."""
     return f"Ignoring {subject} for %(dependency)s in %(location)s ({cause})"
@@ -975,6 +991,55 @@ class Logger:
     def declarations_changed(self, path: Path, before: int, after: int) -> None:
         """Report that the file an updater rewrote declares more or fewer dependencies and plugins than before."""
         self._log_file(self._MESSAGE_DECLARATIONS_CHANGED, path, before=before, after=after)
+
+    _MESSAGE_UNREADABLE_REACTOR = LogMessage(ERROR, _CANNOT_READ_THE_REACTOR + _POMS_LEFT)
+
+    def unreadable_reactor(self, root: Path, poms_left: int) -> None:
+        """Report that Maven cannot read the reactor in the root directory, naming how many of its poms are left."""
+        self._log_file(self._MESSAGE_UNREADABLE_REACTOR, root, poms=_poms(poms_left))
+
+    _MESSAGE_UNREADABLE_REACTOR_AS_FOUND = LogMessage(ERROR, _CANNOT_READ_THE_REACTOR + _AS_FOUND + _OTHER_POMS)
+
+    def unreadable_reactor_as_found(self, root: Path, poms_left: int) -> None:
+        """Report that Maven cannot read the reactor as the scan found it, naming how many other poms it holds."""
+        self._log_file(self._MESSAGE_UNREADABLE_REACTOR_AS_FOUND, root, poms=_poms(poms_left, "other"))
+
+    _MESSAGE_UNREADABLE_REACTOR_SINCE_UPDATE = LogMessage(
+        ERROR, _CANNOT_READ_THE_REACTOR + _SINCE_UPDATE + _POMS_LEFT + _FIX
+    )
+
+    def unreadable_reactor_since_update(self, root: Path, updated: Path, poms_left: int) -> None:
+        """Report that Maven cannot read the reactor since Update-time updated the pom, naming the poms left."""
+        self._log_file(
+            self._MESSAGE_UNREADABLE_REACTOR_SINCE_UPDATE, root, updated=Location(updated), poms=_poms(poms_left)
+        )
+
+    _MESSAGE_UNREADABLE_REACTOR_SINCE_UPDATE_WITHOUT_POMS_LEFT = LogMessage(
+        ERROR, _CANNOT_READ_THE_REACTOR + _SINCE_UPDATE + _FIX
+    )
+
+    def unreadable_reactor_since_update_without_poms_left(self, root: Path, updated: Path) -> None:
+        """Report that Maven cannot read the reactor since Update-time updated the pom."""
+        self._log_file(self._MESSAGE_UNREADABLE_REACTOR_SINCE_UPDATE_WITHOUT_POMS_LEFT, root, updated=Location(updated))
+
+    _MESSAGE_UNPARSABLE_REACTOR = LogMessage(
+        ERROR, _UPDATE_TIME_CANNOT_READ_THE_REACTOR + _SINCE_UNPARSABLE + _OTHER_POMS
+    )
+
+    def unparsable_reactor(self, root: Path, unparsable: Path, other_poms: int) -> None:
+        """Report that Update-time cannot read the reactor since the pom does not parse, naming its other poms."""
+        self._log_file(
+            self._MESSAGE_UNPARSABLE_REACTOR, root, unparsable=Location(unparsable), poms=_poms(other_poms, "other")
+        )
+
+    _MESSAGE_MAVEN_NOT_RUN = LogMessage(
+        DEBUG,
+        "Not running Maven over %(location)s: an earlier Maven run could not read the reactor this pom is part of",
+    )
+
+    def maven_not_run(self, path: Path) -> None:
+        """Log that Maven does not run over the pom, because it cannot read the pom's reactor."""
+        self._log_file(self._MESSAGE_MAVEN_NOT_RUN, path)
 
     # --- HTTP fetching ---
 
