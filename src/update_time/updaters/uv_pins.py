@@ -5,12 +5,14 @@ from typing import TYPE_CHECKING
 from update_time.manifests import pyproject_toml as pyproject_toml_format
 from update_time.package_managers import uv
 from update_time.references.delegated import (
+    pin_resolver,
     warn_about_projects,
     warn_about_redundant_directives,
     warn_about_yanked_dependencies,
 )
 from update_time.references.vulnerability import warn_about_vulnerable_dependencies
 from update_time.sources.osv import Ecosystem
+from update_time.sources.pypi import yank_state
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -30,5 +32,6 @@ def warn_about_pins(files: Iterable[DependencyTomlFile], log: Logger) -> None:
     served = [uv.pypi_served(declarations) for declarations in declared]
     warn_about_redundant_directives(declared, log, uv.no_pypi_release)
     warn_about_projects(served, uv.pypi_projects, log)
-    warn_about_yanked_dependencies(served, uv.pinned_pypi_releases, log)
-    warn_about_vulnerable_dependencies([uv.pinned_versions(pins) for pins in served], Ecosystem.PYPI, log)
+    pinned = [uv.pinned_versions(pins) for pins in served]
+    warn_about_yanked_dependencies(pinned, pin_resolver(yank_state), log)
+    warn_about_vulnerable_dependencies(pinned, Ecosystem.PYPI, log)

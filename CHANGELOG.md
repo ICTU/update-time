@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Link a new version's changes to the page they come from. Closes [#399](https://github.com/ICTU/update-time/issues/399).
+- Warn about a `package.json` dependency pinned to an exact version that npm deprecated or a security advisory names. Closes [#252](https://github.com/ICTU/update-time/issues/252).
 
 ## 0.0.49 - 2026-10-18
 

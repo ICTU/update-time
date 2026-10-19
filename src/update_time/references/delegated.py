@@ -20,7 +20,7 @@ from update_time.references.resolve import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
-    from update_time.domain.dependency import ProjectGetter
+    from update_time.domain.dependency import DependencyName, ProjectGetter, VersionString, Yank
     from update_time.domain.reference import ReferenceResolver
     from update_time.io.log import Logger
     from update_time.markers.directive import RedundancyReason
@@ -43,6 +43,26 @@ def project_resolver(get_project: ProjectGetter) -> ReferenceResolver[SteeredRef
         )
 
     return archival_reporting(resolve, when=partial(reports_archival, get_project))
+
+
+def pin_resolver(
+    get_yank: Callable[[DependencyName, VersionString], Yank],
+) -> ReferenceResolver[SteeredReference, SteeredResolvedReference]:
+    """Return a resolver carrying the release each pin names, with the yank state the source reports for it.
+
+    The release is the version the file records rather than the newest the source offers, so it is the version the
+    run leaves the pin on, whichever version the package manager settled the pin on.
+    """
+
+    def resolve(pins: Iterable[SteeredReference]) -> Iterable[SteeredResolvedReference]:
+        return (
+            SteeredResolvedReference.from_reference(
+                pin, release=DependencyVersion(pin.current_version, yank=get_yank(pin.dependency, pin.current_version))
+            )
+            for pin in pins
+        )
+
+    return resolve
 
 
 def warn_about_projects[ReferenceT: SteeredReference](
