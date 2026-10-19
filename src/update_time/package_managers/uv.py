@@ -24,7 +24,7 @@ from update_time.markers.reference import SteeredResolvedReference
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.primitives.lookup import LookedUp
-from update_time.sources.pypi import get_changes, get_publication_datetime, project, yank_state
+from update_time.sources.pypi import get_changes, get_publication_datetime, project
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -299,17 +299,6 @@ def pypi_projects(declarations: Iterable[Declaration]) -> Iterable[SteeredResolv
     for declaration in declarations:
         release = DependencyVersion.unpinned(project(declaration.dependency, check_archival=archival_is_checked()))
         yield SteeredResolvedReference.from_reference(declaration, release=release)
-
-
-def pinned_pypi_releases(declarations: Iterable[Declaration]) -> Iterable[SteeredResolvedReference]:
-    """Yield each exact `==` pin among the declarations, carrying the release the pin itself names.
-
-    The release carries the yank state PyPI reports for it. Its version is the one the file records rather than the
-    newest PyPI offers, so it is the version the run leaves the pin on, whichever version uv settled the pin on.
-    """
-    for pin in pinned_versions(declarations):
-        yank = yank_state(pin.dependency, pin.current_version)
-        yield SteeredResolvedReference.from_reference(pin, release=DependencyVersion(pin.current_version, yank=yank))
 
 
 def update_uv_lock(pyproject_toml: Path) -> None:

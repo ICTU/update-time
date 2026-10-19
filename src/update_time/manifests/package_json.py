@@ -1,17 +1,16 @@
-"""Read package.json files.
+"""Read package.json files: the dependency entries, the exact versions they pin, and the `update-time` field."""
 
-This module owns parsing the package.json *format*. What the parsed contents mean (which package manager, which
-engines, which dependencies to update) is the caller's concern.
-"""
-
+import re
 from typing import TYPE_CHECKING
 
 from update_time.formats import json as json_format
 from update_time.markers.marker import Marker, ReferenceMarker, parse_directives
+from update_time.markers.reference import SteeredReference
 from update_time.primitives.location import Location
 from update_time.primitives.text import column, line_number
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName
@@ -25,6 +24,9 @@ DEPENDENCY_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies"
 # The field a package.json names its markers in. JSON has no comments, so a marker cannot sit beside the reference
 # it steers, and npm keeps a field it does not know, so the file can carry one.
 _MARKER_FIELD = "update-time"
+
+# A spec that pins a dependency to one version, such as 1.3.0, =v1.3.0, or 1.3.0+build. npm ignores the build.
+_EXACT_VERSION = re.compile(r"=?v?(?P<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\+[0-9A-Za-z.-]+)?")
 
 
 def reference_marker(package_json: JsonFile, section: str, name: DependencyName) -> ReferenceMarker:
@@ -61,16 +63,22 @@ def _unreadable_field(section: str, name: DependencyName) -> Marker:
 def dependency_locations(path: Path) -> dict[DependencyName, list[Location]]:
     """Return each direct registry dependency and the locations of the entries declaring it.
 
-    The dependency sections are read in turn, leaving out a dependency whose spec resolves to no registry release.
-    A name declared in several of them carries a location per entry, so none of the lines it sits on is lost.
+    A name declared in several sections carries a location per entry, so none of the lines it sits on is lost.
     """
-    package_json = json_format.read(path)
     locations: dict[DependencyName, list[Location]] = {}
+    for reference in declared_dependencies(path):
+        locations.setdefault(reference.dependency, []).append(reference.location)
+    return locations
+
+
+def declared_dependencies(path: Path) -> Iterator[SteeredReference]:
+    """Yield a reference to each registry entry the dependency sections declare, at the exact version it pins if any."""
+    package_json = json_format.read(path)
     for section in DEPENDENCY_SECTIONS:
         for name, spec in package_json.contents.get(section, {}).items():
             if _is_registry_spec(spec):
-                locations.setdefault(name, []).append(_entry_location(package_json, section, name))
-    return locations
+                version = match["version"] if (match := _EXACT_VERSION.fullmatch(spec)) else ""
+                yield SteeredReference(name, version, _entry_location(package_json, section, name))
 
 
 def _is_registry_spec(spec: object) -> bool:

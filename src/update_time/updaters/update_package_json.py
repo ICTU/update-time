@@ -1,4 +1,4 @@
-"""Find package.json files and update their dependencies with the project's Node package manager."""
+"""Find package.json files, update their dependencies with the project's Node package manager, and check them."""
 
 from typing import TYPE_CHECKING
 
@@ -7,13 +7,18 @@ from update_time.formats import json as json_format
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.manifests import package_json as package_json_format
-from update_time.markers.reference import SteeredReference
 from update_time.package_managers import node
-from update_time.references.delegated import project_resolver, warn_about_projects
+from update_time.references.delegated import (
+    pin_resolver,
+    project_resolver,
+    warn_about_projects,
+    warn_about_yanked_dependencies,
+)
+from update_time.references.vulnerability import warn_about_vulnerable_dependencies
 from update_time.sources import npmjs
+from update_time.sources.osv import Ecosystem
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 _LOG = get_logger("package.json")
@@ -39,7 +44,7 @@ def _package_manager(package_json: Path) -> str:
 
 
 def update_package_jsons() -> None:
-    """Find all package.json files and update each with its (supported) package manager, skipping the rest."""
+    """Find all package.json files, update each with its (supported) package manager, and check its dependencies."""
     supported = []
     for package_json in glob_for(PACKAGE_JSON):
         if (manager := node.SUPPORTED_MANAGERS.get(name := _package_manager(package_json))) is None:
@@ -47,20 +52,16 @@ def update_package_jsons() -> None:
         else:
             manager.update_package_json(package_json)
             supported.append(package_json)
-    declared = [_declared_dependencies(package_json) for package_json in supported]
+    _warn_about_dependencies(supported)
+
+
+def _warn_about_dependencies(package_jsons: list[Path]) -> None:
+    """Check the dependencies of each package.json."""
+    declared = [list(package_json_format.declared_dependencies(package_json)) for package_json in package_jsons]
     warn_about_projects(declared, project_resolver(npmjs.project), _LOG)
-
-
-def _declared_dependencies(package_json: Path) -> Iterator[SteeredReference]:
-    """Yield a reference to each dependency the package.json declares, at each line declaring it.
-
-    The reference names no version: a `package.json` declares a range, and which version it resolves to is recorded
-    in the lock file. Staleness is measured against the package's newest release, so the range is not needed. It
-    carries no marker either, since a `package.json` dependency takes none.
-    """
-    for name, locations in package_json_format.dependency_locations(package_json).items():
-        for location in locations:
-            yield SteeredReference(name, "", location)
+    pinned = [[reference for reference in references if reference.current_version] for references in declared]
+    warn_about_yanked_dependencies(pinned, pin_resolver(npmjs.deprecation), _LOG)
+    warn_about_vulnerable_dependencies(pinned, Ecosystem.NPM, _LOG)
 
 
 def main() -> None:  # pragma: no cover

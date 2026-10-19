@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from update_time.formats import json as json_format
 from update_time.manifests import package_json
+from update_time.markers.reference import SteeredReference
 from update_time.primitives.location import Location
 
 from tests.helpers import mock_path
@@ -98,3 +99,43 @@ class DependencyLocationsTest(unittest.TestCase):
     def test_no_dependencies(self):
         """Test that a package.json without dependency sections yields nothing."""
         self.assertEqual(package_json.dependency_locations(mock_path('{"name": "x"}')), {})
+
+
+class DeclaredDependenciesTest(unittest.TestCase):
+    """Unit tests for reading a reference to each entry the dependency sections declare."""
+
+    def test_a_reference_per_entry(self):
+        """Test that each entry yields a reference at its own line, a name declared twice included."""
+        path = mock_path(
+            "{\n"
+            '  "dependencies": {\n    "react": "18.2.0",\n    "left-pad": "^1.3.0"\n  },\n'
+            '  "devDependencies": {\n    "react": "^18.0.0"\n  },\n'
+            '  "optionalDependencies": {\n    "fsevents": "2.3.3"\n  }\n'
+            "}\n"
+        )
+        self.assertEqual(
+            list(package_json.declared_dependencies(path)),
+            [
+                SteeredReference("react", "18.2.0", Location(path, 3, 4)),
+                SteeredReference("left-pad", "", Location(path, 4, 4)),
+                SteeredReference("react", "", Location(path, 7, 4)),
+                SteeredReference("fsevents", "2.3.3", Location(path, 10, 4)),
+            ],
+        )
+
+    def test_the_version_a_spec_pins(self):
+        """Test that each spelling npm reads as one version pins that version, and that a range pins none."""
+        for spec, version in [
+            ("1.3.0", "1.3.0"),
+            ("1.3.0-beta.1", "1.3.0-beta.1"),
+            ("=1.3.0", "1.3.0"),
+            ("v1.3.0", "1.3.0"),
+            ("=v1.3.0", "1.3.0"),
+            ("1.3.0+build", "1.3.0"),
+            ("1.3.0 - 1.3.0", ""),
+            ("1.3", ""),
+        ]:
+            with self.subTest(spec=spec):
+                path = mock_path(json.dumps({"dependencies": {"left-pad": spec}}))
+                (reference,) = package_json.declared_dependencies(path)
+                self.assertEqual(reference.current_version, version)

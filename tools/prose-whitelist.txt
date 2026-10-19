@@ -190,7 +190,6 @@ Incorrect 'cooldown>=30' in the update-time marker for in : this comparison adop
 Incorrect 'stale>=90' in the update-time marker for in : this comparison warns while a release is fresh and goes quiet once it is old, so it sets no threshold.
 Incorrect 'vulnerable>=high' in the update-time marker for in : this comparison warns about the mild vulnerabilities and stays quiet about the severe ones, so it sets no risk level.
 Inside a block, a run of fence characters closes it, since code holds no headings to underline.
-It carries no marker either, since a `package.json` dependency takes none.
 It checks a requirement that pins no exact version as well, wherever the file declares it.
 It is also the most urgent, because the browser silently refuses to load the script until the hash matches, which no build step catches.
 It is no number of days, so nothing is ever older than it.
@@ -520,7 +519,6 @@ The default for a release fixture no test asks project URLs of.
 The definitions a call reaches: a function, a method, and a class.
 The dependency below it sets no threshold, so no check runs for it and PyPI is not asked about it at all.
 The dependency declared below it carries no marker, so the request it costs shows the pass ran over the file.
-The dependency sections are read in turn, leaving out a dependency whose spec resolves to no registry release.
 The dependency types every table has to answer for, in the order the tables have to list them in.
 The deprecation npm reports for clipboard 2.0.11: the reason the registry states, and the yank it becomes.
 The directory a monorepo builds the package from.
@@ -569,7 +567,6 @@ The patch is never stopped: no test may put a credential back.
 The prefix is `!`, so `!!python/object` still reaches no constructor and the loader stays safe.
 The project status PEP 792 defines for a project that expects no further release.
 The reason the source published, empty when it published none.
-The reference names no version: a `package.json` declares a range, and which version it resolves to is recorded in the lock file.
 The registry dates the versions it lists, so one it does not list — a version published moments ago, or one it no longer serves — has no date to read.
 The registry publishes no archival signal, so no request answers it.
 The registry serves no manifest, so there is no digest to pin.

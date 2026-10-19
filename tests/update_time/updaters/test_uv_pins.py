@@ -254,11 +254,9 @@ class YankedPinTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            uv_module.pinned_pypi_releases,
-            "SteeredResolvedReference.from_reference(pin, release=DependencyVersion(pin.current_version, yank=yank))",
-            "SteeredResolvedReference.from_reference("
-            "pin, release=DependencyVersion(pin.current_version, yank=yank), "
-            "marker=pinned_versions(declarations)[0].marker)",
+            delegated_module.pin_resolver,
+            "yank=get_yank(pin.dependency, pin.current_version))",
+            "yank=get_yank(pin.dependency, pin.current_version)), marker=next(iter(pins)).marker",
             "one pin's marker steers every pin the file declares, rather than the one carrying it",
         )
     )

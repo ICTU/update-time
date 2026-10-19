@@ -6,19 +6,26 @@ from pathlib import Path
 from unittest.mock import ANY, Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.dependency import Yank
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
+from update_time.sources import npmjs as npmjs_module
+from update_time.updaters import update_package_json as update_package_json_module
 from update_time.updaters.update_package_json import update_package_jsons
 
 from tests.helpers import mock_path, mock_response, patch_pathlib_path
+from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import FRESH_DATE, STALE_DATE
 from tests.update_time.helpers import (
     LoggingTestCase,
     github_commits_json,
     github_release_json,
+    npm_registry,
     published_version,
     staleness_disabled,
 )
+from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
+from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulnerabilities, osv
 
 _NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN.default}"  # the cooldown npm option Update-time adds by default
 _PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN.default * 24 * 60}"  # pnpm's, in minutes
@@ -55,6 +62,19 @@ def _outdated_error(package: str, current: str, latest: str, **extra: object) ->
     """
     output = json.dumps({package: {"current": current, "latest": latest, **extra}})
     return subprocess.CalledProcessError(cmd="", returncode=1, output=output, stderr="")
+
+
+# The yank check asks the npm registry about every exact pin, whichever check a test is about. The tests that are
+# about another check answer it with a registry document that does not deprecate any version.
+_no_deprecations = patch("requests.Session.get", Mock(return_value=npm_registry({})))
+
+# A package.json pinning left-pad to version 1.3.0, on line 4.
+_LEFT_PAD_PINNED = '{\n  "name": "app",\n  "dependencies": {\n    "left-pad": "1.3.0"\n  }\n}\n'
+
+
+def _pnpm_runs(*results: object) -> list:
+    """Prepend the `pnpm config get minimumReleaseAge` cooldown probe (unset) to the given command results."""
+    return [Mock(stdout=_PNPM_UNSET), *results]
 
 
 def _assert_manager_called(mock_run: Mock, outdated: Command, update: Command, list_cmd: Command) -> None:
@@ -292,10 +312,6 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         """Create a mock package.json declaring pnpm as its package manager."""
         return mock_path(contents, parent=Path("/"))
 
-    def pnpm_runs(self, *results: object) -> list:
-        """Prepend the `pnpm config get minimumReleaseAge` cooldown probe (unset) to the given command results."""
-        return [Mock(stdout=_PNPM_UNSET), *results]
-
     def assert_pnpm_called(self, mock_run: Mock, *, cooldown: bool = True) -> None:
         """Assert pnpm outdated, update, and list were called (with the cooldown option when expected)."""
         cooldown_option = [_PNPM_COOLDOWN_OPTION] if cooldown else []
@@ -310,7 +326,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         """Test that the package.json is not written if there are no outdated packages."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
-        mock_run.side_effect = self.pnpm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]"))
+        mock_run.side_effect = _pnpm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]"))
         update_package_jsons()
         self.assert_pnpm_called(mock_run)
         self.assert_path_logged(mock_package_json)
@@ -325,7 +341,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         # pnpm outdated exits 1 when there are updates; pnpm installs 1.1 rather than the latest 1.2 (e.g. because
         # minimumReleaseAge holds back the fresh 1.2 release). pnpm list returns a list of projects and splits
         # dependencies over dependencies/devDependencies:
-        mock_run.side_effect = self.pnpm_runs(
+        mock_run.side_effect = _pnpm_runs(
             _outdated_error("package", "1.0", "1.2", dependencyType="devDependencies"),
             Mock(stdout=""),
             Mock(stdout='[{"name": "root", "devDependencies": {"package": {"version": "1.1"}}}]'),
@@ -342,7 +358,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         """Test that a package is not logged when pnpm update did not change its installed version."""
         mock_package_json = self.create_package_json()
         mock_glob.return_value = [mock_package_json]
-        mock_run.side_effect = self.pnpm_runs(
+        mock_run.side_effect = _pnpm_runs(
             _outdated_error("held", "1.0", "1.2"),
             Mock(stdout=""),
             # "held" stayed at 1.0 (e.g. minimumReleaseAge held back every newer release), "untracked" has no version:
@@ -362,7 +378,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         """Test that a package.json with a sibling pnpm-lock.yaml (and no packageManager field) uses pnpm."""
         mock_package_json = self.create_package_json("{}")  # No packageManager field; detection falls to the lockfile.
         mock_glob.return_value = [mock_package_json]
-        mock_run.side_effect = self.pnpm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]"))
+        mock_run.side_effect = _pnpm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]"))
         update_package_jsons()
         self.assert_pnpm_called(mock_run)
         self.assert_no_new_version_logged()
@@ -408,10 +424,8 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
         self.assert_no_new_version_logged()
 
 
-@patch_pathlib_path("rglob", cwd=Path("/"))
-@patch("subprocess.run")
-class StaleDependencyTest(LoggingTestCase):
-    """Unit tests for the package.json staleness check, which makes its own npm registry pass over the deps."""
+class NoUpdateTestCase(LoggingTestCase):
+    """Base for the tests of the checks over the dependencies a package.json declares, run while none is updated."""
 
     @staticmethod
     def stub_no_update(mock_run: Mock) -> None:
@@ -425,16 +439,126 @@ class StaleDependencyTest(LoggingTestCase):
         ]
 
     @staticmethod
+    def discover_package_json(glob: Mock, contents: str) -> Mock:
+        """Return a mock package.json holding the contents, as the only one the glob finds."""
+        package_json = mock_path(contents, parent=Path("/"))
+        glob.return_value = [package_json]
+        return package_json
+
+
+@_no_deprecations
+@staleness_disabled
+@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch("subprocess.run")
+class VulnerableDependencyTest(NoUpdateTestCase):
+    """Unit tests for the package.json vulnerability check, which looks up each dependency pinned to a version."""
+
+    def test_vulnerable_pin_warned(self, mock_run: Mock, glob: Mock):
+        """Test that a dependency pinned to a version OSV reports an advisory for is warned about, at its line."""
+        self.stub_no_update(mock_run)
+        package_json = self.discover_package_json(glob, _LEFT_PAD_PINNED)
+        with osv(ADVISORY):
+            update_package_jsons()
+        self.assert_vulnerable_dependency_logged("left-pad", "1.3.0", VULNERABILITY, Location(package_json, 4))
+
+    def test_each_pin_of_a_name_warned_at_its_line(self, mock_run: Mock, glob: Mock):
+        """Test that each pin of a name two sections declare is warned about at its own line."""
+        self.stub_no_update(mock_run)
+        contents = (
+            "{\n"
+            '  "dependencies": {\n    "left-pad": "1.3.0"\n  },\n'
+            '  "devDependencies": {\n    "left-pad": "1.2.0"\n  }\n'
+            "}\n"
+        )
+        package_json = self.discover_package_json(glob, contents)
+        with osv(ADVISORY):
+            update_package_jsons()
+        self.assert_vulnerable_dependency_logged(
+            "left-pad", "1.3.0", VULNERABILITY, Location(package_json, 3), among_others=True
+        )
+        self.assert_vulnerable_dependency_logged(
+            "left-pad", "1.2.0", VULNERABILITY, Location(package_json, 6), among_others=True
+        )
+
+    @kills(
+        Mutation(
+            update_package_json_module._warn_about_dependencies,
+            "Ecosystem.NPM",
+            "Ecosystem.PYPI",
+            "OSV is asked about a package.json's pins in another ecosystem than npm's",
+        )
+    )
+    def test_osv_is_asked_about_the_exact_pins_alone(self, mock_run: Mock, glob: Mock):
+        """Test that OSV is asked in the npm ecosystem about a dependency pinned to a version, and not about a range."""
+        self.stub_no_update(mock_run)
+        self.discover_package_json(glob, '{"dependencies": {"left-pad": "1.3.0", "react": "^17.0.2"}}')
+        with osv() as mock_post:
+            update_package_jsons()
+        assert_osv_asked_about(mock_post, ("left-pad", "1.3.0"), ecosystem="npm")
+
+    def test_pnpm_project_checked(self, mock_run: Mock, glob: Mock):
+        """Test that a dependency a pnpm project pins to a version is looked up, as an npm project's is."""
+        mock_run.side_effect = _pnpm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]"))
+        self.discover_package_json(glob, '{"packageManager": "pnpm@9.15.0", "dependencies": {"left-pad": "1.3.0"}}')
+        with osv() as mock_post:
+            update_package_jsons()
+        assert_osv_asked_about(mock_post, ("left-pad", "1.3.0"), ecosystem="npm")
+
+
+@no_vulnerabilities
+@staleness_disabled
+@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch("subprocess.run")
+@patch("requests.Session.get")
+class YankedDependencyTest(NoUpdateTestCase):
+    """Unit tests for the package.json yank check, which reads each pinned version's deprecation on npm."""
+
+    def test_deprecated_pin_warned(self, get: Mock, mock_run: Mock, glob: Mock):
+        """Test that a pin on a version npm deprecates is warned about as yanked, and a pin on another one is not."""
+        self.stub_no_update(mock_run)
+        get.return_value = npm_registry({}, deprecated={"1.3.0": "use 2.0 instead"})
+        contents = (
+            '{\n  "name": "app",\n  "dependencies": {\n    "left-pad": "1.3.0",\n    "right-pad": "2.0.0"\n  }\n}\n'
+        )
+        package_json = self.discover_package_json(glob, contents)
+        update_package_jsons()
+        deprecation = Yank(yanked=True, reason="use 2.0 instead")
+        self.assert_yanked_dependency_logged("left-pad", "1.3.0", Location(package_json, 4), deprecation)
+
+    @kills(
+        Mutation(
+            npmjs_module.deprecation,
+            '.get("versions", {})',
+            '["versions"]',
+            "the deprecation lookup aborts the run on the empty document a failed registry request leaves",
+            raises="KeyError: 'versions'",
+        )
+    )
+    def test_unreachable_registry_reported_without_a_yank(self, get: Mock, mock_run: Mock, glob: Mock):
+        """Test that a registry the yank check cannot reach is reported, and leaves the pin unreported as yanked."""
+        self.stub_no_update(mock_run)
+        url = "https://registry.npmjs.org/left-pad"
+        get.return_value = mock_response(ok=False, status_code=503, reason="Service Unavailable", url=url)
+        self.discover_package_json(glob, _LEFT_PAD_PINNED)
+        update_package_jsons()
+        self.assert_could_not_fetch_logged(url, status=503, reason="Service Unavailable")
+
+
+@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch("subprocess.run")
+class StaleDependencyTest(NoUpdateTestCase):
+    """Unit tests for the package.json staleness check, which makes its own npm registry pass over the deps."""
+
+    @staticmethod
     def registry_doc(version: str, published: str) -> Mock:
         """Mock the npm registry document dating the version it names."""
         return mock_response({"time": {version: published}})
 
     def package_json(self, glob: Mock) -> Mock:
         """Discover a single mock package.json depending on `clipboard`, whose entry sits on line 4."""
-        contents = '{\n  "name": "app",\n  "dependencies": {\n    "clipboard": "^2.0.11"\n  }\n}\n'
-        package_json = mock_path(contents, parent=Path("/"))
-        glob.return_value = [package_json]
-        return package_json
+        return self.discover_package_json(
+            glob, '{\n  "name": "app",\n  "dependencies": {\n    "clipboard": "^2.0.11"\n  }\n}\n'
+        )
 
     @patch("requests.Session.get")
     def test_stale_dependency_warned(self, get: Mock, mock_run: Mock, glob: Mock):
@@ -456,8 +580,7 @@ class StaleDependencyTest(LoggingTestCase):
             '  "devDependencies": {\n    "clipboard": "^2.0.11"\n  }\n'
             "}\n"
         )
-        package_json = mock_path(contents, parent=Path("/"))
-        glob.return_value = [package_json]
+        package_json = self.discover_package_json(glob, contents)
         update_package_jsons()
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 3), Location(package_json, 6))
 

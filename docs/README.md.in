@@ -281,14 +281,14 @@ A yank means "stop using this": a release the maintainer withdrew because it was
 
 When no reason was given, the message reports `(reason not specified)` instead.
 
-Update-time gives the warning only when the run leaves the reference on the yanked version. That happens when the replacement is still within the [cooldown](#-cooldown), or when a marker holds the update back. It also happens when a package manager left the pin where it was, or when the yanked release is the newest one. To silence the warning itself, mark the reference `# update-time: ignore[yanked]` (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
+Update-time gives the warning only when the run leaves the reference on the yanked version. That happens when the replacement is still within the [cooldown](#-cooldown), or when a marker holds the update back. It also happens when a package manager left the pin where it was, or when the yanked release is the newest one. To silence the warning itself, mark the reference `# update-time: ignore[yanked]` (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). A `package.json` dependency does not take a marker, so its warning stays until the dependency moves off the yanked version.
 
-Which dependencies are checked follows from where a yank can be observed. PyPI reports one as [PEP 592](https://peps.python.org/pep-0592/) yank metadata. On npm there is no yank, but a per-version *deprecation* is the same signal, and Update-time reports it in the same wording as a yank. Where a withdrawal can be observed, Update-time skips that version when picking a new one, and warns about a reference left on it:
+Which dependencies are checked follows from where a yank can be observed. PyPI reports one as [PEP 592](https://peps.python.org/pep-0592/) yank metadata. On npm there is no yank, but a per-version *deprecation* is the same signal, and Update-time reports it in the same wording as a yank. Where a withdrawal can be observed, Update-time warns about a reference left on it. Where Update-time picks the new version itself, it also skips a withdrawn one:
 
 | Dependency type | Yank check |
 | :-------------- | :--------- |
 | [Python dependencies](#python-dependencies) | `requirements.txt`, `pyproject.toml`, and inline script metadata pins, against PyPI's yank metadata |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: npm and pnpm handle deprecated versions themselves |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | `package.json` exact pins, against the npm registry's deprecation of the pinned version |
 | [Maven dependencies](#maven-dependencies) | none: Maven Central does not report a withdrawal |
 | [Node engine version](#node-engine-version-and-python-version) | none: its source does not record a yank |
 | [Python version](#node-engine-version-and-python-version) | none: its source does not record a yank |
@@ -324,7 +324,7 @@ Which dependencies are checked follows from what OSV holds advisories for:
 | Dependency type | Vulnerability check |
 | :-------------- | :------------------ |
 | [Python dependencies](#python-dependencies) | `requirements.txt`, `pyproject.toml`, and inline script metadata pins, against OSV's PyPI advisories |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | none: those dependencies are declared as ranges and resolved in the lock file, which Update-time does not read |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | `package.json` exact pins, against OSV's npm advisories |
 | [Maven dependencies](#maven-dependencies) | the version each `pom.xml` dependency and plugin is left on, against OSV's Maven advisories |
 | [Node engine version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
 | [Python version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
@@ -1041,11 +1041,11 @@ Update-time checks each dependency against its newest release on the npm registr
 
 #### Yanked dependencies
 
-npm and pnpm handle deprecated versions themselves when they resolve an update, so Update-time does not check a `package.json` dependency for one.
+Update-time checks a dependency pinned to an exact version, such as `"left-pad": "1.3.0"` or `"left-pad": "=1.3.0"`, against the npm registry's deprecation of that version. npm and pnpm leave such a dependency on the version it names, so they never move it off a deprecated one. Update-time does not check a dependency declared as a range, such as `"^1.3.0"`. npm and pnpm handle deprecated versions themselves when they resolve a range.
 
 #### Vulnerable dependencies
 
-Update-time does not check a `package.json` dependency. It declares a range rather than a version, and the lock file records the version that range resolves to. Update-time does not read that lock file.
+Update-time checks a dependency pinned to an exact version, such as `"left-pad": "1.3.0"`, against OSV's npm advisories. It does not check a dependency declared as a range, such as `"^1.3.0"`. A range resolves to the version the lock file records, and Update-time does not read the lock file.
 
 #### Archived dependencies
 
@@ -1053,7 +1053,7 @@ The npm registry does not publish an archival signal, so Update-time does not ch
 
 #### Markers
 
-A `package.json` dependency takes no marker, because npm and pnpm update it rather than Update-time rewriting its lines. Opt one out by declaring an upper bound or an exact version instead.
+A `package.json` dependency takes no marker, because npm and pnpm update it rather than Update-time rewriting its lines. Opt one out by declaring an upper bound or an exact version instead. Update-time still checks a dependency pinned to an exact version for a deprecation and for vulnerabilities. To silence a vulnerability warning on it, pass `--ignore-vulnerability` or `--vulnerability-level`, which apply to the whole run.
 
 ### Maven dependencies
 
