@@ -5,21 +5,24 @@ from typing import TYPE_CHECKING
 from update_time.domain.file_type import PACKAGE_JSON
 from update_time.formats import json as json_format
 from update_time.io.filesystem import glob_for
-from update_time.io.log import get_logger
+from update_time.io.log import get_logger, report_marker
 from update_time.manifests import package_json as package_json_format
+from update_time.markers.directive import Reason
 from update_time.package_managers import node
+from update_time.package_managers.policy import report_markers
 from update_time.references.delegated import (
-    pin_resolver,
     project_resolver,
-    warn_about_projects,
-    warn_about_yanked_dependencies,
+    warn_about_delegated_checks,
+    warn_about_redundant_directives,
 )
-from update_time.references.vulnerability import warn_about_vulnerable_dependencies
 from update_time.sources import npmjs
 from update_time.sources.osv import Ecosystem
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from update_time.formats.json import JsonFile
+    from update_time.markers.reference import SteeredReference
 
 _LOG = get_logger("package.json")
 # Lockfiles that signal which package manager a project uses, checked when there is no corepack `packageManager`
@@ -56,12 +59,31 @@ def update_package_jsons() -> None:
 
 
 def _warn_about_dependencies(package_jsons: list[Path]) -> None:
-    """Check the dependencies of each package.json."""
-    declared = [list(package_json_format.declared_dependencies(package_json)) for package_json in package_jsons]
-    warn_about_projects(declared, project_resolver(npmjs.project), _LOG)
-    pinned = [[reference for reference in references if reference.current_version] for references in declared]
-    warn_about_yanked_dependencies(pinned, pin_resolver(npmjs.deprecation), _LOG)
-    warn_about_vulnerable_dependencies(pinned, Ecosystem.NPM, _LOG)
+    """Report the marker of each dependency, and check the dependencies of each package.json."""
+    files = [json_format.read(package_json) for package_json in package_jsons]
+    declarations = [list(package_json_format.declarations(file)) for file in files]
+    check_targets = [report_markers(file_declarations, _LOG, node.POLICY) for file_declarations in declarations]
+    warn_about_redundant_directives(declarations, _LOG, node.POLICY)
+    _report_undeclared_references(files)
+    registry_declarations = [[target for target in targets if target.names_a_release] for targets in check_targets]
+    warn_about_delegated_checks(
+        registry_declarations, _LOG, project_resolver(npmjs.project), npmjs.deprecation, Ecosystem.NPM
+    )
+
+
+def _report_undeclared_references(files: list[JsonFile]) -> None:
+    """Report the marker of each dependency that the `update-time` field names and its section does not declare."""
+    for file in files:
+        for reference in package_json_format.undeclared_references(file):
+            _report_undeclared_reference(reference)
+
+
+def _report_undeclared_reference(reference: SteeredReference) -> None:
+    """Report the marker of a dependency its section does not declare, and one holding directives as redundant."""
+    marker = reference.marker
+    report_marker(_LOG, reference.dependency, marker, reference.location, holds_the_update_back=False)
+    if marker.invalid_item is None and marker.raw:
+        _LOG.redundant_directive(reference, marker.raw, Reason.UNDECLARED_DEPENDENCY)
 
 
 def main() -> None:  # pragma: no cover

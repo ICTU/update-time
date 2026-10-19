@@ -128,15 +128,6 @@ class StaleDependencyTest(DependencyTomlFileTestCase):
         self.assert_no_warnings_logged()
         self.assert_ignored_staleness_logged("package", Location(file.path, 2))
 
-    @kills(
-        Mutation(
-            uv_module.pypi_projects,
-            "for declaration in declarations:",
-            "steered = list(declarations)\n"
-            "    for declaration in [replace(one, marker=steered[0].marker) for one in steered]:",
-            "one declaration's marker steers every dependency the file declares, rather than the one carrying it",
-        )
-    )
     def test_a_marker_silences_the_declaration_it_steers_and_no_other(self, get: Mock):
         """Test that a marker on one declaration's line leaves the dependency declared below it warned about."""
         get.return_value = dated_pypi_index("1.0")
@@ -517,9 +508,9 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            delegated_module._scopes_that_need_a_version,
-            "if directive.without_a_version is not None and (written := as_written.directive_for",
-            "if directive.scope is Scope.YANKED and (written := as_written.directive_for",
+            delegated_module._redundant_warning_directives,
+            "reason = directive.without_a_version",
+            "reason = directive.without_a_version if directive.scope is Scope.YANKED else None",
             "only the yank scope is reported as needing a version, so a `vulnerable` scope on a dependency that "
             "pins none reads as silencing its warning",
         ),
@@ -556,23 +547,6 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
                     Reason.COOLDOWN_PER_RUN, "package", Location(file.path, 2), "ignore[cooldown<30]"
                 )
 
-    @kills(
-        Mutation(
-            delegated_module._warning_scopes,
-            "yield written, reason",
-            "yield written, reason\n    if cooldown := as_written.cooldown_directive:\n        yield cooldown, reason",
-            "the rule for a dependency no source reports on sweeps the cooldown in with the warnings, so one item "
-            "is reported twice",
-        )
-    )
-    def test_a_cooldown_on_a_dependency_pypi_serves_no_release_for_keeps_its_own_words(self, get: Mock):
-        """Test that a `cooldown` item on a dependency uv resolves from a path is reported once, as applying per run."""
-        file = self.file_holding(pyproject("local==1.0", marker="ignore[cooldown<30]") + _UV_SOURCE)
-        self.check_dependencies(get, file)
-        self.assert_redundant_directive_logged(
-            Reason.COOLDOWN_PER_RUN, "local", Location(file.path, 2), "ignore[cooldown<30]"
-        )
-
     def test_an_ignore_update_is_reported_when_it_freezes_no_pin(self, get: Mock):
         """Test that an `ignore[update]` on a dependency that pins no version is reported, since uv resolves it."""
         file = self.dependency_toml_file("package>=1.0", marker="ignore[update]")
@@ -598,7 +572,7 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
             "`ignore[update]` the reader never wrote",
         ),
         Mutation(
-            delegated_module._scopes_that_need_a_version,
+            delegated_module._redundant_warning_directives,
             "as_written = reference.marker.as_written",
             "as_written = reference.marker",
             "the scopes rule reads the scopes a bare `ignore` holds back without naming, so it reports scopes the "
@@ -631,9 +605,9 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 
     @kills(
         Mutation(
-            uv_module.no_pypi_release,
-            "return Reason.NO_PYPI_RELEASE if declaration.names_no_release else None",
-            "return None",
+            uv_module._unchecked_scopes,
+            "return {} if declaration.names_a_release else ManagerPolicy.every_warning_scope(Reason.NO_PYPI_RELEASE)",
+            "return {}",
             "a dependency PyPI serves no release for is judged as if it did, so a warning scope on it is reported "
             "in the wrong words or not at all",
         )
@@ -688,9 +662,9 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
         Mutation(
             delegated_module._redundant_floating_pin_directive,
             "Reason.PIN_NOT_FLOATING if",
-            "None if",
-            "a Python dependency's pin reads as one that might float, so an `allow[floating-pin]` keeping nothing "
-            "floating is left unreported",
+            "Reason.RANGE_NEVER_PINNED if",
+            "a Python dependency's exact pin reads as a range, so an `allow[floating-pin]` on it is reported for the "
+            "wrong reason",
         )
     )
     def test_an_opt_in_directive_is_reported(self, get: Mock):
@@ -718,17 +692,6 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
         )
         self.assert_none_logged(redundant, "update held back", reason=Reason.DRIFT_NEVER_ADOPTED)
 
-    @kills(
-        Mutation(
-            delegated_module.warn_about_redundant_directives,
-            "for reference in chain.from_iterable(declared):\n"
-            "        for written, reason in _redundant_directives(reference, no_source_for(reference)):",
-            "references = list(chain.from_iterable(declared))\n"
-            "    for reference in references:\n"
-            "        for written, reason in _redundant_directives(references[0], no_source_for(references[0])):",
-            "one declaration's marker steers every dependency the file declares, rather than the one carrying it",
-        )
-    )
     def test_a_marker_reports_for_the_declaration_it_steers_and_no_other(self, get: Mock):
         """Test that a marker on one declaration's line leaves the dependency declared below it unreported."""
         file = self.file_holding(pyproject_per_line("package>=1.0", "other>=1.0", marker="ignore[yanked]"))

@@ -1,4 +1,4 @@
-"""Update uv-managed Python dependencies (work-around for the missing `uv update` command).
+"""Update uv-managed Python dependencies (work-around for the missing `uv update` command), and uv's marker policy.
 
 Covers both pyproject.toml projects and PEP 723 inline script metadata, which declare their dependencies the same
 way and are both resolved through uv. See https://github.com/astral-sh/uv/issues/6794.
@@ -6,7 +6,6 @@ way and are both resolved through uv. See https://github.com/astral-sh/uv/issues
 
 import os
 import re
-from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -15,12 +14,12 @@ from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
 from update_time.domain.dependency import DependencyVersion, normalized_python_name
 from update_time.domain.reference import Reference
 from update_time.formats import toml
-from update_time.io.log import get_logger, report_marker
+from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.manifests import pyproject_toml as pyproject_toml_format
 from update_time.markers.directive import Reason
-from update_time.markers.marker import Scope
 from update_time.markers.reference import SteeredResolvedReference
+from update_time.package_managers.policy import ManagerPolicy, report_markers
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.primitives.lookup import LookedUp
@@ -33,7 +32,7 @@ if TYPE_CHECKING:
     from update_time.io.log import Logger
     from update_time.manifests.dependency_file import DependencyTomlFile, InlineScript, PyprojectToml
     from update_time.manifests.pyproject_toml import Declaration
-    from update_time.markers.marker import Marker
+    from update_time.markers.marker import Scope
 
 _LOG = get_logger("pyproject.toml")
 # Signals that a pyproject.toml is managed by a tool other than uv. Running uv on such a project would mishandle it
@@ -169,24 +168,6 @@ def _by_name(declarations: Iterable[Declaration]) -> dict[DependencyName, list[D
     return by_name
 
 
-def _with_reported_markers(declarations: Iterable[Declaration], log: Logger) -> list[Declaration]:
-    """Return each declaration carrying the marker reporting it settled on, which an unreadable item freezes."""
-    return [replace(declaration, marker=_reported_marker(declaration, log)) for declaration in declarations]
-
-
-def _reported_marker(declaration: Declaration, log: Logger) -> Marker:
-    """Report the declaration's marker, and return the marker to act on."""
-    acted_on = report_marker(
-        log,
-        declaration.dependency,
-        declaration.marker,
-        declaration.location,
-        holds_the_update_back=declaration.pins_a_version and declaration.marker.ignores(Scope.UPDATE),
-    )
-    log.report_inverted_items(declaration, declaration.marker)
-    return acted_on
-
-
 def _log_new_version(log: Logger, package: DependencyName, version: VersionString, locations: list[Location]) -> None:
     """Log that a new version is available for the package, at each of the locations declaring it.
 
@@ -211,7 +192,7 @@ def _update_dependencies(uv_tree: Command, file: DependencyTomlFile, log: Logger
     can skip any follow-up work that would fail the same way.
     """
     log.path(file.path)
-    declarations = _by_name(_with_reported_markers(pyproject_toml_format.declared_dependencies(file), log))
+    declarations = _by_name(report_markers(pyproject_toml_format.declarations(file), log, POLICY))
     outdated = run(uv_tree)
     if not outdated.ok:
         return False
@@ -275,9 +256,16 @@ def update_python_inline_script_metadata(script: InlineScript, log: Logger) -> b
     return _update_dependencies(uv_tree, script, log)
 
 
-def no_pypi_release(declaration: Declaration) -> Reason | None:
-    """Return why PyPI reports nothing about the declaration, or None when PyPI serves a release for it."""
-    return Reason.NO_PYPI_RELEASE if declaration.names_no_release else None
+def _unchecked_scopes(declaration: Declaration) -> dict[Scope, Reason]:
+    """Return each warning scope that Update-time leaves unchecked for the declaration, with the reason.
+
+    Where PyPI does not serve a release for the declaration, Update-time leaves every warning scope unchecked.
+    """
+    return {} if declaration.names_a_release else ManagerPolicy.every_warning_scope(Reason.NO_PYPI_RELEASE)
+
+
+# uv resolves the version an exact pin names, so a pin Update-time leaves as the file writes it stays where it is.
+POLICY = ManagerPolicy(honours_a_freeze=True, unchecked_scopes=_unchecked_scopes)
 
 
 def pypi_served(declarations: Iterable[Declaration]) -> list[Declaration]:
@@ -285,12 +273,7 @@ def pypi_served(declarations: Iterable[Declaration]) -> list[Declaration]:
 
     The rest are declared like any other, so an update uv resolves for one still reaches the line declaring it.
     """
-    return [declaration for declaration in declarations if not declaration.names_no_release]
-
-
-def pinned_versions(declarations: Iterable[Declaration]) -> list[Declaration]:
-    """Return each of the declarations that pins an exact version."""
-    return [declaration for declaration in declarations if declaration.pins_a_version]
+    return [declaration for declaration in declarations if declaration.names_a_release]
 
 
 @archival_reporting

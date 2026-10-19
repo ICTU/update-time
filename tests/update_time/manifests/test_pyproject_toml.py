@@ -90,7 +90,7 @@ class RewritePinnedVersionsTest(unittest.TestCase):
         """Rewrite the declaration at each of the positions to the version given, and return the mock file."""
         pyproject_file = mock_path(contents)
         file = kind(pyproject_file)
-        declared = {declaration.position: declaration for declaration in pyproject_toml.declared_dependencies(file)}
+        declared = {declaration.position: declaration for declaration in pyproject_toml.declarations(file)}
         pins = {declared[position]: version for position, version in versions.items()}
         pyproject_toml.rewrite_pinned_versions(file, pins)
         return pyproject_file
@@ -172,12 +172,12 @@ class RewritePinnedVersionsTest(unittest.TestCase):
         pyproject_file.write_text.assert_not_called()
 
 
-class DeclaredDependenciesTest(unittest.TestCase):
+class DeclarationsTest(unittest.TestCase):
     """Unit tests for reading every dependency a file declares: the exact pins, and the declarations without one."""
 
     def references(self, path: Mock, kind: type[DependencyTomlFile] = PyprojectToml) -> list[Declaration]:
         """Return the reference each dependency the file declares makes."""
-        return list(pyproject_toml.declared_dependencies(kind(path)))
+        return list(pyproject_toml.declarations(kind(path)))
 
     def markers(self, contents: str, kind: type[DependencyTomlFile] = PyprojectToml) -> list[Marker]:
         """Return the marker steering each dependency the file declares."""
@@ -281,7 +281,7 @@ class DeclaredDependenciesTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            pyproject_toml.declared_dependencies,
+            pyproject_toml.declarations,
             "uv_sourced=normalized_python_name(requirement.name) in sourced,",
             "uv_sourced=requirement.name in sourced,",
             "a dependency spelled another way than its `sources` key reads as one PyPI serves, so PyPI is asked "
@@ -359,7 +359,7 @@ class DeclaredDependenciesTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            pyproject_toml.declared_dependencies,
+            pyproject_toml.declarations,
             "file.toml(placed)",
             "placed",
             "a marker's lines come from the file, so every line of a `# /// script` block reads as a comment and "
@@ -385,7 +385,7 @@ class PinnedDeclarationsTest(unittest.TestCase):
 
     def pins(self, path: Mock) -> list[Declaration]:
         """Return the reference each declaration that pins a version makes."""
-        declarations = pyproject_toml.declared_dependencies(PyprojectToml(path))
+        declarations = pyproject_toml.declarations(PyprojectToml(path))
         return [d for d in declarations if d.current_version]
 
     def test_reads_exact_pins_across_arrays(self):
@@ -420,7 +420,7 @@ class PinnedDeclarationsTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            pyproject_toml.declared_dependencies,
+            pyproject_toml.declarations,
             "requirement.name,\n",
             'requirement.name + "".join(f"[{extra}]" for extra in requirement.extras),\n',
             "a pin's name carries the extra its declaration spells, so it names no package the source knows",

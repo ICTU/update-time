@@ -57,13 +57,13 @@ def set_tool_key(path: Path, table: str, key: str, value: str, *, comment: str =
 def rewrite_pinned_versions(file: DependencyTomlFile, versions: dict[Declaration, VersionString]) -> None:
     """Rewrite each declaration to the version `versions` holds for it; write the file if changed.
 
-    One declaration of a name is rewritten while another declaration of that name keeps its pinned version. The
-    declarations are the ones `declared_dependencies` read from this file.
+    One declaration of a name is rewritten while another declaration of that name keeps its pinned version. Each
+    declaration is one that `declarations` read from this file.
     """
-    declarations = {declaration.position: declaration for declaration in versions}
+    by_position = {declaration.position: declaration for declaration in versions}
 
     def new_spec(position: _DeclarationPosition, spec: str) -> str | None:
-        if (declaration := declarations.get(position)) is None:
+        if (declaration := by_position.get(position)) is None:
             return None
         rewritten = _rewritten_spec(spec, declaration, versions[declaration])
         return rewritten if rewritten != spec else None
@@ -156,9 +156,9 @@ class Declaration(SteeredReference):
         return bool(self.current_version)
 
     @property
-    def names_no_release(self) -> bool:
-        """Return whether the declaration points at something other than a release of the package it names."""
-        return self.direct_url or self.uv_sourced
+    def names_a_release(self) -> bool:
+        """Return whether the declaration points at a release of the package it names."""
+        return not (self.direct_url or self.uv_sourced)
 
     @property
     def updatable(self) -> bool:
@@ -170,7 +170,7 @@ class Declaration(SteeredReference):
         return not (self.pins_a_version and self.marker.ignores(Scope.UPDATE))
 
 
-def declared_dependencies(file: DependencyTomlFile) -> list[Declaration]:
+def declarations(file: DependencyTomlFile) -> list[Declaration]:
     """Return every dependency the file declares, each parsed once and located and marked at the line declaring it.
 
     Only the dependency arrays are read, so a string spelled like a spec elsewhere in the file is not one. A spec

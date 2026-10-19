@@ -13,6 +13,7 @@ import libcst
 from libcst.codemod import CodemodContext
 from libcst.codemod.commands.rename import RenameCommand
 from libcst.helpers import get_full_name_for_node
+from libcst.metadata import QualifiedNameProvider
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -96,7 +97,7 @@ def _sources(paths: list[str]) -> dict[str, str]:
 
 
 class _InPlaceRenameCommand(RenameCommand):
-    """Rename a name as `RenameCommand` does, but rename a line importing it alone, unaliased, where it stands.
+    """Rename a name as `RenameCommand` does, but in place where a line imports it alone or its module reaches it.
 
     `RenameCommand` deletes such a line and imports the new name at the top of the module instead, which moves an
     import out of the `if TYPE_CHECKING:` block it sat in.
@@ -115,6 +116,20 @@ class _InPlaceRenameCommand(RenameCommand):
         self.bypass_import = True  # The import stands renamed, so `leave_Module` does not import the new name again
         new_name = libcst.Name(self.new_name.rpartition(".")[-1])
         return updated_node.with_changes(names=[names[0].with_changes(name=new_name)])
+
+    def leave_Attribute(  # noqa: N802
+        self, original_node: libcst.Attribute, updated_node: libcst.Attribute
+    ) -> libcst.Name | libcst.Attribute:
+        """Return the attribute with the old name renamed where the code reads it through its module's name.
+
+        `RenameCommand` imports the new name directly instead, which a local of that name can then shadow. A node
+        without a qualified name sits inside an import statement, which `RenameCommand` renames as it does.
+        """
+        qualified = self.get_metadata(QualifiedNameProvider, original_node, set())
+        if qualified and QualifiedNameProvider.has_name(self, original_node, self.old_name):
+            self.bypass_import = True  # The module's name still reaches the new name, so `leave_Module` imports nothing
+            return updated_node.with_changes(attr=libcst.Name(self.new_name.rpartition(".")[-1]))
+        return super().leave_Attribute(original_node, updated_node)
 
 
 def _renamed(old: str, new: str, source: str) -> str:

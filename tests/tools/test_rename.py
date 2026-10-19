@@ -112,6 +112,16 @@ class RenamedTest(unittest.TestCase):
         source = "from pkg import m\n\nm.other()\n"
         self.assertEqual(_renamed("pkg.m.old", "pkg.m.new", source), source)
 
+    def test_a_reference_through_the_module_keeps_naming_the_module(self):
+        """Test that a reference written through the module's name is renamed there, rather than imported directly."""
+        for case, (imports, name) in {
+            "the module": ("from pkg import m", "m"),
+            "an alias": ("import pkg.m as alias", "alias"),
+        }.items():
+            with self.subTest(case=case):
+                source = f"{imports}\n\n{name}.old()\n"
+                self.assertEqual(_renamed("pkg.m.old", "pkg.m.new", source), source.replace(".old()", ".new()"))
+
 
 class MainTest(unittest.TestCase):
     """Unit tests for renaming over the files named and reporting a rename that did not land."""

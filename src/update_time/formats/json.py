@@ -34,18 +34,22 @@ def read(path: Path) -> JsonFile:
     return JsonFile(path, text, json.loads(text))
 
 
-def entry_offset(contents: str, section: str, name: str) -> int | None:
-    """Return where the section's own entry for the name starts, or None where the document declares no such entry.
+def entry_offset(contents: str, *keys: str) -> int | None:
+    """Return the offset of the entry that the keys name, one level per key, or None where the document lacks it.
 
-    The document's structure decides which entry that is, so the section is the one the document itself declares:
-    a section of the same name nested in another one is passed over. So is a key of the same name in another
-    section, and so is a value that spells the name.
+    Each key names a member of the object the key before it leads to, the first one a member of the document
+    itself. The document's structure decides which entry that is, so a key of the same name at another depth or in
+    another object is passed over, and so is a value that spells the name.
     """
-    for member, _name_offset, value_offset in _members(contents, _skip_whitespace(contents, 0)):
-        if member == section:
-            entries = _members(contents, value_offset)
-            return next((offset for entry, offset, _value in entries if entry == name), None)
-    return None
+    offset = None
+    value_offset = _skip_whitespace(contents, 0)
+    for key in keys:
+        members = _members(contents, value_offset)
+        found = next(((name_offset, value) for member, name_offset, value in members if member == key), None)
+        if found is None:
+            return None
+        offset, value_offset = found
+    return offset
 
 
 def _members(contents: str, start: int) -> Iterator[tuple[str, int, int]]:

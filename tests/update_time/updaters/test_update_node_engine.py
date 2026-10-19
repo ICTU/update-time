@@ -215,22 +215,6 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             package_json._marker,
-            """if not isinstance(field, dict):
-        return _unreadable_field(section, name)""",
-            """if not isinstance(field, dict):
-        return Marker()""",
-            "a field that is not the object it should be reads as naming no marker",
-        ),
-        Mutation(
-            package_json._marker,
-            """if not isinstance(references, dict):
-        return _unreadable_field(section, name)""",
-            """if not isinstance(references, dict):
-        return Marker()""",
-            "a section that is not the object it should be reads as naming no marker",
-        ),
-        Mutation(
-            package_json._marker,
             "return parse_directives(directives) if isinstance(directives, str) else _unreadable_field(section, name)",
             "return parse_directives(directives)",
             "a value that is not the directive list it should be reaches the parser",

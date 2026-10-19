@@ -11,8 +11,6 @@ A URL the mapping doesn't cover raises a KeyError, so a request the test did not
 A URL whose attribute dictionary declares no `integrity` entry gains one, so the browser verifies the script the CDN serves before running it.
 A `*.py` file without such a block stays untouched and never invokes uv.
 A `node` version another section declares — a Volta pin, a dependency of that name — is neither taken for the engine nor steered by the engine's marker.
-A `package.json` dependency takes no marker, because npm and pnpm update it rather than Update-time rewriting its lines.
-A `package.json` dependency takes no marker.
 A `repo: local` or `repo: meta` entry has no `rev:`, so Update-time leaves it untouched, as it leaves a repository hosted outside GitHub untouched.
 A `rev:` whose repository is not on GitHub carries no dependency, so it is left untouched.
 A `start` that opens no object yields nothing, so a section declared as anything but an object holds no entry.
@@ -282,7 +280,6 @@ Return the tag's version without its `v` prefix, leaving a tag that names no ver
 Return the tree listing entry for the path, a directory below the tree when it maps to no text.
 Return the version for a reference that pins no version, carrying its source's report on the project.
 Return the version parsed, or the lowest there is when the source spells it as no version at all.
-Return where the section's own entry for the name starts, or None where the document declares no such entry.
 Return whether the marker leaves no check to run, so no source need be queried for the reference at all.
 Return whether the pinned image's versions carry a date, which they do not when no registry is asked.
 Rich SVG has no viewBox to size the <img> from.
@@ -337,7 +334,6 @@ Test that a changelog that does not name the version yields no changes.
 Test that a command that exits cleanly is ok, even with no output.
 Test that a dated snapshot the registry lists no newer one of keeps its tag and is pinned to its digest.
 Test that a declaration pinning no exact version is left alone.
-Test that a declaration pinning no exact version is left out, since it names no version to check.
 Test that a declaration the mapping holds no version for is left alone, so the file is not written.
 Test that a declared dependency the registry has no release for is skipped without warning or crashing.
 Test that a delimited path:line is one `repr.filename` span, delimiters stripped and no stray number span.
@@ -658,7 +654,6 @@ Where the file declares no such entry, it is located at the file rather than at 
 Which those are is read off the pom before and after the run, rather than from Maven's own report, which names no line to report a change at.
 Yield each dependency type, in the order this class declares them.
 Yield each line with its number, empty where the line is a code fence or sits inside a fenced code block.
-Yield each warning scope the reference's marker writes, with the reason no source answers any of them.
 `=` is no PEP 440 operator.
 `_TAG` reads no version in one, its prefix admitting no dash, so the label is read as the prefix here and the date as the version, which puts such a snapshot on the line its label names.
 `allow` naming one would keep that warning and drop the warning about every other advisory, which is a rule the language does not offer, so `allow[vulnerable=ID]` names no advisory.
@@ -692,7 +687,6 @@ a dependency that pins no version reads as one whose update was held back, thoug
 a dependency type that declares no file goes unnoticed, and the help stops naming its files.
 a digest the file records beside a built image's tag survives into the match, so the image is looked up.
 a directory the contents endpoint answers with a file ends the run with a traceback.
-a field that is not the object it should be reads as naming no marker.
 a file a dependency type declares that the README's Files table leaves out goes unreported.
 a file the codemod cannot parse still writes the renames already made to the other files.
 a file type that names no glob pattern goes unnoticed, and none of its files is ever scanned.
@@ -730,7 +724,6 @@ a scope the reader spelled out is discarded, instead of being kept.
 a scoped npm package tagged without its scope has no changelog reported.
 a section declaring no such name.
 a section of the details chapter that documents no dependency type goes unreported.
-a section that is not the object it should be reads as naming no marker.
 a service declared with no body is read as a mapping, ending the run.
 a service has no body.
 a source is asked about a reference no check needs an answer for, so the run pays for the request.
@@ -752,7 +745,6 @@ noqa: FBT003 # `isfinal` is positional: pyexpat takes no keyword.
 nothing outdated, so no changelog is fetched.
 npm normalizes specs such as `git+https://...` URLs to the `github:` shorthand whenever it saves the manifest, which previously produced a spurious diff even when no version changed; the original file is now restored unless a registry version was actually updated.
 on disk but registered for no dependency type.
-one declaration's marker steers every dependency the file declares, rather than the one carrying it.
 one pin's marker steers every pin the file declares, rather than the one carrying it.
 only the first of the mutations a registration holds is checked.
 scripts have no lockfile.
@@ -772,7 +764,6 @@ the reason the source published is left out of the warning.
 the repository is asked for at a URL GitHub answers 404, so no repository ever reads as archived.
 the repository reports no archival, so a switched-off staleness check skips the pom it reads.
 the resolver reports no archival, so a switched-off staleness check skips the file it reads.
-the rule for a dependency no source reports on sweeps the cooldown in with the warnings, so one item is reported twice.
 the second URL's version list; the npm registry document is cached.
 the service beside it tags no build.
 the source claims to report no archival, so switching the staleness check off leaves it unasked.

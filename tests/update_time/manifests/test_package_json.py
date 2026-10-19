@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from update_time.formats import json as json_format
 from update_time.manifests import package_json
-from update_time.markers.reference import SteeredReference
+from update_time.manifests.package_json import Declaration
 from update_time.primitives.location import Location
 
 from tests.helpers import mock_path
@@ -101,11 +101,11 @@ class DependencyLocationsTest(unittest.TestCase):
         self.assertEqual(package_json.dependency_locations(mock_path('{"name": "x"}')), {})
 
 
-class DeclaredDependenciesTest(unittest.TestCase):
-    """Unit tests for reading a reference to each entry the dependency sections declare."""
+class DeclarationsTest(unittest.TestCase):
+    """Unit tests for reading a declaration for each entry of the dependency sections."""
 
-    def test_a_reference_per_entry(self):
-        """Test that each entry yields a reference at its own line, a name declared twice included."""
+    def test_a_declaration_per_entry(self):
+        """Test that each entry yields a declaration at its own line, a name declared twice included."""
         path = mock_path(
             "{\n"
             '  "dependencies": {\n    "react": "18.2.0",\n    "left-pad": "^1.3.0"\n  },\n'
@@ -114,12 +114,12 @@ class DeclaredDependenciesTest(unittest.TestCase):
             "}\n"
         )
         self.assertEqual(
-            list(package_json.declared_dependencies(path)),
+            list(package_json.declarations(json_format.read(path))),
             [
-                SteeredReference("react", "18.2.0", Location(path, 3, 4)),
-                SteeredReference("left-pad", "", Location(path, 4, 4)),
-                SteeredReference("react", "", Location(path, 7, 4)),
-                SteeredReference("fsevents", "2.3.3", Location(path, 10, 4)),
+                Declaration("react", "18.2.0", Location(path, 3, 4), names_a_release=True),
+                Declaration("left-pad", "", Location(path, 4, 4), names_a_release=True),
+                Declaration("react", "", Location(path, 7, 4), names_a_release=True),
+                Declaration("fsevents", "2.3.3", Location(path, 10, 4), names_a_release=True),
             ],
         )
 
@@ -137,5 +137,5 @@ class DeclaredDependenciesTest(unittest.TestCase):
         ]:
             with self.subTest(spec=spec):
                 path = mock_path(json.dumps({"dependencies": {"left-pad": spec}}))
-                (reference,) = package_json.declared_dependencies(path)
+                (reference,) = package_json.declarations(json_format.read(path))
                 self.assertEqual(reference.current_version, version)
