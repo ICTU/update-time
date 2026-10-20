@@ -1,4 +1,4 @@
-"""Update package.json dependencies with the project's Node package manager (npm or pnpm)."""
+"""Update package.json dependencies with the project's Node package manager (npm or pnpm), and its marker policy."""
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -9,6 +9,9 @@ from update_time.domain.reference import Reference
 from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.manifests.package_json import DEPENDENCY_SECTIONS, dependency_locations
+from update_time.markers.directive import Reason
+from update_time.markers.marker import Scope
+from update_time.package_managers.policy import ManagerPolicy
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.primitives.lookup import LookedUp
@@ -19,6 +22,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName, VersionString
+    from update_time.manifests.package_json import Declaration
 
 _LOG = get_logger("package.json")
 _COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
@@ -140,3 +144,18 @@ _PNPM = _PackageManager(
 # catalog and skips a project whose manager isn't here (yarn, bun) rather than mishandling it by running npm (which
 # would write a stray package-lock.json and ignore the real lock).
 SUPPORTED_MANAGERS = {"npm": _NPM, "pnpm": _PNPM}
+
+
+def _unchecked_scopes(declaration: Declaration) -> dict[Scope, Reason]:
+    """Return each warning scope that Update-time leaves unchecked for the declaration, with the reason.
+
+    The npm registry does not signal archival, so that scope is always among them. Where the declaration does not
+    name a release, Update-time leaves every warning scope unchecked.
+    """
+    if declaration.names_a_release:
+        return {Scope.ARCHIVED: Reason.NO_ARCHIVAL_SIGNAL}
+    return ManagerPolicy.every_warning_scope(Reason.NO_NPM_RELEASE)
+
+
+# npm and pnpm move a dependency within the range its package.json declares, whatever a marker says about it.
+POLICY = ManagerPolicy(honours_a_freeze=False, unchecked_scopes=_unchecked_scopes)

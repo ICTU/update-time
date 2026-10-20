@@ -32,7 +32,8 @@ _RANKS = (
     ("io",),
     ("manifests",),
     ("sources",),
-    ("package_managers", "references"),
+    ("package_managers",),
+    ("references",),
     ("updaters",),
 )
 _LAYERS = tuple(layer for rank in _RANKS for layer in rank)
@@ -205,8 +206,10 @@ class LayeringTest(unittest.TestCase):
     - `manifests` read, write, and parse the files that declare dependencies. They rank before `sources` because a
       registry serves such a file too: Maven Central serves the pom an artefact was published with.
     - `sources` are the backends the outer layers ask about a dependency.
-    - `package_managers` drive the external managers, uv, npm, and pnpm, using manifests and sources.
+    - `package_managers` drive the external managers, uv, npm, and pnpm, using manifests and sources, and say which
+      directives a manager's dependencies can be steered by.
     - `references` decide which version a pinned reference should update to, and rewrite the reference accordingly.
+      They rank after `package_managers` because the checks a manager's dependencies get follow its policy.
     - `updaters` wire everything together.
     """
 

@@ -191,6 +191,21 @@ def _redundant_directives(
     }
 
 
+def _redundant_package_json_markers(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log a sample per redundancy warning particular to a package.json marker, paired with the placeholder."""
+    log.redundant_directive(
+        reference("bats", Location(Path("package.json"), 4)), "ignore[stale]", Reason.NO_NPM_RELEASE
+    )
+    unserved = capture.take()
+
+    undeclared = reference("lodash", Location(Path("package.json"), 9))
+    log.redundant_directive(undeclared, "ignore[stale]", Reason.UNDECLARED_DEPENDENCY)
+    return {
+        "@@REDUNDANT_UNSERVED_NPM_DEPENDENCY_WARNING@@": unserved,
+        "@@REDUNDANT_UNDECLARED_DEPENDENCY_WARNING@@": capture.take(),
+    }
+
+
 def _redundant_for_the_dependency_type(
     log: Logger, capture: _Capture, requirements: Location, workflow: Location
 ) -> dict[str, str]:
@@ -447,6 +462,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@ARCHIVED_WARNING@@": archival,
         **redundant,
         **redundant_for_the_type,
+        **_redundant_package_json_markers(log, capture),
         **invalid,
         **inverted,
         **understood_markers,

@@ -2,20 +2,28 @@
 
 import json
 import subprocess  # nosec
+from datetime import datetime
+from logging import WARNING
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
+from update_time.io.log import Logger
+from update_time.markers.directive import Reason
+from update_time.markers.marker import Marker, Scope
+from update_time.package_managers import policy as policy_module
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
+from update_time.references import delegated as delegated_module
 from update_time.sources import npmjs as npmjs_module
 from update_time.updaters import update_package_json as update_package_json_module
 from update_time.updaters.update_package_json import update_package_jsons
 
 from tests.helpers import mock_path, mock_response, patch_pathlib_path
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import FRESH_DATE, STALE_DATE
+from tests.update_time.fixtures import BARE_IGNORE, FRESH_DATE, STALE_DATE
 from tests.update_time.helpers import (
     LoggingTestCase,
     github_commits_json,
@@ -26,6 +34,9 @@ from tests.update_time.helpers import (
 )
 from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
 from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulnerabilities, osv
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 _NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN.default}"  # the cooldown npm option Update-time adds by default
 _PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN.default * 24 * 60}"  # pnpm's, in minutes
@@ -445,6 +456,27 @@ class NoUpdateTestCase(LoggingTestCase):
         glob.return_value = [package_json]
         return package_json
 
+    @staticmethod
+    def registry_doc(version: str, published: str) -> Mock:
+        """Mock the npm registry document dating the version it names."""
+        return mock_response({"time": {version: published}})
+
+    @staticmethod
+    def clipboard_contents(marker: str = "", spec: str = "^2.0.11") -> str:
+        """Return a package.json depending on `clipboard`, whose entry sits on line 4."""
+        field = f',\n  "update-time": {{"dependencies": {{"clipboard": "{marker}"}}}}' if marker else ""
+        return f'{{\n  "name": "app",\n  "dependencies": {{\n    "clipboard": "{spec}"\n  }}{field}\n}}\n'
+
+    def run_on_package_json(
+        self, get: Mock, mock_run: Mock, glob: Mock, contents: str, published: datetime = FRESH_DATE
+    ) -> Mock:
+        """Run Update-time on the only package.json, holding the contents, its newest release published then."""
+        self.stub_no_update(mock_run)
+        get.return_value = self.registry_doc("2.0.11", published.isoformat())
+        package_json = self.discover_package_json(glob, contents)
+        update_package_jsons()
+        return package_json
+
 
 @_no_deprecations
 @staleness_disabled
@@ -549,48 +581,37 @@ class YankedDependencyTest(NoUpdateTestCase):
 class StaleDependencyTest(NoUpdateTestCase):
     """Unit tests for the package.json staleness check, which makes its own npm registry pass over the deps."""
 
-    @staticmethod
-    def registry_doc(version: str, published: str) -> Mock:
-        """Mock the npm registry document dating the version it names."""
-        return mock_response({"time": {version: published}})
-
-    def package_json(self, glob: Mock) -> Mock:
-        """Discover a single mock package.json depending on `clipboard`, whose entry sits on line 4."""
-        return self.discover_package_json(
-            glob, '{\n  "name": "app",\n  "dependencies": {\n    "clipboard": "^2.0.11"\n  }\n}\n'
-        )
-
     @patch("requests.Session.get")
     def test_stale_dependency_warned(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that a direct dependency whose newest release is old is warned about, at the line it is declared on."""
-        self.stub_no_update(mock_run)
-        get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
-        package_json = self.package_json(glob)
-        update_package_jsons()
+        package_json = self.run_on_package_json(get, mock_run, glob, self.clipboard_contents(), STALE_DATE)
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 4))
 
     @patch("requests.Session.get")
     def test_dependency_declared_in_two_sections(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that a dependency two sections declare is warned about at each of the lines declaring it."""
-        self.stub_no_update(mock_run)
-        get.return_value = self.registry_doc("2.0.11", STALE_DATE.isoformat())
         contents = (
             "{\n"
             '  "dependencies": {\n    "clipboard": "^2.0.11"\n  },\n'
             '  "devDependencies": {\n    "clipboard": "^2.0.11"\n  }\n'
             "}\n"
         )
-        package_json = self.discover_package_json(glob, contents)
-        update_package_jsons()
+        package_json = self.run_on_package_json(get, mock_run, glob, contents, STALE_DATE)
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 3), Location(package_json, 6))
+
+    @patch("requests.Session.get")
+    def test_stale_dependency_a_marker_silences_not_warned(self, get: Mock, mock_run: Mock, glob: Mock):
+        """Test that an `ignore[stale]` marker is reported as recognised, and silences the staleness warning."""
+        contents = self.clipboard_contents(marker="ignore[stale]")
+        package_json = self.run_on_package_json(get, mock_run, glob, contents, STALE_DATE)
+        self.assert_no_warnings_logged()
+        self.assert_recognised_marker_logged("clipboard", Location(package_json, 4), Marker(ignored_scopes=Scope.STALE))
+        self.assert_ignored_staleness_logged("clipboard", Location(package_json, 4))
 
     @patch("requests.Session.get")
     def test_recent_dependency_not_warned(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that a direct dependency whose newest release is recent is not warned about as stale."""
-        self.stub_no_update(mock_run)
-        get.return_value = self.registry_doc("2.0.11", FRESH_DATE.isoformat())
-        self.package_json(glob)
-        update_package_jsons()
+        self.run_on_package_json(get, mock_run, glob, self.clipboard_contents())
         self.assert_no_warnings_logged()
 
     @patch("requests.Session.get")
@@ -598,7 +619,7 @@ class StaleDependencyTest(NoUpdateTestCase):
         """Test that a declared dependency the registry has no release for is skipped without warning or crashing."""
         self.stub_no_update(mock_run)
         get.return_value = mock_response({})  # the document dates no version, so newest_release returns None
-        self.package_json(glob)
+        self.discover_package_json(glob, self.clipboard_contents())
         update_package_jsons()
         self.assert_no_warnings_logged()
 
@@ -607,7 +628,174 @@ class StaleDependencyTest(NoUpdateTestCase):
     def test_disabled_makes_no_registry_request(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that `--stale-after 0` skips the staleness pass entirely, so it makes no npm registry request."""
         self.stub_no_update(mock_run)
-        self.package_json(glob)
+        self.discover_package_json(glob, self.clipboard_contents())
         update_package_jsons()
         get.assert_not_called()
         self.assert_no_warnings_logged()
+
+
+@no_vulnerabilities
+@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch("subprocess.run")
+@patch("requests.Session.get")
+class MarkerTest(NoUpdateTestCase):
+    """Unit tests for the markers the `update-time` field of a package.json names for its dependencies."""
+
+    def run_on_marker(self, get: Mock, mock_run: Mock, glob: Mock, marker: str, spec: str = "^2.0.11") -> Mock:
+        """Run Update-time on a package.json whose `clipboard` entry the marker steers, its newest release recent."""
+        return self.run_on_package_json(get, mock_run, glob, self.clipboard_contents(marker, spec))
+
+    def run_on_undeclared_markers(self, get: Mock, mock_run: Mock, glob: Mock, markers: str) -> Mock:
+        """Run Update-time on a package.json whose field holds the JSON members under `dependencies`, on line 5."""
+        contents = (
+            '{\n  "dependencies": {"clipboard": "^2.0.11"},\n  "devDependencies": {"is-number": "^7.0.0"},\n'
+            f'  "update-time": {{\n    "dependencies": {{{markers}}}\n  }}\n}}\n'
+        )
+        return self.run_on_package_json(get, mock_run, glob, contents)
+
+    def test_an_inverted_comparison_is_reported(self, get: Mock, mock_run: Mock, glob: Mock):
+        """Test that each item running the wrong way round is reported as incorrect."""
+        messages = {
+            "stale>=90": Logger._MESSAGE_INVERTED_STALE_ITEM,
+            "cooldown>=30": Logger._MESSAGE_INVERTED_COOLDOWN_ITEM,
+            "vulnerable>=high": Logger._MESSAGE_INVERTED_VULNERABLE_ITEM,
+        }
+        for item, message in messages.items():
+            with self.subTest(item=item):
+                package_json = self.run_on_marker(get, mock_run, glob, f"ignore[{item}]")
+                self.assert_logged(message, item=item, dependency="clipboard", location=Location(package_json, 4))
+
+    @kills(
+        Mutation(
+            delegated_module._redundant_update_directives,
+            "not policy.freezes_the_pin(reference)",
+            "not reference.current_version",
+            "an `ignore[update]` on an exact pin reads as freezing it, though npm and pnpm leave such a pin where it "
+            "is whatever the marker says",
+        )
+    )
+    def test_a_directive_deciding_nothing_is_reported(self, get: Mock, mock_run: Mock, glob: Mock):
+        """Test that each directive that decides nothing for a `package.json` dependency is reported, saying why."""
+        cases = {
+            "archived": ("^2.0.11", "ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL),
+            "archived on an exact pin": ("2.0.11", "ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL),
+            "yanked on a range": ("^2.0.11", "ignore[yanked]", Reason.NO_VERSION_TO_CHECK_FOR_A_YANK),
+            "vulnerable on a range": ("^2.0.11", "ignore[vulnerable]", Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY),
+            "cooldown": ("^2.0.11", "ignore[cooldown<30]", Reason.COOLDOWN_PER_RUN),
+            "freeze on a range": ("^2.0.11", "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION),
+            "freeze on an exact pin": ("2.0.11", "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION),
+            "bound": ("^2.0.11", "allow[update<3]", Reason.BOUND_DECIDES_NOTHING),
+            "hash drift": ("^2.0.11", "allow[hash-drift]", Reason.NO_HASH_PIN),
+            "floating pin on an exact pin": ("2.0.11", "allow[floating-pin]", Reason.PIN_NOT_FLOATING),
+            "floating pin on a range": ("^2.0.11", "allow[floating-pin]", Reason.RANGE_NEVER_PINNED),
+        }
+        for case, (spec, directive, reason) in cases.items():
+            with self.subTest(case=case):
+                package_json = self.run_on_marker(get, mock_run, glob, directive, spec)
+                self.assert_redundant_directive_logged(reason, "clipboard", Location(package_json, 4), directive)
+
+    def test_a_warning_scope_is_reported_for_a_dependency_the_registry_serves_no_release_for(
+        self, get: Mock, mock_run: Mock, glob: Mock
+    ):
+        """Test that each warning scope is reported for a dependency whose spec does not name a registry release."""
+        spec = "git+https://github.com/zenorocha/clipboard.js.git"
+        for directive in ("ignore[stale]", "ignore[yanked]", "ignore[vulnerable]", "ignore[archived]"):
+            with self.subTest(directive=directive):
+                package_json = self.run_on_marker(get, mock_run, glob, directive, spec)
+                self.assert_redundant_directive_logged(
+                    Reason.NO_NPM_RELEASE, "clipboard", Location(package_json, 4), directive
+                )
+
+    def test_a_marker_naming_an_entry_its_section_does_not_declare_is_reported(
+        self, get: Mock, mock_run: Mock, glob: Mock
+    ):
+        """Test that a marker under a section that does not declare the name is recognised and reported as redundant."""
+        stale = Marker(ignored_scopes=Scope.STALE)
+        for case, (name, directive, marker) in {
+            "undeclared": ("lodash", "ignore[stale]", stale),
+            "declared in another section": ("is-number", "ignore[stale]", stale),
+            "a bare ignore": ("lodash", "ignore", BARE_IGNORE),
+        }.items():
+            with self.subTest(case=case):
+                package_json = self.run_on_undeclared_markers(get, mock_run, glob, f'"{name}": "{directive}"')
+                location = Location(package_json, 5)
+                self.assert_redundant_directive_logged(Reason.UNDECLARED_DEPENDENCY, name, location, directive)
+                self.assert_recognised_marker_logged(name, location, marker)
+
+    @kills(
+        Mutation(
+            update_package_json_module._report_undeclared_reference,
+            "if marker.invalid_item is None and marker.raw:",
+            "if marker.raw:",
+            "an unreadable item on an undeclared dependency is reported as redundant as well as invalid",
+        )
+    )
+    def test_an_undeclared_marker_that_cannot_be_read_is_reported_as_invalid(
+        self, get: Mock, mock_run: Mock, glob: Mock
+    ):
+        """Test that an unreadable marker on an undeclared dependency is reported as invalid, not as redundant."""
+        for case, (value, item) in {
+            "a value that is not a string": ('["ignore"]', "update-time.dependencies.lodash"),
+            "an unreadable item": ('"ignore[stlae]"', "stlae"),
+        }.items():
+            with self.subTest(case=case):
+                package_json = self.run_on_undeclared_markers(get, mock_run, glob, f'"lodash": {value}')
+                self.assert_invalid_bracket_item_logged("lodash", Location(package_json, 5), item)
+
+    def test_an_undeclared_marker_without_a_directive_is_not_reported(self, get: Mock, mock_run: Mock, glob: Mock):
+        """Test that an undeclared dependency's marker without a directive is left unreported."""
+        for case, value in {"empty": '""', "bare text": '"pinned on purpose"'}.items():
+            with self.subTest(case=case):
+                markers = f'"lodash": {value}, "left-pad": "ignore[stale]"'
+                package_json = self.run_on_undeclared_markers(get, mock_run, glob, markers)
+                self.assert_redundant_directive_logged(
+                    Reason.UNDECLARED_DEPENDENCY, "left-pad", Location(package_json, 5), "ignore[stale]"
+                )
+
+    def test_a_field_of_the_wrong_shape_is_reported_as_invalid_and_the_check_still_runs(
+        self, get: Mock, mock_run: Mock, glob: Mock
+    ):
+        """Test that an `update-time` field or section that is not an object is reported as invalid, and checked."""
+        for case, field in {"field": '"ignore"', "section": '{"dependencies": "ignore"}'}.items():
+            with self.subTest(case=case):
+                contents = (
+                    '{\n  "name": "app",\n  "dependencies": {\n    "clipboard": "^2.0.11"\n  },\n'
+                    f'  "update-time": {field}\n}}\n'
+                )
+                package_json = self.run_on_package_json(get, mock_run, glob, contents, STALE_DATE)
+                location = Location(package_json, 4)
+                self.assert_invalid_bracket_item_logged(
+                    "clipboard", location, "update-time.dependencies.clipboard", among_others=True
+                )
+                self.assert_stale_dependency_logged("clipboard", "2.0.11", location, among_others=True)
+                self.assertEqual(len(self.records(WARNING)), 2)
+
+    def test_a_marker_steers_the_entry_of_its_own_section_alone(self, get: Mock, mock_run: Mock, glob: Mock):
+        """Test that a marker under `dependencies` leaves the name `devDependencies` declares as well warned about."""
+        contents = (
+            "{\n"
+            '  "dependencies": {\n    "clipboard": "^2.0.11"\n  },\n'
+            '  "devDependencies": {\n    "clipboard": "^2.0.11"\n  },\n'
+            '  "update-time": {"dependencies": {"clipboard": "ignore[stale]"}}\n'
+            "}\n"
+        )
+        package_json = self.run_on_package_json(get, mock_run, glob, contents, STALE_DATE)
+        self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 6))
+        self.assert_ignored_staleness_logged("clipboard", Location(package_json, 3))
+
+    @kills(
+        Mutation(
+            policy_module._report_reference_marker,
+            "policy.freezes_the_pin(reference) and",
+            "bool(reference.current_version) and",
+            "an `ignore[update]` on an exact pin reads as holding its update back, though npm decides the update",
+        )
+    )
+    def test_a_freeze_on_an_exact_pin_is_not_reported_as_holding_the_update_back(
+        self, get: Mock, mock_run: Mock, glob: Mock
+    ):
+        """Test that an `ignore[update]` on an exact pin is not reported as holding the update back."""
+        package_json = self.run_on_marker(get, mock_run, glob, "ignore[update]", "2.0.11")
+        marker = Marker(ignored_scopes=Scope.UPDATE)
+        self.assert_recognised_marker_logged("clipboard", Location(package_json, 4), marker)
+        self.assert_none_logged(Logger._MESSAGE_IGNORED, "update held back by a marker")

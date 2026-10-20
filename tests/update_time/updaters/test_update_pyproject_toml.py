@@ -9,6 +9,7 @@ from update_time.io.log import Logger
 from update_time.manifests import pyproject_toml
 from update_time.manifests.dependency_file import PyprojectToml
 from update_time.markers.marker import Marker, Scope, Threshold
+from update_time.package_managers import policy as policy_module
 from update_time.package_managers import uv
 from update_time.primitives.location import Location
 from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
@@ -180,9 +181,9 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            uv._reported_marker,
-            "holds_the_update_back=declaration.pins_a_version and ",
-            "holds_the_update_back=",
+            policy_module.ManagerPolicy.freezes_the_pin,
+            "return self.honours_a_freeze and bool(reference.current_version)",
+            "return self.honours_a_freeze",
             "a dependency that pins no version reads as one whose update was held back, though the marker froze no "
             "pin and uv resolved the version anyway",
         )
@@ -220,16 +221,14 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
     @kills(
         Mutation(
             uv._update_dependencies,
-            "declarations = _by_name(_with_reported_markers("
-            "pyproject_toml_format.declared_dependencies(file), log))\n"
+            "declarations = _by_name(report_markers(pyproject_toml_format.declarations(file), log, POLICY))\n"
             "    outdated = run(uv_tree)\n"
             "    if not outdated.ok:\n"
             "        return False\n",
             "outdated = run(uv_tree)\n"
             "    if not outdated.ok:\n"
             "        return False\n"
-            "    declarations = _by_name(_with_reported_markers("
-            "pyproject_toml_format.declared_dependencies(file), log))\n",
+            "    declarations = _by_name(report_markers(pyproject_toml_format.declarations(file), log, POLICY))\n",
             "a failed uv tree skips the marker report, so a marker on a pin reads as unrecognised",
         )
     )
@@ -261,9 +260,9 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            uv._with_reported_markers,
-            "replace(declaration, marker=_reported_marker(declaration, log))",
-            "(_reported_marker(declaration, log), declaration)[1]",
+            policy_module.report_markers,
+            "replace(reference, marker=_report_reference_marker(reference, log, policy))",
+            "(_report_reference_marker(reference, log, policy), reference)[1]",
             "the marker a report settles on is discarded, so an unreadable item warns and the pin it may have been "
             "meant to freeze is rewritten anyway",
         )
@@ -301,17 +300,16 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            uv._reported_marker,
-            "log.report_inverted_items(declaration, declaration.marker)",
-            "log.report_inverted_items(declaration, type(declaration.marker)())",
+            policy_module._report_reference_marker,
+            "log.report_inverted_items(reference, reference.marker)",
+            "log.report_inverted_items(reference, type(reference.marker)())",
             "the declaration's own marker never reaches the warning, so an item comparing the wrong way is left "
             "unreported and reads as understood",
         ),
         Mutation(
-            uv._with_reported_markers,
-            "[replace(declaration, marker=_reported_marker(declaration, log)) for declaration in declarations]",
-            "[replace(declaration, marker=_reported_marker(declaration, log)) "
-            "if declaration.current_version else declaration for declaration in declarations]",
+            policy_module.report_markers,
+            "for reference in references]",
+            "for reference in references if reference.current_version]",
             "a dependency that pins no exact version has its marker reported nowhere, so what that marker gets wrong "
             "reaches nobody",
         ),
@@ -335,10 +333,10 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            uv._reported_marker,
-            "return acted_on",
-            "return acted_on.frozen if any(threshold.inverted_item for threshold in "
-            "(declaration.marker.stale, declaration.marker.cooldown, declaration.marker.vulnerable)) else acted_on",
+            policy_module._report_reference_marker,
+            "return marker",
+            "return marker.frozen if any(threshold.inverted_item for threshold in "
+            "(marker.stale, marker.cooldown, marker.vulnerable)) else marker",
             "an item comparing the wrong way round freezes the pin, as an item that cannot be read at all does",
         )
     )

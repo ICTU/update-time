@@ -1202,9 +1202,9 @@ def get_logger(name: str) -> Logger:
 def report_marker(
     log: Logger, dependency: str, marker: Marker, location: Location, *, holds_the_update_back: bool
 ) -> Marker:
-    """Report a reference's marker to the log, and return the marker to act on.
+    """Report a reference's marker to the log, and return it, frozen where an item is invalid.
 
-    A marker with an unreadable item comes back frozen, since the item may have been meant to hold the update back.
+    An invalid item may have been meant to hold the update back.
     """
     if marker.invalid_item is not None:
         log.invalid_bracket_item(dependency, marker.invalid_item, location)

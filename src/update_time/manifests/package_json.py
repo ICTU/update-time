@@ -1,6 +1,7 @@
 """Read package.json files: the dependency entries, the exact versions they pin, and the `update-time` field."""
 
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from update_time.formats import json as json_format
@@ -45,19 +46,33 @@ def _marker(contents: dict, section: str, name: DependencyName) -> Marker:
     that is not a directive list, are both a shape the language cannot read, and leave the reference as it is
     rather than ending the run.
     """
-    field = contents.get(_MARKER_FIELD, {})
-    if not isinstance(field, dict):
-        return _unreadable_field(section, name)
-    references = field.get(section, {})
-    if not isinstance(references, dict):
+    references = _section_markers(contents, section)
+    if references is None:
         return _unreadable_field(section, name)
     directives = references.get(name, "")
     return parse_directives(directives) if isinstance(directives, str) else _unreadable_field(section, name)
 
 
+def _section_markers(contents: dict, section: str) -> dict | None:
+    """Return what the `update-time` field holds for the section, or None where either is not an object.
+
+    A file that leaves either out reads as naming an empty object for the section.
+    """
+    field = contents.get(_MARKER_FIELD, {})
+    references = field.get(section, {}) if isinstance(field, dict) else None
+    return references if isinstance(references, dict) else None
+
+
 def _unreadable_field(section: str, name: DependencyName) -> Marker:
     """Return the marker for a field the language cannot read: an invalid item naming where the marker would sit."""
     return Marker(invalid_item=f"{_MARKER_FIELD}.{section}.{name}")
+
+
+@dataclass(frozen=True, kw_only=True)
+class Declaration(SteeredReference):
+    """A dependency declared in a package.json section, and whether its spec names a release on the npm registry."""
+
+    names_a_release: bool
 
 
 def dependency_locations(path: Path) -> dict[DependencyName, list[Location]]:
@@ -66,19 +81,39 @@ def dependency_locations(path: Path) -> dict[DependencyName, list[Location]]:
     A name declared in several sections carries a location per entry, so none of the lines it sits on is lost.
     """
     locations: dict[DependencyName, list[Location]] = {}
-    for reference in declared_dependencies(path):
-        locations.setdefault(reference.dependency, []).append(reference.location)
+    for declaration in declarations(json_format.read(path)):
+        if declaration.names_a_release:
+            locations.setdefault(declaration.dependency, []).append(declaration.location)
     return locations
 
 
-def declared_dependencies(path: Path) -> Iterator[SteeredReference]:
-    """Yield a reference to each registry entry the dependency sections declare, at the exact version it pins if any."""
-    package_json = json_format.read(path)
+def declarations(package_json: JsonFile) -> Iterator[Declaration]:
+    """Yield a declaration for each entry of the dependency sections, at the exact version it pins if any.
+
+    Each declaration carries the marker the `update-time` field names for its entry.
+    """
     for section in DEPENDENCY_SECTIONS:
         for name, spec in package_json.contents.get(section, {}).items():
-            if _is_registry_spec(spec):
-                version = match["version"] if (match := _EXACT_VERSION.fullmatch(spec)) else ""
-                yield SteeredReference(name, version, _entry_location(package_json, section, name))
+            names_a_release = _is_registry_spec(spec)
+            match = _EXACT_VERSION.fullmatch(spec) if names_a_release else None
+            version = match["version"] if match else ""
+            steered = reference_marker(package_json, section, name)
+            yield Declaration(
+                name, version, steered.reference_location, marker=steered.marker, names_a_release=names_a_release
+            )
+
+
+def undeclared_references(package_json: JsonFile) -> Iterator[SteeredReference]:
+    """Yield a reference to each name the `update-time` field gives under a section that does not declare that name.
+
+    Each reference is located at the line in the field that names it.
+    """
+    for section in DEPENDENCY_SECTIONS:
+        entries = package_json.contents.get(section, {})
+        for name in _section_markers(package_json.contents, section) or {}:
+            if name not in entries:
+                location = _entry_location(package_json, _MARKER_FIELD, section, name)
+                yield SteeredReference(name, "", location, marker=_marker(package_json.contents, section, name))
 
 
 def _is_registry_spec(spec: object) -> bool:
@@ -90,13 +125,13 @@ def _is_registry_spec(spec: object) -> bool:
     return isinstance(spec, str) and ":" not in spec and "/" not in spec
 
 
-def _entry_location(package_json: JsonFile, section: str, name: str) -> Location:
-    """Return where the section declares the name, down to the column its entry starts on.
+def _entry_location(package_json: JsonFile, *keys: str) -> Location:
+    """Return the location of the entry that the keys name, down to the column.
 
     Where the file declares no such entry, it is located at the file rather than at a line guessed from elsewhere.
     """
     text = package_json.text
-    offset = json_format.entry_offset(text, section, name)
+    offset = json_format.entry_offset(text, *keys)
     if offset is None:
         return Location(package_json.path)
     return Location(package_json.path, line_number(text, offset), column(text, offset))

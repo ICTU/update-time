@@ -7,13 +7,12 @@ from unittest.mock import ANY, Mock, call, patch
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
 from update_time.manifests.dependency_file import PyprojectToml
-from update_time.manifests.pyproject_toml import declared_dependencies
+from update_time.manifests.pyproject_toml import declarations
 from update_time.package_managers.uv import (
     _persist_exclude_newer,
     _workspace_root,
     _workspace_table,
     configure_cooldown,
-    pinned_versions,
     pypi_served,
 )
 
@@ -180,23 +179,9 @@ class PypiServedDependenciesTest(unittest.TestCase):
             '[tool.uv.sources]\nlocal = {path = "../local"}\nloose = {path = "../loose"}\n'
         )
         path = mock_path(contents)
-        self.assertEqual(
-            pypi_served(declared_dependencies(PyprojectToml(path))), [declaration("other", "2.0", path, 2, 3)]
-        )
+        self.assertEqual(pypi_served(declarations(PyprojectToml(path))), [declaration("other", "2.0", path, 2, 3)])
 
     def test_a_direct_reference_is_skipped(self):
         """Test that a dependency given as a URL is left out, since it resolves to no release on PyPI."""
         path = mock_path('dependencies = ["pkg @ git+https://github.com/org/repo.git", "other>=2.0"]\n')
-        self.assertEqual(
-            pypi_served(declared_dependencies(PyprojectToml(path))), [declaration("other", "", path, 1, 2)]
-        )
-
-
-class PinnedVersionsTest(unittest.TestCase):
-    """Unit tests for picking the exact pins out of the dependencies a file declares."""
-
-    def test_a_declaration_without_an_exact_pin_is_left_out(self):
-        """Test that a declaration pinning no exact version is left out, since it names no version to check."""
-        path = mock_path('[project]\ndependencies = ["pinned==1.0", "loose>=2.0"]\n')
-        declared = pypi_served(declared_dependencies(PyprojectToml(path)))
-        self.assertEqual(pinned_versions(declared), [declaration("pinned", "1.0", path, 2, 1)])
+        self.assertEqual(pypi_served(declarations(PyprojectToml(path))), [declaration("other", "", path, 1, 2)])

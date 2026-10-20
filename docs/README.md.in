@@ -281,7 +281,7 @@ A yank means "stop using this": a release the maintainer withdrew because it was
 
 When no reason was given, the message reports `(reason not specified)` instead.
 
-Update-time gives the warning only when the run leaves the reference on the yanked version. That happens when the replacement is still within the [cooldown](#-cooldown), or when a marker holds the update back. It also happens when a package manager left the pin where it was, or when the yanked release is the newest one. To silence the warning itself, mark the reference `# update-time: ignore[yanked]` (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)). A `package.json` dependency does not take a marker, so its warning stays until the dependency moves off the yanked version.
+Update-time gives the warning only when the run leaves the reference on the yanked version. That happens when the replacement is still within the [cooldown](#-cooldown), or when a marker holds the update back. It also happens when a package manager left the pin where it was, or when the yanked release is the newest one. To silence the warning itself, mark the reference `# update-time: ignore[yanked]` (see [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference)).
 
 Which dependencies are checked follows from where a yank can be observed. PyPI reports one as [PEP 592](https://peps.python.org/pep-0592/) yank metadata. On npm there is no yank, but a per-version *deprecation* is the same signal, and Update-time reports it in the same wording as a yank. Where a withdrawal can be observed, Update-time warns about a reference left on it. Where Update-time picks the new version itself, it also skips a withdrawn one:
 
@@ -426,6 +426,8 @@ So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen.
 `# update-time: ignore[vulnerable]` silences the vulnerability warning for one you assessed, while the reference keeps updating. `# update-time: ignore[archived]` silences the archival warning for a dependency you decided to keep using. To silence it for every dependency in the run, pass `--ignore-archived` (see [Archived dependencies](#-archived-dependencies)). A reason can still follow the scope, for example `# update-time: ignore[update] (pinned until the 3.13 migration)`.
 
 A bare `# update-time: ignore` and an `ignore[update]` win over any directive beside them that would change the reference: a [bound](#bounding-an-update), an [`allow[hash-drift]`](#adopting-hash-drift), or an [`allow[floating-pin]`](#keeping-a-pin-floating). Update-time leaves the reference untouched.
+
+Where a package manager decides the update, a marker holds back the warnings alone. npm and pnpm move a `package.json` dependency within the range the file declares, and uv resolves a `pyproject.toml` dependency that does not pin an exact version. Update-time reports an `ignore[update]` on either as [redundant](#a-bound).
 
 #### Setting a staleness threshold
 
@@ -606,13 +608,13 @@ A marker is written in one of three places, and the file's format decides which:
   ]
   ```
 
-- **In an `update-time` field**, for a reference in a file that can hold no comment. A `package.json` is strict JSON. So its Node engine's marker names the reference it steers instead of sitting beside it, in a field mirroring the file's own structure:
+- **In an `update-time` field**, for a reference in a file that can hold no comment. A `package.json` is strict JSON. So the marker of its Node engine or of one of its dependencies names the reference it steers instead of sitting beside it, in a field mirroring the file's own structure:
 
   ```json
-  "update-time": { "engines": { "node": "ignore" } }
+  "update-time": { "engines": { "node": "ignore" }, "dependencies": { "left-pad": "ignore[stale]" } }
   ```
 
-The field is the Node engine's alone: every other reference that takes a marker takes it in a comment. Those files are Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, and GitHub Actions workflows. They also include `.pre-commit-config.yaml` files, `devcontainer.json` files, `requirements.txt` files, `pyproject.toml` files, the `# /// script` blocks in `*.py` files, `.python-version` files, `pom.xml` files, and the jsDelivr URLs in a Sphinx `conf.py`. Use a `#` comment everywhere except in `devcontainer.json` and `pom.xml`. A `devcontainer.json` is JSONC, so its marker goes in a `//` comment. A `pom.xml` is XML, so its marker goes in a `<!-- … -->` comment. An inline marker steers only a reference on its own line, never on the line below it.
+The field is the `package.json`'s alone: every other reference that takes a marker takes it in a comment. Those files are Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, and GitHub Actions workflows. They also include `.pre-commit-config.yaml` files, `devcontainer.json` files, `requirements.txt` files, `pyproject.toml` files, the `# /// script` blocks in `*.py` files, `.python-version` files, `pom.xml` files, and the jsDelivr URLs in a Sphinx `conf.py`. Use a `#` comment everywhere except in `devcontainer.json` and `pom.xml`. A `devcontainer.json` is JSONC, so its marker goes in a `//` comment. A `pom.xml` is XML, so its marker goes in a `<!-- … -->` comment. An inline marker steers only a reference on its own line, never on the line below it.
 
 Inside a `# /// script` block, every line of the TOML is already commented out, so the marker needs a `#` of its own:
 
@@ -628,7 +630,7 @@ A marker written with the block's own `#` alone uncomments to `update-time: igno
 
 A dependency array can put several declarations on one line, or each on a line of its own, so two rules decide which declaration a marker steers. An inline marker steers every dependency declared on its line, so a marker beside `dependencies = ["a==1", "b==2"]` steers both. A marker on the line above steers whatever the line below it declares, wherever in the array that declaration sits. So a marker above the `dependencies = [` line steers nothing, since that line declares no dependency.
 
-A `package.json` dependency takes no marker. Opt one out by declaring an upper bound or an exact version instead (see [npm and pnpm dependencies](#npm-and-pnpm-dependencies)).
+A `package.json` dependency takes its marker under the section that declares it (see [npm and pnpm dependencies](#markers-1)).
 
 #### Confirming a marker was understood
 
@@ -658,7 +660,7 @@ A line about a warning appears only when the marker actually silenced one, so an
 
 A directive is redundant when it decides nothing for the reference it sits on: a scope silencing a warning that reference never gets, or a bound narrowing nothing. Update-time reports each one at `WARNING`.
 
-Update-time never reports a bare `# update-time: ignore` as redundant. It names no scope, so a warning would have no directive to name. Update-time does report a scope or item written beside it, so `# update-time: ignore ignore[yanked]` on a Docker image reports the `ignore[yanked]` as redundant, since a registry does not record a yank.
+Update-time never reports a bare `# update-time: ignore` as redundant on a reference it updates or checks. It names no scope, so a warning would have no directive to name. A marker naming a dependency that its `package.json` section does not declare is the exception: the whole marker decides nothing there, so Update-time reports the bare `ignore` as redundant (see [npm and pnpm dependencies](#markers-1)). Update-time does report a scope or item written beside it, so `# update-time: ignore ignore[yanked]` on a Docker image reports the `ignore[yanked]` as redundant, since a registry does not record a yank.
 
 #### The `stale` scope
 
@@ -667,7 +669,7 @@ Staleness is measured against the publication date of a dependency's newest rele
 | Dependency type | When `stale` is redundant |
 | :-------------- | :------------------------ |
 | [Python dependencies](#python-dependencies) | on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | on a dependency that does not resolve to a registry release, such as a git URL |
 | [Maven dependencies](#maven-dependencies) | on an artefact Maven Central does not serve, and on a declaration that leaves its version to the declaration managing it |
 | [Node engine version](#node-engine-version-and-python-version) | never |
 | [Python version](#node-engine-version-and-python-version) | never |
@@ -695,7 +697,7 @@ Where a cooldown holds nothing back, Update-time reports the `cooldown` scope as
 | Dependency type | When `cooldown` is redundant |
 | :-------------- | :--------------------------- |
 | [Python dependencies](#python-dependencies) | on a `pyproject.toml` or inline script metadata dependency, since uv takes a cooldown per run rather than per dependency, and on a `requirements.txt` requirement that pins no exact version, since Update-time resolves no update for it |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | always: npm and pnpm take a cooldown per run rather than per dependency |
 | [Maven dependencies](#maven-dependencies) | on a declaration whose version Maven does not update, and on an artefact Maven Central does not serve |
 | [Node engine version](#node-engine-version-and-python-version) | never |
 | [Python version](#node-engine-version-and-python-version) | never |
@@ -723,7 +725,7 @@ A yank can only be observed where the dependency's source reports one, and only 
 | Dependency type | When `yanked` is redundant |
 | :-------------- | :------------------------- |
 | [Python dependencies](#python-dependencies) | on a dependency that pins no exact version, and on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | on a dependency that pins no exact version, and on a dependency that does not resolve to a registry release |
 | [Maven dependencies](#maven-dependencies) | always: Maven Central does not report a withdrawal |
 | [Node engine version](#node-engine-version-and-python-version) | always: its source does not record a yank |
 | [Python version](#node-engine-version-and-python-version) | always: its source does not record a yank |
@@ -746,7 +748,7 @@ A vulnerability can only be reported where OSV holds advisories for the dependen
 | Dependency type | When `vulnerable` is redundant whatever the version |
 | :-------------- | :-------------------------------------------------- |
 | [Python dependencies](#python-dependencies) | on a dependency that pins no exact version, and on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | on a dependency that pins no exact version, and on a dependency that does not resolve to a registry release |
 | [Maven dependencies](#maven-dependencies) | on a declaration whose version Maven leaves unresolved, such as a managed version naming a property that the poms do not declare, and on a declaration that leaves its version to the declaration managing it |
 | [Node engine version](#node-engine-version-and-python-version) | always: OSV does not hold advisories for this kind of dependency |
 | [Python version](#node-engine-version-and-python-version) | always: OSV does not hold advisories for this kind of dependency |
@@ -789,7 +791,7 @@ Archival can only be observed where the dependency's source publishes an archiva
 | Dependency type | When `archived` is redundant |
 | :-------------- | :--------------------------- |
 | [Python dependencies](#python-dependencies) | on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | always: the npm registry does not publish an archival signal |
 | [Maven dependencies](#maven-dependencies) | on an artefact Maven Central does not serve, on an artefact whose poms do not name a GitHub repository, and on a declaration that leaves its version to the declaration managing it |
 | [Node engine version](#node-engine-version-and-python-version) | always: its source does not publish an archival signal |
 | [Python version](#node-engine-version-and-python-version) | always: its source does not publish an archival signal |
@@ -818,7 +820,7 @@ An `allow[floating-pin]` on a reference whose pin does not float keeps nothing f
 @@REDUNDANT_FLOATING_PIN_WARNING@@
 ```
 
-Update-time never pins a range such as `humanize>=4`, so an `allow[floating-pin]` on one is redundant as well:
+Update-time never pins a range such as `humanize>=4` or `^17.0.0`, so an `allow[floating-pin]` on one is redundant as well:
 
 ```console
 @@REDUNDANT_RANGE_FLOATING_PIN_WARNING@@
@@ -845,7 +847,7 @@ An `allow[hash-drift]` adopts what a drifted hash pin points at (see [Adopting h
 | Dependency type | When `allow[hash-drift]` is redundant |
 | :-------------- | :------------------------------------ |
 | [Python dependencies](#python-dependencies) | always: a pin names a version, and Update-time writes no hash beside it |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | never: a `package.json` dependency takes no marker |
+| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | always: the integrity hashes live in the package manager's lock file |
 | [Maven dependencies](#maven-dependencies) | always: a pom names a version, and Maven records an artefact's checksum beside the artefact |
 | [Node engine version](#node-engine-version-and-python-version) | always: it names a Node version, not an artefact that could be hashed |
 | [Python version](#node-engine-version-and-python-version) | always: it names a Python version, not an artefact that could be hashed |
@@ -876,6 +878,8 @@ A [bound](#bounding-an-update) can be redundant in two ways:
 On a `requirements.txt` requirement that pins no exact version, Update-time reports every bound as redundant, `ignore[update]` included, since it resolves no update to bound.
 
 On a `pyproject.toml` or inline script metadata dependency, Update-time reports every bound as redundant, since uv answers with one version rather than the candidates a bound would narrow. It reports an `ignore[update]` as redundant only for a dependency that pins no exact version.
+
+On a `package.json` dependency, Update-time reports every bound as redundant, `ignore[update]` included, since npm and pnpm move the dependency within the range the file declares, whatever its marker says.
 
 On a GitHub Action or pre-commit hook that names a branch, a tag such as `stable-2024`, or a commit SHA, Update-time reports every bound as redundant, since none of them names a version to bound. In the run that pins a branch, a tag, or a short SHA to a version tag, Update-time judges the bound at that version instead. It never pins a full SHA, so a bound on one is always redundant.
 
@@ -1037,7 +1041,7 @@ For pnpm, Update-time passes the cooldown via pnpm's `minimumReleaseAge` setting
 
 #### Stale dependencies
 
-Update-time checks each dependency against its newest release on the npm registry, and reports the stale ones. It skips dependencies given as git, file, link, workspace, alias, or GitHub-shorthand references, since they don't resolve to a registry release.
+Update-time checks each dependency against its newest release on the npm registry, and reports the stale ones. It skips dependencies given as git, file, link, workspace, alias, or GitHub-shorthand references, since they don't resolve to a registry release. A dependency's marker can set a threshold of its own, such as `ignore[stale<90]`, or silence the warning with `ignore[stale]` (see [Markers](#markers-1)).
 
 #### Yanked dependencies
 
@@ -1053,7 +1057,32 @@ The npm registry does not publish an archival signal, so Update-time does not ch
 
 #### Markers
 
-A `package.json` dependency takes no marker, because npm and pnpm update it rather than Update-time rewriting its lines. Opt one out by declaring an upper bound or an exact version instead. Update-time still checks a dependency pinned to an exact version for a deprecation and for vulnerabilities. To silence a vulnerability warning on it, pass `--ignore-vulnerability` or `--vulnerability-level`, which apply to the whole run.
+A `package.json` is strict JSON, so a dependency's marker goes in the file's `update-time` field rather than in a comment. The marker sits under the section that declares the dependency, so it steers that one entry. A name that `dependencies` and `devDependencies` both declare takes a marker per section:
+
+```json
+{
+  "dependencies": { "left-pad": "^1.3.0" },
+  "devDependencies": { "is-number": "^7.0.0" },
+  "update-time": {
+    "dependencies": { "left-pad": "ignore[stale]" },
+    "devDependencies": { "is-number": "ignore[stale<90]" }
+  }
+}
+```
+
+A marker steers the checks rather than the update, since npm and pnpm move a dependency within the range the file declares. Declare an upper bound or an exact version to opt a dependency out of updates. The `stale` scope applies to every dependency that resolves to a registry release, and the `yanked` and `vulnerable` scopes apply to a dependency pinned to an exact version. Update-time reports every other scope as [redundant](#redundant-markers).
+
+Update-time reports every scope as redundant on a dependency that does not resolve to a registry release, such as a git URL:
+
+```console
+@@REDUNDANT_UNSERVED_NPM_DEPENDENCY_WARNING@@
+```
+
+A marker naming a dependency that its section does not declare decides nothing, and Update-time reports it as redundant:
+
+```console
+@@REDUNDANT_UNDECLARED_DEPENDENCY_WARNING@@
+```
 
 ### Maven dependencies
 
@@ -1355,7 +1384,7 @@ A `.python-version` entry takes a marker in either placement. But uv rejects an 
 3.12
 ```
 
-The Node engine version takes a marker too, but not as a comment: `package.json` is strict JSON, which has nowhere to put one. Its marker goes in an `update-time` field instead, which mirrors the file's own structure. The marker steering the engine therefore sits under `engines` and `node`, as the engine itself does:
+The Node engine version takes a marker too, but not as a comment: `package.json` is strict JSON, which has nowhere to put one. Its marker goes in an `update-time` field instead, which mirrors the file's own structure, as the marker of a [`package.json` dependency](#markers-1) does. The marker steering the engine therefore sits under `engines` and `node`, as the engine itself does:
 
 ```json
 {

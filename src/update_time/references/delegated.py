@@ -11,19 +11,21 @@ from update_time.markers.directive import WARNING_DIRECTIVES, Reason
 from update_time.markers.marker import Scope
 from update_time.markers.reference import SteeredReference, SteeredResolvedReference
 from update_time.references.resolve import (
-    opt_in_redundancy,
     project_is_checked,
     report_project,
     staleness_threshold,
 )
+from update_time.references.vulnerability import warn_about_vulnerable_dependencies
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator, Mapping
 
     from update_time.domain.dependency import DependencyName, ProjectGetter, VersionString, Yank
     from update_time.domain.reference import ReferenceResolver
     from update_time.io.log import Logger
     from update_time.markers.directive import RedundancyReason
+    from update_time.package_managers.policy import ManagerPolicy
+    from update_time.sources.osv import Ecosystem
 
 
 def project_resolver(get_project: ProjectGetter) -> ReferenceResolver[SteeredReference, SteeredResolvedReference]:
@@ -103,29 +105,36 @@ def _checked_references[ReferenceT: SteeredReference](
     ]
 
 
-def _scopes_that_need_a_version(reference: SteeredReference) -> Iterator[tuple[str, RedundancyReason]]:
-    """Yield each directive whose check needs a version the reference pins none of, with the reason it is redundant.
+def _redundant_warning_directives(
+    reference: SteeredReference, unchecked: Mapping[Scope, Reason]
+) -> Iterator[tuple[str, RedundancyReason]]:
+    """Yield each warning scope the reference's marker writes that holds nothing back, with the reason it is redundant.
 
-    A check about the version a reference is left on has none to run on where the reference pins none, so its scope
-    holds nothing back there. The scopes with no such reason are the ones a check runs for whatever is pinned.
+    A scope that Update-time leaves unchecked takes the reason `unchecked` gives for it. A check about the version a
+    reference is left on has none to run on where the reference pins none, so its scope holds nothing back there.
     """
-    if reference.current_version:
-        return
     as_written = reference.marker.as_written
     for directive in WARNING_DIRECTIVES:
-        if directive.without_a_version is not None and (written := as_written.directive_for(directive.scope)):
-            yield written, directive.without_a_version
+        if not (written := as_written.directive_for(directive.scope)):
+            continue
+        reason = unchecked.get(directive.scope)
+        if reason is None and not reference.current_version:
+            reason = directive.without_a_version
+        if reason is not None:
+            yield written, reason
 
 
-def _redundant_update_directives(reference: SteeredReference) -> Iterator[tuple[str, RedundancyReason]]:
+def _redundant_update_directives[ReferenceT: SteeredReference](
+    reference: ReferenceT, policy: ManagerPolicy[ReferenceT]
+) -> Iterator[tuple[str, RedundancyReason]]:
     """Yield each redundant directive steering the update, with the reason it is redundant.
 
-    An `ignore[update]` freezes the version the file records. So it holds something back for a reference that pins
-    a version, and nothing for one that pins none. A bound narrows candidates the package manager never offers, so
-    it decides nothing whatever the reference pins, and whatever an `ignore[update]` beside it holds back.
+    An `ignore[update]` holds something back only where the policy freezes the reference's pin. A bound narrows
+    candidates the package manager never offers, so it decides nothing whatever the reference pins, and whatever an
+    `ignore[update]` beside it holds back.
     """
     as_written = reference.marker.as_written
-    if as_written.ignores(Scope.UPDATE) and not reference.current_version:
+    if as_written.ignores(Scope.UPDATE) and not policy.freezes_the_pin(reference):
         yield as_written.bound_directive, Reason.MANAGER_RESOLVES_THE_VERSION
     if bound := as_written.version_bound_directive:
         yield bound, Reason.BOUND_DECIDES_NOTHING
@@ -137,70 +146,40 @@ def _redundant_cooldown_directive(reference: SteeredReference) -> Iterator[tuple
         yield cooldown, Reason.COOLDOWN_PER_RUN
 
 
-def _holds_the_update_back(reference: SteeredReference) -> bool:
-    """Return whether the reference's marker holds its update back, which it does only for a pinned version.
-
-    The marker is read whole rather than as written, since a bare `ignore` holds the update back without naming it.
-    """
-    return bool(reference.current_version) and reference.marker.ignores(Scope.UPDATE)
-
-
 def _redundant_floating_pin_directive(reference: SteeredReference) -> Iterator[tuple[str, RedundancyReason]]:
     """Yield the floating-pin directive the reference's marker writes, with the reason it keeps nothing floating."""
-    held_back = _holds_the_update_back(reference)
-    reason = Reason.PIN_NOT_FLOATING if reference.current_version else Reason.RANGE_NEVER_PINNED
-    if (
-        floating := opt_in_redundancy(reference.marker, Scope.FLOATING_PIN, reason, update_held_back=held_back)
-    ) is not None:
-        yield reference.marker.allow_directive(Scope.FLOATING_PIN), floating
+    if reference.marker.allows(Scope.FLOATING_PIN):
+        reason = Reason.PIN_NOT_FLOATING if reference.current_version else Reason.RANGE_NEVER_PINNED
+        yield reference.marker.allow_directive(Scope.FLOATING_PIN), reason
 
 
 def _redundant_hash_drift_directive(reference: SteeredReference) -> Iterator[tuple[str, RedundancyReason]]:
     """Yield the hash-drift directive the reference's marker writes, with the reason it adopts nothing."""
-    held_back = _holds_the_update_back(reference)
-    if (
-        drift := opt_in_redundancy(reference.marker, Scope.HASH_DRIFT, Reason.NO_HASH_PIN, update_held_back=held_back)
-    ) is not None:
-        yield reference.marker.allow_directive(Scope.HASH_DRIFT), drift
+    if reference.marker.allows(Scope.HASH_DRIFT):
+        yield reference.marker.allow_directive(Scope.HASH_DRIFT), Reason.NO_HASH_PIN
 
 
-def _warning_scopes(reference: SteeredReference, reason: Reason) -> Iterator[tuple[str, RedundancyReason]]:
-    """Yield each warning scope the reference's marker writes, with the reason no source answers any of them."""
-    as_written = reference.marker.as_written
-    for directive in WARNING_DIRECTIVES:
-        if written := as_written.directive_for(directive.scope):
-            yield written, reason
-
-
-def _redundant_directives(
-    reference: SteeredReference, no_source: Reason | None
+def _redundant_directives[ReferenceT: SteeredReference](
+    reference: ReferenceT, policy: ManagerPolicy[ReferenceT]
 ) -> Iterator[tuple[str, RedundancyReason]]:
     """Yield each redundant directive of the reference's marker, with the reason it is redundant."""
-    yield from _redundant_update_directives(reference)
+    yield from _redundant_update_directives(reference, policy)
     yield from _redundant_cooldown_directive(reference)
     yield from _redundant_floating_pin_directive(reference)
     yield from _redundant_hash_drift_directive(reference)
-    if no_source is None:
-        yield from _scopes_that_need_a_version(reference)
-    else:
-        yield from _warning_scopes(reference, no_source)
+    yield from _redundant_warning_directives(reference, policy.unchecked_scopes(reference))
 
 
 def warn_about_redundant_directives[ReferenceT: SteeredReference](
-    declared: Iterable[Iterable[ReferenceT]],
-    log: Logger,
-    no_source_for: Callable[[ReferenceT], Reason | None],
+    declared: Iterable[Iterable[ReferenceT]], log: Logger, policy: ManagerPolicy[ReferenceT]
 ) -> None:
-    """Warn about each redundant directive of a reference's marker, saying why it is redundant.
-
-    `no_source_for` answers why no source reports anything about a reference, or None where one of them does.
-    """
+    """Warn about each redundant directive of a reference's marker, saying why it is redundant."""
     for reference in chain.from_iterable(declared):
-        for written, reason in _redundant_directives(reference, no_source_for(reference)):
+        for written, reason in _redundant_directives(reference, policy):
             log.redundant_directive(reference, written, reason)
 
 
-def warn_about_yanked_dependencies[ReferenceT: SteeredReference](
+def _warn_about_yanked_dependencies[ReferenceT: SteeredReference](
     declared: Iterable[Iterable[ReferenceT]],
     pinned_releases: ReferenceResolver[ReferenceT, SteeredResolvedReference],
     log: Logger,
@@ -209,3 +188,20 @@ def warn_about_yanked_dependencies[ReferenceT: SteeredReference](
     checked = [[pin for pin in pins if _asks_its_source(pin)] for pins in declared]
     for resolved in resolved_references(checked, pinned_releases):
         log.report_yank(resolved, resolved.marker)
+
+
+def warn_about_delegated_checks[ReferenceT: SteeredReference](
+    served: Iterable[Iterable[ReferenceT]],
+    log: Logger,
+    projects: ReferenceResolver[ReferenceT, SteeredResolvedReference],
+    yank: Callable[[DependencyName, VersionString], Yank],
+    ecosystem: Ecosystem,
+) -> None:
+    """Run the project, yank, and vulnerability checks over the dependencies a source serves a release for.
+
+    Each file's dependencies are walked by every check, so each is a list rather than a generator.
+    """
+    warn_about_projects(served, projects, log)
+    pinned = [[reference for reference in references if reference.current_version] for references in served]
+    _warn_about_yanked_dependencies(pinned, pin_resolver(yank), log)
+    warn_about_vulnerable_dependencies(pinned, ecosystem, log)

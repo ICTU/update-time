@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 - Link a new version's changes to the page they come from. Closes [#399](https://github.com/ICTU/update-time/issues/399).
 - Warn about a `package.json` dependency pinned to an exact version that npm deprecated or a security advisory names. Closes [#252](https://github.com/ICTU/update-time/issues/252).
+- Let a `package.json` dependency take a marker in the file's `update-time` field, so it can silence or set a threshold for its warnings. Closes [#255](https://github.com/ICTU/update-time/issues/255).
 
 ## 0.0.49 - 2026-10-18
 
