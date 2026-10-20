@@ -350,6 +350,12 @@ class Logger:
         """Log that a reference was pinned to a hash, named by the version or the ref it pins."""
         self._log(self._MESSAGE_PINNED, **self._reference_fields(reference, version=version.version, sha=version.sha))
 
+    _MESSAGE_PINNED_VERSION = LogMessage(INFO, "Pinned %(dependency)s in %(location)s to %(version)s")
+
+    def pinned_version(self, reference: Reference, version: DependencyVersion) -> None:
+        """Log that a floating reference was pinned to the version it serves, without a hash."""
+        self._log(self._MESSAGE_PINNED_VERSION, **self._reference_fields(reference, version=version.version))
+
     _MESSAGE_KEEPING_FLOATING_TAG = LogMessage(
         DEBUG,
         "Keeping the floating tag %(dependency)s%(tag)s in %(location)s: it resolves to %(resolved)s@%(sha)s "
@@ -436,6 +442,17 @@ class Logger:
         """Log that a reference whose image Update-time does not look up was left as it is, explaining why."""
         fields = self._tagged_fields(reference, reference.current_version)
         self._log(self._MESSAGE_IMAGE_NOT_LOOKED_UP, **fields, reason=reason)
+
+    _MESSAGE_SUBSTITUTED_REFERENCE = LogMessage(
+        DEBUG,
+        "Reference %(dependency)s%(tag)s in %(location)s is %(substituted)s with its build arguments substituted; it "
+        "does not get a digest, since a digest would overrule a --build-arg",
+    )
+
+    def substituted_reference(self, reference: Reference, substituted: str) -> None:
+        """Log a reference naming build arguments as Docker builds on it, and why it does not get a digest."""
+        fields = self._tagged_fields(reference, reference.current_version)
+        self._log(self._MESSAGE_SUBSTITUTED_REFERENCE, **fields, substituted=substituted)
 
     _MESSAGE_CANNOT_PIN = LogMessage(
         INFO,

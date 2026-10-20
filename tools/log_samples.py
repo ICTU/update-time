@@ -306,7 +306,20 @@ def _images_not_looked_up(log: Logger, capture: _Capture, dockerfile: Location) 
     log.image_not_looked_up(reference("deps", dockerfile), ImageNotLookedUp.BUILD_STAGE)
     variable = reference("redis", Location(Path("docker-compose.yml"), 7), "7.2-${VARIANT}")
     log.image_not_looked_up(variable, ImageNotLookedUp.THROUGH_A_VARIABLE)
+    log.image_not_looked_up(reference("python", dockerfile, "3.14"), ImageNotLookedUp.VERSION_ACROSS_LINES)
+    log.image_not_looked_up(
+        reference("python", dockerfile, "3.14"), ImageNotLookedUp.ARGUMENT_SHARED_WITH_ANOTHER_FROM_LINE
+    )
+    log.image_not_looked_up(reference("python", dockerfile, "$PY"), ImageNotLookedUp.DIGEST_OVERRULES_BUILD_ARGUMENTS)
     return capture.take()
+
+
+def _build_argument_samples(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
+    """Log a reference naming build arguments as Docker builds on it, and a floating default pinned to its version."""
+    log.substituted_reference(reference("python", dockerfile, "$PY"), "python:3.14")
+    substituted = capture.take()
+    log.pinned_version(reference("python", dockerfile, "$PY"), DependencyVersion("3.14.7"))
+    return {"@@SUBSTITUTED_REFERENCE@@": substituted, "@@PINNED_VERSION@@": capture.take()}
 
 
 def _unpinned_floating_tags(log: Logger, capture: _Capture) -> str:
@@ -455,6 +468,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@HELD_BACK_BY_COOLDOWN@@": held_back_by_cooldown,
         "@@NO_PUSH_DATE@@": undated_pushes,
         "@@IMAGES_NOT_LOOKED_UP@@": images_not_looked_up,
+        **_build_argument_samples(log, capture, dockerfile),
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
         "@@VULNERABILITY_WARNING@@": vulnerable,

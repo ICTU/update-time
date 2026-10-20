@@ -605,7 +605,6 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
         for case, (image, tag) in cases.items():
             with self.subTest(case):
-                self.requests.reset_mock()
                 mock_file = mock_path(self.reference(f"{image}:{tag}"))
                 run_updater(mock_file)
                 self.assert_left_alone_unqueried(mock_file, image, tag, 1, ImageNotLookedUp.THROUGH_A_VARIABLE)

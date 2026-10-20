@@ -35,9 +35,9 @@ from update_time.domain.dependency import (
 )
 from update_time.domain.image_lookup import explaining_skipped_lookups
 from update_time.domain.publication import publication_date_reporting, reports_publication_dates
+from update_time.domain.reference import VARIABLE
 from update_time.io.fetch import fetch, next_page_url
 from update_time.io.log import get_logger
-from update_time.primitives.digest import SHA256_DIGEST
 from update_time.primitives.lookup import DeferredLookup
 from update_time.sources import docker_hub
 
@@ -51,40 +51,12 @@ if TYPE_CHECKING:
 
 _LOG = get_logger("oci")
 
-# A variable or a template standing in for part of a reference, whose value Update-time does not know: a `$VAR` or
-# `${VAR}`, a Helm `{{ .Values.tag }}`, or a CircleCI `<< parameters.tag >>`. A `$VAR` takes every word character
-# after its `$` and gives none back. Otherwise the regex tries every split between a variable and the characters
-# around it, which takes seconds on a line that holds several variables and does not match.
-_VARIABLE = r"\$\w++|\$\{[^}]*\}|\{\{[^}]*\}\}|<<[^>]*>>"
-
-# A Docker image reference as it appears in files: `dependency:version` with an optional `@sha256:digest`.
-# Updaters prefix this with the keyword that introduces the reference in their file format (`FROM `, `image: `).
-# The image name and the tag may hold a variable, which `tag_getter` reports rather than resolves.
-_IMAGE_NAME = rf"(?P<dependency>(?:[\w\d\./-]|{_VARIABLE})+)"
-_TAG_CHARACTER = rf"(?:[\d\w\.\-]|{_VARIABLE})"
-_IMAGE_DIGEST = rf"(?:@(?P<sha>{SHA256_DIGEST}))?"
-
-# The reference as most file formats write it, its digest optional but its tag required.
-IMAGE_REFERENCE = rf"{_IMAGE_NAME}:(?P<version>{_TAG_CHARACTER}+){_IMAGE_DIGEST}"
-
-# The reference for a file format that writes it without a tag as well, such as a Dockerfile's `FROM python`. The
-# tag then matches empty, at the position pinning writes it to. A colon is consumed only when a tag follows it. The
-# reference ends at whitespace, a double quote, the end of the line, or a YAML flow collection's `,`, `]`, or `}`, so
-# a reference holding syntax Update-time does not read as a variable does not match.
-OPTIONALLY_TAGGED_IMAGE_REFERENCE = (
-    rf'{_IMAGE_NAME}(?::(?={_TAG_CHARACTER}))?(?P<version>{_TAG_CHARACTER}*){_IMAGE_DIGEST}(?=[\s",\]}}]|$)'
-)
-
 # The tag Docker resolves a reference naming no tag to, which floats like any other channel.
 _DEFAULT_TAG = "latest"
 
 # The labels naming a channel the registry re-points rather than a variant of the image. A version tag can
 # carry one — `24-lts` names whichever 24 release is the LTS one — so a pin keeping it would float on.
 _CHANNEL_LABELS = frozenset({_DEFAULT_TAG, "lts", "stable", "edge"})
-
-# The same reference under a YAML `image:` key, shared by the CircleCI, GitLab CI, Docker Compose, and Helm updaters.
-# Its tag is optional, an `image:` naming none as readable a reference as one that names a tag.
-YAML_IMAGE_REFERENCE = rf"image: {OPTIONALLY_TAGGED_IMAGE_REFERENCE}"
 
 # Image references without a registry host are on Docker Hub, whose OCI registry host differs from the user-facing
 # `docker.io` alias and whose images live under an implicit `library/` namespace.
@@ -402,7 +374,7 @@ def tag_getter(image_not_pulled: Callable[[PinnedDependency], ImageNotLookedUp |
 
     def image_not_looked_up(pinned: PinnedDependency) -> ImageNotLookedUp | None:
         """Return why no registry is asked about the pinned image, or None when one is."""
-        if re.search(_VARIABLE, f"{pinned.name}:{pinned.version}"):
+        if re.search(VARIABLE, f"{pinned.name}:{pinned.version}"):
             return ImageNotLookedUp.THROUGH_A_VARIABLE
         return image_not_pulled(pinned)
 

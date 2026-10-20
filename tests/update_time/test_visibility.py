@@ -1,4 +1,7 @@
-"""Test that the names the modules make public have callers outside the module defining them."""
+"""Test that the names the modules make public have callers outside the module defining them.
+
+Also test that no private class takes a public class's name with an underscore added.
+"""
 
 import ast
 import pathlib
@@ -167,6 +170,21 @@ def _privates_imported_elsewhere(files: list[pathlib.Path]) -> list[str]:
     return sorted(reported)
 
 
+def _private_classes_named_like_public_ones(files: list[pathlib.Path]) -> list[str]:
+    """Return the private classes whose name, without its underscore, is the name of a public class.
+
+    The two names then stand for two concepts, and a reader takes the one for the other.
+    """
+    classes = [
+        (path, node.name)
+        for path in files
+        for node in ast.walk(syntax_tree(path.read_text()))
+        if isinstance(node, ast.ClassDef)
+    ]
+    public_classes = {name for _path, name in classes if not name.startswith("_")}
+    return sorted(f"{path}:{name}" for path, name in classes if name.startswith("_") and name[1:] in public_classes)
+
+
 class VisibilityTest(unittest.TestCase):
     """Test that a public module-level name has callers outside the module defining it.
 
@@ -197,6 +215,18 @@ class VisibilityTest(unittest.TestCase):
             "tests/test_architecture.py": "from tests.helpers import _HELPER\n",  # neither of those
         }
         self.assertEqual(self.reported(_privates_imported_elsewhere, files), ["_HELPER"])
+
+    def test_no_private_class_is_named_like_a_public_class(self):
+        """Test that no private class shares its name, underscore aside, with a public class elsewhere."""
+        self.assertEqual(_private_classes_named_like_public_ones(_python_files()), [])
+
+    def test_a_private_class_named_like_a_public_class_is_reported(self):
+        """Test that a private class is reported where a public class elsewhere has its name without the underscore."""
+        files = {
+            "pkg/domain.py": "class ResolvedReference: ...\n",
+            "pkg/updater.py": "class _ResolvedReference: ...\nclass _SubstitutedLine: ...\n",
+        }
+        self.assertEqual(self.reported(_private_classes_named_like_public_ones, files), ["_ResolvedReference"])
 
     def test_constants_without_outside_callers_are_private(self):
         """Test that every public module-level constant is imported from its module or read as an attribute."""

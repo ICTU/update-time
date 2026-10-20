@@ -62,10 +62,11 @@ dev = [
 
 [tool.uv]
 override-dependencies = [
-    "click==8.3.3" # PYSEC-2026-2132: No summary provided
+    "certifi==2026.10.19", # GHSA-6q48-6c7w-9gw2 (certifi bundles emSign root CAs with compromised intermediate CA keys) is fixed in certifi 2026.10.19, released 2026-10-20, which exclude-newer would block; remove after 2026-10-27
+    "click==8.3.3",        # PYSEC-2026-2132: No summary provided
 ]
 exclude-newer = "7 days"  # managed by Update-time — remove this comment to prevent Update-time from changing it
-exclude-newer-package = { nltk = false }  # nltk 3.10.1 blocks the imports it resolves from a project-local .venv (https://github.com/nltk/nltk/pull/3732)
+exclude-newer-package = { certifi = false, nltk = false }  # nltk 3.10.1 blocks the imports it resolves from a project-local .venv (https://github.com/nltk/nltk/pull/3732)
 
 [tool.ruff]
 line-length = 120
