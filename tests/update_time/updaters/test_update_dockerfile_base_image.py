@@ -647,18 +647,41 @@ class ScannedDockerfilesTest(unittest.TestCase):
     """Unit tests for which Dockerfiles are scanned."""
 
     def test_the_conventional_names_are_scanned(self):
-        """Test that a `Dockerfile`, a `<purpose>.Dockerfile`, and a `Dockerfile.<purpose>` are scanned, in any case."""
-        tree = "Dockerfile", "python.Dockerfile", "Dockerfile.dev", "app/dockerfile"
+        """Test that a `Dockerfile` or `Containerfile` is scanned, alone or with a purpose before or after it."""
+        tree = (
+            "Dockerfile",
+            "python.Dockerfile",
+            "web.dockerfile",
+            "Dockerfile.dev",
+            "app/dockerfile",
+            "Containerfile",
+            "python.Containerfile",
+            "web.containerfile",
+            "Containerfile.dev",
+            "app/containerfile",
+        )
         self.assertCountEqual(_scanned_dockerfiles(*tree), tree)
+
+    def test_a_lowercase_dockerfile_or_containerfile_with_an_extension_is_skipped(self):
+        """Test that a lowercase `dockerfile.<extension>` or `containerfile.<extension>` is skipped."""
+        tree = (
+            "dockerfile",
+            "dockerfile.py",
+            "src/pkg/dockerfile.py",
+            "dockerfile.dev",
+            "containerfile.py",
+            "containerfile.dev",
+        )
+        self.assertEqual(_scanned_dockerfiles(*tree), ["dockerfile"])
 
     def test_a_devcontainer_dockerfile_is_scanned(self):
         """Test that a `Dockerfile` in a `.devcontainer` folder or in one of its configuration folders is scanned."""
-        tree = ".devcontainer/Dockerfile", ".devcontainer/python/Dockerfile"
+        tree = ".devcontainer/Dockerfile", ".devcontainer/python/Dockerfile", ".devcontainer/node/dockerfile"
         self.assertCountEqual(_scanned_dockerfiles(*tree), tree)
 
     def test_a_hidden_dockerfile_is_scanned(self):
-        """Test that a hidden `.<purpose>.Dockerfile` is scanned, in any case."""
-        tree = ".gitpod.dockerfile", "pkg/.web.Dockerfile"
+        """Test that a hidden `.<purpose>.Dockerfile` or `.<purpose>.Containerfile` is scanned, in any case."""
+        tree = ".gitpod.dockerfile", "pkg/.web.Dockerfile", ".gitpod.containerfile"
         self.assertCountEqual(_scanned_dockerfiles(*tree), tree)
 
     @kills(

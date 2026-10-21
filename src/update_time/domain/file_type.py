@@ -10,8 +10,13 @@ class FileType:
     name: str  # As the README's first table and the command-line help name it
     patterns: tuple[str, ...]  # The glob patterns that find these files, relative to the directory walked
     start: str = ""  # The directory to walk, relative to the scan root; the scan root itself when empty
-    case_sensitive: bool | None = None  # Whether the patterns match case, or the platform's default when None
+    case_sensitive: bool | None = None  # Whether the other patterns match case, or the platform's default when None
+    case_sensitive_patterns: tuple[str, ...] = ()  # The patterns that match case, whatever `case_sensitive` says
     recursive: bool = True  # Whether the subdirectories are searched too, or the directory alone
+
+    def case_sensitivity(self, pattern: str) -> bool | None:
+        """Return whether the pattern matches case, or None for the platform's default."""
+        return True if pattern in self.case_sensitive_patterns else self.case_sensitive
 
 
 _YAML_PATTERNS = ("*.yml", "*.yaml")
@@ -33,18 +38,18 @@ POM_XML = FileType("pom.xml", ("pom.xml",))
 PYTHON_VERSION_FILE = FileType(".python-version", (".python-version",))
 # Dockerfiles are conventionally named `Dockerfile`, or `<purpose>.Dockerfile` / `Dockerfile.<purpose>` when a
 # project has more than one (e.g. `python.Dockerfile`, `Dockerfile.dev`). Some are hidden: Gitpod builds a
-# `.gitpod.Dockerfile`, and a devcontainer builds the `Dockerfile` beside its config, in a hidden folder. The patterns
-# ignore case, so a `dockerfile` counts too.
+# `.gitpod.Dockerfile`, and a devcontainer builds the `Dockerfile` beside its config, in a hidden folder. Podman names
+# a Dockerfile `Containerfile`, under the same conventions. Every pattern but `Dockerfile.*` and `Containerfile.*`
+# ignores case, so a `dockerfile` counts too, and a Python module named `dockerfile.py` does not.
+_DOCKERFILE_NAMES = ("Dockerfile", "Containerfile")
 DOCKERFILES = FileType(
     "Dockerfiles",
     (
-        "Dockerfile",
-        "*.Dockerfile",
-        "Dockerfile.*",
-        ".*.Dockerfile",
+        *(pattern for name in _DOCKERFILE_NAMES for pattern in (name, f"*.{name}", f"{name}.*", f".*.{name}")),
         *(f"{folder}/Dockerfile" for folder in _DEVCONTAINER_FOLDERS),
     ),
     case_sensitive=False,
+    case_sensitive_patterns=tuple(f"{name}.*" for name in _DOCKERFILE_NAMES),
 )
 CIRCLE_CI_CONFIGS = FileType("CircleCI configs", _YAML_PATTERNS, start=".circleci")
 # GitLab CI reads one file at the repository root, so the scan root is read as it stands: walking it would also
