@@ -1407,6 +1407,8 @@ Update-time looks for these files, each with its own globs and in its own folder
 
 @@DOCKER_IMAGE_FILES_TABLE@@
 
+Update-time reads a `Containerfile` as a Dockerfile. It matches `Dockerfile.*` and `Containerfile.*` case-sensitively, and the other globs of Dockerfiles in either case.
+
 #### What dependencies are updated?
 
 | Files | Dependencies |

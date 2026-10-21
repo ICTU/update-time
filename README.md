@@ -1577,12 +1577,14 @@ Update-time looks for these files, each with its own globs and in its own folder
 
 | Files | Globs | Folder | Recursive |
 | :---- | :---- | :----- | :-------: |
-| Dockerfiles | `Dockerfile`, `*.Dockerfile`, `Dockerfile.*`, `.*.Dockerfile`, `.devcontainer/Dockerfile`, `.devcontainer/*/Dockerfile` | the scan root | ✅ |
+| Dockerfiles | `Dockerfile`, `*.Dockerfile`, `Dockerfile.*`, `.*.Dockerfile`, `Containerfile`, `*.Containerfile`, `Containerfile.*`, `.*.Containerfile`, `.devcontainer/Dockerfile`, `.devcontainer/*/Dockerfile` | the scan root | ✅ |
 | CircleCI configs | `*.yml`, `*.yaml` | `.circleci/` | ✅ |
 | .gitlab-ci.yml | `.gitlab-ci.yml` | the scan root |  |
 | Docker Compose files | `docker-compose*.yml` | the scan root | ✅ |
 | Helm charts | `*.yml`, `*.yaml` | `helm/` | ✅ |
 | devcontainer configs | `.devcontainer.json`, `.devcontainer/devcontainer.json`, `.devcontainer/*/devcontainer.json` | the scan root | ✅ |
+
+Update-time reads a `Containerfile` as a Dockerfile. It matches `Dockerfile.*` and `Containerfile.*` case-sensitively, and the other globs of Dockerfiles in either case.
 
 #### What dependencies are updated?
 

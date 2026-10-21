@@ -61,10 +61,11 @@ def glob_for(file_type: FileType) -> Iterator[Path]:
     excluded = EXCLUDE_PATHS.get()
     for glob_pattern in file_type.patterns:
         hidden_segments = _hidden(PurePath(glob_pattern).parts)
+        case_sensitive = file_type.case_sensitivity(glob_pattern)
         walk = start.rglob if file_type.recursive else start.glob
-        for path in walk(glob_pattern, case_sensitive=file_type.case_sensitive):
+        for path in walk(glob_pattern, case_sensitive=case_sensitive):
             relative_path = path.relative_to(start)
-            if _skipped_as_hidden(relative_path, hidden_segments, case_sensitive=file_type.case_sensitive):
+            if _skipped_as_hidden(relative_path, hidden_segments, case_sensitive=case_sensitive):
                 continue
             if any(part in ALWAYS_IGNORED_DIRECTORIES for part in relative_path.parts):
                 continue
