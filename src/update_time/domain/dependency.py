@@ -63,6 +63,9 @@ def normalized_python_name(name: DependencyName) -> DependencyName:
 # (`*+`) so the engine never backtracks into it, giving back characters to salvage a failing match.
 MAIN_VERSION = r"\d[^-]*+"
 
+# A run of version numbers: digits and the dots between them, such as `3.14`, or the `4.1.100` of `4.1.100.Final`.
+VERSION_NUMBERS = r"\d+(?:\.\d+)*"
+
 # A label after a snapshot's date, such as the `slim` of `trixie-20260803-slim`. A dash separates it from the date.
 _LABEL_AFTER_A_DATE = r"(?:-|$)(?P<suffix>.*)$"
 
@@ -116,6 +119,11 @@ class ImageNotLookedUp(StrEnum):
     EMPTY_BASE_IMAGE = "it names the empty base image Docker builds from, which no registry serves"
     BUILD_STAGE = "it names one of the Dockerfile's own build stages"
     THROUGH_A_VARIABLE = "it names its image or tag through a variable or a template"
+    VERSION_ACROSS_LINES = "it writes its version across more than one line of the Dockerfile"
+    DIGEST_OVERRULES_BUILD_ARGUMENTS = "its digest overrules the build arguments it names"
+    ARGUMENT_SHARED_WITH_ANOTHER_FROM_LINE = (
+        "it shares its build argument with a FROM line that names another image or tag, or carries another marker"
+    )
 
 
 @dataclass(frozen=True)

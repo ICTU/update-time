@@ -4,10 +4,11 @@ from typing import TYPE_CHECKING
 
 from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
+from update_time.domain.reference import YAML_IMAGE_REFERENCE
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.references.file import update_file, update_yaml_files
-from update_time.sources.oci import YAML_IMAGE_REFERENCE, tag_getter, tag_getter_excluding_each
+from update_time.sources.oci import tag_getter, tag_getter_excluding_each
 
 if TYPE_CHECKING:
     from update_time.formats.yaml import Document

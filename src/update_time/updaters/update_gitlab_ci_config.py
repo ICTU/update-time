@@ -1,10 +1,11 @@
 """GitLab CI config updater script finds images and updates to the latest versions."""
 
 from update_time.domain.file_type import GITLAB_CI_CONFIG
+from update_time.domain.reference import YAML_IMAGE_REFERENCE
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.references.file import update_file
-from update_time.sources.oci import YAML_IMAGE_REFERENCE, tag_getter
+from update_time.sources.oci import tag_getter
 
 _LOG = get_logger("gitlab ci")
 

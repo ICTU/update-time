@@ -35,6 +35,16 @@ if TYPE_CHECKING:
     from update_time.primitives.location import Location
 
 
+def _can_hold_a_digest(match: re.Match[str]) -> bool:
+    """Return whether the regexp that matched the reference has a place for a digest."""
+    return "sha" in match.re.groupindex
+
+
+def _lacks_a_digest(match: re.Match[str]) -> bool:
+    """Return whether the reference has a place for a digest, but records none."""
+    return _can_hold_a_digest(match) and match.group("sha") is None
+
+
 @dataclass(frozen=True)
 class _Rewriter:
     """Everything needed to rewrite one kind of reference in a file.
@@ -74,8 +84,7 @@ class _Rewriter:
             return self._keep_unresolved_floating_reference(match, marker, latest, reference, latest.floating)
         if latest.floating is FloatingPin.RESOLVED:
             return self._pin_floating_reference(match, marker, latest, reference)
-        has_sha_group = "sha" in match.re.groupindex
-        pin_unpinned = has_sha_group and match.group("sha") is None and bool(latest.sha)
+        pin_unpinned = _lacks_a_digest(match) and bool(latest.sha)
         if latest.version == reference.current_version and not pin_unpinned:
             return self._handle_drift(match, marker, latest, reference)
         return self._apply_update(match, latest, reference, pin_unpinned=pin_unpinned)
@@ -83,7 +92,7 @@ class _Rewriter:
     @staticmethod
     def _why_drift_is_never_adopted(match: re.Match[str], latest: DependencyVersion | None) -> RedundancyReason | None:
         """Return why the reference cannot adopt drift, whatever its marker says, or None where it can."""
-        if "sha" not in match.re.groupindex:
+        if not _can_hold_a_digest(match):
             return Reason.NO_HASH_PIN
         if latest is not None and latest.image_not_looked_up is not None:
             return ImageNotLookedUpReason(latest.image_not_looked_up, Consequence.DIGEST_NEVER_CHECKED)
@@ -106,7 +115,7 @@ class _Rewriter:
             return match.string
         if drifted and not self._adopts_drift(match, marker, latest, reference):
             return match.string
-        return self._apply_update(match, latest, reference, pin_unpinned=match.groupdict().get("sha") is None)
+        return self._apply_update(match, latest, reference, pin_unpinned=_lacks_a_digest(match))
 
     def _keep_unresolved_floating_reference(
         self, match: re.Match[str], marker: Marker, latest: DependencyVersion, reference: Reference, reason: FloatingPin
@@ -169,12 +178,15 @@ class _Rewriter:
 
         The change is reported as a pin unless the reference moved to another release, so a resolved floating pin
         is reported as a pin although its version changes: it writes down the release the reference already
-        served. A reference that named no version gains the `:` attaching a tag to the image's name.
+        served. A pin names the digest only where the regexp holds one. A reference that named no version gains the
+        `:` attaching a tag to the image's name.
         """
         if latest.version != match.group("version") and latest.floating is None:
             self.logger.new_version(reference, latest)
-        else:
+        elif _can_hold_a_digest(match):
             self.logger.pinned(reference, latest)
+        else:
+            self.logger.pinned_version(reference, latest)
         version = f"{'' if match.group('version') else ':'}{latest.version}"
         if pin_unpinned:
             # Append the digest to a previously unpinned reference, bumping the version too if one is available.

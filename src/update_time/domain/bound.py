@@ -11,6 +11,7 @@ from packaging.version import InvalidVersion, Version
 from update_time.domain.dependency import (
     DASHED_SNAPSHOT,
     MAIN_VERSION,
+    VERSION_NUMBERS,
     DependencyVersion,
     PinnedDependency,
     VersionString,
@@ -49,7 +50,7 @@ _DASHED_SNAPSHOT = re.compile(DASHED_SNAPSHOT)
 
 # A version's first numbers end at a qualifier PEP 440 cannot read, such as the `.Final` of `4.1.100.Final` or the
 # `_7` of `21.0.4_7-jdk`.
-_NUMBERS = re.compile(r"\d+(?:\.\d+)*")
+_NUMBERS = re.compile(VERSION_NUMBERS)
 
 
 def _parse_version(version: VersionString) -> Version | None:

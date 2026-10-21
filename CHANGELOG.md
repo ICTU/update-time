@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Update a Dockerfile's base image that names its image or tag through build arguments, writing the new version onto the line that holds it. Closes [#357](https://github.com/ICTU/update-time/issues/357).
 
 ## 0.0.50 - 2026-10-20
 

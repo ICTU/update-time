@@ -449,7 +449,7 @@ class UpdateReferencesTest(unittest.TestCase):
         resolved = DependencyVersion(version="3.15", sha=DIGEST, floating=FloatingPin.RESOLVED)
         lines = ["image: python:latest  # update-time: ignore[floating-pin]"]
         with floating_pin_allowed:
-            new_lines = self.rewrite(lines, IMAGE_REGEXP, Mock(return_value=resolved))
+            new_lines = self.rewrite(lines, _SHA_REGEXP, Mock(return_value=resolved))
         self.assertEqual(new_lines, [f"image: python:3.15@{DIGEST}  # update-time: ignore[floating-pin]"])
         self.logger.keeping_floating_tag.assert_not_called()
 
@@ -700,12 +700,20 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assertEqual(new_lines, ["image: python:3.15  # update-time: allow[update]"])
         self.assert_resolved(get_new_version, "python:3.14", NO_BOUND)
 
+    def test_floating_tag_without_a_place_for_a_digest_is_pinned_to_its_version_alone(self):
+        """Test that a floating tag is pinned by its version alone where the regexp does not hold a digest."""
+        resolved = DependencyVersion(version="3.15", sha=DIGEST, floating=FloatingPin.RESOLVED)
+        new_lines = self.rewrite(["image: python:latest"], IMAGE_REGEXP, Mock(return_value=resolved))
+        self.assertEqual(new_lines, ["image: python:3.15"])
+        self.logger.pinned_version.assert_called_once_with(self.reference(version="latest"), resolved)
+        self.logger.pinned.assert_not_called()
+
     def test_ignore_floating_pin_is_a_noop(self):
         """Test that `ignore[floating-pin]` pins the floating tag, which is what happens without a marker."""
         resolved = DependencyVersion(version="3.15", sha=DIGEST, floating=FloatingPin.RESOLVED)
         get_new_version = Mock(return_value=resolved)
         lines = ["image: python:latest  # update-time: ignore[floating-pin]"]
-        new_lines = self.rewrite(lines, IMAGE_REGEXP, get_new_version)
+        new_lines = self.rewrite(lines, _SHA_REGEXP, get_new_version)
         self.assertEqual(new_lines, [f"image: python:3.15@{DIGEST}  # update-time: ignore[floating-pin]"])
         self.logger.invalid_bracket_item.assert_not_called()
 

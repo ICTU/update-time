@@ -827,7 +827,7 @@ Staleness is measured against the publication date of a dependency's newest rele
 | [Maven dependencies](#maven-dependencies) | on an artefact Maven Central does not serve, and on a declaration that leaves its version to the declaration managing it |
 | [Node engine version](#node-engine-version-and-python-version) | never |
 | [Python version](#node-engine-version-and-python-version) | never |
-| [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, on an image the file does not pull, and on a reference through a variable or a template |
+| [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, on an image the file does not pull, and on a reference through a variable or a template that Update-time cannot substitute |
 | [GitHub Actions](#github-actions-and-pre-commit-hooks) | never |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | never |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | never |
@@ -838,7 +838,7 @@ Update-time reports a source without publication dates as:
 WARNING Redundant update-time directive ignore[stale<90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure staleness against
 ```
 
-Update-time does not ask a registry about an image the file does not pull, such as a CircleCI machine-executor image or an image a Docker Compose file builds. Nor does it ask about a reference through a variable or a template, such as `redis:7.2-${VARIANT}`. The warning then names why Update-time does not ask:
+Update-time does not ask a registry about an image the file does not pull, such as a CircleCI machine-executor image or an image a Docker Compose file builds. Nor does it ask about a reference through a variable or a template that it cannot substitute, such as `redis:7.2-${VARIANT}`. The warning then names why Update-time does not ask:
 
 ```console
 WARNING Redundant update-time directive ignore[stale<90] for redis in docker-compose.yml:7: it names its image or tag through a variable or a template, so its staleness is never checked
@@ -855,7 +855,7 @@ Where a cooldown holds nothing back, Update-time reports the `cooldown` scope as
 | [Maven dependencies](#maven-dependencies) | on a declaration whose version Maven does not update, and on an artefact Maven Central does not serve |
 | [Node engine version](#node-engine-version-and-python-version) | never |
 | [Python version](#node-engine-version-and-python-version) | never |
-| [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, on an image the file does not pull, and on a reference through a variable or a template |
+| [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, on an image the file does not pull, and on a reference through a variable or a template that Update-time cannot substitute |
 | [GitHub Actions](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since Update-time never updates a commit |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since Update-time never updates a commit |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | never |
@@ -992,7 +992,7 @@ On a reference whose pin floats, an `ignore`, or an `ignore[update]` that holds 
 WARNING Redundant update-time directive allow[floating-pin] for python in Dockerfile:2: this reference's update is held back, so it is never pinned
 ```
 
-Update-time never pins an image the file does not pull, or a reference through a variable or a template, so an `allow[floating-pin]` on one is redundant as well:
+Update-time never pins an image the file does not pull, or a reference through a variable or a template that it cannot substitute, so an `allow[floating-pin]` on one is redundant as well:
 
 ```console
 WARNING Redundant update-time directive allow[floating-pin] for acme/api in docker-compose.yml:4: the Compose file builds this image, so its tag is never pinned
@@ -1011,7 +1011,7 @@ An `allow[hash-drift]` adopts what a drifted hash pin points at (see [Adopting h
 | [Maven dependencies](#maven-dependencies) | always: a pom names a version, and Maven records an artefact's checksum beside the artefact |
 | [Node engine version](#node-engine-version-and-python-version) | always: it names a Node version, not an artefact that could be hashed |
 | [Python version](#node-engine-version-and-python-version) | always: it names a Python version, not an artefact that could be hashed |
-| [Docker images](#docker-images) | on an image the file does not pull, and on a reference through a variable or a template, since Update-time does not ask a registry about its digest |
+| [Docker images](#docker-images) | on an image the file does not pull, and on a reference through a variable or a template that Update-time cannot substitute, since Update-time does not ask a registry about its digest. Also on a Dockerfile `FROM` that names build arguments, which never gets a digest |
 | [GitHub Actions](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since a commit cannot drift |
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since a commit cannot drift |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | always: Update-time never adopts an integrity hash mismatch |
@@ -1599,7 +1599,13 @@ Update-time reads a Dockerfile's `FROM` the way Docker reads it: in upper or low
 
 A Docker Compose service that declares a `build:` beside its `image:` names the image the file builds. That image is the file's output rather than a dependency to update, so Update-time leaves it alone. It leaves the other services naming that image alone as well, including the ones that build nothing themselves. The reference is matched by name and tag, so another tag of the same repository is a registry image like any other and is updated as one. Update-time reads one file at a time, so an image one Docker Compose file builds is updated in another file that pulls it.
 
-A reference can name its image or its tag through a variable or a template, such as `python:3.12-$VARIANT` in a Dockerfile, `{{ .Values.tag }}` in a Helm chart, or `<< parameters.tag >>` in a CircleCI config. Update-time cannot tell what the variable or the template stands for, so it leaves the reference alone.
+A Dockerfile's `FROM` can name its image or its tag through build arguments, as `FROM $IMAGE_NAME:$IMAGE_VERSION-$IMAGE_EDITION` does. Update-time substitutes the defaults that the `ARG` lines above the first `FROM` declare, as Docker does, and updates the reference that gives. It reports at `DEBUG` which reference that is:
+
+```console
+DEBUG Reference python:$PY in Dockerfile:2 is python:3.14 with its build arguments substituted; it does not get a digest, since a digest would overrule a --build-arg
+```
+
+Update-time leaves a `FROM` alone where it cannot tell which line the new version goes on, such as where a build argument does not have a default. It reports why at `DEBUG`, as shown below. Update-time leaves every other reference through a variable or a template alone as well, since it cannot tell what the variable or the template stands for. Examples are `redis:7.2-${VARIANT}` in a Docker Compose file, `{{ .Values.tag }}` in a Helm chart, and `<< parameters.tag >>` in a CircleCI config.
 
 Update-time reports at `DEBUG` why it does not ask a registry about an image:
 
@@ -1609,6 +1615,9 @@ DEBUG Reference ubuntu-2204:2024.01.1 in .circleci/config.yml:4 was left as it i
 DEBUG Reference scratch in Dockerfile:1 was left as it is: it names the empty base image Docker builds from, which no registry serves
 DEBUG Reference deps in Dockerfile:2 was left as it is: it names one of the Dockerfile's own build stages
 DEBUG Reference redis:7.2-${VARIANT} in docker-compose.yml:7 was left as it is: it names its image or tag through a variable or a template
+DEBUG Reference python:3.14 in Dockerfile:2 was left as it is: it writes its version across more than one line of the Dockerfile
+DEBUG Reference python:3.14 in Dockerfile:2 was left as it is: it shares its build argument with a FROM line that names another image or tag, or carries another marker
+DEBUG Reference python:$PY in Dockerfile:2 was left as it is: its digest overrules the build arguments it names
 ```
 
 #### What versions are updated?
@@ -1617,13 +1626,21 @@ When updating an image tag, Update-time keeps the non-numeric parts of the tag a
 
 A floating tag such as `latest` or `trixie`, or a reference without a tag, is pinned rather than updated (see [Floating image tags](#floating-image-tags)).
 
+Update-time writes a new version where the Dockerfile writes the old one. That is the `ARG` line whose default holds it, quotes kept, or the `FROM` line itself. So `ARG IMAGE_VERSION=2026.3.1` becomes `ARG IMAGE_VERSION=2026.4.1`, and `FROM $IMAGE_NAME:$IMAGE_VERSION-$IMAGE_EDITION` stays as it is.
+
 A dated snapshot such as `debian:bookworm-20260803` names the day its image was built. A repository can also name a snapshot by the date alone, as Alpine names one `20260805` beside its `3.24.1` release. A snapshot can spell the date with dashes, as `jupyter/base-notebook:2023-10-20` does, and add the time of the build, as `gitpod/workspace-full:2026-02-12-23-06-03` does. A label can follow the date, as the `slim` of `debian:trixie-20261005-slim` does. Update-time updates a snapshot to the newest snapshot under its labels that spells the date the same way. So a reference on `bookworm-20240110` moves to `bookworm-20260803`, and a reference on `trixie-20260803-slim` moves to `trixie-20261005-slim` rather than to a snapshot without the `slim` label. A reference on `2023-10-19` moves to `2023-10-20` rather than to a snapshot naming a time. A reference on a release keeps following releases, and a reference on a snapshot keeps following snapshots.
 
 #### Pinning
 
 Update-time appends the `@sha256:digest` of the (latest) tag to an image referenced by tag only, so the image is reproducible. This covers base images in Dockerfiles (`FROM image:tag`), CircleCI images, GitLab CI images, Docker Compose and Helm manifest images, and devcontainer base images and features. Update-time takes the image's registry from the reference, so it resolves images on Docker Hub and on other OCI registries (`ghcr.io`, `mcr.microsoft.com`, …) alike.
 
-Update-time does not ask a registry about a reference through a variable or a template, so it does not add a digest to that reference. The same holds for an image the file does not pull. Such images are a CircleCI machine-executor image (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`), an image a Docker Compose file builds, `scratch`, and one of the Dockerfile's own build stages.
+Update-time does not add a digest to a `FROM` that names build arguments. A build can override such a reference with `--build-arg`. Docker pulls a reference that carries a digest by that digest and ignores its tag, so a digest would overrule the override. A floating default, such as `ARG VERSION=latest`, is pinned to the version it serves alone:
+
+```console
+INFO Pinned python in Dockerfile:2 to 3.14.7
+```
+
+Update-time does not ask a registry about a reference through a variable or a template it cannot substitute, so it does not add a digest to that reference. The same holds for an image the file does not pull. Such images are a CircleCI machine-executor image (the `image:` under a `machine:` key, such as `ubuntu-2204:2024.01.1`), an image a Docker Compose file builds, `scratch`, and one of the Dockerfile's own build stages.
 
 #### Cooldown
 
