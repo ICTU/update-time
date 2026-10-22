@@ -11,6 +11,7 @@ push dates, for the digests Docker Hub's listing gives, and for credentials, whi
 import os
 from dataclasses import dataclass
 from functools import cache
+from http import HTTPStatus
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from update_time.io.fetch import failure_reason, fetch
@@ -80,7 +81,7 @@ _NO_PUSH_DATE = "Docker Hub did not report a push date"
 
 @dataclass(frozen=True)
 class _TagListing:
-    """A Docker Hub repository's listed tags: their digests and push dates, and whether the listing was read out."""
+    """A Docker Hub repository's listed tags, their digests and push dates, and whether the listing was read out."""
 
     digests: dict[str, str]
     pushes: dict[str, datetime]
@@ -91,7 +92,7 @@ class _TagListing:
         return LookedUp(self.pushes[tag]) if tag in self.pushes else LookedUp(None, _NO_PUSH_DATE)
 
 
-def tag_listing(repository: str, tag: str) -> _TagListing:
+def tag_listing(repository: str, tag: str) -> LookedUp[_TagListing]:
     """Return a Docker Hub repository's tag listing, read until it holds every tag serving the tag's digest.
 
     `repository` is the `namespace/repository` path (e.g. `library/python`). The OCI listing gives tag names only,
@@ -99,19 +100,21 @@ def tag_listing(repository: str, tag: str) -> _TagListing:
     tag is pushed together with the other tags serving its digest, so reading stops at the first page holding none
     of them, and at `_MAX_TAG_LISTING_PAGES` pages whatever the listing holds. Where the listing ran out, a tag
     missing from it is one the registry does not list. Where reading stopped earlier, that tag may sit on a page
-    after the last one read.
+    after the last one read. The listing is absent where Docker Hub does not serve the repository.
     """
     url = _listing_url(repository)
     digests: dict[str, str] = {}
     pushes: dict[str, datetime] = {}
     for _page in range(_MAX_TAG_LISTING_PAGES):
-        entries, url = _listing_page(url)
-        page = {entry["name"]: entry.get("digest", "") for entry in entries}
+        if (listing_page := _listing_page(url).value) is None:
+            return LookedUp(None, absent=True)
+        url = listing_page.next_url
+        page = {entry["name"]: entry.get("digest", "") for entry in listing_page.entries}
         digests |= page
-        pushes |= _push_dates(entries)
+        pushes |= _push_dates(listing_page.entries)
         if not url or _lists_every_alias(digests, page, tag):
             break
-    return _TagListing(digests, pushes, examined_all=not url)
+    return LookedUp(_TagListing(digests, pushes, examined_all=not url))
 
 
 def newest_pushes(repository: str) -> dict[str, datetime]:
@@ -121,8 +124,8 @@ def newest_pushes(repository: str) -> dict[str, datetime]:
     what dates the dependency. One page answers that, however many tags the repository has. A tag without a push
     date is left out.
     """
-    entries, _next_page = _listing_page(_listing_url(repository))
-    return _push_dates(entries)
+    listing_page = _listing_page(_listing_url(repository)).value
+    return _push_dates(listing_page.entries) if listing_page else {}
 
 
 def _push_dates(entries: tuple[_TagJSON, ...]) -> dict[str, datetime]:
@@ -148,19 +151,31 @@ def _tags_url(repository: str) -> str:
     return f"{_REGISTRY}/v2/namespaces/{namespace}/repositories/{repo}/tags"
 
 
-@cache
-def _listing_page(url: str) -> tuple[tuple[_TagJSON, ...], str]:
-    """Return the tags listed on one page, and the URL of the page after it.
+@dataclass(frozen=True)
+class _ListingPage:
+    """One page of a Docker Hub repository's listing: its tags, and the URL of the page after it."""
 
-    Cached by page rather than by reference, so a repository holding a second floating tag reads the pages the
-    first one read without asking the registry for them again. A page that can't be fetched is logged and read as
-    no tags at all, which ends the reading.
+    entries: tuple[_TagJSON, ...] = ()
+    next_url: str = ""
+
+
+@cache
+def _listing_page(url: str) -> LookedUp[_ListingPage]:
+    """Return one page of the listing, cached so a second floating tag of the repository reuses the pages read.
+
+    A 404 means Docker Hub does not serve the repository, so the page is absent. Any other failure is logged, and
+    reads as a page listing nothing.
     """
-    response = fetch(url, _LOG, headers=api_headers())
+    response = fetch(url, _LOG, headers=api_headers(), require_ok=False)
     if response is None:
-        return (), ""
+        return LookedUp(_ListingPage())
+    if response.status_code == HTTPStatus.NOT_FOUND:
+        return LookedUp(None, absent=True)
+    if not response.ok:
+        _LOG.response(response)
+        return LookedUp(_ListingPage())
     listing = response.json()
-    return tuple(listing.get("results") or []), listing.get("next") or ""
+    return LookedUp(_ListingPage(tuple(listing.get("results") or []), listing.get("next") or ""))
 
 
 def _lists_every_alias(digests: dict[str, str], page: dict[str, str], tag: str) -> bool:

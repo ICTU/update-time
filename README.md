@@ -292,10 +292,10 @@ A [bound](#bounding-an-update) does not prevent pinning, so `allow[update<3.13]`
 Update-time leaves the following kinds of floating tag as they are:
 
 - A tag whose image has no version tag, such as an image tagged only `dev` or `prod`.
-- A tag the registry does not list, such as an image a pipeline builds and never pushes, a tag deleted from the repository, or a mistyped tag.
+- A tag deleted from the repository, a mistyped tag, or a tag a pipeline builds and never pushes. The registry does not list any of them.
 - A tag listed further down a large repository's tag list than Update-time reads.
 - A tag on a registry other than Docker Hub, where Update-time reads the candidate tags one at a time and none of those it tries serves the same image.
-- A tag whose registry does not serve a manifest for it — a private image Update-time cannot authenticate to, or a registry it cannot reach — so it cannot read the digest that tag serves.
+- A tag whose registry does not serve a manifest for it, such as a tag on a registry Update-time cannot reach, so it cannot read the digest that tag serves.
 
 Update-time reports each of them at `DEBUG`, naming the reason the tag was not pinned:
 
@@ -307,7 +307,7 @@ DEBUG Floating tag ghcr.io/acme/api:latest in Dockerfile:1 was left as it is: no
 DEBUG Floating tag ghcr.io/acme/api:edge in Dockerfile:1 was left as it is: the registry does not serve a manifest for edge, so what that tag serves is unknown
 ```
 
-Where Update-time reads the digest a floating tag serves, but does not find a version tag serving the same image, it cannot pin the reference to a version. That happens for an image tagged only `dev`, and on a registry other than Docker Hub when none of the tags Update-time tries serves that image. Where the reference records another digest, Update-time warns about the [hash drift](#hash-drift) instead. When the registry does not list the floating tag among those Update-time reads, or does not serve a manifest for it, Update-time cannot read the digest at all. It then leaves the reference as it is without a drift warning, since it cannot tell whether the floating tag was re-pointed.
+Where Update-time reads the digest a floating tag serves, but does not find a version tag serving the same image, it cannot pin the reference to a version. That happens for an image tagged only `dev`, and on a registry other than Docker Hub when none of the tags Update-time tries serves that image. Where the reference records another digest, Update-time warns about the [hash drift](#hash-drift) instead. When the registry does not serve the image's repository, does not list the floating tag among those Update-time reads, or does not serve a manifest for it, Update-time cannot read the digest at all. It then leaves the reference as it is without a drift warning, since it cannot tell whether the floating tag was re-pointed.
 
 #### Version precision
 
@@ -1622,6 +1622,12 @@ DEBUG Reference python:3.14 in Dockerfile:2 was left as it is: it shares its bui
 DEBUG Reference python:$PY in Dockerfile:2 was left as it is: its digest overrules the build arguments it names
 ```
 
+Update-time leaves a reference alone as well where the registry does not serve the image's repository. That happens for an image the project builds itself, a mistyped image name, and a private image Update-time cannot authenticate to. Update-time cannot tell these apart, so it reports the reference at `DEBUG`, whether its tag floats or not:
+
+```console
+DEBUG Reference spark-rm-base:3.5.1 in Dockerfile:2 was left as it is: the registry does not serve the image's repository
+```
+
 #### What versions are updated?
 
 When updating an image tag, Update-time keeps the non-numeric parts of the tag and only advances its version numbers. A tag such as `python:3.14.6-alpine3.23` has three parts: the label prefix `python`, the main version `3.14.6`, and the suffix `alpine3.23`. Update-time preserves the label prefix and the suffix's label, so it never replaces a variant: `python` never becomes `pypy`, and `alpine` never becomes `debian`. It upgrades both the main version and a version embedded in the suffix, independently or together, for example `3.14.6-alpine3.23` → `3.15.0-alpine3.24`. A suffix without an embedded version (`bookworm-slim`, `windows`) is never updated, since it carries no version to advance. It never downgrades one axis to adopt a newer value on the other.
@@ -1659,9 +1665,9 @@ ERROR Could not determine from Docker Hub when python:3.14 in Dockerfile:2 was p
 
 Staleness is measured against the image's newest release, on Docker Hub only, since other registries do not expose a publication date.
 
-Update-time reports no staleness for a reference whose tag the registry does not serve. That tag names no image in the repository, so the image's newest release says nothing about the reference. An image a pipeline builds without pushing it is the common case, and a deleted or mistyped tag reads the same way.
+Update-time reports no staleness for a reference whose repository or tag the registry does not serve. The registry does not hold an image under such a reference, so the image's newest release says nothing about the reference. An image a pipeline builds without pushing it is the common case, and a deleted or mistyped tag reads the same way.
 
-Two kinds of tags are dated all the same. A tag naming a version is, whether or not the registry serves it. So is a tag listed further down the repository's tag list than Update-time reads, since what the registry serves under such a tag is unknown.
+Two kinds of tags in a repository the registry serves are dated all the same. A tag naming a version is, whether or not the registry serves it. So is a tag listed further down the repository's tag list than Update-time reads, since what the registry serves under such a tag is unknown.
 
 #### Yanked dependencies
 

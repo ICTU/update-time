@@ -84,3 +84,21 @@ class LastPushedTest(LoggingTestCase):
         """Test that an answer that lacks a push date returns a reason, so the cooldown holds the tag back."""
         no_push_date = LookedUp(None, "Docker Hub did not report a push date")
         self.assertEqual(docker_hub.last_pushed("library/python", "3.14"), no_push_date)
+
+
+class TagListingTest(LoggingTestCase):
+    """Unit tests for reading a Docker Hub repository's tag listing."""
+
+    @kills(
+        Mutation(
+            docker_hub._listing_page,
+            "if response is None:\n        return LookedUp(_ListingPage())",
+            "if response is None:\n        return LookedUp(None, absent=True)",
+            "a listing request that fails in transport reads as a repository Docker Hub does not serve",
+        )
+    )
+    @patch("requests.Session.get", Mock(side_effect=requests.exceptions.Timeout))
+    def test_a_listing_request_that_fails_takes_the_repository_as_served(self):
+        """Test that a listing request failing in transport leaves the listing empty and the repository served."""
+        listing = docker_hub.tag_listing("library/python", "latest")
+        self.assertEqual(listing, LookedUp(docker_hub._TagListing({}, {}, examined_all=True)))

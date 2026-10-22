@@ -63,7 +63,6 @@ A name a file declares twice is steered per declaration, so a marker steers the 
 A name mapped to None is an entry with no file to fetch, as a directory is.
 A non-PEP 440 boundary (e.g. an arbitrary-equality `===` clause) has no version to probe.
 A package the file declares nowhere is reported at the file rather than at a line guessed from elsewhere.
-A page that can't be fetched is logged and read as no tags at all, which ends the reading.
 A path the user named on the command line stays a plain `Path` instead (see `_render_field`).
 A pinned reference as a file records it: a dependency, the version it is pinned to, and the line it sits on.
 A printf-style interpolation, such as a log message's ``: a value rather than prose.
@@ -109,7 +108,6 @@ A subscripted base names no class the scan can resolve, so a class carrying one 
 A suffix without an embedded version (`bookworm-slim`, `windows`) is never updated, since it carries no version to advance.
 A suffix without an embedded version has no version to strip, so its whole string is the label (and the second string is empty), and the check reduces to an exact-suffix match (`slim` still only matches `slim`).
 A tag Update-time can read as neither a version nor a channel, such as `debian:dev-2024`: it names no version to advance, so the tag stands and the digest it serves pins it.
-A tag the registry does not list, such as an image a pipeline builds and never pushes, a tag deleted from the repository, or a mistyped tag.
 A tag whose image has no version tag, such as an image tagged only `dev` or `prod`.
 A target that is part of a line rewrites the rest of that line too, and matching once is no protection: the `Edit` tool accepts any fragment that matches once.
 A test that pins existing behaviour drives no code.
@@ -476,7 +474,6 @@ Test that unreadable input leaves the file alone and runs no command.
 Test that where the marker and the option both name the advisory, the marker's silencing is reported.
 That is: how to resolve a new version, where to report, and what to call a reference whose regexp captures no `dependency` group.
 That marker carries where its reference sits, so the pass rewrites that entry and no other.
-That tag names no image in the repository, so the image's newest release says nothing about the reference.
 The Node engine version in the `package.json`: the `node` entry its `engines` section declares.
 The OCI protocol exposes no publish date.
 The `# update-time:` marker language: what a marker says, and what each directive it carries steers.

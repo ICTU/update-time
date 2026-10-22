@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Stop a Maven run over a pom from advancing a property that another pom of the reactor declares or names. Such an update skipped the cooldown and the variant check, and went unlogged. Closes [#453](https://github.com/ICTU/update-time/issues/453).
 - Fill in the properties through which a Maven pom names its GitHub repository, such as `${project.artifactId}`. Closes [#455](https://github.com/ICTU/update-time/issues/455).
 - Keep Maven from adopting a pre-release whose number has dots in it, such as `2.4.0-b180830.0359`. Closes [#454](https://github.com/ICTU/update-time/issues/454).
+- Log at `DEBUG` rather than warn when the registry does not serve an image's repository, as for an image the project builds itself. Closes [#451](https://github.com/ICTU/update-time/issues/451).
 
 ## 0.0.51 - 2026-10-21
 

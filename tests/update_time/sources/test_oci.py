@@ -13,7 +13,7 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, FloatingPin, ImageNotLookedUp, PinnedDependency, Release
 from update_time.domain.publication import reports_publication_dates
 from update_time.io.log import Logger
-from update_time.sources import oci
+from update_time.sources import docker_hub, oci
 from update_time.sources.docker_hub import _MAX_TAG_LISTING_PAGES, _TAG_LISTING_PAGE_SIZE
 from update_time.sources.oci import (
     _MAX_FLOATING_TAG_PROBES,
@@ -23,11 +23,19 @@ from update_time.sources.oci import (
     tag_getter_excluding,
 )
 
-from tests.helpers import mock_response, patch_environ
+from tests.helpers import patch_environ
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3, FRESH_DATE, PAST_COOLDOWN_DATE, STALE_DATE
 from tests.update_time.helpers import LoggingTestCase, bound, days_ago, docker_tag
-from tests.update_time.registry import Endpoint, RegistryRequestsMixin, mock_docker_registry
+from tests.update_time.registry import (
+    Endpoint,
+    RegistryRequestsMixin,
+    mock_docker_registry,
+    probe_response,
+    service_unavailable,
+    token_endpoint,
+    unauthorized,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -137,15 +145,78 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry()
         self.assertEqual(get_latest_tag("no_tags", "1.0").version, "1.0")
 
-    def test_image_not_resolvable(self):
-        """Test that a reference that doesn't resolve (e.g. a CircleCI machine image) is left unchanged, not crash."""
+    @kills(
+        Mutation(
+            oci._tag_names,
+            "_LOG.response(response)",
+            "pass",
+            "tag names the registry fails to list are left unchanged without a warning",
+        )
+    )
+    def test_tag_names_unavailable(self):
+        """Test that a reference whose tag names can't be fetched is left unchanged, and the failure logged."""
         self.requests.side_effect = mock_docker_registry(unavailable=Endpoint.TAG_NAMES)
         self.assertEqual(
-            get_latest_tag("ubuntu-2204", "2025.09.1").version,
-            "2025.09.1",
+            get_latest_tag("python", "3.14.6").version,
+            "3.14.6",
         )
-        url = "https://registry-1.docker.io/v2/library/ubuntu-2204/tags/list?n=1000"
-        self.assert_could_not_fetch_logged(url, status=HTTPStatus.NOT_FOUND)
+        url = "https://registry-1.docker.io/v2/library/python/tags/list?n=1000"
+        self.assert_could_not_fetch_logged(url, status=HTTPStatus.SERVICE_UNAVAILABLE)
+
+    @kills(
+        Mutation(
+            oci._tag_names,
+            "if response is None:\n            break",
+            "if response is None:\n            return LookedUp(None, absent=True)",
+            "a tag names request that fails in transport reads as a repository the registry does not serve",
+        )
+    )
+    def test_tag_names_request_that_fails_takes_the_repository_as_served(self):
+        """Test that a tag names request failing in transport leaves the reference on a repository taken as served."""
+        self.requests.side_effect = requests.exceptions.Timeout
+        latest = get_latest_tag("python", "3.14.6")
+        self.assertEqual(latest.version, "3.14.6")
+        self.assertIsNone(latest.unserved)
+
+    @kills(
+        Mutation(
+            oci._refuses_the_repository,
+            "response.status_code == HTTPStatus.UNAUTHORIZED and _AUTHORIZATION_REFUSED not in challenge",
+            "response.status_code == HTTPStatus.UNAUTHORIZED",
+            "an expired or invalid token reads as a repository the registry does not serve, and goes unwarned",
+        )
+    )
+    def test_tag_names_refused_for_an_invalid_token_are_warned_about(self):
+        """Test that tag names refused for an invalid token are warned about, on a repository taken as served."""
+        challenge = 'Bearer realm="https://auth.docker.io/token",service="registry.docker.io",error="invalid_token"'
+        registry = mock_docker_registry()
+
+        def get(url: str, *args: object, **kwargs: object) -> Mock:
+            if "/tags/list" in url:
+                return unauthorized(url, headers={"WWW-Authenticate": challenge})
+            return registry(url, *args, **kwargs)
+
+        self.requests.side_effect = get
+        self.assertIsNone(get_latest_tag("python", "3.14.6").unserved)
+        url = "https://registry-1.docker.io/v2/library/python/tags/list?n=1000"
+        self.assert_could_not_fetch_logged(url, status=HTTPStatus.UNAUTHORIZED)
+
+    @kills(
+        Mutation(
+            oci._repository_not_served,
+            "unserved=Unserved.REPOSITORY",
+            "unserved=None",
+            "dating a version tag of a repository the registry does not serve costs a request",
+        )
+    )
+    def test_tag_of_a_repository_the_registry_does_not_serve_costs_no_request_to_date_it(self):
+        """Test that a version tag of a repository the registry does not serve is left undated, without asking."""
+        self.requests.side_effect = mock_docker_registry(repository_served=False)
+        latest = get_latest_tag("spark-rm-base", "3.5.1")
+        self.assertIsNone(latest.project.newest)
+        requested = [request.args[0] for request in self.requests.call_args_list]
+        self.assertIn("https://registry-1.docker.io/v2/library/spark-rm-base/tags/list?n=1000", requested)
+        self.assertFalse([url for url in requested if url.startswith("https://registry.hub.docker.com/")])
 
     def test_other_registry_image_resolved(self):
         """Test that an image on a registry other than Docker Hub is resolved against that registry's host."""
@@ -600,7 +671,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
             dependency="push_date_unavailable",
             candidate="1.2",
             current="1.0",
-            reason="HTTP 404",
+            reason="HTTP 503",
         )
 
 
@@ -676,8 +747,8 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             oci._unpinned_floating_tag,
-            "served = reason not in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)",
-            "served = reason not in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST, FloatingPin.NOT_AMONG_EXAMINED)",
+            "if reason in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)",
+            "if reason in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST, FloatingPin.NOT_AMONG_EXAMINED)",
             "a listing cut short before reaching the tag leaves the image's newest release off the reference",
         )
     )
@@ -774,7 +845,8 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         Mutation(
             oci._resolved_tag,
             "return DependencyVersion(version=current.name, sha=tag.digest, publication=tag.pushed)",
-            "return DependencyVersion(version=current.name, sha=tag.digest, publication=tag.pushed, served=False)",
+            "return DependencyVersion(version=current.name, sha=tag.digest, publication=tag.pushed, "
+            "unserved=Unserved.VERSION)",
             "a tag naming neither a version nor a channel is dated by no release, whatever the registry serves",
         ),
     )
@@ -793,7 +865,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             oci._resolved_tag,
-            "return DependencyVersion(version=current.name, served=False)",
+            "return DependencyVersion(version=current.name, unserved=Unserved.VERSION)",
             "return DependencyVersion(version=current.name)",
             "a tag the registry serves no manifest for is dated by the image's newest release",
         )
@@ -830,8 +902,8 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
     @kills(
         Mutation(
             oci._unpinned_floating_tag,
-            "served = reason not in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)",
-            "served = reason is not FloatingPin.NO_MANIFEST",
+            "if reason in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)",
+            "if reason is FloatingPin.NO_MANIFEST",
             "a floating tag the registry does not list is dated by the image's newest release",
         )
     )
@@ -843,13 +915,21 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertEqual(latest.floating, FloatingPin.NOT_LISTED)
         self.assertIsNone(latest.project.newest)
 
+    @kills(
+        Mutation(
+            docker_hub._listing_page,
+            "_LOG.response(response)",
+            "pass",
+            "a tag listing Docker Hub fails to serve leaves the floating tag as it is without a warning",
+        )
+    )
     def test_listing_unavailable(self):
         """Test that a floating tag is left as it is when the tag listing can't be fetched, and the failure logged."""
         self.requests.side_effect = mock_docker_registry(unavailable=Endpoint.TAG_DIGESTS)
         latest = get_latest_tag("python", "latest")
         self.assertEqual(latest.version, "latest")
         url = "https://registry.hub.docker.com/v2/namespaces/library/repositories/python/tags?page_size=100"
-        self.assert_could_not_fetch_logged(url, status=HTTPStatus.NOT_FOUND)
+        self.assert_could_not_fetch_logged(url, status=HTTPStatus.SERVICE_UNAVAILABLE)
 
     @kills(
         Mutation(
@@ -961,12 +1041,18 @@ class RegistryTokenTest(LoggingTestCase):
         """Test that a network error probing the registry yields no token (anonymous) instead of crashing."""
         self.assertIsNone(_registry_token("ghcr.io", "owner/repo"))
 
+    @kills(
+        Mutation(
+            oci._registry_token,
+            "_LOG.response(response)",
+            "pass",
+            "drops the warning about a token request the registry fails to answer",
+        )
+    )
     @patch("requests.Session.get")
     def test_token_request_failure(self, mock_get: Mock):
         """Test that a failed token request (after a valid auth challenge) yields no token instead of crashing."""
-        challenge = 'Bearer realm="https://ghcr.io/token",service="ghcr.io"'
-        mock_get.side_effect = [
-            mock_response({}, ok=False, status_code=401, headers={"WWW-Authenticate": challenge}),  # auth probe
-            mock_response({}, ok=False),  # token endpoint fails
-        ]
+        probe = "https://ghcr.io/v2/"
+        mock_get.side_effect = [probe_response(probe, challenge=True), service_unavailable(token_endpoint(probe))]
         self.assertIsNone(_registry_token("ghcr.io", "owner/repo"))
+        self.assert_could_not_fetch_logged(token_endpoint(probe), status=HTTPStatus.SERVICE_UNAVAILABLE)

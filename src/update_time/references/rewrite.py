@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from update_time.domain.dependency import FloatingPin
+from update_time.domain.dependency import FloatingPin, Unserved
 from update_time.domain.line import located_lines
 from update_time.domain.reference import DriftedPin, hash_drifted
 from update_time.io.log import Logger, report_marker
@@ -75,10 +75,7 @@ class _Rewriter:
             self._why_drift_is_never_adopted(match, latest),
             update_held_back=marker.ignores(Scope.UPDATE),
         )
-        if latest is None:
-            return match.string
-        if latest.image_not_looked_up is not None:
-            self.logger.image_not_looked_up(reference, latest.image_not_looked_up)
+        if latest is None or self._report_why_the_source_left_it(reference, latest):
             return match.string
         if latest.floating is not None and latest.floating is not FloatingPin.RESOLVED:
             return self._keep_unresolved_floating_reference(match, marker, latest, reference, latest.floating)
@@ -88,6 +85,16 @@ class _Rewriter:
         if latest.version == reference.current_version and not pin_unpinned:
             return self._handle_drift(match, marker, latest, reference)
         return self._apply_update(match, latest, reference, pin_unpinned=pin_unpinned)
+
+    def _report_why_the_source_left_it(self, reference: Reference, latest: DependencyVersion) -> bool:
+        """Log why the source left the reference as it is, and return whether it did."""
+        if latest.image_not_looked_up is not None:
+            self.logger.image_not_looked_up(reference, latest.image_not_looked_up)
+            return True
+        if latest.unserved is Unserved.REPOSITORY:
+            self.logger.repository_not_served(reference)
+            return True
+        return False
 
     @staticmethod
     def _why_drift_is_never_adopted(match: re.Match[str], latest: DependencyVersion | None) -> RedundancyReason | None:

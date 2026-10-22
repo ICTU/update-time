@@ -443,6 +443,16 @@ class Logger:
         fields = self._tagged_fields(reference, reference.current_version)
         self._log(self._MESSAGE_IMAGE_NOT_LOOKED_UP, **fields, reason=reason)
 
+    _MESSAGE_REPOSITORY_NOT_SERVED = LogMessage(
+        DEBUG,
+        "Reference %(dependency)s%(tag)s in %(location)s was left as it is: the registry does not serve the image's "
+        "repository",
+    )
+
+    def repository_not_served(self, reference: Reference) -> None:
+        """Log that a reference was left as it is, because its registry does not serve the image's repository."""
+        self._log(self._MESSAGE_REPOSITORY_NOT_SERVED, **self._tagged_fields(reference, reference.current_version))
+
     _MESSAGE_SUBSTITUTED_REFERENCE = LogMessage(
         DEBUG,
         "Reference %(dependency)s%(tag)s in %(location)s is %(substituted)s with its build arguments substituted; it "
