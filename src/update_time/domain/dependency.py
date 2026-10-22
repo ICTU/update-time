@@ -91,6 +91,13 @@ def is_valid(version: VersionString) -> bool:
     return True
 
 
+class Unserved(StrEnum):
+    """What the source does not serve of the image a reference names."""
+
+    VERSION = auto()  # The registry serves the repository, but not the tag the reference names
+    REPOSITORY = auto()  # The registry does not serve the image's repository
+
+
 class FloatingPin(StrEnum):
     """What a source made of a reference with a floating pin and why, if the pin was not resolved."""
 
@@ -229,7 +236,7 @@ class DependencyVersion:
     yank: Yank = Yank()  # The version's withdrawal state (yanked on PyPI, deprecated on npm)
     project: Project = Project()  # What the source reports about the project behind the dependency
     floating: FloatingPin | None = None  # What happened to the floating pin if the reference had one
-    served: bool = True  # Whether the source serves the version the reference names
+    unserved: Unserved | None = None  # What the source does not serve, if anything
     image_not_looked_up: ImageNotLookedUp | None = None  # Why Update-time does not ask a registry about the image
     tag_name: str = ""  # The version's tag as the repository spells it (`v6.0.0`), where the source reads tags
     fresh_release: Release | None = None  # The newest release inside the cooldown, if any

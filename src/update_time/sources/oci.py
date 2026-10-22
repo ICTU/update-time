@@ -30,6 +30,7 @@ from update_time.domain.dependency import (
     PinnedDependency,
     Project,
     Release,
+    Unserved,
     VersionString,
     tag_of,
 )
@@ -38,7 +39,7 @@ from update_time.domain.publication import publication_date_reporting, reports_p
 from update_time.domain.reference import VARIABLE
 from update_time.io.fetch import fetch, next_page_url
 from update_time.io.log import get_logger
-from update_time.primitives.lookup import DeferredLookup
+from update_time.primitives.lookup import DeferredLookup, LookedUp
 from update_time.sources import docker_hub
 
 if TYPE_CHECKING:
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
 
     from update_time.domain.bound import NewVersionGetter, VersionBound
     from update_time.formats.yaml import Document
+    from update_time.io.fetch import Response
     from update_time.primitives.lookup import Lookup
 
 _LOG = get_logger("oci")
@@ -65,6 +67,9 @@ _DOCKER_HUB_OCI_HOST = "registry-1.docker.io"
 # The page size for the registry's tag listing. `_tag_names` follows the registry's pagination links, so this only
 # sizes the pages, it does not cap how many tags are considered.
 _TAGS_PAGE_SIZE = 1000
+
+# What a registry's challenge says when it refuses the token rather than the repository the token is for.
+_AUTHORIZATION_REFUSED = 'error="invalid_token"'
 
 # Media types offered when resolving a manifest digest, so the registry returns the multi-arch index digest (the
 # digest to pin) when the image is multi-arch, and the single image-manifest digest otherwise.
@@ -313,7 +318,7 @@ def get_latest_tag(
     del check_archival
     image = pinned.name
     resolved = _resolved_tag(image, pinned.version, version_bound, cooldown_days)
-    if not resolved.served:
+    if resolved.unserved is not None:
         return resolved
     return replace(resolved, project=Project(newest=_newest_release(image)))
 
@@ -333,15 +338,18 @@ def _resolved_tag(
     current = Tag(name=current_tag or _DEFAULT_TAG)
     if _is_floating(current):
         return _resolved_floating_tag(image, current)
+    names = _tag_names(image)
+    if names.absent:
+        return _repository_not_served(current)
     if current.version is None:
         # A tag Update-time can read as neither a version nor a channel, such as `debian:dev-2024`: it names no
         # version to advance, so the tag stands and the digest it serves pins it.
         if (tag := _get_tag(image, current.name)) is None:
-            return DependencyVersion(version=current.name, served=False)
+            return DependencyVersion(version=current.name, unserved=Unserved.VERSION)
         return DependencyVersion(version=current.name, sha=tag.digest, publication=tag.pushed)
     candidates = [
         tag
-        for tag in (Tag(name=name) for name in _tag_names(image))
+        for tag in (Tag(name=name) for name in names.value or [])
         if tag.is_candidate_for(current)
         and version_bound.keeps(cast("Version", tag.version), current_tag)
         and not _is_another_spelling(tag, current)
@@ -430,7 +438,8 @@ def _resolved_floating_tag(image: DependencyName, current: Tag) -> DependencyVer
     """
     if not is_docker_hub_image(image):
         return _walked_floating_tag(image, current)
-    listing = docker_hub.tag_listing(_repository(image), current.name)
+    if (listing := docker_hub.tag_listing(_repository(image), current.name).value) is None:
+        return _repository_not_served(current)
     if not (digest := listing.digests.get(current.name)):
         reason_no_version_was_pinned = (
             FloatingPin.NOT_LISTED if listing.examined_all else FloatingPin.NOT_AMONG_EXAMINED
@@ -455,12 +464,16 @@ def _walked_floating_tag(image: DependencyName, current: Tag) -> DependencyVersi
     A registry other than Docker Hub lists tag names without their digests, so each candidate costs a manifest
     request. The candidates are walked in the order `_pinned_alias` would pick between them, and the first one
     serving the same digest is the tag to pin, which keeps the common case to a handful of requests. The walk stops
-    at `_MAX_FLOATING_TAG_PROBES` candidates, and says whether it examined them all or gave up.
+    at `_MAX_FLOATING_TAG_PROBES` candidates, and says whether it examined them all or gave up. The tag names are
+    listed first, since the registry refuses that listing for a repository it does not serve.
     """
+    names = _tag_names(image)
+    if names.absent:
+        return _repository_not_served(current)
     digest = _manifest_digest(image, current.name)
     if not digest:
         return _unpinned_floating_tag(current, FloatingPin.NO_MANIFEST)
-    candidates = _concrete_tags(current, [Tag(name=name) for name in _tag_names(image)])
+    candidates = _concrete_tags(current, [Tag(name=name) for name in names.value or []])
     labels = _variant_labels(current, candidates)
     ordered = sorted(candidates, key=lambda tag: _alias_rank(tag, labels), reverse=True)
     for candidate in ordered[:_MAX_FLOATING_TAG_PROBES]:
@@ -472,6 +485,11 @@ def _walked_floating_tag(image: DependencyName, current: Tag) -> DependencyVersi
     )
 
 
+def _repository_not_served(current: Tag) -> DependencyVersion:
+    """Return the tag as it is, on a repository the registry does not serve, so nothing pins or dates it."""
+    return DependencyVersion(version=current.name, unserved=Unserved.REPOSITORY)
+
+
 def _unpinned_floating_tag(
     current: Tag, reason: FloatingPin, digest: str = "", pushed: Lookup[datetime] = UNDATED
 ) -> DependencyVersion:
@@ -480,8 +498,8 @@ def _unpinned_floating_tag(
     It carries the digest the tag serves, and when the tag was pushed, where those are known. Two of the reasons say
     the registry does not serve the tag, so nothing dates the reference.
     """
-    served = reason not in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)
-    return DependencyVersion(version=current.name, sha=digest, publication=pushed, floating=reason, served=served)
+    unserved = Unserved.VERSION if reason in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST) else None
+    return DependencyVersion(version=current.name, sha=digest, publication=pushed, floating=reason, unserved=unserved)
 
 
 def _pinned_alias(current: Tag, aliases: list[Tag]) -> Tag | None:
@@ -638,12 +656,11 @@ def _credentials(image: str) -> tuple[str, str] | None:
 
 
 @cache
-def _tag_names(image: str) -> list[str]:
+def _tag_names(image: str) -> LookedUp[list[str]]:
     """Fetch all tag names for an image from its OCI registry's names-only listing.
 
-    Some references look like images but aren't, e.g. CircleCI machine images such as `ubuntu-2204`, or `${VAR}`
-    substitutions and other registries' private images we can't authenticate for. These return a 404 (or another
-    error); log the response and skip the image so the reference is left unchanged, rather than crashing the run.
+    Where the registry refuses the repository, the names are absent. Any other failure is logged, and leaves the
+    names listed until then.
     """
     host = _registry_host(image)
     repository = _repository(image)
@@ -651,12 +668,25 @@ def _tag_names(image: str) -> list[str]:
     url: str | None = f"https://{host}/v2/{repository}/tags/list?n={_TAGS_PAGE_SIZE}"
     names: list[str] = []
     while url:
-        response = fetch(url, _LOG, headers=headers)
+        response = fetch(url, _LOG, headers=headers, require_ok=False)
         if response is None:
+            break
+        if _refuses_the_repository(response):
+            return LookedUp(None, absent=True)
+        if not response.ok:
+            _LOG.response(response)
             break
         names.extend(response.json().get("tags") or [])
         url = next_page_url(response)
-    return names
+    return LookedUp(names)
+
+
+def _refuses_the_repository(response: Response) -> bool:
+    """Return whether the registry answered that it does not serve the repository, rather than refusing the token."""
+    if response.status_code == HTTPStatus.NOT_FOUND:
+        return True
+    challenge = response.headers.get("WWW-Authenticate", "")
+    return response.status_code == HTTPStatus.UNAUTHORIZED and _AUTHORIZATION_REFUSED not in challenge
 
 
 @cache
@@ -701,13 +731,11 @@ def _auth_headers(host: str, repository: str, credentials: tuple[str, str] | Non
 
 @cache
 def _registry_token(host: str, repository: str, credentials: tuple[str, str] | None = None) -> str | None:
-    """Discover and fetch a pull token for the registry via the OCI `WWW-Authenticate` challenge.
+    """Return a pull token for the repository, from the token endpoint the registry's challenge names.
 
-    Probe `https://<host>/v2/`; a registry that requires auth replies `401` with a `WWW-Authenticate: Bearer
-    realm=...,service=...` header pointing at its token endpoint. Fetch a token from that realm, scoped to pull the
-    repository. This auto-discovers each registry's auth (Docker Hub's `auth.docker.io`, ghcr.io's token endpoint,
-    ...). Registries that allow anonymous access (e.g. mcr.microsoft.com) don't challenge, so None is returned and
-    requests are made without a token. The given credentials, if any, authenticate the token request.
+    A registry that does not challenge, such as mcr.microsoft.com, is asked without a token. The credentials, if any,
+    authenticate the token request. A 403, as ghcr.io answers for a repository it does not serve, is not logged,
+    since the registry refuses the tag names next. Any other failure is logged.
     """
     probe = fetch(f"https://{host}/v2/", _LOG, require_ok=False)
     if probe is None:
@@ -721,8 +749,11 @@ def _registry_token(host: str, repository: str, credentials: tuple[str, str] | N
     params = dict(re.findall(r'\b(\w++)="([^"]*)"', challenge))
     realm = params.pop("realm", "")
     params["scope"] = f"repository:{repository}:pull"
-    response = fetch(realm, _LOG, params=params, auth=credentials)
-    if response is None:
+    response = fetch(realm, _LOG, params=params, auth=credentials, require_ok=False)
+    if response is None or response.status_code == HTTPStatus.FORBIDDEN:
+        return None
+    if not response.ok:
+        _LOG.response(response)
         return None
     token = response.json()
     return token.get("token") or token.get("access_token")

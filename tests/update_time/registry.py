@@ -19,7 +19,8 @@ from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
 from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.primitives.location import Location
-from update_time.sources import oci
+from update_time.references import rewrite
+from update_time.sources import docker_hub, oci
 
 from tests.helpers import mock_path, mock_response
 from tests.mutation import Mutation, kills
@@ -68,20 +69,59 @@ def _not_found(url: str) -> Mock:
     return mock_response({}, ok=False, status_code=404, url=url)
 
 
-def _probe_response(url: str, *, challenge: bool) -> Mock:
+def service_unavailable(url: str) -> Mock:
+    """Answer a request with a 503, as a registry does that cannot serve the request for now."""
+    return mock_response({}, ok=False, status_code=503, url=url)
+
+
+def unauthorized(url: str, headers: dict[str, str] | None = None) -> Mock:
+    """Answer a request with a 401, as a registry does for a repository it does not serve or a probe it challenges."""
+    return mock_response({}, ok=False, status_code=401, url=url, headers=headers or {})
+
+
+def _forbidden(url: str) -> Mock:
+    """Answer a request with a 403, as a registry's token endpoint does for a repository the registry does not serve."""
+    return mock_response({}, ok=False, status_code=403, url=url)
+
+
+def probe_response(url: str, *, challenge: bool) -> Mock:
     """Answer the OCI `/v2/` auth probe: a `401` challenge pointing at the token endpoint, or `200` when anonymous."""
     if not challenge:  # Anonymous registry: no challenge, so the client proceeds without a token.
         return mock_response({}, ok=True, status_code=200, headers={})
-    host = url.removeprefix("https://").split("/", maxsplit=1)[0]
-    realm = "https://auth.docker.io/token" if host == "registry-1.docker.io" else f"https://{host}/token"
-    bearer = f'Bearer realm="{realm}",service="{host}"'
-    return mock_response({}, ok=False, status_code=401, headers={"WWW-Authenticate": bearer})
+    return unauthorized(url, headers={"WWW-Authenticate": _bearer(url)})
+
+
+def _host(url: str) -> str:
+    """Return the host the URL is on."""
+    return url.removeprefix("https://").split("/", maxsplit=1)[0]
+
+
+def token_endpoint(url: str) -> str:
+    """Return the token endpoint of the registry the URL is on, which its challenge names as the realm."""
+    host = _host(url)
+    return "https://auth.docker.io/token" if host == oci._DOCKER_HUB_OCI_HOST else f"https://{host}/token"
+
+
+def _bearer(url: str) -> str:
+    """Return the challenge of the registry the URL is on, pointing at the registry's token endpoint."""
+    return f'Bearer realm="{token_endpoint(url)}",service="{_host(url)}"'
+
+
+def _refusal(url: str) -> Mock:
+    """Answer a request for a repository the registry does not serve, with the challenge the registry sends.
+
+    Docker Hub says the token it handed out does not reach the repository, and ghcr.io adds nothing to its challenge.
+    """
+    challenge = _bearer(url)
+    if _host(url) == oci._DOCKER_HUB_OCI_HOST:
+        challenge += ',error="insufficient_scope"'
+    return unauthorized(url, headers={"WWW-Authenticate": challenge})
 
 
 def _tags_list_response(url: str, tag_names: list[str], *, list_ok: bool, page_size: int | None) -> Mock:
-    """Answer `tags/list`: a 404 when `list_ok` is false, else the names — one `page_size` page (with a next link)."""
+    """Answer `tags/list`: a 503 when `list_ok` is false, else the names — one `page_size` page (with a next link)."""
     if not list_ok:
-        return mock_response({"tags": tag_names}, ok=False, status_code=404, url=url, headers={})
+        return service_unavailable(url)
     if page_size is None:
         return mock_response({"tags": tag_names}, ok=True, status_code=200, url=url, headers={})
     last = parse_qs(urlparse(url).query).get("last", [None])[0]  # The name the previous page ended on, if any.
@@ -101,13 +141,13 @@ def _manifest_response(url: str, by_name: dict[str, dict[str, object]]) -> Mock:
 
 
 def _tag_digests_response(url: str, tags: tuple[dict[str, object], ...], *, ok: bool) -> Mock:
-    """Answer Docker Hub's tag listing: the requested page of tags with their digests, or a 404 when unavailable.
+    """Answer Docker Hub's tag listing: the requested page of tags with their digests, or a 503 when unavailable.
 
     The page and its size are read from the URL, as Docker Hub reads them, and a page that leaves tags unlisted
     carries the `next` URL of the page after it.
     """
     if not ok:
-        return _not_found(url)
+        return service_unavailable(url)
     query = parse_qs(urlparse(url).query)
     page, page_size = int(query.get("page", ["1"])[0]), int(query["page_size"][0])
     start = (page - 1) * page_size
@@ -121,14 +161,15 @@ def _tag_digests_response(url: str, tags: tuple[dict[str, object], ...], *, ok: 
 
 
 def _push_date_response(url: str, by_name: dict[str, dict[str, object]], *, ok: bool) -> Mock:
-    """Answer Docker Hub's per-tag request with that tag's push date, or a 404 when it is unavailable."""
-    return mock_response(by_name.get(url.rsplit("/tags/", maxsplit=1)[-1], {})) if ok else _not_found(url)
+    """Answer Docker Hub's per-tag request with that tag's push date, or a 503 when it is unavailable."""
+    return mock_response(by_name.get(url.rsplit("/tags/", maxsplit=1)[-1], {})) if ok else service_unavailable(url)
 
 
 def mock_docker_registry(
     *tags: dict[str, object],
     names: list[str] | None = None,
     unavailable: Endpoint | None = None,
+    repository_served: bool = True,
     challenge: bool = True,
     page_size: int | None = None,
 ) -> Callable[..., Mock]:
@@ -143,9 +184,12 @@ def mock_docker_registry(
     The same callable is assigned to both `Session.get` and `Session.head`; it routes purely on the URL.
 
     Knobs for the less common flows:
-    - `unavailable` makes the named endpoint answer 404. The tag names then model a reference that doesn't resolve,
-      such as a CircleCI machine image. The tag digests model a floating tag whose digest stays unknown.
-      Without its push date, a tag's cooldown cannot be verified.
+    - `unavailable` makes the named endpoint answer 503. The tag names then model a reference that doesn't resolve.
+      The tag digests model a floating tag whose digest stays unknown. Without its push date, a tag's cooldown
+      cannot be verified.
+    - `repository_served=False` answers as the registry does for a repository it does not serve. Docker Hub's
+      listing answers with a 404, and the token request of a registry other than Docker Hub with a 403. The OCI
+      tag names and manifests answer with a 401, or with a 404 where the registry is anonymous.
     - `challenge=False` makes the `/v2/` probe answer `200` without a `WWW-Authenticate` header, modelling an
       anonymous registry that isn't queried with a token (e.g. mcr.microsoft.com).
     - `page_size` splits the tag listing into pages of that many names, each linking to the next via the `Link`
@@ -156,7 +200,7 @@ def mock_docker_registry(
 
     def get(url: str, *_args: object, **_kwargs: object) -> Mock:
         if url.endswith("/v2/"):  # OCI auth challenge probe.
-            return _probe_response(url, challenge=challenge)
+            return probe_response(url, challenge=challenge)
         if "/token" in url and "/v2/" not in url:  # Token endpoint discovered from the challenge.
             return mock_response({"token": "token"})  # nosec
         if "/tags/list" in url:
@@ -169,7 +213,23 @@ def mock_docker_registry(
         # Docker Hub proprietary per-tag metadata (the push date); only reached for a tag that resolved a digest.
         return _push_date_response(url, by_name, ok=unavailable is not Endpoint.PUSH_DATE)
 
-    return get
+    def unserved(url: str, *_args: object, **_kwargs: object) -> Mock:
+        if url.endswith("/v2/") or url.startswith("https://auth.docker.io/"):  # Docker Hub still hands out a token.
+            return get(url)
+        if "/token" in url:
+            return _forbidden(url)
+        return _not_found(url) if "/tags?" in url or not challenge else _refusal(url)
+
+    return get if repository_served else unserved
+
+
+# An image on each kind of registry, named by a repository its registry does not serve, and whether the registry
+# challenges for a token.
+_UNSERVED_REPOSITORIES = {
+    "Docker Hub": ("spark-rm-base", True),
+    "another registry": ("ghcr.io/acme/spark-rm-base", True),
+    "an anonymous registry": ("mcr.microsoft.com/acme/spark-rm-base", False),
+}
 
 
 class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
@@ -356,8 +416,8 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         with hash_drift_allowed:
             self.run_updater(mock_file)
         mock_file.write_text.assert_not_called()
-        self.assert_could_not_fetch_logged(status=HTTPStatus.NOT_FOUND)
-        self.assert_undated_push_logged(self.drifted(mock_file, "python", "3.14"), "HTTP 404")
+        self.assert_could_not_fetch_logged(status=HTTPStatus.SERVICE_UNAVAILABLE)
+        self.assert_undated_push_logged(self.drifted(mock_file, "python", "3.14"), "HTTP 503")
 
     def test_digest_drift_under_a_zero_day_cooldown_is_adopted_without_its_push_date(self) -> None:
         """Test that a re-pushed tag opted into drift with a zero-day cooldown is re-pinned although it is undated."""
@@ -482,6 +542,49 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         reason = FloatingPin.NOT_LISTED
         self.assert_unpinned_floating_tag_logged("acme/api", "dev", Location(mock_file, 1), reason)
         self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            docker_hub._listing_page,
+            "if response.status_code == HTTPStatus.NOT_FOUND:",
+            "if False:",
+            "a repository Docker Hub does not serve is warned about, and its floating tag reported as not listed",
+        ),
+        Mutation(
+            oci._walked_floating_tag,
+            "if names.absent:",
+            "if False:",
+            "a floating tag of a repository another registry does not serve is warned about as missing a manifest",
+        ),
+        Mutation(
+            rewrite._Rewriter._report_why_the_source_left_it,
+            "if latest.unserved is Unserved.REPOSITORY:",
+            "if False:",
+            "leaves a version tag of a repository the registry does not serve as it is without saying why",
+        ),
+        Mutation(
+            oci._resolved_tag,
+            "if names.absent:",
+            "if names.absent and current.version is not None:",
+            "warns about the manifest of a dev-2024 tag of a repository the registry does not serve",
+        ),
+    )
+    def test_tag_whose_repository_the_registry_does_not_serve(self) -> None:
+        """Test that a floating, versioned, or other tag of a repository not served is reported at DEBUG alone."""
+        for case, (image, challenge) in _UNSERVED_REPOSITORIES.items():
+            for tag in ("latest", "3.5.1", "dev-2024"):
+                with self.subTest(case, tag=tag):
+                    self.requests.side_effect = mock_docker_registry(repository_served=False, challenge=challenge)
+                    mock_file = mock_path(self.reference(f"{image}:{tag}"))
+                    self.run_updater(mock_file)
+                    mock_file.write_text.assert_not_called()
+                    self.assert_logged_among_others(
+                        Logger._MESSAGE_REPOSITORY_NOT_SERVED,
+                        dependency=image,
+                        tag=f":{tag}",
+                        location=Location(mock_file, 1),
+                    )
+                    self.assert_no_warnings_logged()
 
     def test_pinned_floating_tag(self) -> None:
         """Test that a floating tag pinned to the digest it still serves keeps it and gains the version."""

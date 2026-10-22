@@ -332,6 +332,26 @@ class LoggerTests(TestCase):
             "the Compose file builds this image",
         )
 
+    @kills(
+        Mutation(
+            Logger,
+            'was left as it is: the registry does not serve the image\'s "\n        "repository"',
+            'was left as it is"',
+            "the line reports that a reference was left as it is without naming that its repository is not served",
+        )
+    )
+    def test_repository_not_served(self, mock_log: Mock):
+        """Test that a reference whose registry does not serve the image's repository is reported with that reason."""
+        location = create_location("Dockerfile", 1)
+        _new_logger().repository_not_served(reference("spark-rm-base", location, "3.5.1"))
+        self.assert_message(
+            mock_log,
+            Logger._MESSAGE_REPOSITORY_NOT_SERVED,
+            logging.DEBUG,
+            f"Reference {dependency('spark-rm-base')}:3.5.1 in {at('Dockerfile:1')} was left as it is: "
+            "the registry does not serve the image's repository",
+        )
+
     def test_keeping_a_floating_tag(self, mock_log: Mock):
         """Test that keeping a floating tag is reported with the tag it names and what it resolves to."""
         location = create_location("Dockerfile", 1)

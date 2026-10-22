@@ -296,8 +296,8 @@ def _unreadable_reactors(log: Logger, capture: _Capture) -> dict[str, str]:
     }
 
 
-def _images_not_looked_up(log: Logger, capture: _Capture, dockerfile: Location) -> str:
-    """Log one reference of each kind whose image Update-time does not look up, and return the lines they render as."""
+def _references_left_alone(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
+    """Log a reference of each kind left alone: whose image is not looked up, or whose repository is not served."""
     compose = reference("acme/api", Location(Path("docker-compose.yml"), 4), "1.2.3")
     log.image_not_looked_up(compose, ImageNotLookedUp.BUILT_IMAGE)
     machine = reference("ubuntu-2204", Location(Path(".circleci/config.yml"), 4), "2024.01.1")
@@ -311,7 +311,9 @@ def _images_not_looked_up(log: Logger, capture: _Capture, dockerfile: Location) 
         reference("python", dockerfile, "3.14"), ImageNotLookedUp.ARGUMENT_SHARED_WITH_ANOTHER_FROM_LINE
     )
     log.image_not_looked_up(reference("python", dockerfile, "$PY"), ImageNotLookedUp.DIGEST_OVERRULES_BUILD_ARGUMENTS)
-    return capture.take()
+    not_looked_up = capture.take()
+    log.repository_not_served(reference("spark-rm-base", dockerfile, "3.5.1"))
+    return {"@@IMAGES_NOT_LOOKED_UP@@": not_looked_up, "@@REPOSITORY_NOT_SERVED@@": capture.take()}
 
 
 def _build_argument_samples(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
@@ -452,8 +454,6 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     held_back_by_cooldown = _held_back_by_cooldown(log, capture, dockerfile)
 
-    images_not_looked_up = _images_not_looked_up(log, capture, dockerfile)
-
     understood_markers = _understood_markers(log, capture, dockerfile, stale)
     return {
         "@@DRIFT_WARNINGS@@": drift,
@@ -467,7 +467,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **rate_limits,
         "@@HELD_BACK_BY_COOLDOWN@@": held_back_by_cooldown,
         "@@NO_PUSH_DATE@@": undated_pushes,
-        "@@IMAGES_NOT_LOOKED_UP@@": images_not_looked_up,
+        **_references_left_alone(log, capture, dockerfile),
         **_build_argument_samples(log, capture, dockerfile),
         "@@STALE_WARNING@@": staleness,
         "@@YANKED_WARNING@@": yank,
