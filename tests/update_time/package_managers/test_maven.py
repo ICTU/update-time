@@ -99,7 +99,7 @@ class OtherVariantsPatternTest(unittest.TestCase):
         Mutation(maven, "ga|", "", "a dependency on a plain release ignores a release qualified as GA"),
         Mutation(maven, "|final", "", "a dependency on a plain release ignores a release qualified as Final"),
         Mutation(maven, "|release", "", "a dependency on a release qualified as RELEASE ignores the plain releases"),
-        Mutation(maven, "|v[0-9]{8}", "|[0-9]{8}", "a dependency on a release dated after a v holds back every update"),
+        Mutation(maven, '"v[0-9]{8}', '"[0-9]{8}', "a dependency on a release dated after a v holds back every update"),
         Mutation(maven, "(-[0-9]{4})?", "", "a dependency on a release dated to the minute holds back every update"),
         Mutation(maven, "|sp[0-9]*", "", "a dependency on a service pack holds back every later release"),
         Mutation(maven, "|-[0-9]+)?", ")?", "a dependency on a revision holds back every release but that revision"),

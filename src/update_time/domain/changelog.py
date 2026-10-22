@@ -28,8 +28,9 @@ def is_markdown_content_type(content_type: str) -> bool:
 
 # The characters reStructuredText allows a heading to be underlined with.
 _ADORNMENT_CHARACTERS = frozenset(string.punctuation)
-# The target of a reStructuredText hyperlink, in the angle brackets that follow the link's text.
-_RESTRUCTUREDTEXT_LINK_TARGET = re.compile(r"\s*<[^>]*>(?=`_)")
+# The target of a reStructuredText hyperlink, in the angle brackets that follow the link's text. A match starts where
+# the whitespace before the target starts, so a long run of whitespace is not scanned again from each of its characters.
+_RESTRUCTUREDTEXT_LINK_TARGET = re.compile(r"(?<!\s)\s*<[^>]*>(?=`_)")
 # The version a changelog names at the head of a section.
 _VERSION = re.compile(r"\d+(?:\.\d+)+")
 # What a version may not follow, so the tail of a longer version does not read as a version of its own.

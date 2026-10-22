@@ -1437,8 +1437,8 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_range_module._Interval.__str__,
-            "'[' if self.lower.included else '('",
+            maven_range_module._Boundary.lower_end,
+            "'[' if self.included else '('",
             "'['",
             "a range starting past a version starts at it, so `allow[update===34.1]` holds 34.1 back",
         ),
