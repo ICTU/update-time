@@ -222,17 +222,6 @@ def _twin(name: str) -> str:
     return name.removeprefix("_") if name.startswith("_") else f"_{name}"
 
 
-def _quoted_words(module: cst.Module) -> set[str]:
-    """Return the identifier-shaped words the module's strings spell out, the backticked runs in them left out.
-
-    A word spelled out in a string is data the module works with — a path in a URL, a key, a word of a message —
-    so a docstring quoting that word quotes the data rather than a name the code binds.
-    """
-    strings = m.findall(module, m.SimpleString() | m.FormattedString())
-    sources = (_BACKTICKED_NAME.sub(" ", module.code_for_node(string)) for string in strings)
-    return {word for source in sources for word in _IDENTIFIER.findall(source)}
-
-
 _QUERY_ENDPOINT = '''\
 def _query(reference):
     return {"version": reference}
@@ -302,22 +291,50 @@ class RenamedNameInDocstring(LintRule):
     def __init__(self) -> None:
         """Start with no names, until the module they are read from is visited."""
         super().__init__()
+        self._module = cst.Module(body=[])
         self._code_names: set[str] = set()
         self._quoted_words: set[str] = set()
+        self._documented: list[cst.Module | cst.FunctionDef | cst.ClassDef] = []
 
     def visit_Module(self, node: cst.Module) -> None:
-        """Collect what the module names and what it spells out, then check its own docstring against them."""
-        self._code_names = {cst.ensure_type(name, cst.Name).value for name in m.findall(node, m.Name())}
-        self._quoted_words = _quoted_words(node)
-        self._report_renamed(node)
+        """Keep the module, which the strings are read from, and check its own docstring once the module is read."""
+        self._module = node
+        self._code_names = set()
+        self._quoted_words = set()
+        self._documented = [node]
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
-        """Check the function's docstring here, so a report lands on the function rather than on the module."""
-        self._report_renamed(node)
+        """Check the function's docstring once the module is read, so a report lands on the function."""
+        self._documented.append(node)
 
     def visit_ClassDef(self, node: cst.ClassDef) -> None:
-        """Check the class's docstring here, so a report lands on the class rather than on the module."""
-        self._report_renamed(node)
+        """Check the class's docstring once the module is read, so a report lands on the class."""
+        self._documented.append(node)
+
+    def visit_Name(self, node: cst.Name) -> None:
+        """Collect the name the code spells."""
+        self._code_names.add(node.value)
+
+    def visit_SimpleString(self, node: cst.SimpleString) -> None:
+        """Collect the words the string spells out."""
+        self._quote(node)
+
+    def visit_FormattedString(self, node: cst.FormattedString) -> None:
+        """Collect the words the f-string spells out."""
+        self._quote(node)
+
+    def leave_Module(self, original_node: cst.Module) -> None:
+        """Check each docstring against every name the module spells and every word its strings spell out."""
+        for node in self._documented:
+            self._report_renamed(node)
+
+    def _quote(self, node: cst.SimpleString | cst.FormattedString) -> None:
+        """Collect the identifier-shaped words the string spells out, the backticked runs in it left out.
+
+        A word spelled out in a string is data the module works with — a path in a URL, a key, a word of a message —
+        so a docstring quoting that word quotes the data rather than a name the code binds.
+        """
+        self._quoted_words.update(_IDENTIFIER.findall(_BACKTICKED_NAME.sub(" ", self._module.code_for_node(node))))
 
     def _report_renamed(self, node: cst.Module | cst.FunctionDef | cst.ClassDef) -> None:
         """Report each name the docstring quotes that the code mentions only under the opposite visibility.

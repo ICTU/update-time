@@ -356,6 +356,19 @@ class CheckTest(unittest.TestCase):
             with self.subTest(case):
                 self.assertEqual(_checked(mutation, test_name), (Result(Outcome.KILLED), 1))
 
+    @kills(
+        Mutation(
+            checker.Mutation._mutated_function,
+            "return defined.get(",
+            "return (vars(self._module) | defined).get(",
+            "a mutation renaming its function runs the unmutated function in place, so it survives",
+        )
+    )
+    def test_a_mutation_renaming_its_function_executes_its_module_afresh(self):
+        """Test that a mutation renaming the function it is anchored to executes its module afresh, the name gone."""
+        result, executed = _checked(Mutation(is_even, "def is_even(", "def is_even_renamed("), _SUBJECT_TEST_NAME)
+        self.assertEqual((result.outcome, executed), (Outcome.BROKEN, 1))
+
     def test_a_snippet_the_anchored_function_holds_once_and_the_file_twice(self):
         """Test that a snippet the anchored function holds once is applied there, and nowhere else in the file."""
         ambiguous = Result(Outcome.STALE, "the snippet occurs 2 times rather than once")
@@ -514,7 +527,7 @@ class CheckTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            checker.Mutation._mutated,
+            checker.Mutation._source,
             "raise StaleError(_reason(error)) from error",
             "raise StaleError from error",
             "a mutation naming an unreadable file is reported as stale without saying why",

@@ -40,7 +40,7 @@ _SEQUENTIAL_SCRIPT_NAMES = ("package_json",)
 _PLATFORM = "macOS-26.7.1-arm64-arm-64bit-Mach-O"
 
 # How long a stand-in updater runs when nothing stops it, so a run that fails to stop it cannot hang the tests.
-_PATIENCE = 5
+_PATIENCE = 0.5
 
 # How many stand-in updaters have started when the last of them sends the run a SIGTERM.
 _STARTED_WHEN_SIGNALLED = 3

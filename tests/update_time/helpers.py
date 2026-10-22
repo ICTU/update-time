@@ -64,6 +64,12 @@ def syntax_tree(source: str) -> ast.Module:
     return ast.parse(source)
 
 
+@cache
+def syntax_nodes(source: str) -> tuple[ast.AST, ...]:
+    """Return every node of the source's syntax tree, walking each source once."""
+    return tuple(ast.walk(syntax_tree(source)))
+
+
 def module_level_assignments(tree: ast.Module) -> Iterator[tuple[list[ast.expr], ast.expr | None]]:
     """Yield the targets and assigned value of each module-level assignment, annotated or not.
 
