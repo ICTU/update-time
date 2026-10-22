@@ -273,13 +273,21 @@ def _effective_pom_written_elsewhere(stdout: str) -> XmlElement | None:
 
 @contextmanager
 def _versions_options(declarations: list[Declaration]) -> Generator[tuple[str, ...]]:
-    """Yield the options the versions plugin's goals take, naming a rule set where anything is held back."""
+    """Yield the options the versions plugin's goals take, naming a rule set where anything is held back.
+
+    `update-properties` advances a property wherever in the reactor it is declared or named. So a run over a module
+    advances its parent's properties, and a run over the parent advances the properties only its modules name. The
+    options limit the goal to the properties the declarations name, which the rule set covers. With an empty list, the
+    goal does not advance any property.
+    """
+    properties = unique(filter(None, (declaration.version_property for declaration in declarations)))
+    options = (*_VERSIONS_OPTIONS, f"-DincludeProperties={','.join(properties)}")
     rules = _rules(declarations)
     if not rules:
-        yield _VERSIONS_OPTIONS
+        yield options
         return
     with _rule_set_file(_RULE_SET.format(rules=rules)) as path:
-        yield (*_VERSIONS_OPTIONS, f"-Dmaven.version.rules={path.as_uri()}")
+        yield (*options, f"-Dmaven.version.rules={path.as_uri()}")
 
 
 def _rules(declarations: list[Declaration]) -> str:

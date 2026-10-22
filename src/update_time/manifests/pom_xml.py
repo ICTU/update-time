@@ -130,9 +130,11 @@ class Declaration(SteeredReference):
     The input location is empty where the declaration declares a version, or is read without an effective pom.
     `versioned_by_its_pom` tells whether the declaring pom gives the version, in the `<version>` element or in one of
     its own properties. `literal_plugin_version` tells whether a plugin's `<version>` element holds the version itself.
+    `version_property` names the property the `<version>` element names, if any.
     """
 
     version_managed_at: _InputLocation = _InputLocation()
+    version_property: str = ""
     versioned_by_its_pom: bool = False
     literal_plugin_version: bool = False
     listed_in_effective_pom: bool = False
@@ -434,11 +436,13 @@ def _declaration(
     managed_at = effective.version_managed_at if effective and version is None else _InputLocation()
     location = Location(path, versioned_by.line, versioned_by.column)
     versioned_by_its_pom = bool(own_version) and _is_resolved(own_version)
+    named_property = None if version is None else _PROPERTY_REFERENCE.fullmatch(version.text)
     return Declaration(
         pinned.name,
         pinned.version,
         location,
         version_managed_at=managed_at,
+        version_property="" if named_property is None else named_property["name"],
         versioned_by_its_pom=versioned_by_its_pom,
         literal_plugin_version=versioned_by_its_pom and element.tag == "plugin" and versioned_by is version,
         listed_in_effective_pom=effective is not None,
