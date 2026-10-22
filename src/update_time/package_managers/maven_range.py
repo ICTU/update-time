@@ -27,6 +27,14 @@ class _Boundary:
     version: Version
     included: bool
 
+    def lower_end(self) -> str:
+        """Return the boundary as Maven spells the lower end of a range."""
+        return f"{'[' if self.included else '('}{self.version}"
+
+    def upper_end(self) -> str:
+        """Return the boundary as Maven spells the upper end of a range."""
+        return f"{self.version}{']' if self.included else ')'}"
+
 
 @dataclass(frozen=True)
 class _Interval:
@@ -52,8 +60,8 @@ class _Interval:
         """Return the interval as Maven spells a range."""
         if self.lower is not None and self.lower == self.upper:
             return f"[{self.lower.version}]"
-        lower = "(" if self.lower is None else f"{'[' if self.lower.included else '('}{self.lower.version}"
-        upper = ")" if self.upper is None else f"{self.upper.version}{']' if self.upper.included else ')'}"
+        lower = "(" if self.lower is None else self.lower.lower_end()
+        upper = ")" if self.upper is None else self.upper.upper_end()
         return f"{lower},{upper}"
 
 

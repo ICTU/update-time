@@ -64,11 +64,14 @@ _PRE_RELEASES = f"(?i).*{_PRE_RELEASE_QUALIFIER}"
 # The suffix Maven marks a snapshot with.
 _SNAPSHOT = "-SNAPSHOT"
 
+# The date of a build, such as the `v20250814` of `9.4.58.v20250814`. The date can have the time after it, such as the
+# `-1726` of `3.10.0.v20140604-1726`.
+_BUILD_DATE = r"v[0-9]{8}(-[0-9]{4})?"
+
 # What follows the number of a plain release: nothing, a qualifier Maven reads as the release itself, such as the
-# `.Final` of `4.2.19.Final`, or the date of the build, such as the `.v20250814` of `9.4.58.v20250814`. The date can
-# have the time after it, such as the `-1726` of `3.10.0.v20140604-1726`. A service pack, such as the `.SP2` of
-# `5.1.1.SP2`, and a revision, such as the `-1` of the WebJar `3.3.7-1`, leave the release plain too.
-_PLAIN_RELEASE_QUALIFIER = r"(?i:[-.](ga|final|release|sp[0-9]*|v[0-9]{8}(-[0-9]{4})?)|-[0-9]+)?"
+# `.Final` of `4.2.19.Final`, or the date of the build. A service pack, such as the `.SP2` of `5.1.1.SP2`, and a
+# revision, such as the `-1` of the WebJar `3.3.7-1`, leave the release plain too.
+_PLAIN_RELEASE_QUALIFIER = rf"(?i:[-.](ga|final|release|sp[0-9]*|{_BUILD_DATE})|-[0-9]+)?"
 
 
 def _other_variants(*versions: VersionString) -> str:

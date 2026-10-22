@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from update_time.primitives.lookup import Lookup
 
 
-def adopts_drift(  # noqa: PLR0913 — what dates the new value, and what reports it undated, differ per kind of hash pin
+def adopts_drift(  # noqa: PLR0913 — what dates the new value and what reports it undated differ per kind of hash pin
     kind: Drift,
     drifted: DriftedPin,
     marker: Marker,
