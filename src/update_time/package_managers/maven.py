@@ -47,9 +47,15 @@ def _declared_plugin_version(version_property: str) -> str:
 _HELP_PLUGIN = f"org.apache.maven.plugins:maven-help-plugin:{_declared_plugin_version('help.plugin.version')}"
 _VERSIONS_PLUGIN = f"org.codehaus.mojo:versions-maven-plugin:{_declared_plugin_version('versions.plugin.version')}"
 
+# Numbers separated by dots, such as the `2.4.0` a version starts with. The versions plugin reads the patterns built
+# from it as Java regexes. Python's `\d` matches any Unicode digit and Java's matches 0 to 9 alone, so `[0-9]` keeps
+# both reading these patterns the same, where `update_time.domain.dependency.VERSION_NUMBERS` would not.
+_NUMBER = r"[0-9]+(\.[0-9]+)*"
+
 # The qualifier of a pre-release. Maven reads an `a`, `b`, or `m` followed directly by a number as `alpha`, `beta`,
-# or `milestone`: https://maven.apache.org/pom.html#version-order-specification.
-_PRE_RELEASE_QUALIFIER = "[-.](alpha|beta|milestone|rc|cr|m|pre|preview|[ab][0-9])[-.]?[0-9]*"
+# or `milestone`: https://maven.apache.org/pom.html#version-order-specification. The number after a qualifier can have
+# dots in it, such as the `180830.0359` of `2.4.0-b180830.0359`.
+_PRE_RELEASE_QUALIFIER = rf"[-.](alpha|beta|milestone|rc|cr|m|pre|preview|[ab][0-9])[-.]?({_NUMBER})?"
 
 # The versions no goal may adopt. The versions plugin reads every version but a snapshot as a release, so both of
 # its goals adopt a pre-release otherwise. The pattern must match a whole version string.
@@ -57,9 +63,6 @@ _PRE_RELEASES = f"(?i).*{_PRE_RELEASE_QUALIFIER}"
 
 # The suffix Maven marks a snapshot with.
 _SNAPSHOT = "-SNAPSHOT"
-
-# The digits and dots a version starts with.
-_NUMBER = r"[0-9]+(\.[0-9]+)*"
 
 # What follows the number of a plain release: nothing, a qualifier Maven reads as the release itself, such as the
 # `.Final` of `4.2.19.Final`, or the date of the build, such as the `.v20250814` of `9.4.58.v20250814`. The date can
