@@ -52,6 +52,7 @@ from tests.update_time.sources.helpers import (
     markdown_changelog,
     markdown_changes,
     page_url,
+    repository_url,
     requested_urls,
     respond_per_url,
 )
@@ -522,7 +523,7 @@ class ArchivalTest(LoggingTestCase):
                 else:
                     self.assert_no_warnings_logged()
         requested = [call.args[0] for call in mock_get.call_args_list]
-        self.assertEqual(requested, [f"https://api.github.com/repos/owner/{name}" for name in cases])
+        self.assertEqual(requested, [repository_url(f"owner/{name}") for name in cases])
 
     @kills(
         Mutation(

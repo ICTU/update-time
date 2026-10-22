@@ -48,14 +48,24 @@ _POM_XML = "pom.xml"
 _COORDINATE_TAGS = ("groupId", "artifactId", "version")
 
 
-def source_urls(project: XmlElement) -> list[str]:
-    """Return the URLs that may name where the project's source lives, the `<scm>` URLs first.
+def source_urls(project: XmlElement, artefact: DependencyName) -> list[str]:
+    """Return the URLs that may name where the artefact's source lives, the `<scm>` URLs first.
 
-    The project's own `<url>` comes after them, because a module's `<url>` may name its umbrella project.
+    The project's own `<url>` comes after them, because a module's `<url>` may name its umbrella project. Each URL has
+    the pom's properties and the artefact's coordinates filled in, as in `https://github.com/${org}/${artifactId}`.
     """
     urls = scm_urls(project)
     project_url = project.child("url")
-    return urls if project_url is None else [*urls, project_url.text]
+    named = urls if project_url is None else [*urls, project_url.text]
+    values = _property_values(project) | _coordinate_values(artefact)
+    return [_substituted(url, values) for url in named]
+
+
+def _coordinate_values(artefact: DependencyName) -> dict[str, str]:
+    """Return the artefact's group and artifact, keyed by each name a pom refers to them by."""
+    group_id, artifact_id = coordinates(artefact)
+    values = {"groupId": group_id, "artifactId": artifact_id}
+    return values | {f"project.{name}": value for name, value in values.items()}
 
 
 def scm_urls(project: XmlElement) -> list[str]:
@@ -267,7 +277,7 @@ def _version_as_left(
     property only the parent declares keeps the effective pom's value.
     """
     held = None if own_element is None else _interpolated(own_element.text, property_elements)
-    return held if held is not None and _is_resolved(held) else version.text
+    return held if held is not None and is_resolved(held) else version.text
 
 
 def _input_location(element: XmlElement | None) -> _InputLocation:
@@ -301,7 +311,7 @@ def one_per_artefact_and_line(declared: list[Declaration]) -> list[Declaration]:
 
 def with_resolved_coordinates(declared: list[Declaration]) -> list[Declaration]:
     """Return the declarations whose coordinates resolve, since a repository serves nothing under the others."""
-    return [declaration for declaration in declared if _is_resolved(declaration.dependency)]
+    return [declaration for declaration in declared if is_resolved(declaration.dependency)]
 
 
 def without_versions_left_to(declared: list[Declaration], poms: Mapping[str, Path]) -> list[Declaration]:
@@ -334,7 +344,7 @@ def _managed_versions(path: Path) -> dict[_ArtifactAtLine, str]:
 
 def leaves_coordinates_unresolved(path: Path) -> bool:
     """Return whether the pom declares a dependency or plugin by a group or an artifact it does not resolve itself."""
-    return not all(_is_resolved(declaration.dependency) for declaration in _artefact_declarations(path))
+    return not all(is_resolved(declaration.dependency) for declaration in _artefact_declarations(path))
 
 
 def _artefact_declarations(path: Path, effective_pom: XmlElement | None = None) -> list[Declaration]:
@@ -351,11 +361,11 @@ def versioned_declarations(path: Path, effective_pom: XmlElement | None = None) 
     return [
         declaration
         for declaration in declared
-        if declaration.maven_updates_the_version and _is_resolved(declaration.dependency)
+        if declaration.maven_updates_the_version and is_resolved(declaration.dependency)
     ]
 
 
-def _is_resolved(value: str) -> bool:
+def is_resolved(value: str) -> bool:
     """Return whether the pom resolved every property the value names."""
     return not _PROPERTY_REFERENCE.search(value)
 
@@ -366,7 +376,7 @@ def fully_resolved(pinned: PinnedDependency) -> bool:
     A part that still names a property, such as `${spring.version}`, counts as unnamed.
     """
     group_id, artifact_id = coordinates(pinned.name)
-    return all(part and _is_resolved(part) for part in (group_id, artifact_id, pinned.version))
+    return all(part and is_resolved(part) for part in (group_id, artifact_id, pinned.version))
 
 
 def _resolvable_elements(project: XmlElement) -> dict[str, XmlElement]:
@@ -380,9 +390,14 @@ def _own_coordinates(project: XmlElement) -> dict[str, XmlElement]:
 
 
 def properties(path: Path) -> dict[str, str]:
-    """Return the value of each property the pom declares, keyed by the property's name."""
+    """Return the value of each property the pom at the path declares, or none where the pom cannot be read."""
     project = xml.read(path)
-    return {} if project is None else {name: element.text for name, element in _property_elements(project).items()}
+    return {} if project is None else _property_values(project)
+
+
+def _property_values(project: XmlElement) -> dict[str, str]:
+    """Return the value of each property the pom holds, keyed by name."""
+    return {name: element.text for name, element in _property_elements(project).items()}
 
 
 def _property_elements(project: XmlElement) -> dict[str, XmlElement]:
@@ -435,7 +450,7 @@ def _declaration(
     pinned = effective.pinned if effective else PinnedDependency(_artefact(group_name, artifact_name), own_version)
     managed_at = effective.version_managed_at if effective and version is None else _InputLocation()
     location = Location(path, versioned_by.line, versioned_by.column)
-    versioned_by_its_pom = bool(own_version) and _is_resolved(own_version)
+    versioned_by_its_pom = bool(own_version) and is_resolved(own_version)
     named_property = None if version is None else _PROPERTY_REFERENCE.fullmatch(version.text)
     return Declaration(
         pinned.name,
@@ -450,13 +465,13 @@ def _declaration(
 
 
 def _interpolated(text: str, property_elements: dict[str, XmlElement]) -> str:
-    """Return the text with each `${name}` it holds replaced by the value of that property, where there is one."""
+    """Return the text with each `${name}` it holds replaced by the text of the element declaring that property."""
+    return _substituted(text, {name: element.text for name, element in property_elements.items()})
 
-    def value(reference: re.Match[str]) -> str:
-        element = property_elements.get(reference["name"])
-        return reference[0] if element is None else element.text
 
-    return _PROPERTY_REFERENCE.sub(value, text)
+def _substituted(text: str, values: Mapping[str, str]) -> str:
+    """Return the text with each `${name}` it holds replaced by the value of that name, where there is one."""
+    return _PROPERTY_REFERENCE.sub(lambda reference: values.get(reference["name"], reference[0]), text)
 
 
 def _element_holding(element: XmlElement, property_elements: dict[str, XmlElement]) -> XmlElement:

@@ -1620,7 +1620,7 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             pom_xml_module.with_resolved_coordinates,
-            " if _is_resolved(declaration.dependency)",
+            " if is_resolved(declaration.dependency)",
             "",
             "a pom inheriting a group from its parent is asked about coordinates that resolve to nothing",
         ),
@@ -1638,7 +1638,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             pom_xml_module.versioned_declarations,
-            " and _is_resolved(declaration.dependency)",
+            " and is_resolved(declaration.dependency)",
             "",
             "the repository is asked which versions to hold back for coordinates holding a parent's property",
         ),

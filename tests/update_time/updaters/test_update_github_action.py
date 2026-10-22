@@ -49,6 +49,7 @@ from tests.update_time.helpers import (
     patch_github,
     staleness_disabled,
 )
+from tests.update_time.sources.helpers import releases_url, repository_url
 from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
 from tests.update_time.updaters.helpers import OSV_BATCH_URL, github_version, no_vulnerabilities, osv
 
@@ -1679,8 +1680,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@v4\n")
         workflow_yml.write_text.assert_not_called()
         self.assertEqual(len(github_requests("tags")), 1)
-        repository = "https://api.github.com/repos/actions/checkout"
-        self.assert_could_not_fetch_logged(f"{repository}/releases?per_page=100", f"{repository}/tags?per_page=100")
+        tags = f"{repository_url('actions/checkout')}/tags?per_page=100"
+        self.assert_could_not_fetch_logged(releases_url("actions/checkout"), tags)
         self.assert_no_info_logged()
 
     @patch_github(releases=[], tags=[github_tag_json("v4.3.0", NEW_SHA)], commit=github_commits_json(NEW_SHA))
