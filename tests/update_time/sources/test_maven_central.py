@@ -31,6 +31,7 @@ from tests.update_time.helpers import (
     maven_central_row,
     maven_central_version_row,
     patch_maven_central,
+    properties_element,
 )
 from tests.update_time.sources.helpers import (
     contents_json,
@@ -39,6 +40,7 @@ from tests.update_time.sources.helpers import (
     markdown_changelog,
     markdown_changes,
     releases_url,
+    repository_url,
     requested_urls,
     respond_per_url,
 )
@@ -52,7 +54,9 @@ def _guava_pom_url(artifact: str) -> str:
 _GUAVA_LISTING = maven_central_listing_url(GUAVA)
 _GUAVA_VERSION = "33.7.1-jre"
 _GUAVA_POM = _guava_pom_url("guava")
-_GUAVA_REPOSITORY = "https://api.github.com/repos/google/guava"
+_GUAVA_REPOSITORY = repository_url("google/guava")
+# A module's `<url>` may name this umbrella project rather than the module's own repository.
+_GUAVA_UMBRELLA = "https://github.com/google/guava-umbrella"
 _GUAVA_PARENT = f"com.google.guava:guava-parent:{_GUAVA_VERSION}"
 _GUAVA_PARENT_POM = _guava_pom_url("guava-parent")
 # An artefact whose repository is named otherwise than its artifact.
@@ -97,10 +101,10 @@ def _serve_guava_with_parent(mock_get: Mock, parent_pom: str, responses: dict[st
 class ProjectTest(LoggingTestCase):
     """Unit tests for reading whether the repository behind an artefact is archived."""
 
-    def assert_archived(self, mock_get: Mock, archival: Archival) -> None:
-        """Assert that the run reported the archival, having asked GitHub about the repository the pom names."""
+    def assert_archived(self, mock_get: Mock, archival: Archival, *urls: str) -> None:
+        """Assert that the run reported the archival, having asked for guava's listing, its pom, and the given URLs."""
         self.assertEqual(archival, Archival(archived=True, subject=ArchivedSubject.REPOSITORY))
-        self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING, _GUAVA_POM, _GUAVA_REPOSITORY])
+        self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING, _GUAVA_POM, *urls])
 
     def assert_github_unasked(self, mock_get: Mock, archival: Archival, *urls: str) -> None:
         """Assert that the run reported no archival, having asked the given URLs and GitHub nothing.
@@ -120,7 +124,10 @@ class ProjectTest(LoggingTestCase):
         )
     )
     def test_a_pom_naming_an_archived_repository(self):
-        """Test that an artefact whose pom names a repository GitHub declares archived is reported as archived."""
+        """Test that an artefact whose pom names a repository GitHub declares archived is reported as archived.
+
+        The pom names a parent, which stays unread.
+        """
         cases = {
             "url": ("url", "https://github.com/google/guava"),
             "connection": ("connection", GUAVA_SCM),
@@ -128,25 +135,48 @@ class ProjectTest(LoggingTestCase):
         }
         for case, (tag, scm) in cases.items():
             with self.subTest(case=case):
-                served = maven_central_pom(scm, tag)
+                served = maven_central_pom(scm, tag, parent=_GUAVA_PARENT)
                 with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
-                    self.assert_archived(mock_get, project(GUAVA, check_archival=True).archival)
+                    self.assert_archived(mock_get, project(GUAVA, check_archival=True).archival, _GUAVA_REPOSITORY)
 
-    @kills(
-        Mutation(
-            maven_central._pom_repository,
-            "named = _named_repository(pom)\n",
-            "named = _named_repository(pom)\n"
-            "    if eager := pom_xml_format.parent(pom):\n"
-            "        _pom(eager.name, eager.version)\n",
-            "every artefact whose pom names its repository costs a request for its parent pom as well",
-        )
-    )
-    def test_a_pom_naming_a_github_repository_leaves_its_parent_pom_unread(self):
-        """Test that an artefact whose pom names a GitHub repository is checked without a request for its parent pom."""
-        served = maven_central_pom(GUAVA_SCM, parent=_GUAVA_PARENT)
+    def test_a_pom_naming_its_repository_through_its_coordinates(self):
+        """Test that a pom naming its repository through its own coordinates is checked with them filled in."""
+        cases = {
+            "project.artifactId in scm": (
+                maven_central_pom("https://github.com/google/${project.artifactId}"),
+                "guava",
+            ),
+            "groupId in scm": (maven_central_pom("https://github.com/google/${groupId}"), "com.google.guava"),
+            "project.artifactId in url": (
+                maven_central_pom(project_url="https://github.com/google/${project.artifactId}"),
+                "guava",
+            ),
+        }
+        for case, (served, name) in cases.items():
+            with self.subTest(case=case), patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
+                archival = project(GUAVA, check_archival=True).archival
+                self.assert_archived(mock_get, archival, repository_url(f"google/{name}"))
+
+    def test_a_pom_naming_its_repository_through_its_own_properties(self):
+        """Test that a pom naming its repository through a property it declares is checked with that filled in."""
+        scm = "https://github.com/${github.org}/${project.artifactId}"
+        served = maven_central_pom(scm, properties=properties_element({"github.org": "google"}))
         with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
-            self.assert_archived(mock_get, project(GUAVA, check_archival=True).archival)
+            self.assert_archived(mock_get, project(GUAVA, check_archival=True).archival, _GUAVA_REPOSITORY)
+
+    def test_a_url_is_passed_over_where_its_owner_or_repository_names_a_property(self):
+        """Test that a URL is passed over where its owner or repository names a property, not where its path does."""
+        umbrella = repository_url("google/guava-umbrella")
+        cases = {
+            "owner": ("https://github.com/${github.owner}/guava", umbrella),
+            "repository": ("https://github.com/google/${repo.name}", umbrella),
+            "path below the repository": ("https://github.com/google/guava/tree/${project.scm.tag}", _GUAVA_REPOSITORY),
+        }
+        for case, (scm, repository) in cases.items():
+            with self.subTest(case=case):
+                served = maven_central_pom(scm, project_url=_GUAVA_UMBRELLA)
+                with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
+                    self.assert_archived(mock_get, project(GUAVA, check_archival=True).archival, repository)
 
     @kills(
         Mutation(
@@ -157,13 +187,17 @@ class ProjectTest(LoggingTestCase):
         )
     )
     def test_a_pom_naming_no_repository_takes_the_one_its_parent_pom_names(self):
-        """Test that an artefact whose own pom does not name a GitHub repository is checked against its parent's."""
-        with patch("requests.Session.get") as mock_get:
-            archived = {_GUAVA_REPOSITORY: mock_response({"archived": True})}
-            _serve_guava_with_parent(mock_get, maven_central_pom(GUAVA_SCM), archived)
-            archival = project(GUAVA, check_archival=True).archival
-        self.assertEqual(archival, Archival(archived=True, subject=ArchivedSubject.REPOSITORY))
-        self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING, _GUAVA_POM, _GUAVA_PARENT_POM, _GUAVA_REPOSITORY])
+        """Test that an artefact whose own pom does not name a GitHub repository is checked against its parent's.
+
+        A parent pom naming the repository through `${project.artifactId}` names the artefact's own artifact.
+        """
+        cases = {"literal": GUAVA_SCM, "artifactId": "https://github.com/google/${project.artifactId}"}
+        for case, scm in cases.items():
+            with self.subTest(case=case), patch("requests.Session.get") as mock_get:
+                archived = {_GUAVA_REPOSITORY: mock_response({"archived": True})}
+                _serve_guava_with_parent(mock_get, maven_central_pom(scm), archived)
+                archival = project(GUAVA, check_archival=True).archival
+                self.assert_archived(mock_get, archival, _GUAVA_PARENT_POM, _GUAVA_REPOSITORY)
 
     @kills(
         Mutation(
@@ -185,8 +219,8 @@ class ProjectTest(LoggingTestCase):
     @kills(
         Mutation(
             pom_xml_format.fully_resolved,
-            "part and _is_resolved(part)",
-            "_is_resolved(part)",
+            "part and is_resolved(part)",
+            "is_resolved(part)",
             "a parent pom is fetched at a URL with a coordinate left out, which Maven Central serves nothing at",
         ),
         Mutation(
@@ -273,7 +307,7 @@ class ProjectTest(LoggingTestCase):
             first = project(GUAVA, check_archival=True).archival
             second = project(GUAVA, check_archival=True).archival
         # Asserting what each answered, so the one request says the pom was shared rather than never read.
-        self.assert_archived(mock_get, first)
+        self.assert_archived(mock_get, first, _GUAVA_REPOSITORY)
         self.assertEqual(second, first)
 
     @kills(
@@ -550,8 +584,8 @@ class GetChangesTest(LoggingTestCase):
     @kills(
         Mutation(
             pom_xml_format.source_urls,
-            "return urls if project_url is None else [*urls, project_url.text]",
-            "return urls",
+            "named = urls if project_url is None else [*urls, project_url.text]",
+            "named = urls",
             "a pom naming its repository in the project's `<url>` alone is read as naming none",
         ),
         Mutation(
@@ -569,14 +603,13 @@ class GetChangesTest(LoggingTestCase):
     )
     def test_the_changes_come_from_the_first_repository_on_github_the_pom_names(self):
         """Test that `<scm>` names the repository the changes come from, and the project's `<url>` where it fails to."""
-        umbrella = "https://github.com/google/guava-umbrella"
         cases = {
-            "no scm": (maven_central_pom(project_url=umbrella), "google/guava-umbrella"),
+            "no scm": (maven_central_pom(project_url=_GUAVA_UMBRELLA), "google/guava-umbrella"),
             "scm on another host": (
-                maven_central_pom("scm:git:https://gitbox.example.org/guava.git", project_url=umbrella),
+                maven_central_pom("scm:git:https://gitbox.example.org/guava.git", project_url=_GUAVA_UMBRELLA),
                 "google/guava-umbrella",
             ),
-            "scm and url on github": (maven_central_pom(GUAVA_SCM, project_url=umbrella), "google/guava"),
+            "scm and url on github": (maven_central_pom(GUAVA_SCM, project_url=_GUAVA_UMBRELLA), "google/guava"),
         }
         releases = [github_release_json(f"v{_GUAVA_VERSION}", body="Changes in 33.7.1")]
         for case, (pom, repository) in cases.items():
@@ -589,7 +622,7 @@ class GetChangesTest(LoggingTestCase):
         Mutation(
             maven_central.get_changes,
             "_repository(artefact)",
-            "_named_repository(_pom(artefact, _newest_release(artefact).version))",
+            "_named_repository(_pom(artefact, _newest_release(artefact).version), artefact)",
             "an artefact whose pom leaves its repository to the parent pom has its changes go unreported",
         )
     )

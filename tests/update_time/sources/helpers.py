@@ -32,14 +32,19 @@ def respond_per_url(mock_get: Mock, responses: Mapping[Any, Mock]) -> None:
     mock_get.side_effect = lambda url, **_kwargs: responses[url]
 
 
+def repository_url(repository: GitHubRepository | str) -> str:
+    """Return the URL GitHub serves the repository itself at, such as whether it is archived."""
+    return f"{_GITHUB_API}/{repository}"
+
+
 def releases_url(repository: str) -> str:
     """Return the URL GitHub serves the repository's releases at."""
-    return f"{_GITHUB_API}/{repository}/releases?per_page=100"
+    return f"{repository_url(repository)}/releases?per_page=100"
 
 
 def contents_url(repository: GitHubRepository | str, directory: str = "") -> str:
     """Return the URL GitHub serves the listing of the repository's directory at, its root by default."""
-    return f"{_GITHUB_API}/{repository}/contents/{directory}"
+    return f"{repository_url(repository)}/contents/{directory}"
 
 
 def file_url(name: str) -> str:

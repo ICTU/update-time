@@ -1020,7 +1020,9 @@ def maven_central_listing(*rows: str) -> str:
     return f'<html><body><pre>\n<a href="../">../</a>\n{"".join(rows)}</pre></body></html>'
 
 
-def maven_central_pom(scm: str = "", tag: str = "url", project_url: str = "", parent: str = "") -> str:
+def maven_central_pom(
+    scm: str = "", tag: str = "url", project_url: str = "", parent: str = "", properties: str = ""
+) -> str:
     """Return the pom beside a version, naming the source repository in the given child of its `<scm>` element.
 
     An scm given as nothing is a pom that does not declare an `<scm>` element at all, as guava's own pom does not.
@@ -1029,7 +1031,8 @@ def maven_central_pom(scm: str = "", tag: str = "url", project_url: str = "", pa
     """
     url = f"  <url>{project_url}</url>\n" if project_url else ""
     declared = f"  <scm>\n    <{tag}>{scm}</{tag}>\n  </scm>\n" if scm else ""
-    return f'<project xmlns="http://maven.apache.org/POM/4.0.0">\n{_pom_parent(parent)}{url}{declared}</project>\n'
+    elements = f"{_pom_parent(parent)}{properties}{url}{declared}"
+    return f'<project xmlns="http://maven.apache.org/POM/4.0.0">\n{elements}</project>\n'
 
 
 def _pom_parent(parent: str) -> str:

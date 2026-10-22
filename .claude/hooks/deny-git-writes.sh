@@ -35,6 +35,8 @@ while IFS= read -r part; do
         ;;
     branch)
         [[ $arguments =~ ^[[:space:]]+-D[[:space:]]+worktree-agent-[[:alnum:]]+[[:space:]]*$ ]] && continue
+        # Listing the branches whose names match a pattern changes nothing.
+        [[ $arguments =~ ^[[:space:]]+(-l|--list)([[:space:]]+[^-[:space:]][^[:space:]]*)*[[:space:]]*$ ]] && continue
         [[ $arguments =~ [[:space:]](-[dDmMcCf]|--(delete|move|copy|force|set-upstream-to|unset-upstream|edit-description))([[:space:]=]|$) ||
             $arguments =~ [[:space:]][^-[:space:]] ]] && deny "git branch with a name or a flag creates, moves, or deletes a branch"
         ;;

@@ -134,13 +134,13 @@ def _pom_repository(artefact: DependencyName, version: VersionString) -> LookedU
     pom = _pom(artefact, version)
     if pom is None:
         return LookedUp(None)
-    named = _named_repository(pom)
+    named = _named_repository(pom, artefact)
     if not named.absent:
         return named
     parent_pom = _parent_pom(pom)
     if parent_pom.value is None:
         return LookedUp(None, absent=parent_pom.absent)
-    return _named_repository(parent_pom.value)
+    return _named_repository(parent_pom.value, artefact)
 
 
 def _parent_pom(pom: XmlElement) -> LookedUp[XmlElement]:
@@ -154,10 +154,11 @@ def _parent_pom(pom: XmlElement) -> LookedUp[XmlElement]:
     return LookedUp(None, absent=True) if parent is None else LookedUp(_pom(parent.name, parent.version))
 
 
-def _named_repository(pom: XmlElement) -> LookedUp[GitHubRepository]:
-    """Return the GitHub repository the pom names, absent where it names none."""
-    for url in pom_xml_format.source_urls(pom):
-        if (repository := github_repository(url)) is not None:
+def _named_repository(pom: XmlElement, artefact: DependencyName) -> LookedUp[GitHubRepository]:
+    """Return the GitHub repository the pom names for the artefact, absent where it names none."""
+    for url in pom_xml_format.source_urls(pom, artefact):
+        repository = github_repository(url)
+        if repository is not None and pom_xml_format.is_resolved(str(repository)):
             return LookedUp(repository)
     return LookedUp(None, absent=True)
 
