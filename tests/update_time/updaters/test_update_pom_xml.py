@@ -185,10 +185,11 @@ _VERSIONS_GOALS = (
 )
 
 
-def _versions_options(rules: Path | None) -> tuple[str, ...]:
+def _versions_options(rules: Path | None, properties: str = "") -> tuple[str, ...]:
     """Return the options the versions plugin's goals take, naming the rule set file where a run holds versions back."""
     rule_set = (f"-Dmaven.version.rules={rules.as_uri()}",) if rules else ()
-    return ("-DgenerateBackupPoms=false", f"-Dmaven.version.ignore={maven_module._PRE_RELEASES}", *rule_set)
+    pre_releases = f"-Dmaven.version.ignore={maven_module._PRE_RELEASES}"
+    return ("-DgenerateBackupPoms=false", pre_releases, f"-DincludeProperties={properties}", *rule_set)
 
 
 def _options(directory: str = ".") -> tuple[str, ...]:
@@ -196,12 +197,14 @@ def _options(directory: str = ".") -> tuple[str, ...]:
     return ("--batch-mode", "--no-transfer-progress", "--projects", directory)
 
 
-def _maven_command(executable: str = "mvn", rules: Path | None = None, directory: str = ".") -> Command:
+def _maven_command(
+    executable: str = "mvn", rules: Path | None = None, directory: str = ".", properties: str = ""
+) -> Command:
     """Return the command Update-time runs over a pom whose coordinates resolve: the effective pom, then the updates."""
     return Command(
         executable,
         *_options(directory),
-        *_versions_options(rules),
+        *_versions_options(rules, properties),
         *_EFFECTIVE_POM_OPTIONS,
         _EFFECTIVE_POM_GOAL,
         *_VERSIONS_GOALS,
@@ -213,9 +216,9 @@ def _effective_pom_command() -> Command:
     return Command("mvn", *_options(), *_EFFECTIVE_POM_OPTIONS, _EFFECTIVE_POM_GOAL)
 
 
-def _versions_command(rules: Path) -> Command:
+def _versions_command(rules: Path, properties: str = "") -> Command:
     """Return the command updating a pom leaving a group or an artifact to its parent, after its effective pom."""
-    return Command("mvn", *_options(), *_versions_options(rules), *_VERSIONS_GOALS)
+    return Command("mvn", *_options(), *_versions_options(rules, properties), *_VERSIONS_GOALS)
 
 
 def _maven_run(command: Command, directory: Path = _PROJECT) -> object:
@@ -1328,6 +1331,19 @@ class UpdatePomXmlTest(LoggingTestCase):
         self.assertEqual(self.rule_sets, [])
         self.assert_maven_ran(mock_run)
 
+    def test_a_run_advances_the_properties_its_pom_declares_and_names_alone(self, mock_run: Mock, mock_glob: Mock):
+        """Test that the run lists each property the pom declares and its declarations name, once, and those alone."""
+        pom = pom_declaring(
+            guava_element("${guava.version}"),
+            dependency_element("commons-io", "commons-io", "${commons-io.version}"),
+            dependency_element("junit", "junit", "4.13.2"),
+            properties=properties_element({"guava.version": "33.0.0-jre"}),
+            managed=dependency_management_element(guava_element("${guava.version}")),
+        )
+        self.find_pom(mock_run, mock_glob, pom)
+        update_pom_xmls()
+        self.assert_maven_runs(mock_run, _maven_command(rules=_RULES, properties="guava.version"))
+
     @kills(
         Mutation(
             maven_module._variant_versions,
@@ -1729,25 +1745,28 @@ class UpdatePomXmlTest(LoggingTestCase):
                 pom_declaring(_SPRING_LEAVING_ITS_GROUP),
                 effective_spring,
                 _rule("org.springframework", "spring-core", "6.1.0", "7.1.0"),
+                "",
             ),
             "a dependency's artifact": (
                 pom_declaring(dependency_element("org.springframework", "${spring.artifact}", "6.1.0")),
                 effective_spring,
                 _rule("org.springframework", "spring-core", "6.1.0", "7.1.0"),
+                "",
             ),
             "a plugin's group": (
                 _POM_LEAVING_THE_VERSIONS_PLUGINS_GROUP,
                 _EFFECTIVE_VERSIONS,
                 _rule("org.codehaus.mojo", "versions-maven-plugin", "2.18.0", "2.19.0"),
+                "versions.version",
             ),
         }
-        for case, (declared, effective_pom, rule) in cases.items():
+        for case, (declared, effective_pom, rule, properties) in cases.items():
             with self.subTest(case=case):
                 self.find_pom(mock_run, mock_glob, declared, effective_pom)
                 with self.hold_back({spring: ("7.1.0",), _VERSIONS: ("2.19.0",)}):
                     update_pom_xmls()
                 self.assertEqual(self.rule_sets, [_rule_set(rule)])
-                self.assert_maven_runs(mock_run, _effective_pom_command(), _versions_command(_RULES))
+                self.assert_maven_runs(mock_run, _effective_pom_command(), _versions_command(_RULES, properties))
 
     @kills(
         Mutation(
