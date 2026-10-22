@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Fill in the properties through which a Maven pom names its GitHub repository, such as `${project.artifactId}`. Closes [#455](https://github.com/ICTU/update-time/issues/455).
 - Keep Maven from adopting a pre-release whose number has dots in it, such as `2.4.0-b180830.0359`. Closes [#454](https://github.com/ICTU/update-time/issues/454).
 - Log at `DEBUG` rather than warn when the registry does not serve an image's repository, as for an image the project builds itself. Closes [#451](https://github.com/ICTU/update-time/issues/451).
+- Date a GitHub release whose tag was moved onto a later commit by that commit, rather than by its publication date. Closes [#452](https://github.com/ICTU/update-time/issues/452).
 
 ## 0.0.51 - 2026-10-21
 

@@ -1275,7 +1275,7 @@ A reference kept floating with `allow[floating-pin]` keeps naming the branch. Th
 
 #### Cooldown
 
-The cooldown is measured against the release's publication date. A version that was only tagged takes the publication date of the first release of the same commit, so a `v4.3` tag waits as long as a `v4.3.0` release of that commit. Without such a release, the cooldown is measured against the date of the commit the tag points at. Update-time skips a version whose commit date it cannot fetch, rather than adopting it with the cooldown unchecked. It then skips the older versions as well, and stays on the version the reference names, since the failure, such as a rate limit, would hold for them too. It logs why at `ERROR`:
+The cooldown is measured against the release's publication date. Some repositories move a release's tag along with every new version, as the tag of a `v2` release moves to each `v2.x.y`. Where that tag points at a commit made after the release was published, the release takes the commit's date instead. A version that was only tagged takes the publication date of the first release of the same commit, so a `v4.3` tag waits as long as a `v4.3.0` release of that commit. Without such a release, the cooldown is measured against the date of the commit the tag points at. Update-time skips a version whose commit date it cannot fetch, rather than adopting it with the cooldown unchecked. It then skips the older versions as well, and stays on the version the reference names, since the failure, such as a rate limit, would hold for them too. It logs why at `ERROR`:
 
 ```console
 @@UNDATED_TAGGED_COMMIT@@
@@ -1289,7 +1289,7 @@ Update-time measures the cooldown of a moved tag's or branch's new commit agains
 
 #### Stale dependencies
 
-Staleness is measured against the repository's newest release, whatever the reference names: a version, a branch, or a commit.
+Staleness is measured against the repository's newest release, whatever the reference names: a version, a branch, or a commit. A release whose tag was moved onto a commit made after its publication takes the commit's date, as it does for the cooldown.
 
 #### Yanked dependencies
 

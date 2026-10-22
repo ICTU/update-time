@@ -39,7 +39,7 @@ from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import utc_date_and_time
 
 from tests.helpers import mock_path, mock_response, patch_environ
-from tests.update_time.fixtures import COMMIT_SHA, FRESH_DATE, PAST_COOLDOWN_DATE
+from tests.update_time.fixtures import COMMIT_SHA, FRESH_DATE, PAST_COOLDOWN_DATE, STALE_DATE
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator, Mapping, Sequence
@@ -786,7 +786,7 @@ def days_ago(days: int) -> datetime:
 
 
 def github_release_json(tag_name: str, published_at: datetime | None = None, **extra: object) -> dict[str, object]:
-    """Return a GitHub release API result for the tag, eligible (not a draft or prerelease) unless overridden."""
+    """Return a GitHub release API result for the tag, eligible and with its tag not moved, unless overridden."""
     published = published_at.isoformat() if published_at else None
     return {
         "draft": False,
@@ -795,6 +795,7 @@ def github_release_json(tag_name: str, published_at: datetime | None = None, **e
         "body": None,
         "html_url": f"https://github.com/releases/tag/{tag_name}",
         "published_at": published,
+        "created_at": (published_at or STALE_DATE).isoformat(),
         **extra,
     }
 

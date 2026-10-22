@@ -89,6 +89,7 @@ class _ReleaseJSON(TypedDict):
     draft: bool
     prerelease: bool
     published_at: str | None  # None for a draft, which hasn't been published
+    created_at: str  # The date of the commit the release's tag points at
 
 
 class _TaggedCommit(TypedDict):
@@ -179,15 +180,19 @@ class TaggedVersion:
     def from_release(cls, repository: GitHubRepository, release: _ReleaseJSON) -> TaggedVersion:
         """Create a TaggedVersion from a GitHub releases endpoint result.
 
-        GitHub renders a release body as Markdown, whatever the repository's own changelog file is written in.
+        GitHub renders a release body as Markdown, whatever the repository's own changelog file is written in. A release
+        whose tag was moved onto a commit made after its publication takes the commit's date.
         """
+        published_at = parse_timestamp(release["published_at"])
+        if published_at is not None:
+            published_at = max(published_at, datetime.fromisoformat(release["created_at"]))
         return cls(
             repository=repository,
             tag_name=release["tag_name"],
             body=Changes(release.get("body") or "", markdown=True, url=release["html_url"]),
             draft=release["draft"],
             prerelease=release["prerelease"],
-            published_at=parse_timestamp(release["published_at"]),
+            published_at=published_at,
         )
 
     @classmethod

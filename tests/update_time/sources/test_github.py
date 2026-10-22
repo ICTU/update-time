@@ -314,6 +314,16 @@ class GetLatestVersionTest(LoggingTestCase):
         latest = get_latest_version("owner/tag beside fresh release", "8.2.2")
         self.assert_version(latest, "8.2.2", "", "")
 
+    @patch_github(
+        releases=[github_release_json("v2", published_at=PAST_COOLDOWN_DATE, created_at=FRESH_DATE.isoformat())],
+        tags=[github_tag_json("v2.14.0"), github_tag_json("v2")],
+        commit=github_commits_json(date=FRESH_DATE),
+    )
+    def test_skip_versions_on_the_commit_a_release_tag_was_moved_onto(self):
+        """Test that a release published before its commit, and a tag beside it, wait for that commit's cooldown."""
+        latest = get_latest_version("owner/moved release", "1.0")
+        self.assert_version(latest, "1.0", "", "")
+
     def test_tag_takes_the_earliest_publication_date_of_the_releases_of_its_commit(self):
         """Test that a tag without a release takes the earliest date of its commit's releases, whatever the tag order.
 
@@ -763,7 +773,15 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
         ),
     )
     @patch_get(
-        [{"tag_name": "1.1", "html_url": RELEASE_PAGE, "draft": False, "prerelease": False, "published_at": None}]
+        [
+            {
+                "tag_name": "1.1",
+                "html_url": RELEASE_PAGE,
+                "draft": False,
+                "prerelease": False,
+                "published_at": None,
+            }
+        ]
     )
     def test_release_without_body(self):
         """Test that the changes are empty when the release GitHub answers carries no body."""
