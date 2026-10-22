@@ -113,10 +113,10 @@ mutations_switched_off := '[ "${' + mutation_checks_off + ':-}" = 1 ]'
 progress(name, command) := start_progress() + " " + command + " " + end_progress(name)
 
 # The registered mutations stand aside while coverage runs, so coverage is measured over the tests alone and a line that only a mutated re-run reaches shows up as a gap.
-measured_run := switch_mutations_off + " " + coverage + " run -m unittest --quiet"
+measured_run := switch_mutations_off + " " + coverage + " run -m tools.run_tests"
 
-# A measured run must reach 100%. The text report applies that gate and lists the lines no test reaches. A named subset is skipped rather than measured, since it reaches too little of the tree to meet the gate and its report names every file it never imports.
-coverage_command(tests) := if tests == "" { progress("test-coverage", measured_run + " && " + coverage + " report --show-missing") } else { skipped("test-coverage", "a named subset is not measured") }
+# A measured run must reach 100%. Each test process writes a data file of its own, so the run starts by erasing the files a failed run left behind and ends by combining its own. The text report applies that gate and lists the lines no test reaches. A named subset is skipped rather than measured, since it reaches too little of the tree to meet the gate and its report names every file it never imports.
+coverage_command(tests) := if tests == "" { progress("test-coverage", coverage + " erase && " + measured_run + " && " + coverage + " combine --quiet && " + coverage + " report --show-missing") } else { skipped("test-coverage", "a named subset is not measured") }
 
 # The tests carrying a kills decorator run again, unmeasured, against the mutations they register. A caller that switched the registered mutations off already, as `just mutate` does, leaves this pass nothing to add to the coverage pass, so it says so rather than running those tests twice. A named subset, which the coverage pass skips, runs here whole either way, labelled a plain `test` run when the registered mutations are off.
 mutations_command(tests) := if tests == "" { 'if ' + mutations_switched_off + '; then ' + skipped("test-mutations", "the registered mutations are switched off") + '; else ' + mutations_run(tests) + "; fi" } else { mutations_run(tests) }
@@ -125,10 +125,7 @@ mutations_command(tests) := if tests == "" { 'if ' + mutations_switched_off + ';
 mutations_run(tests) := 'label=test-mutations; if ' + mutations_switched_off + '; then label=test; fi; ' + progress('"$label"', mutations_tests(tests))
 
 # The tests the mutations pass runs. A full run loads the tests carrying a kills decorator alone, since the coverage pass runs every other test already.
-mutations_tests(tests) := if tests == "" { uv_run + " python -c 'import unittest; from tests.mutation import KillsTestLoader; unittest.main(module=None, testLoader=KillsTestLoader())' --quiet" } else { python_m + " unittest --quiet " + named_tests(tests) }
-
-# The tests named, each test package among them expanded into its test modules, since `unittest` does not run the tests in a package it is handed.
-named_tests(tests) := "$(" + python_m + " tools.expand_tests " + tests + ")"
+mutations_tests(tests) := python_m + " tools.run_tests " + if tests == "" { "--kills" } else { tests }
 
 # Run the unit tests under coverage, with the registered mutations standing aside, so coverage is measured over the tests alone. A named subset is skipped rather than measured.
 test-coverage *tests: install-py-dependencies install-nltk-data (coverage-pass tests)

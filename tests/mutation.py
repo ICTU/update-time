@@ -141,12 +141,15 @@ class Mutation:
         """Return the file the module was loaded from."""
         return self._module.__file__ or ""
 
-    def _mutated(self) -> str:
-        """Return the file's source with the snippet replaced inside the anchor's span."""
+    def _source(self) -> str:
+        """Return the source of the file the mutation changes."""
         try:
-            source = _READ_TEXT(Path(self._path))
+            return _READ_TEXT(Path(self._path))
         except OSError as error:
             raise StaleError(_reason(error)) from error
+
+    def _mutated(self, source: str) -> str:
+        """Return the source with the snippet replaced inside the anchor's span."""
         mutated = mutated_source(source, self._qualified_name, self.old, self.new)
         if not self._qualified_name and (function := _function_holding(source, self.old)):
             message = f"the snippet lies inside {function}, so anchor the mutation on {function}"
@@ -161,11 +164,12 @@ class Mutation:
         answer for.
         """
         try:
-            mutated = self._mutated()
+            source = self._source()
+            mutated = self._mutated(source)
         except StaleError as error:
             return Result(Outcome.STALE, str(error))
         try:
-            test_result = self._run_test(test_name, mutated)
+            test_result = self._run_test(test_name, source, mutated)
         except _SourceError as error:
             return Result(Outcome.BROKEN, str(error))
         if test_result.errors:
@@ -185,33 +189,32 @@ class Mutation:
             return None
         return function
 
-    def _mutated_function(self, mutated: str) -> types.FunctionType | None:
-        """Return the anchored function as the mutated source defines it, or None where that won't parse or execute."""
-        try:
-            start, end = _span(mutated, self._qualified_name)
-        except StaleError:
-            return None
+    def _mutated_function(self, source: str, mutated: str) -> types.FunctionType | None:
+        """Return the anchored function as the mutated source defines it, or None where that won't run or define it."""
+        start, end = _span(source, self._qualified_name)
+        # The snippet lies inside the span, so the mutated definition ends where the replacement moved the end to.
+        end += len(self.new) - len(self.old)
         line_start = mutated.rfind("\n", 0, start) + 1
         lines_above = mutated.count("\n", 0, line_start)
         # An indented definition is nested in an `if` on the line above it, so its strings keep their indentation.
         header = "\n" * (lines_above - 1) + "if True:\n" if start > line_start else "\n" * lines_above
         definition = header + mutated[line_start:end]
-        namespace = dict(vars(self._module))
+        defined: dict[str, Any] = {}
         try:
-            exec(compile(definition, self._path, "exec"), namespace)  # noqa: S102 # nosec
+            exec(compile(definition, self._path, "exec"), dict(vars(self._module)), defined)  # noqa: S102 # nosec
         except Exception:  # noqa: BLE001  # Executing the module afresh reports what the definition raises.
             return None
-        return namespace[self._qualified_name.rsplit(".", maxsplit=1)[-1]]
+        return defined.get(self._qualified_name.rsplit(".", maxsplit=1)[-1])
 
-    def _run_test(self, test_name: str, mutated: str) -> unittest.TestResult:
+    def _run_test(self, test_name: str, source: str, mutated: str) -> unittest.TestResult:
         """Run the test against the mutated source, with the anchored function's definition swapped in place.
 
         The module is executed afresh instead where the definition cannot be swapped: for a module or a class anchor,
-        for a function of this module, and for a mutated definition that does not parse, raises when executed, or needs
-        other free variables than the function has.
+        for a function of this module, and for a mutated definition that does not parse, raises when executed, defines
+        another name, or needs other free variables than the function has.
         """
         function = self._function()
-        mutated_function = None if function is None else self._mutated_function(mutated)
+        mutated_function = None if function is None else self._mutated_function(source, mutated)
         if function is None or mutated_function is None:
             return self._run_test_afresh(test_name, mutated)
         original = _definition(function)
@@ -332,13 +335,19 @@ def _definitions(source: str) -> dict[str, ast.stmt]:
     A name defined twice, as a property's getter and setter are, names its first definition, which is the getter.
     """
     try:
-        body = ast.parse(source).body
+        body = _parsed(source).body
     except SyntaxError as error:
         raise StaleError(_reason(error)) from error
     definitions: dict[str, ast.stmt] = {}
     for name, node in _named(body):
         definitions.setdefault(name, node)
     return definitions
+
+
+@functools.cache
+def _parsed(source: str) -> ast.Module:
+    """Return the syntax tree of the source, parsed once however many mutations change it."""
+    return ast.parse(source)
 
 
 def _named(body: list[ast.stmt], prefix: str = "") -> Iterator[tuple[str, ast.stmt]]:

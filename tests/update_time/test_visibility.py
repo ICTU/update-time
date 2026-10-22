@@ -8,7 +8,7 @@ import pathlib
 import unittest
 from typing import TYPE_CHECKING
 
-from tests.update_time.helpers import module_level_assignments, project, syntax_tree
+from tests.update_time.helpers import module_level_assignments, project, syntax_nodes, syntax_tree
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -117,11 +117,11 @@ def _module_local_names(
     path rather than by module name, so the two `helpers.py` modules are told apart. Attributes and strings are
     matched by name alone, which can only hide a name, never invent one.
     """
-    trees = {path: syntax_tree(path.read_text()) for path in files}
+    sources = {path: path.read_text() for path in files}
     imported: set[tuple[str, str]] = set()
     mentioned: set[str] = set()
-    for tree in trees.values():
-        for node in ast.walk(tree):
+    for source in sources.values():
+        for node in syntax_nodes(source):
             if isinstance(node, ast.ImportFrom) and node.module and not node.level:
                 module_file = node.module.replace(".", "/") + ".py"
                 imported.update((module_file, alias.name) for alias in node.names)
@@ -131,7 +131,7 @@ def _module_local_names(
                 mentioned.add(node.value)
     return sorted(
         f"{path}:{public_name}"
-        for path, public_name in public_names(trees)
+        for path, public_name in public_names({path: syntax_tree(source) for path, source in sources.items()})
         if public_name not in mentioned
         and not any(path.as_posix().endswith(module_file) and public_name == name for module_file, name in imported)
     )
@@ -160,7 +160,7 @@ def _privates_imported_elsewhere(files: list[pathlib.Path]) -> list[str]:
     """
     reported: list[str] = []
     for path in files:
-        for node in ast.walk(syntax_tree(path.read_text())):
+        for node in syntax_nodes(path.read_text()):
             if not isinstance(node, ast.ImportFrom) or not node.module or node.level:
                 continue
             module_file = node.module.replace(".", "/") + ".py"
@@ -176,10 +176,7 @@ def _private_classes_named_like_public_ones(files: list[pathlib.Path]) -> list[s
     The two names then stand for two concepts, and a reader takes the one for the other.
     """
     classes = [
-        (path, node.name)
-        for path in files
-        for node in ast.walk(syntax_tree(path.read_text()))
-        if isinstance(node, ast.ClassDef)
+        (path, node.name) for path in files for node in syntax_nodes(path.read_text()) if isinstance(node, ast.ClassDef)
     ]
     public_classes = {name for _path, name in classes if not name.startswith("_")}
     return sorted(f"{path}:{name}" for path, name in classes if name.startswith("_") and name[1:] in public_classes)
