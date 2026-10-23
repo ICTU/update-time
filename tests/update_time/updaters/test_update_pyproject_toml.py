@@ -227,9 +227,11 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             "declarations = _by_name(report_file_markers(file, log))\n"
             "    outdated = run(uv_tree)\n"
             "    if not outdated.ok:\n"
+            "        log.uv_dependencies_not_updated(file.path)\n"
             "        return False\n",
             "outdated = run(uv_tree)\n"
             "    if not outdated.ok:\n"
+            "        log.uv_dependencies_not_updated(file.path)\n"
             "        return False\n"
             "    declarations = _by_name(report_file_markers(file, log))\n",
             "a failed uv tree skips the marker report, so a marker on a pin reads as unrecognised",
@@ -244,6 +246,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         get.assert_not_called()
         marker = Marker(ignored_scopes=Scope.UPDATE)
         self.assert_recognised_marker_logged("package", Location(mock_pyproject_toml, 2), marker)
+        self.assert_uv_dependencies_not_updated_logged(mock_pyproject_toml)
 
     @kills(
         Mutation(
@@ -443,8 +446,10 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    def test_uv_lock_skipped_when_uv_tree_fails(self, run: Mock, get: Mock, glob: Mock):
-        """Test that a failed uv tree (e.g. offline) skips the futile uv lock, logging only uv tree's failure."""
+    def test_a_failed_uv_tree_skips_uv_lock_and_reports_the_dependencies_not_updated(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that a failed uv tree (e.g. offline) skips the futile uv lock, and is reported at error."""
         run.side_effect = subprocess.CalledProcessError(cmd="", returncode=2, output="", stderr="error: offline")
         mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
         glob.return_value = [mock_pyproject_toml]
@@ -455,6 +460,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         mock_pyproject_toml.write_text.assert_not_called()
         get.assert_not_called()
         self.assert_command_stderr_logged(stderr="error: offline")  # only uv tree's stderr is surfaced
+        self.assert_uv_dependencies_not_updated_logged(mock_pyproject_toml)
 
     def test_skip_non_uv_tool_section(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pyproject.toml with a non-uv tool section (e.g. [tool.poetry]) is skipped without running uv."""

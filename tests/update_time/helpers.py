@@ -688,6 +688,10 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that a single 'command wrote to stderr' warning was logged, optionally for a given command/stderr."""
         self.assert_logged(Logger._MESSAGE_COMMAND_STDERR, command=command, stderr=stderr)
 
+    def assert_uv_dependencies_not_updated_logged(self, path: Path) -> None:
+        """Assert that the file's dependencies were reported as not updated, because `uv tree` failed."""
+        self.assert_error_logged(Logger._MESSAGE_UV_DEPENDENCIES_NOT_UPDATED, location=Location(path))
+
     def assert_no_info_logged(self) -> None:
         """Assert that nothing was logged at INFO."""
         self.assertEqual(self.records(INFO), [])

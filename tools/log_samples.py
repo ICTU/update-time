@@ -464,6 +464,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
         **github_refs,
         "@@NO_RELEASE_METADATA@@": no_release_metadata,
+        **_uv_dependencies_not_updated(log, capture),
         **_manifests_without_dependencies(log, capture),
         **_uv_cooldown_not_set(log, capture),
         **rate_limits,
@@ -497,6 +498,12 @@ def _uv_cooldown_not_set(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log that a pyproject.toml whose tool tables cannot hold the cooldown gets none, and pair the line."""
     log.uv_cooldown_not_set(Path("pyproject.toml"))
     return {"@@UV_COOLDOWN_NOT_SET@@": capture.take()}
+
+
+def _uv_dependencies_not_updated(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that the dependencies in a pyproject.toml are not updated, because `uv tree` failed, and pair the line."""
+    log.uv_dependencies_not_updated(Path("pyproject.toml"))
+    return {"@@UV_DEPENDENCIES_NOT_UPDATED@@": capture.take()}
 
 
 def _rate_limits(log: Logger, capture: _Capture) -> dict[str, str]:
