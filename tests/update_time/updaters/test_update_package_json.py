@@ -1,6 +1,7 @@
 """Unit tests for the package.json updater (discovery and orchestration of the node package managers)."""
 
 import json
+import posixpath
 import subprocess  # nosec
 from datetime import datetime
 from logging import WARNING
@@ -21,7 +22,7 @@ from update_time.sources import npmjs as npmjs_module
 from update_time.updaters import update_package_json as update_package_json_module
 from update_time.updaters.update_package_json import update_package_jsons
 
-from tests.helpers import mock_path, mock_response, patch_pathlib_path
+from tests.helpers import FakeFiles, mock_path, mock_response, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE, FRESH_DATE, STALE_DATE
 from tests.update_time.helpers import (
@@ -41,8 +42,11 @@ if TYPE_CHECKING:
 _NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN.default}"  # the cooldown npm option Update-time adds by default
 _PNPM_COOLDOWN_OPTION = f"--config.minimumReleaseAge={COOLDOWN.default * 24 * 60}"  # pnpm's, in minutes
 _NPM_UNSET = "null\n"  # what `npm config get <cooldown key>` prints when the key is not set
+_NPM_PREFIX = "/\n"  # what `npm prefix` prints for a package.json in the root directory, outside a workspace
 _PNPM_UNSET = "undefined\n"  # what `pnpm config get minimumReleaseAge` prints when the key is not set
 _NPM_LIST = Command("npm", "list", "--json", "--depth=0", "--include=dev", "--silent", "--package-lock-only")
+_NPM_COOLDOWN_PROBE = Command("npm", "config", "get", "min-release-age")
+_RUN_KWARGS = {"capture_output": True, "text": True, "check": True}  # what Update-time passes to subprocess.run
 
 
 # When the registry fixture below says version 1.1 was published.
@@ -72,6 +76,40 @@ def _npm_lock(**versions: str) -> Mock:
     return Mock(stdout=json.dumps({"dependencies": {name: {"version": version} for name, version in versions.items()}}))
 
 
+def _npm_member(name: str, directory: str, **versions: str) -> dict:
+    """Return the entry npm lists for the workspace member in the directory, with its dependencies' versions.
+
+    npm resolves the member relative to the folder holding its link, such as `node_modules/@scope` for `@scope/b`,
+    and leaves the dependencies out of the entry of a member that has none.
+    """
+    resolved = posixpath.relpath(directory, posixpath.dirname(f"node_modules/{name}"))
+    entry: dict = {"version": "1.0.0", "resolved": f"file:{resolved}"}
+    if versions:
+        entry["dependencies"] = {package: {"version": version} for package, version in versions.items()}
+    return {name: entry}
+
+
+# Workspace members by case: each package's name and its directory relative to the workspace root.
+_MEMBERS = {"unscoped": ("a", "packages/a"), "scoped": ("@scope/b", "packages/b")}
+
+
+# A workspace root's package.json, declaring its members under `packages/` and a dependency of its own.
+_WORKSPACE_ROOT_CONTENTS = (
+    '{\n  "workspaces": ["packages/*"],\n  "dependencies": {\n    "is-number": "^7.0.0"\n  }\n}\n'
+)
+
+
+def _member_contents(name: str) -> str:
+    """Return a member's package.json, named after its package, declaring the dependency `package` on line 4."""
+    return f'{{\n  "name": "{name}",\n  "dependencies": {{\n    "package": "^1.0.0"\n  }}\n}}\n'
+
+
+def _npm_workspace_lock(*members: dict) -> Mock:
+    """Return what `npm list` prints in a workspace for a lock file holding the members' entries."""
+    entries = {name: entry for member in members for name, entry in member.items()}
+    return Mock(stdout=json.dumps({"name": "root", "dependencies": entries}))
+
+
 def _pnpm_lock(section: str = "dependencies", **versions: str) -> Mock:
     """Return what `pnpm list` prints for a lock file holding the versions in the section."""
     project = {"name": "root", section: {name: {"version": version} for name, version in versions.items()}}
@@ -81,6 +119,9 @@ def _pnpm_lock(section: str = "dependencies", **versions: str) -> Mock:
 # The yank check asks the npm registry about every exact pin, whichever check a test is about. The tests that are
 # about another check answer it with a registry document that does not deprecate any version.
 _no_deprecations = patch("requests.Session.get", Mock(return_value=npm_registry({})))
+
+# The tests that log a new version without a changelog answer every registry request with this document.
+_publishing_version_1_1 = patch("requests.Session.get", Mock(return_value=npm_registry({"1.1": _PUBLICATION_TIME})))
 
 # A package.json section declaring a git dependency: the package manager runs for it, and the checks pass it over.
 _GIT_DEPENDENCY = {"devDependencies": {"bats": "git+https://github.com/calj/bats.git"}}
@@ -96,6 +137,16 @@ def _discover_package_json(glob: Mock, contents: str) -> Mock:
     return package_json
 
 
+def _npm_no_update() -> list:
+    """Return what npm prints when the update moves nothing: an empty listing, the update, and the listing again."""
+    return [Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="{}")]
+
+
+def _npm_runs(*results: object, prefix: object = None) -> list:
+    """Prepend `npm prefix` and the two `npm config get` cooldown probes (both unset) to the npm command results."""
+    return [prefix or Mock(stdout=_NPM_PREFIX), Mock(stdout=_NPM_UNSET), Mock(stdout=_NPM_UNSET), *results]
+
+
 def _pnpm_runs(*results: object) -> list:
     """Prepend the `pnpm config get minimumReleaseAge` cooldown probe (unset) to the given command results."""
     return [Mock(stdout=_PNPM_UNSET), *results]
@@ -103,24 +154,36 @@ def _pnpm_runs(*results: object) -> list:
 
 def _assert_manager_called(mock_run: Mock, locked: Command, update: Command) -> None:
     """Assert the manager listed the locked versions, updated, and listed them again, each with the same kwargs."""
-    run_kwargs = {"capture_output": True, "text": True, "check": True, "cwd": Path("/")}
+    run_kwargs = {**_RUN_KWARGS, "cwd": Path("/")}
     mock_run.assert_has_calls((call(locked, **run_kwargs), call(update, **run_kwargs), call(locked, **run_kwargs)))
+
+
+class _PackageJsonFilesTestCase(LoggingTestCase):
+    """Base for the tests that read and write package.json files in a file system in memory."""
+
+    def setUp(self) -> None:
+        """Start each test with an empty file system in memory."""
+        super().setUp()
+        self.files = FakeFiles()
+        self.enterContext(self.files.patched())
+
+    def write_package_json(self, contents: str, directory: Path = Path("/")) -> Path:
+        """Write a package.json with the contents in the directory, and return its path."""
+        path = directory / "package.json"
+        self.files.files[str(path)] = contents
+        return path
 
 
 # Staleness makes its own npm registry requests; it is disabled here and covered by StaleDependencyTest below.
 @staleness_disabled
 @patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("subprocess.run")
-class UpdateNpmPackageJsonTest(LoggingTestCase):
+class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
     """Unit tests for updating an npm-managed package.json."""
 
-    def create_package_json(self, contents: str = json.dumps(_GIT_DEPENDENCY)) -> Mock:
-        """Create a mock package.json file."""
-        return mock_path(contents, parent=Path("/"))
-
-    def npm_runs(self, *results: object) -> list:
-        """Prepend the two `npm config get` cooldown probes (both unset) to the given npm command results."""
-        return [Mock(stdout=_NPM_UNSET), Mock(stdout=_NPM_UNSET), *results]
+    def create_package_json(self, contents: str = json.dumps(_GIT_DEPENDENCY)) -> Path:
+        """Create a package.json in the root directory."""
+        return self.write_package_json(contents)
 
     def assert_npm_called(self, mock_run: Mock, *, cooldown: bool = True) -> None:
         """Assert npm list, update, and list were called (with the cooldown option when expected)."""
@@ -132,34 +195,34 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
     def test_npm_runs_for_peer_dependencies_alone(self, mock_run: Mock, mock_glob: Mock):
         """Test that npm runs for a package.json that declares peer dependencies alone."""
         mock_glob.return_value = [self.create_package_json('{"peerDependencies": {"is-number": "^7.0.0"}}')]
-        mock_run.side_effect = self.npm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout='{"dependencies": {}}'))
+        mock_run.side_effect = _npm_runs(*_npm_no_update())
         update_package_jsons()
         self.assert_npm_called(mock_run)
 
     @patch("requests.Session.get", _package_lookup_responses())
     def test_update(self, mock_run: Mock, mock_glob: Mock):
         """Test that a version the update moved in the lock file is logged, and package.json is kept as npm saved it."""
-        mock_package_json = self.create_package_json()
-        mock_glob.return_value = [mock_package_json]
-        mock_run.side_effect = self.npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
+        package_json = self.create_package_json()
+        mock_glob.return_value = [package_json]
+        mock_run.side_effect = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
         update_package_jsons()
-        mock_package_json.write_text.assert_not_called()
+        self.assertEqual(self.files[package_json], json.dumps(_GIT_DEPENDENCY))
         self.assert_npm_called(mock_run)
-        self.assert_path_logged(mock_package_json)
+        self.assert_path_logged(package_json)
         self.assert_new_version_logged_with_changes(
-            "package", published_version("1.1", _PUBLICATION_TIME), Location(mock_package_json), "Changelog"
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json), "Changelog"
         )
         self.assert_no_warnings_logged()
 
     @patch("requests.Session.get", _package_lookup_responses())
     def test_new_version_is_logged_at_the_line_declaring_the_dependency(self, mock_run: Mock, mock_glob: Mock):
         """Test that the new version is logged at the line declaring the dependency npm updated."""
-        mock_package_json = self.create_package_json('{\n  "dependencies": {\n    "package": "^1.0.0"\n  }\n}\n')
-        mock_glob.return_value = [mock_package_json]
-        mock_run.side_effect = self.npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
+        package_json = self.create_package_json('{\n  "dependencies": {\n    "package": "^1.0.0"\n  }\n}\n')
+        mock_glob.return_value = [package_json]
+        mock_run.side_effect = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
         update_package_jsons()
         self.assert_new_version_logged_with_changes(
-            "package", published_version("1.1", _PUBLICATION_TIME), Location(mock_package_json, 3), "Changelog"
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3), "Changelog"
         )
 
     @patch("requests.Session.get", _package_lookup_responses())
@@ -171,15 +234,13 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
             '  "devDependencies": {\n    "package": "^1.0.0"\n  }\n'
             "}\n"
         )
-        mock_package_json = self.create_package_json(contents)
-        mock_glob.return_value = [mock_package_json]
-        mock_run.side_effect = self.npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
+        package_json = self.create_package_json(contents)
+        mock_glob.return_value = [package_json]
+        mock_run.side_effect = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
         update_package_jsons()
         published = published_version("1.1", _PUBLICATION_TIME)
-        self.assert_new_version_logged_among_others_with_changes(
-            "package", published, Location(mock_package_json, 3), ANY
-        )
-        self.assert_new_version_logged_among_others("package", published, Location(mock_package_json, 6), ANY)
+        self.assert_new_version_logged_among_others_with_changes("package", published, Location(package_json, 3), ANY)
+        self.assert_new_version_logged_among_others("package", published, Location(package_json, 6), ANY)
 
     @patch("requests.Session.get", _package_lookup_responses())
     def test_new_version_of_a_dependency_the_manifest_declares_without_a_registry_spec(
@@ -187,116 +248,247 @@ class UpdateNpmPackageJsonTest(LoggingTestCase):
     ):
         """Test that a new version for a dependency that resolves to no registry release is logged at the file."""
         contents = '{\n  "dependencies": {\n    "package": "git+https://github.com/org/package.git"\n  }\n}\n'
-        mock_package_json = self.create_package_json(contents)
-        mock_glob.return_value = [mock_package_json]
-        mock_run.side_effect = self.npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
+        package_json = self.create_package_json(contents)
+        mock_glob.return_value = [package_json]
+        mock_run.side_effect = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
         update_package_jsons()
         self.assert_new_version_logged_with_changes(
-            "package", published_version("1.1", _PUBLICATION_TIME), Location(mock_package_json), "Changelog"
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json), "Changelog"
         )
 
     def test_manifest_kept_as_npm_saved_it_when_no_version_moved(self, mock_run: Mock, mock_glob: Mock):
         """Test that the specs npm saved, such as a git URL in the github: shorthand, are kept."""
         original = '{\n  "devDependencies": {\n    "bats": "git+https://github.com/calj/bats.git"\n  }\n}\n'
-        mock_package_json = self.create_package_json(original)
-        mock_glob.return_value = [mock_package_json]
-        runs = iter(self.npm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout='{"dependencies": {}}')))
+        package_json = self.create_package_json(original)
+        mock_glob.return_value = [package_json]
+        runs = iter(_npm_runs(*_npm_no_update()))
 
         def run(command: Command, **_kwargs: object) -> Mock:
             """Answer the next npm run, saving the package.json with the git URL in shorthand when npm updates."""
             if command[:2] == ("npm", "update"):
-                mock_package_json.read_text.return_value = original.replace(
-                    "git+https://github.com/calj/bats.git", "github:calj/bats"
-                )
+                self.files.files[str(package_json)] = saved
             return next(runs)
 
+        saved = original.replace("git+https://github.com/calj/bats.git", "github:calj/bats")
         mock_run.side_effect = run
         update_package_jsons()
-        mock_package_json.write_text.assert_not_called()
+        self.assertEqual(self.files[package_json], saved)
         self.assert_npm_called(mock_run)
-        self.assert_path_logged(mock_package_json)
+        self.assert_path_logged(package_json)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
     def test_unmoved_version_not_logged(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package is not logged when npm update did not move its locked version."""
-        mock_package_json = self.create_package_json()
-        mock_glob.return_value = [mock_package_json]
+        package_json = self.create_package_json()
+        mock_glob.return_value = [package_json]
         # The lock file does not record a version of "untracked":
         untracked = Mock(stdout='{"dependencies": {"held": {"version": "1.0"}, "untracked": {"missing": true}}}')
-        mock_run.side_effect = self.npm_runs(untracked, Mock(stdout=""), untracked)
+        mock_run.side_effect = _npm_runs(untracked, Mock(stdout=""), untracked)
         update_package_jsons()
         self.assert_npm_called(mock_run)
-        self.assert_path_logged(mock_package_json)
+        self.assert_path_logged(package_json)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
     @patch("requests.Session.get", _package_lookup_responses())
     def test_version_the_lock_file_did_not_record_not_logged(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package is not logged when the lock file did not record it before the update."""
-        mock_package_json = self.create_package_json()
-        mock_glob.return_value = [mock_package_json]
+        package_json = self.create_package_json()
+        mock_glob.return_value = [package_json]
         no_lock_file = subprocess.CalledProcessError(
             cmd="", returncode=1, output='{"error": {"code": "ENOLOCK"}}', stderr=""
         )
-        mock_run.side_effect = self.npm_runs(no_lock_file, Mock(stdout=""), _npm_lock(package="1.1"))
+        mock_run.side_effect = _npm_runs(no_lock_file, Mock(stdout=""), _npm_lock(package="1.1"))
         update_package_jsons()
         self.assert_npm_called(mock_run)
         self.assert_no_new_version_logged()
 
     def test_empty_npm_output(self, mock_run: Mock, mock_glob: Mock):
         """Test that empty npm output (e.g. from a failed command) is treated as no data rather than crashing."""
-        mock_package_json = self.create_package_json()
-        mock_glob.return_value = [mock_package_json]
+        package_json = self.create_package_json()
+        mock_glob.return_value = [package_json]
         # npm list returns nothing, as a failed command does (its failure is logged by `run`):
-        mock_run.side_effect = self.npm_runs(Mock(stdout=""), Mock(stdout=""), Mock(stdout=""))
+        mock_run.side_effect = _npm_runs(Mock(stdout=""), Mock(stdout=""), Mock(stdout=""))
         update_package_jsons()
         self.assert_npm_called(mock_run)
-        mock_package_json.write_text.assert_not_called()
+        self.assertEqual(self.files[package_json], json.dumps(_GIT_DEPENDENCY))
         self.assert_no_new_version_logged()
 
     def test_failed_update_logs_its_failure_and_no_new_version(self, mock_run: Mock, mock_glob: Mock):
         """Test that a failed update logs its failure, and does not log a new version."""
-        mock_package_json = self.create_package_json()
-        mock_glob.return_value = [mock_package_json]
-        mock_run.side_effect = self.npm_runs(
+        package_json = self.create_package_json()
+        mock_glob.return_value = [package_json]
+        mock_run.side_effect = _npm_runs(
             _npm_lock(package="1.0"),
             subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr="npm error network"),
             _npm_lock(package="1.0"),
         )
         update_package_jsons()
         self.assert_npm_called(mock_run)
-        mock_package_json.write_text.assert_not_called()
+        self.assertEqual(self.files[package_json], json.dumps(_GIT_DEPENDENCY))
         self.assert_command_stderr_logged(stderr="npm error network")
 
     def test_project_cooldown_respected(self, mock_run: Mock, mock_glob: Mock):
         """Test that no cooldown option is added when the project's npm config already sets one."""
-        mock_package_json = self.create_package_json()
-        mock_glob.return_value = [mock_package_json]
+        package_json = self.create_package_json()
+        mock_glob.return_value = [package_json]
         # The first cooldown probe (min-release-age) returns a value, so Update-time adds no cooldown of its own:
-        mock_run.side_effect = [
-            Mock(stdout="14\n"),
-            Mock(stdout="{}"),
-            Mock(stdout=""),
-            Mock(stdout='{"dependencies": {}}'),
-        ]
+        mock_run.side_effect = [Mock(stdout=_NPM_PREFIX), Mock(stdout="14\n"), *_npm_no_update()]
         update_package_jsons()
         self.assert_npm_called(mock_run, cooldown=False)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
+    def test_cooldown_applied_when_npm_config_get_fails(self, mock_run: Mock, mock_glob: Mock):
+        """Test that the cooldown option is added when `npm config get` fails, as it does inside a workspace member."""
+        mock_glob.return_value = [self.create_package_json()]
+        failed = subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr="npm error code ENOWORKSPACES")
+        mock_run.side_effect = [Mock(stdout=_NPM_PREFIX), failed, failed, *_npm_no_update()]
+        update_package_jsons()
+        self.assert_npm_called(mock_run)
+
+    def test_cooldown_of_a_workspace_member_read_in_the_workspace_root(self, mock_run: Mock, mock_glob: Mock):
+        """Test that the cooldown of a workspace member is read in the workspace root that npm reports."""
+        mock_glob.return_value = [self.write_package_json(json.dumps(_GIT_DEPENDENCY), Path("/ws/a"))]
+        mock_run.side_effect = _npm_runs(*_npm_no_update(), prefix=Mock(stdout="/ws\n"))
+        update_package_jsons()
+        mock_run.assert_any_call(_NPM_COOLDOWN_PROBE, **_RUN_KWARGS, cwd=Path("/ws"))
+        update = Command("npm", "update", "--save", "--include=dev", "--silent", _NPM_COOLDOWN_OPTION)
+        mock_run.assert_any_call(update, **_RUN_KWARGS, cwd=Path("/ws/a"))
+
+    @_publishing_version_1_1
+    def test_new_version_of_a_workspace_member_dependency_is_logged(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a dependency of a member has its new version logged, and one of another member not."""
+        for case, (name, directory) in _MEMBERS.items():
+            with self.subTest(case):
+                package_json = self.write_package_json(_member_contents(name), Path("/ws", directory))
+                mock_glob.return_value = [package_json]
+                mock_run.side_effect = _npm_runs(
+                    _npm_workspace_lock(
+                        _npm_member(name, directory, package="1.0"), _npm_member("c", "packages/c", other="2.0")
+                    ),
+                    Mock(stdout=""),
+                    _npm_workspace_lock(
+                        _npm_member(name, directory, package="1.1"), _npm_member("c", "packages/c", other="2.1")
+                    ),
+                    prefix=Mock(stdout="/ws\n"),
+                )
+                update_package_jsons()
+                self.assert_new_version_logged(
+                    "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 4)
+                )
+
+    @_publishing_version_1_1
+    @patch("pathlib.Path.resolve", autospec=True, side_effect=lambda path: Path(str(path).replace("/link", "/real")))
+    def test_new_version_logged_for_a_package_json_in_a_symlinked_directory(
+        self, _resolve: Mock, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a package.json in a symlinked directory has its version logged, whatever npm prefix answers."""
+        prefixes = {
+            "resolved": Mock(stdout="/real/app\n"),
+            "failing": subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr="npm error prefix"),
+        }
+        for case, prefix in prefixes.items():
+            with self.subTest(case):
+                contents = '{\n  "dependencies": {\n    "package": "^1.0.0"\n  }\n}\n'
+                package_json = self.write_package_json(contents, Path("/link/app"))
+                mock_glob.return_value = [package_json]
+                mock_run.side_effect = _npm_runs(
+                    _npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"), prefix=prefix
+                )
+                update_package_jsons()
+                self.assert_new_version_logged(
+                    "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3)
+                )
+
+    @_publishing_version_1_1
+    def test_new_version_of_a_workspace_member_dependency_the_root_updated_is_logged_at_the_member(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that the new version of a member's dependency that npm moved when updating the root is logged."""
+        root = self.write_package_json(_WORKSPACE_ROOT_CONTENTS)
+        for case, (name, directory) in _MEMBERS.items():
+            with self.subTest(case):
+                member = self.write_package_json(_member_contents(name), Path("/", directory))
+                mock_glob.return_value = [root, member]
+                before = _npm_workspace_lock(_npm_member(name, directory, package="1.0"))
+                after = _npm_workspace_lock(_npm_member(name, directory, package="1.1"))
+                mock_run.side_effect = [
+                    *_npm_runs(before, Mock(stdout=""), after),
+                    *_npm_runs(after, Mock(stdout=""), after),
+                ]
+                update_package_jsons()
+                published = published_version("1.1", _PUBLICATION_TIME)
+                self.assert_new_version_logged("package", published, Location(member, 4))
+
+    @_publishing_version_1_1
+    def test_new_version_of_a_member_whose_package_json_cannot_be_read_is_logged_at_the_file(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that an unreadable member package.json is warned about, and its new versions logged at the file."""
+        root, member = Path("/package.json"), Path("/packages/a/package.json")
+        cases: dict[str, tuple[dict[str | Path, str], Exception]] = {
+            "missing": ({}, FileNotFoundError(2, "No such file or directory", str(member))),
+            "invalid JSON": (
+                {member: "{"},
+                json.JSONDecodeError("Expecting property name enclosed in double quotes", "{", 1),
+            ),
+        }
+        for case, (member_files, error) in cases.items():
+            with self.subTest(case):
+                mock_glob.return_value = [root]
+                mock_run.side_effect = _npm_runs(
+                    _npm_workspace_lock(_npm_member("a", "packages/a", package="1.0")),
+                    Mock(stdout=""),
+                    _npm_workspace_lock(_npm_member("a", "packages/a", package="1.1")),
+                )
+                self.files.files = {
+                    str(path): text for path, text in {root: _WORKSPACE_ROOT_CONTENTS, **member_files}.items()
+                }
+                update_package_jsons()
+                self.assert_logged(Logger._MESSAGE_UNREADABLE_PACKAGE_JSON, location=Location(member), error=str(error))
+                published = published_version("1.1", _PUBLICATION_TIME)
+                self.assert_new_version_logged("package", published, Location(member))
+
+    def test_unmoved_versions_of_workspace_members_not_logged(self, mock_run: Mock, mock_glob: Mock):
+        """Test that members without dependencies, new to the lock, or with an unreadable package.json log nothing."""
+        mock_glob.return_value = [self.write_package_json(_WORKSPACE_ROOT_CONTENTS)]
+        without_dependencies = _npm_member("a", "packages/a")
+        unreadable = _npm_member("c", "packages/c", package="1.0")
+        new = _npm_member("d", "packages/d", package="1.1")
+        mock_run.side_effect = _npm_runs(
+            _npm_workspace_lock(without_dependencies, unreadable),
+            Mock(stdout=""),
+            _npm_workspace_lock(without_dependencies, unreadable, new),
+        )
+        update_package_jsons()
+        self.assert_no_new_version_logged()
+        self.assert_no_warnings_logged()
+
+    def test_cooldown_read_in_the_directory_of_the_package_json_when_npm_prefix_fails(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that the cooldown is read in the directory of the package.json when `npm prefix` fails."""
+        mock_glob.return_value = [self.create_package_json()]
+        prefix_failed = subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr="npm error prefix")
+        mock_run.side_effect = _npm_runs(*_npm_no_update(), prefix=prefix_failed)
+        update_package_jsons()
+        self.assert_npm_called(mock_run)
+        mock_run.assert_any_call(_NPM_COOLDOWN_PROBE, **_RUN_KWARGS, cwd=Path("/"))
+
 
 @staleness_disabled
 @patch_pathlib_path("rglob", cwd=Path("/"))
 @patch("subprocess.run")
-class UpdatePnpmPackageJsonTest(LoggingTestCase):
+class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
     """Unit tests for updating a pnpm-managed package.json (detected via the corepack `packageManager` field)."""
 
     def create_package_json(
         self, contents: str = json.dumps({"packageManager": "pnpm@9.15.0", **_GIT_DEPENDENCY})
-    ) -> Mock:
-        """Create a mock package.json declaring pnpm as its package manager."""
-        return mock_path(contents, parent=Path("/"))
+    ) -> Path:
+        """Create a package.json in the root directory, declaring pnpm as its package manager."""
+        return self.write_package_json(contents)
 
     def assert_pnpm_called(self, mock_run: Mock, *, cooldown: bool = True) -> None:
         """Assert pnpm list, update, and list were called (with the cooldown option when expected)."""
@@ -310,23 +502,23 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
     @patch("requests.Session.get", _package_lookup_responses())
     def test_update(self, mock_run: Mock, mock_glob: Mock):
         """Test that a dev dependency the update moved in the lock file is logged, using pnpm's list JSON shape."""
-        mock_package_json = self.create_package_json()
-        mock_glob.return_value = [mock_package_json]
+        package_json = self.create_package_json()
+        mock_glob.return_value = [package_json]
         mock_run.side_effect = _pnpm_runs(
             _pnpm_lock("devDependencies", package="1.0"), Mock(stdout=""), _pnpm_lock("devDependencies", package="1.1")
         )
         update_package_jsons()
         self.assert_pnpm_called(mock_run)
-        self.assert_path_logged(mock_package_json)
+        self.assert_path_logged(package_json)
         self.assert_new_version_logged_with_changes(
-            "package", published_version("1.1", _PUBLICATION_TIME), Location(mock_package_json), "Changelog"
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json), "Changelog"
         )
         self.assert_no_warnings_logged()
 
     def test_unmoved_version_not_logged(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package is not logged when pnpm update did not move its locked version."""
-        mock_package_json = self.create_package_json()
-        mock_glob.return_value = [mock_package_json]
+        package_json = self.create_package_json()
+        mock_glob.return_value = [package_json]
         # The lock file does not record a version of "untracked":
         untracked = Mock(
             stdout='[{"name": "root", "dependencies": {"held": {"version": "1.0"}}, '
@@ -335,7 +527,7 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
         mock_run.side_effect = _pnpm_runs(untracked, Mock(stdout=""), untracked)
         update_package_jsons()
         self.assert_pnpm_called(mock_run)
-        self.assert_path_logged(mock_package_json)
+        self.assert_path_logged(package_json)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
@@ -343,8 +535,8 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
     def test_pnpm_detected_via_lockfile(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json with a sibling pnpm-lock.yaml (and no packageManager field) uses pnpm."""
         # No packageManager field; detection falls to the lockfile:
-        mock_package_json = self.create_package_json(json.dumps(_GIT_DEPENDENCY))
-        mock_glob.return_value = [mock_package_json]
+        package_json = self.create_package_json(json.dumps(_GIT_DEPENDENCY))
+        mock_glob.return_value = [package_json]
         mock_run.side_effect = _pnpm_runs(Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]"))
         update_package_jsons()
         self.assert_pnpm_called(mock_run)
@@ -353,8 +545,8 @@ class UpdatePnpmPackageJsonTest(LoggingTestCase):
 
     def test_project_cooldown_respected(self, mock_run: Mock, mock_glob: Mock):
         """Test that no cooldown option is added when the project's pnpm config already sets minimumReleaseAge."""
-        mock_package_json = self.create_package_json()
-        mock_glob.return_value = [mock_package_json]
+        package_json = self.create_package_json()
+        mock_glob.return_value = [package_json]
         # The cooldown probe returns a value, so Update-time adds no cooldown of its own:
         mock_run.side_effect = [Mock(stdout="4320\n"), Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="[]")]
         update_package_jsons()
@@ -420,8 +612,9 @@ class NoUpdateTestCase(LoggingTestCase):
 
     @staticmethod
     def stub_no_update(mock_run: Mock) -> None:
-        """Stub npm to leave every version where it was: two unset cooldown probes, then empty runs."""
+        """Stub npm to leave every version where it was: `npm prefix`, two unset cooldown probes, then empty runs."""
         mock_run.side_effect = [
+            Mock(stdout=_NPM_PREFIX),
             Mock(stdout=_NPM_UNSET),
             Mock(stdout=_NPM_UNSET),
             Mock(stdout="{}"),

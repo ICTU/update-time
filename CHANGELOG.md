@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Fixed
 
+- Apply the cooldown to the dependencies of an npm workspace member, and report the new versions npm moves for a member. Closes [#468](https://github.com/ICTU/update-time/issues/468).
 - Report at `ERROR` which `pyproject.toml` or inline script's dependencies Update-time did not update because uv failed to resolve them. Closes [#459](https://github.com/ICTU/update-time/issues/459).
 - Separate the `[tool.uv]` table that Update-time adds to a `pyproject.toml` from the table after it with a blank line, and keep a comment above that table where it was. Closes [#458](https://github.com/ICTU/update-time/issues/458).
 - Rewrite an inline `[tool]` or `[tool.uv]` table in a `pyproject.toml` as a normal table, so it can hold the cooldown Update-time writes there, and warn rather than stop where `tool` or `tool.uv` is not a table. Fixed as part of [#458](https://github.com/ICTU/update-time/issues/458).

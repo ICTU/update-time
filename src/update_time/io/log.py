@@ -997,6 +997,14 @@ class Logger:
         """Warn that a file can't be parsed, so it is skipped rather than crashing the run."""
         self._log_file(self._MESSAGE_INVALID_FILE, path, format=file_format)
 
+    _MESSAGE_UNREADABLE_PACKAGE_JSON = LogMessage(
+        WARNING, "Could not read %(location)s to find the lines declaring its dependencies (%(error)s)"
+    )
+
+    def unreadable_package_json(self, path: Path, error: OSError | ValueError) -> None:
+        """Warn that a package.json can't be read, so its new versions are logged without the lines declaring them."""
+        self._log_file(self._MESSAGE_UNREADABLE_PACKAGE_JSON, path, error=str(error))
+
     _MESSAGE_INVALID_POM = LogMessage(WARNING, "Could not read the pom at %(url)s: it is not valid XML")
 
     def invalid_pom(self, url: str) -> None:
