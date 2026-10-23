@@ -957,6 +957,16 @@ class Logger:
         """Log that Update-time wrote its cooldown into the project's uv configuration."""
         self._log_file(self._MESSAGE_UV_COOLDOWN, path, cooldown=cooldown)
 
+    _MESSAGE_UV_COOLDOWN_NOT_SET = LogMessage(
+        WARNING,
+        "Could not set uv exclude-newer in %(location)s to apply the cooldown: its tool, or the uv in it, is not a "
+        "table",
+    )
+
+    def uv_cooldown_not_set(self, path: Path) -> None:
+        """Warn that the project's uv configuration cannot hold the cooldown, so Update-time wrote none."""
+        self._log_file(self._MESSAGE_UV_COOLDOWN_NOT_SET, path)
+
     _MESSAGE_SKIP_UNSUPPORTED = LogMessage(
         WARNING, "Skipping %(location)s: %(manager)s is not supported, only %(supported)s"
     )

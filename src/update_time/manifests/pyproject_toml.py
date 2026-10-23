@@ -50,11 +50,16 @@ def tool_key(path: Path, table: str, key: str) -> tuple[str, str] | None:
     return toml.nested_value(toml.read_document(path), "tool", table, key)
 
 
-def set_tool_key(path: Path, table: str, key: str, value: str, *, comment: str = "") -> None:
-    """Set `[tool.<table>] <key> = value` (with an optional trailing comment) and write the file back."""
+def set_tool_key(path: Path, table: str, key: str, value: str, *, comment: str = "") -> bool:
+    """Set `[tool.<table>] <key> = value` (with an optional trailing comment), write the file back, and return True.
+
+    Return False, leaving the file as it is, when its `tool` or `tool.<table>` is not a table.
+    """
     document = toml.read_document(path)
-    toml.set_nested_value(document, "tool", table, key, value=value, comment=comment)
+    if not toml.set_nested_value(document, "tool", table, key, value=value, comment=comment):
+        return False
     path.write_text(toml.dumps(document))
+    return True
 
 
 def rewrite_pinned_versions(file: DependencyTomlFile, versions: dict[Declaration, VersionString]) -> None:
