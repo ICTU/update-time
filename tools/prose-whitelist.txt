@@ -1,5 +1,3 @@
-"held" stayed at 1.0 (e.g. min-release-age held back every newer release), "untracked" has no version:.
-"held" stayed at 1.0 (e.g. minimumReleaseAge held back every newer release), "untracked" has no version:.
 ### &nbsp;&nbsp;&nbsp;🚀 Features.
 ##### &nbsp;&nbsp;&nbsp;&nbsp;[View changes on GitHub](https://github.com).
 **In an `update-time` field**, for a reference in a file that can hold no comment.
@@ -289,7 +287,6 @@ So a marker above the `dependencies = [` line steers nothing, since that line de
 So an unreadable field drops every directive it carries, where an unreadable bracket item leaves the items beside it standing.
 So does an answer that carries no token, which Docker Hub's schema allows, since it makes the token an optional field.
 Some work changes no behaviour, so no test drives it.
-Stub npm to report no updates: two unset cooldown probes, then empty outdated/update/list.
 Such a cooldown excludes every release anyway, so clamping keeps the meaning.
 Such a requirement pins no version to resolve an update for, so it takes the project checks instead.
 Such a requirement pins no version to update, but the project behind it is checked all the same.
@@ -582,7 +579,6 @@ The shapes of the hashes a reference is pinned to, each stated once so that ever
 The tag Docker resolves a reference naming no tag to, which floats like any other channel.
 The tag names no channel, so no pin of its floats.
 The tagged commit's SHA, when the version came from the tags endpoint (which lists it).
-The three commands share the same shape across managers (detect outdated → update → read the installed versions), but the executables, flags, and lockfiles differ, as does the cooldown option (npm measures its `min-release-age` in days, pnpm its `minimumReleaseAge` in minutes).
 The threshold to ask for to hear about no stale dependency at all, which switches the check off rather than setting a day count.
 The title documents the type when it holds the type's name.
 The token endpoint the credentials are exchanged at; note that it lives on the user-facing hub.docker.com host, not on the _REGISTRY host above.
@@ -657,7 +653,6 @@ Yield each line with its number, empty where the line is a code fence or sits in
 `ignore[floating-pin]` is the opposite and the default, so Update-time pins a reference carrying it exactly as one carrying no marker at all.
 `inverted_item` is the item as the user spelled it when its comparison runs the wrong way, so the caller can warn and fall back to the global setting; None when the reference carries no such item.
 `marker` steers every dependency the file declares, since they share the array's line (see `pyproject`).
-`npm outdated` fails with no output (as an offline registry does); a normal non-zero exit still has JSON.
 `reason` is why the source cannot apply it, and `without_a_version` why it holds nothing back for a reference that pins no version, which is None for a directive such a reference still steers something with.
 `resolved` is that hand-over, empty while no resolved URL is waiting for its dictionary.
 `update` is the one scope with no row: every source resolves a version, so there is no capability a source could lack for it.
