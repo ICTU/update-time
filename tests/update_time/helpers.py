@@ -666,6 +666,10 @@ class LoggingTestCase(CacheClearingTestCase):
             Logger._MESSAGE_SKIP_UNSUPPORTED, location=Location(path), manager=manager, supported=supported
         )
 
+    def assert_no_dependencies_logged(self, path: Path, manager: str, verb: str) -> None:
+        """Assert that the package manager was logged as not running for a file that declares nothing to update."""
+        self.assert_logged(Logger._MESSAGE_NO_DEPENDENCIES, location=Location(path), manager=manager, verb=verb)
+
     def assert_invalid_file_logged(self, path: Path, file_format: str) -> None:
         """Assert that a file that does not parse was logged for the file, naming its format."""
         self.assert_logged(Logger._MESSAGE_INVALID_FILE, location=Location(path), format=file_format)

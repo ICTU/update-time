@@ -182,6 +182,11 @@ def _log_new_version(log: Logger, package: DependencyName, version: VersionStrin
         log.new_version(Reference(package, "", location), dependency_version)
 
 
+def report_file_markers(file: DependencyTomlFile, log: Logger) -> list[Declaration]:
+    """Report the marker of each declaration in the file, and return the declarations with those markers frozen."""
+    return report_markers(pyproject_toml_format.declarations(file), log, POLICY)
+
+
 def _update_dependencies(uv_tree: Command, file: DependencyTomlFile, log: Logger) -> bool:
     """Run `uv tree --outdated`, log every new version no marker holds back, and rewrite the file's exact `==` pins.
 
@@ -192,7 +197,7 @@ def _update_dependencies(uv_tree: Command, file: DependencyTomlFile, log: Logger
     can skip any follow-up work that would fail the same way.
     """
     log.path(file.path)
-    declarations = _by_name(report_markers(pyproject_toml_format.declarations(file), log, POLICY))
+    declarations = _by_name(report_file_markers(file, log))
     outdated = run(uv_tree)
     if not outdated.ok:
         return False

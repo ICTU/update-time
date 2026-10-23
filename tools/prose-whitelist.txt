@@ -191,7 +191,6 @@ It is also the most urgent, because the browser silently refuses to load the scr
 It is no number of days, so nothing is ever older than it.
 It is no risk level, so it sits outside `RISK_LEVELS`.
 It names no scope, so a warning would have no directive to name.
-It passes the value to `uv tree` on the command line rather than persisting it, since a standalone script has no lockfile to keep reproducible.
 It reports an `ignore[update]` as redundant only for a dependency that pins no exact version.
 It reports an advisory that gives no summary, which many do not, without the quotation.
 It rides on the Index API response fetched above, so it costs no request of its own.

@@ -1,5 +1,15 @@
 {
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && status=$(git status --short) && printf 'Branch at the start of this turn: %s\\nWorking tree: %s\\n' \"$(git branch --show-current)\" \"${status:-clean}\""
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",

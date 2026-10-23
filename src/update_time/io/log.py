@@ -965,6 +965,14 @@ class Logger:
         """Warn that a file is managed by an unsupported package manager, so its dependencies are left unchanged."""
         self._log_file(self._MESSAGE_SKIP_UNSUPPORTED, path, manager=manager, supported=supported)
 
+    _MESSAGE_NO_DEPENDENCIES = LogMessage(
+        DEBUG, "Not running %(manager)s for %(location)s: it does not declare dependencies for %(manager)s to %(verb)s"
+    )
+
+    def no_dependencies(self, path: Path, manager: str, verb: str) -> None:
+        """Log that the package manager does not run for a file that declares nothing for it to install or resolve."""
+        self._log_file(self._MESSAGE_NO_DEPENDENCIES, path, manager=manager, verb=verb)
+
     _MESSAGE_INVALID_FILE = LogMessage(WARNING, "Skipping %(location)s: it is not valid %(format)s")
 
     def invalid_file(self, path: Path, file_format: str) -> None:
