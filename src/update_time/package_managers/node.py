@@ -31,14 +31,14 @@ _COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
 _MINUTES_PER_DAY = 24 * 60
 
 
-def _npm_installed_versions(listed: dict | list) -> dict[DependencyName, VersionString]:
-    """Return the installed top-level versions from `npm list --json` output."""
+def _npm_locked_versions(listed: dict | list) -> dict[DependencyName, VersionString]:
+    """Return the locked top-level versions from `npm list --json` output."""
     dependencies = listed.get("dependencies", {}) if isinstance(listed, dict) else {}
     return {package: info["version"] for package, info in dependencies.items() if "version" in info}
 
 
-def _pnpm_installed_versions(listed: dict | list) -> dict[DependencyName, VersionString]:
-    """Return the installed top-level versions from `pnpm list --json` output.
+def _pnpm_locked_versions(listed: dict | list) -> dict[DependencyName, VersionString]:
+    """Return the locked top-level versions from `pnpm list --json` output.
 
     pnpm reports a list of projects (one per workspace package, so just the root here) and splits its dependencies
     over `dependencies`, `devDependencies`, and `optionalDependencies`, unlike npm's single `dependencies` object.
@@ -56,19 +56,17 @@ def _pnpm_installed_versions(listed: dict | list) -> dict[DependencyName, Versio
 class _PackageManager:
     """A supported Node package manager and the commands Update-time runs for it.
 
-    The three commands share the same shape across managers (detect outdated → update → read the installed
-    versions), but the executables, flags, and lockfiles differ, as does the cooldown option (npm measures its
+    The executables, flags, and lockfiles differ across managers, as does the cooldown option (npm measures its
     `min-release-age` in days, pnpm its `minimumReleaseAge` in minutes).
     """
 
-    outdated: Command
     update: Command
-    installed: Command
+    list_locked: Command
     config_get: Command
     cooldown_config_keys: tuple[str, ...]
     cooldown_unset: str
     cooldown_option: Callable[[int], str]
-    installed_versions: Callable[[dict | list], dict[DependencyName, VersionString]]
+    locked_versions: Callable[[dict | list], dict[DependencyName, VersionString]]
 
     def cooldown_options(self, directory: Path) -> list[str]:
         """Return the option that applies Update-time's cooldown, or nothing if the project configures its own.
@@ -83,62 +81,49 @@ class _PackageManager:
             return []
         return [self.cooldown_option(COOLDOWN.get())]
 
+    def _locked_in(self, directory: Path) -> dict[DependencyName, VersionString]:
+        """Return the top-level versions the lock file in the directory records."""
+        return self.locked_versions(run(self.list_locked, directory).json)
+
     def update_package_json(self, package_json: Path) -> None:
-        """Update the package.json and its lockfile using this package manager."""
+        """Update the package.json and its lockfile using this package manager, and log each version it moved."""
         _LOG.path(package_json)
-        original_contents = package_json.read_text()
         cooldown = self.cooldown_options(package_json.parent)
-        outdated = run(Command(*self.outdated, *cooldown), package_json.parent)
-        if not outdated.ok:
-            return  # The outdated check failed, e.g. the registry is unreachable, so update and list would too.
-        parsed = outdated.json
-        outdated_packages = parsed if isinstance(parsed, dict) else {}
+        locked = self._locked_in(package_json.parent)
         run(Command(*self.update, *cooldown), cwd=package_json.parent)
-        # The manager may install an older version than "latest" (e.g. when the cooldown holds back fresh releases),
-        # so log the version that was actually installed rather than the latest one reported by the outdated command.
-        installed = self.installed_versions(run(self.installed, package_json.parent).json)
         declarations = dependency_locations(package_json)
-        updated = False
-        for package, version in outdated_packages.items():
-            new_version = installed.get(package)
-            if new_version is not None and new_version != version.get("current"):
-                updated = True
-                changes = get_changes(package, new_version)
-                published = get_publication_datetime(package, new_version)
-                package_version = DependencyVersion(new_version, changes, publication=LookedUp(published))
-                current = version.get("current", "")
-                for location in declarations.get(package, [Location(package_json)]):
-                    _LOG.new_version(Reference(package, current, location), package_version)
-        # The manager normalizes specs (e.g. npm rewrites git URLs to the github: shorthand) whenever it saves
-        # package.json. When nothing was actually updated, restore the original manifest so reformatting doesn't
-        # produce a spurious diff.
-        if not updated and package_json.read_text() != original_contents:
-            package_json.write_text(original_contents)
+        for package, new_version in self._locked_in(package_json.parent).items():
+            current = locked.get(package)
+            if current is None or current == new_version:
+                continue  # The lock file did not record the package before the update, or the update left it there
+            changes = get_changes(package, new_version)
+            published = get_publication_datetime(package, new_version)
+            package_version = DependencyVersion(new_version, changes, publication=LookedUp(published))
+            for location in declarations.get(package, [Location(package_json)]):
+                _LOG.new_version(Reference(package, current, location), package_version)
 
 
 _NPM = _PackageManager(
-    outdated=Command("npm", "outdated", "--json", *_COMMON_NPM_OPTIONS),
     update=Command("npm", "update", "--save", *_COMMON_NPM_OPTIONS),
-    installed=Command("npm", "list", "--json", "--depth=0", *_COMMON_NPM_OPTIONS),
+    list_locked=Command("npm", "list", "--json", "--depth=0", *_COMMON_NPM_OPTIONS, "--package-lock-only"),
     config_get=Command("npm", "config", "get"),
     # npm config keys that hold back fresh releases. If the project sets either, we leave its cooldown alone (and
     # `min-release-age` can't be combined with `before`, so a project-level `before` also means we add nothing).
     cooldown_config_keys=("min-release-age", "before"),
     cooldown_unset="null",  # `npm config get` reports an unset key as `null`.
     cooldown_option=lambda days: f"--min-release-age={days}",
-    installed_versions=_npm_installed_versions,
+    locked_versions=_npm_locked_versions,
 )
 _PNPM = _PackageManager(
-    outdated=Command("pnpm", "outdated", "--format", "json"),
     # Deliberately without `--latest`, which would cross the version ranges declared in package.json; without it,
     # pnpm stays within the declared ranges, like `npm update` does.
     update=Command("pnpm", "update"),
-    installed=Command("pnpm", "list", "--json", "--depth=0"),
+    list_locked=Command("pnpm", "list", "--json", "--depth=0", "--lockfile-only"),
     config_get=Command("pnpm", "config", "get"),
     cooldown_config_keys=("minimumReleaseAge",),
     cooldown_unset="undefined",  # `pnpm config get` reports an unset key as `undefined` (not its built-in default).
     cooldown_option=lambda days: f"--config.minimumReleaseAge={days * _MINUTES_PER_DAY}",
-    installed_versions=_pnpm_installed_versions,
+    locked_versions=_pnpm_locked_versions,
 )
 # The managers Update-time can update, keyed by name. The updater resolves a detected manager name against this
 # catalog and skips a project whose manager isn't here (yarn, bun) rather than mishandling it by running npm (which

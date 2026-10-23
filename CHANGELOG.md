@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Fixed
 
+- Report the new version of an npm dependency where `node_modules` is missing, and keep `package.json` as npm or pnpm saves it, in step with the lock file. Closes [#457](https://github.com/ICTU/update-time/issues/457).
 - Stop npm, pnpm, and uv from writing a lock file beside a `package.json` or `pyproject.toml` that does not declare dependencies. Closes [#456](https://github.com/ICTU/update-time/issues/456).
 - Stop a Maven run over a pom from advancing a property that another pom of the reactor declares or names. Such an update skipped the cooldown and the variant check, and went unlogged. Closes [#453](https://github.com/ICTU/update-time/issues/453).
 - Fill in the properties through which a Maven pom names its GitHub repository, such as `${project.artifactId}`. Closes [#455](https://github.com/ICTU/update-time/issues/455).
