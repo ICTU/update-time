@@ -967,6 +967,14 @@ class Logger:
         """Warn that the project's uv configuration cannot hold the cooldown, so Update-time wrote none."""
         self._log_file(self._MESSAGE_UV_COOLDOWN_NOT_SET, path)
 
+    _MESSAGE_UV_DEPENDENCIES_NOT_UPDATED = LogMessage(
+        ERROR, "Could not update the dependencies in %(location)s: uv tree failed"
+    )
+
+    def uv_dependencies_not_updated(self, path: Path) -> None:
+        """Log that the file's dependencies were not updated, because `uv tree` failed."""
+        self._log_file(self._MESSAGE_UV_DEPENDENCIES_NOT_UPDATED, path)
+
     _MESSAGE_SKIP_UNSUPPORTED = LogMessage(
         WARNING, "Skipping %(location)s: %(manager)s is not supported, only %(supported)s"
     )

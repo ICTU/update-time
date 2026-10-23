@@ -1,5 +1,6 @@
 """Unit tests for the inline-script-metadata updater (discovery and orchestration of the uv package manager)."""
 
+import subprocess  # nosec
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
@@ -128,6 +129,16 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         self.assertIn("--depth=0", command)
         self.assertTrue(command[command.index("--exclude-newer") + 1])  # a non-empty cutoff follows the flag
         self.assertNotIn(("uv", "lock"), [command[:2] for command in self.uv_commands(run)])  # scripts have no lockfile
+
+    def test_a_failed_uv_tree_reports_the_dependencies_not_updated(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a failed uv tree leaves the script as it is, and is reported at error."""
+        run.side_effect = subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr="error: No solution")
+        mock_script = _discovered_script(glob, "package==1.0")
+        update_python_inline_script_metadatas()
+        mock_script.write_text.assert_not_called()
+        get.assert_not_called()
+        self.assert_command_stderr_logged(stderr="error: No solution")
+        self.assert_uv_dependencies_not_updated_logged(mock_script)
 
     def test_only_outdated_pin_is_rewritten(self, run: Mock, get: Mock, glob: Mock):
         """Test that only the dependency uv reports as outdated is rewritten; the rest of the block is preserved."""

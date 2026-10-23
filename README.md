@@ -1150,6 +1150,12 @@ For a `requirements.txt` pin, Update-time reads from PyPI whether each newer rel
 ERROR Could not fetch from PyPI the metadata of humanize 4.16.0 (HTTP 503), so its yank state and publication date are unknown; humanize stays on 4.15.0 rather than trying the versions in between
 ```
 
+Update-time updates none of the dependencies in a `pyproject.toml` or an inline script metadata block that uv fails to resolve. Two dependency groups pinning conflicting versions are such a case, and so is a registry uv cannot reach. Update-time logs uv's error at `WARNING`, and reports at `ERROR` which file's dependencies it did not update:
+
+```console
+ERROR Could not update the dependencies in pyproject.toml: uv tree failed
+```
+
 #### Pinning
 
 Update-time adds no hash pin to a Python dependency. A `requirements.txt` pin carries one as a `--hash=` line, which has to hold for the file's transitive dependencies too. So Update-time skips a file that already has them entirely, rather than rewriting it partly. Dependencies in `pyproject.toml` are locked by uv, which records each distribution's hash in the `uv.lock` file it maintains. A PEP 723 script has no lock file, so its pins carry no hash either.

@@ -199,13 +199,14 @@ def _update_dependencies(uv_tree: Command, file: DependencyTomlFile, log: Logger
     Shared by the pyproject.toml and inline-script-metadata updaters: both read outdated dependencies from uv and
     rewrite the pins their dependency arrays declare, so only the uv command, the file, and the logger differ (the
     pyproject.toml updater also re-locks afterwards, which its caller handles). Returns whether `uv tree` produced
-    usable output; when it didn't (e.g. an unreachable registry) nothing can be determined to update, so the caller
-    can skip any follow-up work that would fail the same way.
+    usable output; when it didn't (e.g. an unreachable registry) nothing can be determined to update, so the file's
+    dependencies are reported as not updated and the caller can skip any follow-up work that would fail the same way.
     """
     log.path(file.path)
     declarations = _by_name(report_file_markers(file, log))
     outdated = run(uv_tree)
     if not outdated.ok:
+        log.uv_dependencies_not_updated(file.path)
         return False
     lines_with_updates = [line for line in outdated.stdout.splitlines() if " (latest: " in line]
     latest_versions: dict[Declaration, VersionString] = {}
