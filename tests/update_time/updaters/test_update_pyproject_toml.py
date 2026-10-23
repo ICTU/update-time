@@ -37,6 +37,9 @@ if TYPE_CHECKING:
 # What the log renders for the new version `updated_pyproject_toml` has uv and PyPI report.
 _NEW_VERSION = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
 
+# A pyproject.toml that declares build requirements alone, which uv neither resolves nor locks.
+_BUILD_REQUIREMENTS_ALONE = '[build-system]\nrequires = ["hatchling==1.20.0"]\n'
+
 
 def _discovered_pyproject_toml(glob: Mock, spec: str) -> Mock:
     """Return the single mock pyproject.toml the scan discovers, pinning the given dependency."""
@@ -221,14 +224,14 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
     @kills(
         Mutation(
             uv._update_dependencies,
-            "declarations = _by_name(report_markers(pyproject_toml_format.declarations(file), log, POLICY))\n"
+            "declarations = _by_name(report_file_markers(file, log))\n"
             "    outdated = run(uv_tree)\n"
             "    if not outdated.ok:\n"
             "        return False\n",
             "outdated = run(uv_tree)\n"
             "    if not outdated.ok:\n"
             "        return False\n"
-            "    declarations = _by_name(report_markers(pyproject_toml_format.declarations(file), log, POLICY))\n",
+            "    declarations = _by_name(report_file_markers(file, log))\n",
             "a failed uv tree skips the marker report, so a marker on a pin reads as unrecognised",
         )
     )
@@ -466,8 +469,8 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @patch_pathlib_path(exists=True)
     def test_skip_non_uv_lockfile(self, run: Mock, get: Mock, glob: Mock):
-        """Test that a pyproject.toml with a non-uv lockfile (e.g. poetry.lock) is skipped without running uv."""
-        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
+        """Test that a pyproject.toml beside a non-uv lockfile (e.g. poetry.lock) is reported as unsupported."""
+        mock_pyproject_toml = self.create_pyproject_toml(_BUILD_REQUIREMENTS_ALONE)
         glob.return_value = [mock_pyproject_toml]
         update_pyproject_tomls()
         run.assert_not_called()
@@ -487,6 +490,57 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_invalid_file_logged(mock_pyproject_toml, "TOML")
         self.assert_no_new_version_logged()
 
+    def test_uv_not_run_for_a_file_that_declares_nothing_to_lock(self, run: Mock, get: Mock, glob: Mock):
+        """Test that uv does not run, nor get its cooldown, for a pyproject.toml that declares nothing to lock."""
+        cases = {
+            "tool configuration alone": "[tool.ruff]\nline-length = 100\n",
+            "empty dependency arrays": "[project]\ndependencies = []\n\n[dependency-groups]\ndev = []\n",
+            "build requirements alone": _BUILD_REQUIREMENTS_ALONE,
+        }
+        run.return_value = Mock(stdout="", stderr="")
+        for case, contents in cases.items():
+            with self.subTest(case):
+                run.reset_mock()
+                mock_pyproject_toml = self.create_pyproject_toml(contents)
+                glob.return_value = [mock_pyproject_toml]
+                with patch("update_time.package_managers.uv.configure_cooldown") as configure_cooldown:
+                    update_pyproject_tomls()
+                run.assert_not_called()
+                get.assert_not_called()
+                configure_cooldown.assert_called_once_with([])
+                mock_pyproject_toml.write_text.assert_not_called()
+                self.assert_no_dependencies_logged(mock_pyproject_toml, "uv", "resolve")
+
+    def test_a_marker_in_a_file_uv_does_not_run_for_is_recognised(self, run: Mock, get: Mock, glob: Mock):
+        """Test that the marker on a build requirement of a pyproject.toml that uv does not run for is reported."""
+        contents = '[build-system]\nrequires = ["hatchling==1.20.0"]  # update-time: ignore[stale]\n'
+        mock_pyproject_toml = self.updated_pyproject_toml(run, get, glob, contents, latest="")
+        marker = Marker(ignored_scopes=Scope.STALE)
+        self.assert_recognised_marker_logged("hatchling", Location(mock_pyproject_toml, 2), marker)
+
+    @kills(
+        Mutation(
+            pyproject_toml.declares_a_dependency,
+            "any(_uv_dependency_arrays(config))",
+            'bool(config.get("project", {}).get("dependencies"))',
+            "uv runs only for a dependency the project's own array declares",
+        )
+    )
+    def test_uv_runs_for_each_array_it_resolves(self, run: Mock, get: Mock, glob: Mock):
+        """Test that uv runs for a pyproject.toml whose only dependency sits in any of the arrays uv resolves."""
+        cases = {
+            "an extra": '[project]\nname = "a"\n\n[project.optional-dependencies]\ncli = ["package==1.0"]\n',
+            "a dependency group without a project": '[dependency-groups]\ndev = ["package==1.0"]\n',
+            "uv's legacy dev-dependencies": '[tool.uv]\ndev-dependencies = ["package==1.0"]\n',
+            "dynamic dependencies": '[project]\nname = "a"\ndynamic = ["dependencies"]\n',
+            "dynamic extras": '[project]\nname = "a"\ndynamic = ["optional-dependencies"]\n',
+        }
+        for case, contents in cases.items():
+            with self.subTest(case):
+                run.reset_mock()
+                self.updated_pyproject_toml(run, get, glob, contents, latest="")
+                self.assertIn(("uv", "tree"), [call.args[0][:2] for call in run.call_args_list])
+
 
 @patch("update_time.package_managers.uv.configure_cooldown", Mock())
 @patch_pathlib_path("rglob", cwd=Path("/"))
@@ -495,11 +549,21 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 class CheckedPinsTest(LoggingTestCase):
     """Unit test for handing the discovered manifests to the checks uv-delegated updaters share."""
 
+    @kills(
+        Mutation(
+            update_pyproject_tomls,
+            "warn_about_pins([PyprojectToml(path) for path in uv_projects], _LOG)",
+            "warn_about_pins(pyproject_tomls, _LOG)",
+            "a pyproject.toml that uv does not run for is not checked either",
+        )
+    )
     @patch("update_time.updaters.update_pyproject_toml.warn_about_pins")
     def test_the_discovered_manifests_are_checked(self, warn: Mock, run: Mock, get: Mock, glob: Mock):
-        """Test that the checks are handed every manifest the scan found, whether uv updated it or not."""
+        """Test that the checks are handed every manifest the scan found, whether uv ran for it or not."""
         run.return_value = Mock(stdout="| django\n")
         pyproject_toml = _discovered_pyproject_toml(glob, "django==3.2.0")
+        build_requirements_alone = mock_path(_BUILD_REQUIREMENTS_ALONE, parent=Path("/"))
+        glob.return_value.append(build_requirements_alone)
         update_pyproject_tomls()
         get.assert_not_called()
-        warn.assert_called_once_with([PyprojectToml(pyproject_toml)], ANY)
+        warn.assert_called_once_with([PyprojectToml(pyproject_toml), PyprojectToml(build_requirements_alone)], ANY)

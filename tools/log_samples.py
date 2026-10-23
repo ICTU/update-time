@@ -464,6 +464,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
         **github_refs,
         "@@NO_RELEASE_METADATA@@": no_release_metadata,
+        **_manifests_without_dependencies(log, capture),
         **rate_limits,
         "@@HELD_BACK_BY_COOLDOWN@@": held_back_by_cooldown,
         "@@NO_PUSH_DATE@@": undated_pushes,
@@ -481,6 +482,14 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **inverted,
         **understood_markers,
     }
+
+
+def _manifests_without_dependencies(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that npm and uv do not run for a manifest that does not declare dependencies, and pair the lines."""
+    log.no_dependencies(Path("ui/static/package.json"), "npm", "install")
+    package_json = capture.take()
+    log.no_dependencies(Path("pyproject.toml"), "uv", "resolve")
+    return {"@@NO_NODE_DEPENDENCIES@@": package_json, "@@NO_PYTHON_DEPENDENCIES@@": capture.take()}
 
 
 def _rate_limits(log: Logger, capture: _Capture) -> dict[str, str]:

@@ -32,29 +32,37 @@ _LOG = get_logger("package.json")
 _LOCKFILES = {"pnpm-lock.yaml": "pnpm", "yarn.lock": "yarn", "bun.lockb": "bun"}
 
 
-def _package_manager(package_json: Path) -> str:
+def _package_manager(package_json: JsonFile) -> str:
     """Return the name of the project's package manager (npm, pnpm, yarn, bun), defaulting to npm.
 
     The corepack `packageManager` field (e.g. `"pnpm@9.15.0"`) is authoritative; otherwise a sibling lockfile is
     used as a fallback signal.
     """
-    if declared := json_format.read(package_json).contents.get("packageManager", ""):
+    if declared := package_json.contents.get("packageManager", ""):
         return declared.split("@", maxsplit=1)[0]
     for lockfile, manager in _LOCKFILES.items():
-        if (package_json.parent / lockfile).exists():
+        if (package_json.path.parent / lockfile).exists():
             return manager
     return "npm"
 
 
 def update_package_jsons() -> None:
-    """Find all package.json files, update each with its (supported) package manager, and check its dependencies."""
+    """Find all package.json files, update each with its (supported) package manager, and check its dependencies.
+
+    The package manager runs only for a package.json that declares a dependency, since it writes a lockfile beside
+    any package.json it runs for.
+    """
     supported = []
     for package_json in glob_for(PACKAGE_JSON):
-        if (manager := node.SUPPORTED_MANAGERS.get(name := _package_manager(package_json))) is None:
+        file = json_format.read(package_json)
+        if (manager := node.SUPPORTED_MANAGERS.get(name := _package_manager(file))) is None:
             _LOG.unsupported_package_manager(package_json, name, " and ".join(node.SUPPORTED_MANAGERS))
-        else:
+            continue
+        if package_json_format.declares_a_dependency(file):
             manager.update_package_json(package_json)
-            supported.append(package_json)
+        else:
+            _LOG.no_dependencies(package_json, name, "install")
+        supported.append(package_json)
     _warn_about_dependencies(supported)
 
 

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Fixed
 
+- Stop npm, pnpm, and uv from writing a lock file beside a `package.json` or `pyproject.toml` that does not declare dependencies. Closes [#456](https://github.com/ICTU/update-time/issues/456).
 - Stop a Maven run over a pom from advancing a property that another pom of the reactor declares or names. Such an update skipped the cooldown and the variant check, and went unlogged. Closes [#453](https://github.com/ICTU/update-time/issues/453).
 - Fill in the properties through which a Maven pom names its GitHub repository, such as `${project.artifactId}`. Closes [#455](https://github.com/ICTU/update-time/issues/455).
 - Keep Maven from adopting a pre-release whose number has dots in it, such as `2.4.0-b180830.0359`. Closes [#454](https://github.com/ICTU/update-time/issues/454).

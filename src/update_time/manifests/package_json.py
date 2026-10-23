@@ -17,10 +17,13 @@ if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyName
     from update_time.formats.json import JsonFile
 
-# The dependency sections whose direct dependencies npm/pnpm install for this project (peerDependencies are
-# constraints on the consumer, not installed here, so they are left out). pnpm's `list --json` output splits its
-# installed dependencies over the same sections, so `package_managers.node` reads them from here too.
+# The dependency sections whose entries Update-time checks. pnpm's `list --json` output splits its installed
+# dependencies over the same sections, so `package_managers.node` reads them from here too.
 DEPENDENCY_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies")
+
+# The dependency sections npm and pnpm install from. A peer dependency states a range its consumer has to satisfy,
+# so Update-time does not check it, but npm and pnpm install it all the same.
+_INSTALLED_SECTIONS = (*DEPENDENCY_SECTIONS, "peerDependencies")
 
 # The field a package.json names its markers in. JSON has no comments, so a marker cannot sit beside the reference
 # it steers, and npm keeps a field it does not know, so the file can carry one.
@@ -85,6 +88,11 @@ def dependency_locations(path: Path) -> dict[DependencyName, list[Location]]:
         if declaration.names_a_release:
             locations.setdefault(declaration.dependency, []).append(declaration.location)
     return locations
+
+
+def declares_a_dependency(package_json: JsonFile) -> bool:
+    """Return whether the package.json declares a dependency for npm and pnpm to install."""
+    return any(package_json.contents.get(section) for section in _INSTALLED_SECTIONS)
 
 
 def declarations(package_json: JsonFile) -> Iterator[Declaration]:

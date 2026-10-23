@@ -26,6 +26,9 @@ if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyName, VersionString
     from update_time.manifests.dependency_file import DependencyTomlFile
 
+# The `[project]` fields that a project can list as `dynamic`, leaving the build backend to fill in the dependencies
+# that uv then resolves.
+_DYNAMIC_DEPENDENCY_FIELDS = ("dependencies", "optional-dependencies")
 
 type _DeclarationPosition = int
 
@@ -117,13 +120,23 @@ def _uv_source_names(config: dict) -> set[DependencyName]:
     return {normalized_python_name(name) for name in _uv_table(config).get("sources", {})}
 
 
+def declares_a_dependency(config: Mapping) -> bool:
+    """Return whether the config declares a dependency for uv to resolve, in an array or through the build backend."""
+    dynamic = config.get("project", {}).get("dynamic", [])
+    return any(_uv_dependency_arrays(config)) or any(field in dynamic for field in _DYNAMIC_DEPENDENCY_FIELDS)
+
+
 def _dependency_arrays(config: Mapping) -> list[MutableSequence]:
-    """Return every array of dependency specs the config declares.
+    """Return every array of dependency specs the config declares: the ones uv resolves, and the build requirements."""
+    return [*_uv_dependency_arrays(config), config.get("build-system", {}).get("requires", [])]
+
+
+def _uv_dependency_arrays(config: Mapping) -> list[MutableSequence]:
+    """Return every array of dependency specs that uv resolves.
 
     A pyproject.toml declares them in the project's own array, in an array per extra, in an array per dependency
-    group, in uv's legacy `[tool.uv] dev-dependencies`, and in the `[build-system]` requirements. uv still resolves
-    that legacy array, so it is read like the rest. An inline script metadata block declares them in one array of
-    its own.
+    group, and in uv's legacy `[tool.uv] dev-dependencies`. uv still resolves that legacy array, so it is read like
+    the rest. An inline script metadata block declares them in one array of its own.
     """
     project = config.get("project", {})
     return [
@@ -131,7 +144,6 @@ def _dependency_arrays(config: Mapping) -> list[MutableSequence]:
         *project.get("optional-dependencies", {}).values(),
         *config.get("dependency-groups", {}).values(),
         _uv_table(config).get("dev-dependencies", []),
-        config.get("build-system", {}).get("requires", []),
         config.get("dependencies", []),
     ]
 
