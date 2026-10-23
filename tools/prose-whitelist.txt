@@ -282,7 +282,6 @@ Run `uv tree --outdated`, log every new version no marker holds back, and rewrit
 Run every script with `just py`, which puts the package on the path, or with `uv run` where no recipe fits.
 Run the updater over no files, and return the mocks standing in for its two passes.
 Running this again finds nothing left to scrub, so the patch it then starts changes nothing, and needs no guard of the kind the refusal above has.
-Set the value the nested keys hold, with an optional comment trailing it, adding the tables it needs.
 So a marker above the `dependencies = [` line steers nothing, since that line declares no dependency.
 So an unreadable field drops every directive it carries, where an unreadable bracket item leaves the items beside it standing.
 So does an answer that carries no token, which Docker Hub's schema allows, since it makes the token an optional field.
@@ -294,7 +293,6 @@ Such a warning previously named no directive at all.
 Test that --allow-hash-drift re-pins a re-pointed floating tag to the version and digest it now serves.
 Test that None is returned when no tag matches the requested version.
 Test that `--stale-after 0` skips the staleness pass entirely, so it makes no npm registry request.
-Test that `[tool.uv]` is created when the file has no `[tool]` section at all.
 Test that `allow[cooldown<30]` and `ignore[cooldown>=30]` set no cooldown, each carried as its item.
 Test that `allow[floating-pin]` is not reported for a floating pin the source resolved no version for.
 Test that `allow[floating-pin]` on a `FROM` naming no tag leaves it, naming what it resolves to.

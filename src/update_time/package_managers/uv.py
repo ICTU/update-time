@@ -86,6 +86,8 @@ def configure_cooldown(pyproject_tomls: list[Path]) -> None:
 def _persist_exclude_newer(pyproject_toml: Path) -> None:
     """Write `exclude-newer = "<N> days"` (tagged as Update-time's) to the pyproject.toml, unless a user set it.
 
+    A file whose `tool` or `tool.uv` is not a table gets a warning instead.
+
     A value carrying Update-time's marker comment is kept in sync with the cooldown; a value without the marker is
     the user's own and is left untouched, as is an already-current marked value (which is not rewritten).
     """
@@ -97,8 +99,12 @@ def _persist_exclude_newer(pyproject_toml: Path) -> None:
             return  # A user-set exclude-newer: leave it alone.
         if value == cooldown:
             return  # Already Update-time's and already current.
-    pyproject_toml_format.set_tool_key(pyproject_toml, "uv", "exclude-newer", cooldown, comment=_EXCLUDE_NEWER_COMMENT)
-    _LOG.configured_uv_cooldown(pyproject_toml, cooldown)
+    if pyproject_toml_format.set_tool_key(
+        pyproject_toml, "uv", "exclude-newer", cooldown, comment=_EXCLUDE_NEWER_COMMENT
+    ):
+        _LOG.configured_uv_cooldown(pyproject_toml, cooldown)
+    else:
+        _LOG.uv_cooldown_not_set(pyproject_toml)
 
 
 def _workspace_root(pyproject_toml: Path) -> Path:

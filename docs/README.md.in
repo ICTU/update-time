@@ -993,6 +993,12 @@ For `pyproject.toml` dependencies, Update-time applies the cooldown through uv's
 
 Update-time keeps its own tagged value in step with `--cooldown`. An `exclude-newer` without the `managed by Update-time` comment stays as it is, and so does a `UV_EXCLUDE_NEWER` environment variable. Remove the comment to take ownership of the line.
 
+A TOML inline table cannot hold a comment. So where the `pyproject.toml` writes `[tool]` or `[tool.uv]` as an inline table, Update-time rewrites that table as a normal one. It turns `tool = { uv = { package = false } }` into a `[tool.uv]` table holding `package = false` and the tagged `exclude-newer`. Where `tool` or `tool.uv` is a value other than a table, Update-time leaves the file as it is and warns instead:
+
+```console
+@@UV_COOLDOWN_NOT_SET@@
+```
+
 For inline script metadata, Update-time also applies the cooldown through uv's `exclude-newer`. It passes the value to `uv tree` on the command line rather than persisting it, since a standalone script does not have a lock file to keep reproducible. Update-time derives the cutoff from `--cooldown` on every run, so, unlike `pyproject.toml`, it writes nothing into the `# /// script` block.
 
 #### Stale dependencies

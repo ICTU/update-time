@@ -465,6 +465,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **github_refs,
         "@@NO_RELEASE_METADATA@@": no_release_metadata,
         **_manifests_without_dependencies(log, capture),
+        **_uv_cooldown_not_set(log, capture),
         **rate_limits,
         "@@HELD_BACK_BY_COOLDOWN@@": held_back_by_cooldown,
         "@@NO_PUSH_DATE@@": undated_pushes,
@@ -490,6 +491,12 @@ def _manifests_without_dependencies(log: Logger, capture: _Capture) -> dict[str,
     package_json = capture.take()
     log.no_dependencies(Path("pyproject.toml"), "uv", "resolve")
     return {"@@NO_NODE_DEPENDENCIES@@": package_json, "@@NO_PYTHON_DEPENDENCIES@@": capture.take()}
+
+
+def _uv_cooldown_not_set(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that a pyproject.toml whose tool tables cannot hold the cooldown gets none, and pair the line."""
+    log.uv_cooldown_not_set(Path("pyproject.toml"))
+    return {"@@UV_COOLDOWN_NOT_SET@@": capture.take()}
 
 
 def _rate_limits(log: Logger, capture: _Capture) -> dict[str, str]:

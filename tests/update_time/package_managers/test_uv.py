@@ -8,6 +8,7 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
 from update_time.manifests.dependency_file import PyprojectToml
 from update_time.manifests.pyproject_toml import declarations
+from update_time.package_managers import uv
 from update_time.package_managers.uv import (
     _persist_exclude_newer,
     _workspace_root,
@@ -17,6 +18,7 @@ from update_time.package_managers.uv import (
 )
 
 from tests.helpers import mock_path, patch_environ
+from tests.mutation import Mutation, kills
 from tests.update_time.helpers import LoggingTestCase, declaration, pyproject
 
 # The comment Update-time tags its own `exclude-newer` value with, spelled out so the test pins the wording.
@@ -58,6 +60,20 @@ class PersistExcludeNewerTest(LoggingTestCase):
         written = pyproject_toml.write_text.call_args.args[0]
         self.assertIn("exclude-newer-package = { msgpack = false }", written)
         self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', written)
+
+    @kills(
+        Mutation(
+            uv._persist_exclude_newer,
+            "_LOG.uv_cooldown_not_set(pyproject_toml)",
+            "pass",
+            "a pyproject.toml that cannot hold the cooldown is passed over without a word",
+        )
+    )
+    def test_warns_about_a_file_whose_tool_tables_cannot_hold_the_cooldown(self):
+        """Test that a pyproject.toml whose `tool` is not a table is warned about, and neither written nor logged."""
+        pyproject_toml = self.persist('tool = "x"\n' + pyproject("a==1.0"))
+        pyproject_toml.write_text.assert_not_called()
+        self.assert_logged(Logger._MESSAGE_UV_COOLDOWN_NOT_SET, location=ANY)
 
     def test_leaves_a_user_value_untouched(self):
         """Test that an exclude-newer without the marker (the user's own) is left alone, writing and logging nothing."""
