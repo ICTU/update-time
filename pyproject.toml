@@ -29,7 +29,7 @@ dependencies = [
     "pyyaml==6.0.3",
     "requests==2.34.2",
     "rich==15.0.0",
-    "tomlkit==0.15.1",
+    "tomlkit==0.15.2",
 ]
 urls.Changelog = "https://github.com/ICTU/update-time/blob/main/CHANGELOG.md"
 urls.Issues = "https://github.com/ICTU/update-time/issues"
@@ -48,16 +48,16 @@ dev = [
     "nltk==3.10.4",
     "pip-audit==2.10.1",
     "pyproject-fmt==2.30.3",
-    "ruff==0.17.0",
+    "ruff==0.17.1",
     "troml==0.4.1",
-    "ty==0.0.87",
+    "ty==0.0.89",
     "types-pyyaml==6.0.12.20260906",
     "types-requests==2.33.0.20261006",
     "unittest-xml-reporting==4.0.0",
     "vale==3.22.0.0",
     "vulture==2.16",
     "yamllint==1.38.0",
-    "zizmor==1.30.1",
+    "zizmor==1.31.1",
 ]
 
 [tool.uv]
