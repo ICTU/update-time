@@ -9,7 +9,7 @@ from unittest.mock import Mock, call, patch
 
 from update_time.domain.bound import Verb, _Redundancy
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import NO_CHANGES, Archival, ArchivedSubject, Changes, Project, Release
+from update_time.domain.dependency import NO_CHANGES, UNDATED, Archival, ArchivedSubject, Changes, Project, Release
 from update_time.io.log import Logger, LogMessage
 from update_time.manifests import pom_xml as pom_xml_module
 from update_time.markers.directive import Reason
@@ -22,6 +22,7 @@ from update_time.references import delegated as delegated_module
 from update_time.sources import maven_central as maven_central_module
 from update_time.sources.maven_central import lacks_a_github_repository as maven_central_lacks_a_github_repository
 from update_time.sources.maven_central import project as maven_central_project
+from update_time.sources.maven_central import publication as maven_central_publication
 from update_time.sources.maven_central import serves as maven_central_serves
 from update_time.updaters import update_pom_xml as update_pom_xml_module
 from update_time.updaters.update_pom_xml import update_pom_xmls
@@ -37,6 +38,7 @@ from tests.update_time.helpers import (
     days_ago,
     message_of,
     properties_element,
+    published_version,
     staleness_disabled,
 )
 from tests.update_time.manifests.helpers import (
@@ -358,6 +360,7 @@ _CHILDS_EFFECTIVE_POM = effective_pom_declaring(
 @patch.object(maven_central_module, "serves", Mock(return_value=True))
 @patch.object(maven_central_module, "lacks_a_github_repository", Mock(return_value=False))
 @patch.object(maven_central_module, "get_changes", Mock(return_value=NO_CHANGES))
+@patch.object(maven_central_module, "publication", Mock(return_value=UNDATED))
 @patch.object(maven_module, "versions_held_back", Mock(return_value=()))
 @patch_pathlib_path("rglob", cwd=Path("/"), exists=False)
 @patch("subprocess.run")
@@ -1634,10 +1637,10 @@ class UpdatePomXmlTest(LoggingTestCase):
             "a pom inheriting a group from its parent is asked about coordinates that resolve to nothing",
         ),
         Mutation(
-            update_pom_xml_module._report_new_versions,
-            "is_resolved = pom_xml_format.fully_resolved(update.effective.pinned)",
-            "is_resolved = True",
-            "Maven Central is asked for the changes of coordinates holding an unresolved property",
+            update_pom_xml_module._new_version,
+            "if not pom_xml_format.fully_resolved(update.effective.pinned):",
+            "if False:",
+            "Maven Central is asked for the changes and the date of coordinates holding an unresolved property",
         ),
         Mutation(
             maven_module._ReactorModule.update,
@@ -1674,6 +1677,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             osv() as mock_post,
             patch.object(maven_central_module, "project", mock_project),
             patch.object(maven_central_module, "get_changes", Mock(return_value=NO_CHANGES)) as mock_changes,
+            patch.object(maven_central_module, "publication", Mock(return_value=UNDATED)) as mock_publication,
             patch.object(maven_central_module, "serves", Mock(return_value=True)) as mock_serves,
         ):
             update_pom_xmls()
@@ -1683,6 +1687,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         _assert_osv_asked_about_maven(mock_post, (GUAVA, "33.7.1-jre"))
         self.assertEqual(_artefacts_asked(mock_project), [GUAVA])
         self.assertEqual(_artefacts_asked(mock_changes), [GUAVA])
+        self.assertEqual(_artefacts_asked(mock_publication), [GUAVA])
 
     def test_the_cooldown_skips_a_dependency_without_a_version(self, mock_run: Mock, mock_glob: Mock):
         """Test that the repository is not asked which versions to hold back for a dependency Maven does not update."""
@@ -1836,9 +1841,9 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module._report_new_versions,
-            "get_changes(reference.dependency, new.current_version)",
-            "get_changes(reference.dependency, update.old.current_version)",
+            update_pom_xml_module._new_version,
+            "get_changes(artefact, version)",
+            "get_changes(artefact, update.old.current_version)",
             "a dependency Maven moved is reported with the changes of the version it moved away from",
         ),
         Mutation(
@@ -1878,6 +1883,27 @@ class UpdatePomXmlTest(LoggingTestCase):
             changes="Changes in org.springframework:spring-core 7.1.0",
         )
         self.assertEqual(len(self.new_version_records()), 2)
+
+    def test_a_moved_dependency_is_dated_from_the_listing_the_other_checks_fetch(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a moved dependency is dated from the one listing request the cooldown and the checks share."""
+        published = days_ago(30).replace(second=0, microsecond=0)
+        listing = maven_central_listing(maven_central_version_row("33.7.1-jre", published))
+        after = pom_declaring(guava_element("33.7.1-jre"))
+        pom = self.find_rewritten_pom(mock_run, mock_glob, _POM_DECLARING_GUAVA, after)
+        mock_held_back = Mock(side_effect=maven_central_module.versions_held_back)
+        mock_project = Mock(side_effect=maven_central_project)
+        with (
+            patch.object(maven_module, "versions_held_back", mock_held_back),
+            patch.object(maven_central_module, "project", mock_project),
+            patch.object(maven_central_module, "publication", maven_central_publication),
+            patch_maven_central(listing, _POM_ON_GITHUB) as mock_get,
+        ):
+            update_pom_xmls()
+        # The cooldown and the project checks each read the listing, so the one request serves them as well.
+        self.assertEqual(_artefacts_asked(mock_held_back), [GUAVA])
+        self.assertEqual(_artefacts_asked(mock_project), [GUAVA])
+        self.assert_new_version_logged(GUAVA, published_version("33.7.1-jre", published), Location(pom, 6))
+        self.assertEqual(requested_urls(mock_get).count(maven_central_listing_url(GUAVA)), 1)
 
     @kills(
         Mutation(
