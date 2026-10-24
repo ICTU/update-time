@@ -5,7 +5,7 @@ import signal
 import subprocess  # nosec
 import unittest
 from functools import partial
-from logging import DEBUG, WARNING
+from logging import DEBUG
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
@@ -198,7 +198,7 @@ class ToolVersionTests(LoggingTestCase):
                     directory=Location(Path("/project")),
                     reason=reason,
                 )
-                self.assertEqual(self.records(DEBUG), [])
+                self.assert_no_debug_logged()
 
     def test_a_tool_that_cannot_run_is_reported_once(self, mock_run: Mock):
         """Test that a tool the system cannot run is reported by its command alone, not by its version query too."""
@@ -212,7 +212,7 @@ class ToolVersionTests(LoggingTestCase):
                 mock_run.side_effect = error
                 run(Command("pnpm", "outdated"), cwd=Path("/project"))
                 self.assertEqual(mock_run.call_count, 2)
-                self.assertEqual(self.records(WARNING), [])
+                self.assert_no_warnings_logged()
                 self.assert_error_logged(message, command=Command("pnpm", "outdated"), **fields)
 
 

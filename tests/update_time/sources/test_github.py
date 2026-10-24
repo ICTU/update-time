@@ -29,32 +29,25 @@ from update_time.sources.github import (
     release_tags,
 )
 
-from tests.helpers import mock_response, patch_environ, patch_get
+from tests.helpers import mock_response, patch_environ, patch_get, requested_urls
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA1, COMMIT_SHA2, FRESH_DATE, PAST_COOLDOWN_DATE
-from tests.update_time.helpers import (
+from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase, bound, days_ago, message_of
+from tests.update_time.sources.helpers import (
     GITHUB_RATE_LIMITED_REASON,
-    CacheClearingTestCase,
-    LoggingTestCase,
-    bound,
-    days_ago,
+    contents_json,
+    contents_url,
+    file_url,
     github_commits_json,
     github_rate_limited,
     github_release_json,
     github_requests,
     github_tag_json,
-    message_of,
-    patch_github,
-)
-from tests.update_time.sources.helpers import (
-    contents_json,
-    contents_url,
-    file_url,
     markdown_changelog,
     markdown_changes,
     page_url,
+    patch_github,
     repository_url,
-    requested_urls,
     respond_per_url,
 )
 
@@ -533,7 +526,7 @@ class ArchivalTest(LoggingTestCase):
                     self.assert_could_not_fetch_logged()
                 else:
                     self.assert_no_warnings_logged()
-        requested = [call.args[0] for call in mock_get.call_args_list]
+        requested = requested_urls(mock_get)
         self.assertEqual(requested, [repository_url(f"owner/{name}") for name in cases])
 
     @kills(

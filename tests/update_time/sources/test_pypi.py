@@ -23,31 +23,24 @@ from update_time.sources.pypi import (
     get_publication_datetime,
 )
 
-from tests.helpers import mock_response, patch_get
+from tests.helpers import mock_response, patch_get, requested_urls
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import GITHUB_UNCACHED
-from tests.update_time.helpers import (
-    PYPI_OLD_UPLOAD,
-    CacheClearingTestCase,
-    LoggingTestCase,
-    bound,
-    days_ago,
-    github_release_json,
-    message_of,
-    pypi_index,
-    pypi_release,
-    yanked_file,
-)
+from tests.update_time.helpers import CacheClearingTestCase, LoggingTestCase, bound, days_ago, message_of
 from tests.update_time.sources.helpers import (
+    PYPI_OLD_UPLOAD,
     contents_entry,
     contents_url,
     file_url,
+    github_release_json,
     markdown_changelog,
     markdown_changes,
+    pypi_index,
+    pypi_release,
     releases_url,
-    requested_urls,
     respond_per_url,
     tree_url,
+    yanked_file,
 )
 from tests.update_time.updaters.fixtures import PYPI_RECENT_UPLOAD
 

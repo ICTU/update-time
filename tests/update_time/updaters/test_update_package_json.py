@@ -25,15 +25,8 @@ from update_time.updaters.update_package_json import update_package_jsons
 from tests.helpers import FakeFiles, mock_path, mock_response, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE, FRESH_DATE, STALE_DATE
-from tests.update_time.helpers import (
-    LoggingTestCase,
-    github_commits_json,
-    github_release_json,
-    message_of,
-    npm_registry,
-    published_version,
-    staleness_disabled,
-)
+from tests.update_time.helpers import LoggingTestCase, message_of, published_version, staleness_disabled
+from tests.update_time.sources.helpers import github_commits_json, github_release_json, npm_registry
 from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
 from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulnerabilities, osv
 
@@ -257,8 +250,8 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.assertEqual(self.files[package_json], json.dumps(_GIT_DEPENDENCY))
         self.assert_npm_called(mock_run)
         self.assert_path_logged(package_json)
-        self.assert_new_version_logged_with_changes(
-            "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json), "Changelog"
+        self.assert_new_version_logged(
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json), changes="Changelog"
         )
         self.assert_no_warnings_logged()
 
@@ -269,8 +262,8 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [package_json]
         mock_run.side_effect = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
         update_package_jsons()
-        self.assert_new_version_logged_with_changes(
-            "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3), "Changelog"
+        self.assert_new_version_logged(
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3), changes="Changelog"
         )
 
     @patch("requests.Session.get", _package_lookup_responses())
@@ -287,7 +280,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_run.side_effect = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
         update_package_jsons()
         published = published_version("1.1", _PUBLICATION_TIME)
-        self.assert_new_version_logged_among_others_with_changes("package", published, Location(package_json, 3), ANY)
+        self.assert_new_version_logged_among_others("package", published, Location(package_json, 3), changes=ANY)
         self.assert_new_version_logged_among_others("package", published, Location(package_json, 6), ANY)
 
     @patch("requests.Session.get", _package_lookup_responses())
@@ -300,8 +293,8 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_glob.return_value = [package_json]
         mock_run.side_effect = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
         update_package_jsons()
-        self.assert_new_version_logged_with_changes(
-            "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json), "Changelog"
+        self.assert_new_version_logged(
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json), changes="Changelog"
         )
 
     def test_manifest_kept_as_npm_saved_it_when_no_version_moved(self, mock_run: Mock, mock_glob: Mock):
@@ -561,8 +554,8 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         update_package_jsons()
         self.assert_pnpm_called(mock_run)
         self.assert_path_logged(package_json)
-        self.assert_new_version_logged_with_changes(
-            "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json), "Changelog"
+        self.assert_new_version_logged(
+            "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json), changes="Changelog"
         )
         self.assert_no_warnings_logged()
 

@@ -151,7 +151,6 @@ Both npm and pnpm update a dependency to the newest version that satisfies the r
 Cannot pin in : the URL is declared as a bare string, so it has no attribute dictionary to hold an integrity hash.
 Check each requirement that pins no exact version.
 CircleCI machine-executor images (the `image:` under a `machine:` key, e.g. `ubuntu-2204:2024.01.1`) are not on Docker Hub and have no registry to query, so they are detected by parsing the YAML and left unchanged.
-Clear every cache the package holds, so the next run fetches what it needs as a real run does.
 Converting is what the bands, which are floats, compare against; an unset score would band as no level.
 Coverage stays at 100%, and `just test` enforces it, so you need no separate coverage command.
 Create PyPI release metadata without project URLs, so the test needs no changelog response mocked.

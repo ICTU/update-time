@@ -37,6 +37,11 @@ def patch_get(json: Mapping | list | None = None, **kwargs: object) -> _patch:
     return patch("requests.Session.get", Mock(return_value=mock_response(json, **kwargs)))
 
 
+def requested_urls(mock_get: Mock) -> list[str]:
+    """Return the URLs the mock Session.get was asked for, in the order they were asked for."""
+    return [call.args[0] for call in mock_get.call_args_list]
+
+
 def patch_environ(environment_variables: dict[str, str] | None = None, *, clear: bool | None = None) -> _patch_dict:
     """Mock os.environ with the given environment variables.
 

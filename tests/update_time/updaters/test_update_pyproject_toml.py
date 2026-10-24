@@ -17,14 +17,8 @@ from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 from tests.helpers import mock_path, mock_response, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE, CHANGELOG
-from tests.update_time.helpers import (
-    LoggingTestCase,
-    github_commits_json,
-    github_release_json,
-    message_of,
-    published_version,
-    pyproject,
-)
+from tests.update_time.helpers import LoggingTestCase, message_of, published_version, pyproject
+from tests.update_time.sources.helpers import github_commits_json, github_release_json
 from tests.update_time.updaters.helpers import (
     UPLOAD_TIME_WITH_CHANGELOG,
     UPLOAD_TIME_WITHOUT_CHANGELOG,
@@ -372,11 +366,11 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         update_pyproject_tomls()
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_changelog==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
-        self.assert_new_version_logged_with_changes(
+        self.assert_new_version_logged(
             "package_with_changelog",
             published_version("1.1", UPLOAD_TIME_WITH_CHANGELOG),
             Location(mock_pyproject_toml, 2),
-            CHANGELOG,
+            changes=CHANGELOG,
         )
         self.assert_no_warnings_logged()
 
@@ -414,11 +408,11 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         update_pyproject_tomls()
         mock_pyproject_toml.write_text.assert_called_with(pyproject("package_with_github_releases==1.1"))
         self.assert_path_logged(mock_pyproject_toml.parent / "uv.lock")
-        self.assert_new_version_logged_with_changes(
+        self.assert_new_version_logged(
             "package_with_github_releases",
             published_version("1.1", UPLOAD_TIME_WITH_CHANGELOG),
             Location(mock_pyproject_toml, 2),
-            CHANGELOG,
+            changes=CHANGELOG,
         )
         self.assert_no_warnings_logged()
 

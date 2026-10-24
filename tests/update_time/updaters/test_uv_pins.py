@@ -17,20 +17,16 @@ from update_time.references import delegated as delegated_module
 from update_time.updaters import uv_pins as uv_pins_module
 from update_time.updaters.uv_pins import warn_about_pins
 
-from tests.helpers import mock_path, patch_environ
+from tests.helpers import mock_path, patch_environ, requested_urls
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
-    PYPI_OLD_UPLOAD,
     LoggingTestCase,
     archival_check_disabled,
     message_of,
-    pypi_index,
-    pypi_release,
     pyproject,
-    pyproject_per_line,
     staleness_disabled,
-    yanked_file,
 )
+from tests.update_time.sources.helpers import PYPI_OLD_UPLOAD, pypi_index, pypi_release, yanked_file
 from tests.update_time.updaters.fixtures import (
     ADVISORY,
     DJANGO_ADVISORY,
@@ -46,6 +42,7 @@ from tests.update_time.updaters.helpers import (
     no_vulnerabilities,
     osv,
     osv_queries,
+    pyproject_per_line,
     vulnerability_check_disabled,
 )
 
@@ -367,9 +364,7 @@ class VulnerablePinTest(DependencyTomlFileTestCase):
         )
         self.check_pins(file)  # OSV answers with no vulnerability, so all three forms silence nothing.
         location = Location(file.path, 2)
-        self.assert_redundant_vulnerable_scope_logged(
-            "package", "1.0", location, "ignore[vulnerable]", among_others=True
-        )
+        self.assert_redundant_vulnerable_scope_logged("package", "1.0", location, "ignore[vulnerable]")
         self.assert_redundant_vulnerable_advisory_logged("package", "1.0", location, advisory)
         self.assert_redundant_vulnerable_level_logged("package", "1.0", "high", location, "ignore[vulnerable<high]")
 
@@ -445,7 +440,7 @@ class ArchivedDependencyTest(DependencyTomlFileTestCase):
         get.return_value = pypi_index("1.0")
         file = self.file_holding(pyproject_per_line("package==1.0", "other==1.0", marker="ignore"))
         warn_about_pins([file], _LOG)
-        self.assertEqual([call.args[0] for call in get.call_args_list], ["https://pypi.org/simple/other/"])
+        self.assertEqual(requested_urls(get), ["https://pypi.org/simple/other/"])
         self.assert_no_warnings_logged()
 
     def test_stale_and_archived_dependency_warned_about_on_both_counts(self, get: Mock):
@@ -724,7 +719,7 @@ class UvSourcedDependencyTest(DependencyTomlFileTestCase):
         get.return_value = dated_pypi_index("3.2.0", upload_time=PYPI_RECENT_UPLOAD)
         with osv(DJANGO_ADVISORY) as mock_post:
             warn_about_pins([file], _LOG)
-        self.assertEqual([call.args[0] for call in get.call_args_list], ["https://pypi.org/simple/django/"])
+        self.assertEqual(requested_urls(get), ["https://pypi.org/simple/django/"])
         # The first request batches every pin the check looks up; the ones after it follow from what it answered.
         self.assertEqual(mock_post.call_args_list[0].kwargs["json"], osv_queries(("django", "3.2.0")))
         self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(file.path, 2))

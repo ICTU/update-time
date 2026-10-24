@@ -13,17 +13,17 @@ from update_time.sources.npmjs import (
     newest_release,
 )
 
-from tests.helpers import mock_response, patch_get
+from tests.helpers import mock_response, patch_get, requested_urls
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import LoggingTestCase, github_release_json
+from tests.update_time.helpers import LoggingTestCase
 from tests.update_time.sources.helpers import (
     contents_json,
     contents_url,
     file_url,
+    github_release_json,
     markdown_changelog,
     markdown_changes,
     releases_url,
-    requested_urls,
     respond_per_url,
 )
 

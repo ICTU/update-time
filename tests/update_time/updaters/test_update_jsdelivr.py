@@ -11,7 +11,8 @@ from update_time.updaters.update_jsdelivr import update_jsdelivrs
 
 from tests.helpers import mock_path, mock_response
 from tests.update_time.fixtures import FRESH_DATE, HASH1, HASH2, STALE_DATE
-from tests.update_time.helpers import LoggingTestCase, days_ago, jsdelivr_versions, npm_registry
+from tests.update_time.helpers import LoggingTestCase, days_ago
+from tests.update_time.sources.helpers import jsdelivr_versions, npm_registry
 from tests.update_time.updaters.helpers import no_vulnerabilities, osv, osv_vulnerability
 
 _FILENAME = "/dist/clipboard.min.js"
