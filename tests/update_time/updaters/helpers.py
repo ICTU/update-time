@@ -1,15 +1,24 @@
-"""Test helpers the updater tests share: the sources they answer, and the checks they switch off."""
+"""Test helpers the updater tests share: the files they update, their sources, and the checks they switch off."""
 
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
+from urllib.parse import parse_qs, urlparse
 
 from update_time.domain.dependency import DependencyVersion, Project
 from update_time.domain.vulnerability import NO_RISK_LEVEL, VULNERABILITY_LEVEL
 
 from tests.helpers import mock_response, patch_environ
-from tests.update_time.fixtures import COMMIT_SHA2
-from tests.update_time.helpers import PYPI_OLD_UPLOAD, osv_advisory, osv_api, pypi_index, vulnerability
+from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA2, FRESH_DATE
+from tests.update_time.helpers import vulnerability
+from tests.update_time.sources.helpers import (
+    PYPI_OLD_UPLOAD,
+    github_commits_json,
+    github_requests,
+    osv_advisory,
+    osv_api,
+    pypi_index,
+)
 
 if TYPE_CHECKING:
     from unittest.mock import _patch
@@ -92,3 +101,52 @@ no_vulnerabilities = osv()
 # Reusable decorator that switches the vulnerability check off, for update tests that focus on the update flow and
 # would otherwise trigger the vulnerability pass's own OSV request.
 vulnerability_check_disabled = patch_environ({VULNERABILITY_LEVEL.name: NO_RISK_LEVEL})
+
+
+# Reusable decorator for the tests that patch the GitHub source's getter: the commit a reference's own tag points at
+# carries that tag alone, so the reference keeps its version.
+no_other_version_at_the_tag = patch(
+    "update_time.references.github.version_at_tag", new=lambda _dependency, version: version
+)
+
+
+def pyproject_per_line(*specs: str, marker: str) -> str:
+    """Return a minimal valid pyproject.toml declaring each of the given dependencies on a line of its own.
+
+    `marker` goes in an `# update-time:` comment on the first spec's line, so it steers that declaration and leaves
+    the ones below it alone.
+    """
+    lines = [f'    "{spec}",' for spec in specs]
+    lines[0] += f"  # update-time: {marker}"
+    dependencies = "".join(f"{line}\n" for line in lines)
+    return f"[project]\ndependencies = [\n{dependencies}]\n"
+
+
+def github_unknown_ref(ref: str) -> Mock:
+    """Return the response GitHub's commits endpoint gives for a ref that does not name a commit in the repository."""
+    return mock_response({"message": f"No commit found for SHA: {ref}"}, ok=False, status_code=422)
+
+
+def github_fresh_line(length: int, parent: str) -> list[dict[str, object]]:
+    """Return a line of fresh commits, newest first, each the first parent of the one listed before it."""
+    shas = [f"{index:040x}" for index in range(length)]
+    return [
+        github_commits_json(sha, date=FRESH_DATE, parents=[first_parent])
+        for sha, first_parent in zip(shas, [*shas[1:], parent], strict=True)
+    ]
+
+
+def full_commit_sha(short_sha: str) -> str:
+    """Return a full commit SHA that the short one abbreviates, as GitHub resolves it."""
+    return short_sha.ljust(len(COMMIT_SHA), "0")
+
+
+def github_commit_listing_queries() -> list[dict[str, list[str]]]:
+    """Return the query of each request that listed commits."""
+    urls = [urlparse(url) for url in github_requests("commits")]
+    return [parse_qs(url.query) for url in urls if url.path.endswith("/commits")]
+
+
+def github_refs_whose_commits_were_listed() -> list[str]:
+    """Return the refs whose commits were listed."""
+    return [ref for query in github_commit_listing_queries() for ref in query["sha"]]

@@ -2,8 +2,8 @@
 
 This is the machinery only the image tests need: a fake registry that answers the OCI auth/listing/manifest flow
 and Docker Hub's per-tag metadata (`mock_docker_registry` and its `RegistryRequestsMixin`), and the parametrized
-`ImageUpdaterTestMixin` that every `image:tag[@digest]` updater inherits. It builds on the generic primitives in
-`helpers` (`mock_response`, `mock_path`, `docker_tag`, `LoggingTestCase`), which import nothing back from here.
+`ImageUpdaterTestMixin` that every `image:tag[@digest]` updater inherits. It builds on the shared helpers
+(`mock_response`, `mock_path`, `docker_tag`, `LoggingTestCase`), which import nothing back from here.
 """
 
 import unittest

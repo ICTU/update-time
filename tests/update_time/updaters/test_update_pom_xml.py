@@ -26,23 +26,26 @@ from update_time.sources.maven_central import serves as maven_central_serves
 from update_time.updaters import update_pom_xml as update_pom_xml_module
 from update_time.updaters.update_pom_xml import update_pom_xmls
 
-from tests.helpers import mock_path, patch_environ, patch_get, patch_pathlib_path
+from tests.helpers import mock_path, patch_environ, patch_get, patch_pathlib_path, requested_urls
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE
 from tests.update_time.helpers import (
-    EFFECTIVE_GUAVA,
-    GITBOX_SCM,
     GUAVA,
-    GUAVA_SCM,
+    LoggingTestCase,
+    archival_check_disabled,
+    bound,
+    days_ago,
+    message_of,
+    properties_element,
+    staleness_disabled,
+)
+from tests.update_time.manifests.helpers import (
+    EFFECTIVE_GUAVA,
     PARENT_POM_ID,
     SCANNED_POM_COORDINATES,
     SCANNED_POM_ID,
     SUREFIRE,
-    LoggingTestCase,
-    archival_check_disabled,
-    bound,
     build_element,
-    days_ago,
     dependency_element,
     dependency_management_element,
     effective_dependency_element,
@@ -50,20 +53,20 @@ from tests.update_time.helpers import (
     effective_pom_declaring,
     guava_element,
     marked_at_its_version,
+    plugin_element,
+    pom_coordinates,
+    pom_declaring,
+)
+from tests.update_time.sources.helpers import (
+    GITBOX_SCM,
+    GUAVA_SCM,
     maven_central_listing,
     maven_central_listing_url,
     maven_central_pom,
     maven_central_pom_url,
     maven_central_version_row,
-    message_of,
     patch_maven_central,
-    plugin_element,
-    pom_coordinates,
-    pom_declaring,
-    properties_element,
-    staleness_disabled,
 )
-from tests.update_time.sources.helpers import requested_urls
 from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
 from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulnerabilities, osv
 
@@ -1865,14 +1868,14 @@ class UpdatePomXmlTest(LoggingTestCase):
 
         with patch.object(maven_central_module, "get_changes", changes):
             update_pom_xmls()
-        self.assert_new_version_logged_among_others_with_changes(
-            GUAVA, "33.7.1-jre", Location(pom, 6), "Changes in com.google.guava:guava 33.7.1-jre"
+        self.assert_new_version_logged_among_others(
+            GUAVA, "33.7.1-jre", Location(pom, 6), changes="Changes in com.google.guava:guava 33.7.1-jre"
         )
-        self.assert_new_version_logged_among_others_with_changes(
+        self.assert_new_version_logged_among_others(
             "org.springframework:spring-core",
             "7.1.0",
             Location(pom, 11),
-            "Changes in org.springframework:spring-core 7.1.0",
+            changes="Changes in org.springframework:spring-core 7.1.0",
         )
         self.assertEqual(len(self.new_version_records()), 2)
 

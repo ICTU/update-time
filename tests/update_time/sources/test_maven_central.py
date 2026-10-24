@@ -14,15 +14,18 @@ from update_time.manifests import pom_xml as pom_xml_format
 from update_time.sources import maven_central
 from update_time.sources.maven_central import _newest_release, _published, get_changes, project, versions_held_back
 
-from tests.helpers import mock_response, patch_environ, patch_get
+from tests.helpers import mock_response, patch_environ, patch_get, requested_urls
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import (
+from tests.update_time.helpers import GUAVA, LoggingTestCase, days_ago, message_of, properties_element
+from tests.update_time.sources.helpers import (
     GITBOX_SCM,
-    GUAVA,
     GUAVA_SCM,
-    LoggingTestCase,
-    days_ago,
+    contents_json,
+    contents_url,
+    file_url,
     github_release_json,
+    markdown_changelog,
+    markdown_changes,
     maven_central_dated_row,
     maven_central_listing,
     maven_central_listing_url,
@@ -30,19 +33,9 @@ from tests.update_time.helpers import (
     maven_central_pom_url,
     maven_central_row,
     maven_central_version_row,
-    message_of,
     patch_maven_central,
-    properties_element,
-)
-from tests.update_time.sources.helpers import (
-    contents_json,
-    contents_url,
-    file_url,
-    markdown_changelog,
-    markdown_changes,
     releases_url,
     repository_url,
-    requested_urls,
     respond_per_url,
 )
 

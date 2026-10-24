@@ -114,8 +114,8 @@ def _module_local_names(
     A name is taken to have an outside caller when another module imports it from the file defining it, reads it as
     an attribute, or names it in a string. The string counts because a name can be reached dynamically, through
     `getattr(module, "NAME")`, which a rename would break while leaving the string behind. Imports are matched by
-    path rather than by module name, so the two `helpers.py` modules are told apart. Attributes and strings are
-    matched by name alone, which can only hide a name, never invent one.
+    path rather than by module name, so the `helpers.py` modules of the packages are told apart. Attributes and
+    strings are matched by name alone, which can only hide a name, never invent one.
     """
     sources = {path: path.read_text() for path in files}
     imported: set[tuple[str, str]] = set()

@@ -23,7 +23,7 @@ from update_time.sources.oci import (
     tag_getter_excluding,
 )
 
-from tests.helpers import patch_environ
+from tests.helpers import patch_environ, requested_urls
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3, FRESH_DATE, PAST_COOLDOWN_DATE, STALE_DATE
 from tests.update_time.helpers import LoggingTestCase, bound, days_ago, docker_tag, message_of
@@ -223,7 +223,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry(repository_served=False)
         latest = get_latest_tag("spark-rm-base", "3.5.1")
         self.assertIsNone(latest.project.newest)
-        requested = [request.args[0] for request in self.requests.call_args_list]
+        requested = requested_urls(self.requests)
         self.assertIn("https://registry-1.docker.io/v2/library/spark-rm-base/tags/list?n=1000", requested)
         self.assertFalse([url for url in requested if url.startswith("https://registry.hub.docker.com/")])
 
@@ -703,7 +703,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertEqual(latest.version, "1.0")
         self.assertEqual(DIGEST1, latest.sha)
         tags = "https://registry.hub.docker.com/v2/namespaces/library/repositories/push_date_unavailable/tags/"
-        requested = [call.args[0] for call in self.requests.call_args_list]
+        requested = requested_urls(self.requests)
         self.assertEqual([url for url in requested if url.startswith(tags)], [f"{tags}1.2"])
         self.assert_error_logged(
             message_of(Logger.undated_push),
@@ -842,7 +842,7 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         """Test that a tag with no newer one is resolved without asking Docker Hub when it was pushed."""
         self.requests.side_effect = mock_docker_registry(docker_tag("12.15", DIGEST))
         self.assertEqual(get_latest_tag("debian", "12.15").sha, DIGEST)
-        requested = [request.args[0] for request in self.requests.call_args_list]
+        requested = requested_urls(self.requests)
         self.assertNotIn(
             "https://registry.hub.docker.com/v2/namespaces/library/repositories/debian/tags/12.15", requested
         )

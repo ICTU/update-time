@@ -15,15 +15,8 @@ from update_time.sources.osv import _RISK_LEVEL_BANDS, Ecosystem, get_vulnerabil
 
 from tests.helpers import mock_response
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import (
-    LoggingTestCase,
-    message_of,
-    osv_action_entry,
-    osv_action_package,
-    osv_advisory,
-    osv_api,
-    vulnerability,
-)
+from tests.update_time.helpers import LoggingTestCase, message_of, vulnerability
+from tests.update_time.sources.helpers import osv_action_entry, osv_action_package, osv_advisory, osv_api
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

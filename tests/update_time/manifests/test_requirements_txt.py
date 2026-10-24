@@ -4,7 +4,7 @@ import unittest
 
 from update_time.manifests import requirements_txt
 
-from tests.update_time.helpers import requirements_file
+from tests.update_time.manifests.helpers import requirements_file
 
 
 class IsCompiledTest(unittest.TestCase):

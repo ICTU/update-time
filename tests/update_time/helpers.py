@@ -11,12 +11,8 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from functools import cache
 from logging import DEBUG, ERROR, INFO, WARNING
-from typing import TYPE_CHECKING, Protocol, cast
-from unittest.mock import ANY, MagicMock, Mock, call, patch
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
-
-import requests
-from packaging.version import Version
+from typing import TYPE_CHECKING, Protocol
+from unittest.mock import ANY, Mock, call, patch
 
 import update_time
 from update_time.domain.archival import IGNORE_ARCHIVED
@@ -27,7 +23,6 @@ from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import Vulnerability
 from update_time.io.console import CHANGES, NOTE
 from update_time.io.log import Logger, LogMessage
-from update_time.manifests.pom_xml import coordinates
 from update_time.manifests.pyproject_toml import Declaration
 from update_time.markers.bound import parse_bound
 from update_time.markers.directive import Reason
@@ -39,14 +34,14 @@ from update_time.primitives.location import Location
 from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import utc_date_and_time
 
-from tests.helpers import mock_path, mock_response, patch_environ
-from tests.update_time.fixtures import COMMIT_SHA, FRESH_DATE, PAST_COOLDOWN_DATE, STALE_DATE
+from tests.helpers import patch_environ
+from tests.update_time.fixtures import FRESH_DATE, PAST_COOLDOWN_DATE
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterator, Mapping, Sequence
+    from collections.abc import Generator, Iterator
     from pathlib import Path
     from types import ModuleType
-    from unittest.mock import _Call, _patch
+    from unittest.mock import _Call
 
     from update_time.domain.bound import Verb, VersionBound
     from update_time.domain.reference import DriftedPin
@@ -155,14 +150,10 @@ class CacheClearingTestCase(unittest.TestCase):
 
     def _start_new_run(self) -> None:
         """Forget what the previous run fetched and which changelogs it suppressed, so the next run starts afresh."""
-        self.clear_caches()
-        for logger in _all_loggers(update_time):
-            logger.forget_shown_changelogs()
-
-    def clear_caches(self) -> None:
-        """Clear every cache the package holds, so the next run fetches what it needs as a real run does."""
         for cached_function in _all_cached_functions(update_time):
             cached_function.cache_clear()
+        for logger in _all_loggers(update_time):
+            logger.forget_shown_changelogs()
 
 
 class LoggingTestCase(CacheClearingTestCase):
@@ -232,6 +223,11 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert the message was logged with the given fields, among the other records at its level."""
         self.assertIn(self._expected_call(message, fields), self.records(message.level))
 
+    def _assert_reported(self, message: LogMessage, *, among_others: bool, **fields: object) -> None:
+        """Assert the message was logged with the given fields, as the only record at its level unless among others."""
+        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
+        assert_logged(message, **fields)
+
     def assert_error_logged(self, message: LogMessage, **fields: object) -> None:
         """Assert an error was logged, and mark it expected so tearDown's strict no-error check passes."""
         self.assert_errors_logged((message, fields))
@@ -244,56 +240,52 @@ class LoggingTestCase(CacheClearingTestCase):
 
     @staticmethod
     def _new_version_fields(
-        dependency: str, version: str, location: Location, below: dict[str, object]
+        dependency: str, version: str, location: Location, note: str = Logger._NO_CHANGELOG, changes: object = ""
     ) -> dict[str, object]:
-        """Return the fields the logger logs an available new version with, and what it carries below the message."""
+        """Return the fields the logger logs an available new version with: the changes, or else the note, below it."""
+        below = {CHANGES: changes} if changes else {NOTE: note}
         return {"dependency": dependency, "location": location, "version": version, **below}
 
     def assert_new_version_logged(
-        self, dependency: str, version: str, location: Location, note: str = Logger._NO_CHANGELOG
+        self,
+        dependency: str,
+        version: str,
+        location: Location,
+        note: str = Logger._NO_CHANGELOG,
+        *,
+        changes: object = "",
     ) -> None:
         """Assert that a new version was the only record logged for the dependency in the file."""
-        fields = self._new_version_fields(dependency, version, location, {NOTE: note})
-        self.assert_logged(message_of(Logger.new_version), **fields)
-
-    def assert_new_version_logged_with_changes(
-        self, dependency: str, version: str, location: Location, changes: str
-    ) -> None:
-        """Assert that a new version, with the changes its changelog records, was the only record logged."""
-        fields = self._new_version_fields(dependency, version, location, {CHANGES: changes})
+        fields = self._new_version_fields(dependency, version, location, note, changes)
         self.assert_logged(message_of(Logger.new_version), **fields)
 
     def assert_last_new_version_logged(
         self, dependency: str, version: str, location: Location, note: str = Logger._NO_CHANGELOG
     ) -> None:
         """Assert that a new version was the most recent record, for a run that logs several."""
-        fields = self._new_version_fields(dependency, version, location, {NOTE: note})
+        fields = self._new_version_fields(dependency, version, location, note)
         self._assert_last_logged(message_of(Logger.new_version), **fields)
 
     def assert_new_version_logged_among_others(
-        self, dependency: str, version: str, location: Location, note: str = Logger._NO_CHANGELOG
+        self,
+        dependency: str,
+        version: str,
+        location: Location,
+        note: str = Logger._NO_CHANGELOG,
+        *,
+        changes: object = "",
     ) -> None:
         """Assert that a new version was logged, among the other records of a run that logs several."""
-        fields = self._new_version_fields(dependency, version, location, {NOTE: note})
+        fields = self._new_version_fields(dependency, version, location, note, changes)
         self.assert_logged_among_others(message_of(Logger.new_version), **fields)
 
     def assert_new_versions_logged(self, version: str, location: Location, *dependencies: str) -> None:
         """Assert that the dependencies, and no others, were reported at the location with the new version, in order."""
         expected = [
-            self._expected_call(
-                message_of(Logger.new_version),
-                self._new_version_fields(dependency, version, location, {NOTE: Logger._NO_CHANGELOG}),
-            )
+            self._expected_call(message_of(Logger.new_version), self._new_version_fields(dependency, version, location))
             for dependency in dependencies
         ]
         self.assertEqual(self.new_version_records(), expected)
-
-    def assert_new_version_logged_among_others_with_changes(
-        self, dependency: str, version: str, location: Location, changes: str
-    ) -> None:
-        """Assert that a new version, with the changes its changelog records, was logged among the other records."""
-        fields = self._new_version_fields(dependency, version, location, {CHANGES: changes})
-        self.assert_logged_among_others(message_of(Logger.new_version), **fields)
 
     def records_of(self, message: LogMessage, **fields: object) -> list[_Call]:
         """Return the records logged for the message, ignoring the other records at its level.
@@ -328,8 +320,14 @@ class LoggingTestCase(CacheClearingTestCase):
         self, dependency: str, version: str, sha: str, location: Location, *, among_others: bool = False
     ) -> None:
         """Assert that the reference was logged as pinned to a version and its hash, as the only record by default."""
-        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
-        assert_logged(message_of(Logger.pinned), dependency=dependency, location=location, version=version, sha=sha)
+        self._assert_reported(
+            message_of(Logger.pinned),
+            among_others=among_others,
+            dependency=dependency,
+            location=location,
+            version=version,
+            sha=sha,
+        )
 
     def assert_unpinned_ref_logged(
         self, dependency: str, name: str, location: Location, reason: str, *, ref: RefKind = RefKind.BRANCH
@@ -414,17 +412,15 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_drift_logged(self, kind: Drift, drifted: DriftedPin, *, among_others: bool = False) -> None:
         """Assert that the drift was logged, as the file's only warning by default."""
-        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
         message, fields = drift_warning(kind, drifted)
-        assert_logged(message, **fields)
+        self._assert_reported(message, among_others=among_others, **fields)
 
     def assert_adopted_drift_logged(
         self, kind: Drift, drifted: DriftedPin, cause: object = ANY, *, among_others: bool = False
     ) -> None:
         """Assert that the adopted drift was logged, as the file's only record at its level by default."""
-        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
         message, fields = adopted_drift_report(kind, drifted, cause)
-        assert_logged(message, **fields)
+        self._assert_reported(message, among_others=among_others, **fields)
 
     def assert_undated_commit_logged(self, kind: Drift, drifted: DriftedPin, reason: str) -> None:
         """Assert that a commit whose date could not be determined was logged as the file's only error."""
@@ -491,9 +487,9 @@ class LoggingTestCase(CacheClearingTestCase):
         among_others: bool = False,
     ) -> None:
         """Assert that an archived dependency was warned about, as the file's only warning by default."""
-        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
-        assert_logged(
+        self._assert_reported(
             message_of(Logger.report_archival, "subject"),
+            among_others=among_others,
             dependency=dependency,
             location=location,
             subject=subject,
@@ -514,11 +510,8 @@ class LoggingTestCase(CacheClearingTestCase):
         among_others: bool = False,
     ) -> None:
         """Assert that a pin left on a vulnerable version was warned about, as the file's only warning by default."""
-        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
-        reference = Reference(dependency, version, location)
-        assert_logged(
-            message_of(Logger.vulnerable_dependency), **Logger._vulnerability_fields(reference, vulnerability)
-        )
+        fields = Logger._vulnerability_fields(reference(dependency, location, version), vulnerability)
+        self._assert_reported(message_of(Logger.vulnerable_dependency), among_others=among_others, **fields)
 
     def assert_inverted_vulnerable_item_logged(self, dependency: str, item: str, location: Location) -> None:
         """Assert that a `vulnerable` item comparing the wrong way round was warned about, among the other records."""
@@ -534,17 +527,10 @@ class LoggingTestCase(CacheClearingTestCase):
         return {"directive": directive, "dependency": dependency, "location": location, "version": version}
 
     def assert_redundant_vulnerable_scope_logged(
-        self,
-        dependency: str,
-        version: str,
-        location: Location,
-        directive: object = ANY,
-        *,
-        among_others: bool = False,
+        self, dependency: str, version: str, location: Location, directive: object = ANY
     ) -> None:
-        """Assert that a redundant `vulnerable` scope was warned about, as the file's only warning by default."""
-        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
-        assert_logged(
+        """Assert that a redundant `vulnerable` scope was warned about, among the other records."""
+        self.assert_logged_among_others(
             message_of(Logger.redundant_vulnerable_scope),
             **self._redundant_suppression_fields(dependency, version, location, directive),
         )
@@ -592,8 +578,8 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that the path being checked for updates was logged."""
         self._assert_last_logged(message_of(Logger.path), location=Location(path))
 
-    def assert_no_path_logged(self) -> None:
-        """Assert that no path being checked for updates was logged (nothing logged at debug level)."""
+    def assert_no_debug_logged(self) -> None:
+        """Assert that nothing was logged at DEBUG."""
         self.assertEqual(self.records(DEBUG), [])
 
     def assert_recognised_marker_logged(self, dependency: str, location: Location, marker: Marker) -> None:
@@ -606,9 +592,12 @@ class LoggingTestCase(CacheClearingTestCase):
         self, dependency: str, location: object, item: str, *, among_others: bool = False
     ) -> None:
         """Assert that an item the marker language cannot read was warned about, as the only warning by default."""
-        assert_logged = self.assert_logged_among_others if among_others else self.assert_logged
-        assert_logged(
-            message_of(Logger.invalid_bracket_item), bracket_item=item, dependency=dependency, location=location
+        self._assert_reported(
+            message_of(Logger.invalid_bracket_item),
+            among_others=among_others,
+            bracket_item=item,
+            dependency=dependency,
+            location=location,
         )
 
     def assert_ignored_logged(
@@ -812,12 +801,6 @@ archival_check_disabled = patch_environ({IGNORE_ARCHIVED.name: "1"})
 hash_drift_allowed = patch_environ({ALLOW_HASH_DRIFT.name: "1"})
 floating_pin_allowed = patch_environ({ALLOW_FLOATING_PIN.name: "1"})
 
-# Reusable decorator for the tests that patch the GitHub source's getter: the commit a reference's own tag points at
-# carries that tag alone, so the reference keeps its version.
-no_other_version_at_the_tag = patch(
-    "update_time.references.github.version_at_tag", new=lambda _dependency, version: version
-)
-
 
 def pyproject(*specs: str, marker: str = "") -> str:
     """Return a minimal valid pyproject.toml pinning the given dependencies, in one dependencies array.
@@ -830,230 +813,9 @@ def pyproject(*specs: str, marker: str = "") -> str:
     return f"[project]\ndependencies = [{dependencies}]{comment}\n"
 
 
-def pyproject_per_line(*specs: str, marker: str) -> str:
-    """Return a minimal valid pyproject.toml declaring each of the given dependencies on a line of its own.
-
-    `marker` goes in an `# update-time:` comment on the first spec's line, so it steers that declaration and leaves
-    the ones below it alone.
-    """
-    lines = [f'    "{spec}",' for spec in specs]
-    lines[0] += f"  # update-time: {marker}"
-    dependencies = "".join(f"{line}\n" for line in lines)
-    return f"[project]\ndependencies = [\n{dependencies}]\n"
-
-
-def script(*specs: str, requires_python: str = ">=3.11") -> str:
-    """Return a minimal .py file with a PEP 723 `# /// script` block declaring the given dependencies."""
-    dependencies = "".join(f'#     "{spec}",\n' for spec in specs)
-    return (
-        "# /// script\n"
-        f'# requires-python = "{requires_python}"\n'
-        "# dependencies = [\n"
-        f"{dependencies}"
-        "# ]\n"
-        "# ///\n"
-        'print("hi")\n'
-    )
-
-
-def requirements_file(contents: str, *, sibling_in: bool = False) -> Mock:
-    """Return a mock requirements file holding the contents, with a sibling `.in` source file where asked for."""
-    requirements_txt = mock_path(contents)
-    requirements_txt.stem = "requirements"  # so the sibling checked for is `requirements.in`
-    requirements_txt.parent = MagicMock()
-    requirements_txt.parent.__truediv__.return_value = Mock(exists=Mock(return_value=sibling_in))
-    return requirements_txt
-
-
 def days_ago(days: int) -> datetime:
     """Return the instant the given number of days ago."""
     return datetime.now(UTC) - timedelta(days=days)
-
-
-def github_release_json(tag_name: str, published_at: datetime | None = None, **extra: object) -> dict[str, object]:
-    """Return a GitHub release API result for the tag, eligible and with its tag not moved, unless overridden."""
-    published = published_at.isoformat() if published_at else None
-    return {
-        "draft": False,
-        "prerelease": False,
-        "tag_name": tag_name,
-        "body": None,
-        "html_url": f"https://github.com/releases/tag/{tag_name}",
-        "published_at": published,
-        "created_at": (published_at or STALE_DATE).isoformat(),
-        **extra,
-    }
-
-
-def github_tag_json(name: str, sha: str = COMMIT_SHA) -> dict[str, object]:
-    """Return a GitHub tags API result for the tag, carrying the tagged commit's SHA."""
-    return {"name": name, "commit": {"sha": sha}}
-
-
-# The reason Update-time reports for a GitHub request refused because the rate limit is exceeded.
-GITHUB_RATE_LIMITED_REASON = "HTTP 403, API rate limit exceeded"
-
-
-def github_rate_limited() -> Mock:
-    """Return the response GitHub refuses a request with once the rate limit is exceeded."""
-    return mock_response({"message": "API rate limit exceeded"}, ok=False, status_code=403)
-
-
-def github_unknown_ref(ref: str) -> Mock:
-    """Return the response GitHub's commits endpoint gives for a ref that does not name a commit in the repository."""
-    return mock_response({"message": f"No commit found for SHA: {ref}"}, ok=False, status_code=422)
-
-
-def github_not_found() -> Mock:
-    """Return the 404 GitHub answers about a repository that does not exist, and a commit listing of an unknown ref."""
-    return mock_response({"message": "Not Found"}, ok=False, status_code=404)
-
-
-def github_commits_json(
-    sha: str = COMMIT_SHA, date: datetime | None = None, parents: Sequence[str] = ()
-) -> dict[str, object]:
-    """Return a GitHub commits API result carrying a commit SHA, its parents, and, when given, its committer date.
-
-    GitHub reports the commit and its committer whether or not the committer has a date, so a dateless commit carries
-    both, with the date left out.
-    """
-    committer = {"date": date.isoformat()} if date else {"name": "The committer"}
-    return {"sha": sha, "commit": {"committer": committer}, "parents": [{"sha": parent} for parent in parents]}
-
-
-def github_fresh_line(length: int, parent: str) -> list[dict[str, object]]:
-    """Return a line of fresh commits, newest first, each the first parent of the one listed before it."""
-    shas = [f"{index:040x}" for index in range(length)]
-    return [
-        github_commits_json(sha, date=FRESH_DATE, parents=[first_parent])
-        for sha, first_parent in zip(shas, [*shas[1:], parent], strict=True)
-    ]
-
-
-def _listing_page(commits: list, url: str) -> Mock:
-    """Return the page of the listing that the URL asks for, linking to the next page while the listing goes on.
-
-    A response among the commits answers for the page holding it, so a page after the first can fail.
-    """
-    parsed = urlparse(url)
-    query = {name: values[0] for name, values in parse_qs(parsed.query).items()}
-    size, page = int(query["per_page"]), int(query.get("page", 1))
-    start = (page - 1) * size
-    if failed := [response for response in commits[start : start + size] if isinstance(response, Mock)]:
-        return failed[0]
-    next_url = urlunparse(parsed._replace(query=urlencode({**query, "page": page + 1})))
-    links = {"next": {"url": next_url, "rel": "next"}} if start + size < len(commits) else {}
-    return mock_response(commits[start : start + size], ok=True, status_code=200, url=url, links=links)
-
-
-def full_commit_sha(short_sha: str) -> str:
-    """Return a full commit SHA that the short one abbreviates, as GitHub resolves it."""
-    return short_sha.ljust(len(COMMIT_SHA), "0")
-
-
-def _github_endpoint(url: str) -> str:
-    """Return the endpoint the URL names below the repository, empty for the repository's own URL."""
-    _owner, _, below_owner = urlparse(url).path.removeprefix("/repos/").partition("/")
-    _repository, _, endpoint = below_owner.partition("/")
-    return endpoint.partition("/")[0]
-
-
-def _tag_ref(url: str, tags: list) -> Mapping | Mock:
-    """Return the ref of the tag the URL looks up, or the 404 GitHub answers for a name the tags do not carry."""
-    name = url.partition("/git/ref/tags/")[2]
-    return {"ref": f"refs/tags/{name}"} if any(tag["name"] == name for tag in tags) else github_not_found()
-
-
-def _github_api(  # noqa: PLR0913 — what each endpoint answers
-    releases: list | None = None,
-    tags: list | None = None,
-    commit: Mapping | Mock | Exception | None = None,
-    *,
-    listed_commits: list | Mock | None = None,
-    comparison_status: str | Mock = "ahead",
-    archived: bool = False,
-    tag_ref: Mock | Exception | None = None,
-) -> Mock:
-    """Return a Session.get mock serving the GitHub releases, tags, commits, compare, and repository endpoints.
-
-    Each request is answered by the endpoint it names. An endpoint given as None answers non-OK, so a test can make it
-    unreachable. The commits endpoint serves the same commit for every ref. A listing of commits serves the listed
-    commits a page at a time, or else that commit alone. The compare endpoint answers every comparison of two commits
-    with the comparison status. Pass a Mock as the commit, the listed commits, or the comparison status to serve a
-    whole response rather than JSON, such as a non-OK one with an error body, or an exception as the commit to fail the
-    request itself. A Mock among the listed commits answers for the page holding it. The tags are listed a page at a
-    time too, and the lookup of a single tag finds any of them, unless a Mock or an exception given as the tag ref
-    answers it.
-    """
-
-    def answer(url: str) -> Mapping | list | Mock | Exception | None:
-        """Return what the endpoint the URL names answers: JSON, a whole response, or an exception to raise."""
-        if urlparse(url).path.endswith("/commits"):
-            listing = listed_commits if listed_commits is not None else [commit] if isinstance(commit, dict) else commit
-            return _listing_page(listing, url) if isinstance(listing, list) else listing
-        if (endpoint := _github_endpoint(url)) == "git":
-            return tag_ref if tag_ref is not None else _tag_ref(url, tags or [])
-        if endpoint == "tags" and tags is not None:
-            return _listing_page(tags, url)
-        compared = {"status": comparison_status} if isinstance(comparison_status, str) else comparison_status
-        answers = {"commits": commit, "releases": releases, "compare": compared, "": {"archived": archived}}
-        return answers.get(endpoint, tags)
-
-    def serve(url: str, **_kwargs: object) -> Mock:
-        json = answer(url)
-        if isinstance(json, Exception):
-            raise json
-        if isinstance(json, Mock):
-            return json
-        return mock_response(json, ok=json is not None, status_code=200 if json is not None else 404, url=url)
-
-    return Mock(side_effect=serve)
-
-
-@contextlib.contextmanager
-def patch_github(  # noqa: PLR0913 — what each endpoint answers
-    releases: list | None = None,
-    tags: list | None = None,
-    commit: Mapping | Mock | Exception | None = None,
-    *,
-    listed_commits: list | Mock | None = None,
-    comparison_status: str | Mock = "ahead",
-    archived: bool = False,
-    tag_ref: Mock | Exception | None = None,
-) -> Generator[None]:
-    """Patch Session.get to serve the GitHub API endpoints from the given values (see `_github_api`).
-
-    A test decorated with it gets a fresh mock on every run, so each run sees only its own requests.
-    """
-    api = _github_api(
-        releases,
-        tags,
-        commit,
-        listed_commits=listed_commits,
-        comparison_status=comparison_status,
-        archived=archived,
-        tag_ref=tag_ref,
-    )
-    with patch("requests.Session.get", api):
-        yield
-
-
-def github_requests(endpoint: str) -> list[str]:
-    """Return the URLs requested from the GitHub API endpoint."""
-    requests_get = cast("Mock", requests.Session.get)
-    urls = [request.args[0] for request in requests_get.call_args_list]
-    return [url for url in urls if _github_endpoint(url) == endpoint]
-
-
-def github_commit_listing_queries() -> list[dict[str, list[str]]]:
-    """Return the query of each request that listed commits."""
-    urls = [urlparse(url) for url in github_requests("commits")]
-    return [parse_qs(url.query) for url in urls if url.path.endswith("/commits")]
-
-
-def github_refs_whose_commits_were_listed() -> list[str]:
-    """Return the refs whose commits were listed."""
-    return [ref for query in github_commit_listing_queries() for ref in query["sha"]]
 
 
 def published_version(version: str, published: str | datetime) -> str:
@@ -1062,135 +824,8 @@ def published_version(version: str, published: str | datetime) -> str:
     return str(DependencyVersion(version, publication=LookedUp(timestamp)))
 
 
-def maven_central_dated_row(name: str, published: str, size: str) -> str:
-    """Return a row of an artefact's directory listing, dated exactly as given rather than by an instant."""
-    link = f'<a href="{name}" title="{name}">{name}</a>'
-    padding = " " * max(1, 50 - len(name))
-    return f"{link}{padding}{published}   {size}\n"
-
-
-def maven_central_row(name: str, published: datetime, size: str) -> str:
-    """Return a row of the listing, padded out to the date column.
-
-    The repository dates the row in GMT without naming the zone, and closes it with the entry's size.
-    """
-    return maven_central_dated_row(name, f"{published:%Y-%m-%d %H:%M}", size)
-
-
-def maven_central_version_row(version: str, published: datetime) -> str:
-    """Return the row for a version, which the repository serves as a directory, sized with a dash."""
-    return maven_central_row(f"{version}/", published, "-")
-
-
-# The base URL Maven Central serves its artefacts under.
-_MAVEN_CENTRAL = "https://repo1.maven.org/maven2"
-
-
-def maven_central_listing_url(artefact: str) -> str:
-    """Return the URL Maven Central serves the artefact's directory listing at."""
-    group_id, artifact_id = artefact.split(":")
-    return f"{_MAVEN_CENTRAL}/{group_id.replace('.', '/')}/{artifact_id}/"
-
-
-def maven_central_pom_url(artefact: str, version: str) -> str:
-    """Return the URL Maven Central serves the pom beside the artefact's version at."""
-    artifact_id = artefact.split(":")[1]
-    return f"{maven_central_listing_url(artefact)}{version}/{artifact_id}-{version}.pom"
-
-
-def maven_central_listing(*rows: str) -> str:
-    """Return the directory listing the repository serves for an artefact, holding the given rows.
-
-    The listing opens with a link to the parent directory.
-    """
-    return f'<html><body><pre>\n<a href="../">../</a>\n{"".join(rows)}</pre></body></html>'
-
-
-def maven_central_pom(
-    scm: str = "", tag: str = "url", project_url: str = "", parent: str = "", properties: str = ""
-) -> str:
-    """Return the pom beside a version, naming the source repository in the given child of its `<scm>` element.
-
-    An scm given as nothing is a pom that does not declare an `<scm>` element at all, as guava's own pom does not.
-    A project URL is the project's own `<url>` element, where guava's pom names its repository instead. A parent,
-    given as `groupId:artifactId:version`, is the pom's `<parent>` element.
-    """
-    url = f"  <url>{project_url}</url>\n" if project_url else ""
-    declared = f"  <scm>\n    <{tag}>{scm}</{tag}>\n  </scm>\n" if scm else ""
-    elements = f"{_pom_parent(parent)}{properties}{url}{declared}"
-    return f'<project xmlns="http://maven.apache.org/POM/4.0.0">\n{elements}</project>\n'
-
-
-def _pom_parent(parent: str) -> str:
-    """Return the `<parent>` element naming the `groupId:artifactId:version` coordinates, or nothing for none.
-
-    A coordinate given as nothing is left out of the element.
-    """
-    if not parent:
-        return ""
-    values = dict(zip(("groupId", "artifactId", "version"), parent.split(":"), strict=True))
-    coordinates = "".join(f"<{tag}>{value}</{tag}>" for tag, value in values.items() if value)
-    return f"  <parent>{coordinates}</parent>\n"
-
-
-def pom_coordinates(
-    artifact: str | None, group: str | None = None, version: str | None = None, parent: str = ""
-) -> str:
-    """Return the elements naming a pom: its `<parent>` element where a parent is given, then its own coordinates."""
-    own = {"groupId": group, "artifactId": artifact, "version": version}
-    return _pom_parent(parent) + "".join(
-        f"  <{tag}>{value}</{tag}>\n" for tag, value in own.items() if value is not None
-    )
-
-
-def _coordinates_element(tag: str, indent: str, group: str | None, artifact: str, version: str | None) -> str:
-    """Return a `<tag>` element at the indent, declaring the artifact, and the group and the version where given."""
-    parts = {"groupId": group, "artifactId": artifact, "version": version}
-    declared = "".join(f"{indent}  <{name}>{value}</{name}>\n" for name, value in parts.items() if value is not None)
-    return f"{indent}<{tag}>\n{declared}{indent}</{tag}>\n"
-
-
-def dependency_element(group: str, artifact: str, version: str | None) -> str:
-    """Return a `<dependency>` element declaring the group, the artifact, and the version, where one is given."""
-    return _coordinates_element("dependency", "    ", group, artifact, version)
-
-
-def plugin_element(artifact: str, version: str | None, group: str | None = "org.apache.maven.plugins") -> str:
-    """Return a `<plugin>` element declaring the artifact, and the version and the group where each is given."""
-    return _coordinates_element("plugin", "      ", group, artifact, version)
-
-
-def build_element(*plugins: str, managed: str = "") -> str:
-    """Return a `<build>` element declaring the given plugin elements, and the managed ones in `<pluginManagement>`."""
-    management = f"    <pluginManagement>\n      <plugins>\n{managed}      </plugins>\n    </pluginManagement>\n"
-    return f"  <build>\n{management if managed else ''}    <plugins>\n{''.join(plugins)}    </plugins>\n  </build>\n"
-
-
 # The artefact most Maven tests declare.
 GUAVA = "com.google.guava:guava"
-
-# The source repositories poms name: guava's own on GitHub, and one outside GitHub, where commons-lang3's lives.
-GUAVA_SCM = "scm:git:https://github.com/google/guava.git"
-GITBOX_SCM = "scm:git:https://gitbox.apache.org/repos/asf/commons-lang.git"
-
-# A plugin in Maven's default plugin group.
-SUREFIRE = "org.apache.maven.plugins:maven-surefire-plugin"
-
-
-def guava_element(version: str | None) -> str:
-    """Return the `<dependency>` element declaring guava."""
-    return dependency_element("com.google.guava", "guava", version)
-
-
-def marked_at_its_version(element: str, directives: str) -> str:
-    """Return the element with a marker carrying the directives at the end of its `<version>` line."""
-    return element.replace("</version>", f"</version>  <!-- update-time: {directives} -->")
-
-
-def dependency_management_element(*dependencies: str) -> str:
-    """Return a `<dependencyManagement>` element declaring the given dependency elements."""
-    declared = "".join(dependencies)
-    return f"  <dependencyManagement>\n    <dependencies>\n{declared}    </dependencies>\n  </dependencyManagement>\n"
 
 
 def properties_element(values: dict[str, str]) -> str:
@@ -1199,246 +834,9 @@ def properties_element(values: dict[str, str]) -> str:
     return f"  <properties>\n{declared}  </properties>\n"
 
 
-def pom_declaring(
-    *dependencies: str, coordinates: str = "", properties: str = "", managed: str = "", build: str = ""
-) -> str:
-    """Return a pom declaring the given coordinates, properties, managed dependencies, dependencies, and plugins.
-
-    Without coordinates the properties come first, so the first property sits on line 3.
-    """
-    return (
-        '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
-        f"{coordinates}"
-        f"{properties}"
-        f"{managed}"
-        "  <dependencies>\n"
-        f"{''.join(dependencies)}"
-        "  </dependencies>\n"
-        f"{build}"
-        "</project>\n"
-    )
-
-
-# Each input location names the scanned pom by this id. The pom is a child inheriting its parent's group.
-SCANNED_POM_ID = "org.example:child:1.0"
-
-# An input location names the scanned pom's parent by this id, where the child inherits the element.
-PARENT_POM_ID = "org.example:parent:1.0"
-
-# The elements of a pom that Maven names by `SCANNED_POM_ID`, on lines 2 and 3.
-SCANNED_POM_COORDINATES = pom_coordinates("child", parent=PARENT_POM_ID)
-
-
-def effective_dependency_element(
-    artefact: str,
-    version: str,
-    line: int,
-    declared_by: str = SCANNED_POM_ID,
-    *,
-    managed_at: tuple[str, int] | None = None,
-) -> str:
-    """Return a `<dependency>` of the effective pom, its `<artifactId>` located on the line of the declaring pom.
-
-    Its `<version>` is located on the next line, or on the line of the pom `managed_at` names for a dependency that
-    leaves its version to a `<dependencyManagement>` section.
-    """
-    locations = {
-        "groupId": (declared_by, line - 1),
-        "artifactId": (declared_by, line),
-        "version": managed_at or (declared_by, line + 1),
-    }
-    return f"    <dependency>\n{_located_coordinates(artefact, version, locations)}    </dependency>\n"
-
-
-def effective_plugin_element(
-    artefact: str, version: str, line: int, *, managed_at: tuple[str, int] | None = None
-) -> str:
-    """Return a `<plugin>` of the effective pom, located in the scanned pom as a dependency is.
-
-    Maven leaves out the `<groupId>` of a plugin in its default plugin group.
-    """
-    group = {} if artefact.startswith("org.apache.maven.plugins:") else {"groupId": (SCANNED_POM_ID, line - 1)}
-    locations = group | {"artifactId": (SCANNED_POM_ID, line), "version": managed_at or (SCANNED_POM_ID, line + 1)}
-    return f"      <plugin>\n{_located_coordinates(artefact, version, locations)}      </plugin>\n"
-
-
-def _located_coordinates(artefact: str, version: str, locations: dict[str, tuple[str, int]]) -> str:
-    """Return the coordinate elements of an effective pom entry, each followed by the input location given for it."""
-    group, artifact = coordinates(artefact)
-    values = {"groupId": group, "artifactId": artifact, "version": version}
-    return "".join(
-        f"      <{tag}>{values[tag]}</{tag}>  <!-- {pom}, line {located} -->\n"
-        for tag, (pom, located) in locations.items()
-    )
-
-
-# A pom declaring guava alone gets this entry in its effective pom, with guava's `<artifactId>` on line 5.
-EFFECTIVE_GUAVA = effective_dependency_element(GUAVA, "33.0.0-jre", line=5)
-
-
-def effective_pom_declaring(*dependencies: str, properties: str = "", managed: str = "", build: str = "") -> str:
-    """Return the effective pom Maven writes for the scanned pom, holding the given elements.
-
-    Maven lists every property the parent declares, and this lists only the ones given. Update-time reads them only to
-    resolve an artifact's name, so a test passes the properties its artifacts name.
-    """
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        "<!-- Effective POM for project 'org.example:child:jar:1.0' -->\n"
-        '<project xmlns="http://maven.apache.org/POM/4.0.0">\n'
-        f"  <groupId>org.example</groupId>  <!-- {PARENT_POM_ID}, line 2 -->\n"
-        f"  <artifactId>child</artifactId>  <!-- {SCANNED_POM_ID}, line 3 -->\n"
-        f"{properties}"
-        f"{managed}"
-        "  <dependencies>\n"
-        f"{''.join(dependencies)}"
-        "  </dependencies>\n"
-        f"{build}"
-        "</project>\n"
-    )
-
-
-def _maven_central_api(listing: str, pom: str | None, *, archived: bool, releases: list | None) -> Mock:
-    """Return a Session.get mock serving an artefact's listing, a version's pom, and the GitHub repository it names.
-
-    GitHub serves the given releases for every repository, and answers the releases request non-OK where none are given.
-
-    Each request is answered by the URL it names, so a test needs no expectation about the order they are made in.
-    A pom given as None is one the repository does not serve.
-    """
-    github = _github_api(releases, archived=archived)
-
-    def serve(url: str, **kwargs: object) -> Mock:
-        if urlparse(url).hostname == "api.github.com":
-            return github(url, **kwargs)
-        if not url.endswith(".pom"):
-            return mock_response(text=listing, url=url)
-        if pom is None:
-            return mock_response(ok=False, status_code=404, reason="Not Found", url=url, text="")
-        return mock_response(text=pom, content=pom.encode(), url=url)
-
-    return Mock(side_effect=serve)
-
-
-def patch_maven_central(
-    listing: str, pom: str | None, *, archived: bool = False, releases: list | None = None
-) -> _patch:
-    """Patch Session.get to serve a Maven artefact's listing and pom (see `_maven_central_api`)."""
-    return patch("requests.Session.get", _maven_central_api(listing, pom, archived=archived, releases=releases))
-
-
-def jsdelivr_versions(*version_strings: str) -> Mock:
-    """Return a mock jsDelivr package API response listing the given versions (newest first)."""
-    return mock_response({"versions": [{"version": version} for version in version_strings]})
-
-
-def osv_advisory(
-    advisory: str,
-    summary: str,
-    level: str = "",
-    aliases: list[str] | None = None,
-    vectors: dict[str, str] | None = None,
-) -> dict[str, object]:
-    """Return an OSV advisory record, carrying the risk level a GitHub-reviewed advisory reports when given.
-
-    An advisory nobody reviewed for severity carries no `database_specific` section at all, which is the shape OSV
-    returns for the PYSEC records among others; it states a CVSS vector at best, which `vectors` gives per CVSS
-    version. `aliases` are the identifiers the other databases name the vulnerability by.
-    """
-    reviewed = {"database_specific": {"severity": level}} if level else {}
-    named = {"aliases": aliases} if aliases else {}
-    severities = [{"type": version, "score": vector} for version, vector in (vectors or {}).items()]
-    scored = {"severity": severities} if severities else {}
-    return {"id": advisory, "summary": summary, **reviewed, **named, **scored}
-
-
-def osv_action_package(action: str) -> dict[str, str]:
-    """Return the package OSV files the action's advisories under."""
-    return {"name": action, "ecosystem": "GitHub Actions"}
-
-
-def osv_action_entry(action: str, *events: dict[str, str], **fields: object) -> dict[str, object]:
-    """Return an OSV `affected` entry naming the action, stating its affected versions as one range of the events.
-
-    The fields add to the entry, such as the versions it lists, or replace its range with ranges of their own.
-    """
-    ranges = [{"type": "ECOSYSTEM", "events": list(events)}] if events else []
-    return {"package": osv_action_package(action), "ranges": ranges, **fields}
-
-
 def vulnerability(advisory: str, summary: str, level: str, aliases: list[str] | None = None) -> Vulnerability:
     """Return the vulnerability Update-time reads an advisory as, known by the aliases where it has them."""
     return Vulnerability(advisory, summary, level, f"https://osv.dev/{advisory}", frozenset(aliases or []))
-
-
-def _osv_response(*advisories: dict[str, object]) -> Mock:
-    """Return a mock OSV response listing the advisories that affect a version."""
-    return mock_response({"vulns": list(advisories)})
-
-
-def osv_api(*advisories: dict[str, object]) -> Mock:
-    """Return a Session.post mock serving both OSV endpoints, reporting the advisories for every version queried.
-
-    Routing by URL keeps tests independent of how many of each request the source makes: the batch endpoint answers
-    which of the queried versions are affected, and the details endpoint answers with the advisories in full.
-    """
-
-    def serve(url: str, **kwargs: object) -> Mock:
-        if not url.endswith("/querybatch"):
-            return _osv_response(*advisories)
-        queries = cast("dict[str, list]", kwargs["json"])["queries"]
-        affected = {"vulns": [{"id": advisory["id"]} for advisory in advisories]} if advisories else {}
-        return mock_response({"results": [affected for _query in queries]})
-
-    return Mock(side_effect=serve)
-
-
-def npm_registry(published: dict[str, str], deprecated: dict[str, str] | None = None) -> Mock:
-    """Return a mock npm registry response mapping versions to publish times and optional deprecation messages."""
-    versions = {version: {"deprecated": reason} for version, reason in (deprecated or {}).items()}
-    return mock_response({"time": published, "versions": versions})
-
-
-PYPI_OLD_UPLOAD = "2020-01-01T00:00:00.000000Z"  # A distribution upload time far older than the cooldown.
-
-
-def pypi_index(
-    *versions: str, files: Sequence[Mapping[str, str | bool]] | None = None, archived: bool | str = False
-) -> Mock:
-    """Return a mock PyPI Index API response listing the versions, distribution files, and project status."""
-    body: dict[str, object] = {"versions": list(versions)}
-    if files is not None:
-        newest = str(max(Version(version) for version in versions))
-        body["files"] = [{"filename": f"package-{newest}.tar.gz", **file} for file in files]
-    if archived:
-        reason = archived if isinstance(archived, str) else None
-        body["project-status"] = {"status": "archived", "reason": reason}
-    return mock_response(body)
-
-
-def yanked_file(filename: str, *, reason: str | bool = True) -> dict[str, str | bool]:
-    """Return a mock Index API distribution file entry marked as yanked (a reason string, or True for none)."""
-    return {"filename": filename, "yanked": reason}
-
-
-_NO_PROJECT_URLS: dict[str, str] = {}  # The default for a release fixture no test asks project URLs of.
-
-
-def pypi_release(
-    upload_time: str = PYPI_OLD_UPLOAD,
-    *,
-    yanked: bool = False,
-    description: str = "",
-    project_urls: dict[str, str] | None = _NO_PROJECT_URLS,
-) -> Mock:
-    """Return a mock PyPI per-version metadata response with the given upload time, yank state, and description.
-
-    An empty `upload_time` models a release with no distribution files (an empty `urls` list). Passing None for the
-    project URLs models the null PyPI answers for a package that declares none.
-    """
-    urls = [{"upload_time_iso_8601": upload_time}] if upload_time else []
-    info = {"description": description, "yanked": yanked, "project_urls": project_urls}
-    return mock_response({"info": info, "urls": urls})
 
 
 def docker_tag(

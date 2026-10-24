@@ -133,7 +133,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
                 mock_package_json = self.update_engine(mock_glob, contents)
                 mock_package_json.read_text.assert_called_once()
                 mock_package_json.write_text.assert_not_called()
-                self.assert_no_path_logged()
+                self.assert_no_debug_logged()
                 self.assert_no_new_version_logged()
                 self.assert_no_warnings_logged()
 

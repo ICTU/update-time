@@ -13,7 +13,8 @@ from update_time.primitives.location import Location
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE
-from tests.update_time.helpers import declaration, script
+from tests.update_time.helpers import declaration
+from tests.update_time.manifests.helpers import script
 
 if TYPE_CHECKING:
     from unittest.mock import Mock

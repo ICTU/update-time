@@ -25,18 +25,14 @@ from tests.helpers import patch_environ
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE, EVERY_SOURCE_CHECK_SCOPE
 from tests.update_time.helpers import (
-    PYPI_OLD_UPLOAD,
     LoggingTestCase,
     archival_check_disabled,
     message_of,
-    osv_advisory,
     published_version,
-    pypi_index,
-    pypi_release,
-    requirements_file,
     staleness_disabled,
-    yanked_file,
 )
+from tests.update_time.manifests.helpers import requirements_file
+from tests.update_time.sources.helpers import PYPI_OLD_UPLOAD, osv_advisory, pypi_index, pypi_release, yanked_file
 from tests.update_time.sources.test_pypi import NULL_PROJECT_URLS_READ_AS_A_DICT
 from tests.update_time.updaters.fixtures import (
     DJANGO_ADVISORY,
@@ -831,9 +827,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         with osv():  # No vulnerability, so all three forms silence nothing.
             update_requirements_txts()
         location = Location(requirements_txt, 1)
-        self.assert_redundant_vulnerable_scope_logged(
-            "django", "3.2.0", location, "ignore[vulnerable]", among_others=True
-        )
+        self.assert_redundant_vulnerable_scope_logged("django", "3.2.0", location, "ignore[vulnerable]")
         self.assert_redundant_vulnerable_advisory_logged("django", "3.2.0", location, advisory)
         self.assert_redundant_vulnerable_level_logged("django", "3.2.0", "high", location, "ignore[vulnerable<high]")
         self.assert_no_ignored_vulnerability_logged()
@@ -1009,7 +1003,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt.write_text.assert_not_called()
         mock_get.assert_not_called()
         self.assert_skipped_logged(requirements_txt, "compiled or hash-pinned requirements file")
-        self.assert_no_path_logged()
+        self.assert_no_debug_logged()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 

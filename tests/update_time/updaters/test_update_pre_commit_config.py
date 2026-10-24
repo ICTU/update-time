@@ -25,18 +25,15 @@ from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.fixtures import FRESH_DATE, PAST_COOLDOWN_DATE, STALE_DATE
-from tests.update_time.helpers import (
-    LoggingTestCase,
-    bound,
-    full_commit_sha,
+from tests.update_time.helpers import LoggingTestCase, bound
+from tests.update_time.sources.helpers import (
     github_commits_json,
     github_release_json,
     github_requests,
     github_tag_json,
-    no_other_version_at_the_tag,
     patch_github,
 )
-from tests.update_time.updaters.helpers import github_version
+from tests.update_time.updaters.helpers import full_commit_sha, github_version, no_other_version_at_the_tag
 
 _HOOKS = "hooks:\n      - id: trailing-whitespace\n"
 

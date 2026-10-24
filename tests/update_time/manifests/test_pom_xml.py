@@ -8,9 +8,9 @@ from update_time.markers.marker import Marker, Scope
 
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import (
+from tests.update_time.helpers import GUAVA, properties_element
+from tests.update_time.manifests.helpers import (
     EFFECTIVE_GUAVA,
-    GUAVA,
     PARENT_POM_ID,
     SCANNED_POM_COORDINATES,
     SCANNED_POM_ID,
@@ -26,7 +26,6 @@ from tests.update_time.helpers import (
     plugin_element,
     pom_coordinates,
     pom_declaring,
-    properties_element,
 )
 
 _POM_WITH_A_PROFILE = """<project xmlns="http://maven.apache.org/POM/4.0.0">

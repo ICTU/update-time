@@ -27,32 +27,40 @@ from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.fixtures import COMMIT_SHA3 as PAST_COOLDOWN_SHA
 from tests.update_time.fixtures import FRESH_DATE, GITHUB_UNCACHED, PAST_COOLDOWN_DATE, STALE_DATE
 from tests.update_time.helpers import (
-    GITHUB_RATE_LIMITED_REASON,
     LoggingTestCase,
     bound,
     floating_pin_allowed,
-    full_commit_sha,
-    github_commit_listing_queries,
+    hash_drift_allowed,
+    message_of,
+    staleness_disabled,
+)
+from tests.update_time.sources.helpers import (
+    GITHUB_RATE_LIMITED_REASON,
     github_commits_json,
-    github_fresh_line,
     github_not_found,
     github_rate_limited,
-    github_refs_whose_commits_were_listed,
     github_release_json,
     github_requests,
     github_tag_json,
-    github_unknown_ref,
-    hash_drift_allowed,
-    message_of,
-    no_other_version_at_the_tag,
     osv_action_entry,
     osv_action_package,
     patch_github,
-    staleness_disabled,
+    releases_url,
+    repository_url,
 )
-from tests.update_time.sources.helpers import releases_url, repository_url
 from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
-from tests.update_time.updaters.helpers import OSV_BATCH_URL, github_version, no_vulnerabilities, osv
+from tests.update_time.updaters.helpers import (
+    OSV_BATCH_URL,
+    full_commit_sha,
+    github_commit_listing_queries,
+    github_fresh_line,
+    github_refs_whose_commits_were_listed,
+    github_unknown_ref,
+    github_version,
+    no_other_version_at_the_tag,
+    no_vulnerabilities,
+    osv,
+)
 
 if TYPE_CHECKING:
     from contextlib import ContextDecorator

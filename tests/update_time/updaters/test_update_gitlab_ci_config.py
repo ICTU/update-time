@@ -40,6 +40,6 @@ class UpdateGitLabCIConfigTest(registry.ImageUpdaterTestMixin):
         with patch("update_time.updaters.update_gitlab_ci_config.glob_for", return_value=[]):
             update_gitlab_ci_config()
         self.requests.assert_not_called()
-        self.assert_no_path_logged()
+        self.assert_no_debug_logged()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
