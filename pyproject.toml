@@ -45,7 +45,7 @@ dev = [
     "fixit==2.2.1",
     "libcst==1.9.0",
     "mypy==2.4.0",
-    "nltk==3.10.4",
+    "nltk==3.10.3",
     "pip-audit==2.10.1",
     "pyproject-fmt==2.30.3",
     "ruff==0.17.1",
@@ -63,10 +63,10 @@ dev = [
 [tool.uv]
 override-dependencies = [
     "certifi==2026.10.19", # GHSA-6q48-6c7w-9gw2 (certifi bundles emSign root CAs with compromised intermediate CA keys) is fixed in certifi 2026.10.19, released 2026-10-20, which exclude-newer would block; remove after 2026-10-27
-    "click==8.3.3",        # PYSEC-2026-2132: No summary provided
+    "filelock==4.2.4",     # filelock 4.2.0 has 6 known vulnerabilities; remove after 2026-10-26
 ]
 exclude-newer = "7 days"  # managed by Update-time — remove this comment to prevent Update-time from changing it
-exclude-newer-package = { certifi = false, nltk = false }  # nltk 3.10.1 blocks the imports it resolves from a project-local .venv (https://github.com/nltk/nltk/pull/3732)
+exclude-newer-package = { certifi = false, filelock = false }
 
 [tool.ruff]
 line-length = 120

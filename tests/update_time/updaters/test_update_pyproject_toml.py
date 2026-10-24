@@ -506,7 +506,6 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         run.return_value = Mock(stdout="", stderr="")
         for case, contents in cases.items():
             with self.subTest(case):
-                run.reset_mock()
                 mock_pyproject_toml = self.create_pyproject_toml(contents)
                 glob.return_value = [mock_pyproject_toml]
                 with patch("update_time.package_managers.uv.configure_cooldown") as configure_cooldown:
@@ -543,7 +542,6 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         }
         for case, contents in cases.items():
             with self.subTest(case):
-                run.reset_mock()
                 self.updated_pyproject_toml(run, get, glob, contents, latest="")
                 self.assertIn(("uv", "tree"), [call.args[0][:2] for call in run.call_args_list])
 

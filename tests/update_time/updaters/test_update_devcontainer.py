@@ -64,7 +64,6 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
         }
         for case, (feature, tag) in cases.items():
             with self.subTest(case):
-                self.requests.reset_mock()
                 devcontainer = mock_path(f'    "{feature}:{tag}": {{}}\n')
                 self.run_updater(devcontainer)
                 self.assert_left_alone_unqueried(devcontainer, feature, tag, 1, ImageNotLookedUp.THROUGH_A_VARIABLE)

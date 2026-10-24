@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- Run pnpm rather than npm for a member of a pnpm workspace, so npm no longer writes a stray lock file into the member. Closes [#473](https://github.com/ICTU/update-time/issues/473).
 
 ## 0.0.52 - 2026-10-23
 

@@ -25,25 +25,51 @@ if TYPE_CHECKING:
     from update_time.markers.reference import SteeredReference
 
 _LOG = get_logger("package.json")
-# Lockfiles that signal which package manager a project uses, checked when there is no corepack `packageManager`
-# field. pnpm is handled like npm; yarn and bun are detected only to be skipped (see node.SUPPORTED_MANAGERS). npm's
+# Files that signal which package manager a project uses, checked when there is no corepack `packageManager` field.
+# pnpm is handled like npm; yarn and bun are detected only to be skipped (see node.SUPPORTED_MANAGERS). npm's
 # `package-lock.json` is deliberately absent: npm is the default when nothing else matches, so listing it would be a
 # no-op, and leaving it out lets a real non-npm lockfile win over a stale `package-lock.json` left by a migration.
-_LOCKFILES = {"pnpm-lock.yaml": "pnpm", "yarn.lock": "yarn", "bun.lockb": "bun"}
+_MANAGER_FILES = {"pnpm-lock.yaml": "pnpm", "pnpm-workspace.yaml": "pnpm", "yarn.lock": "yarn", "bun.lockb": "bun"}
 
 
 def _package_manager(package_json: JsonFile) -> str:
     """Return the name of the project's package manager (npm, pnpm, yarn, bun), defaulting to npm.
 
-    The corepack `packageManager` field (e.g. `"pnpm@9.15.0"`) is authoritative; otherwise a sibling lockfile is
-    used as a fallback signal.
+    The nearest directory that names a manager decides, from the package.json's own upwards, so a workspace member
+    takes the manager of its workspace root. In each directory, the corepack `packageManager` field of its
+    package.json (e.g. `"pnpm@9.15.0"`) wins over a lockfile or a workspace file.
     """
-    if declared := package_json.contents.get("packageManager", ""):
-        return declared.split("@", maxsplit=1)[0]
-    for lockfile, manager in _LOCKFILES.items():
-        if (package_json.path.parent / lockfile).exists():
+    directory = package_json.path.parent
+    if manager := _declared_manager(package_json) or _signalled_manager(directory):
+        return manager
+    for ancestor in directory.parents:
+        if manager := _declared_manager_in(ancestor) or _signalled_manager(ancestor):
             return manager
     return "npm"
+
+
+def _declared_manager(package_json: JsonFile) -> str:
+    """Return the name of the manager that the package.json's corepack `packageManager` field names, if any."""
+    contents = package_json.contents
+    declared = contents.get("packageManager") if isinstance(contents, dict) else None
+    return declared.split("@", maxsplit=1)[0] if isinstance(declared, str) else ""
+
+
+def _declared_manager_in(directory: Path) -> str:
+    """Return the name of the manager that the package.json in the directory names, if any."""
+    package_json = directory / "package.json"
+    if not package_json.exists():
+        return ""
+    try:
+        return _declared_manager(json_format.read(package_json))
+    except (OSError, ValueError) as error:
+        _LOG.unreadable_manager_declaration(package_json, error)
+        return ""
+
+
+def _signalled_manager(directory: Path) -> str:
+    """Return the name of the manager that a lockfile or a workspace file in the directory signals, if any."""
+    return next((manager for name, manager in _MANAGER_FILES.items() if (directory / name).exists()), "")
 
 
 def update_package_jsons() -> None:

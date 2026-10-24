@@ -244,7 +244,6 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         mock_get_latest_version.return_value = DependencyVersion("0")  # A rev read as a version does not get pinned
         for case, (rev, tags, sha, pinned) in cases.items():
             with self.subTest(case), patch_github(releases=[], tags=tags, commit=github_commits_json(sha)):
-                mock_get_latest_version.reset_mock()
                 config_file = mock_path(config(f"rev: {rev}\n"))
                 mock_glob.return_value = [config_file]
                 update_pre_commit_configs()
