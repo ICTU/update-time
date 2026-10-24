@@ -460,6 +460,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@PINNED_FLOATING_TAG@@": pinned_floating_tag,
         "@@PINNED_INTEGRITY_HASH@@": pinned_integrity_hash,
         **maven_runs,
+        **_property_moved_for_other_artefacts(log, capture),
         "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
         **github_refs,
@@ -498,6 +499,13 @@ def _uv_cooldown_not_set(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log that a pyproject.toml whose tool tables cannot hold the cooldown gets none, and pair the line."""
     log.uv_cooldown_not_set(Path("pyproject.toml"))
     return {"@@UV_COOLDOWN_NOT_SET@@": capture.take()}
+
+
+def _property_moved_for_other_artefacts(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log the warning about an unserved artefact whose property Maven moved, and pair the line."""
+    mistaken = reference("org.glassfish.jersey:jersey-client", Location(Path("pom.xml"), 206))
+    log.new_version_not_reported(mistaken, "jersey.version", "3.1.12")
+    return {"@@PROPERTY_MOVED_FOR_OTHER_ARTEFACTS@@": capture.take()}
 
 
 def _uv_dependencies_not_updated(log: Logger, capture: _Capture) -> dict[str, str]:

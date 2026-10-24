@@ -268,6 +268,17 @@ class LoggingTestCase(CacheClearingTestCase):
         fields = self._new_version_fields(dependency, version, location, {NOTE: note})
         self.assert_logged_among_others(Logger._MESSAGE_NEW_VERSION, **fields)
 
+    def assert_new_versions_logged(self, version: str, location: Location, *dependencies: str) -> None:
+        """Assert that the dependencies, and no others, were reported at the location with the new version, in order."""
+        expected = [
+            self._expected_call(
+                Logger._MESSAGE_NEW_VERSION,
+                self._new_version_fields(dependency, version, location, {NOTE: Logger._NO_CHANGELOG}),
+            )
+            for dependency in dependencies
+        ]
+        self.assertEqual(self.new_version_records(), expected)
+
     def assert_new_version_logged_among_others_with_changes(
         self, dependency: str, version: str, location: Location, changes: str
     ) -> None:

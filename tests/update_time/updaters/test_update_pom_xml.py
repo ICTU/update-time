@@ -300,6 +300,11 @@ def _artefacts_asked(mock: Mock) -> list[str]:
     return [call.args[0] for call in mock.call_args_list]
 
 
+def _on_jersey_core(artefact: str) -> bool:
+    """Stand in for Maven Central, serving the artefacts of Jersey's core group alone."""
+    return artefact.startswith("org.glassfish.jersey.core:")
+
+
 # The tests hand every run this effective pom by default. It does not list a dependency, so it resolves nothing.
 _EMPTY_EFFECTIVE_POM = effective_pom_declaring()
 
@@ -1626,7 +1631,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         ),
         Mutation(
             update_pom_xml_module._report_new_versions,
-            "is_resolved = pom_xml_format.fully_resolved(named.pinned)",
+            "is_resolved = pom_xml_format.fully_resolved(update.effective.pinned)",
             "is_resolved = True",
             "Maven Central is asked for the changes of coordinates holding an unresolved property",
         ),
@@ -1828,8 +1833,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._report_new_versions,
-            "get_changes(named.dependency, new.current_version)",
-            "get_changes(named.dependency, old.current_version)",
+            "get_changes(reference.dependency, new.current_version)",
+            "get_changes(reference.dependency, update.old.current_version)",
             "a dependency Maven moved is reported with the changes of the version it moved away from",
         ),
         Mutation(
@@ -1886,17 +1891,98 @@ class UpdatePomXmlTest(LoggingTestCase):
         after = pom_declaring(provider, properties=properties_element({"surefire.version": "3.5.2"}), build=plugin)
         pom = self.find_rewritten_pom(mock_run, mock_glob, before, after)
         update_pom_xmls()
-        self.assert_new_version_logged_among_others(
-            "org.apache.maven.surefire:surefire-junit-platform", "3.5.2", Location(pom, 3)
+        self.assert_new_versions_logged(
+            "3.5.2", Location(pom, 3), "org.apache.maven.surefire:surefire-junit-platform", SUREFIRE
         )
-        self.assert_new_version_logged_among_others(SUREFIRE, "3.5.2", Location(pom, 3))
-        self.assertEqual(len(self.new_version_records()), 2)
+
+    def test_unserved_artefacts_naming_a_served_artefacts_property_are_not_reported(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that no new version is reported for an unserved artefact whose property a served artefact names."""
+        client = dependency_element("org.glassfish.jersey.core", "jersey-client", "${jersey.version}")
+        mistaken = [
+            dependency_element("org.glassfish.jersey", artifact, "${jersey.version}")
+            for artifact in ("jersey-client", "jersey-common")
+        ]
+        before = pom_declaring(client, *mistaken, properties=properties_element({"jersey.version": "3.1.11"}))
+        after = pom_declaring(client, *mistaken, properties=properties_element({"jersey.version": "3.1.12"}))
+        pom = self.find_rewritten_pom(mock_run, mock_glob, before, after)
+        with (
+            patch.object(maven_central_module, "serves", Mock(side_effect=_on_jersey_core)),
+            patch.object(maven_central_module, "get_changes", Mock(return_value=NO_CHANGES)) as mock_changes,
+        ):
+            update_pom_xmls()
+        self.assert_new_versions_logged("3.1.12", Location(pom, 3), "org.glassfish.jersey.core:jersey-client")
+        mock_changes.assert_called_once_with("org.glassfish.jersey.core:jersey-client", "3.1.12")
+        unreported = [
+            self._expected_call(
+                Logger._MESSAGE_NEW_VERSION_NOT_REPORTED,
+                {
+                    "dependency": artefact,
+                    "location": Location(pom, 3),
+                    "property": "jersey.version",
+                    "version": "3.1.12",
+                },
+            )
+            for artefact in ("org.glassfish.jersey:jersey-client", "org.glassfish.jersey:jersey-common")
+        ]
+        self.assertEqual(self.records_of(Logger._MESSAGE_NEW_VERSION_NOT_REPORTED), unreported)
+
+    def test_unserved_artefacts_whose_property_no_served_artefact_names_are_reported(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that unserved artefacts get a new version where every artefact naming their property is unserved."""
+        lib = dependency_element("nl.example", "lib", "${internal.version}")
+        tools = dependency_element("nl.example", "tools", "${internal.version}")
+        before = pom_declaring(lib, tools, properties=properties_element({"internal.version": "1.0"}))
+        after = pom_declaring(lib, tools, properties=properties_element({"internal.version": "1.1"}))
+        pom = self.find_rewritten_pom(mock_run, mock_glob, before, after)
+        with patch.object(maven_central_module, "serves", Mock(return_value=False)):
+            update_pom_xmls()
+        self.assert_new_versions_logged("1.1", Location(pom, 3), "nl.example:lib", "nl.example:tools")
+        self.assert_none_logged(Logger._MESSAGE_NEW_VERSION_NOT_REPORTED, "unreported new version")
+
+    @kills(
+        Mutation(
+            update_pom_xml_module._unreportable_updates,
+            "update.new.version_property in properties_on_central",
+            "properties_on_central",
+            "an unserved artefact goes unreported whenever a served artefact moved, whatever property each names",
+        )
+    )
+    def test_unserved_artefacts_with_a_version_or_a_property_of_their_own_are_reported(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that unserved artefacts with a version or a property of their own are reported beside a served one."""
+        client = dependency_element("org.glassfish.jersey.core", "jersey-client", "${jersey.version}")
+        tools = dependency_element("nl.example", "tools", "${internal.version}")
+        before = pom_declaring(
+            client,
+            dependency_element("nl.example", "lib", "1.0"),
+            tools,
+            properties=properties_element({"jersey.version": "3.1.11", "internal.version": "1.0"}),
+        )
+        after = pom_declaring(
+            client,
+            dependency_element("nl.example", "lib", "1.1"),
+            tools,
+            properties=properties_element({"jersey.version": "3.1.12", "internal.version": "1.1"}),
+        )
+        pom = self.find_rewritten_pom(mock_run, mock_glob, before, after)
+        with patch.object(maven_central_module, "serves", Mock(side_effect=_on_jersey_core)):
+            update_pom_xmls()
+        self.assert_new_version_logged_among_others(
+            "org.glassfish.jersey.core:jersey-client", "3.1.12", Location(pom, 3)
+        )
+        self.assert_new_version_logged_among_others("nl.example:lib", "1.1", Location(pom, 15))
+        self.assert_new_version_logged_among_others("nl.example:tools", "1.1", Location(pom, 4))
+        self.assert_none_logged(Logger._MESSAGE_NEW_VERSION_NOT_REPORTED, "unreported new version")
 
     @kills(
         Mutation(
             update_pom_xml_module._report_new_versions,
-            "in unique(zip(before, after, resolved, strict=True)):",
-            "in zip(before, after, resolved, strict=True):",
+            "in unique(zip(before, after, resolved, strict=True))",
+            "in zip(before, after, resolved, strict=True)",
             "a property two declarations of one artefact name is reported as moved once per declaration, at one line",
         )
     )

@@ -1061,6 +1061,19 @@ class Logger:
         """Report that the file an updater rewrote declares more or fewer dependencies and plugins than before."""
         self._log_file(self._MESSAGE_DECLARATIONS_CHANGED, path, before=before, after=after)
 
+    _MESSAGE_NEW_VERSION_NOT_REPORTED = LogMessage(
+        DEBUG,
+        "Not reporting a new version for %(dependency)s in %(location)s: Maven moved the property %(property)s to "
+        "%(version)s for the other artefacts naming it, and Maven Central does not serve this artefact",
+    )
+
+    def new_version_not_reported(self, reference: Reference, version_property: str, version: str) -> None:
+        """Log that Maven moved the property the reference names, though Maven Central does not serve its artefact."""
+        self._log(
+            self._MESSAGE_NEW_VERSION_NOT_REPORTED,
+            **self._reference_fields(reference, property=version_property, version=version),
+        )
+
     _MESSAGE_UNREADABLE_REACTOR = LogMessage(ERROR, _CANNOT_READ_THE_REACTOR + _POMS_LEFT)
 
     def unreadable_reactor(self, root: Path, poms_left: int) -> None:

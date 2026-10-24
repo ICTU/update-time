@@ -1,5 +1,6 @@
 """Find pom.xml files and update the dependencies and plugins they declare with Maven."""
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from update_time.domain.archival import archival_is_checked
@@ -27,6 +28,25 @@ if TYPE_CHECKING:
     from update_time.manifests.pom_xml import Declaration
 
 _LOG = get_logger("pom.xml")
+
+
+@dataclass(frozen=True)
+class _Update:
+    """A declaration Maven updated, as the pom held it before and after the update and as the effective pom lists it."""
+
+    old: Declaration
+    new: Declaration
+    effective: Declaration
+
+    @property
+    def reference(self) -> Reference:
+        """Return the reference at the version it had, named as the effective pom names it."""
+        return Reference(self.effective.dependency, self.old.current_version, self.new.location)
+
+    @property
+    def is_resolvable(self) -> bool:
+        """Return whether the effective pom names the artefact whole, so a repository can be asked about it."""
+        return pom_xml_format.is_resolved(self.effective.dependency)
 
 
 def update_pom_xmls() -> None:
@@ -204,15 +224,42 @@ def _report_new_versions(before: list[Declaration], after: list[Declaration], re
     """Report each dependency and plugin whose version differs between the two readings, with its changes.
 
     The name is the one the effective pom gives the declaration, where it resolves one. Two declarations of one
-    artefact naming one property read the same in each reading, so they are reported once.
+    artefact naming one property read the same in each reading, so they are reported once. The new version of an
+    artefact Maven Central does not serve goes unreported, where a served artefact names its property too.
     """
-    for old, new, named in unique(zip(before, after, resolved, strict=True)):
-        if old.current_version == new.current_version:
+    updates = [
+        _Update(old, new, effective)
+        for old, new, effective in unique(zip(before, after, resolved, strict=True))
+        if old.current_version != new.current_version
+    ]
+    unreportable = _unreportable_updates(updates)
+    for update in updates:
+        reference, new = update.reference, update.new
+        if update in unreportable:
+            _LOG.new_version_not_reported(reference, new.version_property, new.current_version)
             continue
-        updated = Reference(named.dependency, old.current_version, new.location)
-        is_resolved = pom_xml_format.fully_resolved(named.pinned)
-        changes = maven_central.get_changes(named.dependency, new.current_version) if is_resolved else NO_CHANGES
-        _LOG.new_version(updated, DependencyVersion(new.current_version, changes))
+        is_resolved = pom_xml_format.fully_resolved(update.effective.pinned)
+        changes = maven_central.get_changes(reference.dependency, new.current_version) if is_resolved else NO_CHANGES
+        _LOG.new_version(reference, DependencyVersion(new.current_version, changes))
+
+
+def _unreportable_updates(updates: list[_Update]) -> list[_Update]:
+    """Return the updates of an artefact Maven Central does not serve, whose property a served artefact names too.
+
+    Maven moves a property to a version that every artefact naming it has, so the move says nothing about an artefact
+    whose versions Maven does not find.
+    """
+    candidates = [update for update in updates if update.new.version_property and update.is_resolvable]
+    artefacts = {update.effective.dependency for update in candidates}
+    off_central = {artefact for artefact in artefacts if not maven_central.serves(artefact)}
+    properties_on_central = {
+        update.new.version_property for update in candidates if update.effective.dependency not in off_central
+    }
+    return [
+        update
+        for update in candidates
+        if update.effective.dependency in off_central and update.new.version_property in properties_on_central
+    ]
 
 
 def main() -> None:  # pragma: no cover
