@@ -796,6 +796,38 @@ class ServesTest(LoggingTestCase):
                 self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
 
 
+class PublicationTest(LoggingTestCase):
+    """Unit tests for finding a version's row in the listing to date the version by."""
+
+    @kills(
+        Mutation(
+            maven_central.publication,
+            'if row["version"] == version)',
+            'if row["version"])',
+            "a new version is dated by whichever row the listing holds first",
+        ),
+        Mutation(
+            maven_central.publication,
+            "for row in rows), None)",
+            "for row in rows))",
+            "the run over every pom ends where the listing lacks a new version",
+            raises="StopIteration",
+        ),
+    )
+    def test_a_version_is_dated_by_its_own_row(self):
+        """Test that a version is dated by the listing's row for it, and undated where the listing lacks that row."""
+        dated = datetime(2026, 10, 15, 15, 23, tzinfo=UTC)
+        older = maven_central_version_row("33.7.0-jre", datetime(2026, 9, 1, 8, 0, tzinfo=UTC))
+        cases = {
+            "a version the listing dates": ((older, maven_central_version_row("33.7.1-jre", dated)), dated),
+            "a version the listing lacks": ((older,), None),
+        }
+        for case, (rows, expected) in cases.items():
+            with self.subTest(case=case), patch_get(text=maven_central_listing(*rows)) as mock_get:
+                self.assertEqual(maven_central.publication(GUAVA, "33.7.1-jre").value, expected)
+                self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
+
+
 class PublishedTest(unittest.TestCase):
     """Unit tests for reading the date the listing holds for a version."""
 
