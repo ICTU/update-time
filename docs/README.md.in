@@ -1474,6 +1474,8 @@ Update-time leaves a reference alone as well where the registry does not serve t
 
 When updating an image tag, Update-time keeps the non-numeric parts of the tag and only advances its version numbers. A tag such as `python:3.14.6-alpine3.23` has three parts: the label prefix `python`, the main version `3.14.6`, and the suffix `alpine3.23`. Update-time preserves the label prefix and the suffix's label, so it never replaces a variant: `python` never becomes `pypy`, and `alpine` never becomes `debian`. It upgrades both the main version and a version embedded in the suffix, independently or together, for example `3.14.6-alpine3.23` → `3.15.0-alpine3.24`. A suffix without an embedded version (`bookworm-slim`, `windows`) is never updated, since it carries no version to advance. It never downgrades one axis to adopt a newer value on the other.
 
+A main version can end in a build number after an underscore, as Eclipse Temurin's `26.0.2_10-jre` does. Update-time reads that tag as version 26.0.2, build 10. So it moves `26.0.2_9-jre` to `26.0.2_10-jre`, and `25-jre` as well.
+
 A floating tag such as `latest` or `trixie`, or a reference without a tag, is pinned rather than updated (see [Floating image tags](#floating-image-tags)).
 
 Update-time writes a new version where the Dockerfile writes the old one. That is the `ARG` line whose default holds it, quotes kept, or the `FROM` line itself. So `ARG IMAGE_VERSION=2026.3.1` becomes `ARG IMAGE_VERSION=2026.4.1`, and `FROM $IMAGE_NAME:$IMAGE_VERSION-$IMAGE_EDITION` stays as it is.

@@ -71,6 +71,14 @@ class IsDockerHubImageTest(unittest.TestCase):
 class TagTest(unittest.TestCase):
     """Unit tests for tags."""
 
+    @kills(
+        Mutation(
+            oci.Tag.version,
+            r'r"+\1"',
+            r'r".\1"',
+            "a build number is read as a version component, so 26.0.2_10 sorts above 26.0.2.1_1",
+        )
+    )
     def test_sort_tag(self):
         """Test that a tag sorts below one with a higher version, or a more precise version of the same release."""
         lower_and_higher = (
@@ -82,6 +90,7 @@ class TagTest(unittest.TestCase):
             ("python1.3", "python1.3.0"),
             ("python1.3-alpine2.3", "python1.3.0-alpine2.3"),  # the main version decides
             ("python1.3.0-alpine2.3", "python1.3.0-alpine2.3.0"),  # ...and the suffix's when the main ones are equal
+            ("26.0.2_10-jre", "26.0.2.1_1-jre"),  # a build number orders the builds within one version
         )
         for lower, higher in lower_and_higher:
             with self.subTest(lower=lower, higher=higher):
@@ -279,6 +288,12 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
             r'r"-?(?P<suffix>',
             "a date is read from the first eight of a longer run of digits, so a tag naming an hour moves to another",
         ),
+        Mutation(
+            oci,
+            r'r"_(\d+)$"',
+            r'r"_(\w+)$"',
+            "a prerelease label after an underscore is read as a build number, so a reference moves onto a prerelease",
+        ),
     )
     def test_which_listed_tags_leave_the_reference_as_it_is(self):
         """Test which listed tags leave the reference on the tag it already names."""
@@ -286,6 +301,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
             "a lower version": ("lower", "1.1", "1.0"),
             "an unparsable version": ("invalid-version", "1.3", "1.2.invalid"),
             "a prerelease": ("prerelease", "1.3", "1.4a1"),
+            "a prerelease after an underscore": ("underscored-prerelease", "1.3", "1.4_rc1"),
             "another suffix": ("other-suffix", "1.3", "1.4-windows"),
             "a downgraded suffix version": ("suffix-downgrade", "3.14.6-alpine3.23", "3.15.0-alpine3.22"),
             "another suffix label": ("other-suffix-label", "3.14.6-alpine3.23", "3.15.0-debian12"),
@@ -455,6 +471,29 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         """Test that an update writes the tag as the registry lists it, such as the leading zero in `2024.01`."""
         self.requests.side_effect = mock_docker_registry(docker_tag("2024.01", DIGEST))
         self.assertEqual(get_latest_tag("cimg/base", "2023.12").version, "2024.01")
+
+    @kills(
+        Mutation(
+            oci.Tag.version,
+            r'r"+\1"',
+            r'r"+b\1"',
+            "a build number is compared as text, so build 10 sorts below build 9",
+        )
+    )
+    def test_tag_with_a_build_number_is_a_candidate(self):
+        """Test that a tag spelling its version with a build number, such as `26.0.2_10-jre`, updates a reference."""
+        self.requests.side_effect = mock_docker_registry(
+            docker_tag("26-jre", DIGEST1, tag_last_pushed=FRESH_DATE),
+            docker_tag("26.0.2.1_1-jre", DIGEST1, tag_last_pushed=FRESH_DATE),
+            docker_tag("26.0.2_10-jre", DIGEST2),
+            docker_tag("26.0.2_9-jre", DIGEST3),
+        )
+        cases = {"a version without a build number": "25-jre", "a lower build number": "26.0.2_9-jre"}
+        for case, current_tag in cases.items():
+            with self.subTest(case=case):
+                latest = get_latest_tag("eclipse-temurin", current_tag)
+                self.assertEqual(latest.version, "26.0.2_10-jre")
+                self.assertEqual(latest.sha, DIGEST2)
 
     def test_outside_cooldown(self):
         """Test that tags pushed before the cooldown are considered, with the push date as publication date."""
