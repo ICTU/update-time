@@ -223,7 +223,6 @@ class UpdateReferencesTest(unittest.TestCase):
         }
         for case, (marker_text, directive, reason) in cases.items():
             with self.subTest(case=case):
-                self.logger.reset_mock()
                 lines = [f"image: python:3.14  # update-time: {marker_text}"]
                 self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, new_version_getter("3.15")), lines)
                 self.logger.redundant_directive.assert_any_call(self.reference(), directive, reason)

@@ -152,9 +152,9 @@ def _pnpm_runs(*results: object) -> list:
     return [Mock(stdout=_PNPM_UNSET), *results]
 
 
-def _assert_manager_called(mock_run: Mock, locked: Command, update: Command) -> None:
-    """Assert the manager listed the locked versions, updated, and listed them again, each with the same kwargs."""
-    run_kwargs = {**_RUN_KWARGS, "cwd": Path("/")}
+def _assert_manager_called(mock_run: Mock, locked: Command, update: Command, directory: Path = Path("/")) -> None:
+    """Assert the manager listed the locked versions, updated, and listed them again, each in the directory."""
+    run_kwargs = {**_RUN_KWARGS, "cwd": directory}
     mock_run.assert_has_calls((call(locked, **run_kwargs), call(update, **run_kwargs), call(locked, **run_kwargs)))
 
 
@@ -185,11 +185,14 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         """Create a package.json in the root directory."""
         return self.write_package_json(contents)
 
-    def assert_npm_called(self, mock_run: Mock, *, cooldown: bool = True) -> None:
-        """Assert npm list, update, and list were called (with the cooldown option when expected)."""
+    def assert_npm_called(self, mock_run: Mock, *, cooldown: bool = True, directory: Path = Path("/")) -> None:
+        """Assert npm list, update, and list were called in the directory (with the cooldown option when expected)."""
         cooldown_option = [_NPM_COOLDOWN_OPTION] if cooldown else []
         _assert_manager_called(
-            mock_run, _NPM_LIST, Command("npm", "update", "--save", "--include=dev", "--silent", *cooldown_option)
+            mock_run,
+            _NPM_LIST,
+            Command("npm", "update", "--save", "--include=dev", "--silent", *cooldown_option),
+            directory,
         )
 
     def test_npm_runs_for_peer_dependencies_alone(self, mock_run: Mock, mock_glob: Mock):
@@ -198,6 +201,48 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_run.side_effect = _npm_runs(*_npm_no_update())
         update_package_jsons()
         self.assert_npm_called(mock_run)
+
+    def test_nearest_directory_naming_a_manager_decides(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a package.json naming npm, or one in a directory between, wins over a pnpm workspace above."""
+        npm_project = json.dumps({"packageManager": "npm@11.0.0", **_GIT_DEPENDENCY})
+        cases = {
+            "the package.json's own field": {"/a/b/package.json": npm_project},
+            "a package.json in a directory between": {
+                "/a/package.json": npm_project,
+                "/a/b/package.json": json.dumps(_GIT_DEPENDENCY),
+            },
+        }
+        for case, files in cases.items():
+            with self.subTest(case):
+                self.files.files = {"/pnpm-workspace.yaml": "packages:\n  - a/b\n", **files}
+                mock_glob.return_value = [Path("/a/b/package.json")]
+                mock_run.side_effect = _npm_runs(*_npm_no_update())
+                update_package_jsons()
+                self.assert_npm_called(mock_run, directory=Path("/a/b"))
+
+    def run_below_package_json(self, mock_run: Mock, mock_glob: Mock, contents: str) -> None:
+        """Run on a member in /a, below a /package.json holding the contents, and assert npm ran for the member."""
+        self.files.files = {"/package.json": contents}
+        mock_glob.return_value = [self.write_package_json(json.dumps(_GIT_DEPENDENCY), Path("/a"))]
+        mock_run.side_effect = _npm_runs(*_npm_no_update())
+        update_package_jsons()
+        self.assert_npm_called(mock_run, directory=Path("/a"))
+
+    def test_invalid_package_json_above_is_warned_about_and_passed_over(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a package.json above that does not parse is warned about, and passed over."""
+        self.run_below_package_json(mock_run, mock_glob, "{")
+        error = json.JSONDecodeError("Expecting property name enclosed in double quotes", "{", 1)
+        self.assert_logged(
+            Logger._MESSAGE_UNREADABLE_MANAGER_DECLARATION, location=Location(Path("/package.json")), error=str(error)
+        )
+
+    def test_package_json_above_of_the_wrong_shape_is_passed_over(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a package.json above that holds a list, or a `packageManager` number, is passed over silently."""
+        cases = {"not an object": "[]", "a field that is not a string": '{"packageManager": 9}'}
+        for case, contents in cases.items():
+            with self.subTest(case):
+                self.run_below_package_json(mock_run, mock_glob, contents)
+                self.assert_no_warnings_logged()
 
     @patch("requests.Session.get", _package_lookup_responses())
     def test_update(self, mock_run: Mock, mock_glob: Mock):
@@ -490,13 +535,14 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         """Create a package.json in the root directory, declaring pnpm as its package manager."""
         return self.write_package_json(contents)
 
-    def assert_pnpm_called(self, mock_run: Mock, *, cooldown: bool = True) -> None:
-        """Assert pnpm list, update, and list were called (with the cooldown option when expected)."""
+    def assert_pnpm_called(self, mock_run: Mock, *, cooldown: bool = True, directory: Path = Path("/")) -> None:
+        """Assert pnpm list, update, and list were called in the directory (with the cooldown option when expected)."""
         cooldown_option = [_PNPM_COOLDOWN_OPTION] if cooldown else []
         _assert_manager_called(
             mock_run,
             Command("pnpm", "list", "--json", "--depth=0", "--lockfile-only"),
             Command("pnpm", "update", *cooldown_option),
+            directory,
         )
 
     @patch("requests.Session.get", _package_lookup_responses())
@@ -543,6 +589,23 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
+    def test_pnpm_detected_above_a_workspace_member(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a package.json without a signal of its own uses pnpm when a directory above signals pnpm."""
+        cases = {
+            "a pnpm-workspace.yaml": {"/pnpm-workspace.yaml": "packages:\n  - a\n"},
+            "a pnpm-lock.yaml": {"/pnpm-lock.yaml": "lockfileVersion: '9.0'\n"},
+            "a packageManager field": {"/package.json": '{"packageManager": "pnpm@9.15.0"}'},
+        }
+        contents = json.dumps(_GIT_DEPENDENCY)
+        for case, files in cases.items():
+            with self.subTest(case):
+                self.files.files = dict(files)
+                member = self.write_package_json(contents, Path("/a"))
+                mock_glob.return_value = [member]
+                mock_run.side_effect = _pnpm_runs(Mock(stdout="[]"), Mock(stdout=""), Mock(stdout="[]"))
+                update_package_jsons()
+                self.assert_pnpm_called(mock_run, directory=Path("/a"))
+
     def test_project_cooldown_respected(self, mock_run: Mock, mock_glob: Mock):
         """Test that no cooldown option is added when the project's pnpm config already sets minimumReleaseAge."""
         package_json = self.create_package_json()
@@ -571,14 +634,18 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
 
     def test_skip_unsupported_lockfile(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json with an unsupported lockfile (e.g. yarn.lock) is skipped without running it."""
-        mock_package_json = _discover_package_json(mock_glob, "{}")
-        # Only yarn.lock exists next to the manifest (no pnpm-lock.yaml), so yarn is detected and the file skipped:
-        with patch("pathlib.Path.exists", lambda self: self.name == "yarn.lock"):
-            update_package_jsons()
-        mock_run.assert_not_called()
-        mock_package_json.write_text.assert_not_called()
-        self.assert_unsupported_package_manager_logged(mock_package_json, "yarn", "npm and pnpm")
-        self.assert_no_new_version_logged()
+        cases = {"beside the package.json": Path("/"), "in a directory above": Path("/a")}
+        for case, directory in cases.items():
+            with self.subTest(case):
+                mock_package_json = mock_path("{}", parent=directory)
+                mock_glob.return_value = [mock_package_json]
+                # Only /yarn.lock exists (no pnpm-lock.yaml), so yarn is detected and the file skipped:
+                with patch("pathlib.Path.exists", lambda self: str(self) == "/yarn.lock"):
+                    update_package_jsons()
+                mock_run.assert_not_called()
+                mock_package_json.write_text.assert_not_called()
+                self.assert_unsupported_package_manager_logged(mock_package_json, "yarn", "npm and pnpm")
+                self.assert_no_new_version_logged()
 
 
 @patch_pathlib_path("rglob", cwd=Path("/"))
@@ -599,7 +666,6 @@ class SkipPackageJsonWithoutDependenciesTest(LoggingTestCase):
         mock_run.return_value = Mock(stdout="", stderr="")
         for case, (contents, manager) in cases.items():
             with self.subTest(case):
-                mock_run.reset_mock()
                 mock_package_json = _discover_package_json(mock_glob, contents)
                 update_package_jsons()
                 mock_run.assert_not_called()

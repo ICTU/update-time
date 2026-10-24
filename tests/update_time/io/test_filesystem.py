@@ -63,7 +63,6 @@ class GlobForTest(unittest.TestCase):
         """
         for file_type, expected in ((_TEXT_FILES, "**/*.txt"), (_TEXT_FILES_AT_ROOT, "*.txt")):
             with self.subTest(recursive=file_type.recursive):
-                mock_glob.reset_mock()
                 mock_glob.return_value = [Path("/file.txt")]
                 self.assertEqual(list(glob_for(file_type)), [Path("/file.txt")])
                 self.assertEqual(mock_glob.call_args.args[1], expected)

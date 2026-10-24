@@ -1005,6 +1005,14 @@ class Logger:
         """Warn that a package.json can't be read, so its new versions are logged without the lines declaring them."""
         self._log_file(self._MESSAGE_UNREADABLE_PACKAGE_JSON, path, error=str(error))
 
+    _MESSAGE_UNREADABLE_MANAGER_DECLARATION = LogMessage(
+        WARNING, "Could not read %(location)s to find the package manager it names (%(error)s)"
+    )
+
+    def unreadable_manager_declaration(self, path: Path, error: OSError | ValueError) -> None:
+        """Warn that a package.json can't be read, so the package manager it may name goes unread."""
+        self._log_file(self._MESSAGE_UNREADABLE_MANAGER_DECLARATION, path, error=str(error))
+
     _MESSAGE_INVALID_POM = LogMessage(WARNING, "Could not read the pom at %(url)s: it is not valid XML")
 
     def invalid_pom(self, url: str) -> None:
