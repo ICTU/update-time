@@ -96,6 +96,10 @@ _DATED_SNAPSHOT = re.compile(DATED_SNAPSHOT)
 # so this is tried first.
 _DASHED_SNAPSHOT = re.compile(DASHED_SNAPSHOT)
 
+# A build number after the version, such as the `_10` of `26.0.2_10`. PEP 440 spells it as a local version, `+10`,
+# which orders the builds of one version and leaves the version itself at `26.0.2`.
+_BUILD_NUMBER = re.compile(r"_(\d+)$")
+
 # What orders two tags: each version axis, and the number of components it is spelled with.
 type _SortKey = tuple[Version, Version, int, int]
 
@@ -128,12 +132,13 @@ class Tag:
         """Return the parsed version, or None if the tag does not contain a valid version.
 
         A leading label prefix (e.g. the `python` in `python3.12`) is stripped before parsing the version. A date drops
-        its dashes, so `2023-10-20` reads as `20231020`, and `2026-02-12-23-06-03` as `20260212230603`.
+        its dashes, so `2023-10-20` reads as `20231020`, and `2026-02-12-23-06-03` as `20260212230603`. A build number
+        reads as a local version, so `26.0.2_10` reads as `26.0.2+10`.
         """
         if not (match := self._match):
             return None
         try:
-            return Version(match.group("version").replace("-", ""))
+            return Version(_BUILD_NUMBER.sub(r"+\1", match.group("version").replace("-", "")))
         except InvalidVersion:
             return None
 
