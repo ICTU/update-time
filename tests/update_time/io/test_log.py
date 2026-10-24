@@ -1,11 +1,9 @@
 """Logger unit tests."""
 
 import contextlib
-import inspect
 import logging
 import re
 import signal
-from dataclasses import fields, is_dataclass
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
@@ -33,10 +31,10 @@ from update_time.io.console import (
     NOTE,
 )
 from update_time.io.log import (
+    Drift,
     Logger,
     LogMessage,
     get_logger,
-    reset_changelog_suppression,
 )
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
@@ -46,7 +44,17 @@ from update_time.primitives.timestamp import utc_date_and_time
 
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE, COMMIT_SHA1, COMMIT_SHA2, DIGEST, DIGEST1, DIGEST2, FRESH_DATE
-from tests.update_time.helpers import bound, published_version, reference, resolved_reference, vulnerability
+from tests.update_time.helpers import (
+    adopted_drift_report,
+    bound,
+    drift_warning,
+    logged_messages,
+    message_of,
+    published_version,
+    reference,
+    resolved_reference,
+    vulnerability,
+)
 from tests.update_time.io.helpers import at, create_location, dependency
 
 if TYPE_CHECKING:
@@ -80,31 +88,35 @@ class LogMessageTests(TestCase):
     def test_no_message_contains_a_full_stop(self):
         """Test that no log message contains a full stop, keeping the style consistent (commas and semicolons).
 
-        Every message attribute of `Logger` is a message template, and every string attribute a fragment
-        substituted into one.
+        Each log method holds its message templates. Each string attribute of `Logger` is a fragment substituted
+        into one, and so is each word a kind of drift fills in.
         """
-        messages = [
-            str(value)
-            for name, value in vars(Logger).items()
-            if isinstance(value, LogMessage | str) and not name.startswith("__")
+        fragments = [
+            value for name, value in vars(Logger).items() if isinstance(value, str) and not name.startswith("__")
         ]
+        messages = [str(message) for message in logged_messages().values()] + fragments
         # Two enums carry message fragments of their own, so the fragments are read off the enums rather than
         # off the logger: the `Reason` a warning reports, and the `Redundancy` a bound is reported with.
         messages += [str(member) for enum in (Reason, _Redundancy) for member in enum]
+        kinds = [value for value in vars(Logger).values() if isinstance(value, Drift)]
+        messages += [word for kind in kinds for word in kind.warning_words.values()]
         # Guard against the introspection silently covering the fragments alone, as it did when the messages stopped
         # being plain strings:
-        self.assertIn(str(Logger._MESSAGE_NEW_VERSION), messages)
+        self.assertIn(str(message_of(Logger.repository_not_served)), messages)
         self.assertIn(str(Reason.NO_YANK_CONCEPT), messages)
+        self.assertIn(Logger.TAG_DRIFT.advice, messages)
         for message in messages:
             with self.subTest(message=message):
                 self.assertNotIn(".", message)
 
     def test_every_message_names_its_holes(self):
         """Test that every message interpolates by name, so its log method hands the logger named fields."""
-        for name, message in vars(Logger).items():
-            if isinstance(message, LogMessage):
-                with self.subTest(message=name):
-                    self.assertEqual(re.findall(r"%(?!\()", message.format), [])
+        messages = logged_messages()
+        self.assertIn("repository_not_served", messages)  # The decorated methods' messages are read
+        self.assertIn("drift.1", messages)  # And each of a method's stacked messages
+        for name, message in messages.items():
+            with self.subTest(message=name):
+                self.assertEqual(re.findall(r"%(?!\()", message.format), [])
 
 
 def _new_logger() -> Logger:
@@ -125,7 +137,7 @@ class RenderTests(TestCase):
     def test_a_location_field_is_wrapped_and_a_plain_field_is_not(self, mock_log: Mock):
         """Test that a location passed as a named field is wrapped, while a plain field is passed through as it is."""
         message = LogMessage(logging.INFO, "Skipping %(location)s: %(reason)s")
-        _new_logger()._log(message, location=create_location("Dockerfile", 1), reason="it is compiled")
+        _new_logger()._emit(message, {"location": create_location("Dockerfile", 1), "reason": "it is compiled"}, {})
         mock_log.assert_called_once_with(
             message.level, message, {"location": at("Dockerfile:1"), "reason": "it is compiled"}
         )
@@ -133,8 +145,8 @@ class RenderTests(TestCase):
     @patch("logging.Logger.log")
     def test_the_dependency_field_is_wrapped_in_its_delimiter(self, mock_log: Mock):
         """Test that the field named `dependency` is wrapped, so no log method has to render one itself."""
-        message = LogMessage(logging.ERROR, "No valid version found for %(dependency)s")
-        _new_logger()._log(message, dependency="actions/checkout")
+        message = LogMessage(logging.WARNING, "Could not find where %(dependency)s is declared")
+        _new_logger()._emit(message, {"dependency": "actions/checkout"}, {})
         mock_log.assert_called_once_with(message.level, message, {"dependency": dependency("actions/checkout")})
 
 
@@ -158,7 +170,7 @@ class LoggerTests(TestCase):
         """Assert the most recent record is the message at the level, carrying exactly the fields the message names."""
         logged_level, template, fields = mock_log.call_args.args
         self.assertEqual((logged_level, template), (level, message))
-        self.assertEqual(set(fields), set(re.findall(r"%\((\w+)\)", str(template))))
+        self.assertEqual(set(fields), template.holes)
         self.assertEqual(str(template) % fields, rendered)
 
     def assert_changes(self, mock_log: Mock, changes: str) -> None:
@@ -169,9 +181,9 @@ class LoggerTests(TestCase):
         """Assert the most recent record carries Update-time's own note about the changes beside its fields."""
         self.assertEqual(mock_log.call_args.kwargs, {"extra": {NOTE: note}})
 
-    def test_reset_changelog_suppression(self, mock_log: Mock):
-        """Test that resetting the suppression makes a logger show a changelog it has already shown."""
-        message = Logger._MESSAGE_NEW_VERSION
+    def test_a_changelog_is_shown_again_once_the_shown_changelogs_are_forgotten(self, mock_log: Mock):
+        """Test that forgetting the changelogs shown makes a logger show a changelog it has already shown."""
+        message = message_of(Logger.new_version)
         location = create_location("pyproject.toml", 5)
         available = f"New version available for {dependency('dependency')} in {at('pyproject.toml:5')}: 1.0"
         logger = get_logger("reset suppression")
@@ -183,7 +195,7 @@ class LoggerTests(TestCase):
         )
         self.assert_last_message(mock_log, message, logging.INFO, available)
         self.assert_note(mock_log, "Suppressing changelog already shown, see above")
-        reset_changelog_suppression()
+        logger.forget_shown_changelogs()
         logger.new_version(
             reference("dependency", location), DependencyVersion("1.0", Changes("Changelog", markdown=False, url=""))
         )
@@ -198,7 +210,7 @@ class LoggerTests(TestCase):
         )
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_NEW_VERSION,
+            message_of(Logger.new_version),
             logging.INFO,
             f"New version available for {dependency('dependency')} in {at('a.txt:3')}: 1.0",
         )
@@ -210,19 +222,11 @@ class LoggerTests(TestCase):
         _new_logger().pinned(reference("dependency", location), DependencyVersion("1.0", sha=DIGEST))
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_PINNED,
+            message_of(Logger.pinned),
             logging.INFO,
             f"Pinned {dependency('dependency')} in {at('Dockerfile:1')} to 1.0@{DIGEST}",
         )
 
-    @kills(
-        Mutation(
-            log_module.Logger,
-            '"Floating tag %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s",',
-            '"Floating tag %(dependency)s%(tag)s in %(location)s was left as it is",',
-            "the line reports that a tag was left as it is without naming the reason it was left",
-        )
-    )
     def test_unpinned_floating_tag(self, mock_log: Mock):
         """Test that a floating tag pinned to no version is reported with the reason it was left as it is."""
         location = create_location("docker-compose.yml", 7)
@@ -230,7 +234,7 @@ class LoggerTests(TestCase):
         _new_logger().unpinned_floating_tag(reference("acme/api", location, "dev"), release, FloatingPin.NO_VERSION_TAG)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_UNPINNED_FLOATING_TAG,
+            message_of(Logger.unpinned_floating_tag),
             logging.DEBUG,
             f"Floating tag {dependency('acme/api')}:dev in {at('docker-compose.yml:7')} was left as it is: "
             "no tag naming a version serves the same image",
@@ -243,7 +247,7 @@ class LoggerTests(TestCase):
         _new_logger().unpinned_floating_tag(reference("acme/api", location), release, FloatingPin.NO_VERSION_TAG)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_UNPINNED_FLOATING_TAG,
+            message_of(Logger.unpinned_floating_tag),
             logging.DEBUG,
             f"Floating tag {dependency('acme/api')} in {at('docker-compose.yml:7')} was left as it is: "
             f"{FloatingPin.NO_VERSION_TAG}",
@@ -257,7 +261,7 @@ class LoggerTests(TestCase):
                 _new_logger().unpinned_ref(reference("actions/checkout", location, "main"), "HTTP 404, Not Found", kind)
                 self.assert_message(
                     mock_log,
-                    Logger._MESSAGE_UNPINNED_REF,
+                    message_of(Logger.unpinned_ref),
                     logging.ERROR,
                     f"Could not fetch the commit of the {ref} {dependency('actions/checkout')}@main in "
                     f"{at('.github/workflows/ci.yml:17')}, so it was left as it is (HTTP 404, Not Found)",
@@ -270,7 +274,7 @@ class LoggerTests(TestCase):
         _new_logger().unchecked_branch_drift(branch, COMMIT_SHA2, "HTTP 403, API rate limit exceeded")
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_UNCHECKED_BRANCH_DRIFT,
+            message_of(Logger.unchecked_branch_drift),
             logging.ERROR,
             f"Could not check branch drift for {dependency('actions/checkout')}@main in "
             f"{at('.github/workflows/ci.yml:17')}: GitHub did not compare the pinned commit with {COMMIT_SHA2}, the "
@@ -284,7 +288,7 @@ class LoggerTests(TestCase):
         _new_logger().comment_naming_no_ref(reference("actions/checkout", location, "pinned"))
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_COMMENT_NAMING_NO_REF,
+            message_of(Logger.comment_naming_no_ref),
             logging.DEBUG,
             f"Commit SHA of {dependency('actions/checkout')} in {at('.github/workflows/ci.yml:17')} was left as it "
             "is: its comment pinned does not name a branch or tag of the repository",
@@ -306,7 +310,7 @@ class LoggerTests(TestCase):
                 _new_logger().unpinned_floating_tag(reference("default", location), release, reason)
                 self.assert_message(
                     mock_log,
-                    Logger._MESSAGE_UNPINNED_FLOATING_TAG,
+                    message_of(Logger.unpinned_floating_tag),
                     logging.DEBUG,
                     f"Floating tag {dependency('default')} in {at('.circleci/config.yml:1')} was left as it is: "
                     f"{explanation}",
@@ -315,8 +319,8 @@ class LoggerTests(TestCase):
     @kills(
         Mutation(
             log_module.Logger,
-            '"Reference %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s",\n',
-            '"Reference %(dependency)s%(tag)s in %(location)s was left as it is",\n',
+            '"Reference %(dependency)s%(tag)s in %(location)s was left as it is: %(reason)s")',
+            '"Reference %(dependency)s%(tag)s in %(location)s was left as it is")',
             "the line reports that a reference was left as it is without naming why the file does not pull its image",
         )
     )
@@ -326,7 +330,7 @@ class LoggerTests(TestCase):
         _new_logger().image_not_looked_up(reference("acme/api", location, "1.2.3"), ImageNotLookedUp.BUILT_IMAGE)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_IMAGE_NOT_LOOKED_UP,
+            message_of(Logger.image_not_looked_up),
             logging.DEBUG,
             f"Reference {dependency('acme/api')}:1.2.3 in {at('docker-compose.yml:4')} was left as it is: "
             "the Compose file builds this image",
@@ -346,7 +350,7 @@ class LoggerTests(TestCase):
         _new_logger().repository_not_served(reference("spark-rm-base", location, "3.5.1"))
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_REPOSITORY_NOT_SERVED,
+            message_of(Logger.repository_not_served),
             logging.DEBUG,
             f"Reference {dependency('spark-rm-base')}:3.5.1 in {at('Dockerfile:1')} was left as it is: "
             "the registry does not serve the image's repository",
@@ -360,7 +364,7 @@ class LoggerTests(TestCase):
         _new_logger().keeping_floating_tag(reference("python", location, "latest"), release, cause)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_KEEPING_FLOATING_TAG,
+            message_of(Logger.keeping_floating_tag),
             logging.DEBUG,
             f"Keeping the floating tag {dependency('python')}:latest in {at('Dockerfile:1')}: it resolves to "
             f"3.14.7@{DIGEST} ({cause})",
@@ -376,7 +380,7 @@ class LoggerTests(TestCase):
                 _new_logger().keeping_ref(reference("actions/checkout", location, "main"), release, cause, kind)
                 self.assert_message(
                     mock_log,
-                    Logger._MESSAGE_KEEPING_REF,
+                    message_of(Logger.keeping_ref),
                     logging.DEBUG,
                     f"Keeping the {ref} {dependency('actions/checkout')}@main in {at('.github/workflows/ci.yml:17')}: "
                     f"it resolves to 4.3.0@{COMMIT_SHA1} ({cause})",
@@ -390,7 +394,7 @@ class LoggerTests(TestCase):
         _new_logger().keeping_floating_tag(reference("python", location), release, cause)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_KEEPING_FLOATING_TAG,
+            message_of(Logger.keeping_floating_tag),
             logging.DEBUG,
             f"Keeping the floating tag {dependency('python')} in {at('Dockerfile:1')}: it resolves to "
             f"3.14.7@{DIGEST} ({cause})",
@@ -441,7 +445,8 @@ class LoggerTests(TestCase):
         for name, (kind, drifted, rendered) in cases.items():
             with self.subTest(name):
                 _new_logger().drift(kind, drifted)
-                self.assert_message(mock_log, kind.warning, logging.WARNING, rendered)
+                message, _fields = drift_warning(kind, drifted)
+                self.assert_message(mock_log, message, logging.WARNING, rendered)
 
     def test_undated_candidate(self, mock_log: Mock):
         """Test that an undated candidate names the source, what it dates, and the version the reference stays on."""
@@ -449,7 +454,7 @@ class LoggerTests(TestCase):
         cases = {
             "image tag": (
                 lambda log: log.undated_push("python", "3.15.0", "3.14.6", "HTTP 429"),
-                Logger._MESSAGE_UNDATED_PUSH,
+                message_of(Logger.undated_push),
                 (
                     f"Could not determine from Docker Hub when {python}:3.15.0 was pushed (HTTP 429), so the cooldown "
                     f"can't be verified; {python} stays on 3.14.6 rather than trying the tags in between"
@@ -457,7 +462,7 @@ class LoggerTests(TestCase):
             ),
             "tagged commit": (
                 lambda log: log.undated_commit("actions/checkout", "v4.4.0", "4.3.0", "HTTP 403"),
-                Logger._MESSAGE_UNDATED_TAGGED_COMMIT,
+                message_of(Logger.undated_commit),
                 (
                     f"Could not determine from GitHub when {checkout} v4.4.0 was committed (HTTP 403), so the cooldown "
                     f"can't be verified; {checkout} stays on 4.3.0 rather than trying the versions in between"
@@ -475,7 +480,7 @@ class LoggerTests(TestCase):
         humanize = dependency("humanize")
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_NO_RELEASE_METADATA,
+            message_of(Logger.no_release_metadata),
             logging.ERROR,
             f"Could not fetch from PyPI the metadata of {humanize} 4.16.0 (HTTP 503), so its yank state and "
             f"publication date are unknown; {humanize} stays on 4.15.0 rather than trying the versions in between",
@@ -488,7 +493,7 @@ class LoggerTests(TestCase):
         _new_logger().no_commit_date(Logger.BRANCH_DRIFT, drifted, "HTTP 403, API rate limit exceeded")
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_NO_COMMIT_DATE,
+            message_of(Logger.no_commit_date),
             logging.ERROR,
             f"Could not determine from GitHub the date of commit {COMMIT_SHA2} that "
             f"{dependency('actions/checkout')}@main in {at('.github/workflows/ci.yml:17')} now points at (HTTP 403, "
@@ -501,7 +506,7 @@ class LoggerTests(TestCase):
         _new_logger().no_push_date(Logger.DIGEST_DRIFT, drifted, "HTTP 429")
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_NO_PUSH_DATE,
+            message_of(Logger.no_push_date),
             logging.ERROR,
             f"Could not determine from Docker Hub when {dependency('python')}:3.14 in {at('Dockerfile:1')} was pushed "
             "(HTTP 429), so the cooldown can't be verified; not adopting the drift",
@@ -510,10 +515,12 @@ class LoggerTests(TestCase):
     def test_digest_drift_of_a_reference_naming_no_tag(self, mock_log: Mock):
         """Test that a drifted digest is reported by the image's name alone when the reference does not name a tag."""
         location = create_location("Dockerfile", 1)
-        _new_logger().drift(Logger.DIGEST_DRIFT, DriftedPin("python", "", location, DIGEST1, new_sha=DIGEST2))
+        drifted = DriftedPin("python", "", location, DIGEST1, new_sha=DIGEST2)
+        _new_logger().drift(Logger.DIGEST_DRIFT, drifted)
+        message, _fields = drift_warning(Logger.DIGEST_DRIFT, drifted)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_DIGEST_DRIFT,
+            message,
             logging.WARNING,
             f"Digest drift for {dependency('python')} in {at('Dockerfile:1')}: pinned to {DIGEST1} "
             f"but the registry now serves {DIGEST2}; the pin was left unchanged, verify the change is expected "
@@ -562,7 +569,8 @@ class LoggerTests(TestCase):
         for name, (kind, drifted, rendered) in cases.items():
             with self.subTest(name):
                 _new_logger().adopted_drift(kind, drifted, cause)
-                self.assert_message(mock_log, kind.adopted, logging.INFO, rendered)
+                message, _fields = adopted_drift_report(kind, drifted, cause)
+                self.assert_message(mock_log, message, logging.INFO, rendered)
 
     def test_stale_dependency_warning(self, mock_log: Mock):
         """Test that an old newest release is warned about at warning level, naming the release that was measured.
@@ -577,7 +585,7 @@ class LoggerTests(TestCase):
         _new_logger().report_staleness(resolved_reference("humanize", location, version), Marker(), 90)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_STALE,
+            message_of(Logger.report_staleness, "threshold"),
             logging.WARNING,
             f"Stale dependency {dependency('humanize')} in {at('requirements.txt:9')}: "
             "newest release 5.0.0 was published 512 days ago (> 90)",
@@ -593,7 +601,11 @@ class LoggerTests(TestCase):
         version = DependencyVersion("4.15.0", project=Project(newest=Release("4.15.0", published)))
         resolved = resolved_reference("humanize", create_location("requirements.txt", 9), version)
         _new_logger().report_staleness(resolved, Marker(), 90)
-        mock_log.assert_called_once_with(Logger._MESSAGE_STALE.level, Logger._MESSAGE_STALE, ANY)
+        mock_log.assert_called_once_with(
+            message_of(Logger.report_staleness, "threshold").level,
+            message_of(Logger.report_staleness, "threshold"),
+            ANY,
+        )
         mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
         _new_logger().report_staleness(
             resolved,
@@ -606,7 +618,7 @@ class LoggerTests(TestCase):
         )
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_IGNORED_STALENESS,
+            message_of(Logger.report_staleness, "directive"),
             logging.DEBUG,
             f"Ignoring the staleness warning for {dependency('humanize')} in {at('requirements.txt:9')} "
             "(update-time: ignore[stale])",
@@ -625,7 +637,7 @@ class LoggerTests(TestCase):
                 )
                 self.assert_message(
                     mock_log,
-                    Logger._MESSAGE_YANKED,
+                    message_of(Logger.report_yank, "version"),
                     logging.WARNING,
                     f"Yanked dependency {dependency('humanize')} in {at('requirements.txt:9')}: {clause}",
                 )
@@ -652,7 +664,7 @@ class LoggerTests(TestCase):
                 )
                 self.assert_message(
                     mock_log,
-                    Logger._MESSAGE_ARCHIVED,
+                    message_of(Logger.report_archival, "subject"),
                     logging.WARNING,
                     f"Archived dependency {dependency('humanize')} in {at('requirements.txt:9')}: {clause}",
                 )
@@ -663,7 +675,7 @@ class LoggerTests(TestCase):
         _new_logger().invalid_bracket_item("python", "@@@", location)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_INVALID_BRACKET_ITEM,
+            message_of(Logger.invalid_bracket_item),
             logging.WARNING,
             f"Invalid '@@@' in the update-time marker for {dependency('python')} in {at('Dockerfile:2')}; "
             "leaving the reference unchanged",
@@ -676,7 +688,7 @@ class LoggerTests(TestCase):
         _new_logger().report_inverted_items(reference("python", location), marker)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_INVERTED_STALE_ITEM,
+            message_of(Logger._inverted_stale_item),
             logging.WARNING,
             f"Incorrect 'stale>=90' in the update-time marker for {dependency('python')} in {at('Dockerfile:2')}: "
             "this comparison warns while a release is fresh and goes quiet once it is old, so it sets no threshold",
@@ -689,7 +701,7 @@ class LoggerTests(TestCase):
         _new_logger().report_inverted_items(reference("python", location), marker)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_INVERTED_COOLDOWN_ITEM,
+            message_of(Logger._inverted_cooldown_item),
             logging.WARNING,
             f"Incorrect 'cooldown>=30' in the update-time marker for {dependency('python')} in {at('Dockerfile:2')}: "
             "this comparison adopts a release only while it is fresh and holds it back once it is old, "
@@ -703,7 +715,7 @@ class LoggerTests(TestCase):
         _new_logger().report_inverted_items(reference("python", location), marker)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_INVERTED_VULNERABLE_ITEM,
+            message_of(Logger._inverted_vulnerable_item),
             logging.WARNING,
             f"Incorrect 'vulnerable>=high' in the update-time marker for {dependency('python')} in "
             f"{at('Dockerfile:2')}: this comparison warns about the mild vulnerabilities and stays quiet about the "
@@ -714,9 +726,9 @@ class LoggerTests(TestCase):
         """Test that a bound deciding nothing for a 3.12 pin is warned about, naming it and how it is redundant."""
         location = create_location("Dockerfile", 6)
         cases = (
-            (Verb.ALLOW, "update>=3.12", "it never has an effect"),  # a 3.12 pin already satisfies it
-            (Verb.ALLOW, "major-update", "it never has an effect"),
-            (Verb.IGNORE, "patch-update", "it blocks every update"),
+            (Verb.ALLOW, "update>=3.12", "never has an effect"),  # a 3.12 pin already satisfies it
+            (Verb.ALLOW, "major-update", "never has an effect"),
+            (Verb.IGNORE, "patch-update", "blocks every update"),
         )
         for verb, item, clause in cases:
             directive = f"{verb.value}[{item}]"
@@ -725,10 +737,10 @@ class LoggerTests(TestCase):
                 _new_logger().warn_if_redundant_bound(reference("python", location, "3.12"), marker)
                 self.assert_message(
                     mock_log,
-                    Logger._MESSAGE_REDUNDANT_BOUND,
+                    message_of(Logger.warn_if_redundant_bound),
                     logging.WARNING,
-                    f"Redundant update bound {directive} on {dependency('python')} 3.12 in {at('Dockerfile:6')}: "
-                    f"{clause}",
+                    f"Redundant update-time directive {directive} for {dependency('python')} in {at('Dockerfile:6')}: "
+                    f"this bound {clause} at version 3.12",
                 )
 
     def test_warn_if_redundant_bound_does_nothing_for_a_bound_that_decides(self, mock_log: Mock):
@@ -758,7 +770,7 @@ class LoggerTests(TestCase):
         _new_logger().recognised_marker("python", marker, location)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_RECOGNISED_MARKER,
+            message_of(Logger.recognised_marker),
             logging.DEBUG,
             f"Recognised update-time marker {raw} for {dependency('python')} in {at('Dockerfile:6')}",
         )
@@ -779,7 +791,7 @@ class LoggerTests(TestCase):
         _new_logger().ignored("python", marker, location)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_IGNORED,
+            message_of(Logger.ignored),
             logging.DEBUG,
             f"Ignoring updates for {dependency('python')} in {at('Dockerfile:6')} (update-time: ignore[update])",
         )
@@ -791,7 +803,7 @@ class LoggerTests(TestCase):
         _new_logger().ignored("python", marker, location)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_IGNORED,
+            message_of(Logger.ignored),
             logging.DEBUG,
             f"Ignoring updates for {dependency('python')} in {at('Dockerfile:6')} (update-time: ignore)",
         )
@@ -814,7 +826,9 @@ class LoggerTests(TestCase):
         version = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="broke Python 3.10 support"))
         resolved = resolved_reference("humanize", create_location("requirements.txt", 9), version)
         _new_logger().report_yank(resolved, Marker())
-        mock_log.assert_called_once_with(Logger._MESSAGE_YANKED.level, Logger._MESSAGE_YANKED, ANY)
+        mock_log.assert_called_once_with(
+            message_of(Logger.report_yank, "version").level, message_of(Logger.report_yank, "version"), ANY
+        )
         mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
         _new_logger().report_yank(
             resolved,
@@ -826,7 +840,7 @@ class LoggerTests(TestCase):
         )
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_IGNORED_YANK,
+            message_of(Logger.report_yank, "directive"),
             logging.DEBUG,
             f"Ignoring the yank warning for {dependency('humanize')} in {at('requirements.txt:9')} "
             "(update-time: ignore[yanked])",
@@ -842,8 +856,8 @@ class LoggerTests(TestCase):
     @kills(
         Mutation(
             log_module.Logger,
-            '_MESSAGE_IGNORED_VULNERABILITY = LogMessage(DEBUG, _ignoring("the %(advisory)s vulnerability warning"))',
-            '_MESSAGE_IGNORED_VULNERABILITY = LogMessage(DEBUG, _ignoring("the %(advisories)s vulnerability warning"))',
+            '@_debug(_ignoring("the %(advisory)s vulnerability warning"))',
+            '@_debug(_ignoring("the %(advisories)s vulnerability warning"))',
             "the silenced line names a field the log call does not supply, so the line is lost at render time",
         )
     )
@@ -855,7 +869,7 @@ class LoggerTests(TestCase):
         _new_logger().ignored_vulnerability(pin, reported, marker)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_IGNORED_VULNERABILITY,
+            message_of(Logger.ignored_vulnerability),
             logging.DEBUG,
             f"Ignoring the GHSA-2gwj-7jmv-h26r vulnerability warning for {dependency('django')} "
             f"in {at('requirements.txt:9')} (update-time: ignore[vulnerable])",
@@ -864,8 +878,8 @@ class LoggerTests(TestCase):
     @kills(
         Mutation(
             log_module.Logger,
-            'DEBUG, _ignoring("the %(advisory)s vulnerability warning", "--ignore-vulnerability %(identifiers)s")',
-            'DEBUG, _ignoring("the %(identifiers)s vulnerability warning", "--ignore-vulnerability %(advisory)s")',
+            '_ignoring("the %(advisory)s vulnerability warning", "--ignore-vulnerability %(identifiers)s")',
+            '_ignoring("the %(identifiers)s vulnerability warning", "--ignore-vulnerability %(advisory)s")',
             "the run-wide line names what was passed in its subject and the advisory in its cause, swapping the two",
         )
     )
@@ -877,7 +891,7 @@ class LoggerTests(TestCase):
         _new_logger().globally_ignored_vulnerability(pin, reported, passed)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_GLOBALLY_IGNORED_VULNERABILITY,
+            message_of(Logger.globally_ignored_vulnerability),
             logging.DEBUG,
             f"Ignoring the GHSA-2gwj-7jmv-h26r vulnerability warning for {dependency('django')} "
             f"in {at('requirements.txt:9')} (--ignore-vulnerability CVE-2021-31542,CVE-2022-28346)",
@@ -896,7 +910,7 @@ class LoggerTests(TestCase):
                 _new_logger().redundant_directive(reference("python", location), directive, reason)
                 self.assert_message(
                     mock_log,
-                    Logger._MESSAGE_REDUNDANT_DIRECTIVE,
+                    message_of(Logger.redundant_directive),
                     logging.WARNING,
                     f"Redundant update-time directive {directive} for {dependency('python')} in "
                     f"{at('Dockerfile:2')}: {reason}",
@@ -908,7 +922,7 @@ class LoggerTests(TestCase):
         _new_logger().path(config_yml)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_CHECKING_PATH,
+            message_of(Logger.path),
             logging.DEBUG,
             f"Checking if there are updates for {at('config.yml')}",
         )
@@ -919,7 +933,7 @@ class LoggerTests(TestCase):
         _new_logger().configured_uv_cooldown(path, "7 days")
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_UV_COOLDOWN,
+            message_of(Logger.configured_uv_cooldown),
             logging.INFO,
             f"Set uv exclude-newer to '7 days' in {at('pyproject.toml')} to apply the cooldown",
         )
@@ -930,7 +944,7 @@ class LoggerTests(TestCase):
         _new_logger().configured_uv_cooldown(outside, "7 days")
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_UV_COOLDOWN,
+            message_of(Logger.configured_uv_cooldown),
             logging.INFO,
             f"Set uv exclude-newer to '7 days' in {at('/elsewhere/pyproject.toml')} to apply the cooldown",
         )
@@ -942,7 +956,7 @@ class LoggerTests(TestCase):
                 _new_logger().invalid_file(Path.cwd() / file_name, file_format)
                 self.assert_message(
                     mock_log,
-                    Logger._MESSAGE_INVALID_FILE,
+                    message_of(Logger.invalid_file),
                     logging.WARNING,
                     f"Skipping {at(file_name)}: it is not valid {file_format}",
                 )
@@ -951,7 +965,7 @@ class LoggerTests(TestCase):
         """Test that a directory held back by --exclude-path is logged at debug level, with its path undelimited."""
         _new_logger().excluded_path(Path("vendor"))
         self.assert_message(
-            mock_log, Logger._MESSAGE_EXCLUDING_PATH, logging.DEBUG, "Excluding vendor from the scan (--exclude-path)"
+            mock_log, message_of(Logger.excluded_path), logging.DEBUG, "Excluding vendor from the scan (--exclude-path)"
         )
 
     def test_missing_excluded_path_logged_at_warning(self, mock_log: Mock):
@@ -959,7 +973,7 @@ class LoggerTests(TestCase):
         _new_logger().missing_excluded_path(Path("vendor"))
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_PATH_TO_EXCLUDE_DOES_NOT_EXIST,
+            message_of(Logger.missing_excluded_path),
             logging.WARNING,
             "Path vendor passed to --exclude-path does not exist",
         )
@@ -970,9 +984,19 @@ class LoggerTests(TestCase):
         _new_logger().response(response)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_NOT_OK_RESPONSE,
+            message_of(Logger.response),
             logging.WARNING,
             "Could not fetch https://pypi.org/pypi/humanize/json: HTTP 404 Not Found",
+        )
+
+    def test_a_timeout_is_warned_about_as_a_failed_fetch(self, mock_log: Mock):
+        """Test that a request that timed out is warned about as a fetch that failed, with its URL."""
+        _new_logger().timeout("https://pypi.org/pypi/humanize/json")
+        self.assert_message(
+            mock_log,
+            message_of(Logger.timeout),
+            logging.WARNING,
+            "Could not fetch https://pypi.org/pypi/humanize/json: the request timed out",
         )
 
     def test_running_logged_at_debug(self, mock_log: Mock):
@@ -980,7 +1004,7 @@ class LoggerTests(TestCase):
         _new_logger().running("0.0.48", "macOS-26.7.1-arm64-arm-64bit-Mach-O", "3.14.7")
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_RUNNING,
+            message_of(Logger.running),
             logging.DEBUG,
             "Running Update-time v0.0.48 on macOS-26.7.1-arm64-arm-64bit-Mach-O with Python 3.14.7",
         )
@@ -1004,7 +1028,7 @@ class LoggerTests(TestCase):
             with self.subTest(case):
                 _new_logger().arguments(arguments)
                 self.assert_message(
-                    mock_log, Logger._MESSAGE_ARGUMENTS, logging.DEBUG, f"Command-line arguments: {rendered}"
+                    mock_log, message_of(Logger.arguments), logging.DEBUG, f"Command-line arguments: {rendered}"
                 )
 
     def test_tool_version_logged_at_debug(self, mock_log: Mock):
@@ -1019,7 +1043,7 @@ class LoggerTests(TestCase):
                 _new_logger().tool_version(executable, directory, output)
                 self.assert_message(
                     mock_log,
-                    Logger._MESSAGE_TOOL_VERSION,
+                    message_of(Logger.tool_version),
                     logging.DEBUG,
                     f"Version of {executable} in {at(rendered)}: {output}",
                 )
@@ -1038,7 +1062,7 @@ class LoggerTests(TestCase):
         ):
             with self.subTest(case):
                 _new_logger().credentials({name: name in set_variables for name in names})
-                self.assert_message(mock_log, Logger._MESSAGE_CREDENTIALS, logging.DEBUG, f"Credentials: {rendered}")
+                self.assert_message(mock_log, message_of(Logger.credentials), logging.DEBUG, f"Credentials: {rendered}")
 
     def test_network_settings_logged_at_debug(self, mock_log: Mock):
         """Test that the proxies, the hosts they skip, and the CA bundle are logged at debug level."""
@@ -1060,7 +1084,7 @@ class LoggerTests(TestCase):
             with self.subTest(case):
                 _new_logger().network_settings(proxies, no_proxy, ca_bundle)
                 self.assert_message(
-                    mock_log, Logger._MESSAGE_NETWORK_SETTINGS, logging.DEBUG, f"Network settings: {rendered}"
+                    mock_log, message_of(Logger.network_settings), logging.DEBUG, f"Network settings: {rendered}"
                 )
 
     def test_used_up_github_rate_limit_logged_at_error(self, mock_log: Mock):
@@ -1071,7 +1095,7 @@ class LoggerTests(TestCase):
             (
                 "anonymous",
                 partial(logger.github_rate_limit_used_up, 60),
-                Logger._MESSAGE_GITHUB_RATE_LIMIT_USED_UP,
+                message_of(Logger.github_rate_limit_used_up),
                 (
                     f"GitHub's API rate limit of 60 requests is used up until {utc_date_and_time(reset)}; "
                     "set GITHUB_TOKEN to raise it"
@@ -1080,7 +1104,7 @@ class LoggerTests(TestCase):
             (
                 "with a token",
                 partial(logger.github_token_rate_limit_used_up, 5000),
-                Logger._MESSAGE_GITHUB_TOKEN_RATE_LIMIT_USED_UP,
+                message_of(Logger.github_token_rate_limit_used_up),
                 (
                     "GitHub's API rate limit of 5000 requests for GITHUB_TOKEN is used up until "
                     f"{utc_date_and_time(reset)}"
@@ -1096,7 +1120,7 @@ class LoggerTests(TestCase):
         _new_logger().unreadable_github_rate_limit(ValueError("invalid literal for int() with base 10: 'soon'"))
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_UNREADABLE_GITHUB_RATE_LIMIT,
+            message_of(Logger.unreadable_github_rate_limit),
             logging.DEBUG,
             "Could not read GitHub's rate-limit headers: invalid literal for int() with base 10: 'soon'",
         )
@@ -1106,7 +1130,7 @@ class LoggerTests(TestCase):
         _new_logger().update_stopped("Maven dependencies", signal.SIGKILL)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_UPDATE_STOPPED,
+            message_of(Logger.update_stopped),
             logging.ERROR,
             "Could not finish updating Maven dependencies: SIGKILL stopped it",
         )
@@ -1123,7 +1147,7 @@ class LoggerTests(TestCase):
                 _new_logger().stopped(signal_number)
                 self.assert_message(
                     mock_log,
-                    Logger._MESSAGE_STOPPED,
+                    message_of(Logger.stopped),
                     logging.ERROR,
                     f"{name} stopped Update-time before it finished; review the files it changed, since a file it "
                     "was writing may be incomplete",
@@ -1134,7 +1158,7 @@ class LoggerTests(TestCase):
         _new_logger().forced_outside_git_repository(Path("/home/user/project"))
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_FORCED_OUTSIDE_GIT_REPOSITORY,
+            message_of(Logger.forced_outside_git_repository),
             logging.WARNING,
             "Running outside a git repository (/home/user/project) because --force was given; changes are made in "
             "place and cannot be reverted",
@@ -1150,7 +1174,7 @@ class LoggerTests(TestCase):
         _new_logger().new_version(reference("dependency", location), version)
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_NEW_VERSION,
+            message_of(Logger.new_version),
             logging.INFO,
             f"New version available for {dependency('dependency')} in {at('a.txt:3')}: "
             f"{published_version('1.0', published)}",
@@ -1166,75 +1190,9 @@ class LoggerTests(TestCase):
         )
         self.assert_message(
             mock_log,
-            Logger._MESSAGE_NEW_VERSION,
+            message_of(Logger.new_version),
             logging.INFO,
             f"New version available for {dependency('dependency')} in {at('a.txt:3')}: "
             f"{published_version('1.0', published)}",
         )
         self.assert_note(mock_log, "No changelog available!")
-
-
-class LoggerMessageTest(TestCase):
-    """Test that Logger's message templates pair one-to-one with the log methods and constants that own them.
-
-    Each `MESSAGE_` template sits directly above its owner, which nothing but convention enforces. That owner is
-    the log method emitting it, or, for a pair of messages one dispatch reports through, the constant holding both.
-    """
-
-    @staticmethod
-    def _templates() -> set[str]:
-        """Return the names of the message templates on Logger."""
-        return {name for name in vars(Logger) if name.removeprefix("_").startswith("MESSAGE_")}
-
-    @classmethod
-    def methods_by_template(cls) -> dict[str, set[str]]:
-        """Return, for each message template on Logger, the names of the log methods that reference it."""
-        templates = cls._templates()
-        references: dict[str, set[str]] = {template: set() for template in templates}
-        for name in vars(Logger):
-            if name.startswith("__") or not inspect.isfunction(function := getattr(Logger, name)):
-                continue
-            for template in templates & set(function.__code__.co_names):
-                references[template].add(name)
-        return references
-
-    @classmethod
-    def holders_by_template(cls) -> dict[str, set[str]]:
-        """Return, for each message template on Logger, the names of the constants that hold it.
-
-        A constant pairing messages — a check's warning and its silencing, a drift's warning and its adoption —
-        has them emitted by the dispatch the pair shares, so neither is named by a log method of its own. The
-        templates are matched by identity, since the constant holds the message rather than its name.
-        """
-        template_of = {id(getattr(Logger, template)): template for template in cls._templates()}
-        holders: dict[str, set[str]] = {template: set() for template in cls._templates()}
-        for name, value in vars(Logger).items():
-            if not is_dataclass(value) or isinstance(value, type):
-                continue
-            for field in fields(value):
-                if isinstance(message := getattr(value, field.name), LogMessage):
-                    holders[template_of[id(message)]].add(name)
-        return holders
-
-    @kills(
-        Mutation(
-            log_module.Logger,
-            '_MESSAGE_NO_VERSION = LogMessage(ERROR, "No valid version found for %(dependency)s")',
-            '_MESSAGE_ORPHANED = LogMessage(ERROR, "Nothing emits this")\n\n'
-            '    _MESSAGE_NO_VERSION = LogMessage(ERROR, "No valid version found for %(dependency)s")',
-            "a message template that neither a log method nor a holder emits goes unnoticed",
-        )
-    )
-    def test_each_template_belongs_to_exactly_one_owner(self):
-        """Test that each message template is owned by exactly one log method or constant: no orphans, no sharing."""
-        methods, holders = self.methods_by_template(), self.holders_by_template()
-        owners = {template: names | holders[template] for template, names in methods.items()}
-        self.assertEqual({template: names for template, names in owners.items() if len(names) != 1}, {})
-
-    def test_each_method_references_at_most_one_template(self):
-        """Test that no log method references more than one message template."""
-        template_counts: dict[str, int] = {}
-        for methods in self.methods_by_template().values():
-            for method in methods:
-                template_counts[method] = template_counts.get(method, 0) + 1
-        self.assertEqual({method: count for method, count in template_counts.items() if count > 1}, {})

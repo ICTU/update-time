@@ -26,7 +26,7 @@ from update_time.sources.oci import (
 from tests.helpers import patch_environ
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2, DIGEST3, FRESH_DATE, PAST_COOLDOWN_DATE, STALE_DATE
-from tests.update_time.helpers import LoggingTestCase, bound, days_ago, docker_tag
+from tests.update_time.helpers import LoggingTestCase, bound, days_ago, docker_tag, message_of
 from tests.update_time.registry import (
     Endpoint,
     RegistryRequestsMixin,
@@ -706,7 +706,7 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         requested = [call.args[0] for call in self.requests.call_args_list]
         self.assertEqual([url for url in requested if url.startswith(tags)], [f"{tags}1.2"])
         self.assert_error_logged(
-            Logger._MESSAGE_UNDATED_PUSH,
+            message_of(Logger.undated_push),
             dependency="push_date_unavailable",
             candidate="1.2",
             current="1.0",

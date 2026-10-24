@@ -31,7 +31,7 @@ from update_time.domain.staleness import STALE_AFTER
 from update_time.io.console import undelimited
 from update_time.io.log import Logger
 from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
-from update_time.markers.marker import Marker, Scope, Threshold
+from update_time.markers.marker import Marker, Scope, Threshold, parse_directives
 from update_time.primitives.location import Location
 from update_time.sources.github import BEYOND_THE_COMMITS_EXAMINED
 
@@ -260,6 +260,13 @@ def _invalid_items(log: Logger, capture: _Capture, dockerfile: Location) -> dict
     return {"@@UNRECOGNISED_ITEM_WARNING@@": unrecognised, "@@INVALID_FIELD_WARNING@@": capture.take()}
 
 
+def _bounds_deciding_nothing(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
+    """Log a bound that never has an effect and one that blocks every update, and pair the lines."""
+    for directives in ("allow[update>=3.12]", "ignore[update>=3.12]"):
+        log.warn_if_redundant_bound(reference("python", dockerfile, "3.12"), parse_directives(directives))
+    return {"@@BOUNDS_DECIDING_NOTHING@@": capture.take()}
+
+
 def _inverted_items(log: Logger, capture: _Capture, requirements: Location, dockerfile: Location) -> dict[str, str]:
     """Log a sample per warning about a comparison item running the wrong way, paired with the block's placeholder."""
     stale_marker = Marker(stale=Threshold(inverted_item="stale>=90"))
@@ -346,6 +353,12 @@ def _unpinned_floating_tags(log: Logger, capture: _Capture) -> str:
     return capture.take()
 
 
+def _no_release_tagged(log: Logger, capture: _Capture, workflow: Location) -> dict[str, str]:
+    """Log that a reference was left as it is, since its repository does not tag a release, and pair the line."""
+    log.no_release_tagged(reference("actions/checkout", workflow, "1"))
+    return {"@@NO_RELEASE_TAGGED@@": capture.take()}
+
+
 def _github_refs(log: Logger, capture: _Capture, workflow: Location) -> dict[str, str]:
     """Log a branch kept floating, refs left unpinned, unchecked drift, and undated commits, with placeholders."""
     branch = reference("actions/checkout", workflow, "main")
@@ -391,8 +404,8 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     log.drift(Logger.TAG_DRIFT, DriftedPin("actions/checkout", "4.1.1", workflow, _ELIDED, new_sha=_ELIDED))
     log.drift(Logger.BRANCH_DRIFT, DriftedPin("actions/checkout", "main", workflow, _ELIDED, new_sha=_ELIDED))
     log.drift(Logger.REF_DRIFT, DriftedPin("actions/checkout", "stable-2024", workflow, _ELIDED, new_sha=_ELIDED))
-    location = Location(Path("docs/conf.py"), 4)
-    log.hash_mismatch("clipboard", "2.0.11", _ELIDED_INTEGRITY_HASH, _ELIDED_INTEGRITY_HASH, location)
+    clipboard = reference("clipboard", Location(Path("docs/conf.py"), 4), "2.0.11")
+    log.hash_mismatch(clipboard, _ELIDED_INTEGRITY_HASH, _ELIDED_INTEGRITY_HASH)
     drift = capture.take()
 
     requirements = Location(Path("docs/requirements.txt"), 12)
@@ -464,6 +477,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@UNPINNED_FLOATING_TAG@@": unpinned_floating_tag,
         "@@KEPT_FLOATING_TAG@@": kept_floating_tag,
         **github_refs,
+        **_no_release_tagged(log, capture, workflow),
         "@@NO_RELEASE_METADATA@@": no_release_metadata,
         **_uv_dependencies_not_updated(log, capture),
         **_manifests_without_dependencies(log, capture),
@@ -483,6 +497,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_redundant_package_json_markers(log, capture),
         **invalid,
         **inverted,
+        **_bounds_deciding_nothing(log, capture, dockerfile),
         **understood_markers,
     }
 

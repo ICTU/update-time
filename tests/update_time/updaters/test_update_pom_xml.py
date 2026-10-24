@@ -55,6 +55,7 @@ from tests.update_time.helpers import (
     maven_central_pom,
     maven_central_pom_url,
     maven_central_version_row,
+    message_of,
     patch_maven_central,
     plugin_element,
     pom_coordinates,
@@ -470,24 +471,24 @@ class UpdatePomXmlTest(LoggingTestCase):
         """Assert that the run's errors were the failed run over the directory, then the message about the reactor."""
         failed = _maven_command(directory=directory)
         self.assert_errors_logged(
-            (Logger._MESSAGE_COMMAND_FAILED, {"command": failed, "output": output}),
+            (message_of(Logger.command_failed), {"command": failed, "output": output}),
             (message, {"location": Location(_PROJECT), **fields}),
         )
 
     def assert_maven_not_run_logged(self, *poms: Mock) -> None:
         """Assert that the poms, and no others, were logged as left without a Maven run, in this order."""
-        message = Logger._MESSAGE_MAVEN_NOT_RUN
+        message = message_of(Logger.maven_not_run)
         expected = [self._expected_call(message, {"location": Location(pom)}) for pom in poms]
         self.assertEqual(self.records_of(message), expected)
 
     def assert_no_redundant_directive_logged(self) -> None:
         """Assert that no directive was reported as redundant, whatever else was logged."""
-        self.assert_none_logged(Logger._MESSAGE_REDUNDANT_DIRECTIVE, "redundant directive")
+        self.assert_none_logged(message_of(Logger.redundant_directive), "redundant directive")
 
     def assert_reported_as_held_elsewhere(self, location: Location, marker: Marker, directive: str) -> None:
         """Assert that guava's marker was recognised and reported as redundant, not as holding the update back."""
         self.assert_recognised_marker_logged(GUAVA, location, marker)
-        self.assert_none_logged(Logger._MESSAGE_IGNORED, "update held back")
+        self.assert_none_logged(message_of(Logger.ignored), "update held back")
         self.assert_redundant_directive_logged(Reason.VERSION_HELD_ELSEWHERE, GUAVA, location, directive)
 
     @contextlib.contextmanager
@@ -594,7 +595,7 @@ class UpdatePomXmlTest(LoggingTestCase):
                 pom = self.find_marked_pom(mock_run, mock_glob, directives)
                 update_pom_xmls()
                 self.assert_recognised_marker_logged(GUAVA, Location(pom, 6), marker)
-                self.assert_none_logged(Logger._MESSAGE_IGNORED, "update held back")
+                self.assert_none_logged(message_of(Logger.ignored), "update held back")
 
     def test_a_redundant_bound_on_a_version_maven_updates_is_warned_about(self, mock_run: Mock, mock_glob: Mock):
         """Test that a bound that never has an effect or blocks every update is warned about."""
@@ -606,10 +607,10 @@ class UpdatePomXmlTest(LoggingTestCase):
                 pom = self.find_marked_pom(mock_run, mock_glob, directives)
                 update_pom_xmls()
                 self.assert_logged(
-                    Logger._MESSAGE_REDUNDANT_BOUND,
+                    message_of(Logger.warn_if_redundant_bound),
                     dependency=GUAVA,
                     location=Location(pom, 6),
-                    bound=directives,
+                    directive=directives,
                     version="33.0.0-jre",
                     redundancy=redundancy,
                 )
@@ -629,8 +630,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         update_pom_xmls()
         marker = Marker(ignored_scopes=Scope.STALE, version_bound=bound(Verb.IGNORE, "update>=34"))
         self.assert_recognised_marker_logged(GUAVA, Location(pom, 3), marker)
-        self.assertEqual(len(self.records_of(Logger._MESSAGE_RECOGNISED_MARKER)), 1)
-        self.assertEqual(len(self.records_of(Logger._MESSAGE_HOLDING_BACK_RANGE)), 1)
+        self.assertEqual(len(self.records_of(message_of(Logger.recognised_marker))), 1)
+        self.assertEqual(len(self.records_of(message_of(Logger.holding_back_range))), 1)
 
     @kills(
         Mutation(
@@ -647,7 +648,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         with osv(ADVISORY), _stale_release():
             update_pom_xmls()
         self.assert_stale_dependency_logged(GUAVA, "33.0.0-jre", Location(pom, 3), among_others=True)
-        self.assertEqual(len(self.records_of(Logger._MESSAGE_VULNERABLE_DEPENDENCY)), 1)
+        self.assertEqual(len(self.records_of(message_of(Logger.vulnerable_dependency))), 1)
 
     @kills(
         Mutation(
@@ -706,7 +707,7 @@ class UpdatePomXmlTest(LoggingTestCase):
                 update_pom_xmls()
                 location = Location(pom, 9)
                 self.assert_recognised_marker_logged(SUREFIRE, location, Marker(ignored_scopes=Scope.UPDATE))
-                self.assert_none_logged(Logger._MESSAGE_IGNORED, "update held back")
+                self.assert_none_logged(message_of(Logger.ignored), "update held back")
                 self.assert_redundant_directive_logged(reason, SUREFIRE, location, "ignore[update]")
 
     def test_an_unreadable_item_is_warned_about_rather_than_recognised(self, mock_run: Mock, mock_glob: Mock):
@@ -714,7 +715,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         pom = self.find_marked_pom(mock_run, mock_glob, "ignore[stlae]")
         update_pom_xmls()
         self.assert_invalid_bracket_item_logged(GUAVA, Location(pom, 6), "stlae")
-        self.assert_none_logged(Logger._MESSAGE_RECOGNISED_MARKER, "recognised marker")
+        self.assert_none_logged(message_of(Logger.recognised_marker), "recognised marker")
 
     def test_an_inverted_cooldown_is_reported_and_leaves_the_runs_cooldown(self, mock_run: Mock, mock_glob: Mock):
         """Test that a cooldown comparing the wrong way is reported as incorrect, and the run's cooldown applies."""
@@ -722,7 +723,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         with self.hold_back({GUAVA: ("33.7.1-jre",)}):
             update_pom_xmls()
         self.assert_logged(
-            Logger._MESSAGE_INVERTED_COOLDOWN_ITEM, item="cooldown>=30", dependency=GUAVA, location=Location(pom, 6)
+            message_of(Logger._inverted_cooldown_item), item="cooldown>=30", dependency=GUAVA, location=Location(pom, 6)
         )
         self.assertEqual(self.rule_sets, [_GUAVA_33_7_1_HELD_BACK])
 
@@ -1151,7 +1152,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         parent_pom.read_bytes = Mock(side_effect=parent_contents)
         with _stale_release():
             update_pom_xmls()
-        self.assert_error_logged(Logger._MESSAGE_INVALID_XML_AFTER_UPDATE, location=Location(parent_pom))
+        self.assert_error_logged(message_of(Logger.invalid_xml_after_update), location=Location(parent_pom))
         self.assert_stale_dependency_logged(GUAVA, "33.0.0-jre", Location(child_pom, 5))
 
     @kills(
@@ -1166,7 +1167,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         """Test that a Maven run that succeeded without writing an effective pom is warned about."""
         pom = self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("${guava.version}")), effective_pom="")
         update_pom_xmls()
-        self.assert_logged(Logger._MESSAGE_EFFECTIVE_POM_UNREADABLE, location=Location(pom))
+        self.assert_logged(message_of(Logger.effective_pom_unreadable), location=Location(pom))
 
     @kills(
         Mutation(
@@ -1196,7 +1197,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         pom = self.find_pom(mock_run, mock_glob, declared, effective_pom)
         with osv() as mock_post:
             update_pom_xmls()
-        self.assert_logged(Logger._MESSAGE_EFFECTIVE_POM_WITHOUT_INPUT_LOCATIONS, location=Location(pom))
+        self.assert_logged(message_of(Logger.effective_pom_without_input_locations), location=Location(pom))
         _assert_osv_asked_about_maven(mock_post, ("junit:junit", "4.13.2"))
 
     @kills(
@@ -1499,7 +1500,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         pom = self.find_marked_pom(mock_run, mock_glob, "ignore[update>=34]")
         update_pom_xmls()
         self.assert_logged_among_others(
-            Logger._MESSAGE_HOLDING_BACK_RANGE,
+            message_of(Logger.holding_back_range),
             dependency=GUAVA,
             location=Location(pom, 6),
             range="[34,)",
@@ -1916,7 +1917,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         mock_changes.assert_called_once_with("org.glassfish.jersey.core:jersey-client", "3.1.12")
         unreported = [
             self._expected_call(
-                Logger._MESSAGE_NEW_VERSION_NOT_REPORTED,
+                message_of(Logger.new_version_not_reported),
                 {
                     "dependency": artefact,
                     "location": Location(pom, 3),
@@ -1926,7 +1927,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             )
             for artefact in ("org.glassfish.jersey:jersey-client", "org.glassfish.jersey:jersey-common")
         ]
-        self.assertEqual(self.records_of(Logger._MESSAGE_NEW_VERSION_NOT_REPORTED), unreported)
+        self.assertEqual(self.records_of(message_of(Logger.new_version_not_reported)), unreported)
 
     def test_unserved_artefacts_whose_property_no_served_artefact_names_are_reported(
         self, mock_run: Mock, mock_glob: Mock
@@ -1940,7 +1941,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         with patch.object(maven_central_module, "serves", Mock(return_value=False)):
             update_pom_xmls()
         self.assert_new_versions_logged("1.1", Location(pom, 3), "nl.example:lib", "nl.example:tools")
-        self.assert_none_logged(Logger._MESSAGE_NEW_VERSION_NOT_REPORTED, "unreported new version")
+        self.assert_none_logged(message_of(Logger.new_version_not_reported), "unreported new version")
 
     @kills(
         Mutation(
@@ -1976,7 +1977,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         )
         self.assert_new_version_logged_among_others("nl.example:lib", "1.1", Location(pom, 15))
         self.assert_new_version_logged_among_others("nl.example:tools", "1.1", Location(pom, 4))
-        self.assert_none_logged(Logger._MESSAGE_NEW_VERSION_NOT_REPORTED, "unreported new version")
+        self.assert_none_logged(message_of(Logger.new_version_not_reported), "unreported new version")
 
     @kills(
         Mutation(
@@ -2060,7 +2061,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         pom = self.find_rewritten_pom(mock_run, mock_glob, _POM_DECLARING_GUAVA, "<project><broken>")
         with osv() as mock_post:
             update_pom_xmls()
-        self.assert_error_logged(Logger._MESSAGE_INVALID_XML_AFTER_UPDATE, location=Location(pom))
+        self.assert_error_logged(message_of(Logger.invalid_xml_after_update), location=Location(pom))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()  # The pom was not skipped: Maven ran and rewrote it.
         mock_post.assert_not_called()  # There is no reading to check, so OSV is asked about nothing.
@@ -2089,7 +2090,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         mock_project = Mock(return_value=Project())
         with patch.object(maven_central_module, "project", mock_project):
             update_pom_xmls()
-        self.assert_error_logged(Logger._MESSAGE_DECLARATIONS_CHANGED, location=Location(pom), before=2, after=1)
+        self.assert_error_logged(message_of(Logger.declarations_changed), location=Location(pom), before=2, after=1)
         self.assert_no_new_version_logged()
         mock_project.assert_not_called()  # The pom is reported, not checked on a reading it cannot pair up.
 
@@ -2106,7 +2107,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         second = self.find_poms(mock_run, mock_glob, "<project/>", "<project/>")[1]
         mock_run.side_effect = [FileNotFoundError, _maven_succeeded()]
         update_pom_xmls()
-        self.assert_error_logged(Logger._MESSAGE_COMMAND_NOT_FOUND, command=_maven_command(), executable="mvn")
+        self.assert_error_logged(message_of(Logger.command_not_found), command=_maven_command(), executable="mvn")
         self.assertEqual(mock_run.call_count, 2)
         self.assert_path_logged(second)
 
@@ -2192,7 +2193,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         output = "[ERROR] The build could not read 2 projects -> [Help 1]"
         mock_run.side_effect = [_maven_failed(output), *[_maven_succeeded()] * (len(poms) - 1)]
         update_pom_xmls()
-        message = Logger._MESSAGE_UNREADABLE_REACTOR_AS_FOUND
+        message = message_of(Logger.unreadable_reactor_as_found)
         self.assert_unreadable_reactor_logged(message, output=output, poms="2 other poms")
         runs = [_maven_run(_maven_command()), _maven_run(_maven_command(), _PROJECT / "other")]
         self.assertEqual(mock_run.call_args_list, runs)
@@ -2203,8 +2204,12 @@ class UpdatePomXmlTest(LoggingTestCase):
     ):
         """Test that the error names the pom an earlier run changed, and the poms left where there are any."""
         cases = {
-            "poms left": (("app", "lib"), Logger._MESSAGE_UNREADABLE_REACTOR_SINCE_UPDATE, {"poms": "1 pom"}),
-            "the reactor's last pom": (("app",), Logger._MESSAGE_UNREADABLE_REACTOR_SINCE_UPDATE_WITHOUT_POMS_LEFT, {}),
+            "poms left": (("app", "lib"), message_of(Logger.unreadable_reactor_since_update), {"poms": "1 pom"}),
+            "the reactor's last pom": (
+                ("app",),
+                message_of(Logger.unreadable_reactor_since_update_without_poms_left),
+                {},
+            ),
         }
         for case, (later, message, fields) in cases.items():
             with self.subTest(case=case):
@@ -2230,7 +2235,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         """Test that the error leaves the update out where a later run read the reactor without changing a pom."""
         self.find_reactor_updated_by_bom(mock_run, mock_glob, "app", "lib", "web", failing="lib")
         update_pom_xmls()
-        self.assert_unreadable_reactor_logged(Logger._MESSAGE_UNREADABLE_REACTOR, "lib", poms="1 pom")
+        self.assert_unreadable_reactor_logged(message_of(Logger.unreadable_reactor), "lib", poms="1 pom")
 
     def test_a_reactor_holding_a_pom_that_does_not_parse_runs_maven_over_none_of_its_poms(
         self, mock_run: Mock, mock_glob: Mock
@@ -2241,7 +2246,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         update_pom_xmls()
         self.assertEqual(mock_run.call_args_list, [])
         self.assert_error_logged(
-            Logger._MESSAGE_UNPARSABLE_REACTOR,
+            message_of(Logger.unparsable_reactor),
             location=Location(_PROJECT),
             unparsable=Location(app),
             poms="2 other poms",
@@ -2262,7 +2267,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         mock_project = Mock(return_value=Project())
         with osv() as mock_post, patch.object(maven_central_module, "project", mock_project):
             update_pom_xmls()
-        self.assert_unreadable_reactor_logged(Logger._MESSAGE_UNREADABLE_REACTOR_AS_FOUND, poms="1 other pom")
+        self.assert_unreadable_reactor_logged(message_of(Logger.unreadable_reactor_as_found), poms="1 other pom")
         self.assert_maven_runs(mock_run, _maven_command())
         _assert_osv_asked_about_maven(mock_post, (GUAVA, "33.0.0-jre"))
         self.assertEqual(_artefacts_asked(mock_project), [GUAVA])

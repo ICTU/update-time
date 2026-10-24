@@ -29,7 +29,7 @@ from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.fixtures import DIGEST1 as OLD_DIGEST
 from tests.update_time.fixtures import DIGEST2 as NEW_DIGEST
 from tests.update_time.helpers import bound, floating_pin_allowed, hash_drift_allowed, reference
-from tests.update_time.references.helpers import mock_new_version_getter, new_version_getter
+from tests.update_time.references.helpers import mock_logger, mock_new_version_getter, new_version_getter
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter, VersionBound
@@ -44,7 +44,7 @@ class UpdateReferencesTest(unittest.TestCase):
     def setUp(self) -> None:
         """Use a mock logger and path so log calls can be asserted."""
         super().setUp()
-        self.logger = Mock()
+        self.logger = mock_logger()
         self.path = Mock()
 
     def rewrite(self, lines: list[str], regexp: str, get_new_version: NewVersionGetter) -> list[str]:
@@ -751,7 +751,7 @@ class MarkerForwardingTest(unittest.TestCase):
 
     def test_engine_forwards_the_verbatim_marker(self):
         """Test that the marker reaching `recognised_marker` carries its directives exactly as written."""
-        logger = Mock()
+        logger = mock_logger()
         lines = located_lines(Mock(), ["image: python:3.12  # update-time: ignore[update] ignore[stale]"])
         update_references_in_lines(lines, IMAGE_REGEXP, get_new_version=new_version_getter("3.15"), logger=logger)
         logger.recognised_marker.assert_called_once()

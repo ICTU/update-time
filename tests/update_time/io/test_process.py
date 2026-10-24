@@ -16,7 +16,7 @@ from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import LoggingTestCase
+from tests.update_time.helpers import LoggingTestCase, message_of
 
 
 @patch("subprocess.run")
@@ -91,7 +91,9 @@ class RunTests(LoggingTestCase):
         result = run(Command("./mvnw", "--version"))
         self.assertEqual(result.stdout, "")
         self.assertFalse(result.ok)
-        self.assert_error_logged(Logger._MESSAGE_COMMAND_ERROR, command=Command("./mvnw", "--version"), error=refused)
+        self.assert_error_logged(
+            message_of(Logger.command_error), command=Command("./mvnw", "--version"), error=refused
+        )
 
     def test_missing_executable_is_logged(self, mock_run: Mock):
         """Test that a missing executable is logged and a failed, empty result returned rather than crashing."""
@@ -100,7 +102,7 @@ class RunTests(LoggingTestCase):
         self.assertEqual(result.stdout, "")
         self.assertFalse(result.ok)
         self.assert_error_logged(
-            Logger._MESSAGE_COMMAND_NOT_FOUND, command=Command("npm", "outdated"), executable="npm"
+            message_of(Logger.command_not_found), command=Command("npm", "outdated"), executable="npm"
         )
 
 
@@ -125,7 +127,7 @@ class ToolVersionTests(LoggingTestCase):
         mock_run.return_value = Mock(stdout="11.19.1\n", stderr="")
         run(Command("npm", "outdated"), cwd=Path("/project"))
         self.assert_logged(
-            Logger._MESSAGE_TOOL_VERSION,
+            message_of(Logger.tool_version),
             executable="npm",
             directory=Location(Path("/project")),
             version="11.19.1",
@@ -136,7 +138,7 @@ class ToolVersionTests(LoggingTestCase):
         mock_run.return_value = Mock(stdout="uv 0.13.1\n", stderr="")
         run(Command("uv", "lock"))
         self.assert_logged(
-            Logger._MESSAGE_TOOL_VERSION,
+            message_of(Logger.tool_version),
             executable="uv",
             directory=Location(Path.cwd()),
             version="uv 0.13.1",
@@ -191,7 +193,7 @@ class ToolVersionTests(LoggingTestCase):
                 mock_run.side_effect = [outcome, Mock(stdout="output", stderr="")]
                 self.assertEqual(run(Command("pnpm", "outdated"), cwd=Path("/project")).stdout, "output")
                 self.assert_logged(
-                    Logger._MESSAGE_TOOL_VERSION_UNKNOWN,
+                    message_of(Logger.tool_version_unknown),
                     executable="pnpm",
                     directory=Location(Path("/project")),
                     reason=reason,
@@ -202,8 +204,8 @@ class ToolVersionTests(LoggingTestCase):
         """Test that a tool the system cannot run is reported by its command alone, not by its version query too."""
         refused = PermissionError(13, "Permission denied")
         for case, error, message, fields in (
-            ("not installed", FileNotFoundError(), Logger._MESSAGE_COMMAND_NOT_FOUND, {"executable": "pnpm"}),
-            ("refused", refused, Logger._MESSAGE_COMMAND_ERROR, {"error": refused}),
+            ("not installed", FileNotFoundError(), message_of(Logger.command_not_found), {"executable": "pnpm"}),
+            ("refused", refused, message_of(Logger.command_error), {"error": refused}),
         ):
             with self.subTest(case):
                 mock_run.reset_mock()

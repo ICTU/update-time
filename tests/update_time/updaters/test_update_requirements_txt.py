@@ -28,6 +28,7 @@ from tests.update_time.helpers import (
     PYPI_OLD_UPLOAD,
     LoggingTestCase,
     archival_check_disabled,
+    message_of,
     osv_advisory,
     published_version,
     pypi_index,
@@ -215,10 +216,16 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assertEqual(self.queried_packages(mock_get), ["typing-extensions"])
         stale = {"version": "4.0.0", "days": ANY, "threshold": ANY}
         self.assert_logged_among_others(
-            Logger._MESSAGE_STALE, dependency="typing_extensions", location=Location(requirements_txt, 1), **stale
+            message_of(Logger.report_staleness, "threshold"),
+            dependency="typing_extensions",
+            location=Location(requirements_txt, 1),
+            **stale,
         )
         self.assert_logged_among_others(
-            Logger._MESSAGE_STALE, dependency="Typing-Extensions", location=Location(requirements_txt, 2), **stale
+            message_of(Logger.report_staleness, "threshold"),
+            dependency="Typing-Extensions",
+            location=Location(requirements_txt, 2),
+            **stale,
         )
 
     def test_a_requirement_whose_newest_release_is_recent_is_not_warned(self, mock_rglob: Mock, mock_get: Mock):
@@ -326,7 +333,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 mock_get.side_effect = self.pypi("4.15.0")  # Undated, so the staleness warning is not given.
                 update_requirements_txts()
                 self.assert_logged(
-                    Logger._MESSAGE_REDUNDANT_DIRECTIVE,
+                    message_of(Logger.redundant_directive),
                     reason=reason,
                     directive=directive,
                     dependency="humanize",
@@ -368,7 +375,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 mock_get.side_effect = self.pypi("4.15.0")  # Undated, so the staleness warning is not given.
                 update_requirements_txts()
                 self.assert_logged(
-                    Logger._MESSAGE_REDUNDANT_DIRECTIVE,
+                    message_of(Logger.redundant_directive),
                     reason=Reason.NO_VERSION_TO_UPDATE,
                     directive=directive,
                     dependency="humanize",
@@ -390,7 +397,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = self.pypi("4.15.0")  # Undated, so the staleness warning is not given.
         update_requirements_txts()
         location = Location(requirements_txt, 1)
-        redundant = Logger._MESSAGE_REDUNDANT_DIRECTIVE
+        redundant = message_of(Logger.redundant_directive)
         fields = {"dependency": "humanize", "location": location}
         self.assert_logged_among_others(redundant, directive="allow[hash-drift]", reason=Reason.NO_HASH_PIN, **fields)
         self.assert_logged_among_others(
@@ -408,7 +415,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 requirements_txt = self.loose_requirement(mock_rglob, marker)
                 mock_get.side_effect = self.pypi("4.15.0")  # Undated, so the staleness warning is not given.
                 update_requirements_txts()
-                redundant = Logger._MESSAGE_REDUNDANT_DIRECTIVE
+                redundant = message_of(Logger.redundant_directive)
                 fields = {"dependency": "humanize", "location": Location(requirements_txt, 1)}
                 self.assert_logged_among_others(redundant, directive="allow[floating-pin]", reason=reason, **fields)
                 self.assertEqual(len(self.records_of(redundant, directive="allow[floating-pin]")), 1)
@@ -482,7 +489,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         mock_get.assert_not_called()
         # The file was checked and the marker read; only the release was not looked up.
-        self.assert_logged_among_others(Logger._MESSAGE_CHECKING_PATH, location=Location(requirements_txt))
+        self.assert_logged_among_others(message_of(Logger.path), location=Location(requirements_txt))
         self.assert_no_warnings_logged()
 
     def test_an_inverted_comparison_on_a_loose_requirement_is_reported(self, mock_rglob: Mock, mock_get: Mock):
@@ -492,9 +499,9 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         global 365. The reported item being the run's only warning shows that item set no threshold.
         """
         for item, message in {
-            "stale>=90": Logger._MESSAGE_INVERTED_STALE_ITEM,
-            "cooldown>=30": Logger._MESSAGE_INVERTED_COOLDOWN_ITEM,
-            "vulnerable>=high": Logger._MESSAGE_INVERTED_VULNERABLE_ITEM,
+            "stale>=90": message_of(Logger._inverted_stale_item),
+            "cooldown>=30": message_of(Logger._inverted_cooldown_item),
+            "vulnerable>=high": message_of(Logger._inverted_vulnerable_item),
         }.items():
             with self.subTest(item=item):
                 requirements_txt = self.loose_requirement(mock_rglob, f"ignore[{item}]")
@@ -741,8 +748,8 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     @kills(
         Mutation(
             log_module.Logger.ignored_vulnerability,
-            "advisory=vulnerability.advisory,",
-            "advisory=next(iter(marker.ignored_advisories), vulnerability.advisory),",
+            "advisory=vulnerability.advisory",
+            "advisory=next(iter(marker.ignored_advisories), vulnerability.advisory)",
             "the line names the identifier the marker spelled rather than the one OSV answered under",
         )
     )
@@ -814,7 +821,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             update_requirements_txts()
         self.assert_redundant_vulnerable_advisory_logged("django", "3.2.0", Location(requirements_txt, 1), advisory)
         # The level silences the moderate vulnerability, so it is not reported as silencing nothing itself.
-        self.assert_none_logged(Logger._MESSAGE_REDUNDANT_VULNERABLE_LEVEL, "a redundant risk level")
+        self.assert_none_logged(message_of(Logger.redundant_vulnerable_level), "a redundant risk level")
 
     def test_every_dead_vulnerable_form_names_itself(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a version with no vulnerability at all reports each `vulnerable` form under its own directive."""
@@ -841,7 +848,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             "django", "3.2.0", "high", Location(requirements_txt, 1), "ignore[vulnerable<high]"
         )
         # The advisory silences that vulnerability, so it is not reported as silencing nothing itself.
-        self.assert_none_logged(Logger._MESSAGE_REDUNDANT_VULNERABLE_ADVISORY, "a redundant advisory")
+        self.assert_none_logged(message_of(Logger.redundant_vulnerable_advisory), "a redundant advisory")
 
     def test_ignore_vulnerable_advisory_marker_is_redundant_when_no_vulnerability_answers_to_it(
         self, mock_rglob: Mock, mock_get: Mock

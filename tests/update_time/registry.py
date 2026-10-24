@@ -32,6 +32,7 @@ from tests.update_time.helpers import (
     docker_tag,
     floating_pin_allowed,
     hash_drift_allowed,
+    message_of,
 )
 
 if TYPE_CHECKING:
@@ -579,7 +580,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
                     self.run_updater(mock_file)
                     mock_file.write_text.assert_not_called()
                     self.assert_logged_among_others(
-                        Logger._MESSAGE_REPOSITORY_NOT_SERVED,
+                        message_of(Logger.repository_not_served),
                         dependency=image,
                         tag=f":{tag}",
                         location=Location(mock_file, 1),

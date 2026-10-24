@@ -1,15 +1,24 @@
-"""Test helpers the reference tests share: the getters and resolvers a decision is handed."""
+"""Test helpers the reference tests share: the logger, and the getters and resolvers a decision is handed."""
 
 from collections.abc import Callable
+from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
 from update_time.domain.dependency import DependencyVersion, Project
+from update_time.io.log import Logger
 
 if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter
     from update_time.domain.dependency import VersionString
     from update_time.domain.reference import ResolvedReference
+
+
+def mock_logger() -> Mock:
+    """Return a mock logger that reports a marker as a logger does, through the mock's own log methods."""
+    logger = Mock()
+    logger.report_marker.side_effect = partial(Logger.report_marker, logger)
+    return logger
 
 
 def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGetter:

@@ -30,6 +30,7 @@ from tests.update_time.helpers import (
     maven_central_pom_url,
     maven_central_row,
     maven_central_version_row,
+    message_of,
     patch_maven_central,
     properties_element,
 )
@@ -291,7 +292,7 @@ class ProjectTest(LoggingTestCase):
         with patch_maven_central(_DATED_LISTING, "<project><scm>", archived=True) as mock_get:
             archival = project(GUAVA, check_archival=True).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
-        self.assert_logged(Logger._MESSAGE_INVALID_POM, url=_GUAVA_POM)
+        self.assert_logged(message_of(Logger.invalid_pom), url=_GUAVA_POM)
 
     @kills(
         Mutation(
@@ -666,7 +667,7 @@ class VersionsHeldBackTest(LoggingTestCase):
         # Asserting the request was made, so holding nothing back says something about the answer rather than
         # about a request that was never sent.
         self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
-        self.assert_logged(Logger._MESSAGE_UNSERVED_LISTING, url=_GUAVA_LISTING, status=404, reason="Not Found")
+        self.assert_logged(message_of(Logger.unserved_listing), url=_GUAVA_LISTING, status=404, reason="Not Found")
 
     @kills(
         Mutation(
@@ -696,7 +697,7 @@ class VersionsHeldBackTest(LoggingTestCase):
         """Test that a listing request that times out is reported as a timeout, and that nothing is held back."""
         with patch("requests.Session.get", Mock(side_effect=requests.exceptions.Timeout)):
             self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ())
-        self.assert_logged(Logger._MESSAGE_TIMEOUT, url=_GUAVA_LISTING)
+        self.assert_logged(message_of(Logger.timeout), url=_GUAVA_LISTING)
 
     @kills(
         Mutation(
@@ -727,7 +728,7 @@ class VersionsHeldBackTest(LoggingTestCase):
         with patch_get(text=maven_central_listing(unreadable, fresh)):
             self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ("33.7.2-jre", "33.7.1-jre"))
         self.assert_logged(
-            Logger._MESSAGE_UNREADABLE_PUBLICATION_DATE,
+            message_of(Logger.unreadable_publication_date),
             dependency=GUAVA,
             version="33.7.2-jre",
             date="2026-13-45 99:99",

@@ -9,7 +9,7 @@ from update_time.domain.file_type import POM_XML
 from update_time.domain.reference import Reference
 from update_time.formats import xml
 from update_time.io.filesystem import glob_for
-from update_time.io.log import get_logger, report_marker
+from update_time.io.log import get_logger
 from update_time.manifests import pom_xml as pom_xml_format
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Scope
@@ -125,8 +125,7 @@ def _report_markers(declared: list[Declaration]) -> None:
     """Report the marker of each dependency and plugin, named as Maven resolves it, and the range a bound holds back."""
     for declaration in declared:
         held_back = maven.range_held_back(declaration) if declaration.maven_updates_the_version else ""
-        report_marker(
-            _LOG,
+        _LOG.report_marker(
             declaration.dependency,
             declaration.marker,
             declaration.location,

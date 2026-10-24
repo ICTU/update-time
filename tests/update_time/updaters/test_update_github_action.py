@@ -43,6 +43,7 @@ from tests.update_time.helpers import (
     github_tag_json,
     github_unknown_ref,
     hash_drift_allowed,
+    message_of,
     no_other_version_at_the_tag,
     osv_action_entry,
     osv_action_package,
@@ -452,6 +453,15 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
         self.assert_no_warnings_logged()
 
+    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
+    def test_a_version_whose_repository_tags_no_release_is_left_as_it_is(self, mock_glob: Mock):
+        """Test that a version reference is left as it is, saying so at debug, where its repository tags nothing."""
+        workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@v1\n")
+        workflow_yml.write_text.assert_not_called()
+        self.assert_logged_among_others(
+            message_of(Logger.no_release_tagged), dependency="actions/checkout", location=Location(workflow_yml, 1)
+        )
+
     @kills(
         Mutation(
             references_github._PinResolver._report_redundant_directives,
@@ -820,7 +830,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main\n")
         workflow_yml.write_text.assert_not_called()
         self.assert_error_logged(
-            Logger._MESSAGE_UNCHECKED_BRANCH_DRIFT,
+            message_of(Logger.unchecked_branch_drift),
             dependency="actions/checkout",
             name="main",
             location=Location(workflow_yml, 1),
@@ -1211,7 +1221,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@main{marker}\n")
         workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # main{marker}\n")
         self.assert_logged_among_others(
-            Logger._MESSAGE_INVERTED_COOLDOWN_ITEM,
+            message_of(Logger._inverted_cooldown_item),
             item="cooldown>=30",
             dependency="actions/checkout",
             location=Location(workflow_yml, 1),
@@ -1517,10 +1527,10 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@main{marker}\n")
         workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{OLD_SHA} # v5.0.0{marker}\n")
         self.assert_logged(
-            Logger._MESSAGE_REDUNDANT_BOUND,
+            message_of(Logger.warn_if_redundant_bound),
             dependency="actions/checkout",
             location=Location(workflow_yml, 1),
-            bound="allow[update<4]",
+            directive="allow[update<4]",
             version="5.0.0",
             redundancy=_Redundancy.BLOCKS_ALL,
         )
@@ -1548,10 +1558,10 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         location = Location(workflow_yml, 1)
         self.assert_pinned_logged("actions/checkout", "4.3.0", NEW_SHA, location, among_others=True)
         self.assert_logged(
-            Logger._MESSAGE_REDUNDANT_BOUND,
+            message_of(Logger.warn_if_redundant_bound),
             dependency="actions/checkout",
             location=location,
-            bound="allow[update<4.1]",
+            directive="allow[update<4.1]",
             version="4.3.0",
             redundancy=_Redundancy.BLOCKS_ALL,
         )

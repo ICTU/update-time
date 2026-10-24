@@ -3,15 +3,18 @@
 import re
 import sys
 import unittest
+from typing import TYPE_CHECKING
 from unittest.mock import Mock, patch
 
 from tools.generate_log_svg import LogOutput
 from tools.generate_readme import _README, _SCREENSHOT, _TEMPLATE, _help_output, _table_of_contents, main, render
 from tools.log_samples import sample_log_lines
 
-from update_time.io.log import Logger, LogMessage
-
 from tests.helpers import patch_environ
+from tests.update_time.helpers import logged_messages
+
+if TYPE_CHECKING:
+    from update_time.io.log import LogMessage
 
 _PLACEHOLDER = re.compile(r"@@\w+@@")
 
@@ -28,8 +31,7 @@ _MESSAGE_ARGUMENT = re.compile(r"%\(\w+\)[sd]")
 
 def _quoted_log_messages(text: str) -> list[str]:
     """Return the name of each log message the text quotes, whatever values fill in its arguments."""
-    messages = {name: value for name, value in vars(Logger).items() if isinstance(value, LogMessage)}
-    return [name for name, message in messages.items() if _message_pattern(message).search(text)]
+    return [name for name, message in logged_messages().items() if _message_pattern(message).search(text)]
 
 
 def _message_pattern(message: LogMessage) -> re.Pattern[str]:

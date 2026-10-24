@@ -24,6 +24,7 @@ from update_time.domain.dependency import (
     PinnedDependency,
     Project,
     Release,
+    Unserved,
     VersionString,
     is_valid,
 )
@@ -598,6 +599,8 @@ def get_latest_version(
 ) -> DependencyVersion:
     """Return the latest eligible version of the GitHub repository, or the current version unchanged.
 
+    Where the repository does not tag a release to update to, the current version comes back marked as unserved.
+
     The current version is a candidate too, so a reference to a version tag is pinned to its commit without an update.
     Neither the cooldown nor a bound holds the current version back, since the reference uses it already.
     """
@@ -609,7 +612,7 @@ def get_latest_version(
         return DependencyVersion(current_version, project=repository_project)
     valid_versions = [version for version in tagged_versions if version.is_candidate]
     if not valid_versions:
-        _LOG.no_version(str(repository))
+        return DependencyVersion(current_version, project=repository_project, unserved=Unserved.RELEASES)
     current = Version(current_version)
     own_tag = _own_tag(tagged_versions, current)
     candidates = [

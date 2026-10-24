@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.file_type import REQUIREMENTS_TXT
 from update_time.domain.reference import Reference
 from update_time.io.filesystem import glob_for
-from update_time.io.log import get_logger, report_marker
+from update_time.io.log import get_logger
 from update_time.manifests import requirements_txt as requirements_txt_format
 from update_time.markers.directive import DIRECTIVES, Reason
 from update_time.markers.marker import Scope
@@ -82,7 +82,7 @@ def _check_loose_requirements(lines: list[Line]) -> None:
     """
     for line, match, marker in reference_matches(lines, _LOOSE_REQUIREMENT_RE):
         # No pass before this one reads these lines, so their markers are reported here.
-        report_marker(_LOG, match["dependency"], marker, line.location, holds_the_update_back=False)
+        _LOG.report_marker(match["dependency"], marker, line.location, holds_the_update_back=False)
         if (dependency := match["dependency"]).endswith(_ARCHIVE_SUFFIXES):
             continue
         reference = Reference(dependency, "", line.location)

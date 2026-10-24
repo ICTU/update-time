@@ -19,7 +19,7 @@ from update_time.package_managers.uv import (
 
 from tests.helpers import mock_path, patch_environ
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import LoggingTestCase, declaration, pyproject
+from tests.update_time.helpers import LoggingTestCase, declaration, message_of, pyproject
 
 # The comment Update-time tags its own `exclude-newer` value with, spelled out so the test pins the wording.
 _MARKER_COMMENT = "managed by Update-time — remove this comment to prevent Update-time from changing it"
@@ -45,7 +45,7 @@ class PersistExcludeNewerTest(LoggingTestCase):
         written = pyproject_toml.write_text.call_args.args[0]
         self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', written)
         self.assertIn(_MARKER_COMMENT, written)
-        self.assert_logged(Logger._MESSAGE_UV_COOLDOWN, cooldown=f"{COOLDOWN.default} days", location=ANY)
+        self.assert_logged(message_of(Logger.configured_uv_cooldown), cooldown=f"{COOLDOWN.default} days", location=ANY)
 
     def test_creates_tool_uv_section_when_absent(self):
         """Test that a `[tool.uv]` section is created when the pyproject.toml has none at all."""
@@ -73,7 +73,7 @@ class PersistExcludeNewerTest(LoggingTestCase):
         """Test that a pyproject.toml whose `tool` is not a table is warned about, and neither written nor logged."""
         pyproject_toml = self.persist('tool = "x"\n' + pyproject("a==1.0"))
         pyproject_toml.write_text.assert_not_called()
-        self.assert_logged(Logger._MESSAGE_UV_COOLDOWN_NOT_SET, location=ANY)
+        self.assert_logged(message_of(Logger.uv_cooldown_not_set), location=ANY)
 
     def test_leaves_a_user_value_untouched(self):
         """Test that an exclude-newer without the marker (the user's own) is left alone, writing and logging nothing."""

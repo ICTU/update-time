@@ -17,6 +17,7 @@ from tests.helpers import mock_response
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
     LoggingTestCase,
+    message_of,
     osv_action_entry,
     osv_action_package,
     osv_advisory,
@@ -90,7 +91,7 @@ class GetVulnerabilitiesTest(LoggingTestCase):
         """Test that an advisory whose CVSS vector cannot be scored is read at no level, and warned about."""
         advisory = osv_advisory(_ADVISORY, _SUMMARY, vectors={"CVSS_V3": _MALFORMED_VECTOR})
         self.assert_level(mock_post, advisory, "")
-        self.assert_logged(Logger._MESSAGE_MALFORMED_CVSS_VECTOR, advisory=_ADVISORY, error=ANY)
+        self.assert_logged(message_of(Logger.malformed_cvss_vector), advisory=_ADVISORY, error=ANY)
 
     def test_advisory_without_a_severity(self, mock_post: Mock):
         """Test that an advisory reporting no risk level is read as a vulnerability of no level, rather than failing."""
@@ -415,7 +416,7 @@ class GitHubActionVulnerabilitiesTest(LoggingTestCase):
             with self.subTest(case=case):
                 mock_post.side_effect = osv_api(advisory)
                 self.assertEqual(_action_vulnerabilities("v1"), [expected])
-                self.assert_logged(Logger._MESSAGE_UNREADABLE_AFFECTED_VERSIONS, advisory=_GHSA, error=ANY)
+                self.assert_logged(message_of(Logger.unreadable_affected_versions), advisory=_GHSA, error=ANY)
 
     def test_an_unreadable_version_is_warned_about_once_however_many_references_meet_it(self, mock_post: Mock):
         """Test that two references to one action, whose advisory states a version that does not parse, warn once."""
@@ -428,7 +429,7 @@ class GitHubActionVulnerabilitiesTest(LoggingTestCase):
                 mock_post.side_effect = osv_api(advisory)
                 for version in ("v1", "v2"):
                     _action_vulnerabilities(version)
-                self.assert_logged(Logger._MESSAGE_UNREADABLE_AFFECTED_VERSIONS, advisory=_GHSA, error=ANY)
+                self.assert_logged(message_of(Logger.unreadable_affected_versions), advisory=_GHSA, error=ANY)
 
     def test_a_closed_range_leaves_an_unreadable_last_known_affected_version_range_unread(self, mock_post: Mock):
         """Test that a closed range warns about nothing beside a last known affected version range it cannot read."""
