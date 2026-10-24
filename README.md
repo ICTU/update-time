@@ -1038,6 +1038,13 @@ A [bound](#bounding-an-update) can be redundant in two ways:
 - Either the bound **never has an effect**, so removing it would change nothing. The current version and every version above it satisfy the bound. Examples are `allow[update>=3.12]` on a `3.12` pin, and `allow[major-update]` on any pin, which allows every update and so says nothing.
 - Or the bound **blocks every update**, so it is a frozen `ignore[update]` in disguise. Use `ignore[update]` instead if you intend the freeze. No version above the current one satisfies the bound. Examples are `ignore[update>=3.12]` on a `3.12` pin, and `ignore[patch-update]` on any pin.
 
+Update-time reports the two as:
+
+```console
+WARNING Redundant update-time directive allow[update>=3.12] for python in Dockerfile:2: this bound never has an effect at version 3.12
+WARNING Redundant update-time directive ignore[update>=3.12] for python in Dockerfile:2: this bound blocks every update at version 3.12
+```
+
 On a `requirements.txt` requirement that pins no exact version, Update-time reports every bound as redundant, `ignore[update]` included, since it resolves no update to bound.
 
 On a `pyproject.toml` or inline script metadata dependency, Update-time reports every bound as redundant, since uv answers with one version rather than the candidates a bound would narrow. It reports an `ignore[update]` as redundant only for a dependency that pins no exact version.
@@ -1433,6 +1440,12 @@ A `uses:` or a `rev:` can also name a branch, such as `@main` or `rev: main`, a 
 Update-time moves a reference given as a version tag to the latest version. Such a tag is `@v4` or `@v4.1.1` for an action, and `v4.5.0` for a `rev:`. It also moves a reference already pinned to a commit SHA with a version comment, such as `@<sha> # v4.1.1` or `rev: <sha>  # frozen: v4.5.0`.
 
 Often, the latest version is the latest GitHub release. But a version that was tagged without being published as a release counts too. So Update-time still updates a repository that only tags its versions, or whose releases stopped while tagging continued.
+
+A repository may also tag only drafts and pre-releases, or not tag a release at all. Update-time then leaves the reference as it is, and reports that at `DEBUG`:
+
+```console
+DEBUG Reference actions/checkout in .github/workflows/ci.yml:17 was left as it is: the repository does not tag a release to update to
+```
 
 #### Pinning
 

@@ -15,7 +15,7 @@ from update_time.updaters.update_node_engine import update_node_engines
 from tests.helpers import mock_path, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import LoggingTestCase, docker_hub_version, docker_tag
+from tests.update_time.helpers import LoggingTestCase, docker_hub_version, docker_tag, message_of
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
 from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
@@ -154,7 +154,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         contents = '{"engines": {"npm": ">=10"}, "engines": {"node": "18"}}\n'
         mock_package_json = self.update_engine(mock_glob, contents)
         mock_package_json.write_text.assert_not_called()
-        self.assert_logged(Logger._MESSAGE_NO_ENTRY, dependency="node", location=Location(mock_package_json))
+        self.assert_logged(message_of(Logger.no_entry), dependency="node", location=Location(mock_package_json))
         self.assert_no_new_version_logged()
 
     def test_marker_in_the_update_time_field_holds_the_engine_back(self, mock_glob: Mock):
@@ -162,7 +162,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         mock_package_json = self.update_engine(mock_glob, _package_json(section="volta", directives="ignore"))
         mock_package_json.write_text.assert_not_called()
         self.assert_ignored_logged("node", Location(mock_package_json, 6), "ignore")
-        self.assertEqual(len(self.records_of(Logger._MESSAGE_IGNORED)), 1)  # The volta pin is steered by no marker.
+        self.assertEqual(len(self.records_of(message_of(Logger.ignored))), 1)  # The volta pin is steered by no marker.
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 

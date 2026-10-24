@@ -18,7 +18,6 @@ A body that isn't JSON has no message to include.
 A branch names no version to resolve an update for.
 A call whose arguments sit on their own lines spreads one call site over several lines, and the line defining the name holds no call at all.
 A channel names no version and carries no digit.
-A check a reference's marker can silence: the scope silencing it, its warning, and what is logged instead.
 A check about the version a reference is left on has none to run on where the reference pins none, so its scope holds nothing back there.
 A class a framework discovers is found by scanning the module rather than by importing it, and an entry point is reached by running its file, so neither has a caller to find and reporting it would buy nothing.
 A component the current version doesn't have counts as zero, so `ignore[minor-update]` on `node:22` blocks `22.1`.
@@ -85,7 +84,6 @@ A replacement the test passes against, so nothing it asserts breaks.
 A request to a host name is refused at the lookup, before it reaches the resolver; one to a literal address needs no lookup and is refused at the socket.
 A requirement that pins no exact version is rewritten not at all: the project behind it is checked instead.
 A rule every module has to remember is duplication too, so state it once, where nobody can forget it.
-A run resets nothing; the tests do, between test cases sharing this process.
 A run that checks no dependency for archival is told none, though PyPI's answer costs no request of its own.
 A run that sets no DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN leaves the requests anonymous.
 A score below the `low` band means the advisory reports no risk at all, which is no level to name.
@@ -198,7 +196,6 @@ JSON has no comments, so a marker cannot sit beside the reference it steers, and
 Keep an image tag's spelling when the registry lists the same version under another name: a reference pinned to, for example, `node:22.15.0` was sometimes rewritten to the alias tag `node:22.15` — the same version, spelled shorter — when no newer version was eligible.
 Leave a `requirements.txt` requirement combining `==` with another specifier unchanged, instead of rewriting it into one no version satisfies.
 Leave the Node engine version alone when the Node base image's tag carries no version to sync it to, such as `node:22.x`, instead of writing the tag's digits into the `package.json`.
-Log that a floating tag was pinned to no version, naming which of the reasons left it as it is.
 Match a `repo:` key and capture its value: a repository URL (`https://github.com/owner/repo`), or the `local` / `meta` sentinels that carry no `rev:`.
 Match a requirement that pins no exact version, which is any requirement the pattern above does not match: the lookahead rules out an exact pin, so a `==` reaching here names a range or one specifier of several.
 Match an exact pin: the name followed by `==` and a version that ends there.
@@ -430,7 +427,6 @@ Test that an unreachable registry yields no changelog instead of crashing.
 Test that an unreachable registry yields no publication date instead of crashing.
 Test that an unreachable registry yields no release instead of crashing.
 Test that each `vulnerable` marker is reported when an image has no vulnerability to silence.
-Test that each message template is owned by exactly one log method or constant: no orphans, no sharing.
 Test that each scope named alone holds that scope back and no other.
 Test that empty npm output (e.g. from a failed command) is treated as no data rather than crashing.
 Test that every scope a marker can hold back has a row, so a scope added later is judged as the rest are.
@@ -623,11 +619,6 @@ Update-time still reports a new version for a dependency that pins no exact vers
 Usable as a decorator on a test method or class (like `unittest.mock.patch`, by stacking one patch per method); it adds no mock argument.
 Warn about a `cooldown` marker on a reference whose source reports no publication date to measure a cooldown against, instead of accepting it in silence.
 Warn about a `stale` marker on a reference whose source reports no publication date to measure staleness against, instead of accepting it in silence.
-Warn that a `cooldown` item compares the wrong way round, so it sets no cooldown.
-Warn that a `stale` item compares the wrong way round, so it sets no threshold.
-Warn that a `vulnerable` item compares the wrong way round, so it sets no risk level.
-Warn that the marker's risk level left no vulnerability of the pinned version below it to silence.
-Warn that the marker's vulnerability scope found no vulnerability to silence for the pinned version.
 Warn when an `# update-time: ignore[yanked]` marker is on a reference whose source has no yank concept, so it can never hold anything back.
 Warn when the hash the dictionary declares differs from the one jsDelivr serves for the URL's version.
 Warn when the version a Python dependency or a jsDelivr URL is left on has a known vulnerability, according to the [OSV](https://osv.dev) database.
@@ -701,7 +692,6 @@ a pin's name carries the extra its declaration spells, so it names no package th
 a reading of another length than its own pairs up all the same, taking the whole run down with it.
 a reference naming no repository is read as one, ending the run over that single line.
 a reference naming no tag is matched with an empty tag, so it is looked up on a registry.
-a reference naming no tag is reported with the version it resolves to, as if it had named it.
 a registration naming no mutation is accepted, so the test it decorates checks nothing.
 a release tagged with something that is no version ends the run with a traceback.
 a repository naming its changelog file `history`, `news`, or `releases` reports no changes.

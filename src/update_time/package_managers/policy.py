@@ -3,7 +3,6 @@
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from update_time.io.log import report_marker
 from update_time.markers.directive import WARNING_DIRECTIVES
 from update_time.markers.marker import Scope
 from update_time.markers.reference import SteeredReference
@@ -49,8 +48,8 @@ def _report_reference_marker[ReferenceT: SteeredReference](
 ) -> Marker:
     """Report the reference's marker, and return it, frozen where an item is invalid."""
     holds_the_update_back = policy.freezes_the_pin(reference) and reference.marker.ignores(Scope.UPDATE)
-    marker = report_marker(
-        log, reference.dependency, reference.marker, reference.location, holds_the_update_back=holds_the_update_back
+    marker = log.report_marker(
+        reference.dependency, reference.marker, reference.location, holds_the_update_back=holds_the_update_back
     )
     log.report_inverted_items(reference, reference.marker)
     return marker

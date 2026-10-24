@@ -18,7 +18,7 @@ from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import docker_hub_version, docker_tag
+from tests.update_time.helpers import docker_hub_version, docker_tag, message_of
 from tests.update_time.registry import mock_docker_registry
 from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
@@ -131,7 +131,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         dockerfile = "ARG V={}\nFROM python:$V\n"
         mock_dockerfile = self.assert_update_written("3.15", dockerfile.format("3.14"), dockerfile.format("3.15"))
         self.assert_logged_among_others(
-            log.Logger._MESSAGE_SUBSTITUTED_REFERENCE,
+            message_of(log.Logger.substituted_reference),
             dependency="python",
             tag=":$V",
             location=Location(mock_dockerfile, 2),
@@ -306,7 +306,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
                 mock_dockerfile.write_text.assert_called_once_with(expected)
                 location = Location(mock_dockerfile, 2)
                 self.assert_logged(
-                    log.Logger._MESSAGE_PINNED_VERSION, dependency=image, location=location, version=version
+                    message_of(log.Logger.pinned_version), dependency=image, location=location, version=version
                 )
                 self.assert_no_warnings_logged()
 
@@ -373,14 +373,10 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            log.Logger.keeping_floating_tag,
-            "fields = self._tagged_fields(reference, reference.current_version)\n"
-            "        self._log(self._MESSAGE_KEEPING_FLOATING_TAG, **fields, resolved=release.version, "
-            "sha=release.sha, cause=cause)\n",
-            "fields = self._tagged_fields(reference, reference.current_version or release.version)\n"
-            "        self._log(self._MESSAGE_KEEPING_FLOATING_TAG, **fields, resolved=release.version, "
-            "sha=release.sha, cause=cause)\n",
-            "a reference naming no tag is reported with the version it resolves to, as if it had named it",
+            log.Logger._tagged_fields,
+            "tag_of(reference.current_version)",
+            'tag_of(reference.current_version or "latest")',
+            "a tagless reference is reported under a tag the file does not write",
         )
     )
     def test_marker_keeps_a_tagless_base_image_as_it_is(self):

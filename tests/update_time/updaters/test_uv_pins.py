@@ -23,6 +23,7 @@ from tests.update_time.helpers import (
     PYPI_OLD_UPLOAD,
     LoggingTestCase,
     archival_check_disabled,
+    message_of,
     pypi_index,
     pypi_release,
     pyproject,
@@ -684,7 +685,7 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
         """Test that an `allow[hash-drift]` on a range keeps its own reason beside an `ignore[update]`."""
         file = self.dependency_toml_file("package>=1.0", marker="ignore[update] allow[hash-drift]")
         self.check_dependencies(get, file)
-        redundant = Logger._MESSAGE_REDUNDANT_DIRECTIVE
+        redundant = message_of(Logger.redundant_directive)
         fields = {"dependency": "package", "location": Location(file.path, 2)}
         self.assert_logged_among_others(redundant, directive="allow[hash-drift]", reason=Reason.NO_HASH_PIN, **fields)
         self.assert_logged_among_others(

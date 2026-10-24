@@ -12,7 +12,7 @@ from update_time.domain import cooldown, dependency
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.changelog import is_markdown
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import Archival, ArchivedSubject, PinnedDependency, Release
+from update_time.domain.dependency import Archival, ArchivedSubject, PinnedDependency, Release, Unserved
 from update_time.io.log import Logger
 from update_time.primitives.timestamp import utc_date_and_time
 from update_time.sources import github
@@ -43,6 +43,7 @@ from tests.update_time.helpers import (
     github_release_json,
     github_requests,
     github_tag_json,
+    message_of,
     patch_github,
 )
 from tests.update_time.sources.helpers import (
@@ -159,7 +160,7 @@ class GetLatestVersionTest(LoggingTestCase):
         latest = get_latest_version(dependency, "1.0")
         self.assert_version(latest, "1.0", "", "")
         self.assert_error_logged(
-            Logger._MESSAGE_UNDATED_TAGGED_COMMIT, dependency=dependency, candidate="v1.1", current="1.0", reason=reason
+            message_of(Logger.undated_commit), dependency=dependency, candidate="v1.1", current="1.0", reason=reason
         )
 
     @patch_github(releases=[github_release_json("1.0", body="changelog")], tags=[], commit=github_commits_json())
@@ -206,7 +207,7 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual(len(self.records(WARNING)), 2)  # One could-not-fetch warning per endpoint
 
     def test_a_repository_offering_no_valid_version_keeps_the_current_one(self):
-        """Test which repositories leave the reference on its current version, reporting an error for each.
+        """Test which repositories leave the reference on its current version, saying they do not tag a release.
 
         Each case names a repository of its own, since the releases and tags are cached per repository.
         """
@@ -220,8 +221,8 @@ class GetLatestVersionTest(LoggingTestCase):
         for case, (releases, tags) in cases.items():
             with self.subTest(case=case), patch_github(releases=releases, tags=tags):
                 action = f"owner/{case}"
-                self.assertEqual(get_latest_version(action, "1.0").version, "1.0")
-                self.assert_error_logged(Logger._MESSAGE_NO_VERSION, dependency=action)
+                latest = get_latest_version(action, "1.0")
+                self.assertEqual((latest.version, latest.unserved), ("1.0", Unserved.RELEASES))
 
     @patch_github(releases=[github_release_json("1.1")], tags=[])
     def test_no_commit_sha(self):
@@ -229,7 +230,7 @@ class GetLatestVersionTest(LoggingTestCase):
         latest = get_latest_version("owner/no sha", "1.0")
         self.assert_version(latest, "1.0", "", "")
         url = "https://github.com/owner/no sha/releases/tag/1.1"
-        message = Logger._MESSAGE_NO_COMMIT_SHA
+        message = message_of(Logger.no_commit_sha)
         self.assert_error_logged(message, dependency="owner/no sha", version="1.1", reason="HTTP 404", url=url)
 
     @patch_github(
@@ -406,7 +407,7 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual(github_requests("commits"), [commits])
         reason = GITHUB_RATE_LIMITED_REASON
         self.assert_error_logged(
-            Logger._MESSAGE_UNDATED_TAGGED_COMMIT, dependency=dependency, candidate="v1.2", current="1.0", reason=reason
+            message_of(Logger.undated_commit), dependency=dependency, candidate="v1.2", current="1.0", reason=reason
         )
 
     @patch_github(releases=[], tags=[github_tag_json("v1.1")], commit=requests.exceptions.Timeout())
@@ -726,7 +727,7 @@ class GetReleaseTest(LoggingTestCase):
             _get_release(GitHubRepository("owner", "repo without releases for get_release"), release_tags("any", "1.0"))
         )
         url = "https://api.github.com/repos/owner/repo without releases for get_release/releases?per_page=100"
-        self.assert_logged(Logger._MESSAGE_TIMEOUT, url=url)
+        self.assert_logged(message_of(Logger.timeout), url=url)
 
 
 class ChangesFromReleaseTest(CacheClearingTestCase):
@@ -985,8 +986,8 @@ class GitHubRateLimitTest(LoggingTestCase):
         """Test that a response saying the rate limit is used up is reported as an error, in the token's form."""
         mock_get.return_value = self.refused_response()
         for case, environment, message in (
-            ("anonymous", {}, Logger._MESSAGE_GITHUB_RATE_LIMIT_USED_UP),
-            ("with a token", {"GITHUB_TOKEN": "a-token"}, Logger._MESSAGE_GITHUB_TOKEN_RATE_LIMIT_USED_UP),  # nosec B105
+            ("anonymous", {}, message_of(Logger.github_rate_limit_used_up)),
+            ("with a token", {"GITHUB_TOKEN": "a-token"}, message_of(Logger.github_token_rate_limit_used_up)),  # nosec B105
         ):
             with self.subTest(case), patch_environ(environment, clear=True):
                 archival(GitHubRepository("owner", "repository"), check_archival=True)
@@ -1009,7 +1010,7 @@ class GitHubRateLimitTest(LoggingTestCase):
             archival(GitHubRepository("owner", name), check_archival=True)
         self.assertEqual(mock_get.call_count, 2)
         self.assert_error_logged(
-            Logger._MESSAGE_GITHUB_RATE_LIMIT_USED_UP, limit=60, reset=utc_date_and_time(self.RESET)
+            message_of(Logger.github_rate_limit_used_up), limit=60, reset=utc_date_and_time(self.RESET)
         )
 
     @kills(
@@ -1041,4 +1042,4 @@ class GitHubRateLimitTest(LoggingTestCase):
             with self.subTest(case):
                 mock_get.return_value = self.refused_response(overrides)
                 archival(GitHubRepository("owner", "repository"), check_archival=True)
-                self.assert_logged(Logger._MESSAGE_UNREADABLE_GITHUB_RATE_LIMIT, error=error)
+                self.assert_logged(message_of(Logger.unreadable_github_rate_limit), error=error)

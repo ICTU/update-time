@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from packaging.version import Version
 
-from update_time.domain.dependency import DependencyVersion, is_valid
+from update_time.domain.dependency import DependencyVersion, Unserved, is_valid
 from update_time.domain.reference import DriftedPin, Reference, RefKind, hash_drifted
 from update_time.domain.vulnerability import reports_vulnerabilities, vulnerability_reporting
 from update_time.io.log import Logger
@@ -114,7 +114,7 @@ def _ref_kind(reference: Reference) -> RefKind:
 
 
 # Map each kind of ref to the drift it reports when it moves.
-_DRIFT = {RefKind.TAG: Logger.TAG_DRIFT, RefKind.BRANCH: Logger.BRANCH_DRIFT, RefKind.REF: Logger.REF_DRIFT}
+_DRIFT = {drift.ref: drift for drift in (Logger.TAG_DRIFT, Logger.BRANCH_DRIFT, Logger.REF_DRIFT)}
 
 
 @vulnerability_reporting
@@ -151,6 +151,9 @@ class _PinResolver:
         warn_if_the_opt_in_is_redundant(
             reference, self.marker, self.log, Scope.HASH_DRIFT, None, update_held_back=self.marker.ignores(Scope.UPDATE)
         )
+        if latest is not None and latest.unserved is Unserved.RELEASES:
+            self.log.no_release_tagged(reference)
+            return None
         if latest is None or not latest.sha:
             return None
         if not current_sha:

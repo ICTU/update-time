@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.file_type import PACKAGE_JSON
 from update_time.formats import json as json_format
 from update_time.io.filesystem import glob_for
-from update_time.io.log import get_logger, report_marker
+from update_time.io.log import get_logger
 from update_time.manifests import package_json as package_json_format
 from update_time.markers.directive import Reason
 from update_time.package_managers import node
@@ -115,7 +115,7 @@ def _report_undeclared_references(files: list[JsonFile]) -> None:
 def _report_undeclared_reference(reference: SteeredReference) -> None:
     """Report the marker of a dependency its section does not declare, and one holding directives as redundant."""
     marker = reference.marker
-    report_marker(_LOG, reference.dependency, marker, reference.location, holds_the_update_back=False)
+    _LOG.report_marker(reference.dependency, marker, reference.location, holds_the_update_back=False)
     if marker.invalid_item is None and marker.raw:
         _LOG.redundant_directive(reference, marker.raw, Reason.UNDECLARED_DEPENDENCY)
 

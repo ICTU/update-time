@@ -21,6 +21,7 @@ from tests.update_time.helpers import (
     LoggingTestCase,
     github_commits_json,
     github_release_json,
+    message_of,
     published_version,
     pyproject,
 )
@@ -199,7 +200,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         mock_pyproject_toml = self.updated_pyproject_toml(run, get, glob, contents)
         marker = Marker(ignored_scopes=Scope.UPDATE)
         self.assert_recognised_marker_logged("package", Location(mock_pyproject_toml, 2), marker)
-        self.assert_none_logged(Logger._MESSAGE_IGNORED, "update held back by a marker")
+        self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
 
     @kills(
         Mutation(
@@ -283,8 +284,8 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
                 self.assert_no_new_version_logged()
                 self.assert_invalid_bracket_item_logged("package", location, item)
                 # The item is reported as invalid, so the marker is neither echoed back nor obeyed as a hold-back.
-                self.assert_none_logged(Logger._MESSAGE_RECOGNISED_MARKER, "recognised marker")
-                self.assert_none_logged(Logger._MESSAGE_IGNORED, "update held back by a marker")
+                self.assert_none_logged(message_of(Logger.recognised_marker), "recognised marker")
+                self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
 
     @kills(
         Mutation(
@@ -323,9 +324,9 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
     def test_an_inverted_comparison_is_reported(self, run: Mock, get: Mock, glob: Mock):
         """Test that each item running the wrong way round is reported, and the dependency updates as usual."""
         messages = {
-            "stale>=90": Logger._MESSAGE_INVERTED_STALE_ITEM,
-            "cooldown>=30": Logger._MESSAGE_INVERTED_COOLDOWN_ITEM,
-            "vulnerable>=high": Logger._MESSAGE_INVERTED_VULNERABLE_ITEM,
+            "stale>=90": message_of(Logger._inverted_stale_item),
+            "cooldown>=30": message_of(Logger._inverted_cooldown_item),
+            "vulnerable>=high": message_of(Logger._inverted_vulnerable_item),
         }
         for spec in ("package==1.0", "package>=1.0"):
             for item, message in messages.items():

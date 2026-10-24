@@ -13,7 +13,14 @@ from update_time.sources.jsdelivr import version_getter
 from tests.helpers import mock_response
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import FRESH_DATE, HASH, HASH1, HASH2, PAST_COOLDOWN_DATE, STALE_DATE
-from tests.update_time.helpers import LoggingTestCase, days_ago, jsdelivr_versions, npm_registry, staleness_disabled
+from tests.update_time.helpers import (
+    LoggingTestCase,
+    days_ago,
+    jsdelivr_versions,
+    message_of,
+    npm_registry,
+    staleness_disabled,
+)
 
 # The file referenced in the jsDelivr URL, and a flat package listing as returned by the API with ?structure=flat.
 _FILENAME = "/dist/clipboard.min.js"
@@ -163,7 +170,7 @@ class GetLatestVersionTest(LoggingTestCase):
         latest_version = _get_latest_version("clipboard", "1.0", _FILENAME)
         self.assertEqual(latest_version.version, "1.0")
         self.assertEqual(latest_version.sha, "")
-        message = Logger._MESSAGE_NO_INTEGRITY_HASH
+        message = message_of(Logger.no_integrity_hash)
         self.assert_logged(message, dependency="clipboard", version="1.1", filename=_FILENAME)
 
     @kills(

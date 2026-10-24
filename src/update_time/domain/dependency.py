@@ -92,10 +92,11 @@ def is_valid(version: VersionString) -> bool:
 
 
 class Unserved(StrEnum):
-    """What the source does not serve of the image a reference names."""
+    """What the source does not serve of the dependency a reference names."""
 
     VERSION = auto()  # The registry serves the repository, but not the tag the reference names
     REPOSITORY = auto()  # The registry does not serve the image's repository
+    RELEASES = auto()  # The repository does not tag a release to update to
 
 
 class FloatingPin(StrEnum):

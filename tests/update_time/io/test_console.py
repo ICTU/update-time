@@ -24,7 +24,7 @@ from update_time.primitives.command import Command
 
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, DIGEST2
-from tests.update_time.helpers import reference
+from tests.update_time.helpers import message_of, reference
 from tests.update_time.io.helpers import at, create_location, dependency
 
 if TYPE_CHECKING:
@@ -352,7 +352,7 @@ class LogHighlighterTests(TestCase):
     def test_dependency_name_highlighted_and_markers_removed(self):
         """Test that a marker-wrapped dependency name is styled as `repr.dependency` and the markers leave no trace."""
         fields = {"dependency": dependency("actions/checkout"), "location": "a.txt", "version": "1.1"}
-        plain, styled = self.highlighted(Logger._MESSAGE_NEW_VERSION.format % fields)
+        plain, styled = self.highlighted(message_of(Logger.new_version).format % fields)
         self.assertEqual(plain, "New version available for actions/checkout in a.txt: 1.1")
         self.assertIn(("actions/checkout", "repr.dependency"), styled)
 

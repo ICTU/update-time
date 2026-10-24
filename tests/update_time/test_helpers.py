@@ -17,8 +17,10 @@ from tests.update_time.helpers import (
     CacheClearingTestCase,
     LoggingTestCase,
     _all_cached_functions,
+    _all_loggers,
     _cached_functions,
     bound,
+    message_of,
     reference,
 )
 from tests.update_time.io.helpers import create_location
@@ -62,6 +64,10 @@ class CachedFunctionsTest(unittest.TestCase):
         """Test that walking the package reaches a cached function a module nested in it defines."""
         self.assertIn(release_metadata, _all_cached_functions(update_time))
 
+    def test_the_loggers_of_the_package_are_found(self):
+        """Test that walking the package reaches the logger a module nested in it holds."""
+        self.assertIn(pypi._LOG, _all_loggers(update_time))
+
     def test_only_the_cached_function_the_module_defines_is_returned(self):
         """Test that the discovery returns the module's own cached function, not its plain or its imported one."""
         module = types.ModuleType("fake")
@@ -81,6 +87,15 @@ class BoundTest(unittest.TestCase):
         self.assertRaises(ValueError, bound, Verb.ALLOW, "not-a-bound")
 
 
+# The tables below log these fields. They name a commit SHA that could not be fetched.
+_NO_COMMIT_SHA = {
+    "dependency": "owner/repository",
+    "version": "1.1",
+    "reason": "HTTP 404",
+    "url": "https://github.com/owner/repository/releases/tag/1.1",
+}
+
+
 class LoggingTestCaseTest(unittest.TestCase):
     """Unit tests for the base test case that fails a test on an error it did not expect."""
 
@@ -89,7 +104,7 @@ class LoggingTestCaseTest(unittest.TestCase):
         result = unittest.TestResult()
         table("test_table").run(result)
         self.assertEqual(len(result.failures), 1)
-        self.assertIn("No valid version found", result.failures[0][1])
+        self.assertIn("Could not fetch commit SHA", result.failures[0][1])
 
     def test_an_error_an_earlier_case_of_a_table_logs_fails_the_test(self):
         """Test that an error the first case of a table logs fails the test, although the last case logs none."""
@@ -102,7 +117,7 @@ class LoggingTestCaseTest(unittest.TestCase):
                 for case in ("logs an error", "logs nothing"):
                     with self.subTest(case):
                         if case == "logs an error":
-                            Logger("test").no_version("owner/repository")
+                            Logger("test").no_commit_sha(**_NO_COMMIT_SHA)
 
         self.assert_fails_once_on_the_unexpected_error(Table)
 
@@ -116,9 +131,9 @@ class LoggingTestCaseTest(unittest.TestCase):
                 """Log an error in both cases, asserting it in the first only."""
                 for case in ("expects an error", "logs an error"):
                     with self.subTest(case):
-                        Logger("test").no_version("owner/repository")
+                        Logger("test").no_commit_sha(**_NO_COMMIT_SHA)
                         if case == "expects an error":
-                            self.assert_error_logged(Logger._MESSAGE_NO_VERSION, dependency="owner/repository")
+                            self.assert_error_logged(message_of(Logger.no_commit_sha), **_NO_COMMIT_SHA)
 
         self.assert_fails_once_on_the_unexpected_error(Table)
 

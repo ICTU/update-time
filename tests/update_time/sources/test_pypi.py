@@ -33,6 +33,7 @@ from tests.update_time.helpers import (
     bound,
     days_ago,
     github_release_json,
+    message_of,
     pypi_index,
     pypi_release,
     yanked_file,
@@ -735,7 +736,7 @@ class GetChangesTest(LoggingTestCase):
         )
         self.assertEqual(_changelog_from_url("https://changes", "1.0"), "")
         self.assert_logged(
-            Logger._MESSAGE_UNSERVED_CHANGELOG,
+            message_of(Logger.unserved_changelog),
             url="https://changes",
             status=HTTPStatus.NOT_FOUND,
             reason="Not Found",
@@ -755,7 +756,7 @@ class GetChangesTest(LoggingTestCase):
         """Test that a changelog URL that times out yields no changes, and is reported as a timeout."""
         mock_get.side_effect = requests.exceptions.Timeout
         self.assertEqual(_changelog_from_url("https://changes", "1.0"), "")
-        self.assert_logged(Logger._MESSAGE_TIMEOUT, url="https://changes")
+        self.assert_logged(message_of(Logger.timeout), url="https://changes")
 
 
 class GetPublicationDateTimeTest(CacheClearingTestCase):
@@ -919,7 +920,7 @@ class GetLatestVersionTest(LoggingTestCase):
                 self.assertEqual(get_latest_version("unreachable", "1.0", cooldown_days=cooldown_days).version, "1.0")
                 self.assertEqual(mock_get.call_count, 2)  # The index and the newest release's metadata
                 self.assert_error_logged(
-                    Logger._MESSAGE_NO_RELEASE_METADATA,
+                    message_of(Logger.no_release_metadata),
                     dependency="unreachable",
                     candidate="1.2",
                     current="1.0",

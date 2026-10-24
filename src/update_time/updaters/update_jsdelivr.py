@@ -93,10 +93,9 @@ class _ResolvedURL(ResolvedReference):
         that can't be resolved (an unreachable API, a file jsDelivr doesn't list) leaves nothing to compare, so it
         stays silent and the failed request reports itself.
         """
-        dependency, version = self.dependency, self.current_version
-        served_hash = integrity_hash(dependency, version, self.filename)
+        served_hash = integrity_hash(self.dependency, self.current_version, self.filename)
         if hash_drifted(served_hash, declared_hash):
-            _LOG.hash_mismatch(dependency, version, declared_hash, served_hash, self.location)
+            _LOG.hash_mismatch(self, declared_hash, served_hash)
 
 
 @dataclass
@@ -164,7 +163,7 @@ class _Rewriter:
         below never inherits a hash resolved for the one above.
         """
         if self.resolved is not None:
-            _LOG.cannot_pin(self.resolved.dependency, self.resolved.location)
+            _LOG.cannot_pin(self.resolved)
             self.resolved = None
 
 

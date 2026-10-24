@@ -11,7 +11,7 @@ from update_time.references.file import rewrite_file, update_file, update_yaml_f
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import IMAGE_REGEXP
-from tests.update_time.references.helpers import new_version_getter
+from tests.update_time.references.helpers import mock_logger, new_version_getter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -48,7 +48,9 @@ class UpdateFileTest(unittest.TestCase):
         """Test that several regexps are applied to the same content, reading and writing the file once."""
         mount_regexp = r"mount: (?P<dependency>[\w\d\./-]+):(?P<version>[\d\w\.\-]+)"
         mock_file = mock_path("image: python:3.14\nmount: redis:1.0\n")
-        update_file(mock_file, IMAGE_REGEXP, mount_regexp, get_new_version=new_version_getter("9.9"), logger=Mock())
+        update_file(
+            mock_file, IMAGE_REGEXP, mount_regexp, get_new_version=new_version_getter("9.9"), logger=mock_logger()
+        )
         mock_file.read_text.assert_called_once_with()
         mock_file.write_text.assert_called_once_with("image: python:9.9\nmount: redis:9.9\n")
 
@@ -61,11 +63,9 @@ class UpdateYamlFilesTest(unittest.TestCase):
     # A reference the regexp matches, so skipping is what leaves it alone, followed by an unclosed flow sequence.
     UNPARSABLE = "image: python:3.14\nbroken: [\n"
 
-    def update(self, mock_logger: Mock, get_new_version_for: Callable[[object], NewVersionGetter]) -> None:
+    def update(self, logger: Mock, get_new_version_for: Callable[[object], NewVersionGetter]) -> None:
         """Update the discovered files, building each file's getter with the given factory."""
-        update_yaml_files(
-            self.FILE_TYPE, regexp=IMAGE_REGEXP, get_new_version_for=get_new_version_for, logger=mock_logger
-        )
+        update_yaml_files(self.FILE_TYPE, regexp=IMAGE_REGEXP, get_new_version_for=get_new_version_for, logger=logger)
 
     @kills(
         Mutation(
@@ -86,11 +86,11 @@ class UpdateYamlFilesTest(unittest.TestCase):
         unparsable_file = mock_path(self.UNPARSABLE)
         next_file = mock_path("image: python:3.14\n")
         mock_glob.return_value = [unparsable_file, next_file]
-        mock_logger = Mock()
-        self.update(mock_logger, lambda _document: new_version_getter("3.15"))
+        logger = mock_logger()
+        self.update(logger, lambda _document: new_version_getter("3.15"))
         unparsable_file.write_text.assert_not_called()
         next_file.write_text.assert_called_once_with("image: python:3.15\n")
-        mock_logger.invalid_file.assert_called_once_with(unparsable_file, "YAML")
+        logger.invalid_file.assert_called_once_with(unparsable_file, "YAML")
 
     @kills(
         Mutation(
@@ -103,8 +103,8 @@ class UpdateYamlFilesTest(unittest.TestCase):
     def test_file_that_parses_to_nothing_is_not_reported(self, mock_glob: Mock):
         """Test that a file holding only comments is taken through the update rather than reported as invalid."""
         mock_glob.return_value = [mock_path("# image: python:3.14\n")]
-        mock_logger = Mock()
+        logger = mock_logger()
         get_new_version_for = Mock(return_value=new_version_getter("3.15"))
-        self.update(mock_logger, get_new_version_for)
+        self.update(logger, get_new_version_for)
         get_new_version_for.assert_called_once_with(None)
-        mock_logger.invalid_file.assert_not_called()
+        logger.invalid_file.assert_not_called()

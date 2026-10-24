@@ -29,6 +29,7 @@ from tests.update_time.helpers import (
     LoggingTestCase,
     github_commits_json,
     github_release_json,
+    message_of,
     npm_registry,
     published_version,
     staleness_disabled,
@@ -233,7 +234,9 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.run_below_package_json(mock_run, mock_glob, "{")
         error = json.JSONDecodeError("Expecting property name enclosed in double quotes", "{", 1)
         self.assert_logged(
-            Logger._MESSAGE_UNREADABLE_MANAGER_DECLARATION, location=Location(Path("/package.json")), error=str(error)
+            message_of(Logger.unreadable_manager_declaration),
+            location=Location(Path("/package.json")),
+            error=str(error),
         )
 
     def test_package_json_above_of_the_wrong_shape_is_passed_over(self, mock_run: Mock, mock_glob: Mock):
@@ -492,7 +495,9 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                     str(path): text for path, text in {root: _WORKSPACE_ROOT_CONTENTS, **member_files}.items()
                 }
                 update_package_jsons()
-                self.assert_logged(Logger._MESSAGE_UNREADABLE_PACKAGE_JSON, location=Location(member), error=str(error))
+                self.assert_logged(
+                    message_of(Logger.unreadable_package_json), location=Location(member), error=str(error)
+                )
                 published = published_version("1.1", _PUBLICATION_TIME)
                 self.assert_new_version_logged("package", published, Location(member))
 
@@ -888,9 +893,9 @@ class MarkerTest(NoUpdateTestCase):
     def test_an_inverted_comparison_is_reported(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that each item running the wrong way round is reported as incorrect."""
         messages = {
-            "stale>=90": Logger._MESSAGE_INVERTED_STALE_ITEM,
-            "cooldown>=30": Logger._MESSAGE_INVERTED_COOLDOWN_ITEM,
-            "vulnerable>=high": Logger._MESSAGE_INVERTED_VULNERABLE_ITEM,
+            "stale>=90": message_of(Logger._inverted_stale_item),
+            "cooldown>=30": message_of(Logger._inverted_cooldown_item),
+            "vulnerable>=high": message_of(Logger._inverted_vulnerable_item),
         }
         for item, message in messages.items():
             with self.subTest(item=item):
@@ -1048,4 +1053,4 @@ class MarkerTest(NoUpdateTestCase):
         package_json = self.run_on_marker(get, mock_run, glob, "ignore[update]", "2.0.11")
         marker = Marker(ignored_scopes=Scope.UPDATE)
         self.assert_recognised_marker_logged("clipboard", Location(package_json, 4), marker)
-        self.assert_none_logged(Logger._MESSAGE_IGNORED, "update held back by a marker")
+        self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
