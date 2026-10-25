@@ -137,14 +137,14 @@ class Mutation:
         return ".".join(filter(None, (self._module.__name__, self._qualified_name)))
 
     @property
-    def _path(self) -> str:
+    def path(self) -> str:
         """Return the file the module was loaded from."""
         return self._module.__file__ or ""
 
     def _source(self) -> str:
         """Return the source of the file the mutation changes."""
         try:
-            return _READ_TEXT(Path(self._path))
+            return _READ_TEXT(Path(self.path))
         except OSError as error:
             raise StaleError(_reason(error)) from error
 
@@ -155,6 +155,15 @@ class Mutation:
             message = f"the snippet lies inside {function}, so anchor the mutation on {function}"
             raise StaleError(message)
         return mutated
+
+    @property
+    def lines(self) -> range:
+        """Return the numbers of the lines the snippet covers in its file, counted from one."""
+        source = self._source()
+        start, end = _span(source, self._qualified_name)
+        offset = start + source[start:end].index(self.old)
+        first = source.count("\n", 0, offset) + 1
+        return range(first, first + self.old.count("\n") + 1)
 
     def check(self, test_name: str) -> Result:
         """Return what checking the mutation showed: whether the test fails against it, or the file has moved on.
@@ -201,7 +210,7 @@ class Mutation:
         definition = header + mutated[line_start:end]
         defined: dict[str, Any] = {}
         try:
-            exec(compile(definition, self._path, "exec"), dict(vars(self._module)), defined)  # noqa: S102 # nosec
+            exec(compile(definition, self.path, "exec"), dict(vars(self._module)), defined)  # noqa: S102 # nosec
         except Exception:  # noqa: BLE001  # Executing the module afresh reports what the definition raises.
             return None
         return defined.get(self._qualified_name.rsplit(".", maxsplit=1)[-1])
@@ -505,9 +514,10 @@ def kills(*mutations: Mutation) -> Callable[[_Method], _Method]:
     """Return a decorator making the decorated test kill the mutations it is meant to kill.
 
     The test runs its own body first, so a test already failing for a reason of its own never reports a mutation as
-    killed. It checks the mutations once it has finished, when the patches decorating it have stopped, since checking
-    a mutation runs the test again. One decorator holds every mutation a test kills, so there is never a
-    reason to write two. A second decorator on the same test fails it, as does one given no mutation at all.
+    killed. It checks the mutations once it has finished and its other cleanups have run, when the patches decorating
+    it and the ones its set-up entered have stopped, since checking a mutation runs the test again. One decorator
+    holds every mutation a test kills, so there is never a reason to write two. A second decorator on the same test
+    fails it, as does one given no mutation at all.
     """
 
     def decorate(method: _Method) -> _Method:
@@ -523,13 +533,20 @@ def kills(*mutations: Mutation) -> Callable[[_Method], _Method]:
                 return result
             if os.environ.get(CHECKED_TEST) == self.id() or os.environ.get(CHECKS_OFF) == "1":
                 return result
-            self.addCleanup(_fail_unless_killed, self, mutations)
+            cleanups = self._cleanups  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            # `doCleanups` runs the cleanups from the end of the list, so the check at its front runs after the others:
+            cleanups.insert(0, (_fail_unless_killed, (self, mutations), {}))
             return result
 
         setattr(wrapper, _REGISTERED, mutations)
         return cast("_Method", wrapper)
 
     return decorate
+
+
+def registered_mutations(test: unittest.TestCase) -> tuple[Mutation, ...]:
+    """Return the mutations the test's kills decorator registers, or none for a test without one."""
+    return getattr(getattr(type(test), test.id().rsplit(".", 1)[-1], None), _REGISTERED, ())
 
 
 class KillsTestLoader(unittest.TestLoader):

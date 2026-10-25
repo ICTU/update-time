@@ -35,6 +35,7 @@ if TYPE_CHECKING:
         FloatingPin,
         ImageNotLookedUp,
         Release,
+        VersionString,
     )
     from update_time.domain.reference import DriftedPin, Reference, ResolvedReference
     from update_time.domain.vulnerability import Vulnerability
@@ -355,6 +356,19 @@ class Logger:
         if version.changes:
             return {**fields, CHANGES: version.changes}
         return {**fields, NOTE: self._NO_CHANGELOG}
+
+    _RANGE_REWRITE = "%(manager)s rewrote the range of %(dependency)s in %(location)s from %(range)s to %(new_range)s"
+
+    @_info(f"{_RANGE_REWRITE}; the version in the lock file is unchanged at %(version)s")
+    @_info(f"{_RANGE_REWRITE}; the lock file did not record a version before")
+    def range_rewrite(
+        self, manager: str, reference: Reference, new_range: str, version: VersionString
+    ) -> dict[str, object]:
+        """Log that a package manager rewrote the range a reference declares, with the version locked before if any."""
+        fields = self._reference_fields(
+            reference, manager=manager, range=reference.current_version, new_range=new_range
+        )
+        return {**fields, "version": version} if version else fields
 
     _HELD_BACK_BY_COOLDOWN = (
         "Holding back version %(version)s of %(dependency)s in %(location)s: published %(published)s, within the "
@@ -892,7 +906,7 @@ class Logger:
 
     @_warning("Could not read %(location)s to find the lines declaring its dependencies (%(error)s)")
     def unreadable_package_json(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
-        """Warn that a package.json can't be read, so its new versions are logged without the lines declaring them."""
+        """Warn that a package.json can't be read to find the lines declaring its dependencies."""
         return self._file_fields(path, error=str(error))
 
     @_warning("Could not read %(location)s to find the package manager it names (%(error)s)")

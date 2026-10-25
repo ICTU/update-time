@@ -4,6 +4,7 @@ import json
 import unittest
 from typing import TYPE_CHECKING
 
+from update_time.domain.reference import Reference
 from update_time.formats import json as json_format
 from update_time.manifests import package_json
 from update_time.manifests.package_json import Declaration
@@ -37,6 +38,11 @@ class ReferenceMarkerTest(unittest.TestCase):
 class DependencyLocationsTest(unittest.TestCase):
     """Unit tests for reading the direct registry dependencies and where each is declared."""
 
+    @staticmethod
+    def locations(path: Mock) -> dict[str, list[Location]]:
+        """Return each direct registry dependency of the package.json and where its entries sit."""
+        return package_json.dependency_locations(json_format.read(path))
+
     def test_every_entry_across_the_sections(self):
         """Test that every entry in the dependency sections is returned, in order, each at its own line."""
         path = mock_path(
@@ -48,7 +54,7 @@ class DependencyLocationsTest(unittest.TestCase):
             "}\n"
         )
         self.assertEqual(
-            package_json.dependency_locations(path),
+            self.locations(path),
             {
                 "react": [Location(path, 3, 4), Location(path, 8, 4)],  # declared twice, so it keeps both lines
                 "left-pad": [Location(path, 4, 4)],
@@ -61,7 +67,7 @@ class DependencyLocationsTest(unittest.TestCase):
         """Test that each dependency is located at the line its entry sits on."""
         path = mock_path('{\n  "dependencies": {\n    "react": "^18.0.0",\n    "left-pad": "1.3.0"\n  }\n}\n')
         self.assertEqual(
-            package_json.dependency_locations(path),
+            self.locations(path),
             {"react": [Location(path, 3, 4)], "left-pad": [Location(path, 4, 4)]},
         )
 
@@ -75,7 +81,7 @@ class DependencyLocationsTest(unittest.TestCase):
             "}\n"
         )
         self.assertEqual(
-            package_json.dependency_locations(path),
+            self.locations(path),
             {"react": [Location(path, 9, 4)], "left-pad": [Location(path, 10, 4)]},
         )
 
@@ -93,12 +99,44 @@ class DependencyLocationsTest(unittest.TestCase):
                 }
             }
         )
-        located = package_json.dependency_locations(mock_path(contents))
+        located = self.locations(mock_path(contents))
         self.assertEqual(list(located), ["clipboard"])
 
     def test_no_dependencies(self):
         """Test that a package.json without dependency sections yields nothing."""
-        self.assertEqual(package_json.dependency_locations(mock_path('{"name": "x"}')), {})
+        self.assertEqual(self.locations(mock_path('{"name": "x"}')), {})
+
+
+class DeclaredRangesTest(unittest.TestCase):
+    """Unit tests for reading the range each registry dependency declares."""
+
+    @staticmethod
+    def ranges(path: Mock) -> dict[tuple[str, str], Reference]:
+        """Return a reference to the range each registry dependency of the package.json declares."""
+        return package_json.declared_ranges(json_format.read(path))
+
+    def test_a_range_per_section_declaring_the_name(self):
+        """Test that a name two sections declare has a range per section, each at its own line."""
+        path = mock_path(
+            "{\n"
+            '  "dependencies": {\n    "react": "^18.0.0"\n  },\n'
+            '  "devDependencies": {\n    "react": "~18.2.0"\n  }\n'
+            "}\n"
+        )
+        self.assertEqual(
+            self.ranges(path),
+            {
+                ("dependencies", "react"): Reference("react", "^18.0.0", Location(path, 3, 4)),
+                ("devDependencies", "react"): Reference("react", "~18.2.0", Location(path, 6, 4)),
+            },
+        )
+
+    def test_non_registry_specs_skipped(self):
+        """Test that a git URL and the github shorthand are skipped, since neither names a registry release."""
+        specs = {"clipboard": "^2.0.11", "bats": "git+https://github.com/calj/bats.git", "forked": "github:org/repo"}
+        self.assertEqual(
+            list(self.ranges(mock_path(json.dumps({"dependencies": specs})))), [("dependencies", "clipboard")]
+        )
 
 
 class DeclarationsTest(unittest.TestCase):

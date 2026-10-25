@@ -481,6 +481,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@NO_RELEASE_METADATA@@": no_release_metadata,
         **_uv_dependencies_not_updated(log, capture),
         **_manifests_without_dependencies(log, capture),
+        **_range_rewrites(log, capture),
         **_uv_cooldown_not_set(log, capture),
         **rate_limits,
         "@@HELD_BACK_BY_COOLDOWN@@": held_back_by_cooldown,
@@ -508,6 +509,14 @@ def _manifests_without_dependencies(log: Logger, capture: _Capture) -> dict[str,
     package_json = capture.take()
     log.no_dependencies(Path("pyproject.toml"), "uv", "resolve")
     return {"@@NO_NODE_DEPENDENCIES@@": package_json, "@@NO_PYTHON_DEPENDENCIES@@": capture.take()}
+
+
+def _range_rewrites(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that npm rewrote a range where the lock file held its version already, and where it held none."""
+    package_json = Location(Path("dev/package.json"), 5)
+    log.range_rewrite("npm", reference("minimatch", package_json, "^3.1.2"), "^3.1.5", "3.1.5")
+    log.range_rewrite("npm", reference("minimatch", package_json, "^3.0.0"), "^3.1.5", "")
+    return {"@@RANGE_REWRITES@@": capture.take()}
 
 
 def _uv_cooldown_not_set(log: Logger, capture: _Capture) -> dict[str, str]:
