@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from update_time.domain.reference import Reference
 from update_time.formats import json as json_format
 from update_time.markers.marker import Marker, ReferenceMarker, parse_directives
 from update_time.markers.reference import SteeredReference
@@ -12,7 +13,6 @@ from update_time.primitives.text import column, line_number
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
     from update_time.domain.dependency import DependencyName
     from update_time.formats.json import JsonFile
@@ -78,16 +78,26 @@ class Declaration(SteeredReference):
     names_a_release: bool
 
 
-def dependency_locations(path: Path) -> dict[DependencyName, list[Location]]:
+def dependency_locations(package_json: JsonFile) -> dict[DependencyName, list[Location]]:
     """Return each direct registry dependency and the locations of the entries declaring it.
 
     A name declared in several sections carries a location per entry, so none of the lines it sits on is lost.
     """
     locations: dict[DependencyName, list[Location]] = {}
-    for declaration in declarations(json_format.read(path)):
+    for declaration in declarations(package_json):
         if declaration.names_a_release:
             locations.setdefault(declaration.dependency, []).append(declaration.location)
     return locations
+
+
+def declared_ranges(package_json: JsonFile) -> dict[tuple[str, DependencyName], Reference]:
+    """Return a reference to the range each registry dependency declares, keyed by its section and name."""
+    return {
+        (section, name): Reference(name, spec, _entry_location(package_json, section, name))
+        for section in DEPENDENCY_SECTIONS
+        for name, spec in package_json.contents.get(section, {}).items()
+        if _is_registry_spec(spec)
+    }
 
 
 def declares_a_dependency(package_json: JsonFile) -> bool:

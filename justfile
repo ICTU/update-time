@@ -194,9 +194,9 @@ mutate-help:
     @echo "leave it unregistered."
 
 # Run Python with the package importable, to probe how it behaves. See `just help py`.
-[env("PYTHONPATH", "src")]
+[no-cd]
 py *args: install-py-dependencies
-    {{ uv_run }} python "$@"
+    PYTHONPATH={{ justfile_directory() }}/src {{ uv_run }} --project {{ justfile_directory() }} python "$@"
 
 [private]
 py-help:
@@ -208,21 +208,36 @@ py-help:
     @echo "    print(get_changes('react-grid-layout', '2.2.4'))"
     @echo "    EOF"
     @echo "\nARGS goes to the interpreter untouched, so a script path and its arguments work too."
+    @echo "\nPython runs in the directory just was called from. To run a probe in another directory, such as one"
+    @echo "the scan should start in, change to it and name this justfile:"
+    @echo "\n    cd \"\$TMPDIR/probe\" && just --justfile {{ justfile() }} py - <<'EOF'"
 
-# Report where a name is called, and how many places call it. See `just help callers`.
-callers name: install-py-dependencies
-    {{ python_m }} tools.callers "$@"
+# Report the registered mutations that tests besides the registering one kill as well. See `just help audit-mutations`.
+[env("PYTHONPATH", "src")]
+audit-mutations: install-py-dependencies install-nltk-data
+    {{ python_m }} tools.audit_mutations
 
 [private]
-callers-help:
-    @echo "\nReport every call this repository makes to NAME, one per line, and the number of them, so the size of"
+audit-mutations-help:
+    @echo "\nRun the suite once under coverage, to learn which tests run each line. Then check every mutation a kills"
+    @echo "decorator registers against the other tests that run its lines, and report each mutation one of them kills"
+    @echo "as well. Such a registration guards nothing the suite does not, so it can go. The run fails when it reports"
+    @echo "one."
+
+# Report where a name is used, and how many usages it has. See `just help usages`.
+usages name: install-py-dependencies
+    {{ python_m }} tools.usages "$@"
+
+[private]
+usages-help:
+    @echo "\nReport every usage this repository makes of NAME, one per line, and the number of them, so the size of"
     @echo "a change to the name is counted rather than guessed:"
-    @echo "\n    just callers assert_new_version_logged"
-    @echo "\nThe calls are read off the syntax rather than matched as text, so a call whose arguments sit on their"
-    @echo "own lines counts once, at the line it starts on, and the line defining the name counts not at all."
-    @echo "\nA name nothing defines fails the run, so a report of no call sites says the name exists and nothing"
-    @echo "calls it, rather than leaving a misspelling to read the same way. A file whose Python does not parse"
-    @echo "fails the run by name, so a count is never quietly short."
+    @echo "\n    just usages update_time.package_managers.node._ProjectUpdate.log_new_versions"
+    @echo "\nThe usages come from ty's language server. So a method called on self or on an instance counts, and"
+    @echo "so do an import, an alias, and a name passed as a value."
+    @echo "\nGive NAME qualified, or give the end of one, such as log_new_versions or _ProjectUpdate.log_new_versions."
+    @echo "A name that ends several definitions fails the run and lists them. A name nothing defines fails the run"
+    @echo "too, so a report of no usages says the name exists and nothing uses it."
 
 # === Run checks ===
 

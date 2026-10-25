@@ -1059,7 +1059,15 @@ Update-time delegates updating Node dependencies to the package manager that man
 
 #### What versions are updated?
 
-Because Update-time delegates updating Node dependencies to a package manager, that package manager also chooses the version. Both npm and pnpm update a dependency to the newest version that satisfies the range declared in the `package.json`. So a dependency declared as `"react": "^17.0.0"` receives `17.x` updates, but never moves to `18`, and one pinned to an exact version stays where it is. Update-time reports a new version for each dependency whose version in the lock file moved. npm moves the dependencies of an npm workspace's members along with those of its root, and Update-time reports each such new version at the member's `package.json`. See the documentation of [npm update](https://docs.npmjs.com/cli/v12/commands/npm-update) and [pnpm update](https://pnpm.io/cli/update) for the finer points of how each manager resolves versions.
+Because Update-time delegates updating Node dependencies to a package manager, that package manager also chooses the version. Both npm and pnpm update a dependency to the newest version that satisfies the range declared in the `package.json`. So a dependency declared as `"react": "^17.0.0"` receives `17.x` updates, but never moves to `18`, and one pinned to an exact version stays where it is. Update-time reports a new version for each dependency whose version in the lock file moved.
+
+Both managers also write the version they resolve into the declared range, and sort the keys of each section. They do so whether or not the version in the lock file moved. Where the version in the lock file did not move, Update-time reports the rewritten range at `INFO`. Where the lock file did not record a version before the run, the line says so:
+
+```console
+@@RANGE_REWRITES@@
+```
+
+npm moves and rewrites the dependencies of an npm workspace's members along with those of its root. Update-time runs npm for a workspace root before its members, and reports each new version and each rewritten range at the member's `package.json`. See the documentation of [npm update](https://docs.npmjs.com/cli/v12/commands/npm-update) and [pnpm update](https://pnpm.io/cli/update) for the finer points of how each manager resolves versions.
 
 #### Pinning
 

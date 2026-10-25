@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Stop reporting a new version for a Maven artefact Maven Central does not serve, where Maven moved its property for an artefact Maven Central does serve. Closes [#478](https://github.com/ICTU/update-time/issues/478).
 - Report the publication date of a new Maven dependency or plugin version, as for the other dependency types. Closes [#479](https://github.com/ICTU/update-time/issues/479).
 - Warn once about a Maven dependency or plugin that a profile declares without a version, at the declaration managing its version, where Maven does not activate that profile. Closes [#480](https://github.com/ICTU/update-time/issues/480).
+- Report a range that npm or pnpm rewrites in a `package.json` while the version in the lock file stays where it was. Closes [#481](https://github.com/ICTU/update-time/issues/481).
 
 ## 0.0.52 - 2026-10-23
 

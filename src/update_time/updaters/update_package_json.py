@@ -79,22 +79,25 @@ def update_package_jsons() -> None:
     any package.json it runs for.
     """
     supported = []
-    for package_json in glob_for(PACKAGE_JSON):
-        file = json_format.read(package_json)
+    # npm rewrites the ranges of a workspace's members as it updates the root, so the root runs first and logs them:
+    for package_json in sorted(glob_for(PACKAGE_JSON), key=lambda path: len(path.parts)):
+        if (file := node.readable_package_json(package_json, _LOG.unreadable_package_json)) is None:
+            continue
         if (manager := node.SUPPORTED_MANAGERS.get(name := _package_manager(file))) is None:
             _LOG.unsupported_package_manager(package_json, name, " and ".join(node.SUPPORTED_MANAGERS))
             continue
         if package_json_format.declares_a_dependency(file):
-            manager.update_package_json(package_json)
+            checked_package_json = manager.update_package_json(file)
         else:
             _LOG.no_dependencies(package_json, name, "install")
-        supported.append(package_json)
+            checked_package_json = file
+        if checked_package_json is not None:
+            supported.append(checked_package_json)
     _warn_about_dependencies(supported)
 
 
-def _warn_about_dependencies(package_jsons: list[Path]) -> None:
+def _warn_about_dependencies(files: list[JsonFile]) -> None:
     """Report the marker of each dependency, and check the dependencies of each package.json."""
-    files = [json_format.read(package_json) for package_json in package_jsons]
     declarations = [list(package_json_format.declarations(file)) for file in files]
     check_targets = [report_markers(file_declarations, _LOG, node.POLICY) for file_declarations in declarations]
     warn_about_redundant_directives(declarations, _LOG, node.POLICY)

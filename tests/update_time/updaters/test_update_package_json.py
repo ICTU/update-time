@@ -1,8 +1,10 @@
 """Unit tests for the package.json updater (discovery and orchestration of the node package managers)."""
 
+import itertools
 import json
 import posixpath
 import subprocess  # nosec
+import unittest
 from datetime import datetime
 from logging import WARNING
 from pathlib import Path
@@ -14,6 +16,7 @@ from update_time.domain.dependency import Yank
 from update_time.io.log import Logger
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope
+from update_time.package_managers import node as node_module
 from update_time.package_managers import policy as policy_module
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
@@ -31,6 +34,7 @@ from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
 from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulnerabilities, osv
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import datetime
 
 _NPM_COOLDOWN_OPTION = f"--min-release-age={COOLDOWN.default}"  # the cooldown npm option Update-time adds by default
@@ -53,21 +57,28 @@ def _package_lookup_responses() -> Mock:
     After a manager reports a package updated to 1.1, Update-time resolves its changelog and push date via four
     sequential requests: the package's repository URL (npm registry), the GitHub releases (the changelog), the npm
     registry publication time, and the release's commit SHA. A fresh mock is returned per call so each decorated
-    test gets its own unexhausted `side_effect`.
+    test gets answers of its own, and the answers cycle, so a test run again by its kills check gets them again.
     """
     return Mock(
-        side_effect=[
-            mock_response({"repository": {"url": "https://github.com/package/1.1"}}),
-            mock_response([github_release_json("v1.1", body="Changelog")]),
-            mock_response({"time": {"1.1": _PUBLICATION_TIME}}),
-            mock_response(github_commits_json()),
-        ]
+        side_effect=itertools.cycle(
+            [
+                mock_response({"repository": {"url": "https://github.com/package/1.1"}}),
+                mock_response([github_release_json("v1.1", body="Changelog")]),
+                mock_response({"time": {"1.1": _PUBLICATION_TIME}}),
+                mock_response(github_commits_json()),
+            ]
+        )
     )
 
 
 def _npm_lock(**versions: str) -> Mock:
     """Return what `npm list` prints for a lock file holding the versions."""
     return Mock(stdout=json.dumps({"dependencies": {name: {"version": version} for name, version in versions.items()}}))
+
+
+def _no_lock_file() -> subprocess.CalledProcessError:
+    """Return the error `npm list` fails with where the project does not have a lock file."""
+    return subprocess.CalledProcessError(cmd="", returncode=1, output='{"error": {"code": "ENOLOCK"}}', stderr="")
 
 
 def _npm_member(name: str, directory: str, **versions: str) -> dict:
@@ -123,6 +134,16 @@ _GIT_DEPENDENCY = {"devDependencies": {"bats": "git+https://github.com/calj/bats
 # A package.json pinning left-pad to version 1.3.0, on line 4.
 _LEFT_PAD_PINNED = '{\n  "name": "app",\n  "dependencies": {\n    "left-pad": "1.3.0"\n  }\n}\n'
 
+# A package.json declaring minimatch with the range ^3.1.2, on line 3.
+_MINIMATCH_RANGE = '{\n  "dependencies": {\n    "minimatch": "^3.1.2"\n  }\n}\n'
+
+# The fields npm's rewrite of minimatch's range to ^3.1.5 is logged with, where the lock file held 3.1.5 already.
+_MINIMATCH_REWRITE = {"dependency": "minimatch", "range": "^3.1.2", "new_range": "^3.1.5", "version": "3.1.5"}
+
+# What a package.json holds that cannot be read, and the error reading it raises.
+_UNREADABLE = "{"
+_UNREADABLE_ERROR = json.JSONDecodeError("Expecting property name enclosed in double quotes", _UNREADABLE, 1)
+
 
 def _discover_package_json(glob: Mock, contents: str) -> Mock:
     """Return a mock package.json holding the contents, as the only one the glob finds."""
@@ -134,6 +155,11 @@ def _discover_package_json(glob: Mock, contents: str) -> Mock:
 def _npm_no_update() -> list:
     """Return what npm prints when the update moves nothing: an empty listing, the update, and the listing again."""
     return [Mock(stdout="{}"), Mock(stdout=""), Mock(stdout="{}")]
+
+
+def _npm_unmoved(locked: Mock) -> list:
+    """Return the npm runs of an update that leaves the lock file's versions as the listing holds them."""
+    return _npm_runs(locked, Mock(stdout=""), locked)
 
 
 def _npm_runs(*results: object, prefix: object = None) -> list:
@@ -152,6 +178,21 @@ def _assert_manager_called(mock_run: Mock, locked: Command, update: Command, dir
     mock_run.assert_has_calls((call(locked, **run_kwargs), call(update, **run_kwargs), call(locked, **run_kwargs)))
 
 
+# Every log of a rewritten range carries these fields. The wording naming the version locked before adds `version`.
+_RANGE_REWRITE_FIELDS = ("manager", "dependency", "location", "range", "new_range")
+
+
+class PackageLookupResponsesTest(unittest.TestCase):
+    """Unit tests for the registry and GitHub answers the tests that log a new version are given."""
+
+    def test_a_second_run_gets_the_answers_the_first_got(self):
+        """Test that the lookups of a test run again, as a kills check runs it, get the answers the first run got."""
+        get = _package_lookup_responses()
+        first_run = [get().json() for _ in range(4)]
+        second_run = [get().json() for _ in range(4)]
+        self.assertEqual(second_run, first_run)
+
+
 class _PackageJsonFilesTestCase(LoggingTestCase):
     """Base for the tests that read and write package.json files in a file system in memory."""
 
@@ -166,6 +207,33 @@ class _PackageJsonFilesTestCase(LoggingTestCase):
         path = directory / "package.json"
         self.files.files[str(path)] = contents
         return path
+
+    def assert_range_rewrite_logged(self, **fields: object) -> None:
+        """Assert that the rewrite of a range was the only record logged at its level, with the given fields."""
+        self.assert_logged(message_of(Logger.range_rewrite, *fields), **fields)
+
+    def assert_unreadable_package_json_warned(self, path: Path, error: Exception = _UNREADABLE_ERROR) -> None:
+        """Assert that a warning about the unreadable package.json was the only one logged, with the error."""
+        self.assert_logged(message_of(Logger.unreadable_package_json), location=Location(path), error=str(error))
+
+    def assert_no_range_rewrite_logged(self) -> None:
+        """Assert that no rewrite of a range was logged, in either wording."""
+        self.assert_none_logged(message_of(Logger.range_rewrite, *_RANGE_REWRITE_FIELDS), "range rewrite")
+        self.assert_none_logged(message_of(Logger.range_rewrite, *_RANGE_REWRITE_FIELDS, "version"), "range rewrite")
+
+    def update_stub(self, package_json: Path, saved: str, results: list) -> Callable[..., Mock]:
+        """Return a `subprocess.run` stub that answers with the results and saves the package.json on an update."""
+        answers = iter(results)
+
+        def run(command: Command, **_kwargs: object) -> Mock:
+            """Answer the next run, raising an error as the run's answer, and save the package.json on an update."""
+            if command[1] == "update":
+                self.files.files[str(package_json)] = saved
+            if isinstance(answer := next(answers), BaseException):
+                raise answer
+            return answer
+
+        return run
 
 
 # Staleness makes its own npm registry requests; it is disabled here and covered by StaleDependencyTest below.
@@ -224,13 +292,22 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
 
     def test_invalid_package_json_above_is_warned_about_and_passed_over(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json above that does not parse is warned about, and passed over."""
-        self.run_below_package_json(mock_run, mock_glob, "{")
-        error = json.JSONDecodeError("Expecting property name enclosed in double quotes", "{", 1)
+        self.run_below_package_json(mock_run, mock_glob, _UNREADABLE)
         self.assert_logged(
             message_of(Logger.unreadable_manager_declaration),
             location=Location(Path("/package.json")),
-            error=str(error),
+            error=str(_UNREADABLE_ERROR),
         )
+
+    def test_package_json_that_does_not_parse_is_warned_about_and_passed_over(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a package.json the scan finds that does not parse is warned about, and the others still update."""
+        root = self.write_package_json(json.dumps(_GIT_DEPENDENCY))
+        fixture = self.write_package_json(_UNREADABLE, Path("/fixtures"))
+        mock_glob.return_value = [root, fixture]
+        mock_run.side_effect = _npm_runs(*_npm_no_update())
+        update_package_jsons()
+        self.assert_npm_called(mock_run)
+        self.assert_unreadable_package_json_warned(fixture)
 
     def test_package_json_above_of_the_wrong_shape_is_passed_over(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json above that holds a list, or a `packageManager` number, is passed over silently."""
@@ -256,11 +333,13 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.assert_no_warnings_logged()
 
     @patch("requests.Session.get", _package_lookup_responses())
-    def test_new_version_is_logged_at_the_line_declaring_the_dependency(self, mock_run: Mock, mock_glob: Mock):
-        """Test that the new version is logged at the line declaring the dependency npm updated."""
-        package_json = self.create_package_json('{\n  "dependencies": {\n    "package": "^1.0.0"\n  }\n}\n')
+    def test_new_version_alone_is_logged_at_the_line_declaring_the_dependency(self, mock_run: Mock, mock_glob: Mock):
+        """Test that the new version alone is logged at the line declaring the dependency, whose range npm rewrote."""
+        original = '{\n  "dependencies": {\n    "package": "^1.0.0"\n  }\n}\n'
+        package_json = self.create_package_json(original)
         mock_glob.return_value = [package_json]
-        mock_run.side_effect = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
+        runs = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
+        mock_run.side_effect = self.update_stub(package_json, original.replace("^1.0.0", "^1.1.0"), runs)
         update_package_jsons()
         self.assert_new_version_logged(
             "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3), changes="Changelog"
@@ -298,26 +377,58 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         )
 
     def test_manifest_kept_as_npm_saved_it_when_no_version_moved(self, mock_run: Mock, mock_glob: Mock):
-        """Test that the specs npm saved, such as a git URL in the github: shorthand, are kept."""
+        """Test that the specs npm saved, such as a git URL in the github: shorthand, are kept and not logged."""
         original = '{\n  "devDependencies": {\n    "bats": "git+https://github.com/calj/bats.git"\n  }\n}\n'
         package_json = self.create_package_json(original)
         mock_glob.return_value = [package_json]
-        runs = iter(_npm_runs(*_npm_no_update()))
-
-        def run(command: Command, **_kwargs: object) -> Mock:
-            """Answer the next npm run, saving the package.json with the git URL in shorthand when npm updates."""
-            if command[:2] == ("npm", "update"):
-                self.files.files[str(package_json)] = saved
-            return next(runs)
-
         saved = original.replace("git+https://github.com/calj/bats.git", "github:calj/bats")
-        mock_run.side_effect = run
+        locked = _npm_lock(bats="1.0.0")
+        mock_run.side_effect = self.update_stub(package_json, saved, _npm_unmoved(locked))
         update_package_jsons()
         self.assertEqual(self.files[package_json], saved)
         self.assert_npm_called(mock_run)
         self.assert_path_logged(package_json)
         self.assert_no_new_version_logged()
+        self.assert_no_range_rewrite_logged()
         self.assert_no_warnings_logged()
+
+    def test_range_rewrite_is_logged_at_each_line_declaring_the_dependency(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a dependency two sections declare has the rewrite of its range logged at each of those lines."""
+        original = (
+            "{\n"
+            '  "dependencies": {\n    "minimatch": "^3.1.2"\n  },\n'
+            '  "devDependencies": {\n    "minimatch": "^3.1.2"\n  }\n'
+            "}\n"
+        )
+        package_json = self.create_package_json(original)
+        mock_glob.return_value = [package_json]
+        locked = _npm_lock(minimatch="3.1.5")
+        saved = original.replace("^3.1.2", "^3.1.5")
+        mock_run.side_effect = self.update_stub(package_json, saved, _npm_unmoved(locked))
+        update_package_jsons()
+        fields = {"manager": "npm", **_MINIMATCH_REWRITE}
+        message = message_of(Logger.range_rewrite, *fields)
+        self.assert_logged_among_others(message, location=Location(package_json, 3), **fields)
+        self.assert_logged_among_others(message, location=Location(package_json, 6), **fields)
+
+    @kills(
+        Mutation(
+            node_module._ProjectUpdate.log_range_rewrites,
+            "range_before.current_version == range_after.current_version",
+            "range_before == range_after",
+            "a range npm only moved to another line by sorting the keys is logged as rewritten",
+        )
+    )
+    def test_range_npm_only_moved_by_sorting_the_keys_is_not_logged(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a range npm moved to another line by sorting the keys is not logged, beside one it rewrote."""
+        original = '{\n  "dependencies": {\n    "minimatch": "^3.1.2",\n    "ansi-regex": "^5.0.1"\n  }\n}\n'
+        package_json = self.create_package_json(original)
+        mock_glob.return_value = [package_json]
+        locked = _npm_lock(minimatch="3.1.5", **{"ansi-regex": "5.0.1"})
+        saved = '{\n  "dependencies": {\n    "ansi-regex": "^5.0.1",\n    "minimatch": "^3.1.5"\n  }\n}\n'
+        mock_run.side_effect = self.update_stub(package_json, saved, _npm_unmoved(locked))
+        update_package_jsons()
+        self.assert_range_rewrite_logged(manager="npm", location=Location(package_json, 4), **_MINIMATCH_REWRITE)
 
     def test_unmoved_version_not_logged(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package is not logged when npm update did not move its locked version."""
@@ -337,13 +448,26 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         """Test that a package is not logged when the lock file did not record it before the update."""
         package_json = self.create_package_json()
         mock_glob.return_value = [package_json]
-        no_lock_file = subprocess.CalledProcessError(
-            cmd="", returncode=1, output='{"error": {"code": "ENOLOCK"}}', stderr=""
-        )
-        mock_run.side_effect = _npm_runs(no_lock_file, Mock(stdout=""), _npm_lock(package="1.1"))
+        mock_run.side_effect = _npm_runs(_no_lock_file(), Mock(stdout=""), _npm_lock(package="1.1"))
         update_package_jsons()
         self.assert_npm_called(mock_run)
         self.assert_no_new_version_logged()
+
+    def test_range_rewrite_says_the_lock_file_did_not_record_a_version_before(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a range npm rewrote says so, where the lock file did not record a version before the update."""
+        original = '{\n  "dependencies": {\n    "minimatch": "^3.0.0"\n  }\n}\n'
+        package_json = self.create_package_json(original)
+        mock_glob.return_value = [package_json]
+        runs = _npm_runs(_no_lock_file(), Mock(stdout=""), _npm_lock(minimatch="3.1.5"))
+        mock_run.side_effect = self.update_stub(package_json, original.replace("^3.0.0", "^3.1.5"), runs)
+        update_package_jsons()
+        self.assert_range_rewrite_logged(
+            manager="npm",
+            dependency="minimatch",
+            location=Location(package_json, 3),
+            range="^3.0.0",
+            new_range="^3.1.5",
+        )
 
     def test_empty_npm_output(self, mock_run: Mock, mock_glob: Mock):
         """Test that empty npm output (e.g. from a failed command) is treated as no data rather than crashing."""
@@ -355,6 +479,43 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.assert_npm_called(mock_run)
         self.assertEqual(self.files[package_json], json.dumps(_GIT_DEPENDENCY))
         self.assert_no_new_version_logged()
+
+    def test_range_rewrite_not_logged_when_the_listing_after_the_update_fails(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a rewritten range is not logged when npm fails to list the lock file after the update."""
+        package_json = self.create_package_json(_MINIMATCH_RANGE)
+        mock_glob.return_value = [package_json]
+        saved = _MINIMATCH_RANGE.replace("^3.1.2", "^3.1.5")
+        failed_listing = subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr="npm error EJSONPARSE")
+        runs = _npm_runs(_npm_lock(minimatch="3.1.5"), Mock(stdout=""), failed_listing)
+        mock_run.side_effect = self.update_stub(package_json, saved, runs)
+        update_package_jsons()
+        self.assertEqual(self.files[package_json], saved)
+        self.assert_command_stderr_logged(stderr="npm error EJSONPARSE")
+        self.assert_no_range_rewrite_logged()
+
+    def test_package_json_unreadable_after_the_update_is_warned_about_and_logs_no_range(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a package.json npm left unreadable is warned about, and that its ranges are not logged."""
+        package_json = self.create_package_json(_MINIMATCH_RANGE)
+        mock_glob.return_value = [package_json]
+        mock_run.side_effect = self.update_stub(package_json, _UNREADABLE, _npm_unmoved(_npm_lock(minimatch="3.1.5")))
+        update_package_jsons()
+        self.assert_unreadable_package_json_warned(package_json)
+        self.assert_no_range_rewrite_logged()
+
+    @_publishing_version_1_1
+    def test_package_json_unreadable_after_the_update_is_warned_about_once_while_a_version_moved(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a package.json npm left unreadable is warned about once, and its new version logged at the file."""
+        package_json = self.create_package_json('{\n  "dependencies": {\n    "package": "^1.0.0"\n  }\n}\n')
+        mock_glob.return_value = [package_json]
+        runs = _npm_runs(_npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"))
+        mock_run.side_effect = self.update_stub(package_json, _UNREADABLE, runs)
+        update_package_jsons()
+        self.assert_unreadable_package_json_warned(package_json)
+        self.assert_new_version_logged("package", published_version("1.1", _PUBLICATION_TIME), Location(package_json))
 
     def test_failed_update_logs_its_failure_and_no_new_version(self, mock_run: Mock, mock_glob: Mock):
         """Test that a failed update logs its failure, and does not log a new version."""
@@ -463,6 +624,40 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                 published = published_version("1.1", _PUBLICATION_TIME)
                 self.assert_new_version_logged("package", published, Location(member, 4))
 
+    def test_workspace_root_is_updated_before_its_members(self, mock_run: Mock, mock_glob: Mock):
+        """Test that npm updates a workspace root before its members, whichever the glob finds first."""
+        root = self.write_package_json(_WORKSPACE_ROOT_CONTENTS)
+        member = self.write_package_json(_member_contents("a"), Path("/packages/a"))
+        mock_glob.return_value = [member, root]
+        mock_run.side_effect = [*_npm_runs(*_npm_no_update()), *_npm_runs(*_npm_no_update())]
+        update_package_jsons()
+        updated_directories = [
+            kwargs["cwd"] for command, kwargs in mock_run.call_args_list if command[0][:2] == ("npm", "update")
+        ]
+        self.assertEqual(updated_directories, [Path("/"), Path("/packages/a")])
+
+    def test_range_of_a_workspace_member_the_root_rewrote_is_logged_at_the_member(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a member's range npm rewrote when updating the root is logged at the member's package.json."""
+        root = self.write_package_json(_WORKSPACE_ROOT_CONTENTS)
+        name, directory = _MEMBERS["unscoped"]
+        original = _member_contents(name)
+        member = self.write_package_json(original, Path("/", directory))
+        mock_glob.return_value = [root]
+        locked = _npm_workspace_lock(_npm_member(name, directory, package="1.1"))
+        saved = original.replace("^1.0.0", "^1.1.0")
+        mock_run.side_effect = self.update_stub(member, saved, _npm_unmoved(locked))
+        update_package_jsons()
+        self.assert_range_rewrite_logged(
+            manager="npm",
+            dependency="package",
+            location=Location(member, 4),
+            range="^1.0.0",
+            new_range="^1.1.0",
+            version="1.1",
+        )
+
     @_publishing_version_1_1
     def test_new_version_of_a_member_whose_package_json_cannot_be_read_is_logged_at_the_file(
         self, mock_run: Mock, mock_glob: Mock
@@ -471,10 +666,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         root, member = Path("/package.json"), Path("/packages/a/package.json")
         cases: dict[str, tuple[dict[str | Path, str], Exception]] = {
             "missing": ({}, FileNotFoundError(2, "No such file or directory", str(member))),
-            "invalid JSON": (
-                {member: "{"},
-                json.JSONDecodeError("Expecting property name enclosed in double quotes", "{", 1),
-            ),
+            "invalid JSON": ({member: _UNREADABLE}, _UNREADABLE_ERROR),
         }
         for case, (member_files, error) in cases.items():
             with self.subTest(case):
@@ -488,9 +680,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                     str(path): text for path, text in {root: _WORKSPACE_ROOT_CONTENTS, **member_files}.items()
                 }
                 update_package_jsons()
-                self.assert_logged(
-                    message_of(Logger.unreadable_package_json), location=Location(member), error=str(error)
-                )
+                self.assert_unreadable_package_json_warned(member, error)
                 published = published_version("1.1", _PUBLICATION_TIME)
                 self.assert_new_version_logged("package", published, Location(member))
 
@@ -574,6 +764,17 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.assert_path_logged(package_json)
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
+
+    def test_range_pnpm_rewrote_is_logged_where_the_lock_file_did_not_move(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a range pnpm rewrote is logged at its line, naming pnpm, where the lock file did not move."""
+        original = '{\n  "packageManager": "pnpm@9.15.0",\n  "dependencies": {\n    "minimatch": "^3.1.2"\n  }\n}\n'
+        package_json = self.create_package_json(original)
+        mock_glob.return_value = [package_json]
+        locked = _pnpm_lock(minimatch="3.1.5")
+        saved = original.replace("^3.1.2", "^3.1.5")
+        mock_run.side_effect = self.update_stub(package_json, saved, _pnpm_runs(locked, Mock(stdout=""), locked))
+        update_package_jsons()
+        self.assert_range_rewrite_logged(manager="pnpm", location=Location(package_json, 4), **_MINIMATCH_REWRITE)
 
     @patch_pathlib_path(exists=True)
     def test_pnpm_detected_via_lockfile(self, mock_run: Mock, mock_glob: Mock):

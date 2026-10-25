@@ -16,7 +16,6 @@ A backticked run holding anything else — a `path:line`, an `# update-time: ign
 A bare word parses as a name, with no call in it.
 A body that isn't JSON has no message to include.
 A branch names no version to resolve an update for.
-A call whose arguments sit on their own lines spreads one call site over several lines, and the line defining the name holds no call at all.
 A channel names no version and carries no digit.
 A check about the version a reference is left on has none to run on where the reference pins none, so its scope holds nothing back there.
 A class a framework discovers is found by scanning the module rather than by importing it, and an entry point is reached by running its file, so neither has a caller to find and reporting it would buy nothing.
@@ -349,7 +348,6 @@ Test that a marker is reported as recognised and as holding the update back, wit
 Test that a marker setting a risk level no vulnerability falls below is reported, whichever verb set it.
 Test that a marker whose `raw` holds no directive of the verb yields an empty text.
 Test that a marker-wrapped dependency name is styled as `repr.dependency` and the markers leave no trace.
-Test that a name no file defines fails the run, where a name nothing calls reports no call site.
 Test that a network error probing the registry yields no token (anonymous) instead of crashing.
 Test that a new version for a dependency that resolves to no registry release is logged at the file.
 Test that a non-OK response yields no release, and is reported as a failed fetch.
@@ -498,7 +496,6 @@ The cooldown probe returns a value, so Update-time adds no cooldown of its own:.
 The cooldown still only applies to Docker Hub, because the OCI protocol exposes no publication date.
 The declared hash is passed in rather than read from `reference`, because the URL's line carries no hash — only the dictionary's line does.
 The default for a release fixture no test asks project URLs of.
-The definitions a call reaches: a function, a method, and a class.
 The dependency below it sets no threshold, so no check runs for it and PyPI is not asked about it at all.
 The dependency declared below it carries no marker, so the request it costs shows the pass ran over the file.
 The dependency types every table has to answer for, in the order the tables have to list them in.

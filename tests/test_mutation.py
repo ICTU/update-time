@@ -65,7 +65,8 @@ _SCALED_TEST_NAME = "tests.test_mutation.ScaledTest.test_a_value_scaled_by_the_d
 _INDENTED_BANNER_TEST_NAME = "tests.test_mutation.BannerTest.test_an_indented_banner"
 _FLUSH_LEFT_BANNER_TEST_NAME = "tests.test_mutation.BannerTest.test_a_flush_left_banner"
 # The `IsEvenTest` tests `KillsTest` runs to exercise the decorator: one registers a single mutation, one several,
-# one asserts inside a subTest, and one has a patch above its decorator.
+# one asserts inside a subTest, and one has a patch above its decorator. `IsEvenPatchedInSetUpTest` gives its
+# decorated test the name of the first.
 _DECORATED_TEST = "test_an_odd_number"
 _SEVERAL_MUTATIONS_TEST = "test_an_odd_number_against_several_mutations"
 _SUBTEST_DECORATED_TEST = "test_an_odd_number_in_a_subtest"
@@ -155,6 +156,19 @@ class IsEvenTest(unittest.TestCase):
     @kills(Mutation(mutation_subject.is_even, _EVEN, _ERRORING, _RAISING_REGRESSION, raises=_NAME_ERROR))
     def test_an_odd_number_against_a_mutation_that_raises(self):
         """Test that an odd number is not even, killing a mutation by raising the error the mutation declares."""
+        self.assertFalse(is_even(3))
+
+
+class IsEvenPatchedInSetUpTest(unittest.TestCase):
+    """Unit tests for deciding whether a number is even, with a patch the set-up enters, which `KillsTest` runs."""
+
+    def setUp(self) -> None:
+        """Patch the subject module's attribute until the test's cleanups run."""
+        self.enterContext(patch("tests.mutation_subject.is_even"))
+
+    @kills(_ODD_REPORTED_AS_EVEN)
+    def test_an_odd_number(self):
+        """Test that an odd number is not even, while the set-up's patch hands the subject module a mock."""
         self.assertFalse(is_even(3))
 
 
@@ -754,6 +768,24 @@ def _stand_in(_test_case: unittest.TestCase, *_args: object) -> None:
     """Stand in for the test that a registration under test decorates."""
 
 
+class LinesTest(unittest.TestCase):
+    """Unit tests for the lines of its file that a mutation changes."""
+
+    def test_the_lines_the_snippet_covers_inside_its_anchor(self):
+        """Test that a mutation's lines are the snippet's, found inside the anchor, however many lines it spans."""
+        cases = {
+            "one line": (Mutation(mutation_subject.is_even, _EVEN, _ODD), range(8, 9)),
+            "a snippet in two methods": (
+                Mutation(Doubler.quadrupled, _DOUBLING, _TRIPLING),
+                range(44, 45),
+            ),
+            "two lines": (Mutation(Banner.indented, "first\n        second", "first"), range(68, 70)),
+        }
+        for case, (mutation, lines) in cases.items():
+            with self.subTest(case):
+                self.assertEqual(mutation.lines, lines)
+
+
 class CapturedMethodsTest(unittest.TestCase):
     """Unit tests for the `Path` methods the module holds when it is imported."""
 
@@ -888,8 +920,9 @@ class KillsTest(unittest.TestCase):
         checked: Result | Callable[..., Result],
         test_name: str = _DECORATED_TEST,
         sentinels: dict[str, str] | None = None,
+        test_class: type[unittest.TestCase] = IsEvenTest,
     ) -> unittest.TestResult:
-        """Run the named decorated test with the check answering as given, and return what unittest recorded.
+        """Run the class's named decorated test with the check answering as given, and return what unittest recorded.
 
         The check is stood in for, so that a test of the decorator does not pay for a real one; the decorated test
         the suite runs of its own accord is what exercises the real check. The run sees the sentinels named and no
@@ -898,7 +931,7 @@ class KillsTest(unittest.TestCase):
         called in.
         """
         result = unittest.TestResult()
-        decorated = IsEvenTest(test_name)
+        decorated = test_class(test_name)
         self.decorated_id = decorated.id()
         with patch.dict(os.environ), patch.object(Mutation, "check", autospec=True) as self.checked:
             os.environ.pop(CHECKED_TEST, None)
@@ -1007,17 +1040,23 @@ class KillsTest(unittest.TestCase):
                     message,
                 )
 
-    def test_a_test_checks_its_mutations_once_a_patch_above_its_decorator_has_stopped(self):
-        """Test that a test with a patch above its kills decorator checks its mutations outside that patch."""
-        patched_while_checking: list[bool] = []
+    def test_a_test_checks_its_mutations_once_its_patches_have_stopped(self):
+        """Test that a test checks its mutations outside a patch above its decorator and one its set-up entered."""
+        cases = {
+            "a patch above the decorator": (IsEvenTest, _PATCHED_ABOVE_TEST),
+            "a patch in the set-up": (IsEvenPatchedInSetUpTest, _DECORATED_TEST),
+        }
+        for case, (test_class, test_name) in cases.items():
+            with self.subTest(case):
+                patched_while_checking: list[bool] = []
 
-        def check(*_args: object) -> Result:
-            patched_while_checking.append(isinstance(mutation_subject.is_even, Mock))
-            return Result(Outcome.KILLED)
+                def check(*_args: object, patched: list[bool] = patched_while_checking) -> Result:
+                    patched.append(isinstance(mutation_subject.is_even, Mock))
+                    return Result(Outcome.KILLED)
 
-        result = self.run_decorated_test(check, _PATCHED_ABOVE_TEST)
-        self.assertEqual((result.failures, result.errors), ([], []))
-        self.assertEqual(patched_while_checking, [False])
+                result = self.run_decorated_test(check, test_name, test_class=test_class)
+                self.assertEqual((result.failures, result.errors), ([], []))
+                self.assertEqual(patched_while_checking, [False])
 
     def test_a_test_class_overriding_subtest_takes_no_part_in_the_checks(self):
         """Test that the checks run in unittest's own subTests, rather than in the one the test's class overrides."""
