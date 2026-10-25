@@ -97,10 +97,10 @@ class ProblemsTest(unittest.TestCase):
 
     @kills(
         Mutation(
-            structure_check._problems,
-            "        + _type_section_problems(markdown)\n",
-            "",
-            "a declared dependency type the details chapter has no section for goes unreported",
+            structure_check._type_section_problems,
+            "if not any(_documents(title, name) for title in titles)",
+            "if not titles",
+            "a declared dependency type goes unreported as long as the details chapter has a section for another",
         )
     )
     def test_declared_type_without_a_section_is_reported(self):
@@ -194,14 +194,6 @@ class TableTest(unittest.TestCase):
         table = _dependency_type_table("Files", *_TYPE_NAMES)
         self.assertEqual(_table_problems(table.replace("| --- | --- |", "| :-------------- | :---- |")), [])
 
-    @kills(
-        Mutation(
-            structure_check._table_problems,
-            'for problem in _list_problems(_row_labels(rows), list(_TYPE_NAMES), f"the \'{header}\' table", "row")',
-            'for problem in _list_problems(_row_labels(rows), _row_labels(rows), f"the \'{header}\' table", "row")',
-            "each table is compared with itself, so no table is held to the declared dependency types",
-        )
-    )
     def test_table_missing_a_declared_type_is_reported(self):
         """Test that a table leaving out a declared dependency type is reported, naming the table and the type."""
         markdown = _dependency_type_table("Files", *_TYPE_NAMES[:-1])

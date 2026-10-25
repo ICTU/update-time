@@ -464,15 +464,6 @@ class GitHubActionVulnerabilitiesTest(LoggingTestCase):
             }
         )
 
-    @kills(
-        Mutation(
-            osv._entry_names,
-            '"")',
-            '"<0")',
-            "an action version in an open range goes unreported where the advisory leaves out its last known affected "
-            "version range",
-        )
-    )
     def test_an_open_range_without_a_last_known_affected_version_range_reports_every_later_version(
         self, mock_post: Mock
     ):

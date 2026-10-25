@@ -222,7 +222,10 @@ audit-mutations-help:
     @echo "\nRun the suite once under coverage, to learn which tests run each line. Then check every mutation a kills"
     @echo "decorator registers against the other tests that run its lines, and report each mutation one of them kills"
     @echo "as well. Such a registration guards nothing the suite does not, so it can go. The run fails when it reports"
-    @echo "one."
+    @echo "one. A test that fails without the mutation is not counted. Such a test can fail on state the tests before"
+    @echo "it left behind. The checks run in UTC, so a test that reads the local time gives the same verdict in every"
+    @echo "zone. The tests of the mutations themselves, in tests/test_mutation.py, are left out: they all run the"
+    @echo "checker, so they kill each other's mutations by design."
 
 # Report where a name is used, and how many usages it has. See `just help usages`.
 usages name: install-py-dependencies

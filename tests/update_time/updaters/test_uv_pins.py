@@ -9,12 +9,10 @@ from update_time.domain.vulnerability import NO_RISK_LEVEL, VULNERABILITY_LEVEL
 from update_time.formats import toml as toml_module
 from update_time.io.log import Logger, get_logger
 from update_time.manifests.dependency_file import InlineScript, PyprojectToml
-from update_time.markers import reference as marker_reference_module
 from update_time.markers.directive import Reason
 from update_time.package_managers import uv as uv_module
 from update_time.primitives.location import Location
 from update_time.references import delegated as delegated_module
-from update_time.updaters import uv_pins as uv_pins_module
 from update_time.updaters.uv_pins import warn_about_pins
 
 from tests.helpers import mock_path, patch_environ, requested_urls
@@ -403,15 +401,6 @@ class ArchivedDependencyTest(DependencyTomlFileTestCase):
         self.assert_no_warnings_logged()
         self.assert_ignored_archival_logged("package", Location(file.path, 2))
 
-    @kills(
-        Mutation(
-            marker_reference_module.SteeredReference.from_reference,
-            'resolved.setdefault("marker", reference.marker)',
-            'resolved.setdefault("marker", reference.marker if reference.current_version '
-            "else type(reference.marker)())",
-            "a declaration that pins no version loses its marker, so the warnings it silences are reported anyway",
-        )
-    )
     def test_a_marker_silences_a_dependency_that_pins_no_version(self, get: Mock):
         """Test that both project scopes silence their warning for a dependency declared without an exact pin."""
         cases = {
@@ -502,15 +491,6 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
         get.return_value = pypi_index("1.0")
         warn_about_pins([file], _LOG)
 
-    @kills(
-        Mutation(
-            delegated_module._redundant_warning_directives,
-            "reason = directive.without_a_version",
-            "reason = directive.without_a_version if directive.scope is Scope.YANKED else None",
-            "only the yank scope is reported as needing a version, so a `vulnerable` scope on a dependency that "
-            "pins none reads as silencing its warning",
-        ),
-    )
     def test_a_scope_needing_a_version_is_redundant_without_an_exact_pin(self, get: Mock):
         """Test that a scope whose check needs a version reports that the dependency pins none."""
         vulnerable = Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY
@@ -525,14 +505,6 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
                 self.check_dependencies(get, file)
                 self.assert_redundant_directive_logged(reason, "package", Location(file.path, 2), directive)
 
-    @kills(
-        Mutation(
-            delegated_module._redundant_directives,
-            "    yield from _redundant_cooldown_directive(reference)\n",
-            "",
-            "a cooldown of a dependency's own reads as applying to it, though uv takes one per run",
-        ),
-    )
     def test_a_cooldown_is_reported_as_applying_per_run(self, get: Mock):
         """Test that a `cooldown` item is reported for either spec, since uv takes one per run."""
         for spec in ("package==1.0", "package>=1.0"):
@@ -619,14 +591,6 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
                         Reason.NO_PYPI_RELEASE, "local", Location(file.path, 2), directive
                     )
 
-    @kills(
-        Mutation(
-            delegated_module._redundant_update_directives,
-            "if bound := as_written.version_bound_directive:",
-            "if as_written.ignores(Scope.UPDATE) and (bound := as_written.version_bound_directive):",
-            "a bound goes on deciding nothing without a word, as it did before uv-resolved dependencies took a marker",
-        )
-    )
     def test_a_bound_is_reported_as_deciding_nothing(self, get: Mock):
         """Test that a bound is reported for either spec, in whichever form the marker sets it."""
         for spec in ("package==1.0", "package>=1.0"):
@@ -654,15 +618,6 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
             Reason.BOUND_DECIDES_NOTHING, "package", Location(file.path, 2), "allow[update<5]"
         )
 
-    @kills(
-        Mutation(
-            delegated_module._redundant_floating_pin_directive,
-            "Reason.PIN_NOT_FLOATING if",
-            "Reason.RANGE_NEVER_PINNED if",
-            "a Python dependency's exact pin reads as a range, so an `allow[floating-pin]` on it is reported for the "
-            "wrong reason",
-        )
-    )
     def test_an_opt_in_directive_is_reported(self, get: Mock):
         """Test that each opt-in is reported for the reason it decides nothing, on an exact pin and on a range."""
         cases = {
@@ -701,14 +656,6 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 class UvSourcedDependencyTest(DependencyTomlFileTestCase):
     """Unit tests for the dependencies uv resolves from a source of its own, which PyPI serves no release for."""
 
-    @kills(
-        Mutation(
-            uv_pins_module.warn_about_pins,
-            "served = [uv.pypi_served(declarations) for declarations in declared]",
-            "served = [list(declarations) for declarations in declared]",
-            "the checks are handed every declaration, so PyPI is asked about one it serves no release for",
-        )
-    )
     def test_a_pin_with_a_uv_source_is_asked_about_nowhere(self, get: Mock):
         """Test that a pin uv resolves from a source of its own is looked up at neither PyPI nor OSV."""
         contents = (

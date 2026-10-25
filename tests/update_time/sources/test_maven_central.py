@@ -1,6 +1,5 @@
 """Unit tests for the Maven Central source."""
 
-import time
 import unittest
 from datetime import UTC, datetime
 from unittest.mock import Mock, patch
@@ -14,7 +13,7 @@ from update_time.manifests import pom_xml as pom_xml_format
 from update_time.sources import maven_central
 from update_time.sources.maven_central import _newest_release, _published, get_changes, project, versions_held_back
 
-from tests.helpers import mock_response, patch_environ, patch_get, requested_urls
+from tests.helpers import mock_response, patch_get, requested_urls, time_zone
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import GUAVA, LoggingTestCase, days_ago, message_of, properties_element
 from tests.update_time.sources.helpers import (
@@ -172,14 +171,6 @@ class ProjectTest(LoggingTestCase):
                 with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
                     self.assert_archived(mock_get, project(GUAVA, check_archival=True).archival, repository)
 
-    @kills(
-        Mutation(
-            maven_central._parent_pom,
-            "parent = pom_xml_format.parent(pom)",
-            "parent = None",
-            "an artefact whose pom leaves its repository to the parent pom goes unchecked for archival",
-        )
-    )
     def test_a_pom_naming_no_repository_takes_the_one_its_parent_pom_names(self):
         """Test that an artefact whose own pom does not name a GitHub repository is checked against its parent's.
 
@@ -193,15 +184,6 @@ class ProjectTest(LoggingTestCase):
                 archival = project(GUAVA, check_archival=True).archival
                 self.assert_archived(mock_get, archival, _GUAVA_PARENT_POM, _GUAVA_REPOSITORY)
 
-    @kills(
-        Mutation(
-            maven_central._pom_repository,
-            "parent_pom = _parent_pom(pom)\n",
-            "parent_pom = _parent_pom(_parent_pom(pom).value or pom)\n",
-            "an artefact's grandparent pom is read too, which may name a generic parent project's repository",
-            raises=f"KeyError: '{_guava_pom_url('guava-grandparent')}'",
-        )
-    )
     def test_a_parent_pom_naming_no_repository_leaves_its_own_parent_unread(self):
         """Test that a parent pom that does not name a GitHub repository leaves GitHub and its own parent unasked."""
         parent_pom = maven_central_pom(parent=f"com.google.guava:guava-grandparent:{_GUAVA_VERSION}")
@@ -210,20 +192,6 @@ class ProjectTest(LoggingTestCase):
             archival = project(GUAVA, check_archival=True).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM, _GUAVA_PARENT_POM)
 
-    @kills(
-        Mutation(
-            pom_xml_format.fully_resolved,
-            "part and is_resolved(part)",
-            "is_resolved(part)",
-            "a parent pom is fetched at a URL with a coordinate left out, which Maven Central serves nothing at",
-        ),
-        Mutation(
-            pom_xml_format.parent,
-            "return pinned if fully_resolved(pinned) else None",
-            "return pinned",
-            "a parent pom is fetched at a URL that spells out a property, which Maven Central serves nothing at",
-        ),
-    )
     def test_a_pom_naming_no_repository_and_no_complete_parent_leaves_github_unasked(self):
         """Test that GitHub stays unasked for a pom lacking both a repository and a complete parent."""
         cases = {
@@ -433,14 +401,6 @@ class GetChangesTest(LoggingTestCase):
         with patch_maven_central(_DATED_LISTING, maven_central_pom(GUAVA_SCM), releases=releases):
             self.assertEqual(get_changes(GUAVA, "33.6.0-jre"), "Changes in 33.6.0")
 
-    @kills(
-        Mutation(
-            maven_central.get_changes,
-            "_repository(artefact)",
-            "_pom_repository(artefact, version)",
-            "the repository is read from the pom beside the version, which may predate the project's move to GitHub",
-        )
-    )
     def test_the_repository_is_read_from_the_newest_releases_pom(self):
         """Test that the pom naming the repository is the newest release's, whatever version the changes are for."""
         with patch_maven_central(_DATED_LISTING, maven_central_pom(GUAVA_SCM)) as mock_get:
@@ -495,14 +455,6 @@ class GetChangesTest(LoggingTestCase):
                 with patch_maven_central(_listing_of(_NETTY_VERSION), maven_central_pom(_NETTY_SCM), releases=releases):
                     self.assertEqual(get_changes(_NETTY_ALL, _NETTY_VERSION), "More specific")
 
-    @kills(
-        Mutation(
-            maven_central._release_tags,
-            "in _spellings(version)",
-            "in (version,)",
-            "a release tagged without the qualifier Maven appends to the version goes unmatched",
-        )
-    )
     def test_a_release_tagged_with_the_version_without_its_qualifier_matches(self):
         """Test that a release tagged with the version less the qualifier Maven appends holds the version's changes."""
         cases = {"dash qualifier": ("33.7.1-jre", "v33.7.1"), "dot qualifier": ("7.4.10.Final", "7.4.10")}
@@ -575,26 +527,6 @@ class GetChangesTest(LoggingTestCase):
             self.assertEqual(get_changes(GUAVA, _GUAVA_VERSION), "Changes in 33.7.1")
         self.assertNotIn(contents_url("google/guava"), requested_urls(mock_get))
 
-    @kills(
-        Mutation(
-            pom_xml_format.source_urls,
-            "named = urls if project_url is None else [*urls, project_url.text]",
-            "named = urls",
-            "a pom naming its repository in the project's `<url>` alone is read as naming none",
-        ),
-        Mutation(
-            pom_xml_format.source_urls,
-            "urls = scm_urls(project)\n",
-            'urls = scm_urls(project)\n    if project.child("scm") is None:\n        return urls\n',
-            "Update-time reads the project's `<url>` only when the pom declares an `<scm>` element",
-        ),
-        Mutation(
-            pom_xml_format.source_urls,
-            "[*urls, project_url.text]",
-            "[project_url.text, *urls]",
-            "the project's `<url>` wins over `<scm>`, so a module's changes are read from its umbrella project",
-        ),
-    )
     def test_the_changes_come_from_the_first_repository_on_github_the_pom_names(self):
         """Test that `<scm>` names the repository the changes come from, and the project's `<url>` where it fails to."""
         cases = {
@@ -640,15 +572,6 @@ class VersionsHeldBackTest(LoggingTestCase):
         with patch_get(text=maven_central_listing(past_cooldown, fresh)):
             self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ("33.7.1-jre",))
 
-    @kills(
-        Mutation(
-            maven_central._listing,
-            "    if response.status_code == HTTPStatus.NOT_FOUND:\n        _LOG.unserved_listing(response)\n"
-            "        return LookedUp(None, absent=True)\n",
-            "",
-            "the repository warns about an artefact it does not serve, as though the request had failed",
-        )
-    )
     def test_an_unserved_listing_holds_no_version_back(self):
         """Test that an unserved listing is reported at debug, and that the run holds nothing back."""
         # The repository serves this error page beside the status. A run that read it as a listing would find nothing.
@@ -677,15 +600,6 @@ class VersionsHeldBackTest(LoggingTestCase):
             self.assertEqual(versions_held_back(GUAVA, COOLDOWN.default), ())
         self.assert_could_not_fetch_logged(_GUAVA_LISTING, status=503, reason="Service Unavailable")
 
-    @kills(
-        Mutation(
-            maven_central._listing,
-            "    if response is None:\n        return LookedUp(None)\n",
-            "",
-            "a listing whose request fails ends the run with a traceback",
-            raises="AttributeError: 'NoneType' object has no attribute 'status_code'",
-        )
-    )
     def test_a_listing_request_that_times_out_holds_no_version_back(self):
         """Test that a listing request that times out is reported as a timeout, and that nothing is held back."""
         with patch("requests.Session.get", Mock(side_effect=requests.exceptions.Timeout)):
@@ -839,11 +753,9 @@ class PublishedTest(unittest.TestCase):
             "a date is read in the machine's own zone, so a version falls on the wrong side of the cooldown",
         )
     )
-    @patch_environ({"TZ": "Asia/Tokyo"})
+    @time_zone("Asia/Tokyo")
     def test_a_date_is_read_as_gmt(self):
         """Test that a date is read as GMT, whatever zone the machine runs in."""
-        time.tzset()
-        self.addCleanup(time.tzset)
         self.assertEqual(_published("2026-09-12 23:30"), datetime(2026, 9, 12, 23, 30, tzinfo=UTC))
 
 
@@ -860,14 +772,6 @@ class NewestReleaseTest(LoggingTestCase):
         with patch_get(text=maven_central_listing(*rows)):
             self.assertEqual(_newest_release(GUAVA), Release("33.7.0-jre", newest))
 
-    @kills(
-        Mutation(
-            maven_central._rows,
-            "_listing(artefact)",
-            "_listing.__wrapped__(artefact)",
-            "each read fetches a listing of its own, so an artefact the cooldown read costs a second request",
-        )
-    )
     def test_the_cooldown_has_already_paid_for_the_listing(self):
         """Test that the newest release is free once the cooldown has read the same artefact's listing."""
         # The listing dates a row to the minute, so the expected release is dated to the minute too.

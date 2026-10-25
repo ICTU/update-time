@@ -10,13 +10,11 @@ from update_time.domain.dependency import DependencyVersion, FloatingPin, Pinned
 from update_time.domain.line import located_lines
 from update_time.domain.reference import DriftedPin, Reference
 from update_time.io.log import Logger
-from update_time.markers import marker as marker_module
 from update_time.markers.directive import Reason
 from update_time.markers.marker import _SOURCE_CHECK_SCOPES, Marker, Scope, Threshold
 from update_time.primitives.location import Location
 from update_time.references.rewrite import update_references_in_lines
 
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import (
     BARE_IGNORE,
     DIGEST,
@@ -365,14 +363,6 @@ class UpdateReferencesTest(unittest.TestCase):
         )
         self.logger.keeping_floating_tag.assert_not_called()
 
-    @kills(
-        Mutation(
-            marker_module.Marker.allow_directive,
-            'return _directive(Verb.ALLOW, str(scope)) if self.allows(scope) else ""',
-            'return self.raw_directives(Verb.ALLOW) if self.allows(scope) else ""',
-            "the cause names every allow directive again, not the one that kept the tag floating",
-        )
-    )
     def test_kept_floating_tag_names_the_directive_that_kept_it(self):
         """Test that a tag kept floating names the directive keeping it, not the drift opt-in written beside it."""
         resolved = DependencyVersion(version="3.15", sha=DIGEST, floating=FloatingPin.RESOLVED)

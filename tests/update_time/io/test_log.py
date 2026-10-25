@@ -642,14 +642,6 @@ class LoggerTests(TestCase):
                     f"Yanked dependency {dependency('humanize')} in {at('requirements.txt:9')}: {clause}",
                 )
 
-    @kills(
-        Mutation(
-            log_module.Logger._archival_fields,
-            'reason = f\' ("{archival.reason}")\' if archival.reason else ""',
-            'reason = ""',
-            "the reason the source published is left out of the warning",
-        )
-    )
     def test_archived_dependency_warning(self, mock_log: Mock):
         """Test that the warning quotes the reason the source published, and ends where it published none."""
         for case, (reason, clause) in {

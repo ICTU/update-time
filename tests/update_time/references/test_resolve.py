@@ -15,11 +15,9 @@ from update_time.domain.vulnerability import vulnerability_reporting
 from update_time.domain.yank import yank_reporting
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
-from update_time.references import resolve
 from update_time.references.resolve import latest_version, report_project_checks
 
 from tests.helpers import patch_environ
-from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE, DIGEST
 from tests.update_time.helpers import (
     archival_check_disabled,
@@ -289,14 +287,6 @@ class LatestVersionTest(unittest.TestCase):
         )
         self.assertEqual(latest, DependencyVersion(version="3.15"))
 
-    @kills(
-        Mutation(
-            resolve._why_the_pin_never_floats,
-            "return None if latest.floating is not None else",
-            'return None if latest.floating == "resolved" else',
-            "a floating pin the source could not resolve is reported as redundant, although its tag still floats",
-        )
-    )
     def test_no_redundant_floating_pin_directive_for_a_pin_the_source_could_not_resolve(self):
         """Test that `allow[floating-pin]` is not reported for a floating pin the source resolved no version for.
 
@@ -327,14 +317,6 @@ class LatestVersionTest(unittest.TestCase):
                     self.reference(), "allow[floating-pin]", Reason.NEVER_PINNED
                 )
 
-    @kills(
-        Mutation(
-            resolve.opt_in_redundancy,
-            "if not marker.allows(scope):",
-            "if not marker.allows(scope) and scope not in marker.written_scopes:",
-            "the explicit default is reported as redundant, as if it kept the pin floating",
-        )
-    )
     def test_no_redundant_directive_for_the_ignore_spelling_of_the_floating_pin(self):
         """Test that `ignore[floating-pin]` is not reported, since it asks for what happens without it."""
         marker = Marker(written_scopes=Scope.FLOATING_PIN, raw="ignore[floating-pin]")
@@ -370,14 +352,6 @@ class ReportProjectChecksTest(unittest.TestCase):
         self.log.report_archival.assert_called_once_with(resolved, marker)
         self.log.report_staleness.assert_called_once_with(resolved, marker, STALE_AFTER.default)
 
-    @kills(
-        Mutation(
-            resolve.report_project_checks,
-            "    if not project_is_checked(get_project, reference.dependency, threshold):\n        return\n",
-            "",
-            "a source is asked about a reference no check needs an answer for, so the run pays for the request",
-        )
-    )
     def test_a_source_reporting_no_archival_is_not_asked_with_the_staleness_check_switched_off(self):
         """Test that switching the staleness check off leaves such a source unasked, so it costs no request."""
         get_project = mock_project_getter()
@@ -387,15 +361,6 @@ class ReportProjectChecksTest(unittest.TestCase):
         self.log.report_staleness.assert_not_called()
         self.log.report_archival.assert_not_called()
 
-    @kills(
-        Mutation(
-            resolve.project_is_checked,
-            "return threshold != NO_STALENESS_CHECK or "
-            "(archival_is_checked() and reports_archival(source, dependency))",
-            "return threshold != NO_STALENESS_CHECK or reports_archival(source, dependency)",
-            "a source is asked about a reference with both checks off, so the run pays for an answer nothing reads",
-        )
-    )
     def test_a_source_reporting_archival_is_not_asked_with_both_checks_switched_off(self):
         """Test that a source reporting archival is left unasked once both checks are off, so it costs no request."""
         get_project = archival_reporting(mock_project_getter())

@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from update_time.io.log import Logger
-from update_time.manifests import package_json
 from update_time.markers.directive import Reason
 from update_time.primitives.location import Location
 from update_time.references import rewrite
@@ -82,16 +81,6 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_new_version_logged("node", docker_hub_version("19"), Location(mock_package_json, 1))
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            rewrite._reference_match,
-            """if not reference_marker.reference_location.is_on_the_same_line_as(line.location):
-        return None
-    return pattern.search(line.text, reference_marker.reference_location.column)""",
-            "return pattern.search(line.text, reference_marker.reference_location.column)",
-            "the pattern reads every line it matches, rather than the line the file names",
-        )
-    )
     def test_a_node_version_outside_the_engines_section_is_left_as_it_is(self, mock_glob: Mock):
         """Test that a node version another section declares is not taken for the engine."""
         mock_package_json = self.update_engine(mock_glob, _package_json(section="volta"))
@@ -212,15 +201,6 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_invalid_bracket_item_logged("node", Location(mock_package_json, 3), "updaet")
         self.assert_no_new_version_logged()
 
-    @kills(
-        Mutation(
-            package_json._marker,
-            "return parse_directives(directives) if isinstance(directives, str) else _unreadable_field(section, name)",
-            "return parse_directives(directives)",
-            "a value that is not the directive list it should be reaches the parser",
-            raises="TypeError: expected string or bytes-like object, got 'list'",
-        ),
-    )
     def test_a_field_the_marker_language_cannot_read_leaves_the_engine_unchanged(self, mock_glob: Mock):
         """Test that an `update-time` field of the wrong shape is warned about, and the engine left as it is."""
         fields: dict[str, object] = {

@@ -9,7 +9,6 @@ from update_time.io.log import Logger
 from update_time.manifests import pyproject_toml
 from update_time.manifests.dependency_file import PyprojectToml
 from update_time.markers.marker import Marker, Scope, Threshold
-from update_time.package_managers import policy as policy_module
 from update_time.package_managers import uv
 from update_time.primitives.location import Location
 from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
@@ -177,15 +176,6 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         mock_pyproject_toml = self.updated_pyproject_toml(run, get, glob, contents)
         self.assert_new_version_logged("package", _NEW_VERSION, Location(mock_pyproject_toml, 2))
 
-    @kills(
-        Mutation(
-            policy_module.ManagerPolicy.freezes_the_pin,
-            "return self.honours_a_freeze and bool(reference.current_version)",
-            "return self.honours_a_freeze",
-            "a dependency that pins no version reads as one whose update was held back, though the marker froze no "
-            "pin and uv resolved the version anyway",
-        )
-    )
     def test_no_update_is_reported_as_held_back_for_a_dependency_that_pins_no_version(
         self, run: Mock, get: Mock, glob: Mock
     ):
@@ -196,15 +186,6 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_recognised_marker_logged("package", Location(mock_pyproject_toml, 2), marker)
         self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
 
-    @kills(
-        Mutation(
-            uv._update_dependencies,
-            "if declared else [Location(file.path)]",
-            "or [Location(file.path)]",
-            "a package whose every declaration is held back has its new version reported at the file, and costs a "
-            "request for the changelog of a version nothing adopts",
-        ),
-    )
     def test_a_marker_holds_the_update_back(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pin whose marker holds its update back keeps its version, and is reported as held back."""
         for directive, marker in {"ignore": BARE_IGNORE, "ignore[update]": Marker(ignored_scopes=Scope.UPDATE)}.items():
@@ -243,14 +224,6 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_recognised_marker_logged("package", Location(mock_pyproject_toml, 2), marker)
         self.assert_uv_dependencies_not_updated_logged(mock_pyproject_toml)
 
-    @kills(
-        Mutation(
-            uv._update_dependencies,
-            "if declaration.updatable",
-            "if all(other.updatable for other in declared)",
-            "a marker freezes the name rather than the declaration, so another declaration of that name is frozen too",
-        )
-    )
     def test_a_marker_freezes_one_declaration_of_a_name_while_the_other_updates(self, run: Mock, get: Mock, glob: Mock):
         """Test that a name declared twice is frozen on the line its marker steers, and updated on the other."""
         frozen = '[project]\ndependencies = ["package==1.0"]  # update-time: ignore\n[dependency-groups]\n'
@@ -259,15 +232,6 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_new_version_logged("package", _NEW_VERSION, Location(mock_pyproject_toml, 4))
         self.assert_ignored_logged("package", Location(mock_pyproject_toml, 2), "ignore", among_others=True)
 
-    @kills(
-        Mutation(
-            policy_module.report_markers,
-            "replace(reference, marker=_report_reference_marker(reference, log, policy))",
-            "(_report_reference_marker(reference, log, policy), reference)[1]",
-            "the marker a report settles on is discarded, so an unreadable item warns and the pin it may have been "
-            "meant to freeze is rewritten anyway",
-        )
-    )
     def test_an_invalid_bracket_item_leaves_the_pin_unchanged(self, run: Mock, get: Mock, glob: Mock):
         """Test that an item the marker language cannot read warns and freezes the pin, reporting no marker."""
         for directive, item in {"ignore[stlae]": "stlae", "ignore[update": "[update"}.items():
@@ -299,22 +263,6 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_new_version_logged("package", _NEW_VERSION, Location(mock_pyproject_toml, 4))
         self.assert_invalid_bracket_item_logged("package", Location(mock_pyproject_toml, 2), "stlae")
 
-    @kills(
-        Mutation(
-            policy_module._report_reference_marker,
-            "log.report_inverted_items(reference, reference.marker)",
-            "log.report_inverted_items(reference, type(reference.marker)())",
-            "the declaration's own marker never reaches the warning, so an item comparing the wrong way is left "
-            "unreported and reads as understood",
-        ),
-        Mutation(
-            policy_module.report_markers,
-            "for reference in references]",
-            "for reference in references if reference.current_version]",
-            "a dependency that pins no exact version has its marker reported nowhere, so what that marker gets wrong "
-            "reaches nobody",
-        ),
-    )
     def test_an_inverted_comparison_is_reported(self, run: Mock, get: Mock, glob: Mock):
         """Test that each item running the wrong way round is reported, and the dependency updates as usual."""
         messages = {
@@ -332,15 +280,6 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
                     self.assert_logged(message, item=item, dependency="package", location=location)
                     self.assert_new_version_logged("package", _NEW_VERSION, location)
 
-    @kills(
-        Mutation(
-            policy_module._report_reference_marker,
-            "return marker",
-            "return marker.frozen if any(threshold.inverted_item for threshold in "
-            "(marker.stale, marker.cooldown, marker.vulnerable)) else marker",
-            "an item comparing the wrong way round freezes the pin, as an item that cannot be read at all does",
-        )
-    )
     def test_a_pin_with_inverted_comparisons_still_updates(self, run: Mock, get: Mock, glob: Mock):
         """Test that items comparing the wrong way round leave the pin updated and its marker recognised."""
         items = "stale>=90, cooldown>=30, vulnerable>=high"

@@ -65,14 +65,6 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.assert_pinned_logged("python", "3.14.7", DIGEST, Location(mock_dockerfile, 1))
         self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            update_dockerfile_base_image._update_dockerfile,
-            "if pinned.name == SCRATCH:\n",
-            "if pinned.name == SCRATCH.upper():\n",
-            "a `FROM scratch` is resolved as though a registry served the empty base",
-        )
-    )
     def test_scratch_base_image_is_left_alone_and_not_queried(self):
         """Test that `FROM scratch` names Docker's empty base rather than an image, so no registry is queried."""
         self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
@@ -80,14 +72,6 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.run_updater(mock_dockerfile)
         self.assert_left_alone_unqueried(mock_dockerfile, "scratch", "", 1, ImageNotLookedUp.EMPTY_BASE_IMAGE)
 
-    @kills(
-        Mutation(
-            update_dockerfile_base_image._update_dockerfile,
-            "return ImageNotLookedUp.BUILD_STAGE if pinned.name.lower() in stages else None\n",
-            "return ImageNotLookedUp.BUILD_STAGE if pinned.name.lower() in frozenset() else None\n",
-            "a `FROM` naming a build stage is resolved as though a registry served an image of that name",
-        )
-    )
     def test_build_stage_reference_is_left_alone_and_not_queried(self):
         """Test that a `FROM` naming one of the file's own build stages is left alone, no registry serving it."""
         for indentation in ("", "  "):
@@ -371,14 +355,6 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         reason = ImageNotLookedUp.DIGEST_OVERRULES_BUILD_ARGUMENTS
         self.assert_left_alone_unqueried(mock_dockerfile, "python", "$PY", 2, reason)
 
-    @kills(
-        Mutation(
-            log.Logger._tagged_fields,
-            "tag_of(reference.current_version)",
-            'tag_of(reference.current_version or "latest")',
-            "a tagless reference is reported under a tag the file does not write",
-        )
-    )
     def test_marker_keeps_a_tagless_base_image_as_it_is(self):
         """Test that `allow[floating-pin]` on a `FROM` naming no tag leaves it, naming what it resolves to."""
         self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))

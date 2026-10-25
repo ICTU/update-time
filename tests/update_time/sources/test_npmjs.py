@@ -189,15 +189,6 @@ class GetChangesFallbackTest(LoggingTestCase):
             },
         )
 
-    @kills(
-        Mutation(
-            npmjs.get_changes,
-            "return changes_from_release(source.repository, package, version) or changes_from_changelog_file(\n"
-            "        source.repository, version, source.directory\n    )",
-            "return changes_from_release(source.repository, package, version)",
-            "a package whose repository publishes no matching release reports no changelog",
-        ),
-    )
     @patch("requests.Session.get")
     def test_changelog_file_when_no_release_matches(self, mock_get: Mock):
         """Test that a repository publishing no release for the version has its changelog file read."""

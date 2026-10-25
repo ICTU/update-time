@@ -11,7 +11,6 @@ from update_time.markers import directive as directive_module
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope
 from update_time.primitives.location import Location
-from update_time.references import resolve as resolve_module
 from update_time.references import vulnerability as vulnerability_module
 from update_time.sources import pypi as pypi_module
 from update_time.updaters import update_requirements_txt as update_requirements_txt_module
@@ -33,7 +32,6 @@ from tests.update_time.helpers import (
 )
 from tests.update_time.manifests.helpers import requirements_file
 from tests.update_time.sources.helpers import PYPI_OLD_UPLOAD, osv_advisory, pypi_index, pypi_release, yanked_file
-from tests.update_time.sources.test_pypi import NULL_PROJECT_URLS_READ_AS_A_DICT
 from tests.update_time.updaters.fixtures import (
     DJANGO_ADVISORY,
     DJANGO_VULNERABILITY,
@@ -109,7 +107,6 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
-    @kills(NULL_PROJECT_URLS_READ_AS_A_DICT)
     def test_a_pin_whose_metadata_reports_no_project_urls(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin whose metadata reports the project URLs as null is updated, and so is the pin beside it."""
         requirements_txt = self.discovered_requirements_txt(mock_rglob, "flask==1.0\nhumanize==4.14.0\n")
@@ -235,14 +232,6 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 self.assertEqual(self.queried_packages(mock_get), ["humanize"])
                 self.assert_no_warnings_logged()
 
-    @kills(
-        Mutation(
-            resolve_module.report_project,
-            "log.report_archival(resolved, resolved.marker)",
-            "if staleness_threshold(resolved.marker):\n        log.report_archival(resolved, resolved.marker)",
-            "the archival check sits behind the staleness gate, so switching staleness off silences archival too",
-        )
-    )
     def test_staleness_disabled_still_looks_up_a_loose_requirement(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a loose requirement is still looked up when the staleness check is switched off."""
         requirements_txt = self.loose_requirement(mock_rglob)

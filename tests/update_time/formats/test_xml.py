@@ -6,7 +6,6 @@ from unittest.mock import Mock
 from update_time.formats import xml
 
 from tests.helpers import mock_path
-from tests.mutation import Mutation, kills
 
 
 def _latin_1_file(contents: str) -> Mock:
@@ -60,15 +59,6 @@ class ReadTest(unittest.TestCase):
         project = xml.read(mock_path(commented))
         self.assertEqual([child.comment for child in project.children] if project else [], ["", "a remark"])
 
-    @kills(
-        Mutation(
-            xml.parse,
-            "if siblings:",
-            "if True:",
-            "a comment opening a document or an element ends the run, since it does not follow an element",
-            raises="IndexError: list index out of range",
-        )
-    )
     def test_a_comment_without_an_element_before_it_is_left_unattached(self):
         """Test that a comment before the root, or opening an element before its first child, is left unattached."""
         commented = "<!-- a header -->\n<project>  <!-- an opening -->\n  <name>probe</name>\n</project>\n"
