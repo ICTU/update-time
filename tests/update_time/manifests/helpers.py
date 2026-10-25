@@ -97,10 +97,24 @@ def dependency_management_element(*dependencies: str) -> str:
     return f"  <dependencyManagement>\n    <dependencies>\n{declared}    </dependencies>\n  </dependencyManagement>\n"
 
 
+def profiles_element(*dependencies: str, managed: str = "", build: str = "") -> str:
+    """Return a `<profiles>` element holding a profile without activation, declaring the given elements."""
+    declared = "".join(dependencies)
+    return (
+        f"  <profiles>\n    <profile>\n      <id>inactive</id>\n{managed}"
+        f"  <dependencies>\n{declared}  </dependencies>\n{build}    </profile>\n  </profiles>\n"
+    )
+
+
 def pom_declaring(
-    *dependencies: str, coordinates: str = "", properties: str = "", managed: str = "", build: str = ""
+    *dependencies: str,
+    coordinates: str = "",
+    properties: str = "",
+    managed: str = "",
+    build: str = "",
+    profiles: str = "",
 ) -> str:
-    """Return a pom declaring the given coordinates, properties, managed dependencies, dependencies, and plugins.
+    """Return a pom holding the given coordinates, properties, managed dependencies, dependencies, build, and profiles.
 
     Without coordinates the properties come first, so the first property sits on line 3.
     """
@@ -113,6 +127,7 @@ def pom_declaring(
         f"{''.join(dependencies)}"
         "  </dependencies>\n"
         f"{build}"
+        f"{profiles}"
         "</project>\n"
     )
 
@@ -131,7 +146,7 @@ SCANNED_POM_COORDINATES = pom_coordinates("child", parent=PARENT_POM_ID)
 
 def effective_dependency_element(
     artefact: str,
-    version: str,
+    version: str | None,
     line: int,
     declared_by: str = SCANNED_POM_ID,
     *,
@@ -140,29 +155,33 @@ def effective_dependency_element(
     """Return a `<dependency>` of the effective pom, its `<artifactId>` located on the line of the declaring pom.
 
     Its `<version>` is located on the next line, or on the line of the pom `managed_at` names for a dependency that
-    leaves its version to a `<dependencyManagement>` section.
+    leaves its version to a `<dependencyManagement>` section. An entry whose version is None lacks a `<version>`,
+    as Maven lists a dependency in a profile it does not activate.
     """
-    locations = {
-        "groupId": (declared_by, line - 1),
-        "artifactId": (declared_by, line),
-        "version": managed_at or (declared_by, line + 1),
-    }
+    locations = {"groupId": (declared_by, line - 1), "artifactId": (declared_by, line)}
+    locations |= _version_location(version, managed_at or (declared_by, line + 1))
     return f"    <dependency>\n{_located_coordinates(artefact, version, locations)}    </dependency>\n"
 
 
 def effective_plugin_element(
-    artefact: str, version: str, line: int, *, managed_at: tuple[str, int] | None = None
+    artefact: str, version: str | None, line: int, *, managed_at: tuple[str, int] | None = None
 ) -> str:
     """Return a `<plugin>` of the effective pom, located in the scanned pom as a dependency is.
 
     Maven leaves out the `<groupId>` of a plugin in its default plugin group.
     """
     group = {} if artefact.startswith("org.apache.maven.plugins:") else {"groupId": (SCANNED_POM_ID, line - 1)}
-    locations = group | {"artifactId": (SCANNED_POM_ID, line), "version": managed_at or (SCANNED_POM_ID, line + 1)}
+    locations = group | {"artifactId": (SCANNED_POM_ID, line)}
+    locations |= _version_location(version, managed_at or (SCANNED_POM_ID, line + 1))
     return f"      <plugin>\n{_located_coordinates(artefact, version, locations)}      </plugin>\n"
 
 
-def _located_coordinates(artefact: str, version: str, locations: dict[str, tuple[str, int]]) -> str:
+def _version_location(version: str | None, location: tuple[str, int]) -> dict[str, tuple[str, int]]:
+    """Return the location of the `<version>` of an effective pom entry, or none for an entry without a version."""
+    return {} if version is None else {"version": location}
+
+
+def _located_coordinates(artefact: str, version: str | None, locations: dict[str, tuple[str, int]]) -> str:
     """Return the coordinate elements of an effective pom entry, each followed by the input location given for it."""
     group, artifact = coordinates(artefact)
     values = {"groupId": group, "artifactId": artifact, "version": version}
@@ -176,7 +195,9 @@ def _located_coordinates(artefact: str, version: str, locations: dict[str, tuple
 EFFECTIVE_GUAVA = effective_dependency_element(GUAVA, "33.0.0-jre", line=5)
 
 
-def effective_pom_declaring(*dependencies: str, properties: str = "", managed: str = "", build: str = "") -> str:
+def effective_pom_declaring(
+    *dependencies: str, properties: str = "", managed: str = "", build: str = "", profiles: str = ""
+) -> str:
     """Return the effective pom Maven writes for the scanned pom, holding the given elements.
 
     Maven lists every property the parent declares, and this lists only the ones given. Update-time reads them only to
@@ -190,5 +211,5 @@ def effective_pom_declaring(*dependencies: str, properties: str = "", managed: s
         f"  <artifactId>child</artifactId>  <!-- {SCANNED_POM_ID}, line 3 -->\n"
     )
     return header + pom_declaring(
-        *dependencies, coordinates=located, properties=properties, managed=managed, build=build
+        *dependencies, coordinates=located, properties=properties, managed=managed, build=build, profiles=profiles
     )

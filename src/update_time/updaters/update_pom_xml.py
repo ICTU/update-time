@@ -212,7 +212,7 @@ def _warn_about_vulnerabilities(declared: list[Declaration]) -> None:
     for declaration in declared:
         if pom_xml_format.fully_resolved(declaration.pinned):
             resolved.append(declaration)
-        elif declaration.listed_in_effective_pom and (
+        elif declaration.resolved_by_effective_pom and (
             vulnerable := declaration.marker.as_written.directive_for(Scope.VULNERABLE)
         ):
             _LOG.redundant_directive(declaration, vulnerable, Reason.NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY)
