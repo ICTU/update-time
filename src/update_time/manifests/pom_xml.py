@@ -137,17 +137,18 @@ class _InputLocation:
 class Declaration(SteeredReference):
     """A dependency or plugin a pom declares, its marker, and where the version the declaration leaves out is managed.
 
-    The input location is empty where the declaration declares a version, or is read without an effective pom.
-    `versioned_by_its_pom` tells whether the declaring pom gives the version, in the `<version>` element or in one of
-    its own properties. `literal_plugin_version` tells whether a plugin's `<version>` element holds the version itself.
-    `version_property` names the property the `<version>` element names, if any.
+    The input location is empty where the declaration declares a version, or where the effective pom, if any, does not
+    give it one. `versioned_by_its_pom` tells whether the declaring pom gives the version, in the `<version>` element
+    or in one of its own properties. `literal_plugin_version` tells whether a plugin's `<version>` element holds the
+    version itself. `version_property` names the property the `<version>` element names, if any.
+    `resolved_by_effective_pom` tells whether the effective pom gives the declaration its coordinates and version.
     """
 
     version_managed_at: _InputLocation = _InputLocation()
     version_property: str = ""
     versioned_by_its_pom: bool = False
     literal_plugin_version: bool = False
-    listed_in_effective_pom: bool = False
+    resolved_by_effective_pom: bool = False
 
     @property
     def maven_updates_the_version(self) -> bool:
@@ -215,47 +216,106 @@ class _EffectiveArtefact:
 
 @dataclass(frozen=True)
 class _EffectiveArtefacts:
-    """What Maven's effective pom gives each dependency and plugin the pom declares."""
+    """Holds the coordinates and version of each artefact the pom declares, and where that version is managed."""
 
-    declared: Mapping[_ArtifactAtLine, _EffectiveArtefact]
+    artefacts: Mapping[_ArtifactAtLine, _EffectiveArtefact]
     # The properties Maven resolved the pom with, the parent's included.
     property_elements: dict[str, XmlElement]
 
     def get(self, artifact: XmlElement) -> _EffectiveArtefact | None:
-        """Return what the effective pom gives the dependency or plugin that the `<artifactId>` element declares."""
+        """Return the coordinates and version of the artefact the `<artifactId>` declares, and where it is managed."""
         artifact_name = _interpolated(artifact.text, self.property_elements)
-        return self.declared.get(_ArtifactAtLine(artifact_name, artifact.line))
+        return self.artefacts.get(_ArtifactAtLine(artifact_name, artifact.line))
 
 
 def _effective_artefacts(effective_pom: XmlElement | None, project: XmlElement) -> _EffectiveArtefacts:
-    """Return what the effective pom gives each dependency and plugin the pom declares."""
+    """Return the coordinates and version of each artefact the pom declares, and where that version is managed.
+
+    The effective pom gives all three. Maven lists a profile it does not activate as the pom writes it, so an entry
+    there may lack a version. Such an entry takes the version that the profile's management section lists for the
+    artefact, else the project's, as it would on activation.
+    """
     if effective_pom is None:
         return _EffectiveArtefacts({}, {})
     effective_pom_name = _effective_pom_name(effective_pom)
     property_elements = _resolvable_elements(project)
     effective_property_elements = _resolvable_elements(effective_pom)
     own_versions = _own_versions(project, effective_property_elements)
-    declared = {}
+    management = _management(effective_pom)
+    profile_management = _profile_management(effective_pom, management)
+    artefacts = {}
     entries = (
-        (entry, default_group)
+        (tag, entry, default_group)
         for tag, default_group in _ARTEFACT_ELEMENTS.items()
         for entry in effective_pom.descendants(tag)
     )
-    for entry, default_group in entries:
-        group = entry.child("groupId")
+    for tag, entry, default_group in entries:
         artifact = entry.child("artifactId")
-        version = entry.child("version")
-        declared_by = _input_location(artifact)
-        if declared_by.pom_name == effective_pom_name and artifact is not None and version is not None:
-            managed_by = _input_location(version)
-            managed_at = _ArtifactAtLine(artifact.text, managed_by.line)
-            own_element = own_versions.get(managed_at) if managed_by.pom_name == effective_pom_name else None
-            group_name = default_group if group is None else group.text
-            pinned = PinnedDependency(
-                _artefact(group_name, artifact.text), _version_as_left(version, own_element, property_elements)
+        artifact_location = _input_location(artifact)
+        if artifact_location.pom_name != effective_pom_name or artifact is None:
+            continue  # Another pom, such as the parent, declares the entry, or the entry does not name an artifact.
+        name = _entry_artefact(entry, default_group)
+        artifact_at_line = _artifact_at_line(entry)
+        entry_management = profile_management.get(artifact_at_line, management)
+        version = entry.child("version") or entry_management.get((tag, name))
+        if version is not None:
+            version_location = _input_location(version)
+            artifact_at_version_line = _ArtifactAtLine(artifact.text, version_location.line)
+            own_element = (
+                own_versions.get(artifact_at_version_line) if version_location.pom_name == effective_pom_name else None
             )
-            declared[_ArtifactAtLine(artifact.text, declared_by.line)] = _EffectiveArtefact(pinned, managed_by)
-    return _EffectiveArtefacts(declared, effective_property_elements)
+            pin = PinnedDependency(name, _version_as_left(version, own_element, property_elements))
+            artefacts[artifact_at_line] = _EffectiveArtefact(pin, version_location)
+    return _EffectiveArtefacts(artefacts, effective_property_elements)
+
+
+# The management sections list a `<version>` element per artefact. This keys each by the artefact's tag and name.
+type _Management = dict[tuple[str, DependencyName], XmlElement]
+
+
+def _management(element: XmlElement) -> _Management:
+    """Return the management of the effective pom, or of one of its profiles: each `<version>` its sections list.
+
+    A profile's entry without a version leaves the version to the effective pom's entry.
+    """
+    build = element.child("build")
+    sections = {
+        "dependency": element.child("dependencyManagement"),
+        "plugin": build and build.child("pluginManagement"),
+    }
+    return {
+        (tag, _entry_artefact(entry, _ARTEFACT_ELEMENTS[tag])): version
+        for tag, section in sections.items()
+        if section is not None
+        for entry in section.descendants(tag)
+        if (version := entry.child("version")) is not None
+    }
+
+
+def _profile_management(effective_pom: XmlElement, management: _Management) -> dict[_ArtifactAtLine, _Management]:
+    """Return the management each profile's entries take, keyed by where each entry's `<artifactId>` sits.
+
+    A profile's own management wins over the effective pom's.
+    """
+    profiles = effective_pom.child("profiles")
+    entry_management = {}
+    for profile in () if profiles is None else profiles.children:
+        own = _management(profile)
+        for tag in _ARTEFACT_ELEMENTS:
+            for entry in profile.descendants(tag):
+                entry_management[_artifact_at_line(entry)] = management | own
+    return entry_management
+
+
+def _artifact_at_line(entry: XmlElement) -> _ArtifactAtLine:
+    """Return the `<artifactId>` of an entry of the effective pom, and the line its input location names."""
+    artifact = entry.child("artifactId")
+    return _ArtifactAtLine(_coordinate(entry, "artifactId"), _input_location(artifact).line)
+
+
+def _entry_artefact(entry: XmlElement, default_group: str) -> DependencyName:
+    """Return the artefact an entry of the effective pom names, in the default group where it names none."""
+    return _artefact(_coordinate(entry, "groupId") or default_group, _coordinate(entry, "artifactId"))
 
 
 def _own_versions(project: XmlElement, property_elements: dict[str, XmlElement]) -> dict[_ArtifactAtLine, XmlElement]:
@@ -460,7 +520,7 @@ def _declaration(
         version_property="" if named_property is None else named_property["name"],
         versioned_by_its_pom=versioned_by_its_pom,
         literal_plugin_version=versioned_by_its_pom and element.tag == "plugin" and versioned_by is version,
-        listed_in_effective_pom=effective is not None,
+        resolved_by_effective_pom=effective is not None,
     )
 
 

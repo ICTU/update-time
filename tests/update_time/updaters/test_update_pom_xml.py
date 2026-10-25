@@ -58,6 +58,7 @@ from tests.update_time.manifests.helpers import (
     plugin_element,
     pom_coordinates,
     pom_declaring,
+    profiles_element,
 )
 from tests.update_time.sources.helpers import (
     GITBOX_SCM,
@@ -347,11 +348,29 @@ _PARENT_MANAGING_GUAVA_BY_PROPERTY = pom_declaring(
     properties=properties_element({"guava.version": "33.0.0-jre"}),
     managed=dependency_management_element(guava_element("${guava.version}")),
 )
+
+
+def _child_declaring_in_a_profile(dependency: str, managed: str = "") -> str:
+    """Return the child declaring the dependency, and the managed ones, in a profile Maven does not activate.
+
+    Without managed dependencies, guava starts on line 10, its `<artifactId>` on line 12.
+    """
+    return pom_declaring(coordinates=SCANNED_POM_COORDINATES, profiles=profiles_element(dependency, managed=managed))
+
+
 # The child, which declares guava without a version on line 5, and its `<artifactId>` on line 7.
 _CHILD_LEAVING_GUAVAS_VERSION = pom_declaring(guava_element(None), coordinates=SCANNED_POM_COORDINATES)
 # The child's effective pom, which locates guava's version where the parent manages it, on line 10.
 _CHILDS_EFFECTIVE_POM = effective_pom_declaring(
     effective_dependency_element(GUAVA, "33.0.0-jre", line=7, managed_at=(PARENT_POM_ID, 10))
+)
+# The effective pom of the child declaring guava in its profile. Maven lists that guava without a version, and lists
+# the guava the parent manages, its `<artifactId>` on line 9 and its version on line 10.
+_CHILDS_EFFECTIVE_POM_LISTING_A_PROFILE = effective_pom_declaring(
+    managed=dependency_management_element(
+        effective_dependency_element(GUAVA, "33.0.0-jre", line=9, declared_by=PARENT_POM_ID)
+    ),
+    profiles=profiles_element(effective_dependency_element(GUAVA, None, line=12)),
 )
 
 
@@ -902,7 +921,7 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._warn_about_vulnerabilities,
-            "elif declaration.listed_in_effective_pom and (",
+            "elif declaration.resolved_by_effective_pom and (",
             "elif (",
             "without an effective pom, a version from a parent's property reads as one Maven leaves unresolved",
         )
@@ -1033,8 +1052,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             pom_xml_module._effective_artefacts,
-            "_EffectiveArtefact(pinned, managed_by)",
-            "_EffectiveArtefact(pinned, _InputLocation() if default_group else managed_by)",
+            "_EffectiveArtefact(pin, version_location)",
+            "_EffectiveArtefact(pin, _InputLocation() if default_group else version_location)",
             "a plugin is warned about twice: where the pom manages its version, and where it declares none",
         )
     )
@@ -1051,6 +1070,75 @@ class UpdatePomXmlTest(LoggingTestCase):
         with _stale_release("3.5.0"):
             update_pom_xmls()
         self.assert_stale_dependency_logged(SUREFIRE, "3.5.0", Location(pom, 12))
+
+    def test_a_declaration_in_an_inactive_profile_is_warned_about_at_its_managing_declaration(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a versionless declaration in a profile Maven does not activate is skipped for its managing one."""
+        child = _child_declaring_in_a_profile(guava_element(None))
+        # The pom manages surefire's version on line 12, and declares surefire without a version on line 27, in the
+        # `<pluginManagement>` of its profile, with its `<artifactId>` on line 29.
+        own = pom_declaring(
+            coordinates=SCANNED_POM_COORDINATES,
+            build=build_element(managed=plugin_element("maven-surefire-plugin", "3.5.0")),
+            profiles=profiles_element(build=build_element(managed=plugin_element("maven-surefire-plugin", None))),
+        )
+        owns_effective_pom = effective_pom_declaring(
+            build=build_element(managed=effective_plugin_element(SUREFIRE, "3.5.0", line=11)),
+            profiles=profiles_element(build=build_element(managed=effective_plugin_element(SUREFIRE, None, line=29))),
+        )
+        # The child's profile manages guava's version on line 14, where the parent, outside the scan, manages another.
+        # The profile's versionless guava has its `<artifactId>` on line 21.
+        managing_in_its_profile = _child_declaring_in_a_profile(
+            guava_element(None), managed=dependency_management_element(guava_element("33.0.0-jre"))
+        )
+        effective_pom_managing_in_its_profile = effective_pom_declaring(
+            managed=dependency_management_element(
+                effective_dependency_element(GUAVA, "32.0.0-jre", line=9, declared_by=PARENT_POM_ID)
+            ),
+            profiles=profiles_element(
+                effective_dependency_element(GUAVA, None, line=21),
+                managed=dependency_management_element(effective_dependency_element(GUAVA, "33.0.0-jre", line=13)),
+            ),
+        )
+        # The managing pom comes first.
+        cases = {
+            "a dependency a scanned parent manages": (
+                (_PARENT_MANAGING_GUAVA, child),
+                _CHILDS_EFFECTIVE_POM_LISTING_A_PROFILE,
+                GUAVA,
+                "33.0.0-jre",
+                10,
+            ),
+            "a plugin its own pom manages": ((own,), owns_effective_pom, SUREFIRE, "3.5.0", 12),
+            "a dependency its own profile manages": (
+                (managing_in_its_profile,),
+                effective_pom_managing_in_its_profile,
+                GUAVA,
+                "33.0.0-jre",
+                14,
+            ),
+        }
+        for case, (contents, effective_pom, artefact, version, line) in cases.items():
+            with self.subTest(case=case):
+                managing, *_ = self.find_poms(mock_run, mock_glob, *contents, effective_pom=effective_pom)
+                with _stale_release(version):
+                    update_pom_xmls()
+                self.assert_stale_dependency_logged(artefact, version, Location(managing, line))
+
+    def test_an_unmanaged_declaration_in_an_inactive_profile_is_checked_for_staleness_alone(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a versionless declaration in a profile no management section covers is checked by coordinates."""
+        declared = _child_declaring_in_a_profile(guava_element(None))
+        effective_pom = effective_pom_declaring(
+            profiles=profiles_element(effective_dependency_element(GUAVA, None, line=12))
+        )
+        pom = self.find_pom(mock_run, mock_glob, declared, effective_pom)
+        with _stale_release(), osv(ADVISORY) as mock_post:
+            update_pom_xmls()
+        self.assert_stale_dependency_logged(GUAVA, "33.0.0-jre", Location(pom, 10))
+        mock_post.assert_not_called()  # OSV needs a version to match an advisory to.
 
     def test_a_version_a_scanned_pom_manages_is_warned_about_where_it_resolves(self, mock_run: Mock, mock_glob: Mock):
         """Test that a version a scanned parent manages is warned about in the parent, or in both poms.

@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Read the version in an image tag with a build number, such as `26.0.2_10-jre`, so a reference updates to such a tag and from it. Closes [#477](https://github.com/ICTU/update-time/issues/477).
 - Stop reporting a new version for a Maven artefact Maven Central does not serve, where Maven moved its property for an artefact Maven Central does serve. Closes [#478](https://github.com/ICTU/update-time/issues/478).
 - Report the publication date of a new Maven dependency or plugin version, as for the other dependency types. Closes [#479](https://github.com/ICTU/update-time/issues/479).
+- Warn once about a Maven dependency or plugin that a profile declares without a version, at the declaration managing its version, where Maven does not activate that profile. Closes [#480](https://github.com/ICTU/update-time/issues/480).
 
 ## 0.0.52 - 2026-10-23
 

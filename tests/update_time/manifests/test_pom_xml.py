@@ -337,8 +337,8 @@ class ResolvedDependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml._effective_artefacts,
-            "declared_by.pom_name == effective_pom_name and artifact",
-            "artifact",
+            "artifact_location.pom_name != effective_pom_name or artifact is None",
+            "artifact is None",
             "a dependency takes the version of whatever the parent declares on the same line of its own pom",
         )
     )
@@ -354,8 +354,8 @@ class ResolvedDependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml._EffectiveArtefacts.get,
-            "self.declared.get(_ArtifactAtLine(artifact_name, artifact.line))",
-            "{key.artifact: pinned for key, pinned in self.declared.items()}.get(artifact_name)",
+            "self.artefacts.get(_ArtifactAtLine(artifact_name, artifact.line))",
+            "{key.artifact: pinned for key, pinned in self.artefacts.items()}.get(artifact_name)",
             "two declarations of one artefact share a version, so OSV is asked about one of them at the other's",
         )
     )
@@ -372,8 +372,8 @@ class ResolvedDependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml._EffectiveArtefacts.get,
-            "self.declared.get(_ArtifactAtLine(artifact_name, artifact.line))",
-            "{key.line: pinned for key, pinned in self.declared.items()}.get(artifact.line)",
+            "self.artefacts.get(_ArtifactAtLine(artifact_name, artifact.line))",
+            "{key.line: pinned for key, pinned in self.artefacts.items()}.get(artifact.line)",
             "a dependency takes the version of whichever dependency is declared last on its line",
         )
     )
@@ -408,7 +408,7 @@ class ResolvedDependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml._effective_artefacts,
-            " if managed_by.pom_name == effective_pom_name else None",
+            " if version_location.pom_name == effective_pom_name else None",
             "",
             "a line of the pom lends its version to a dependency the parent versions, as their line numbers match",
         )
@@ -529,8 +529,8 @@ class ResolvedDependenciesTest(unittest.TestCase):
     @kills(
         Mutation(
             pom_xml._effective_artefacts,
-            "own_versions.get(managed_at) if",
-            "{key.line: element for key, element in own_versions.items()}.get(managed_by.line) if",
+            "own_versions.get(artifact_at_version_line) if",
+            "{key.line: element for key, element in own_versions.items()}.get(version_location.line) if",
             "a dependency takes the version of whichever dependency its own pom manages last on the same line",
         )
     )
