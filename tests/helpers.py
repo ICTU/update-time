@@ -3,6 +3,7 @@
 import contextlib
 import logging
 import os
+import time
 from logging import INFO
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, cast
@@ -55,6 +56,17 @@ def patch_environ(environment_variables: dict[str, str] | None = None, *, clear:
         if (value := os.environ.get(sentinel)) is not None:
             in_dict.setdefault(sentinel, value)
     return patch.dict("os.environ", in_dict, clear=clear)
+
+
+@contextlib.contextmanager
+def time_zone(name: str) -> Generator[None]:
+    """Set the process's time zone, and restore the machine's own zone afterwards, whatever happens in between."""
+    try:
+        with patch_environ({"TZ": name}):
+            time.tzset()
+            yield
+    finally:
+        time.tzset()
 
 
 def patch_pathlib_path(*methods: str, **methods_and_return_values: object) -> Callable[[_Decorated], _Decorated]:

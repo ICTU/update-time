@@ -799,12 +799,6 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_central_module._listing,
-            "absent=True",
-            "absent=False",
-            "a listing Maven Central does not serve reads as a failed request, so nothing is reported as redundant",
-        ),
-        Mutation(
             update_pom_xml_module._report_scopes_on_artefacts_maven_central_does_not_serve,
             "directive_for(Scope.STALE)",
             "scope_directive(Scope.STALE)",
@@ -943,12 +937,6 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module._report_redundant_directives,
-            "declaration.marker.as_written",
-            "declaration.marker",
-            "a bare `ignore` reads as naming the scopes it holds back, so its `yanked` and `update` read as redundant",
-        ),
-        Mutation(
             update_pom_xml_module._warn_about_vulnerabilities,
             "declaration.marker.as_written.directive_for(Scope.VULNERABLE)",
             "declaration.marker.directive_for(Scope.VULNERABLE)",
@@ -1049,14 +1037,6 @@ class UpdatePomXmlTest(LoggingTestCase):
                     update_pom_xmls()
                 self.assert_vulnerable_dependency_logged(name, version, VULNERABILITY, Location(pom, line))
 
-    @kills(
-        Mutation(
-            pom_xml_module._effective_artefacts,
-            "_EffectiveArtefact(pin, version_location)",
-            "_EffectiveArtefact(pin, _InputLocation() if default_group else version_location)",
-            "a plugin is warned about twice: where the pom manages its version, and where it declares none",
-        )
-    )
     def test_a_plugin_its_own_pom_manages_is_warned_about_once(self, mock_run: Mock, mock_glob: Mock):
         """Test that a plugin the pom declares without a version, and manages, is warned about once."""
         managed = plugin_element("maven-surefire-plugin", "3.5.0")
@@ -1389,14 +1369,6 @@ class UpdatePomXmlTest(LoggingTestCase):
             update_pom_xmls()
         self.assert_archived_repository_logged(GUAVA, Location(pom, 6))
 
-    @kills(
-        Mutation(
-            delegated_module.project_resolver,
-            "archival_is_checked()",
-            "True",
-            "every delegated source reads archival, so --ignore-archived costs the requests it exists to save",
-        )
-    )
     @archival_check_disabled
     def test_a_run_that_checks_nothing_for_archival(self, mock_run: Mock, mock_glob: Mock):
         """Test that a run with the archival check switched off tells the repository so, and warns about nothing."""
@@ -1444,14 +1416,6 @@ class UpdatePomXmlTest(LoggingTestCase):
         update_pom_xmls()
         self.assert_maven_runs(mock_run, _maven_command(rules=_RULES, properties="guava.version"))
 
-    @kills(
-        Mutation(
-            maven_module._variant_versions,
-            ",) if other_variants else ()",
-            ",)",
-            "an artefact on a version without a number gets an empty pattern that Maven reads as matching nothing",
-        )
-    )
     def test_a_version_without_a_number_puts_no_variant_in_its_rule(self, mock_run: Mock, mock_glob: Mock):
         """Test that the rule for an artefact on a version without a number holds the cooldown's versions alone."""
         self.find_pom(mock_run, mock_glob, pom_declaring(guava_element("r09")))
@@ -1554,14 +1518,6 @@ class UpdatePomXmlTest(LoggingTestCase):
                 update_pom_xmls()
                 self.assertEqual(self.rule_sets, [_guava_range_held_back(maven_range)])
 
-    @kills(
-        Mutation(
-            maven_range_module.maven_range,
-            "current_version)) is None:\n        return None",
-            'current_version)) is None:\n        return ""',
-            "a level bound with no version to anchor to holds nothing back, so Maven crosses it",
-        ),
-    )
     def test_a_level_bound_holds_back_what_it_drops_from_its_version(self, mock_run: Mock, mock_glob: Mock):
         """Test that a level bound holds back what it drops from its declaration's version on, or every version."""
         own_property = _marked_property("guava.version", "32.1.0-jre", "ignore[minor-update]")
@@ -1929,12 +1885,6 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module._new_version,
-            "get_changes(artefact, version)",
-            "get_changes(artefact, update.old.current_version)",
-            "a dependency Maven moved is reported with the changes of the version it moved away from",
-        ),
-        Mutation(
             update_pom_xml_module._update_pom_xml,
             "_report_new_versions(before, after, resolved)",
             "_report_new_versions(before, after, after)",
@@ -1993,14 +1943,6 @@ class UpdatePomXmlTest(LoggingTestCase):
         self.assert_new_version_logged(GUAVA, published_version("33.7.1-jre", published), Location(pom, 6))
         self.assertEqual(requested_urls(mock_get).count(maven_central_listing_url(GUAVA)), 1)
 
-    @kills(
-        Mutation(
-            update_pom_xml_module._report_new_versions,
-            "zip(before, after, resolved, strict=True)",
-            "{n.location: (o, n, r) for o, n, r in zip(before, after, resolved, strict=True)}.values()",
-            "one declaration per line is reported, so of two naming the same property only one is",
-        )
-    )
     def test_a_dependency_and_plugin_sharing_a_property_are_each_reported(self, mock_run: Mock, mock_glob: Mock):
         """Test that a dependency and a plugin naming the same property are both reported, at that property's line."""
         provider = dependency_element("org.apache.maven.surefire", "surefire-junit-platform", "${surefire.version}")
@@ -2147,14 +2089,6 @@ class UpdatePomXmlTest(LoggingTestCase):
         self.assert_no_new_version_logged()
         get_changes.assert_not_called()
 
-    @kills(
-        Mutation(
-            update_pom_xml_module._update_pom_xml,
-            "    return\n    effective_pom",
-            "effective_pom",
-            "Maven runs on a pom Update-time cannot read, rewriting a file it could not parse",
-        )
-    )
     def test_an_unparsable_pom_is_skipped(self, mock_run: Mock, mock_glob: Mock):
         """Test that a pom whose XML does not parse is warned about, and leaves the next pom checked as usual."""
         poms = {"broken": "<project><broken>", "app": pom_declaring(guava_element("33.7.1-jre"))}

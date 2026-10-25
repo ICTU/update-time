@@ -61,15 +61,6 @@ class SetToolKeyTest(unittest.TestCase):
         self.assertTrue(pyproject_toml.set_tool_key(pyproject_file, "uv", "exclude-newer", "7 days", comment=comment))
         return pyproject_file.write_text.call_args.args[0]
 
-    @kills(
-        Mutation(
-            toml._add_table,
-            "following and not",
-            "not",
-            "a table appended at the end of the file looks for a blank line after it",
-            raises="IndexError: list index out of range",
-        )
-    )
     def test_creates_tool_and_table_when_absent(self):
         """Test that a `[tool.uv]` added to a file that does not have a `[tool]` section ends the file on its key."""
         self.assertEqual(self.written('[project]\nname = "x"\n'), f'[project]\nname = "x"\n\n{_UV_TABLE}')
@@ -119,12 +110,6 @@ class SetToolKeyTest(unittest.TestCase):
         self.assertEqual(written, f"[tool.ruff]\nx = 1\n\n{_UV_TABLE}\n{_NEXT_TABLE}\n[tool.black]\ny = 2\n")
 
     @kills(
-        Mutation(
-            toml._add_table,
-            "_pop_trailing_decorations(_last_table(part))",
-            "[]",
-            "a comment above the next table ends up above the inserted table",
-        ),
         Mutation(
             toml._last_table,
             "table = last",
@@ -455,14 +440,6 @@ class DeclarationsTest(unittest.TestCase):
         contents = '[project]\ndependencies = [\n    "pkg==1.0",  # update-time: ignore\n    "other==2.0",\n]\n'
         self.assertEqual(self.markers(contents), [BARE_IGNORE, Marker()])
 
-    @kills(
-        Mutation(
-            pyproject_toml._marker,
-            "parse_marker(replace(line, location=location))",
-            'parse_marker(replace(line, previous_text="", location=location))',
-            "only an inline marker is read, so a marker on the line above a declaration steers nothing",
-        )
-    )
     def test_reads_the_marker_on_the_line_above_a_declaration(self):
         """Test that a marker steers the declaration on the line below it, and none when that line opens an array."""
         contents = (

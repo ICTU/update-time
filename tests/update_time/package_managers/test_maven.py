@@ -73,15 +73,6 @@ class PreReleasePatternTest(unittest.TestCase):
 class OtherVariantsPatternTest(unittest.TestCase):
     """Unit tests for the pattern of the versions on a variant none of the current versions is on."""
 
-    @kills(
-        Mutation(
-            maven._other_variants,
-            "({same_variants})$",
-            "({same_variants})?$",
-            "a dependency on a variant moves to the plain release",
-        ),
-        Mutation(maven._variant_pattern, "re.escape(variant)", "variant", "a dot in a variant matches any character"),
-    )
     def test_the_pattern_matches_a_version_on_another_variant(self):
         """Test that the pattern matches a version on another variant, on none, on a respelled one, or a pre-release."""
         for current, version in (

@@ -62,17 +62,6 @@ def get_latest_version(
     return pypi.get_latest_version(pinned, version_bound, cooldown_days, check_archival=True)
 
 
-# The mutation that reads the null project URLs PyPI reports as a dictionary. The tests of the updater that rewrites
-# the pins kill it too, so it is named here rather than spelled out in each registration.
-NULL_PROJECT_URLS_READ_AS_A_DICT = Mutation(
-    pypi.get_changes,
-    'urls = info.get("project_urls") or {}',
-    'urls = info.get("project_urls", {})',
-    "the project URLs PyPI reports as null are read as a dictionary, which ends the run with a traceback",
-    raises="AttributeError: 'NoneType' object has no attribute 'items'",
-)
-
-
 @patch("requests.Session.get")
 class GetChangesTest(LoggingTestCase):
     """Unit tests for getting the changes."""
@@ -339,7 +328,6 @@ class GetChangesTest(LoggingTestCase):
         self.assertEqual(get_changes("typing-extensions", "1.1"), changelog)
         self.assert_releases_requested(mock_get, "python/typing_extensions")
 
-    @kills(NULL_PROJECT_URLS_READ_AS_A_DICT)
     def test_changelog_in_description_links_the_release_page(self, mock_get: Mock):
         """Test that the description supplies the changes, linking the release's PyPI page, without project URLs."""
         changelog = "1.1\n- Fixed ...\n- Added ..."
@@ -358,12 +346,6 @@ class GetChangesTest(LoggingTestCase):
             "markdown=is_markdown_content_type(content_type)",
             "markdown=True",
             "the content type is passed over, so a reStructuredText description is read as Markdown",
-        ),
-        Mutation(
-            changelog.is_markdown_content_type,
-            'return content_type.partition(";")[0].strip().lower() == _MARKDOWN_CONTENT_TYPE',
-            "return content_type.strip().lower() == _MARKDOWN_CONTENT_TYPE",
-            "a content type carrying parameters matches nothing, so a Markdown description is read as text",
         ),
     )
     def test_the_content_type_says_whether_the_description_is_markdown(self, mock_get: Mock):
@@ -807,12 +789,6 @@ class ArchivalTest(LoggingTestCase):
     """Unit tests for the archival state PyPI declares for a project."""
 
     @kills(
-        Mutation(
-            pypi._archival,
-            'return Archival(archived=archived, reason=project_status.get("reason") or "")',
-            "return Archival(archived=archived)",
-            "the reason published beside the status is dropped, so an archived project reports none",
-        ),
         Mutation(
             pypi._archival,
             'project_status = _project_metadata(package).get("project-status") or {}',

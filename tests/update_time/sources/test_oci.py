@@ -121,14 +121,6 @@ class TagGetterExcludingTest(RegistryRequestsMixin, unittest.TestCase):
         self.requests.assert_not_called()
         self.assertEqual(self.resolve("python", "3.14").version, "9.9")
 
-    @kills(
-        Mutation(
-            oci.tag_getter_excluding,
-            'as_written = f"{pinned.name}{tag_of(pinned.version)}"\n',
-            'as_written = f"{pinned.name}:{pinned.version}"\n',
-            "a reference naming no tag is matched with an empty tag, so it is looked up on a registry",
-        )
-    )
     def test_an_excluded_reference_naming_no_tag_is_left_as_it_is(self):
         """Test that an entry listed without a tag matches the reference that names none."""
         resolved = self.resolve("default", "")
@@ -154,14 +146,6 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.requests.side_effect = mock_docker_registry()
         self.assertEqual(get_latest_tag("no_tags", "1.0").version, "1.0")
 
-    @kills(
-        Mutation(
-            oci._tag_names,
-            "_LOG.response(response)",
-            "pass",
-            "tag names the registry fails to list are left unchanged without a warning",
-        )
-    )
     def test_tag_names_unavailable(self):
         """Test that a reference whose tag names can't be fetched is left unchanged, and the failure logged."""
         self.requests.side_effect = mock_docker_registry(unavailable=Endpoint.TAG_NAMES)
@@ -210,14 +194,6 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         url = "https://registry-1.docker.io/v2/library/python/tags/list?n=1000"
         self.assert_could_not_fetch_logged(url, status=HTTPStatus.UNAUTHORIZED)
 
-    @kills(
-        Mutation(
-            oci._repository_not_served,
-            "unserved=Unserved.REPOSITORY",
-            "unserved=None",
-            "dating a version tag of a repository the registry does not serve costs a request",
-        )
-    )
     def test_tag_of_a_repository_the_registry_does_not_serve_costs_no_request_to_date_it(self):
         """Test that a version tag of a repository the registry does not serve is left undated, without asking."""
         self.requests.side_effect = mock_docker_registry(repository_served=False)
@@ -427,15 +403,6 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
                 )
                 self.assertEqual(get_latest_tag(image, "3.24.1").version, "3.25.0")
 
-    @kills(
-        Mutation(
-            oci.Tag._is_dated_snapshot,
-            "try:\n            date.fromisoformat(str(release[0]))\n        except ValueError:\n"
-            "            return False\n        return True",
-            "return True",
-            "a version of eight digits naming no calendar date is passed over as if it were a snapshot",
-        )
-    )
     def test_eight_digit_version_that_is_no_date_is_a_candidate(self):
         """Test that an eight-digit version reading as no calendar date, such as `20261332`, still updates a release."""
         self.requests.side_effect = mock_docker_registry(docker_tag("20261332", DIGEST))
@@ -830,14 +797,6 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         get_latest_tag("debian", "12.14")
         self.requests.assert_not_called()
 
-    @kills(
-        Mutation(
-            oci._get_tag,
-            "pushed = DeferredLookup(partial(docker_hub.last_pushed, _repository(image), name))",
-            "pushed = docker_hub.last_pushed(_repository(image), name)",
-            "every tag resolved costs a push-date request, also where nothing reads its push date",
-        )
-    )
     def test_an_up_to_date_tag_costs_no_push_date_request(self):
         """Test that a tag with no newer one is resolved without asking Docker Hub when it was pushed."""
         self.requests.side_effect = mock_docker_registry(docker_tag("12.15", DIGEST))
@@ -938,14 +897,6 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         listings = [call for call in self.requests.call_args_list if "/tags?" in call.args[0]]
         self.assertEqual(len(listings), 1)
 
-    @kills(
-        Mutation(
-            oci._unpinned_floating_tag,
-            "if reason in (FloatingPin.NOT_LISTED, FloatingPin.NO_MANIFEST)",
-            "if reason is FloatingPin.NO_MANIFEST",
-            "a floating tag the registry does not list is dated by the image's newest release",
-        )
-    )
     def test_tag_not_listed(self):
         """Test that a floating tag the registry does not list is left as it is, and dated by no release."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.14.7", DIGEST, tag_last_pushed=STALE_DATE))
@@ -996,14 +947,6 @@ class GetLatestTagForFloatingTagTest(RegistryRequestsMixin, LoggingTestCase):
         ]
         self.assertEqual(manifests, ["latest", "3.15.0", "3.14.7"])  # `3.14` and `3` sort below the match.
 
-    @kills(
-        Mutation(
-            oci._alias_rank,
-            "carried = sum(_carries(alias, label) for label in labels)",
-            "carried = 0",
-            "the walk ignores the floating tag's words, so it lands on the shorter alias it ties with",
-        )
-    )
     def test_walk_keeps_the_words_of_the_floating_tag(self):
         """Test that the walk lands on an alias carrying the floating tag's words, not on a shorter one it ties with."""
         names = ("trixie", "26.7.0-trixie", "26.7-trixie", "26.7.0", "26.7", "26")

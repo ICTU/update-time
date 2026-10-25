@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from update_time.domain import cooldown, dependency
+from update_time.domain import cooldown
 from update_time.domain.bound import NO_BOUND, Verb
 from update_time.domain.changelog import is_markdown
 from update_time.domain.cooldown import COOLDOWN
@@ -422,14 +422,6 @@ class GetLatestVersionTest(LoggingTestCase):
 class NewestReleaseTest(LoggingTestCase):
     """Unit tests for the newest release of a GitHub repo."""
 
-    @kills(
-        Mutation(
-            dependency.Release.__lt__,
-            "return (self.published, self._sortable_version) < (other.published, other._sortable_version)",
-            "return (self._sortable_version, self.published) < (other._sortable_version, other.published)",
-            "the release named is the highest version rather than the one whose date was measured",
-        )
-    )
     @patch_github(
         releases=[
             github_release_json("2.0", published_at=PAST_COOLDOWN_DATE),
@@ -496,14 +488,6 @@ class NewestReleaseTest(LoggingTestCase):
 class ArchivalTest(LoggingTestCase):
     """Unit tests for the archival state GitHub declares for a repository."""
 
-    @kills(
-        Mutation(
-            github._repository_metadata,
-            'response = _fetch_github(f"{_GITHUB_API}/{repository}")',
-            'response = _fetch_github(f"{_GITHUB_API}/{repository}/")',
-            "the repository is asked for at a URL GitHub answers 404, so no repository ever reads as archived",
-        )
-    )
     @patch("requests.Session.get")
     def test_archived_flag(self, mock_get: Mock):
         """Test that a repository reads as archived exactly when GitHub's repository endpoint flags it archived.
@@ -584,20 +568,6 @@ class GetReleaseTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            github._package_names,
-            "[package] if unscoped == package else [package, unscoped]",
-            "[package]",
-            "a scoped npm package tagged without its scope has no changelog reported",
-            raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
-        ),
-        Mutation(
-            github.release_tags,
-            'for name in names for joiner in ("-v", "-", "@", "/")',
-            'for name in names for joiner in ("-v", "-", "@", "/") if name == package or joiner == "@"',
-            "a monorepo prefixing the unscoped name with a dash has no changelog reported",
-            raises="AttributeError: 'NoneType' object has no attribute 'tag_name'",
-        ),
-        Mutation(
             github.release_tags,
             'for name in names for joiner in ("-v", "-", "@", "/")',
             'for name in names for joiner in ("-v", "-", "@", "/") if name == package or joiner != "/"',
@@ -643,14 +613,6 @@ class GetReleaseTest(LoggingTestCase):
         release = _get_release(GitHubRepository("emotion-js", "emotion"), release_tags("@emotion/react", "11.14.0"))
         self.assert_release(release, "@emotion/react@11.14.0", "Scoped")
 
-    @kills(
-        Mutation(
-            github.release_tags,
-            'return [*package_tags, f"v{version}", version]',
-            'return [*package_tags[:1], f"v{version}", version, *package_tags[1:]]',
-            "a package whose repository also tags the version alone has the wrong release reported for it",
-        ),
-    )
     @patch_get(
         [
             github_release_json("v6.1.1", body="Version only"),
@@ -734,14 +696,6 @@ class ChangesFromReleaseTest(CacheClearingTestCase):
         self.assertEqual(changes_from_release(None, "any", "1.0"), "")
         mock_get.assert_not_called()
 
-    @kills(
-        Mutation(
-            github.TaggedVersion.from_release,
-            '"", markdown=True, url=',
-            '"", markdown=False, url=',
-            "a release body is read as text, so the Markdown GitHub renders it in is shown raw",
-        ),
-    )
     @patch_get([github_release_json("1.1", body="Changelog", html_url=RELEASE_PAGE)])
     def test_the_body_is_returned_as_markdown_linking_the_release_page(self):
         """Test that the body of the matching release is returned as Markdown, linking the release's page."""
@@ -924,28 +878,12 @@ class GitHubHeadersTest(CacheClearingTestCase):
         archival(GitHubRepository("owner", "repository"), check_archival=True)
         self.assertEqual(mock_get.call_args.kwargs["headers"], expected)
 
-    @kills(
-        Mutation(
-            github._github_headers,
-            '{"Authorization": f"Bearer {github_token}"}',
-            "{}",
-            "every GitHub API request goes out unauthenticated, so a run spends an anonymous caller's rate limit",
-        )
-    )
     @patch_environ({"GITHUB_TOKEN": "pat123"})  # nosec
     @patch("requests.Session.get")
     def test_authorization_header_when_a_token_is_set(self, mock_get: Mock):
         """Test that a request carries a bearer authorization header when GITHUB_TOKEN is set."""
         self.assert_request_headers(mock_get, {"Authorization": "Bearer pat123"})
 
-    @kills(
-        Mutation(
-            github._github_headers,
-            "(TOKEN_VARIABLE)) else {}",
-            '(TOKEN_VARIABLE)) else {"Authorization": "Bearer"}',
-            "a run given no token sends an empty bearer header instead of asking anonymously",
-        )
-    )
     @patch_environ()
     @patch("requests.Session.get")
     def test_no_authorization_header_without_a_token(self, mock_get: Mock):

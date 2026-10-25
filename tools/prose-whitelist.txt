@@ -646,20 +646,15 @@ a JSON key naming no version is read as a feature reference without a tag.
 a TOML escape: the spec parses as `pkg>=1.0`.
 a `<5` bound on a v4 pin is live, so no redundancy warning.
 a `sources` key spelled another way than the dependency it names covers it not, so PyPI is asked about a name it has no release for.
-a changelog heading a release one component shorter than the version reports no changes for it.
 a changelog underlining its headings with backticks or tildes reports no changes at all, its file read as one fenced code block.
 a comment the changelog's author wrote to be invisible is printed in the log.
 a cooldown steers an update, and no update is resolved for such a reference.
-a declaration that pins no version loses its marker, so the warnings it silences are reported anyway.
 a declaration whose package the index lists no release for is dropped, archival and all.
-a declared dependency type the details chapter has no section for goes unreported.
 a decorated test carries no registration, so a second one on it goes undetected.
 a decorated test reports under the wrapper's name, so a failing run names no test.
 a decorated test the checked test reaches stands aside too, so its mutations go unchecked.
 a dependency PyPI serves no release for is judged as if it did, so a warning scope on it is reported in the wrong words or not at all.
 a dependency spelled another way than its `sources` key reads as one PyPI serves, so PyPI is asked about a name it has no release for.
-a dependency that pins no exact version has its marker reported nowhere, so what that marker gets wrong reaches nobody.
-a dependency that pins no version reads as one whose update was held back, though the marker froze no pin and uv resolved the version anyway.
 a dependency type that declares no file goes unnoticed, and the help stops naming its files.
 a digest the file records beside a built image's tag survives into the match, so the image is looked up.
 a directory the contents endpoint answers with a file ends the run with a traceback.
@@ -668,51 +663,40 @@ a file the codemod cannot parse still writes the renames already made to the oth
 a file type that names no glob pattern goes unnoticed, and none of its files is ever scanned.
 a file type the dependency types declare goes unnamed in the help.
 a fixture the test being checked reads.
-a floating pin the source could not resolve is reported as redundant, although its tag still floats.
-a floating tag the registry does not list is dated by the image's newest release.
 a lower-case `from` introduces no base image, so its line is left as it is.
 a machine-executor image naming no tag is not collected, so it is looked up on a registry.
 a major-update bound on a v4 pin is live, so no redundancy warning.
 a monorepo joining the unscoped name and the version with a slash has no changelog reported.
-a monorepo prefixing the unscoped name with a dash has no changelog reported.
 a mutation the test did not kill is reported without naming which mutation it was.
 a mutation the test module cannot import escapes the check rather than being reported as broken.
 a mutation the test module cannot import is reported as broken without naming the error.
 a package whose description links another project above its own repository reports no changes.
 a package whose description links another project reports no changes, though its repository's root holds a changelog file.
-a package whose every declaration is held back has its new version reported at the file, and costs a request for the changelog of a version nothing adopts.
-a package whose repository publishes no matching release reports no changelog.
 a package whose repository spells its name with another separator, or in another case, reports no changes.
 a pin nothing updates costs no request for its changelog.
 a pin's name carries the extra its declaration spells, so it names no package the source knows.
 a reading of another length than its own pairs up all the same, taking the whole run down with it.
 a reference naming no repository is read as one, ending the run over that single line.
-a reference naming no tag is matched with an empty tag, so it is looked up on a registry.
 a registration naming no mutation is accepted, so the test it decorates checks nothing.
 a release tagged with something that is no version ends the run with a traceback.
 a repository naming its changelog file `history`, `news`, or `releases` reports no changes.
 a repository whose root answers costs a documentation tree listing it has no need of.
 a resolver reports no archival though its source does, so the same switched-off check skips it.
 a root whose first changelog file names no version reports no changes, though another file names it.
-a run given no token sends an empty bearer header instead of asking anonymously.
 a scope the reader spelled out is discarded, instead of being kept.
-a scoped npm package tagged without its scope has no changelog reported.
 a section declaring no such name.
 a section of the details chapter that documents no dependency type goes unreported.
 a service declared with no body is read as a mapping, ending the run.
 a service has no body.
-a source is asked about a reference no check needs an answer for, so the run pays for the request.
 a tag naming neither a version nor a channel is dated by no release, whatever the registry serves.
 a tag the registry serves no manifest for is dated by the image's newest release.
 a traceback the probe passes over.
 a version a space and a comma follow still ends its specifier, so a requirement combining two of them is rewritten into one no version satisfies.
-a version of eight digits naming no calendar date is passed over as if it were a snapshot.
 a version that is no `.0` release reports the changes of the release one component shorter.
 a version the registry dates nowhere in its time map ends the run with a traceback.
 adopts a release only while it is fresh and holds it back once it is old, so it sets no cooldown.
 an `ignore[update]` holds back a dependency that pins no version, whose version uv resolves whatever the marker says, so the new version reaches nobody.
 an unknown tag reaches no constructor, so a Compose override file reads as unparsable.
-each table is compared with itself, so no table is held to the declared dependency types.
 every mutation the test did not kill is reported with the first one's regression.
 it names the empty base image Docker builds from, which no registry serves.
 nltk ships no `py.typed` marker, so mypy has no types to resolve for it.
@@ -727,16 +711,12 @@ standard input holds no line separating the snippet from its replacement.
 switch the archival check off, so no dependency is warned about as archived.
 the Markdown parser traces every block rule it tries, burying the run's own debug output.
 the changelog file of a package a monorepo builds from a directory is looked for in the root.
-the checks are handed every declaration, so PyPI is asked about one it serves no release for.
 the commit has no committer date.
 the content type a changelog URL is served with is passed over, so its Markdown is shown raw.
 the details chapter has no section for ''.
 the document dates no version, so newest_release returns None.
 the line below declares nothing, so this steers no declaration.
 the lookahead's copy of the pin drifts from the pin itself, so a spelling only one of them accepts matches both patterns and is read twice.
-the marker a report settles on is discarded, so an unreadable item warns and the pin it may have been meant to freeze is rewritten anyway.
-the reason the source published is left out of the warning.
-the repository is asked for at a URL GitHub answers 404, so no repository ever reads as archived.
 the repository reports no archival, so a switched-off staleness check skips the pom it reads.
 the resolver reports no archival, so a switched-off staleness check skips the file it reads.
 the second URL's version list; the npm registry document is cached.

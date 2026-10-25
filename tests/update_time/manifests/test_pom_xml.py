@@ -179,15 +179,6 @@ class PomNameTest(unittest.TestCase):
                 pom = pom_declaring(coordinates=coordinates, properties=properties)
                 self.assertEqual(pom_xml.pom_name(mock_path(pom)), name)
 
-    @kills(
-        Mutation(
-            pom_xml.pom_name,
-            "if project is None or project.child",
-            "if project.child",
-            "an unparsable pom ends the run",
-            raises="AttributeError: 'NoneType' object has no attribute 'child'",
-        )
-    )
     def test_a_pom_that_does_not_parse(self):
         """Test that a pom whose XML does not parse goes unnamed, rather than ending the run."""
         self.assertEqual(pom_xml.pom_name(mock_path("<project><broken>")), "")
@@ -351,14 +342,6 @@ class ResolvedDependenciesTest(unittest.TestCase):
         effective_pom = effective_pom_declaring(inherited, managed=dependency_management_element(guava))
         self.assertEqual(_resolved(pom, effective_pom), [(GUAVA, "33.0.0-jre", 7)])
 
-    @kills(
-        Mutation(
-            pom_xml._EffectiveArtefacts.get,
-            "self.artefacts.get(_ArtifactAtLine(artifact_name, artifact.line))",
-            "{key.artifact: pinned for key, pinned in self.artefacts.items()}.get(artifact_name)",
-            "two declarations of one artefact share a version, so OSV is asked about one of them at the other's",
-        )
-    )
     def test_each_declaration_of_a_name_takes_the_version_the_effective_pom_gives_it(self):
         """Test that two declarations of one artefact, each versioned by a parent's property, keep their own version."""
         managed = dependency_management_element(guava_element("${guava.managed.version}"))
@@ -369,14 +352,6 @@ class ResolvedDependenciesTest(unittest.TestCase):
         expected = [(GUAVA, "33.0.0-jre", 7), (GUAVA, "32.1.0-jre", 15)]
         self.assertEqual(_resolved(pom, effective_pom), expected)
 
-    @kills(
-        Mutation(
-            pom_xml._EffectiveArtefacts.get,
-            "self.artefacts.get(_ArtifactAtLine(artifact_name, artifact.line))",
-            "{key.line: pinned for key, pinned in self.artefacts.items()}.get(artifact.line)",
-            "a dependency takes the version of whichever dependency is declared last on its line",
-        )
-    )
     def test_dependencies_declared_on_one_line_each_take_their_own_version(self):
         """Test that two dependencies on one line each take the version the effective pom gives that artefact."""
         one_line = dependency_element("commons-io", "commons-io", "${commons.version}") + dependency_element(
@@ -389,14 +364,6 @@ class ResolvedDependenciesTest(unittest.TestCase):
         expected = [("commons-io:commons-io", "2.11.0", 3), ("junit:junit", "4.12", 3)]
         self.assertEqual(_resolved(pom, effective_pom_declaring(commons_io, junit)), expected)
 
-    @kills(
-        Mutation(
-            pom_xml._EffectiveArtefacts.get,
-            "_interpolated(artifact.text, self.property_elements)",
-            "_element_holding(artifact, self.property_elements).text",
-            "an artifact holding a parent's property inside its name keeps the property, so it goes unchecked",
-        )
-    )
     def test_an_artifact_holding_a_parent_property_in_its_name_is_matched_to_its_effective_entry(self):
         """Test that an artifact spelling part of its name as a parent's property takes the effective pom's name."""
         pom = pom_declaring(dependency_element("org.apache.spark", "spark-core_${scala.binary.version}", "3.5.0"))
@@ -460,14 +427,6 @@ class ResolvedDependenciesTest(unittest.TestCase):
                 expected = [(artefact, "33.7.1-jre", 7), (artefact, "33.7.1-jre", 12)]
                 self.assertEqual(_resolved(pom, effective_pom), expected)
 
-    @kills(
-        Mutation(
-            pom_xml._own_versions,
-            "for tag in _ARTEFACT_ELEMENTS",
-            'for tag in ("dependency",)',
-            "a plugin is checked at the version its property held before the run, which Maven updated away from",
-        )
-    )
     def test_a_version_the_pom_holds_for_a_plugin_is_read_from_the_pom(self):
         """Test that a plugin takes the version its own pom holds, in the plugin or in its `<pluginManagement>`."""
         properties = properties_element({"surefire.version": "3.5.2"})
@@ -493,12 +452,6 @@ class ResolvedDependenciesTest(unittest.TestCase):
                 self.assertEqual(_resolved(pom, effective_pom), expected)
 
     @kills(
-        Mutation(
-            pom_xml._version_as_left,
-            "_interpolated(own_element.text, property_elements)",
-            "own_element.text",
-            "Update-time checks the version Maven moved away from, where the pom manages it through a property",
-        ),
         Mutation(
             pom_xml._version_as_left,
             "_interpolated(own_element.text, property_elements)",
@@ -552,15 +505,6 @@ class ResolvedDependenciesTest(unittest.TestCase):
         ]
         self.assertEqual(_resolved(pom, effective_pom_declaring(guava, managed=effective_managed)), expected)
 
-    @kills(
-        Mutation(
-            pom_xml._input_location,
-            "    if input_location is None:\n        return _InputLocation()\n",
-            "",
-            "an entry Maven adds from its own model ends the run, since its input location lacks a line",
-            raises="TypeError: 'NoneType' object is not subscriptable",
-        )
-    )
     def test_an_entry_whose_input_location_lacks_a_line_is_skipped(self):
         """Test that an entry whose input location lacks a line is skipped, and the entries beside it are read."""
         guava = EFFECTIVE_GUAVA

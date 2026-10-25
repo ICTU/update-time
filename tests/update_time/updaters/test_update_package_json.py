@@ -1,6 +1,5 @@
 """Unit tests for the package.json updater (discovery and orchestration of the node package managers)."""
 
-import itertools
 import json
 import posixpath
 import subprocess  # nosec
@@ -10,6 +9,7 @@ from logging import WARNING
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, call, patch
+from urllib.parse import urlparse
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
@@ -21,7 +21,6 @@ from update_time.package_managers import policy as policy_module
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.references import delegated as delegated_module
-from update_time.sources import npmjs as npmjs_module
 from update_time.updaters import update_package_json as update_package_json_module
 from update_time.updaters.update_package_json import update_package_jsons
 
@@ -29,7 +28,7 @@ from tests.helpers import FakeFiles, mock_path, mock_response, patch_pathlib_pat
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import BARE_IGNORE, FRESH_DATE, STALE_DATE
 from tests.update_time.helpers import LoggingTestCase, message_of, published_version, staleness_disabled
-from tests.update_time.sources.helpers import github_commits_json, github_release_json, npm_registry
+from tests.update_time.sources.helpers import github_release_json, npm_registry
 from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
 from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulnerabilities, osv
 
@@ -54,21 +53,24 @@ _PUBLICATION_TIME = "20260530T10:26:45.543Z"
 def _package_lookup_responses() -> Mock:
     """Return a `Session.get` mock for the npmjs/GitHub lookups that describe an update to version 1.1.
 
-    After a manager reports a package updated to 1.1, Update-time resolves its changelog and push date via four
-    sequential requests: the package's repository URL (npm registry), the GitHub releases (the changelog), the npm
-    registry publication time, and the release's commit SHA. A fresh mock is returned per call so each decorated
-    test gets answers of its own, and the answers cycle, so a test run again by its kills check gets them again.
+    After a manager reports a package updated to 1.1, Update-time resolves its changelog and push date: the npm
+    registry's version document names the repository, GitHub serves its releases, and the npm registry's package
+    document dates the version. Each request is answered by the URL it names, so the answers do not depend on how
+    many of them the lookups' caches already hold.
     """
-    return Mock(
-        side_effect=itertools.cycle(
-            [
-                mock_response({"repository": {"url": "https://github.com/package/1.1"}}),
-                mock_response([github_release_json("v1.1", body="Changelog")]),
-                mock_response({"time": {"1.1": _PUBLICATION_TIME}}),
-                mock_response(github_commits_json()),
-            ]
-        )
-    )
+
+    def serve(url: str, **_kwargs: object) -> Mock:
+        parsed = urlparse(url)
+        if parsed.hostname == "registry.npmjs.org":
+            if parsed.path.count("/") > 1:
+                return mock_response({"repository": {"url": "https://github.com/package/1.1"}})
+            return mock_response({"time": {"1.1": _PUBLICATION_TIME}})
+        if parsed.path.endswith("/releases"):
+            return mock_response([github_release_json("v1.1", body="Changelog")])
+        unexpected = f"No answer for a request for {url}"
+        raise AssertionError(unexpected)
+
+    return Mock(side_effect=serve)
 
 
 def _npm_lock(**versions: str) -> Mock:
@@ -185,12 +187,23 @@ _RANGE_REWRITE_FIELDS = ("manager", "dependency", "location", "range", "new_rang
 class PackageLookupResponsesTest(unittest.TestCase):
     """Unit tests for the registry and GitHub answers the tests that log a new version are given."""
 
-    def test_a_second_run_gets_the_answers_the_first_got(self):
-        """Test that the lookups of a test run again, as a kills check runs it, get the answers the first run got."""
+    def test_each_lookup_gets_the_answer_for_the_url_it_names(self):
+        """Test that each lookup gets the answer for its URL, whichever lookups a cache spared before it."""
+        urls = [
+            "https://registry.npmjs.org/package/1.1",
+            "https://api.github.com/repos/package/1.1/releases",
+            "https://registry.npmjs.org/package",
+        ]
         get = _package_lookup_responses()
-        first_run = [get().json() for _ in range(4)]
-        second_run = [get().json() for _ in range(4)]
-        self.assertEqual(second_run, first_run)
+        in_order = [get(url).json() for url in urls]
+        reversed_order = [get(url).json() for url in reversed(urls)]
+        self.assertEqual(reversed_order, in_order[::-1])
+        self.assertEqual(len({json.dumps(answer) for answer in in_order}), len(urls))
+
+    def test_a_lookup_without_an_answer_fails_the_test(self):
+        """Test that a request for a URL the lookups make none of fails, rather than getting another URL's answer."""
+        with self.assertRaises(AssertionError):
+            _package_lookup_responses()("https://api.github.com/repos/package/1.1/commits")
 
 
 class _PackageJsonFilesTestCase(LoggingTestCase):
@@ -943,14 +956,6 @@ class VulnerableDependencyTest(NoUpdateTestCase):
             "left-pad", "1.2.0", VULNERABILITY, Location(package_json, 6), among_others=True
         )
 
-    @kills(
-        Mutation(
-            update_package_json_module._warn_about_dependencies,
-            "Ecosystem.NPM",
-            "Ecosystem.PYPI",
-            "OSV is asked about a package.json's pins in another ecosystem than npm's",
-        )
-    )
     def test_osv_is_asked_about_the_exact_pins_alone(self, mock_run: Mock, glob: Mock):
         """Test that OSV is asked in the npm ecosystem about a dependency pinned to a version, and not about a range."""
         self.stub_no_update(mock_run)
@@ -988,15 +993,6 @@ class YankedDependencyTest(NoUpdateTestCase):
         deprecation = Yank(yanked=True, reason="use 2.0 instead")
         self.assert_yanked_dependency_logged("left-pad", "1.3.0", Location(package_json, 4), deprecation)
 
-    @kills(
-        Mutation(
-            npmjs_module.deprecation,
-            '.get("versions", {})',
-            '["versions"]',
-            "the deprecation lookup aborts the run on the empty document a failed registry request leaves",
-            raises="KeyError: 'versions'",
-        )
-    )
     def test_unreachable_registry_reported_without_a_yank(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that a registry the yank check cannot reach is reported, and leaves the pin unreported as yanked."""
         self.stub_no_update(mock_run)

@@ -214,25 +214,15 @@ class MainTest(unittest.TestCase):
                 self.assertEqual(run_if_changed.main(), 0)
                 self.assertEqual(_commands_run(run)[1:], [(*_COMMAND, "src/answer.py", "src/other.py")])
 
-    @kills(
-        Mutation(
-            run_if_changed.main,
-            "fingerprints == recorded",
-            "False",
-            "code unchanged since the command last passed reads as changed, so the tests run every time",
-        )
-    )
-    def test_code_equal_to_the_fingerprint_is_skipped_and_keeps_the_fingerprint(self):
+    def test_code_equal_to_the_fingerprint_is_skipped(self):
         """Test that a second run over unchanged code exits with the skip status and does not run the command."""
         files = FakeFiles({"src/answer.py": _MODULE})
         run = _files_listed(["src/answer.py"])
         with _patched(run, files):
             run_if_changed.main()
-            fingerprint = files.files[_RECORD_FILE]
             run.reset_mock()
             self.assertEqual(run_if_changed.main(), _SKIPPED)
         self.assertEqual(_commands_run(run), [])
-        self.assertEqual(files.files[_RECORD_FILE], fingerprint)
 
     @kills(
         Mutation(

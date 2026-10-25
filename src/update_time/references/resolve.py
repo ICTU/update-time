@@ -43,7 +43,7 @@ def report_directives_that_set_nothing(
             log.redundant_directive(reference, written, directive.reason_given(image_not_looked_up))
 
 
-def opt_in_redundancy(
+def _opt_in_redundancy(
     marker: Marker, scope: Scope, reason: RedundancyReason | None, *, update_held_back: bool
 ) -> RedundancyReason | None:
     """Return why the marker's opt-in to the scope is redundant, or None where the opt-in decides something.
@@ -67,8 +67,8 @@ def warn_if_the_opt_in_is_redundant(  # noqa: PLR0913 — whether the update is 
     *,
     update_held_back: bool,
 ) -> None:
-    """Warn when the marker's opt-in to the scope is redundant, saying why (see `opt_in_redundancy`)."""
-    if (redundancy := opt_in_redundancy(marker, scope, reason, update_held_back=update_held_back)) is not None:
+    """Warn when the marker's opt-in to the scope is redundant, saying why (see `_opt_in_redundancy`)."""
+    if (redundancy := _opt_in_redundancy(marker, scope, reason, update_held_back=update_held_back)) is not None:
         log.redundant_directive(reference, marker.allow_directive(scope), redundancy)
 
 

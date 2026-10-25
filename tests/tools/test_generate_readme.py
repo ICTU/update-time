@@ -37,7 +37,10 @@ def _quoted_log_messages(text: str) -> list[str]:
 def _message_pattern(message: LogMessage) -> re.Pattern[str]:
     """Return a pattern matching the message on a single line, with any text in place of each argument."""
     literal_parts = _MESSAGE_ARGUMENT.split(message.format)
-    return re.compile("[^\n]+?".join(re.escape(part) for part in literal_parts))
+    pattern = "[^\n]+?".join(re.escape(part) for part in literal_parts)
+    # A match needs only one character in place of an argument that opens the message. A run there makes the search
+    # retry that run at every position of the text.
+    return re.compile(pattern.replace("[^\n]+?", "[^\n]", 1) if not literal_parts[0] else pattern)
 
 
 class PlaceholderTest(unittest.TestCase):
