@@ -191,6 +191,12 @@ def _newest_release(artefact: DependencyName) -> Release | None:
     )
 
 
+def publication(artefact: DependencyName, version: VersionString) -> LookedUp[datetime]:
+    """Return the date Maven Central's listing gives the artefact's version."""
+    rows = (row for row in _rows(artefact) if row["version"] == version)
+    return LookedUp(next((_published(row["published"]) for row in rows), None))
+
+
 def versions_held_back(artefact: DependencyName, cooldown_days: int) -> tuple[str, ...]:
     """Return the artefact's versions published inside the cooldown, and the ones whose date does not parse."""
     return tuple(row["version"] for row in _rows(artefact) if _held_back(artefact, row, cooldown_days))

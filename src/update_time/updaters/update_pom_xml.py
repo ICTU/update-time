@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from update_time.domain.archival import archival_is_checked
-from update_time.domain.dependency import NO_CHANGES, DependencyVersion
+from update_time.domain.dependency import DependencyVersion
 from update_time.domain.file_type import POM_XML
 from update_time.domain.reference import Reference
 from update_time.formats import xml
@@ -220,7 +220,7 @@ def _warn_about_vulnerabilities(declared: list[Declaration]) -> None:
 
 
 def _report_new_versions(before: list[Declaration], after: list[Declaration], resolved: list[Declaration]) -> None:
-    """Report each dependency and plugin whose version differs between the two readings, with its changes.
+    """Report each dependency and plugin whose version differs between the two readings, with its changes and date.
 
     The name is the one the effective pom gives the declaration, where it resolves one. Two declarations of one
     artefact naming one property read the same in each reading, so they are reported once. The new version of an
@@ -237,9 +237,16 @@ def _report_new_versions(before: list[Declaration], after: list[Declaration], re
         if update in unreportable:
             _LOG.new_version_not_reported(reference, new.version_property, new.current_version)
             continue
-        is_resolved = pom_xml_format.fully_resolved(update.effective.pinned)
-        changes = maven_central.get_changes(reference.dependency, new.current_version) if is_resolved else NO_CHANGES
-        _LOG.new_version(reference, DependencyVersion(new.current_version, changes))
+        _LOG.new_version(reference, _new_version(update))
+
+
+def _new_version(update: _Update) -> DependencyVersion:
+    """Return the version Maven moved to, with its changes and publication date where the coordinates resolve."""
+    artefact, version = update.effective.dependency, update.new.current_version
+    if not pom_xml_format.fully_resolved(update.effective.pinned):
+        return DependencyVersion(version)
+    changes = maven_central.get_changes(artefact, version)
+    return DependencyVersion(version, changes, publication=maven_central.publication(artefact, version))
 
 
 def _unreportable_updates(updates: list[_Update]) -> list[_Update]:
