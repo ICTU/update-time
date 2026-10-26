@@ -1,5 +1,6 @@
 """Unit tests for the requirements.txt update script."""
 
+import contextlib
 import re
 import unittest
 from unittest.mock import ANY, Mock, patch
@@ -209,13 +210,13 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assertEqual(self.queried_packages(mock_get), ["typing-extensions"])
         stale = {"version": "4.0.0", "days": ANY, "threshold": ANY}
         self.assert_logged_among_others(
-            message_of(Logger.report_staleness, "threshold"),
+            message_of(Logger.report_staleness, "days"),
             dependency="typing_extensions",
             location=Location(requirements_txt, 1),
             **stale,
         )
         self.assert_logged_among_others(
-            message_of(Logger.report_staleness, "threshold"),
+            message_of(Logger.report_staleness, "days"),
             dependency="Typing-Extensions",
             location=Location(requirements_txt, 2),
             **stale,
@@ -289,7 +290,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi_module._archival,
-            "    if not check_archival:\n        return Archival()\n",
+            "    if not check_archival:\n        return None\n",
             "",
             "the source is told not to check for archival but answers anyway, so an archived project is warned "
             "about with the check off",
@@ -468,6 +469,29 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
+    def test_a_threshold_judging_a_recent_release_as_the_run_does_is_redundant(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a threshold judging a recent release as the run does is redundant, also with the check off."""
+        runs: dict[str, tuple[contextlib.AbstractContextManager[object], int]] = {
+            "the default run": (contextlib.nullcontext(), 365),
+            "a run switching the check off": (staleness_disabled, 0),
+        }
+        requirements_txt = self.loose_requirement(mock_rglob, "ignore[stale<90]")
+        for case, (run, run_threshold) in runs.items():
+            with self.subTest(case=case):
+                mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=PYPI_RECENT_UPLOAD)
+                with run:
+                    update_requirements_txts()
+                self.assert_logged(
+                    message_of(Logger.redundant_stale_threshold),
+                    directive="ignore[stale<90]",
+                    dependency="humanize",
+                    location=Location(requirements_txt, 1),
+                    version="4.15.0",
+                    days=ANY,
+                    threshold=90,
+                    run_threshold=run_threshold,
+                )
+
     def test_a_bare_ignore_on_a_loose_requirement_queries_and_reports_nothing(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a loose requirement held back by a bare `ignore` is neither looked up at PyPI nor warned about."""
         requirements_txt = self.loose_requirement(mock_rglob, "ignore")
@@ -550,6 +574,24 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         self.assert_no_warnings_logged()
         self.assert_ignored_yank_logged("humanize", Location(requirements_txt, 1), "ignore[yanked]")
+
+    def test_ignore_yanked_marker_on_a_pin_moved_off_its_yanked_release_is_redundant(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that an `ignore[yanked]` on a pin the run moves off its yanked release is reported as redundant."""
+        contents = "humanize==4.15.0  # update-time: ignore[yanked]\n"
+        requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
+        yanked = [yanked_file("humanize-4.15.0.tar.gz", reason="broke Python 3.10")]
+        mock_get.side_effect = [pypi_index("4.15.0", "4.16.0", files=yanked), pypi_release()]
+        update_requirements_txts()
+        requirements_txt.write_text.assert_called_once_with("humanize==4.16.0  # update-time: ignore[yanked]\n")
+        self.assert_logged(
+            message_of(Logger.report_yank, "directive", "version"),
+            directive="ignore[yanked]",
+            dependency="humanize",
+            location=Location(requirements_txt, 1),
+            version="4.16.0",
+        )
 
     def test_ignore_archived_marker_silences_the_warning(self, mock_rglob: Mock, mock_get: Mock):
         """Test that an `ignore[archived]` marker on the pin's line silences the archival warning."""

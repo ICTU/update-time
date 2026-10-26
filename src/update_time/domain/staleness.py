@@ -12,10 +12,15 @@ if TYPE_CHECKING:
 
 # The threshold to ask for to hear about no stale dependency at all, which switches the check off rather than
 # setting a day count. It is no number of days, so nothing is ever older than it.
-NO_STALENESS_CHECK = 0
+_NO_STALENESS_CHECK = 0
 
 # Private channel that passes --stale-after from the CLI to the updater subprocesses.
 STALE_AFTER = EnvVar("_UPDATE_TIME_STALE_AFTER_DAYS", default=365, parse=int)
+
+
+def staleness_is_checked(threshold: int) -> bool:
+    """Return whether the run checks staleness at the threshold."""
+    return threshold != _NO_STALENESS_CHECK
 
 
 def is_stale(published: datetime, threshold: int) -> bool:
@@ -24,7 +29,7 @@ def is_stale(published: datetime, threshold: int) -> bool:
     A threshold that switches the check off makes nothing stale. Whole days are compared (via `days_since`), so a
     fractional day over the threshold is not stale yet.
     """
-    if threshold == NO_STALENESS_CHECK:
+    if not staleness_is_checked(threshold):
         return False
     return days_since(published) > threshold
 
@@ -33,3 +38,11 @@ def stale_release(version: DependencyVersion, threshold: int) -> Release | None:
     """Return the dependency's newest release when it is old enough to warn about, or None when it is not."""
     newest = version.project.newest
     return newest if newest is not None and is_stale(newest.published, threshold) else None
+
+
+def release_judged_alike(version: DependencyVersion, threshold: int, run_threshold: int) -> Release | None:
+    """Return the dependency's newest release when both thresholds judge its staleness alike, or None otherwise."""
+    newest = version.project.newest
+    if newest is None or is_stale(newest.published, threshold) != is_stale(newest.published, run_threshold):
+        return None
+    return newest

@@ -16,6 +16,7 @@ from rich.logging import RichHandler
 from update_time.domain.bound import Verb, _Redundancy
 from update_time.domain.dependency import (
     Archival,
+    ArchivedSubject,
     Changes,
     DependencyVersion,
     FloatingPin,
@@ -25,6 +26,7 @@ from update_time.domain.dependency import (
     Yank,
 )
 from update_time.domain.reference import DriftedPin, RefKind
+from update_time.domain.staleness import _NO_STALENESS_CHECK
 from update_time.io import log as log_module
 from update_time.io.console import (
     CHANGES,
@@ -585,7 +587,7 @@ class LoggerTests(TestCase):
         _new_logger().report_staleness(resolved_reference("humanize", location, version), Marker(), 90)
         self.assert_message(
             mock_log,
-            message_of(Logger.report_staleness, "threshold"),
+            message_of(Logger.report_staleness, "days"),
             logging.WARNING,
             f"Stale dependency {dependency('humanize')} in {at('requirements.txt:9')}: "
             "newest release 5.0.0 was published 512 days ago (> 90)",
@@ -602,8 +604,8 @@ class LoggerTests(TestCase):
         resolved = resolved_reference("humanize", create_location("requirements.txt", 9), version)
         _new_logger().report_staleness(resolved, Marker(), 90)
         mock_log.assert_called_once_with(
-            message_of(Logger.report_staleness, "threshold").level,
-            message_of(Logger.report_staleness, "threshold"),
+            message_of(Logger.report_staleness, "days").level,
+            message_of(Logger.report_staleness, "days"),
             ANY,
         )
         mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
@@ -618,32 +620,64 @@ class LoggerTests(TestCase):
         )
         self.assert_message(
             mock_log,
-            message_of(Logger.report_staleness, "directive"),
+            message_of(Logger.report_staleness, "dependency", "location", "directive"),
             logging.DEBUG,
             f"Ignoring the staleness warning for {dependency('humanize')} in {at('requirements.txt:9')} "
             "(update-time: ignore[stale])",
         )
 
+    def test_report_staleness_warns_about_an_ignore_stale_on_a_recent_release(self, mock_log: Mock):
+        """Test that an `ignore[stale]` on a project whose newest release is recent is reported as redundant."""
+        version = DependencyVersion("4.15.0", project=Project(newest=Release("4.15.0", FRESH_DATE)))
+        resolved = resolved_reference("humanize", create_location("requirements.txt", 9), version)
+        _new_logger().report_staleness(resolved, Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]"), 90)
+        self.assert_message(
+            mock_log,
+            message_of(Logger.report_staleness, "directive", "threshold"),
+            logging.WARNING,
+            f"Redundant update-time directive ignore[stale] for {dependency('humanize')} in "
+            f"{at('requirements.txt:9')}: newest release 4.15.0 is not older than 90 days",
+        )
+
+    def test_redundant_stale_threshold(self, mock_log: Mock):
+        """Test that the warning names the threshold as written, the run's threshold, and the newest release's age."""
+        newest = Release("4.15.0", datetime.now(UTC) - timedelta(days=30, hours=1))
+        location = create_location("requirements.txt", 9)
+        for directive in ("ignore[stale<90]", "allow[stale>=90]"):
+            with self.subTest(directive=directive):
+                threshold = Threshold(value=90, directive=directive)
+                _new_logger().redundant_stale_threshold(reference("humanize", location), threshold, newest, 365)
+                self.assert_message(
+                    mock_log,
+                    message_of(Logger.redundant_stale_threshold),
+                    logging.WARNING,
+                    f"Redundant update-time directive {directive} for {dependency('humanize')} in "
+                    f"{at('requirements.txt:9')}: newest release 4.15.0 was published 30 days ago, which the "
+                    "threshold of 90 days and --stale-after 365 judge alike",
+                )
+
     def test_yanked_dependency_warning(self, mock_log: Mock):
         """Test that the warning quotes the maintainer's reason, and says so where they gave none."""
+        message = message_of(Logger.report_yank, "reason")
+        location = create_location("requirements.txt", 9)
         for case, (reason, clause) in {
             "no reason": ("", "version 4.15.0 was yanked (reason not specified)"),
             "a reason": ("broke Python 3.10 support", 'version 4.15.0 was yanked ("broke Python 3.10 support")'),
         }.items():
             with self.subTest(case=case):
                 version = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason=reason))
-                _new_logger().report_yank(
-                    resolved_reference("humanize", create_location("requirements.txt", 9), version), Marker()
-                )
+                _new_logger().report_yank(resolved_reference("humanize", location, version), Marker())
                 self.assert_message(
                     mock_log,
-                    message_of(Logger.report_yank, "version"),
+                    message,
                     logging.WARNING,
                     f"Yanked dependency {dependency('humanize')} in {at('requirements.txt:9')}: {clause}",
                 )
 
     def test_archived_dependency_warning(self, mock_log: Mock):
         """Test that the warning quotes the reason the source published, and ends where it published none."""
+        message = message_of(Logger.report_archival, "reason")
+        location = create_location("requirements.txt", 9)
         for case, (reason, clause) in {
             "no reason": ("", "the project was archived"),
             "a reason": ("superseded by humanize2", 'the project was archived ("superseded by humanize2")'),
@@ -651,14 +685,29 @@ class LoggerTests(TestCase):
             with self.subTest(case=case):
                 archival = Archival(archived=True, reason=reason)
                 version = DependencyVersion("4.15.0", project=Project(archival=archival))
-                _new_logger().report_archival(
-                    resolved_reference("humanize", create_location("requirements.txt", 9), version), Marker()
-                )
+                _new_logger().report_archival(resolved_reference("humanize", location, version), Marker())
                 self.assert_message(
                     mock_log,
-                    message_of(Logger.report_archival, "subject"),
+                    message,
                     logging.WARNING,
                     f"Archived dependency {dependency('humanize')} in {at('requirements.txt:9')}: {clause}",
+                )
+
+    def test_report_archival_warns_about_an_ignore_archived_on_an_active_project(self, mock_log: Mock):
+        """Test that an `ignore[archived]` on a dependency its source did not archive is reported as redundant."""
+        message = message_of(Logger.report_archival, "directive", "subject")
+        marker = Marker(ignored_scopes=Scope.ARCHIVED, raw="ignore[archived]")
+        location = create_location("requirements.txt", 9)
+        for subject in ArchivedSubject:
+            with self.subTest(subject=subject):
+                version = DependencyVersion("4.15.0", project=Project(archival=Archival(subject=subject)))
+                _new_logger().report_archival(resolved_reference("humanize", location, version), marker)
+                self.assert_message(
+                    mock_log,
+                    message,
+                    logging.WARNING,
+                    f"Redundant update-time directive ignore[archived] for {dependency('humanize')} in "
+                    f"{at('requirements.txt:9')}: the {subject} is not archived",
                 )
 
     def test_invalid_specifier(self, mock_log: Mock):
@@ -801,17 +850,27 @@ class LoggerTests(TestCase):
         )
 
     def test_report_staleness_does_nothing_when_not_stale(self, mock_log: Mock):
-        """Test that a release that is recent or undated is reported by nothing, marker or no marker."""
+        """Test that an unmarked recent release is not reported, and an undated one is not either, marked or not."""
         newest = Release("4.15.0", FRESH_DATE)
         recent = DependencyVersion("4.15.0", project=Project(newest=newest))
         undated = DependencyVersion("4.15.0")
         logger = _new_logger()
         location = create_location("requirements.txt", 9)
+        logger.report_staleness(resolved_reference("humanize", location, recent), Marker(), 90)
+        mock_log.assert_not_called()
         for marker in (Marker(), Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")):
             with self.subTest(marker=marker.raw or "no marker"):
-                logger.report_staleness(resolved_reference("humanize", location, recent), marker, 90)
                 logger.report_staleness(resolved_reference("humanize", location, undated), marker, 90)
                 mock_log.assert_not_called()
+
+    def test_report_staleness_reports_no_ignore_stale_in_a_run_that_switches_the_check_off(self, mock_log: Mock):
+        """Test that an `ignore[stale]` on a recent release is not reported in a run with `--stale-after 0`."""
+        recent = DependencyVersion("4.15.0", project=Project(newest=Release("4.15.0", FRESH_DATE)))
+        resolved = resolved_reference("humanize", create_location("requirements.txt", 9), recent)
+        _new_logger().report_staleness(
+            resolved, Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]"), _NO_STALENESS_CHECK
+        )
+        mock_log.assert_not_called()
 
     def test_report_yank(self, mock_log: Mock):
         """Test that a yank is reported as a warning, or as the marker that silences it."""
@@ -819,7 +878,7 @@ class LoggerTests(TestCase):
         resolved = resolved_reference("humanize", create_location("requirements.txt", 9), version)
         _new_logger().report_yank(resolved, Marker())
         mock_log.assert_called_once_with(
-            message_of(Logger.report_yank, "version").level, message_of(Logger.report_yank, "version"), ANY
+            message_of(Logger.report_yank, "reason").level, message_of(Logger.report_yank, "reason"), ANY
         )
         mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
         _new_logger().report_yank(
@@ -832,17 +891,29 @@ class LoggerTests(TestCase):
         )
         self.assert_message(
             mock_log,
-            message_of(Logger.report_yank, "directive"),
+            message_of(Logger.report_yank, "dependency", "location", "directive"),
             logging.DEBUG,
             f"Ignoring the yank warning for {dependency('humanize')} in {at('requirements.txt:9')} "
             "(update-time: ignore[yanked])",
         )
 
-    def test_report_yank_does_nothing_when_not_yanked(self, mock_log: Mock):
-        """Test that nothing is logged for a version that was not yanked, marker or no marker."""
+    def test_report_yank_warns_about_an_ignore_yanked_on_a_version_never_yanked(self, mock_log: Mock):
+        """Test that an `ignore[yanked]` on a version its source answered was not yanked is reported as redundant."""
+        version = DependencyVersion("4.15.0", yank=Yank())
+        resolved = resolved_reference("humanize", create_location("requirements.txt", 9), version)
+        _new_logger().report_yank(resolved, Marker(ignored_scopes=Scope.YANKED, raw="ignore[yanked]"))
+        self.assert_message(
+            mock_log,
+            message_of(Logger.report_yank, "directive", "version"),
+            logging.WARNING,
+            f"Redundant update-time directive ignore[yanked] for {dependency('humanize')} in "
+            f"{at('requirements.txt:9')}: version 4.15.0 was not yanked",
+        )
+
+    def test_report_yank_does_nothing_for_an_unmarked_version_never_yanked(self, mock_log: Mock):
+        """Test that an unmarked version that was not yanked is not reported."""
         resolved = resolved_reference("humanize", create_location("requirements.txt", 9), DependencyVersion("4.15.0"))
         _new_logger().report_yank(resolved, Marker())
-        _new_logger().report_yank(resolved, Marker(ignored_scopes=Scope.YANKED, raw="ignore[yanked]"))
         mock_log.assert_not_called()
 
     @kills(

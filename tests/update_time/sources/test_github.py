@@ -47,6 +47,7 @@ from tests.update_time.sources.helpers import (
     markdown_changes,
     page_url,
     patch_github,
+    releases_url,
     repository_url,
     respond_per_url,
 )
@@ -444,9 +445,22 @@ class NewestReleaseTest(LoggingTestCase):
 
     @patch_github()
     def test_fetch_failure(self):
-        """Test that no release is returned when neither the releases nor the tags can be fetched."""
+        """Test that a repo whose releases can't be fetched is undated, and that its tags go unasked."""
         self.assertIsNone(_newest_release(GitHubRepository("owner", "unreachable")))
-        self.assertEqual(len(self.records(WARNING)), 2)  # One could-not-fetch warning per endpoint
+        self.assert_could_not_fetch_logged(releases_url("owner/unreachable"))
+
+    def test_a_listing_that_fails_leaves_the_repository_undated(self):
+        """Test that no release is returned when the releases or the tags can't be fetched, whatever the other lists."""
+        cases = {
+            "the tags fail": patch_github(releases=[github_release_json("1.0", published_at=PAST_COOLDOWN_DATE)]),
+            "the releases fail": patch_github(
+                tags=[github_tag_json("v2.0")], commit=github_commits_json(date=FRESH_DATE)
+            ),
+        }
+        for case, github_api in cases.items():
+            with self.subTest(case=case), github_api:
+                self.assertIsNone(_newest_release(GitHubRepository("owner", "partly unreachable")))
+                self.assert_could_not_fetch_logged()
 
     @patch_github(releases=[], tags=[github_tag_json("v1.0")], commit=github_commits_json(date=FRESH_DATE))
     def test_tag_without_release(self):
@@ -492,15 +506,15 @@ class ArchivalTest(LoggingTestCase):
     def test_archived_flag(self, mock_get: Mock):
         """Test that a repository reads as archived exactly when GitHub's repository endpoint flags it archived.
 
-        A repository whose endpoint answers with an error reads as active. Each case names a repository of its
-        own, since the response is cached per repository.
+        A repository whose endpoint answers with an error leaves the archival unknown. Each case names a repository
+        of its own, since the response is cached per repository.
         """
         archived = Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
-        cases: dict[str, tuple[Mock, Archival, bool]] = {  # The response, the archival read, and whether it warns
+        active = Archival(subject=ArchivedSubject.REPOSITORY)
+        cases: dict[str, tuple[Mock, Archival | None, bool]] = {  # The response, the archival read, whether it warns
             "archived": (mock_response({"archived": True}), archived, False),
-            "active": (mock_response({"archived": False}), Archival(), False),
-            "without-the-flag": (mock_response({}), Archival(), False),
-            "unreachable": (mock_response(None, ok=False), Archival(), True),
+            "active": (mock_response({"archived": False}), active, False),
+            "unreachable": (mock_response(None, ok=False), None, True),
         }
         for repository, (response, expected, warns) in cases.items():
             with self.subTest(repository=repository):
@@ -513,20 +527,30 @@ class ArchivalTest(LoggingTestCase):
         requested = requested_urls(mock_get)
         self.assertEqual(requested, [repository_url(f"owner/{name}") for name in cases])
 
+    @patch("requests.Session.get")
+    def test_an_unreadable_archived_flag_is_warned_about_and_leaves_the_archival_unknown(self, mock_get: Mock):
+        """Test that an endpoint answering without a boolean archived flag is warned about, its archival unknown."""
+        for case, body in {"without the flag": {}, "with a flag that is not a boolean": {"archived": "yes"}}.items():
+            with self.subTest(case=case):
+                mock_get.return_value = mock_response(body)
+                repository = GitHubRepository("owner", case)
+                self.assertIsNone(archival(repository, check_archival=True))
+                self.assert_logged(message_of(Logger.unreadable_archival), repository=str(repository))
+
     @kills(
         Mutation(
             github.archival,
-            "if check_archival and",
-            "_repository_metadata(repository)\n    if check_archival and",
+            "if not check_archival:",
+            "_repository_metadata(repository)\n    if not check_archival:",
             "the source is told not to check for archival but fetches the repository anyway, so the run pays for a "
             "check it does not make",
         )
     )
     @patch("requests.Session.get")
     def test_a_source_told_not_to_check_asks_github_nothing(self, mock_get: Mock):
-        """Test that a source told not to check asks GitHub nothing and reads the repository as active."""
+        """Test that a source told not to check asks GitHub nothing and leaves the archival unknown."""
         mock_get.return_value = mock_response({"archived": True})
-        self.assertEqual(archival(GitHubRepository("owner", "not checked"), check_archival=False), Archival())
+        self.assertIsNone(archival(GitHubRepository("owner", "not checked"), check_archival=False))
         mock_get.assert_not_called()
 
 

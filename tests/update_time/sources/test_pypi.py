@@ -791,8 +791,8 @@ class ArchivalTest(LoggingTestCase):
     @kills(
         Mutation(
             pypi._archival,
-            'project_status = _project_metadata(package).get("project-status") or {}',
-            'project_status = _project_metadata(package).get("project-status", {})',
+            'project_status = metadata.get("project-status") or {}',
+            'project_status = metadata.get("project-status", {})',
             "a project status PyPI serves as null ends the run with a traceback rather than reading as active",
             raises="AttributeError: 'NoneType' object has no attribute 'get'",
         ),
@@ -830,6 +830,17 @@ class ArchivalTest(LoggingTestCase):
             with self.subTest(package=package):
                 mock_get.return_value = mock_response(body)
                 self.assertEqual(_archival(package, check_archival=True), expected)
+
+    @patch_get({"project-status": {"status": "archived"}})
+    def test_a_run_that_checks_no_archival_leaves_the_archival_unknown(self):
+        """Test that a run that does not check archival leaves it unknown, whatever PyPI declares."""
+        self.assertIsNone(_archival("not-checked", check_archival=False))
+
+    @patch_get(ok=False)
+    def test_a_failed_request_leaves_the_archival_unknown(self):
+        """Test that a failed Index API request leaves the archival unknown, rather than reading as active."""
+        self.assertIsNone(_archival("unreachable", check_archival=True))
+        self.assert_could_not_fetch_logged()
 
 
 @patch("requests.Session.get")
@@ -957,11 +968,24 @@ class GetLatestVersionTest(LoggingTestCase):
         self.assertEqual(latest.version, "1.1")
         self.assertEqual(latest.yank, Yank())
 
+    def test_a_failed_index_request_leaves_the_yank_unknown(self, mock_get: Mock):
+        """Test that a failed Index API request leaves the yank state of the pin's version unknown."""
+        mock_get.return_value = mock_response({}, ok=False, status_code=503)
+        latest = get_latest_version("unreachable", "1.0")
+        self.assertEqual(latest.version, "1.0")
+        self.assertIsNone(latest.yank)
+        self.assert_could_not_fetch_logged()
+
+    def test_a_version_the_index_does_not_list_has_an_unknown_yank_state(self, mock_get: Mock):
+        """Test that a version missing from the Index API's versions has an unknown yank state."""
+        mock_get.return_value = pypi_index("2.0", files=[yanked_file("unlisted-2.0.tar.gz")])
+        self.assertIsNone(pypi.yank_state("unlisted", "1.0"))
+
     def test_yanked_file_of_another_version_ignored(self, mock_get: Mock):
         """Test that a yanked file of another version, or an unparsable filename, leaves the pin unyanked."""
         files = [yanked_file("pin-0.9.tar.gz", reason="old"), yanked_file("not-a-distribution")]
         mock_get.side_effect = [pypi_index("1.0", files=files)]
-        self.assertFalse(get_latest_version("pin", "1.0").yank.yanked)
+        self.assertEqual(get_latest_version("pin", "1.0").yank, Yank())
 
     def test_cooldown_decides_eligibility(self, mock_get: Mock):
         """Test that a release is held back or adopted according to the cooldown the getter is passed."""

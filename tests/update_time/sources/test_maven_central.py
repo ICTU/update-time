@@ -94,18 +94,18 @@ def _serve_guava_with_parent(mock_get: Mock, parent_pom: str, responses: dict[st
 class ProjectTest(LoggingTestCase):
     """Unit tests for reading whether the repository behind an artefact is archived."""
 
-    def assert_archived(self, mock_get: Mock, archival: Archival, *urls: str) -> None:
+    def assert_archived(self, mock_get: Mock, archival: Archival | None, *urls: str) -> None:
         """Assert that the run reported the archival, having asked for guava's listing, its pom, and the given URLs."""
         self.assertEqual(archival, Archival(archived=True, subject=ArchivedSubject.REPOSITORY))
         self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING, _GUAVA_POM, *urls])
 
-    def assert_github_unasked(self, mock_get: Mock, archival: Archival, *urls: str) -> None:
+    def assert_github_unasked(self, mock_get: Mock, archival: Archival | None, *urls: str) -> None:
         """Assert that the run reported no archival, having asked the given URLs and GitHub nothing.
 
-        GitHub declares every repository archived in these tests, so asking it nothing is what leaves the artefact
-        unarchived.
+        GitHub declares every repository archived in these tests, so asking it nothing is what leaves the artefact's
+        archival unknown.
         """
-        self.assertEqual(archival, Archival())
+        self.assertIsNone(archival)
         self.assertEqual(requested_urls(mock_get), list(urls))
 
     @kills(

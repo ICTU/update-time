@@ -577,7 +577,7 @@ humanize==4.15.0  # update-time: ignore[stale<90] (critical, warn early)
 FROM python:3.12
 ```
 
-The threshold applies to the reference carrying it, and every other reference in the run keeps the global one. It wins over `--stale-after`, `--stale-after 0` included, so disabling the check globally still leaves a reference with its own threshold checked. To disable the check for one reference, use `ignore[stale]`. Where a reference carries both a threshold and a bare `ignore[stale]`, the `ignore[stale]` wins and silences the warning whatever the threshold says. `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`.
+The threshold applies to the reference carrying it, and every other reference in the run keeps the global one. It wins over `--stale-after`, `--stale-after 0` included, so disabling the check globally still leaves a reference with its own threshold checked. To disable the check for one reference, use `ignore[stale]`. Where a reference carries both a threshold and a bare `ignore[stale]`, the `ignore[stale]` wins and silences the warning whatever the threshold says. `allow[stale>=90]` sets the same 90-day threshold as `ignore[stale<90]`. Update-time reports a threshold as [redundant](#the-warning-scopes) while it and `--stale-after` judge the newest release alike, as `ignore[stale<1095]` and the default 365 days do for a release less than 365 days old.
 
 #### Setting a cooldown period
 
@@ -793,7 +793,7 @@ DEBUG Holding back the versions [34,) of com.google.guava:guava in pom.xml:12 (u
 
 ### Redundant markers
 
-A directive is redundant when it decides nothing for the reference it sits on: a scope silencing a warning that reference never gets, or a bound narrowing nothing. Update-time reports each one at `WARNING`.
+A directive is redundant when it decides nothing for the reference it sits on: a scope silencing a warning that reference never gets, a staleness threshold judging the newest release as `--stale-after` does, or a bound narrowing nothing. Update-time reports each one at `WARNING`.
 
 Update-time never reports a bare `# update-time: ignore` as redundant on a reference it updates or checks. It names no scope, so a warning would have no directive to name. A marker naming a dependency that its `package.json` section does not declare is the exception: the whole marker decides nothing there, so Update-time reports the bare `ignore` as redundant (see [npm and pnpm dependencies](#markers-1)). Update-time does report a scope or item written beside it, so `# update-time: ignore ignore[yanked]` on a Docker image reports the `ignore[yanked]` as redundant, since a registry does not record a yank.
 
@@ -828,6 +828,26 @@ WARNING Redundant update-time directive ignore[vulnerable] for actions/checkout 
 WARNING Redundant update-time directive ignore[archived] for org.apache.commons:commons-lang3 in pom.xml:12: Update-time does not find a GitHub repository to check this dependency for archival
 ```
 
+Update-time reports a bare `ignore[stale]`, `ignore[yanked]`, `ignore[vulnerable]`, or `ignore[archived]` as redundant where its check finds nothing to silence. A suppression can outlive what it was written for, and the check is what tells you it did:
+
+```console
+WARNING Redundant update-time directive ignore[stale] for humanize in docs/requirements.txt:12: newest release 4.15.0 is not older than 365 days
+WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: version 4.15.0 was not yanked
+WARNING Redundant update-time directive ignore[vulnerable] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability
+WARNING Redundant update-time directive ignore[archived] for humanize in docs/requirements.txt:12: the project is not archived
+WARNING Redundant update-time directive ignore[archived] for actions/checkout in .github/workflows/ci.yml:17: the repository is not archived
+```
+
+Update-time does not report such a scope when it cannot reach the dependency's source. Nor does it in a run that switches the check off with `--stale-after 0`, `--vulnerability-level none`, or `--ignore-archived`.
+
+Update-time reports a staleness threshold such as `ignore[stale<90]` as redundant where it and `--stale-after` judge the newest release alike, so both warn about it or neither does:
+
+```console
+WARNING Redundant update-time directive ignore[stale<90] for humanize in docs/requirements.txt:12: newest release 4.15.0 was published 30 days ago, which the threshold of 90 days and --stale-after 365 judge alike
+```
+
+Under `--stale-after 0`, a threshold is redundant until the newest release is older than the threshold, since the run itself does not warn about any release.
+
 #### The `vulnerable` scope
 
 Update-time reports an `ignore[vulnerable=…]` as redundant when none of the version's vulnerabilities answers to the identifier. An update fixed the vulnerability, or the identifier was mistyped:
@@ -837,12 +857,6 @@ WARNING Redundant update-time directive ignore[vulnerable=CVE-2022-28346] for dj
 ```
 
 Update-time judges a marker naming several advisories together. It warns only when none of them matches a vulnerability the version has.
-
-Update-time still checks a reference marked `ignore[vulnerable]`, and silences what it finds rather than warning about it. So it reports the marker as redundant for a version that the check clears. A suppression can outlive the vulnerability it was written for, and the check is what tells you it did:
-
-```console
-WARNING Redundant update-time directive ignore[vulnerable] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability
-```
 
 Update-time reports an `ignore[vulnerable<high]` as redundant when none of the version's vulnerabilities falls below the level. A level that silences nothing is one the reference no longer needs:
 

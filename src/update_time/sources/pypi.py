@@ -133,8 +133,8 @@ def release_metadata(package: str, version: str) -> LookedUp[ReleaseMetadata]:
     return LookedUp(response.json())
 
 
-def _project_metadata(package: str) -> dict:
-    """Get the package's metadata from PyPI's Index API, or an empty dict if it can't be fetched.
+def _project_metadata(package: str) -> dict | None:
+    """Get the package's metadata from PyPI's Index API, or None if it can't be fetched.
 
     The name is normalized first, so every spelling of one package shares a single request; the index redirects
     the other spellings to that one anyway.
@@ -142,9 +142,14 @@ def _project_metadata(package: str) -> dict:
     return _index_metadata(normalized_python_name(package))
 
 
+def _project_metadata_or_empty(package: str) -> dict:
+    """Get the package's metadata from PyPI's Index API, or an empty dict if it can't be fetched."""
+    return _project_metadata(package) or {}
+
+
 @cache
-def _index_metadata(package: str) -> dict:
-    """Fetch the Index API response for the normalized package name, or an empty dict if it can't be fetched.
+def _index_metadata(package: str) -> dict | None:
+    """Fetch the Index API response for the normalized package name, or None if it can't be fetched.
 
     Uses the Index (Simple) API rather than the project JSON API's `releases` key, which is deprecated. See
     https://docs.pypi.org/api/json/ and https://docs.pypi.org/api/index-api/. The response carries both the
@@ -153,12 +158,12 @@ def _index_metadata(package: str) -> dict:
     """
     headers = {"Accept": "application/vnd.pypi.simple.v1+json"}
     response = fetch(f"{_PYPI}/simple/{package}/", _LOG, headers=headers)
-    return response.json() if response is not None else {}
+    return response.json() if response is not None else None
 
 
 def _project_versions(package: str) -> list[str]:
     """Get all version strings of a package from PyPI's Index API, or an empty list if they can't be fetched."""
-    return _project_metadata(package).get("versions", [])
+    return _project_metadata_or_empty(package).get("versions", [])
 
 
 def _versions(package: str) -> list[Version]:
@@ -180,7 +185,7 @@ def _newest_release(package: DependencyName) -> Release | None:
     """
     return Release.newest(
         Release(version=str(version), published=published)
-        for file in _project_metadata(package).get("files", [])
+        for file in _project_metadata_or_empty(package).get("files", [])
         if (published := parse_timestamp(file.get("upload-time"))) is not None
         and (version := _distribution_version(file.get("filename", ""))) is not None
     )
@@ -196,14 +201,16 @@ def project(package: DependencyName, *, check_archival: bool) -> Project:
     return Project(newest=_newest_release(package), archival=_archival(package, check_archival=check_archival))
 
 
-def _archival(package: DependencyName, *, check_archival: bool) -> Archival:
+def _archival(package: DependencyName, *, check_archival: bool) -> Archival | None:
     """Return what PyPI declares about the project: whether it is archived, and the reason published beside it.
 
-    A run that checks no dependency for archival is told none, though PyPI's answer costs no request of its own.
+    The archival is None in a run that does not check archival, and where the Index API can't be fetched.
     """
     if not check_archival:
-        return Archival()
-    project_status = _project_metadata(package).get("project-status") or {}
+        return None
+    if (metadata := _project_metadata(package)) is None:
+        return None
+    project_status = metadata.get("project-status") or {}
     # PEP 792's text spells the status key `state`, where PyPI's Index API documentation shows `status`.
     archived = project_status.get("status") == _ARCHIVED_STATUS
     return Archival(archived=archived, reason=project_status.get("reason") or "")
@@ -247,15 +254,17 @@ def get_latest_version(
     return replace(latest, project=project(package, check_archival=check_archival))
 
 
-def yank_state(package: str, version: str) -> Yank:
-    """Return the version's yank state (PEP 592).
+def yank_state(package: str, version: str) -> Yank | None:
+    """Return the version's yank state (PEP 592), or None where the Index API can't be fetched or doesn't list it.
 
     The Index API lists each distribution file's yank state (`false`, `true`, or the reason string); a version is
     yanked when one of its files is. Files whose name doesn't parse to a version are skipped. The version asked
     about has to parse as one, since it is compared against the version each filename encodes.
     """
     pinned = Version(version)
-    for file in _project_metadata(package).get("files", []):
+    if (metadata := _project_metadata(package)) is None or pinned not in _versions(package):
+        return None
+    for file in metadata.get("files", []):
         yanked = file.get("yanked")
         if yanked and _distribution_version(file.get("filename", "")) == pinned:
             return Yank(yanked=True, reason=yanked if isinstance(yanked, str) else "")

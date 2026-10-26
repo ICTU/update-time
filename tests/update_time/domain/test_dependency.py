@@ -77,9 +77,9 @@ class DependencyVersionTest(unittest.TestCase):
             f"1.0, published: {utc_date_and_time(published)}",
         )
 
-    def test_not_yanked_by_default(self):
-        """Test that a version's yank state defaults to not yanked."""
-        self.assertEqual(DependencyVersion(version="1.0").yank, Yank())
+    def test_yank_state_unknown_by_default(self):
+        """Test that a version's yank state defaults to unknown."""
+        self.assertIsNone(DependencyVersion(version="1.0").yank)
 
     def test_carries_yank_state(self):
         """Test that a version can carry a yank state."""

@@ -15,7 +15,7 @@ from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import cooldown_end
 from update_time.domain.dependency import tag_of
 from update_time.domain.reference import RefKind
-from update_time.domain.staleness import stale_release
+from update_time.domain.staleness import stale_release, staleness_is_checked
 from update_time.io.console import CHANGES, LOG_THEME, NOTE, configure_logging, delimit_dependency, delimit_location
 from update_time.markers.bound import spell
 from update_time.markers.marker import Scope
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from update_time.domain.reference import DriftedPin, Reference, ResolvedReference
     from update_time.domain.vulnerability import Vulnerability
     from update_time.markers.directive import RedundancyReason
-    from update_time.markers.marker import Marker
+    from update_time.markers.marker import Marker, Threshold
     from update_time.markers.opt_in import OptInCause
     from update_time.primitives.command import Command
 
@@ -267,11 +267,21 @@ class Logger:
 
     @classmethod
     def _check_fields(
-        cls, scope: Scope, marker: Marker, resolved: ResolvedReference, warning_fields: dict[str, object] | None
+        cls,
+        scope: Scope,
+        marker: Marker,
+        resolved: ResolvedReference,
+        warning_fields: dict[str, object] | None,
+        redundancy_fields: Mapping[str, object] | None,
     ) -> dict[str, object] | None:
-        """Return the fields of what a check found: its warning's, or the silencing marker's, or None for nothing."""
+        """Return the fields of what a check found: its warning's, the silencing marker's, or the redundant marker's.
+
+        `redundancy_fields` are what the redundancy warning adds, and None where the check did not answer.
+        """
         if warning_fields is None:
-            return None
+            if redundancy_fields is None or not marker.ignores(scope):
+                return None
+            return cls._reference_fields(resolved, directive=marker.scope_directive(scope), **redundancy_fields)
         if marker.ignores(scope):
             return cls._ignored_fields(resolved.dependency, marker.written_directive(scope), resolved.location)
         return warning_fields
@@ -559,46 +569,75 @@ class Logger:
             resolved, version=newest.version, days=days_since(newest.published), threshold=threshold
         )
 
+    @_warning(_redundant_directive("newest release %(version)s is not older than %(threshold)d days"))
     @_debug(_ignoring("the staleness warning"))
     @_warning(
         "Stale dependency %(dependency)s in %(location)s: newest release %(version)s was published "
         "%(days)d days ago (> %(threshold)d)"
     )
     def report_staleness(self, resolved: ResolvedReference, marker: Marker, threshold: int) -> dict[str, object] | None:
-        """Report the reference's staleness: a warning, or the marker that silenced it."""
-        return self._check_fields(Scope.STALE, marker, resolved, self._stale_fields(resolved, threshold))
+        """Report the reference's staleness, or the marker that silenced it or had nothing to silence."""
+        newest = resolved.release.project.newest
+        redundancy_fields = (
+            None
+            if newest is None or not staleness_is_checked(threshold)
+            else {"version": newest.version, "threshold": threshold}
+        )
+        warning_fields = self._stale_fields(resolved, threshold)
+        return self._check_fields(Scope.STALE, marker, resolved, warning_fields, redundancy_fields)
+
+    @_warning(
+        _redundant_directive(
+            "newest release %(version)s was published %(days)d days ago, which the threshold of %(threshold)d days "
+            "and --stale-after %(run_threshold)d judge alike"
+        )
+    )
+    def redundant_stale_threshold(
+        self, reference: Reference, threshold: Threshold[int], newest: Release, run_threshold: int
+    ) -> dict[str, object]:
+        """Warn that the marker's staleness threshold judges the newest release as the run's threshold does."""
+        return self._reference_fields(
+            reference,
+            directive=threshold.directive,
+            version=newest.version,
+            days=days_since(newest.published),
+            threshold=threshold.value,
+            run_threshold=run_threshold,
+        )
 
     @classmethod
     def _yank_fields(cls, resolved: ResolvedReference) -> dict[str, object] | None:
-        """Return the yank warning's fields, or None when the version the run leaves the reference on stands.
+        """Return the yank warning's fields, or None when the version the run leaves the reference on was not yanked.
 
         The reason is the yank itself, which renders as the maintainer's words where they gave any.
         """
         release = resolved.release
-        if not release.yank.yanked:
+        if release.yank is None or not release.yank.yanked:
             return None
         return cls._reference_fields(resolved, version=release.version, reason=release.yank)
 
+    @_warning(_redundant_directive("version %(version)s was not yanked"))
     @_debug(_ignoring("the yank warning"))
     @_warning("Yanked dependency %(dependency)s in %(location)s: version %(version)s was yanked (%(reason)s)")
     def report_yank(self, resolved: ResolvedReference, marker: Marker) -> dict[str, object] | None:
-        """Report the version's yank: a warning, or the marker that silenced it."""
-        return self._check_fields(Scope.YANKED, marker, resolved, self._yank_fields(resolved))
+        """Report the version's yank, or the marker that silenced it or had nothing to silence."""
+        release = resolved.release
+        redundancy_fields = None if release.yank is None else {"version": release.version}
+        return self._check_fields(Scope.YANKED, marker, resolved, self._yank_fields(resolved), redundancy_fields)
 
-    @classmethod
-    def _archival_fields(cls, resolved: ResolvedReference) -> dict[str, object] | None:
-        """Return the archival warning's fields, or None when the source declares nothing archived."""
-        archival = resolved.release.project.archival
-        if not archival.archived:
-            return None
-        reason = f' ("{archival.reason}")' if archival.reason else ""
-        return cls._reference_fields(resolved, subject=archival.subject, reason=reason)
-
+    @_warning(_redundant_directive("the %(subject)s is not archived"))
     @_debug(_ignoring("the archival warning"))
     @_warning("Archived dependency %(dependency)s in %(location)s: the %(subject)s was archived%(reason)s")
     def report_archival(self, resolved: ResolvedReference, marker: Marker) -> dict[str, object] | None:
-        """Report the reference's archival: a warning, or the marker that silenced it."""
-        return self._check_fields(Scope.ARCHIVED, marker, resolved, self._archival_fields(resolved))
+        """Report the reference's archival, or the marker that silenced it or had nothing to silence."""
+        if (archival := resolved.release.project.archival) is None:
+            return None
+        reason = f' ("{archival.reason}")' if archival.reason else ""
+        warning_fields = (
+            self._reference_fields(resolved, subject=archival.subject, reason=reason) if archival.archived else None
+        )
+        redundancy_fields = {"subject": archival.subject}
+        return self._check_fields(Scope.ARCHIVED, marker, resolved, warning_fields, redundancy_fields)
 
     @_warning(
         "Could not score the CVSS vector of advisory %(advisory)s (%(error)s), so it is reported at unknown severity"
@@ -1036,6 +1075,14 @@ class Logger:
     def unreadable_github_rate_limit(self, error: KeyError | ValueError) -> dict[str, object]:
         """Log that GitHub's rate-limit headers could not be read."""
         return {"error": str(error)}
+
+    @_warning(
+        "Could not read whether GitHub archived %(repository)s: its repository endpoint answered without the "
+        "archived flag"
+    )
+    def unreadable_archival(self, repository: str) -> dict[str, object]:
+        """Warn that GitHub answered about the repository without an archived flag to read."""
+        return {"repository": repository}
 
     # --- External commands ---
 

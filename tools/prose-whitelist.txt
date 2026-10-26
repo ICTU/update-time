@@ -82,7 +82,6 @@ A replacement the test passes against, so nothing it asserts breaks.
 A request to a host name is refused at the lookup, before it reaches the resolver; one to a literal address needs no lookup and is refused at the socket.
 A requirement that pins no exact version is rewritten not at all: the project behind it is checked instead.
 A rule every module has to remember is duplication too, so state it once, where nobody can forget it.
-A run that checks no dependency for archival is told none, though PyPI's answer costs no request of its own.
 A run that sets no DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN leaves the requests anonymous.
 A score below the `low` band means the advisory reports no risk at all, which is no level to name.
 A script has no lock file, so there Update-time reports the new version and nothing more.
@@ -111,7 +110,6 @@ A vector the `cvss` package refuses is a fault in the advisory, not in the proje
 A version a dependency's source published, and the date it was published on.
 A version that is eligible but whose referenced file has no integrity hash ends the walk: it returns the current version unchanged rather than skipping to an older one, since bumping without a matching hash would break the Subresource Integrity check.
 A version the npm registry dates nowhere counts as too fresh, since a version it has yet to date is one it has just received.
-A version the run moved to comes back unchanged, since a source skips a withdrawn release when picking a new version, so only a version a reference stayed on can be withdrawn.
 A word a string spells out is data, whatever the code binds beside it.
 A word the module's strings spell out is data it works with, whatever the code binds beside it, so a docstring quoting that word is left alone.
 Aliasing the import swaps the file type without changing its shape, so no other test can notice.
@@ -222,10 +220,7 @@ Report the changelog of a dependency whose repository URL is an ssh URL, instead
 Report the changes for a Python dependency whose changelog lives in a file in its repository, such as gevent's `CHANGES.rst`, instead of reporting no changelog available.
 Report the changes for a dependency whose repository tags a release `<package>-<version>` or `<package>@<version>`, such as selenium and astro, instead of reporting no changelog available.
 Report the changes for a release its changelog heads one component shorter, such as mypy heading version `1.11.0` as `Mypy 1.11`, instead of reporting no changelog available.
-Report the reference's archival: a warning, or the marker that silenced it.
-Report the reference's staleness: a warning, or the marker that silenced it.
 Report the staleness and the archival of a project a source has already answered for.
-Report the version's yank: a warning, or the marker that silenced it.
 Reproducible builds commonly zero that annotation (`SOURCE_DATE_EPOCH`), so it is no substitute.
 Return a GitHub contents listing entry for the name, one with no file to fetch when it is a directory.
 Return a getter that resolves an image tag, leaving the references it asks no registry about unchanged.
@@ -352,7 +347,6 @@ Test that a record carrying no changes renders as its message alone.
 Test that a reference naming a digest but no tag gains the version tag that digest serves.
 Test that a reference naming no tag is reported by its name alone, there being no tag to name after it.
 Test that a registry reporting no timestamp yields None rather than raising.
-Test that a release that is recent or undated is reported by nothing, marker or no marker.
 Test that a repo whose newest release is tagged with no version is reported by that tag.
 Test that a repo whose releases cover its newest version needs no commits fetch for the newest release.
 Test that a repo with no releases has no newest release.
@@ -429,7 +423,6 @@ Test that no newer version keeps the current version and fetches no integrity ha
 Test that no newest release is reported for non-Docker-Hub registries, which expose no push date.
 Test that no newest release is set when the registry lists no tags at all.
 Test that no release is returned when the Index API lists no distribution files.
-Test that nothing is logged for a version that was not yanked, marker or no marker.
 Test that prose naming the name without backticks is no mention, since it may be an English word.
 Test that re-running the suite while the test is fixed adds no second entry for the same day.
 Test that rendering a Markdown changelog at debug level adds no record of its own to the output.

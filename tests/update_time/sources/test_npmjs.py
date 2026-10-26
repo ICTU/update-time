@@ -56,8 +56,8 @@ class NpmjsPublicationDatetimeTest(LoggingTestCase):
     @kills(
         Mutation(
             npmjs.get_publication_datetime,
-            'return parse_timestamp(_package_metadata(package).get("time", {}).get(version))',
-            'return parse_timestamp(_package_metadata(package).get("time", {})[version])',
+            '.get("time", {}).get(version))',
+            '.get("time", {})[version])',
             "a version the registry dates nowhere in its time map ends the run with a traceback",
             raises="KeyError: '9.9'",
         ),
@@ -119,8 +119,14 @@ class NpmjsDeprecationTest(LoggingTestCase):
 
     @patch_get({"versions": {}})
     def test_unlisted_version(self):
-        """Test that a version the registry doesn't list is not flagged."""
-        self.assertEqual(deprecation("package", "9.9"), Yank())
+        """Test that a version the registry doesn't list has an unknown deprecation state."""
+        self.assertIsNone(deprecation("package", "9.9"))
+
+    @patch_get(ok=False)
+    def test_unreachable_registry(self):
+        """Test that a failed registry request leaves the deprecation state unknown."""
+        self.assertIsNone(deprecation("package", "1.0"))
+        self.assert_could_not_fetch_logged()
 
 
 class GetChangesRepositoryTest(LoggingTestCase):

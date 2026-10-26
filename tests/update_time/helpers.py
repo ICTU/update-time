@@ -460,7 +460,7 @@ class LoggingTestCase(CacheClearingTestCase):
         warnings out of the comparison while still holding every staleness warning to the locations given.
         """
         fields: dict[str, object] = {"dependency": dependency, "version": version, "days": ANY, "threshold": ANY}
-        message = message_of(Logger.report_staleness, "threshold")
+        message = message_of(Logger.report_staleness, "days")
         expected = [self._expected_call(message, fields | {"location": location}) for location in locations]
         stale_warnings = self.records_of(message)
         self.assertEqual(stale_warnings if among_others else self.records(message.level), expected)
@@ -470,7 +470,7 @@ class LoggingTestCase(CacheClearingTestCase):
     ) -> None:
         """Assert that a pin left on a yanked version was warned about once for the file."""
         self.assert_logged(
-            message_of(Logger.report_yank, "version"),
+            message_of(Logger.report_yank, "reason"),
             dependency=dependency,
             location=location,
             version=version,
@@ -488,7 +488,7 @@ class LoggingTestCase(CacheClearingTestCase):
     ) -> None:
         """Assert that an archived dependency was warned about, as the file's only warning by default."""
         self._assert_reported(
-            message_of(Logger.report_archival, "subject"),
+            message_of(Logger.report_archival, "reason"),
             among_others=among_others,
             dependency=dependency,
             location=location,
@@ -574,6 +574,11 @@ class LoggingTestCase(CacheClearingTestCase):
         self.assert_none_logged(message_of(Logger.redundant_vulnerable_level), what)
         self.assert_none_logged(message_of(Logger.redundant_directive), what, reason=Reason.NO_VULNERABILITY_REPORTS)
 
+    def assert_no_redundant_directive_logged(self) -> None:
+        """Assert that no directive was reported as redundant, whatever else was logged."""
+        self.assert_none_logged(message_of(Logger.redundant_directive), "redundant directive")
+        self.assert_none_logged(message_of(Logger.redundant_stale_threshold), "redundant staleness threshold")
+
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged."""
         self._assert_last_logged(message_of(Logger.path), location=Location(path))
@@ -628,7 +633,7 @@ class LoggingTestCase(CacheClearingTestCase):
     def assert_ignored_staleness_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
         """Assert that a staleness warning silenced by a marker was logged, among the other records."""
         self.assert_logged_among_others(
-            message_of(Logger.report_staleness, "directive"),
+            message_of(Logger.report_staleness, "dependency", "location", "directive"),
             dependency=dependency,
             location=location,
             directive=directive,
@@ -671,13 +676,16 @@ class LoggingTestCase(CacheClearingTestCase):
     def assert_ignored_yank_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
         """Assert that a yank warning silenced by a marker was logged, among the other records."""
         self.assert_logged_among_others(
-            message_of(Logger.report_yank, "directive"), dependency=dependency, location=location, directive=directive
+            message_of(Logger.report_yank, "dependency", "location", "directive"),
+            dependency=dependency,
+            location=location,
+            directive=directive,
         )
 
     def assert_ignored_archival_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
         """Assert that an archival warning silenced by a marker was logged, among the other records."""
         self.assert_logged_among_others(
-            message_of(Logger.report_archival, "directive"),
+            message_of(Logger.report_archival, "dependency", "location", "directive"),
             dependency=dependency,
             location=location,
             directive=directive,

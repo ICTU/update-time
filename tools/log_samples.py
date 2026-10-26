@@ -10,7 +10,7 @@ two of them differ, and their full length would wrap the line several times over
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from packaging.version import InvalidVersion
@@ -494,12 +494,40 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@UNREADABLE_AFFECTED_VERSIONS_WARNING@@": unreadable_affected_versions,
         "@@ARCHIVED_WARNING@@": archival,
         **redundant,
+        **_redundant_suppressions(log, capture, requirements, workflow),
         **redundant_for_the_type,
         **_redundant_package_json_markers(log, capture),
         **invalid,
         **inverted,
         **_bounds_deciding_nothing(log, capture, dockerfile),
         **understood_markers,
+    }
+
+
+def _redundant_suppressions(
+    log: Logger, capture: _Capture, requirements: Location, workflow: Location
+) -> dict[str, str]:
+    """Log a sample per warning about a staleness, yank, or archival directive that decides nothing."""
+    recent = Release("4.15.0", datetime.now(UTC) - timedelta(days=30))
+    standing = DependencyVersion("4.15.0", yank=Yank(), project=Project(newest=recent, archival=Archival()))
+    ignore_stale = Marker(ignored_scopes=Scope.STALE)
+    log.report_staleness(resolved("humanize", requirements, standing), ignore_stale, STALE_AFTER.get())
+    stale = capture.take()
+    log.report_yank(resolved("humanize", requirements, standing), Marker(ignored_scopes=Scope.YANKED))
+    yank = capture.take()
+    log.report_archival(resolved("humanize", requirements, standing), Marker(ignored_scopes=Scope.ARCHIVED))
+    active_repository = DependencyVersion.unpinned(Project(archival=Archival(subject=ArchivedSubject.REPOSITORY)))
+    log.report_archival(
+        resolved("actions/checkout", workflow, active_repository), Marker(ignored_scopes=Scope.ARCHIVED)
+    )
+    archival = capture.take()
+    threshold = Threshold(value=90, directive="ignore[stale<90]")
+    log.redundant_stale_threshold(reference("humanize", requirements), threshold, recent, STALE_AFTER.get())
+    return {
+        "@@REDUNDANT_STALE_SUPPRESSION_WARNING@@": stale,
+        "@@REDUNDANT_YANK_SUPPRESSION_WARNING@@": yank,
+        "@@REDUNDANT_ARCHIVED_SUPPRESSION_WARNINGS@@": archival,
+        "@@REDUNDANT_STALE_THRESHOLD_WARNING@@": capture.take(),
     }
 
 

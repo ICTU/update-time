@@ -78,7 +78,7 @@ _DOCUMENTATION_DIRECTORY_NAMES = frozenset({"doc", "docs"})
 class _RepositoryJSON(TypedDict):
     """A repository from the GitHub repository endpoint."""
 
-    archived: NotRequired[bool]  # Absent from the empty payload a repository that couldn't be fetched reports
+    archived: NotRequired[bool]
 
 
 class _ReleaseJSON(TypedDict):
@@ -353,13 +353,13 @@ def _list(repository: GitHubRepository, path: str, *, require_ok: bool = True) -
     return tuple(listing) if isinstance(listing, list) else ()
 
 
-def _repository_metadata(repository: GitHubRepository) -> _RepositoryJSON:
-    """Fetch what GitHub reports about the repository itself, or an empty dict when it can't be fetched.
+def _repository_metadata(repository: GitHubRepository) -> _RepositoryJSON | None:
+    """Fetch what GitHub reports about the repository itself, or None when it can't be fetched.
 
     GitHub answers 404 when the repository's URL ends in a slash.
     """
     response = _fetch_github(f"{_GITHUB_API}/{repository}")
-    return response.json() if response is not None else {}
+    return response.json() if response is not None else None
 
 
 def _list_releases(repository: GitHubRepository) -> tuple[_ReleaseJSON, ...] | None:
@@ -688,20 +688,32 @@ def project(dependency: DependencyName, *, check_archival: bool) -> Project:
     return Project(newest=newest, archival=archival(repository, check_archival=check_archival))
 
 
-def archival(repository: GitHubRepository, *, check_archival: bool) -> Archival:
-    """Return what GitHub declares about the repository: whether it is archived."""
-    if check_archival and _repository_metadata(repository).get("archived", False):
-        return Archival(archived=True, subject=ArchivedSubject.REPOSITORY)
-    return Archival()
+def archival(repository: GitHubRepository, *, check_archival: bool) -> Archival | None:
+    """Return what GitHub declares about the repository: whether it is archived, or None where it is not known.
+
+    It is not known in a run that does not check archival, since Update-time does not ask GitHub then, and where the
+    repository can't be fetched.
+    """
+    if not check_archival:
+        return None
+    if (metadata := _repository_metadata(repository)) is None:
+        return None
+    if not isinstance(archived := metadata.get("archived"), bool):
+        _LOG.unreadable_archival(str(repository))
+        return None
+    return Archival(archived=archived, subject=ArchivedSubject.REPOSITORY)
 
 
 def _newest_release(repository: GitHubRepository) -> Release | None:
-    """Return the repository's most recently published version with its date, or None if it has none.
+    """Return the repository's most recently published version with its date, or None if it has none or is unknown.
 
     Every release counts, pre-releases and backports included, and so does a tag that runs ahead of them. Only that tag
-    is dated, since dating a tag costs a commits request.
+    is dated, since dating a tag costs a commits request. Where the releases or the tags can't be fetched, the newest
+    release is unknown, since the listing that failed may hold a newer one.
     """
-    versions = [TaggedVersion.from_release(repository, release) for release in _list_releases(repository) or ()]
+    if (releases := _list_releases(repository)) is None or _list_tags(repository) is None:
+        return None
+    versions = [TaggedVersion.from_release(repository, release) for release in releases]
     if (tag := _newest_tag_beyond_releases(repository)) is not None:
         versions.append(TaggedVersion.from_tag(repository, tag, release=None))
     return Release.newest(

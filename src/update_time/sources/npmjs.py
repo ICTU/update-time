@@ -96,10 +96,15 @@ def get_changes(package: str, version: str) -> Changes:
 
 
 @cache
-def _package_metadata(package: str) -> _PackageJSON:
-    """Get the npm registry's package document, or an empty document if it can't be fetched."""
+def _package_metadata(package: str) -> _PackageJSON | None:
+    """Get the npm registry's package document, or None if it can't be fetched."""
     response = fetch(f"{_REGISTRY}/{package}", _LOG)
-    return response.json() if response is not None else {}
+    return response.json() if response is not None else None
+
+
+def _package_metadata_or_empty(package: str) -> _PackageJSON:
+    """Get the npm registry's package document, or an empty document if it can't be fetched."""
+    return _package_metadata(package) or {}
 
 
 def get_publication_datetime(package: str, version: str) -> datetime | None:
@@ -108,16 +113,20 @@ def get_publication_datetime(package: str, version: str) -> datetime | None:
     The registry dates the versions it lists, so one it does not list — a version published moments ago, or one it
     no longer serves — has no date to read.
     """
-    return parse_timestamp(_package_metadata(package).get("time", {}).get(version))
+    return parse_timestamp(_package_metadata_or_empty(package).get("time", {}).get(version))
 
 
-def deprecation(package: str, version: str) -> Yank:
-    """Return the version's deprecation state as a yank (npm's counterpart to a PyPI yank).
+def deprecation(package: str, version: str) -> Yank | None:
+    """Return the version's deprecation state as a yank (npm's counterpart to a PyPI yank), or None if unknown.
 
     Read from the registry document's per-version metadata, where a deprecated version carries a `deprecated`
-    message; an undeprecated version, or one the registry doesn't list, carries none.
+    message. The state is unknown where the document can't be fetched or doesn't list the version.
     """
-    deprecated = _package_metadata(package).get("versions", {}).get(version, {}).get("deprecated")
+    if (metadata := _package_metadata(package)) is None:
+        return None
+    if (listed := metadata.get("versions", {}).get(version)) is None:
+        return None
+    deprecated = listed.get("deprecated")
     return Yank(yanked=bool(deprecated), reason=deprecated if isinstance(deprecated, str) else "")
 
 
@@ -132,7 +141,7 @@ def newest_release(package: str) -> Release | None:
 
     The release is read from the registry document's `time` map, which dates every version the package published.
     """
-    times = _package_metadata(package).get("time", {})
+    times = _package_metadata_or_empty(package).get("time", {})
     return Release.newest(
         Release(version=version, published=published)
         for version, time in times.items()
