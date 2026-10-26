@@ -235,7 +235,9 @@ DEBUG Credentials: GITHUB_TOKEN set, DOCKER_HUB_USERNAME set, DOCKER_HUB_TOKEN n
 
 ## 🔄 Updating
 
-Update-time scans your repository for version pins. It moves each pin to the newest version its source offers, once that version is older than the cooldown. It also adds a hash pin wherever the reference can hold one.
+Update-time scans your repository for references. A *reference* is one occurrence of a dependency in a file, such as `FROM python:3.12` in a Dockerfile or `humanize==4.15.0` in a `requirements.txt`. Each reference has a *dependency type*, such as Docker images or Python dependencies. The dependency type decides which files Update-time looks in. It also decides the *source* that Update-time asks for versions, such as Docker Hub or PyPI.
+
+Update-time updates each version pin to the newest version that its source offers. It waits until that version is older than the cooldown. It also adds a hash pin wherever the reference can hold one.
 
 ### 📦 What is updated
 
@@ -253,7 +255,7 @@ Update-time updates the following types of dependencies, found in the listed fil
 | [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | `.pre-commit-config.yaml` | [GitHub API](https://api.github.com) | Update-time |
 | [jsDelivr npm URLs](#jsdelivr-npm-urls) | Sphinx config | [npm registry](https://registry.npmjs.org) | Update-time |
 
-Update-time rewrites the dependency types it updates itself line by line: it picks the new version from the source and edits the reference in place. It hands the types it delegates to uv, npm, or pnpm, which resolve the versions themselves. The package managers also keep the project's lock files in step. For a pyproject.toml or inline script metadata dependency pinned with `==`, uv resolves the new version and Update-time writes it into the `pyproject.toml` or the `# /// script` block. This is needed because uv has no [command to upgrade dependencies](https://github.com/astral-sh/uv/issues/6794).
+uv, npm, and pnpm keep the project's lock files in step. Update-time writes the pins that uv resolves, because uv does not have a [command to upgrade dependencies](https://github.com/astral-sh/uv/issues/6794).
 
 In the table above, each dependency type links to its own section under [Details per dependency type](#-details-per-dependency-type). That section covers the files and dependencies the type updates. It also covers how pinning, the cooldown, staleness, yanks, vulnerabilities, archival, and markers apply to it.
 
@@ -264,8 +266,6 @@ In the table above, each dependency type links to its own section under [Details
 A **version pin** names an exact version rather than a floating image tag, a range, a branch, or a tag such as `stable-2024`: `python:3.14` instead of `python:latest`, `humanize==4.15.0` instead of `humanize>=4`. Its opposite is a **floating pin**, which leaves the version to the source. A floating image tag such as `python:latest`, a range such as `humanize>=4` or npm's `^17.0.0`, a branch such as the `main` in `actions/checkout@main`, and a tag such as `stable-2024` each float. Update-time updates version pins. It pins a floating image tag to the version and digest the tag serves, and a branch or a tag such as `stable-2024` to the commit it points at (see [Floating image tags](#floating-image-tags) and [GitHub Actions and pre-commit hooks](#github-actions-and-pre-commit-hooks)). It keeps a range such as `humanize>=4` or `^17.0.0` a range, because the range states which versions the project accepts. Where the project has a lock file, the package manager records there which version the range resolves to.
 
 A **hash pin** adds a cryptographic hash of the artefact the version resolves to — an image digest, a commit SHA, or an integrity hash. The difference with a version pin is immutability. A version pin can be re-pointed under you, because a tag can be moved or re-pushed. A hash pin can only match the one thing it was computed from. That is what protects against a supply chain attack, and Update-time adds a hash pin wherever it can.
-
-Update-time works on both version pins and hash pins. It moves a version pin forward, and takes the most precise spelling the source has for the version it lands on. And it adds a hash pin to any reference that can hold one.
 
 #### Floating image tags
 
@@ -281,7 +281,7 @@ Registries name one image under several tags, so a floating tag shares its diges
 
 1. Update-time keeps a label the floating tag shares with a version tag, so `node:trixie` lands on `26.7.0-trixie` rather than on `26.7.0`, and `python:slim` on `3.14.7-slim`. It drops a label naming a channel — `latest`, `lts`, `stable`, or `edge` — to stop the tag from floating. So `node:lts-alpine` keeps `alpine` and drops `lts`.
 2. The most precise version wins, so `3.14.7` is preferred over `3.14` and `3`.
-3. Then the most precise version of a variant the floating tag names, so `node:lts-alpine` lands on `24.19.0-alpine3.24` rather than on `24.19.0-alpine`.
+3. Next, Update-time prefers the most precise version of the variant, so `node:lts-alpine` lands on `24.19.0-alpine3.24` rather than on `24.19.0-alpine`.
 4. The shortest name comes last, so `node:latest` lands on `26.7.0` rather than on `26.7.0-trixie`, and `amazoncorretto:latest` on `8` rather than on `8-al2023`. This prevents adopting a label the floating tag doesn't have.
 
 A [bound](#bounding-an-update) does not prevent pinning, so `allow[update<3.13]` on `python:latest` still pins to `3.14.7`, the version that tag serves. From the next run on, the reference is a version pin like any other, and Update-time updates, bounds, and checks it as one.
@@ -289,15 +289,7 @@ A [bound](#bounding-an-update) does not prevent pinning, so `allow[update<3.13]`
 > [!IMPORTANT]
 > Once pinned, a reference no longer follows a channel. Later runs move `node:lts` pinned to `24.19.0` to whatever version is newest, LTS or not. To keep the channel, mark the reference `# update-time: allow[floating-pin]` (see [Keeping a pin floating](#keeping-a-pin-floating)). To keep the pin under 25, add a bound. From the next run on, `ignore[major-update]` or `allow[update<25]` holds it there (see [Bounding an update](#bounding-an-update)).
 
-Update-time leaves the following kinds of floating tag as they are:
-
-- A tag whose image has no version tag, such as an image tagged only `dev` or `prod`.
-- A tag deleted from the repository, a mistyped tag, or a tag a pipeline builds and never pushes. The registry does not list any of them.
-- A tag listed further down a large repository's tag list than Update-time reads.
-- A tag on a registry other than Docker Hub, where Update-time reads the candidate tags one at a time and none of those it tries serves the same image.
-- A tag whose registry does not serve a manifest for it, such as a tag on a registry Update-time cannot reach, so it cannot read the digest that tag serves.
-
-Update-time reports each of them at `DEBUG`, naming the reason the tag was not pinned:
+Update-time leaves a floating tag as it is where it does not find a version tag serving the same image, or cannot read the digest the tag serves. It reports why at `DEBUG`:
 
 ```console
 DEBUG Floating tag acme/api:dev in docker-compose.yml:7 was left as it is: no tag naming a version serves the same image
@@ -307,7 +299,7 @@ DEBUG Floating tag ghcr.io/acme/api:latest in Dockerfile:1 was left as it is: no
 DEBUG Floating tag ghcr.io/acme/api:edge in Dockerfile:1 was left as it is: the registry does not serve a manifest for edge, so what that tag serves is unknown
 ```
 
-Where Update-time reads the digest a floating tag serves, but does not find a version tag serving the same image, it cannot pin the reference to a version. That happens for an image tagged only `dev`, and on a registry other than Docker Hub when none of the tags Update-time tries serves that image. Where the reference records another digest, Update-time warns about the [hash drift](#hash-drift) instead. When the registry does not serve the image's repository, does not list the floating tag among those Update-time reads, or does not serve a manifest for it, Update-time cannot read the digest at all. It then leaves the reference as it is without a drift warning, since it cannot tell whether the floating tag was re-pointed.
+Where Update-time reads the digest but does not find a version tag, and the reference records another digest, it warns about the [hash drift](#hash-drift) instead. Where it cannot read the digest at all, it does not warn about drift, since it cannot tell whether the floating tag was re-pointed.
 
 #### Version precision
 
@@ -347,7 +339,7 @@ WARNING Integrity hash mismatch for clipboard@2.0.11 in docs/conf.py:4: declares
 
 *Digest drift* means an image tag was re-pushed (rebuilt) under the same name and version, so the registry now serves a different digest.
 
-*Tag drift* means the tag of a GitHub Action or pre-commit hook now points at another commit than the one the reference pins. *Branch drift* means the branch has moved on from the commit the reference pins. The branch's newest commit older than the [cooldown](#-cooldown) differs from the pinned commit, and lies further along the branch or on a history a force-push rewrote. Update-time follows the branch's own line of commits, through the first parent of each merge. So a commit on a merged pull request's branch never counts as the branch's newest commit, whatever its date. When GitHub refuses to say whether the repository has a tag of that name, Update-time can't tell a tag from a branch. It then treats the reference as a tag, and reports *ref drift*. A git tag is mutable, so whoever controls the repository can move it. Update-time pins the reference to a commit SHA to catch that. A branch is meant to move. Mark the reference `allow[hash-drift]` only if you trust whoever moves the branch. Update-time then moves the reference to the branch's newest commit older than the cooldown (see [Adopting hash drift](#adopting-hash-drift)). It keeps doing so as long as the comment names the branch.
+*Tag drift* means the tag of a GitHub Action or pre-commit hook now points at another commit than the one the reference pins. *Branch drift* means the branch has moved on from the commit the reference pins. The branch's newest commit older than the [cooldown](#-cooldown) differs from the pinned commit, and lies further along the branch or on a history a force-push rewrote. When GitHub refuses to say whether the repository has a tag of that name, Update-time can't tell a tag from a branch. It then treats the reference as a tag, and reports *ref drift*. A git tag is mutable, so whoever controls the repository can move it. Update-time pins the reference to a commit SHA to catch that. A branch is meant to move. Mark the reference `allow[hash-drift]` only if you trust whoever moves the branch (see [Adopting hash drift](#adopting-hash-drift)).
 
 An *integrity hash mismatch* means the hash a jsDelivr URL declares is not the one jsDelivr serves for the version the URL sits on. Unlike the other forms this rarely means anything upstream changed, since npm does not allow a published version to be republished. More likely, the declared hash is wrong: mistyped, copied from another file, or tampered with. It is also the most urgent, because the browser silently refuses to load the script until the hash matches, which no build step catches.
 
@@ -355,9 +347,7 @@ A floating image tag that carries a digest, and a branch pinned to a commit, can
 
 A reference without hash pin has nothing that can drift. So Update-time checks no `requirements.txt` pin, no `.python-version` entry, and no Node engine version. It checks none of the dependencies it delegates to a package manager either.
 
-To have Update-time adopt drift, mark the reference `allow[hash-drift]` or pass `--allow-hash-drift` (see [Adopting hash drift](#adopting-hash-drift)). The marker adopts the drift of the reference it marks, run after run. The flag adopts the drift of every reference in the run. A marker that holds the reference back wins over both, so a reference you deliberately froze is never re-pinned. Update-time logs adopted drift at `INFO`, like any other change.
-
-For a reference that adopts drift, Update-time adopts the newest digest or commit older than the [cooldown](#-cooldown), the same way an update moves to the newest version older than it. Until a new digest or commit is older than the cooldown, it holds the drift back without a warning, the same way it holds back an update. For a reference that does not adopt drift, Update-time warns about a moved tag or a re-pushed image right away, without waiting for the cooldown, since a pin exists to catch exactly that. A branch is meant to move, so Update-time warns about it only once a new commit on it is older than the cooldown, when that commit could be adopted. A registry other than Docker Hub does not date an image, so Update-time adopts a re-pushed digest there at once.
+Update-time warns about a moved tag or a re-pushed image right away, without waiting for the [cooldown](#-cooldown), since a pin exists to catch exactly that. A branch is meant to move, so Update-time warns about it only once a new commit on it is older than the cooldown. To have Update-time adopt drift instead of warning about it, mark the reference `allow[hash-drift]` or pass `--allow-hash-drift` (see [Adopting hash drift](#adopting-hash-drift)).
 
 Update-time never adopts an integrity hash mismatch, whatever you opt in to. The whole point of the hash is to refuse content that doesn't match it. So Update-time reports the mismatch and leaves correcting it to you.
 
@@ -391,14 +381,7 @@ Where a package manager applies the cooldown, Update-time hands the value to uv,
 
 ## ⚠️ Warnings
 
-Update-time reports what an update cannot fix:
-
-- a dependency whose newest release is years old
-- a version its maintainer withdrew
-- a version a security advisory names
-- a dependency its maintainer archived
-
-These warnings are informational, so they change no file and do not affect the exit status.
+Update-time reports what an update cannot fix: a stale, yanked, vulnerable, or archived dependency. These warnings are informational, so they change no file and do not affect the exit status.
 
 ### 🕸️ Stale dependencies
 
@@ -458,11 +441,9 @@ Update-time queries the [OSV](https://osv.dev) database about the pinned version
 WARNING Vulnerable dependency django in docs/requirements.txt:12: version 3.2.0 has a critical vulnerability, "SQL Injection in Django" (GHSA-2gwj-7jmv-h26r, https://osv.dev/GHSA-2gwj-7jmv-h26r)
 ```
 
-Several of the databases that OSV aggregates carry the same vulnerability, each under an identifier of its own. So OSV answers with an advisory per database. Update-time warns about a vulnerability once, whichever of them reported it. The advisories of one vulnerability name each other's identifiers, and Update-time reads them as one. The databases rate a vulnerability independently, and only some rate it at all. So the warning names the advisory that rates it most severely, and Update-time reports and filters the vulnerability at that level.
+OSV holds an advisory per database that carries a vulnerability, each under an identifier of its own. Update-time warns about each vulnerability once, at the most severe risk level any of those advisories gives it, and names that advisory.
 
-The risk level is the one the advisory's reviewers gave it: `low`, `moderate`, `high`, or `critical`. Where they gave none, Update-time derives the level from the advisory's CVSS base score: `0.1` to `3.9` is low, `4.0` to `6.9` moderate, `7.0` to `8.9` high, and `9.0` to `10.0` critical.
-
-Update-time reads an advisory carrying both a CVSS v3 and a v4 vector at its v4 score, the newer of the two assessments. It reports an advisory whose risk level it cannot read at all as `a vulnerability of unknown severity`. It reports an advisory that gives no summary, which many do not, without the quotation. That advisory's id and URL say which vulnerability it is.
+The risk level is the one the advisory's reviewers gave it: `low`, `moderate`, `high`, or `critical`. Where they gave none, Update-time derives the level from the advisory's CVSS score. It reports an advisory whose risk level it cannot read as `a vulnerability of unknown severity`. Many advisories do not give a summary, and Update-time reports such an advisory without the quotation.
 
 Update-time checks the version the run leaves the reference on. So it warns about a vulnerability the run updated into, and not about one the run updated away from. It does not check transitive dependencies. Auditing the transitive dependencies in a lock file is what `uv audit`, `pip-audit`, `npm audit`, and `pnpm audit` are for.
 
@@ -581,7 +562,7 @@ So `# update-time: ignore[update]` keeps a deliberately pinned reference frozen.
 
 A bare `# update-time: ignore` and an `ignore[update]` win over any directive beside them that would change the reference: a [bound](#bounding-an-update), an [`allow[hash-drift]`](#adopting-hash-drift), or an [`allow[floating-pin]`](#keeping-a-pin-floating). Update-time leaves the reference untouched.
 
-Where a package manager decides the update, a marker holds back the warnings alone. npm and pnpm move a `package.json` dependency within the range the file declares, and uv resolves a `pyproject.toml` dependency that does not pin an exact version. Update-time reports an `ignore[update]` on either as [redundant](#a-bound).
+npm and pnpm move a `package.json` dependency within the range the file declares, and uv resolves a `pyproject.toml` dependency that does not pin an exact version. On such a dependency, a marker affects the warnings alone. Update-time reports an `ignore[update]` on it as [redundant](#a-bound).
 
 #### Setting a staleness threshold
 
@@ -625,11 +606,11 @@ The override reaches the dependencies whose cooldown Update-time enforces itself
 django==3.2.0  # update-time: ignore[vulnerable=GHSA-2gwj-7jmv-h26r] (assessed, we don't use the affected query API)
 ```
 
-Any identifier the vulnerability is known by will do. OSV holds an advisory per database, each under an id of its own. So a marker naming the `CVE-…` silences a warning reported under the `GHSA-…`. The `DEBUG` line reporting the silenced warning names that `GHSA-…`. Your own marker is quoted beside it, so you can tell which of the two you wrote.
+A marker can name the vulnerability by any of its identifiers (see [Vulnerable dependencies](#-vulnerable-dependencies)). So a marker naming the `CVE-…` silences a warning reported under the `GHSA-…`. The `DEBUG` line reporting the silenced warning names that `GHSA-…`. Your own marker is quoted beside it, so you can tell which of the two you wrote.
 
 To silence a second advisory, add a second item: `# update-time: ignore[vulnerable=GHSA-2gwj-7jmv-h26r, vulnerable=CVE-2021-31542]`. The comma separates the bracket's items, so each identifier needs a `vulnerable=` of its own.
 
-Only the `ignore` verb silences an advisory. The `allow` verb would keep that advisory's warning and drop the warning about every other advisory, hiding the vulnerabilities you have not assessed. So the language does not offer it.
+An `allow[vulnerable=…]` would keep that advisory's warning and drop the warnings about every other advisory. So only the `ignore` verb silences an advisory, and the warnings about advisories you have not assessed stay.
 
 The reference keeps updating, and Update-time still warns about every other advisory affecting the version it lands on. So a vulnerability found after you wrote the marker still reaches you. Run with `--log-level DEBUG` to see what the marker silenced. To silence an advisory wherever it appears, pass `--ignore-vulnerability` (see [Vulnerable dependencies](#-vulnerable-dependencies)).
 
@@ -645,7 +626,7 @@ The level applies to the reference carrying it, and every other reference in the
 
 ### Adopting hash drift
 
-`# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting its drift, in this run and in every later one (see [Hash drift](#hash-drift)). Update-time then re-pins the reference to the new digest or commit, instead of only warning about the drift. As with an update, Update-time waits until the new digest or commit is older than the [cooldown](#-cooldown). For a branch, it takes the newest commit that is. A registry other than Docker Hub does not date an image, so there it re-pins at once. The global `--allow-hash-drift` flag applies it to every reference in the run.
+`# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting its drift, in this run and in every later one (see [Hash drift](#hash-drift)). Update-time then re-pins the reference to the new digest or commit, instead of only warning about the drift, and logs that at `INFO` like any other change. As with an update, Update-time waits until the new digest or commit is older than the [cooldown](#-cooldown), and holds the drift back without a warning until then. For a branch, it takes the newest commit that is. A registry other than Docker Hub does not date an image, so there it re-pins at once. The global `--allow-hash-drift` flag applies it to every reference in the run. A marker that holds the reference back wins over both, so a reference you deliberately froze is never re-pinned (see [Holding a reference back](#holding-a-reference-back)).
 
 `ignore[hash-drift]` is the opposite and the default. A reference carrying it keeps its pin exactly as one carrying no marker at all, in a run passing `--allow-hash-drift` as well.
 
@@ -768,7 +749,7 @@ A marker is written in one of three places, and the file's format decides which:
   "update-time": { "engines": { "node": "ignore" }, "dependencies": { "left-pad": "ignore[stale]" } }
   ```
 
-The field is the `package.json`'s alone: every other reference that takes a marker takes it in a comment. Those files are Dockerfiles, Docker Compose and Helm manifests, CircleCI and GitLab CI configs, and GitHub Actions workflows. They also include `.pre-commit-config.yaml` files, `devcontainer.json` files, `requirements.txt` files, `pyproject.toml` files, the `# /// script` blocks in `*.py` files, `.python-version` files, `pom.xml` files, and the jsDelivr URLs in a Sphinx `conf.py`. Use a `#` comment everywhere except in `devcontainer.json` and `pom.xml`. A `devcontainer.json` is JSONC, so its marker goes in a `//` comment. A `pom.xml` is XML, so its marker goes in a `<!-- … -->` comment. An inline marker steers only a reference on its own line, never on the line below it.
+The field is the `package.json`'s alone: every other reference that takes a marker takes it in a comment. Use a `#` comment everywhere except in `devcontainer.json` and `pom.xml`. A `devcontainer.json` is JSONC, so its marker goes in a `//` comment. A `pom.xml` is XML, so its marker goes in a `<!-- … -->` comment. An inline marker steers only a reference on its own line, never on the line below it.
 
 Inside a `# /// script` block, every line of the TOML is already commented out, so the marker needs a `#` of its own:
 
@@ -816,113 +797,38 @@ A directive is redundant when it decides nothing for the reference it sits on: a
 
 Update-time never reports a bare `# update-time: ignore` as redundant on a reference it updates or checks. It names no scope, so a warning would have no directive to name. A marker naming a dependency that its `package.json` section does not declare is the exception: the whole marker decides nothing there, so Update-time reports the bare `ignore` as redundant (see [npm and pnpm dependencies](#markers-1)). Update-time does report a scope or item written beside it, so `# update-time: ignore ignore[yanked]` on a Docker image reports the `ignore[yanked]` as redundant, since a registry does not record a yank.
 
-#### The `stale` scope
+#### The warning scopes
 
-Staleness is measured against the publication date of a dependency's newest release. In all its forms, Update-time reports the `stale` scope as redundant where it does not measure the reference's staleness. It updates the reference as usual:
-
-| Dependency type | When `stale` is redundant |
-| :-------------- | :------------------------ |
-| [Python dependencies](#python-dependencies) | on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | on a dependency that does not resolve to a registry release, such as a git URL |
-| [Maven dependencies](#maven-dependencies) | on an artefact Maven Central does not serve, and on a declaration that leaves its version to the declaration managing it |
-| [Node engine version](#node-engine-version-and-python-version) | never |
-| [Python version](#node-engine-version-and-python-version) | never |
-| [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, on an image the file does not pull, and on a reference through a variable or a template that Update-time cannot substitute |
-| [GitHub Actions](#github-actions-and-pre-commit-hooks) | never |
-| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | never |
-| [jsDelivr npm URLs](#jsdelivr-npm-urls) | never |
-
-Update-time reports a source without publication dates as:
-
-```console
-WARNING Redundant update-time directive ignore[stale<90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure staleness against
-```
-
-Update-time does not ask a registry about an image the file does not pull, such as a CircleCI machine-executor image or an image a Docker Compose file builds. Nor does it ask about a reference through a variable or a template that it cannot substitute, such as `redis:7.2-${VARIANT}`. The warning then names why Update-time does not ask:
-
-```console
-WARNING Redundant update-time directive ignore[stale<90] for redis in docker-compose.yml:7: it names its image or tag through a variable or a template, so its staleness is never checked
-```
-
-#### The `cooldown` scope
-
-Where a cooldown holds nothing back, Update-time reports the `cooldown` scope as redundant:
-
-| Dependency type | When `cooldown` is redundant |
-| :-------------- | :--------------------------- |
-| [Python dependencies](#python-dependencies) | on a `pyproject.toml` or inline script metadata dependency, since uv takes a cooldown per run rather than per dependency, and on a `requirements.txt` requirement that pins no exact version, since Update-time resolves no update for it |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | always: npm and pnpm take a cooldown per run rather than per dependency |
-| [Maven dependencies](#maven-dependencies) | on a declaration whose version Maven does not update, and on an artefact Maven Central does not serve |
-| [Node engine version](#node-engine-version-and-python-version) | never |
-| [Python version](#node-engine-version-and-python-version) | never |
-| [Docker images](#docker-images) | on an image on a registry other than Docker Hub, which reports no push date, on an image the file does not pull, and on a reference through a variable or a template that Update-time cannot substitute |
-| [GitHub Actions](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since Update-time never updates a commit |
-| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since Update-time never updates a commit |
-| [jsDelivr npm URLs](#jsdelivr-npm-urls) | never |
-
-A short SHA that a version tag names is the exception. Update-time pins such a SHA as that version, and from the next run on the cooldown governs its updates. Update-time reports a source without publication dates as:
-
-```console
-WARNING Redundant update-time directive ignore[cooldown<30] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure a cooldown against
-```
-
-It reports the cases particular to a dependency type as:
-
-```console
-WARNING Redundant update-time directive ignore[cooldown<30] for humanize in pyproject.toml:12: the package manager applies the cooldown per run rather than per dependency
-WARNING Redundant update-time directive ignore[cooldown<30] for humanize in docs/requirements.txt:12: this requirement does not pin a version to update
-WARNING Redundant update-time directive ignore[cooldown<30] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so a cooldown holds nothing back
-WARNING Redundant update-time directive ignore[cooldown<30] for commons-io:commons-io in child/pom.xml:5: this declaration does not hold its version, so Maven does not update that version here
-WARNING Redundant update-time directive ignore[cooldown<30] for redis in docker-compose.yml:7: it names its image or tag through a variable or a template, so it is never updated
-```
-
-#### The `yanked` scope
-
-A yank can only be observed where the dependency's source reports one, and only for the version a reference is left on (see [Yanked dependencies](#-yanked-dependencies)). Where the scope can never suppress anything, Update-time reports it as redundant:
-
-| Dependency type | When `yanked` is redundant |
-| :-------------- | :------------------------- |
-| [Python dependencies](#python-dependencies) | on a dependency that pins no exact version, and on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | on a dependency that pins no exact version, and on a dependency that does not resolve to a registry release |
-| [Maven dependencies](#maven-dependencies) | always: Maven Central does not report a withdrawal |
-| [Node engine version](#node-engine-version-and-python-version) | always: its source does not record a yank |
-| [Python version](#node-engine-version-and-python-version) | always: its source does not record a yank |
-| [Docker images](#docker-images) | always: its source does not record a yank |
-| [GitHub Actions](#github-actions-and-pre-commit-hooks) | always: its source does not record a yank |
-| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | always: its source does not record a yank |
-| [jsDelivr npm URLs](#jsdelivr-npm-urls) | never |
-
-Update-time reports those cases as:
+The `stale`, `yanked`, `vulnerable`, and `archived` scopes each silence a warning. Update-time reports such a scope as redundant, in all its forms, where it never runs the check the scope silences. The table in each section under [Warnings](#-warnings) says which dependency types the check covers. Where a type's row says none, the scope is redundant on every reference of that type:
 
 ```console
 WARNING Redundant update-time directive ignore[yanked] for python in Dockerfile:2: this dependency's source does not record a yank
-WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: this requirement does not pin a version to check for a yank
+WARNING Redundant update-time directive ignore[vulnerable] for python in Dockerfile:2: OSV does not hold advisories for this kind of dependency
+WARNING Redundant update-time directive ignore[archived] for python in Dockerfile:2: this dependency's source does not publish an archival signal
 ```
 
-#### The `vulnerable` scope
+A check also passes over a reference of a type it covers in these cases, and the scope is redundant there as well:
 
-A vulnerability can only be reported where OSV holds advisories for the dependency, and an advisory is matched against a version (see [Vulnerable dependencies](#-vulnerable-dependencies)). Where the scope can never suppress anything, Update-time reports it as redundant in all its forms:
-
-| Dependency type | When `vulnerable` is redundant whatever the version |
-| :-------------- | :-------------------------------------------------- |
-| [Python dependencies](#python-dependencies) | on a dependency that pins no exact version, and on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | on a dependency that pins no exact version, and on a dependency that does not resolve to a registry release |
-| [Maven dependencies](#maven-dependencies) | on a declaration whose version Maven leaves unresolved, such as a managed version naming a property that the poms do not declare, and on a declaration that leaves its version to the declaration managing it |
-| [Node engine version](#node-engine-version-and-python-version) | always: OSV does not hold advisories for this kind of dependency |
-| [Python version](#node-engine-version-and-python-version) | always: OSV does not hold advisories for this kind of dependency |
-| [Docker images](#docker-images) | always: OSV does not hold advisories for this kind of dependency |
-| [GitHub Actions](#github-actions-and-pre-commit-hooks) | on a reference that names a branch, a tag such as `stable-2024`, or a commit SHA rather than a version, and that the run does not pin to a version tag |
-| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | always: OSV does not hold advisories for this kind of dependency |
-| [jsDelivr npm URLs](#jsdelivr-npm-urls) | never |
+- The source does not serve a release for the dependency. Examples are a `pyproject.toml` dependency pointing at a git repository, a `package.json` dependency given as a git URL, and an artefact Maven Central does not serve. The `vulnerable` scope still applies to such a Maven artefact (see [Maven dependencies](#markers-2)).
+- The file does not pull the image, as with a CircleCI machine-executor image or an image a Docker Compose file builds. Or the reference goes through a variable or a template that Update-time cannot substitute, such as `redis:7.2-${VARIANT}`. Update-time does not ask a registry about either.
+- The image sits on a registry other than Docker Hub. Such a registry does not report a publication date, so the `stale` scope is redundant there.
+- A `pom.xml` declaration leaves its version to the declaration managing it (see [Maven dependencies](#markers-2)).
+- The `yanked` and `vulnerable` scopes judge a version, so they are redundant on a reference that does not name one. Examples are a requirement that does not pin an exact version, a `pom.xml` declaration whose version Maven leaves unresolved, and a GitHub Action that names a branch, a tag such as `stable-2024`, or a commit SHA. In the run that pins such an action to a version tag, Update-time checks it at that version.
+- The poms of a `pom.xml` artefact do not name a GitHub repository, so the `archived` scope is redundant (see [Archived dependencies](#archived-dependencies-2)). Update-time reports this redundancy only in a run that checks archival.
 
 Update-time reports those cases as:
 
 ```console
-WARNING Redundant update-time directive ignore[vulnerable] for python in Dockerfile:2: OSV does not hold advisories for this kind of dependency
+WARNING Redundant update-time directive ignore[stale<90] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure staleness against
+WARNING Redundant update-time directive ignore[stale<90] for redis in docker-compose.yml:7: it names its image or tag through a variable or a template, so its staleness is never checked
+WARNING Redundant update-time directive ignore[yanked] for humanize in docs/requirements.txt:12: this requirement does not pin a version to check for a yank
 WARNING Redundant update-time directive ignore[vulnerable] for humanize in docs/requirements.txt:12: this requirement does not pin a version to check for a vulnerability
 WARNING Redundant update-time directive ignore[vulnerable] for nl.example:internal-lib in pom.xml:12: this dependency does not resolve to a version to check for a vulnerability
 WARNING Redundant update-time directive ignore[vulnerable] for actions/checkout in .github/workflows/ci.yml:17: this reference does not name a version to check for a vulnerability
+WARNING Redundant update-time directive ignore[archived] for org.apache.commons:commons-lang3 in pom.xml:12: Update-time does not find a GitHub repository to check this dependency for archival
 ```
+
+#### The `vulnerable` scope
 
 Update-time reports an `ignore[vulnerable=…]` as redundant when none of the version's vulnerabilities answers to the identifier. An update fixed the vulnerability, or the identifier was mistyped:
 
@@ -944,32 +850,23 @@ Update-time reports an `ignore[vulnerable<high]` as redundant when none of the v
 WARNING Redundant update-time directive ignore[vulnerable<high] for django in docs/requirements.txt:12: version 4.2.0 has no vulnerability below high
 ```
 
-#### The `archived` scope
+#### The `cooldown` scope
 
-Archival can only be observed where the dependency's source publishes an archival signal (see [Archived dependencies](#-archived-dependencies)). Where the scope can never suppress anything, Update-time reports it as redundant:
+A cooldown holds nothing back in these cases, so Update-time reports the `cooldown` scope as redundant there:
 
-| Dependency type | When `archived` is redundant |
-| :-------------- | :--------------------------- |
-| [Python dependencies](#python-dependencies) | on a `pyproject.toml` or inline script metadata dependency that PyPI does not serve a release for |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | always: the npm registry does not publish an archival signal |
-| [Maven dependencies](#maven-dependencies) | on an artefact Maven Central does not serve, on an artefact whose poms do not name a GitHub repository, and on a declaration that leaves its version to the declaration managing it |
-| [Node engine version](#node-engine-version-and-python-version) | always: its source does not publish an archival signal |
-| [Python version](#node-engine-version-and-python-version) | always: its source does not publish an archival signal |
-| [Docker images](#docker-images) | always: its source does not publish an archival signal |
-| [GitHub Actions](#github-actions-and-pre-commit-hooks) | never |
-| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | never |
-| [jsDelivr npm URLs](#jsdelivr-npm-urls) | always: its source does not publish an archival signal |
+- uv, npm, or pnpm applies the cooldown. They take one per run rather than per dependency (see [Cooldown](#-cooldown)).
+- The source does not report a publication date. That holds for an image on a registry other than Docker Hub, and for an artefact Maven Central does not serve.
+- Update-time does not update the reference. That holds for a `requirements.txt` requirement that does not pin an exact version, and for a GitHub Action or pre-commit hook that names a commit SHA. A short SHA that a version tag names is the exception: Update-time pins it as that version, and from the next run on the cooldown governs its updates. Not updated either are a `pom.xml` declaration whose version Maven does not update, an image the file does not pull, and a reference through a variable or a template that Update-time cannot substitute.
 
-Update-time reports a source without an archival signal as:
+Update-time reports the cases above as:
 
 ```console
-WARNING Redundant update-time directive ignore[archived] for python in Dockerfile:2: this dependency's source does not publish an archival signal
-```
-
-The pom of `org.apache.commons:commons-lang3` names `gitbox.apache.org` rather than a GitHub repository, for example (see [Archived dependencies](#archived-dependencies-2)). Update-time reports such an artefact only in a run that checks archival:
-
-```console
-WARNING Redundant update-time directive ignore[archived] for org.apache.commons:commons-lang3 in pom.xml:12: Update-time does not find a GitHub repository to check this dependency for archival
+WARNING Redundant update-time directive ignore[cooldown<30] for ghcr.io/astral-sh/uv in Dockerfile:2: this dependency's source does not report a publication date to measure a cooldown against
+WARNING Redundant update-time directive ignore[cooldown<30] for humanize in pyproject.toml:12: the package manager applies the cooldown per run rather than per dependency
+WARNING Redundant update-time directive ignore[cooldown<30] for humanize in docs/requirements.txt:12: this requirement does not pin a version to update
+WARNING Redundant update-time directive ignore[cooldown<30] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a version, so a cooldown holds nothing back
+WARNING Redundant update-time directive ignore[cooldown<30] for commons-io:commons-io in child/pom.xml:5: this declaration does not hold its version, so Maven does not update that version here
+WARNING Redundant update-time directive ignore[cooldown<30] for redis in docker-compose.yml:7: it names its image or tag through a variable or a template, so it is never updated
 ```
 
 #### The `floating-pin` scope
@@ -1002,19 +899,12 @@ Update-time does not report a floating image tag, a branch, or a tag such as `st
 
 #### The `hash-drift` scope
 
-An `allow[hash-drift]` adopts what a drifted hash pin points at (see [Adopting hash drift](#adopting-hash-drift)). The directive adopts nothing on a reference without a hash pin that could drift, or on one whose drift Update-time never adopts. Update-time reports it as redundant there:
+An `allow[hash-drift]` adopts what a drifted hash pin points at (see [Adopting hash drift](#adopting-hash-drift)). Update-time reports the directive as redundant in these cases, since there is no drift for it to adopt:
 
-| Dependency type | When `allow[hash-drift]` is redundant |
-| :-------------- | :------------------------------------ |
-| [Python dependencies](#python-dependencies) | always: a pin names a version, and Update-time writes no hash beside it |
-| [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | always: the integrity hashes live in the package manager's lock file |
-| [Maven dependencies](#maven-dependencies) | always: a pom names a version, and Maven records an artefact's checksum beside the artefact |
-| [Node engine version](#node-engine-version-and-python-version) | always: it names a Node version, not an artefact that could be hashed |
-| [Python version](#node-engine-version-and-python-version) | always: it names a Python version, not an artefact that could be hashed |
-| [Docker images](#docker-images) | on an image the file does not pull, and on a reference through a variable or a template that Update-time cannot substitute, since Update-time does not ask a registry about its digest. Also on a Dockerfile `FROM` that names build arguments, which never gets a digest |
-| [GitHub Actions](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since a commit cannot drift |
-| [Pre-commit hooks](#github-actions-and-pre-commit-hooks) | on a reference that names a commit SHA, since a commit cannot drift |
-| [jsDelivr npm URLs](#jsdelivr-npm-urls) | always: Update-time never adopts an integrity hash mismatch |
+- The dependency type does not get a hash pin (see [Which dependencies get a hash pin](#which-dependencies-get-a-hash-pin)).
+- The reference is a jsDelivr URL, and Update-time never adopts an integrity hash mismatch.
+- A GitHub Action or pre-commit hook names a commit SHA, and a commit cannot drift.
+- Update-time does not ask a registry about the image's digest. That holds for an image the file does not pull, and for a reference through a variable or a template that Update-time cannot substitute. A Dockerfile `FROM` that names build arguments does not get a digest either.
 
 Update-time reports those cases as:
 
@@ -1025,7 +915,7 @@ WARNING Redundant update-time directive allow[hash-drift] for acme/api in docker
 WARNING Redundant update-time directive allow[hash-drift] for actions/checkout in .github/workflows/ci.yml:17: this reference pins a commit rather than a tag or branch, so it cannot drift
 ```
 
-On a reference whose drift Update-time would otherwise adopt, an `ignore`, or an `ignore[update]` that holds the update back, leaves the directive adopting nothing as well, since Update-time never rewrites a reference whose update it holds back. Update-time reports the `allow[hash-drift]` directive as redundant there:
+Update-time never rewrites a reference whose update it holds back. So on a reference carrying an `ignore`, or an `ignore[update]` that holds the update back, it reports the `allow[hash-drift]` directive as redundant as well:
 
 ```console
 WARNING Redundant update-time directive allow[hash-drift] for python in Dockerfile:2: this reference's update is held back, so its drift is never adopted
@@ -1045,15 +935,13 @@ WARNING Redundant update-time directive allow[update>=3.12] for python in Docker
 WARNING Redundant update-time directive ignore[update>=3.12] for python in Dockerfile:2: this bound blocks every update at version 3.12
 ```
 
-On a `requirements.txt` requirement that pins no exact version, Update-time reports every bound as redundant, `ignore[update]` included, since it resolves no update to bound.
+Update-time also reports every bound as redundant in these cases. In the first three, it reports an `ignore[update]` as redundant as well:
 
-On a `pyproject.toml` or inline script metadata dependency, Update-time reports every bound as redundant, since uv answers with one version rather than the candidates a bound would narrow. It reports an `ignore[update]` as redundant only for a dependency that pins no exact version.
-
-On a `package.json` dependency, Update-time reports every bound as redundant, `ignore[update]` included, since npm and pnpm move the dependency within the range the file declares, whatever its marker says.
-
-On a GitHub Action or pre-commit hook that names a branch, a tag such as `stable-2024`, or a commit SHA, Update-time reports every bound as redundant, since none of them names a version to bound. In the run that pins a branch, a tag, or a short SHA to a version tag, Update-time judges the bound at that version instead. It never pins a full SHA, so a bound on one is always redundant.
-
-On a `pom.xml` dependency or plugin whose version Maven does not update, Update-time reports every bound as redundant, `ignore[update]` included (see [What dependencies are updated?](#what-dependencies-are-updated-2)).
+- Update-time does not resolve an update for a `requirements.txt` requirement that does not pin an exact version.
+- npm and pnpm move a `package.json` dependency within the range the file declares, whatever its marker says.
+- Maven does not update the version of some `pom.xml` dependencies and plugins (see [What dependencies are updated?](#what-dependencies-are-updated-2)).
+- uv answers with one version for a `pyproject.toml` or inline script metadata dependency, rather than the candidates a bound would narrow. An `ignore[update]` is redundant there only where the dependency does not pin an exact version.
+- A GitHub Action or pre-commit hook that names a branch, a tag such as `stable-2024`, or a commit SHA does not name a version to bound. In the run that pins such a reference to a version tag, Update-time judges the bound at that version. Update-time never pins a full SHA, so a bound on one is always redundant.
 
 Update-time reports those bounds as:
 
@@ -1145,9 +1033,9 @@ In a PEP 723 inline script metadata block, Update-time updates only the pins in 
 
 #### What versions are updated?
 
-Update-time rewrites a dependency's declaration when it pins one exact version with `==`. What the declaration spells around the pin makes no difference. Update-time accepts an extra, an environment marker, and spaces around the operator, and keeps them as written when it rewrites the version. So it rewrites `django[argon2]==3.2.0`, `humanize==4.15.0; python_version < "3.13"`, and `humanize == 4.15.0` each to the new version.
+Update-time rewrites a dependency's declaration when it pins one exact version with `==`, and keeps an extra or an environment marker as written. So it rewrites `django[argon2]==3.2.0` and `humanize==4.15.0; python_version < "3.13"` each to the new version.
 
-Update-time leaves every other specifier untouched, so you can pin a maximum version to opt a dependency out of automatic updates. A `==` that names more than one version pins none either: `humanize==4.15.*` names a range, `humanize===nightly` is an arbitrary equality, and `humanize==4.15.0,!=4.15.1` combines two specifiers. Update-time leaves each of them alone.
+Update-time leaves every other specifier untouched, so you can pin a maximum version, such as `humanize<5`, to opt a dependency out of automatic updates. A `==` that names a range, such as `humanize==4.15.*`, does not pin an exact version either.
 
 Update-time still reports a new version for a dependency that pins no exact version, both in a `pyproject.toml` and in an inline script metadata block. In a `pyproject.toml` uv also applies it: uv resolves the specifier and records the version it picks in the `uv.lock` file. So `humanize>=4` moves from one release to the next without its line changing. A script has no lock file, so there Update-time reports the new version and nothing more. In a `requirements.txt` it reports no new version, because it resolves none for a requirement that pins no exact version. It still checks that requirement's package for staleness and archival.
 
@@ -1165,7 +1053,7 @@ ERROR Could not update the dependencies in pyproject.toml: uv tree failed
 
 #### Pinning
 
-Update-time adds no hash pin to a Python dependency. A `requirements.txt` pin carries one as a `--hash=` line, which has to hold for the file's transitive dependencies too. So Update-time skips a file that already has them entirely, rather than rewriting it partly. Dependencies in `pyproject.toml` are locked by uv, which records each distribution's hash in the `uv.lock` file it maintains. A PEP 723 script has no lock file, so its pins carry no hash either.
+Update-time adds no hash pin to a Python dependency. uv records each distribution's hash in the `uv.lock` file beside a `pyproject.toml`. Update-time skips a `requirements.txt` file with `--hash=` lines (see [What files are updated?](#what-files-are-updated)).
 
 #### Cooldown
 
@@ -1175,7 +1063,7 @@ For `pyproject.toml` dependencies, Update-time applies the cooldown through uv's
 
 Update-time keeps its own tagged value in step with `--cooldown`. An `exclude-newer` without the `managed by Update-time` comment stays as it is, and so does a `UV_EXCLUDE_NEWER` environment variable. Remove the comment to take ownership of the line.
 
-A TOML inline table cannot hold a comment. So where the `pyproject.toml` writes `[tool]` or `[tool.uv]` as an inline table, Update-time rewrites that table as a normal one. It turns `tool = { uv = { package = false } }` into a `[tool.uv]` table holding `package = false` and the tagged `exclude-newer`. Where `tool` or `tool.uv` is a value other than a table, Update-time leaves the file as it is and warns instead:
+A TOML inline table cannot hold a comment. So where the `pyproject.toml` writes `[tool]` or `[tool.uv]` as an inline table, Update-time rewrites that table as a normal one. Where `tool` or `tool.uv` is a value other than a table, Update-time leaves the file as it is and warns instead:
 
 ```console
 WARNING Could not set uv exclude-newer in pyproject.toml to apply the cooldown: its tool, or the uv in it, is not a table
@@ -1186,8 +1074,6 @@ For inline script metadata, Update-time also applies the cooldown through uv's `
 #### Stale dependencies
 
 Update-time checks each pin a Python file declares against the newest release of its package on PyPI and reports the stale ones. It checks a requirement that pins no exact version as well, wherever the file declares it. The package name alone is enough to find the newest release.
-
-Update-time skips a package published only as `.egg` files, since PyPI no longer accepts files named that way.
 
 #### Yanked dependencies
 
@@ -1264,7 +1150,7 @@ Update-time checks a dependency pinned to an exact version, such as `"left-pad":
 
 #### Archived dependencies
 
-The npm registry does not publish an archival signal, so Update-time does not check a `package.json` dependency. What npmjs.com shows as a deprecated package is a deprecation on the release its `latest` tag points at. That says something about the release rather than about the project.
+The npm registry does not publish an archival signal, so Update-time does not check a `package.json` dependency.
 
 #### Markers
 
@@ -1303,7 +1189,7 @@ Update-time looks for `pom.xml` files recursively from the starting path.
 
 Update-time delegates updating Maven dependencies to Maven. Maven runs over each pom in turn, as a module of its reactor: the poms that the topmost pom's `<modules>` reach. So Maven reads a BOM of the same project from the working tree, rather than a copy from a repository. The Maven it runs is the project's own `./mvnw` wrapper when one sits beside the topmost pom, and the `mvn` on your path where the project ships none.
 
-Once Maven cannot read a pom of the reactor, every later Maven run over that reactor fails the same way. Update-time then runs Maven over none of the reactor's poms, and still checks them, as the sections below describe. A module that declares a dependency without its version breaks the reactor, for example, once the BOM managing that version drops the dependency. A pom that does not parse breaks it as well. Update-time names the pom whose update broke the reactor, or the pom that does not parse. Where the reactor was unreadable before Update-time changed it, the error says so. Where something outside the poms broke the reactor, such as a repository Maven cannot reach, the error does not name a cause:
+Once Maven cannot read a pom of the reactor, Update-time runs Maven over none of the reactor's poms, and still checks them, as the sections below describe. A module that declares a dependency without its version breaks the reactor, for example, once the BOM managing that version drops the dependency. The error names the cause where Update-time can tell it:
 
 ```console
 ERROR Maven cannot read the reactor in . since Update-time updated dubbo-dependencies-bom/pom.xml, so Update-time does not run Maven over the 50 poms left in it; revert that pom and hold the update that broke the reactor back with a marker, or fix what Maven reports
@@ -1320,7 +1206,7 @@ Update-time reads every `<dependency>` element the pom declares, wherever it sit
 
 Update-time also reads every `<plugin>` element the pom declares: under `<plugins>`, under `<pluginManagement>`, and in a `<profile>`. It checks each plugin as it checks a dependency.
 
-For each pom, Maven runs two goals of the [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/). The `use-latest-releases` goal advances a dependency whose `<version>` element holds a version. That goal leaves a plugin alone, so a plugin whose `<version>` element holds a version stays on that version. The `update-properties` goal advances a dependency or plugin whose `<version>` element names one of the pom's properties, by advancing that property. Maven advances such a property only in a run over the pom that declares it and names it too. So a property that a parent pom declares for its modules alone stays where it is. Update-time reports the new version of each dependency and plugin that Maven moved, so two artefacts that name the same property get a report each. The exception is an artefact Maven Central does not serve, where an artefact that Maven Central does serve names the same property. Maven moves a property to a version that every artefact naming it has, and passes over an artefact whose versions it does not find, such as one whose coordinates are mistyped. So the move says nothing about the unserved artefact, and Update-time logs it at `DEBUG` instead. Where a mirror or a private repository serves that artefact, its new version goes unreported as well:
+For each pom, Maven runs two goals of the [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/). The `use-latest-releases` goal advances a dependency whose `<version>` element holds a version, and leaves a plugin alone. The `update-properties` goal advances a dependency or plugin whose `<version>` element names one of the pom's properties, by advancing that property. Maven advances such a property only in a pom that both declares and names it, so a property that a parent pom declares for its modules alone stays where it is. Update-time reports the new version of each dependency and plugin that Maven moved. Maven moves a property to a version that every artefact naming it has, and passes over an artefact whose versions it does not find. So where an artefact Maven Central does not serve names the same property as one it does serve, Update-time does not report a new version for the unserved one, even when a mirror serves it. It logs that at `DEBUG` instead:
 
 ```console
 DEBUG Not reporting a new version for org.glassfish.jersey:jersey-client in pom.xml:206: Maven moved the property jersey.version to 3.1.12 for the other artefacts naming it, and Maven Central does not serve this artefact
@@ -1328,7 +1214,7 @@ DEBUG Not reporting a new version for org.glassfish.jersey:jersey-client in pom.
 
 Update-time tells the versions plugin which versions it may not adopt: pre-releases, versions of another variant, versions inside the cooldown, and versions a marker holds back. The sections below describe each.
 
-Update-time warns once about a version that a scanned pom manages, at the declaration managing it. It skips the checks for each declaration that leaves its `<version>` to that pom, whether in the managing pom itself, in a module inheriting from it, or in a module importing it as a BOM. A module can override a property that the managed `<version>` names, and so resolve another version. Update-time then checks the module's declaration at that version. It also checks the module's declaration where the managing pom leaves that property to a pom above it. A pom outside the scan can manage the version as well, such as a released parent pom or an imported BOM. Update-time then checks each declaration that leaves its `<version>` out.
+Update-time warns once about a version that a scanned pom manages, at the declaration managing it. It skips the checks for each declaration that leaves its `<version>` to that pom. A module that overrides the property the managed `<version>` names is checked at the version it resolves. Where a pom outside the scan manages the version, such as a released parent pom or an imported BOM, Update-time checks each declaration that leaves its `<version>` out.
 
 For a group or artifact the pom leaves to its parent, such as `${project.groupId}`, Update-time names the artefact Maven resolves: in the new versions it reports, in the cooldown, and in every check.
 
@@ -1376,13 +1262,7 @@ Update-time does not check a dependency or plugin whose `<version>` element is e
 
 Maven Central does not publish an archival signal of its own. So Update-time looks up the repository of each dependency and plugin on GitHub, and warns when GitHub reports that repository as archived.
 
-Update-time finds the repository in the pom that Maven Central serves beside the artefact's newest release. It reads the newest release's pom whatever version the reference pins, because archival is a fact about the project rather than about one of its versions. Update-time looks in these places, in this order, and takes the first one that names a GitHub repository:
-
-1. The `<url>`, `<connection>`, and `<developerConnection>` of the `<scm>` element of the newest release's pom.
-2. The `<url>` element of the newest release's pom.
-3. The `<scm>` and `<url>` of the parent pom. Update-time reads the parent pom only when the `<scm>` element of the newest release's pom does not name a URL, and does not read the parent pom's own parent.
-
-Update-time warns about archival only where it finds a GitHub repository to ask about. The newest release's pom and its parent pom may leave the repository unnamed. They may also name a host other than GitHub, as `org.apache.commons:commons-lang3` names `gitbox.apache.org`. And Maven Central does not serve a pom at all for an artefact a project resolves from a mirror or a private repository.
+Update-time finds the repository in the `<scm>` or `<url>` of the pom that Maven Central serves beside the artefact's newest release, or else of its parent pom. It reads the newest release's pom whatever version the reference pins, because archival is a fact about the project rather than about one of its versions. Where those poms name a host other than GitHub, as `org.apache.commons:commons-lang3` names `gitbox.apache.org`, Update-time does not check archival.
 
 Where Maven Central lists a release, but Update-time cannot fetch or parse the pom beside it, Update-time warns that it could not read that pom.
 
@@ -1424,7 +1304,7 @@ A marker steers the update only where Maven updates the version (see [What depen
 
 A bound holds back the versions it drops. Update-time reports those versions at `DEBUG`, as Maven ranges (see [Seeing what a marker did](#seeing-what-a-marker-did)). A bound reads a version up to the first character that is neither a digit nor a dot, so `allow[update<=32.1.3]` keeps guava's `32.1.3-jre`. A bound that names a version other than a release, such as `34.1rc1`, holds back every version. So does a level bound on a version that does not hold a number, such as `RELEASE`.
 
-A pom can declare an artefact more than once. The versions plugin takes the versions it may not adopt per artefact (see [What versions are updated?](#what-versions-are-updated-2)). So a marker on one of those declarations steers all of them, provided Maven updates the version of the declaration it sits on. A marker on one of them that holds back every version, such as an `ignore`, holds back every declaration of the artefact in the pom. Without such a marker, Update-time holds back the versions each declaration's bound drops, and the versions published inside the longest cooldown among the declarations. A declaration whose marker does not set a cooldown has the run's cooldown.
+A pom can declare an artefact more than once, and the versions plugin takes the versions it may not adopt per artefact (see [What versions are updated?](#what-versions-are-updated-2)). So a marker on one of those declarations steers all of them. Update-time holds back the versions each declaration's bound drops, and the versions published inside the longest cooldown among the declarations. A declaration whose marker does not set a cooldown has the run's cooldown.
 
 ### GitHub Actions and pre-commit hooks
 
@@ -1472,38 +1352,27 @@ Update-time leaves a reference naming a branch, a tag such as `stable-2024`, or 
 ERROR Could not fetch the commit of the ref actions/checkout@main in .github/workflows/ci.yml:17, so it was left as it is (HTTP 403, API rate limit exceeded)
 ```
 
-The line names a short commit SHA as one. It calls any other reference a branch or a tag, or a ref where GitHub refuses to say which of the two it is.
+While the comment names the branch, later runs check the branch for [drift](#hash-drift), and never move the reference back. `@<sha> # main` becomes `@<sha> # v4.3.1` once a version tag points at the pinned commit, provided the branch has not moved on from that commit. Where Update-time adopts a moved branch's new commit, the comment names the version tag pointing at that commit, or the branch where none does.
 
-When the commit can be fetched but the repository's tags cannot be listed, Update-time pins the reference as the branch. When a later run can list the tags, it names the version tag.
-
-While the comment names the branch, every later run compares the branch's newest commit older than the [cooldown](#-cooldown) with the commit the reference is pinned to, as [Hash drift](#hash-drift) describes. Update-time never moves the reference back. The first pin takes the commit the branch points at, however fresh. Until that commit is older than the cooldown, the branch's newest commit older than the cooldown is an earlier one, and Update-time leaves the reference as it is. `@<sha> # main` becomes `@<sha> # v4.3.1` once a version tag points at the pinned commit, provided the branch has not moved on from the pinned commit. Where Update-time adopts a moved branch's new commit, the comment names the version tag pointing at that commit, or the branch where none does.
-
-When GitHub cannot compare the pinned commit with the newest one, Update-time cannot tell whether the branch moved on, and leaves the reference as it is. It logs why at `ERROR`:
+Update-time leaves the reference as it is when it cannot tell whether the branch moved on. That happens when GitHub does not compare the pinned commit with the newest one. It also happens when the branch's newest commit older than the cooldown lies beyond the 500 newest commits Update-time reads. It logs why at `ERROR`:
 
 ```console
 ERROR Could not check branch drift for actions/checkout@main in .github/workflows/ci.yml:17: GitHub did not compare the pinned commit with …, the branch's newest commit older than the cooldown (HTTP 403, API rate limit exceeded); the pin was left unchanged
-```
-
-Update-time reads the branch's newest 500 commits at most. When the branch's newest commit older than the cooldown lies deeper, Update-time leaves the reference as it is and logs why at `ERROR`:
-
-```console
 ERROR Could not fetch the commit of the branch actions/checkout@main in .github/workflows/ci.yml:17, so it was left as it is (the branch's newest commit older than the cooldown is not among the 500 newest commits examined)
 ```
 
 > [!IMPORTANT]
-> Once the comment names a version tag, the reference is a version pin like any other. Later runs move it to newer versions, and no longer follow the branch. That happens in the run that first pins the branch, when a version tag points at its commit. It also happens when an adopted move lands on a tagged commit. To keep following the branch, mark the reference `# update-time: allow[floating-pin]` (see [Keeping a pin floating](#keeping-a-pin-floating)).
-
-A reference kept floating with `allow[floating-pin]` keeps naming the branch. The reference does so when a version tag comes to point at its pinned commit. It also does so when it adopts the branch's new commit (see [Keeping a pin floating](#keeping-a-pin-floating)).
+> Once the comment names a version tag, the reference is a version pin like any other. Later runs move it to newer versions, and no longer follow the branch. To keep following the branch, mark the reference `# update-time: allow[floating-pin]`. Its comment then keeps naming the branch, also when a version tag points at its commit (see [Keeping a pin floating](#keeping-a-pin-floating)).
 
 #### Cooldown
 
-The cooldown is measured against the release's publication date. Some repositories move a release's tag along with every new version, as the tag of a `v2` release moves to each `v2.x.y`. Where that tag points at a commit made after the release was published, the release takes the commit's date instead. A version that was only tagged takes the publication date of the first release of the same commit, so a `v4.3` tag waits as long as a `v4.3.0` release of that commit. Without such a release, the cooldown is measured against the date of the commit the tag points at. Update-time skips a version whose commit date it cannot fetch, rather than adopting it with the cooldown unchecked. It then skips the older versions as well, and stays on the version the reference names, since the failure, such as a rate limit, would hold for them too. It logs why at `ERROR`:
+The cooldown is measured against the release's publication date. A release whose tag was moved onto a commit made after its publication, as a `v2` tag moves to each `v2.x.y`, takes the commit's date. A version that was only tagged takes the publication date of the first release of the same commit, or else the date of the commit itself. When Update-time cannot fetch a commit's date, it stays on the version the reference names rather than adopting a version with the cooldown unchecked. It logs why at `ERROR`:
 
 ```console
 ERROR Could not determine from GitHub when actions/checkout v4.4.0 was committed (HTTP 403, API rate limit exceeded), so the cooldown can't be verified; actions/checkout stays on 4.3.0 rather than trying the versions in between
 ```
 
-Update-time measures the cooldown of a moved tag's or branch's new commit against the committer date. GitHub does not report when a tag or branch was moved, and whoever makes a commit sets its committer date. So a tag moved onto an old commit passes the cooldown at once, and so does an old commit pushed onto a branch. Update-time adopts a moved tag's new commit only when it can fetch the commit's date. When it cannot, it holds the drift back and logs why at `ERROR`:
+GitHub does not report when a tag or branch was moved. So Update-time measures the cooldown of a moved tag's or branch's new commit against the commit's committer date. Whoever makes a commit sets that date, so a tag moved onto an old commit passes the cooldown at once, and so does an old commit pushed onto a branch. When Update-time cannot fetch the commit's date, it holds the drift back and logs why at `ERROR`:
 
 ```console
 ERROR Could not determine from GitHub the date of commit … that actions/checkout@4.1.1 in .github/workflows/ci.yml:17 now points at (HTTP 403, API rate limit exceeded), so the cooldown can't be verified; not adopting the drift
@@ -1519,11 +1388,11 @@ GitHub does not record a yank, so Update-time checks neither an action nor a hoo
 
 #### Vulnerable dependencies
 
-Update-time checks an action against OSV's GitHub Actions advisories. It checks the version the run leaves the action on. OSV does not match a version of an action against its advisories, so Update-time asks OSV for every advisory about the action and matches the version itself. It reads `v4.1.1` as `4.1.1`, and `v4` as `4.0.0`. OSV files an action under its repository. So Update-time checks an action in a subdirectory, such as `github/codeql-action/init`, as `github/codeql-action`, and a reusable workflow, such as `octo-org/example-repo/.github/workflows/reusable.yml`, as `octo-org/example-repo`.
+Update-time checks an action against OSV's GitHub Actions advisories. It checks the version that the action is on when the run ends. It reads `v4.1.1` as `4.1.1`, and `v4` as `4.0.0`. OSV files an action under its repository, so Update-time checks `github/codeql-action/init` as `github/codeql-action`, and a reusable workflow as the repository holding it.
 
 Update-time does not check a reference that names a branch, a tag such as `stable-2024`, or a commit SHA rather than a version. A run that pins such a reference to a version tag checks it at that version.
 
-An advisory can state an open-ended range. Where its reviewers record which versions they last knew to be affected, Update-time ends the range there. GHSA-vqf5-2xx6-9wfm states a range of `github/codeql-action` versions that starts at `2.26.11` and does not end. Its reviewers record `< 3.0.0` as the versions last known to be affected. So Update-time does not report `v4`. Without that record, Update-time reports every version from the start of the range on.
+An advisory can state an open-ended range. Where the advisory's reviewers record the versions they last knew to be affected, Update-time ends the range there.
 
 Update-time reads what it can of an advisory, and warns about a value it cannot read:
 
@@ -1555,13 +1424,13 @@ Both name the runtime a project runs on, rather than a package it depends on. Bo
 
 For the Node engine version, Update-time looks for `package.json` files that specify a [Node engine](https://docs.npmjs.com/cli/v12/configuring-npm/package-json#engines).
 
-For the Python version, it looks for `.python-version` files recursively from the starting path. That covers a repository that pins its Python version at the root, and a monorepo that pins one per package. `.python-version` is the de facto standard for pinning a project's Python version, read by uv, pyenv, and GitHub's `setup-python` action, among others.
+For the Python version, it looks for `.python-version` files recursively from the starting path.
 
 #### What dependencies are updated?
 
 The Node engine version in the `package.json`: the `node` entry its `engines` section declares.
 
-In a `.python-version` file, each plain CPython version on a line of its own, `X.Y` or `X.Y.Z`. Examples are `3.12` and `3.12.6`. A file may list several entries, one per line (pyenv reads more than one), each handled independently. Update-time leaves the other entries untouched: alternative implementations (`pypy3.10-7.3.12`, `miniconda3-…`), free-threaded and other variant suffixes (`3.13t`), prefixed forms (`cpython@3.12`, `>=3.10`), and the `system` sentinel.
+In a `.python-version` file, each plain CPython version on a line of its own, such as `3.12` or `3.12.6`. Update-time leaves other entries untouched, such as `pypy3.10-7.3.12`, `3.13t`, or `system`.
 
 Update-time leaves other Python version pins untouched too. The `requires-python` value in `pyproject.toml` and in PEP 723 inline script metadata is not a `.python-version` entry, and stays as it is.
 
@@ -1575,7 +1444,7 @@ An entry or an engine gains precision as it updates, like any other version pin 
 
 #### Pinning
 
-Neither can carry a hash pin. Both name a version rather than one artefact, and a version covers every build ever published for it. So there is no image digest, commit SHA, or integrity hash to add. Neither format has anywhere to put one either: a `package.json` entry names a version, and a `.python-version` line is a bare version. Update-time only moves them to a fuller version, which makes them more precise but verifies nothing.
+Update-time adds a hash pin to neither. Each names a version that covers every build published for it, rather than one artefact that could be hashed.
 
 #### Cooldown
 
@@ -1615,7 +1484,7 @@ The Node engine version takes a marker too, but not as a comment: `package.json`
 }
 ```
 
-The field holds the directives a comment holds, without the `# update-time:` prefix that introduces them there. npm and pnpm keep a field they do not know, so the marker survives an `npm update` and a `pnpm update`. Both rewrite the file onto one key per line, so the field appears spread over several lines rather than on the one shown here. Update-time reports a field of the wrong shape as an invalid item, and leaves the engine as it is (see [Invalid markers](#invalid-markers)).
+The field holds the directives a comment holds, without the `# update-time:` prefix that introduces them there. npm and pnpm keep a field they do not know, so the marker survives an `npm update` and a `pnpm update`. Update-time reports a field of the wrong shape as an invalid item, and leaves the engine as it is (see [Invalid markers](#invalid-markers)).
 
 Update-time never updates an engine declared as a range. A marker steers an update, so on such an engine it has nothing to steer, and Update-time has nothing to report.
 
@@ -1649,9 +1518,7 @@ Update-time reads a `Containerfile` as a Dockerfile. It matches `Dockerfile.*` a
 | Helm charts | Container images (`image:` references) |
 | devcontainer configs | The base image and each feature |
 
-Update-time reads a Dockerfile's `FROM` the way Docker reads it: in upper or lower case, and only where it opens its line. Neither `FROM scratch` nor a `FROM` naming one of the file's own build stages names an image a registry serves, so Update-time leaves both alone.
-
-A Docker Compose service that declares a `build:` beside its `image:` names the image the file builds. That image is the file's output rather than a dependency to update, so Update-time leaves it alone. It leaves the other services naming that image alone as well, including the ones that build nothing themselves. The reference is matched by name and tag, so another tag of the same repository is a registry image like any other and is updated as one. Update-time reads one file at a time, so an image one Docker Compose file builds is updated in another file that pulls it.
+A Docker Compose service that declares a `build:` beside its `image:` names the image the file builds. That image is the file's output rather than a dependency to update, so Update-time leaves it alone, in every service of the file that names it with the same tag.
 
 A Dockerfile's `FROM` can name its image or its tag through build arguments, as `FROM $IMAGE_NAME:$IMAGE_VERSION-$IMAGE_EDITION` does. Update-time substitutes the defaults that the `ARG` lines above the first `FROM` declare, as Docker does, and updates the reference that gives. It reports at `DEBUG` which reference that is:
 
@@ -1659,9 +1526,7 @@ A Dockerfile's `FROM` can name its image or its tag through build arguments, as 
 DEBUG Reference python:$PY in Dockerfile:2 is python:3.14 with its build arguments substituted; it does not get a digest, since a digest would overrule a --build-arg
 ```
 
-Update-time leaves a `FROM` alone where it cannot tell which line the new version goes on, such as where a build argument does not have a default. It reports why at `DEBUG`, as shown below. Update-time leaves every other reference through a variable or a template alone as well, since it cannot tell what the variable or the template stands for. Examples are `redis:7.2-${VARIANT}` in a Docker Compose file, `{{ .Values.tag }}` in a Helm chart, and `<< parameters.tag >>` in a CircleCI config.
-
-Update-time reports at `DEBUG` why it does not ask a registry about an image:
+Update-time leaves a `FROM` alone where it cannot tell which line the new version goes on, such as where a build argument does not have a default. It leaves every other reference through a variable or a template alone as well, such as `redis:7.2-${VARIANT}` or `{{ .Values.tag }}`. It reports at `DEBUG` why it does not ask a registry about an image:
 
 ```console
 DEBUG Reference acme/api:1.2.3 in docker-compose.yml:4 was left as it is: the Compose file builds this image
@@ -1690,7 +1555,7 @@ A floating tag such as `latest` or `trixie`, or a reference without a tag, is pi
 
 Update-time writes a new version where the Dockerfile writes the old one. That is the `ARG` line whose default holds it, quotes kept, or the `FROM` line itself. So `ARG IMAGE_VERSION=2026.3.1` becomes `ARG IMAGE_VERSION=2026.4.1`, and `FROM $IMAGE_NAME:$IMAGE_VERSION-$IMAGE_EDITION` stays as it is.
 
-A dated snapshot such as `debian:bookworm-20260803` names the day its image was built. A repository can also name a snapshot by the date alone, as Alpine names one `20260805` beside its `3.24.1` release. A snapshot can spell the date with dashes, as `jupyter/base-notebook:2023-10-20` does, and add the time of the build, as `gitpod/workspace-full:2026-02-12-23-06-03` does. A label can follow the date, as the `slim` of `debian:trixie-20261005-slim` does. Update-time updates a snapshot to the newest snapshot under its labels that spells the date the same way. So a reference on `bookworm-20240110` moves to `bookworm-20260803`, and a reference on `trixie-20260803-slim` moves to `trixie-20261005-slim` rather than to a snapshot without the `slim` label. A reference on `2023-10-19` moves to `2023-10-20` rather than to a snapshot naming a time. A reference on a release keeps following releases, and a reference on a snapshot keeps following snapshots.
+A dated snapshot, such as `debian:bookworm-20260803` or Alpine's `20260805`, names the day its image was built. A snapshot can spell the date with dashes, as `jupyter/base-notebook:2023-10-20` does, and add the time of the build. Update-time updates a snapshot to the newest snapshot under its labels that spells the date the same way. So `trixie-20260803-slim` moves to `trixie-20261005-slim` rather than to a snapshot without the `slim` label, and `2023-10-19` moves to `2023-10-20` rather than to a snapshot naming a time. A reference on a release keeps following releases, and a reference on a snapshot keeps following snapshots.
 
 #### Pinning
 
@@ -1719,9 +1584,7 @@ ERROR Could not determine from Docker Hub when python:3.14 in Dockerfile:2 was p
 
 Staleness is measured against the image's newest release, on Docker Hub only, since other registries do not expose a publication date.
 
-Update-time reports no staleness for a reference whose repository or tag the registry does not serve. The registry does not hold an image under such a reference, so the image's newest release says nothing about the reference. An image a pipeline builds without pushing it is the common case, and a deleted or mistyped tag reads the same way.
-
-Two kinds of tags in a repository the registry serves are dated all the same. A tag naming a version is, whether or not the registry serves it. So is a tag listed further down the repository's tag list than Update-time reads, since what the registry serves under such a tag is unknown.
+Update-time reports no staleness for a reference whose repository or tag the registry does not serve. The registry does not hold an image under such a reference, so the image's newest release says nothing about the reference. An image a pipeline builds without pushing it is the common case, and a deleted or mistyped tag reads the same way. A tag naming a version is the exception: Update-time dates it whether or not the registry serves it.
 
 #### Yanked dependencies
 
