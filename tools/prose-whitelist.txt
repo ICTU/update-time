@@ -4,7 +4,6 @@
 - the sample log lines the sections below quote, from `log_samples`, each filling the placeholder it names.
 A CVSS vector the `cvss` package refuses, since `AV:X` is not a value the metric can take.
 A Compose override file writes `!reset` and `!override`, which the loader would otherwise refuse the document over.
-A PEP 723 script has no lock file, so its pins carry no hash either.
 A URL the mapping doesn't cover raises a KeyError, so a request the test did not expect fails loudly rather than being answered.
 A URL whose attribute dictionary declares no `integrity` entry gains one, so the browser verifies the script the CDN serves before running it.
 A `*.py` file without such a block stays untouched and never invokes uv.
@@ -103,7 +102,6 @@ A subscripted base names no class the scan can resolve, so a class carrying one 
 A suffix without an embedded version (`bookworm-slim`, `windows`) is never updated, since it carries no version to advance.
 A suffix without an embedded version has no version to strip, so its whole string is the label (and the second string is empty), and the check reduces to an exact-suffix match (`slim` still only matches `slim`).
 A tag Update-time can read as neither a version nor a channel, such as `debian:dev-2024`: it names no version to advance, so the tag stands and the digest it serves pins it.
-A tag whose image has no version tag, such as an image tagged only `dev` or `prod`.
 A target that is part of a line rewrites the rest of that line too, and matching once is no protection: the `Edit` tool accepts any fragment that matches once.
 A test that pins existing behaviour drives no code.
 A test the run reported as failing, as unittest names it: the method, where it lives, and a `subTest` case's parameters where it has them.
@@ -137,7 +135,6 @@ An inline marker steers every dependency declared on its line, so a marker besid
 An option the CLI either passes or does not is carried this way, so each declares its name alone.
 An unpinned reference has no pinned digest to drift from.
 An unreadable item holds the update back too, but gets no such line: Update-time reports it as invalid instead.
-Any identifier the vulnerability is known by will do.
 Assert that a floating tag pinned to no version was reported, with its reason, among the other records.
 Assert that a repository GitHub declares archived was warned about, GitHub publishing no reason.
 Assert that of the two constants a module assigns, only the one the reader leaves alone is reported.
@@ -145,7 +142,6 @@ Assert that the lines below the message sit in a box, and that the box holds the
 Assert that the run reported no archival, having asked the given URLs and GitHub nothing.
 Assert uv tree/lock carry no `--exclude-newer` flag (the cooldown lives in config), nor `--frozen`.
 Both name a version of a runtime rather than a release of a package, which is not something OSV matches an advisory against.
-Both name a version rather than one artefact, and a version covers every build ever published for it.
 Both npm and pnpm update a dependency to the newest version that satisfies the range declared in the `package.json`.
 Cannot pin in : the URL is declared as a bare string, so it has no attribute dictionary to hold an integrity hash.
 Check each requirement that pins no exact version.
@@ -185,8 +181,6 @@ It is also the most urgent, because the browser silently refuses to load the scr
 It is no number of days, so nothing is ever older than it.
 It is no risk level, so it sits outside `RISK_LEVELS`.
 It names no scope, so a warning would have no directive to name.
-It reports an `ignore[update]` as redundant only for a dependency that pins no exact version.
-It reports an advisory that gives no summary, which many do not, without the quotation.
 It rides on the Index API response fetched above, so it costs no request of its own.
 It then prints an error, exits with a non-zero status, and touches no files.
 It touches no unrelated file, such as `constraints.txt` or `requirements.in`.
@@ -205,8 +199,6 @@ Neither patch is ever stopped: no test may lift the refusal.
 No newer version; the pin's own release is yanked.
 No newer version; the pin's release is vulnerable.
 Null for an entry that is no file to fetch, such as a directory: pip's root keeps its `news` fragments in one.
-On a `pyproject.toml` or inline script metadata dependency, Update-time reports every bound as redundant, since uv answers with one version rather than the candidates a bound would narrow.
-On a `requirements.txt` requirement that pins no exact version, Update-time reports every bound as redundant, `ignore[update]` included, since it resolves no update to bound.
 One holding every check back does not, since a bare `ignore` queries no source at all, OSV included.
 One spec packaging rejects outright, the other names a range no version parses from.
 One whose every declaration is held back has no line left to report at, so it is not reported at all.
@@ -470,7 +462,6 @@ The `DependencyTomlFile` the caller hands over says where in the file that TOML 
 The `changelog` directory answers a text naming no version, rather than raising, so a request for it fails the assertion below rather than the whole test.
 The `cvss` package ships no type information, scores a v3 vector as a `Decimal` where it scores a v4 one as a float, and types the score as optional because construction sets it after initialising it to None.
 The `item` is the text its creator spelled, compared as no part of the bound, so two spellings of one bound are equal and cache alike.
-The advisories of one vulnerability name each other's identifiers, and Update-time reads them as one.
 The advisories of one vulnerability name each other, by their own ids as much as by the identifiers they share, so an advisory joins every vulnerability it names something of, folding those into one.
 The advisory is moderate, which the item's `high` would silence and the run's `low` does not, so the warning shows the item set no level of its own.
 The advisory the sample vulnerability warning names, rated critical so it is reported at every risk level.
@@ -581,12 +572,10 @@ The volta pin is steered by no marker.
 The warning costs no request, the item being unreadable on its own.
 The warning names where the marker would sit rather than the value that is wrong.
 The yank pass asks PyPI for every pin, whichever of the checks a test is about, so the tests that are about another check answer it with an index that lists no version and no distribution file to read a yank from.
-Then the most precise version of a variant the floating tag names, so `node:lts-alpine` lands on `24.19.0-alpine3.24` rather than on `24.19.0-alpine`.
 These have no registry to query and are now recognised and left unchanged, instead of being looked up on Docker Hub and logged as unfetchable on every run.
 These warnings are informational, so they change no file and do not affect the exit status.
 They are sorted, since a `frozenset` keeps no order, and a marker split over two placements reaches them in the order they merged rather than the order they were written.
 This Code of Conduct applies within all community spaces, and also applies when an individual is officially representing the community in public spaces.
-This is needed because uv has no [command to upgrade dependencies](https://github.com/astral-sh/uv/issues/6794).
 This message renders no version the reference is pinned to, so the reference names none.
 This mirrors SonarCloud rule S3415 and the Python documentation's convention (`self.assertEqual('foo'.upper(), 'FOO')`): when an assertion compares a computed value against one written out in the test, the computed (actual) value comes first.
 Track an annotated assignment the same way as a plain one, when it carries a value to bind.
@@ -624,7 +613,6 @@ What a name in a repository's root listing maps to: a file's text, a directory w
 What follows from naming no release is the caller's.
 What its marker gets wrong is reported whether or not those checks run, since that needs no release.
 What orders the aliases of one digest: the version, how precisely it is spelled, the version of each variant label the floating tag asked for, and the shorter name last.
-What the declaration spells around the pin makes no difference.
 What to ask for to be warned about no vulnerability at all, which switches the check off rather than setting a level.
 Where possible, it [pins](#-pinning) references — no more `latest` — and adds hashes.
 Where the file declares no such entry, it is located at the file rather than at a line guessed from elsewhere.

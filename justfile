@@ -31,6 +31,11 @@ vulture_whitelist := "tools/vulture-whitelist.py"
 prose_whitelist := "tools/prose-whitelist.txt"
 coverage := uv_run + " coverage"
 
+# Create a temporary file under TMPDIR, store its path in the shell variable, and remove it when the shell exits.
+# Without a template, the mktemp of macOS ignores TMPDIR and writes to the per-user temporary directory instead, which
+# a sandbox may not let it write to.
+create_temporary_file(variable) := variable + '=$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXX"); trap "rm -f $' + variable + '" EXIT;'
+
 # === Build and publish ===
 
 # Check that the version is well-formed (x.y.z or vx.y.z), greater than the current version, and not already tagged.
@@ -297,7 +302,7 @@ nltk_advisory_for_uv_audit := "GHSA-8mgp-746c-j5xp"
 # Run pip-audit to check Python dependencies for known security vulnerabilities.
 [private]
 pip-audit: install-py-dependencies
-    req=$(mktemp); trap "rm -f $req" EXIT; \
+    {{ create_temporary_file("req") }} \
     {{ start_capture() }} uv export --quiet --color never --no-emit-local --format requirements-txt > $req && \
     {{ uv_run }} pip-audit --requirement $req --disable-pip --progress-spinner off \
     --ignore-vuln {{ nltk_advisory_for_pip_audit }} {{ end_capture("pip-audit") }}
@@ -546,5 +551,5 @@ end_capture(name) := f'; } 2>&1) || { status=$?; printf "%s ${_red}FAIL${_normal
 skipped(name, reason) := f'if [ -t 2 ]; then _yellow="{{ YELLOW }}"; _normal="{{ NORMAL }}"; else _yellow=; _normal=; fi; printf "%s ${_yellow}SKIP${_normal} (%s)\n" {{ name }} "{{ reason }}" >&2'
 
 # Like start_capture/end_capture, but for slow commands (e.g. tests): run them in the background and animate a spinner while they run. The spinner only shows on a terminal, and leaves the cursor at the start of its line, so a PASS line printed beside it overwrites it instead of being prefixed by it. `verify` prints such lines, running the tests and the checks at the same time.
-start_progress() := f'if [ -t 2 ]; then spin=1; _green="{{ GREEN }}"; _red="{{ RED }}"; _normal="{{ NORMAL }}"; else spin=; _green=; _red=; _normal=; fi; tmp=$(mktemp); trap "rm -f $tmp" EXIT; { '
+start_progress() := f'if [ -t 2 ]; then spin=1; _green="{{ GREEN }}"; _red="{{ RED }}"; _normal="{{ NORMAL }}"; else spin=; _green=; _red=; _normal=; fi; {{ create_temporary_file("tmp") }} { '
 end_progress(name) := f'; } > "$tmp" 2>&1 & pid=$!; sp="|/-\\"; while kill -0 "$pid" 2>/dev/null; do [ -n "$spin" ] && printf "%c\r" "$sp" >&2; sp="${sp#?}${sp%???}"; sleep 0.1; done; [ -n "$spin" ] && printf " \r" >&2; wait "$pid"; status=$?; if [ "$status" -eq 0 ]; then count=$(grep -m1 "^Ran " "$tmp" | cut -d" " -f2); printf "%s ${_green}PASS${_normal} (%s tests)\n" {{ name }} "${count:-?}" >&2; else printf "%s ${_red}FAIL${_normal}\n%s\n" {{ name }} "$(cat "$tmp")" >&2; exit "$status"; fi'
