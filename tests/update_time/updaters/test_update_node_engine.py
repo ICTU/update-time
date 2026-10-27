@@ -186,13 +186,19 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
                 self.assert_redundant_directive_logged(reason, "node", Location(mock_package_json, 3), directives)
                 self.assert_new_version_logged("node", docker_hub_version("19"), Location(mock_package_json, 3))
 
-    def test_the_cooldown_and_stale_scopes_are_not_reported_as_redundant(self, mock_glob: Mock):
-        """Test that a `cooldown` or `stale` marker on the engine is not reported as redundant."""
-        for directives in ("ignore[cooldown<30]", "ignore[stale<1095]"):
-            with self.subTest(directives=directives):
-                mock_package_json = self.update_engine(mock_glob, _package_json(directives=directives))
-                mock_package_json.write_text.assert_called_once_with(_package_json("19", directives=directives))
-                self.assert_no_warnings_logged()
+    def test_the_cooldown_scope_is_not_reported_as_redundant(self, mock_glob: Mock):
+        """Test that a `cooldown` marker on the engine is not reported as redundant."""
+        directives = "ignore[cooldown<30]"
+        mock_package_json = self.update_engine(mock_glob, _package_json(directives=directives))
+        mock_package_json.write_text.assert_called_once_with(_package_json("19", directives=directives))
+        self.assert_no_warnings_logged()
+
+    def test_the_stale_scope_warns_at_its_own_threshold(self, mock_glob: Mock):
+        """Test that a `stale` threshold on the engine warns at that threshold, rather than being redundant."""
+        directives = "ignore[stale<90]"
+        mock_package_json = self.update_engine(mock_glob, _package_json(directives=directives))
+        mock_package_json.write_text.assert_called_once_with(_package_json("19", directives=directives))
+        self.assert_stale_dependency_logged("node", "19", Location(mock_package_json, 3))
 
     def test_invalid_item_in_the_update_time_field_leaves_the_engine_unchanged(self, mock_glob: Mock):
         """Test that an item Update-time cannot read is warned about and holds the engine's update back."""

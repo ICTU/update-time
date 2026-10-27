@@ -14,7 +14,7 @@ from update_time.domain.archival import archival_is_checked, reports_archival
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.dependency import DependencyName, DependencyVersion
 from update_time.domain.image_lookup import why_image_not_looked_up
-from update_time.domain.staleness import NO_STALENESS_CHECK, STALE_AFTER
+from update_time.domain.staleness import STALE_AFTER, release_judged_alike, staleness_is_checked
 from update_time.markers.cooldown import cooldown_days
 from update_time.markers.directive import DIRECTIVES, HELD_BACK_OPT_INS, Consequence, ImageNotLookedUpReason, Reason
 from update_time.markers.marker import Scope
@@ -125,13 +125,23 @@ def project_is_checked(source: object, dependency: DependencyName, threshold: in
 
     The archival check has no threshold of its own, so `--ignore-archived` is what switches it off.
     """
-    return threshold != NO_STALENESS_CHECK or (archival_is_checked() and reports_archival(source, dependency))
+    return staleness_is_checked(threshold) or (archival_is_checked() and reports_archival(source, dependency))
 
 
 def report_project(resolved: SteeredResolvedReference, log: Logger) -> None:
     """Report the staleness and the archival of a project a source has already answered for."""
     log.report_staleness(resolved, resolved.marker, staleness_threshold(resolved.marker))
+    _warn_if_the_staleness_threshold_is_redundant(resolved, log)
     log.report_archival(resolved, resolved.marker)
+
+
+def _warn_if_the_staleness_threshold_is_redundant(resolved: SteeredResolvedReference, log: Logger) -> None:
+    """Warn when the marker's staleness threshold judges the newest release as the run's threshold does."""
+    if (threshold := resolved.marker.stale).value is None:
+        return
+    run_threshold = STALE_AFTER.get()
+    if (newest := release_judged_alike(resolved.release, threshold.value, run_threshold)) is not None:
+        log.redundant_stale_threshold(resolved, threshold, newest, run_threshold)
 
 
 def report_project_checks(reference: Reference, marker: Marker, log: Logger, get_project: ProjectGetter) -> None:

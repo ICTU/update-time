@@ -48,7 +48,7 @@ def project_resolver(get_project: ProjectGetter) -> ReferenceResolver[SteeredRef
 
 
 def pin_resolver(
-    get_yank: Callable[[DependencyName, VersionString], Yank],
+    get_yank: Callable[[DependencyName, VersionString], Yank | None],
 ) -> ReferenceResolver[SteeredReference, SteeredResolvedReference]:
     """Return a resolver carrying the release each pin names, with the yank state the source reports for it.
 
@@ -194,7 +194,7 @@ def warn_about_delegated_checks[ReferenceT: SteeredReference](
     served: Iterable[Iterable[ReferenceT]],
     log: Logger,
     projects: ReferenceResolver[ReferenceT, SteeredResolvedReference],
-    yank: Callable[[DependencyName, VersionString], Yank],
+    yank: Callable[[DependencyName, VersionString], Yank | None],
     ecosystem: Ecosystem,
 ) -> None:
     """Run the project, yank, and vulnerability checks over the dependencies a source serves a release for.

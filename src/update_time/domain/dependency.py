@@ -198,7 +198,7 @@ class Project:
     """What a source reports about the project behind a dependency, rather than about one of its versions."""
 
     newest: Release | None = None
-    archival: Archival = Archival()
+    archival: Archival | None = None  # None where the source does not say whether it archived the project
 
 
 class Changes(str):
@@ -234,7 +234,7 @@ class DependencyVersion:
     changes: Changes = NO_CHANGES  # What the changelog records for this version
     sha: str = ""
     publication: Lookup[datetime] = UNDATED  # When the source says the version was published, or why it can't say
-    yank: Yank = Yank()  # The version's withdrawal state (yanked on PyPI, deprecated on npm)
+    yank: Yank | None = None  # The version's withdrawal state (yanked on PyPI, deprecated on npm), None if unknown
     project: Project = Project()  # What the source reports about the project behind the dependency
     floating: FloatingPin | None = None  # What happened to the floating pin if the reference had one
     unserved: Unserved | None = None  # What the source does not serve, if anything

@@ -506,10 +506,6 @@ class UpdatePomXmlTest(LoggingTestCase):
         expected = [self._expected_call(message, {"location": Location(pom)}) for pom in poms]
         self.assertEqual(self.records_of(message), expected)
 
-    def assert_no_redundant_directive_logged(self) -> None:
-        """Assert that no directive was reported as redundant, whatever else was logged."""
-        self.assert_none_logged(message_of(Logger.redundant_directive), "redundant directive")
-
     def assert_reported_as_held_elsewhere(self, location: Location, marker: Marker, directive: str) -> None:
         """Assert that guava's marker was recognised and reported as redundant, not as holding the update back."""
         self.assert_recognised_marker_logged(GUAVA, location, marker)

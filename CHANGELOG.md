@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- Report an `ignore[stale]`, `ignore[yanked]`, or `ignore[archived]` marker as redundant where its check finds nothing to silence, and a staleness threshold where it judges the newest release as `--stale-after` does. Closes [#343](https://github.com/ICTU/update-time/issues/343).
 
 ## 0.0.53 - 2026-10-25
 

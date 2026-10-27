@@ -113,13 +113,17 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_invalid_bracket_item_logged("python", Location(version_file, 2), "<<3.13")
         self.assert_no_new_version_logged()
 
-    def test_the_cooldown_and_stale_scopes_are_not_reported_as_redundant(self, mock_glob: Mock):
-        """Test that a `cooldown` or `stale` marker on an entry is not reported as redundant."""
-        for directive in ("ignore[cooldown<30]", "ignore[stale<1095]"):
-            with self.subTest(directive=directive):
-                version_file = self.update_version_file(mock_glob, f"# update-time: {directive}\n3.12.6\n")
-                version_file.write_text.assert_called_once_with(f"# update-time: {directive}\n3.13.2\n")
-                self.assert_no_warnings_logged()
+    def test_the_cooldown_scope_is_not_reported_as_redundant(self, mock_glob: Mock):
+        """Test that a `cooldown` marker on an entry is not reported as redundant."""
+        version_file = self.update_version_file(mock_glob, "# update-time: ignore[cooldown<30]\n3.12.6\n")
+        version_file.write_text.assert_called_once_with("# update-time: ignore[cooldown<30]\n3.13.2\n")
+        self.assert_no_warnings_logged()
+
+    def test_the_stale_scope_warns_at_its_own_threshold(self, mock_glob: Mock):
+        """Test that a `stale` threshold on an entry warns at that threshold, rather than being redundant."""
+        version_file = self.update_version_file(mock_glob, "# update-time: ignore[stale<90]\n3.12.6\n")
+        version_file.write_text.assert_called_once_with("# update-time: ignore[stale<90]\n3.13.2\n")
+        self.assert_stale_dependency_logged("python", "3.13.2", Location(version_file, 2))
 
     def test_the_yanked_vulnerable_and_archived_scopes_are_reported_as_redundant(self, mock_glob: Mock):
         """Test that a `yanked`, `vulnerable`, or `archived` marker on an entry is reported as redundant."""

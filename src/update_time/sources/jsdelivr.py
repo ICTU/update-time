@@ -85,7 +85,7 @@ def _eligible_version(
     has yet to date is one it has just received.
     """
     version_string = str(version)
-    if deprecation(pinned.name, version_string).yanked:
+    if (yank := deprecation(pinned.name, version_string)) is not None and yank.yanked:
         return None
     published = get_publication_datetime(pinned.name, version_string)
     if published is None or walk.holds_back(version_string, published):

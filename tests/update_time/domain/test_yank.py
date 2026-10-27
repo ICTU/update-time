@@ -16,9 +16,10 @@ class WithYankStateTest(unittest.TestCase):
         latest = with_yank_state(DependencyVersion("1.0"), "1.0", Mock(return_value=yank))
         self.assertEqual(latest, DependencyVersion("1.0", yank=yank))
 
-    def test_moved_version_is_returned_without_a_yank_lookup(self):
-        """Test that a version the run moved to comes back as it was, and that its yank state is never looked up."""
+    def test_moved_version_is_not_yanked_without_a_yank_lookup(self):
+        """Test that a version the run moved to comes back not yanked, and that its yank state is never looked up."""
         yank_state = Mock()
-        latest = DependencyVersion("1.1")
-        self.assertEqual(with_yank_state(latest, "1.0", yank_state), latest)
+        self.assertEqual(
+            with_yank_state(DependencyVersion("1.1"), "1.0", yank_state), DependencyVersion("1.1", yank=Yank())
+        )
         yank_state.assert_not_called()
