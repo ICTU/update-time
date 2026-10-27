@@ -13,12 +13,12 @@ from update_time.markers.reference import SteeredReference, SteeredResolvedRefer
 from update_time.references.resolve import (
     project_is_checked,
     report_project,
-    staleness_threshold,
+    warn_if_the_archival_check_is_off,
 )
 from update_time.references.vulnerability import warn_about_vulnerable_dependencies
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
     from update_time.domain.dependency import DependencyName, ProjectGetter, VersionString, Yank
     from update_time.domain.reference import ReferenceResolver
@@ -68,7 +68,7 @@ def pin_resolver(
 
 
 def warn_about_projects[ReferenceT: SteeredReference](
-    declared: Iterable[Iterable[ReferenceT]],
+    declared: Sequence[Sequence[ReferenceT]],
     projects: ReferenceResolver[ReferenceT, SteeredResolvedReference],
     log: Logger,
 ) -> None:
@@ -76,7 +76,11 @@ def warn_about_projects[ReferenceT: SteeredReference](
 
     A reference carrying a staleness threshold of its own is asked about at that threshold, so it is looked up in a
     run that switches both project checks off.
+    An `archived` scope is reported as redundant in a run that switches the archival check off, looked up or not.
     """
+    for declared_in_file in declared:
+        for reference in declared_in_file:
+            warn_if_the_archival_check_is_off(projects, reference.dependency, reference, reference.marker, log)
     checked = [
         references for declared_in_file in declared if (references := _checked_references(projects, declared_in_file))
     ]
@@ -84,25 +88,11 @@ def warn_about_projects[ReferenceT: SteeredReference](
         report_project(resolved, log)
 
 
-def _asks_its_source(reference: SteeredReference) -> bool:
-    """Return whether a check still asks the reference's own source about it.
-
-    A marker holding back every check that source answers leaves nothing to ask it for, so the reference is left
-    out and costs no request.
-    """
-    return not reference.marker.holds_back_source_checks
-
-
 def _checked_references[ReferenceT: SteeredReference](
     projects: ReferenceResolver[ReferenceT, SteeredResolvedReference], declared: Iterable[ReferenceT]
 ) -> list[ReferenceT]:
-    """Return the file's references a project check runs for, each at the staleness threshold its marker sets."""
-    return [
-        reference
-        for reference in declared
-        if _asks_its_source(reference)
-        and project_is_checked(projects, reference.dependency, staleness_threshold(reference.marker))
-    ]
+    """Return the file's references a project check runs for."""
+    return [reference for reference in declared if project_is_checked(projects, reference.dependency, reference.marker)]
 
 
 def _redundant_warning_directives(
@@ -113,9 +103,8 @@ def _redundant_warning_directives(
     A scope that Update-time leaves unchecked takes the reason `unchecked` gives for it. A check about the version a
     reference is left on has none to run on where the reference pins none, so its scope holds nothing back there.
     """
-    as_written = reference.marker.as_written
     for directive in WARNING_DIRECTIVES:
-        if not (written := as_written.directive_for(directive.scope)):
+        if not (written := reference.marker.directive_for(directive.scope)):
             continue
         reason = unchecked.get(directive.scope)
         if reason is None and not reference.current_version:
@@ -133,16 +122,15 @@ def _redundant_update_directives[ReferenceT: SteeredReference](
     candidates the package manager never offers, so it decides nothing whatever the reference pins, and whatever an
     `ignore[update]` beside it holds back.
     """
-    as_written = reference.marker.as_written
-    if as_written.ignores(Scope.UPDATE) and not policy.freezes_the_pin(reference):
-        yield as_written.bound_directive, Reason.MANAGER_RESOLVES_THE_VERSION
-    if bound := as_written.version_bound_directive:
+    if reference.marker.ignores(Scope.UPDATE) and not policy.freezes_the_pin(reference):
+        yield reference.marker.bound_directive, Reason.MANAGER_RESOLVES_THE_VERSION
+    if bound := reference.marker.version_bound_directive:
         yield bound, Reason.BOUND_DECIDES_NOTHING
 
 
 def _redundant_cooldown_directive(reference: SteeredReference) -> Iterator[tuple[str, RedundancyReason]]:
     """Yield the cooldown the marker sets, which the package manager applies per run rather than per reference."""
-    if cooldown := reference.marker.as_written.cooldown_directive:
+    if cooldown := reference.marker.cooldown_directive:
         yield cooldown, Reason.COOLDOWN_PER_RUN
 
 
@@ -185,13 +173,12 @@ def _warn_about_yanked_dependencies[ReferenceT: SteeredReference](
     log: Logger,
 ) -> None:
     """Warn about each pin the run leaves on a withdrawn release, unless the pin's marker silences the warning."""
-    checked = [[pin for pin in pins if _asks_its_source(pin)] for pins in declared]
-    for resolved in resolved_references(checked, pinned_releases):
+    for resolved in resolved_references(declared, pinned_releases):
         log.report_yank(resolved, resolved.marker)
 
 
 def warn_about_delegated_checks[ReferenceT: SteeredReference](
-    served: Iterable[Iterable[ReferenceT]],
+    served: Sequence[Sequence[ReferenceT]],
     log: Logger,
     projects: ReferenceResolver[ReferenceT, SteeredResolvedReference],
     yank: Callable[[DependencyName, VersionString], Yank | None],

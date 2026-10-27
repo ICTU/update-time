@@ -15,7 +15,8 @@ from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import cooldown_end
 from update_time.domain.dependency import tag_of
 from update_time.domain.reference import RefKind
-from update_time.domain.staleness import stale_release, staleness_is_checked
+from update_time.domain.staleness import STALE_AFTER, stale_release
+from update_time.domain.vulnerability import VULNERABILITY_LEVEL
 from update_time.io.console import CHANGES, LOG_THEME, NOTE, configure_logging, delimit_dependency, delimit_location
 from update_time.markers.bound import spell
 from update_time.markers.marker import Scope
@@ -172,6 +173,11 @@ def _redundant_directive(reason: str) -> str:
     return f"Redundant update-time directive %(directive)s for %(dependency)s in %(location)s: {reason}"
 
 
+def _run_setting_field[T](name: str, setting: EnvVar[T], value: T) -> dict[str, T]:
+    """Return the field naming the run's value: `default_<name>` if it is the setting's default, else `run_<name>`."""
+    return {f"default_{name}" if value == setting.default else f"run_{name}": value}
+
+
 def _effective_pom_unused(problem: str, cause: str) -> str:
     """Return a message saying why the effective pom went unused, what the run missed, and what may cause it."""
     return (
@@ -283,7 +289,7 @@ class Logger:
                 return None
             return cls._reference_fields(resolved, directive=marker.scope_directive(scope), **redundancy_fields)
         if marker.ignores(scope):
-            return cls._ignored_fields(resolved.dependency, marker.written_directive(scope), resolved.location)
+            return cls._ignored_fields(resolved.dependency, marker.directive_for(scope), resolved.location)
         return warning_fields
 
     @staticmethod
@@ -560,38 +566,24 @@ class Logger:
             reference, version=reference.current_version, declared_hash=declared_hash, served_hash=served_hash
         )
 
-    @classmethod
-    def _stale_fields(cls, resolved: ResolvedReference, threshold: int) -> dict[str, object] | None:
-        """Return the staleness warning's fields, or None when the newest release is not old enough to warn about."""
-        if (newest := stale_release(resolved.release, threshold)) is None:
-            return None
-        return cls._reference_fields(
-            resolved, version=newest.version, days=days_since(newest.published), threshold=threshold
-        )
-
-    @_warning(_redundant_directive("newest release %(version)s is not older than %(threshold)d days"))
-    @_debug(_ignoring("the staleness warning"))
     @_warning(
         "Stale dependency %(dependency)s in %(location)s: newest release %(version)s was published "
         "%(days)d days ago (> %(threshold)d)"
     )
-    def report_staleness(self, resolved: ResolvedReference, marker: Marker, threshold: int) -> dict[str, object] | None:
-        """Report the reference's staleness, or the marker that silenced it or had nothing to silence."""
-        newest = resolved.release.project.newest
-        redundancy_fields = (
-            None
-            if newest is None or not staleness_is_checked(threshold)
-            else {"version": newest.version, "threshold": threshold}
+    def report_staleness(self, resolved: ResolvedReference, threshold: int) -> dict[str, object] | None:
+        """Warn that the reference's newest release is older than the threshold, where it is."""
+        if (newest := stale_release(resolved.release, threshold)) is None:
+            return None
+        return self._reference_fields(
+            resolved, version=newest.version, days=days_since(newest.published), threshold=threshold
         )
-        warning_fields = self._stale_fields(resolved, threshold)
-        return self._check_fields(Scope.STALE, marker, resolved, warning_fields, redundancy_fields)
 
-    @_warning(
-        _redundant_directive(
-            "newest release %(version)s was published %(days)d days ago, which the threshold of %(threshold)d days "
-            "and --stale-after %(run_threshold)d judge alike"
-        )
+    _JUDGED_ALIKE = (
+        "newest release %(version)s was published %(days)d days ago, which the threshold of %(threshold)d days"
     )
+
+    @_warning(_redundant_directive(f"{_JUDGED_ALIKE} and the default of %(default_threshold)d days judge alike"))
+    @_warning(_redundant_directive(f"{_JUDGED_ALIKE} and --stale-after %(run_threshold)d judge alike"))
     def redundant_stale_threshold(
         self, reference: Reference, threshold: Threshold[int], newest: Release, run_threshold: int
     ) -> dict[str, object]:
@@ -602,8 +594,13 @@ class Logger:
             version=newest.version,
             days=days_since(newest.published),
             threshold=threshold.value,
-            run_threshold=run_threshold,
+            **_run_setting_field("threshold", STALE_AFTER, run_threshold),
         )
+
+    @_debug(_ignoring("the staleness warning"))
+    def ignored_staleness(self, reference: Reference, directive: str) -> dict[str, object]:
+        """Log that the marker's staleness threshold silenced a warning the run's threshold gives."""
+        return self._ignored_fields(reference.dependency, directive, reference.location)
 
     @classmethod
     def _yank_fields(cls, resolved: ResolvedReference) -> dict[str, object] | None:
@@ -675,10 +672,9 @@ class Logger:
 
     @_debug(_ignoring("the %(advisory)s vulnerability warning"))
     def ignored_vulnerability(
-        self, reference: Reference, vulnerability: Vulnerability, marker: Marker
+        self, reference: Reference, vulnerability: Vulnerability, directive: str
     ) -> dict[str, object]:
-        """Log that the marker silenced a vulnerability warning."""
-        directive = marker.written_directive(Scope.VULNERABLE)
+        """Log that the marker's directive silenced a vulnerability warning."""
         return self._ignored_fields(
             reference.dependency, directive, reference.location, advisory=vulnerability.advisory
         )
@@ -703,20 +699,33 @@ class Logger:
         """
         return cls._reference_fields(reference, directive=directive, version=reference.current_version, **extra)
 
-    @_warning(_redundant_directive("version %(version)s has no vulnerability"))
-    def redundant_vulnerable_scope(self, reference: Reference, marker: Marker) -> dict[str, object]:
-        """Warn that the marker's vulnerability scope silences nothing."""
-        return self._redundant_suppression_fields(reference, marker.scope_directive(Scope.VULNERABLE))
-
     @_warning(_redundant_directive("version %(version)s has no such vulnerability"))
     def redundant_vulnerable_advisory(self, reference: Reference, marker: Marker) -> dict[str, object]:
         """Warn that the advisory the marker names silences nothing."""
         return self._redundant_suppression_fields(reference, marker.advisory_directives)
 
-    @_warning(_redundant_directive("version %(version)s has no vulnerability below %(level)s"))
-    def redundant_vulnerable_level(self, reference: Reference, marker: Marker, level: str) -> dict[str, object]:
-        """Warn that the marker's risk level silences nothing."""
-        return self._redundant_suppression_fields(reference, marker.vulnerable.directive, level=level)
+    _SAME_VULNERABILITIES = "report the same vulnerabilities in version %(version)s"
+
+    @_warning(
+        _redundant_directive(
+            f"the risk level %(level)s and the default level %(default_level)s {_SAME_VULNERABILITIES}"
+        )
+    )
+    @_warning(
+        _redundant_directive(
+            f"the risk level %(level)s and --vulnerability-level %(run_level)s {_SAME_VULNERABILITIES}"
+        )
+    )
+    def redundant_vulnerable_level(
+        self, reference: Reference, marker: Marker, level: str, run_level: str
+    ) -> dict[str, object]:
+        """Warn that the marker's risk level reports the same vulnerabilities as the run's level does."""
+        return self._redundant_suppression_fields(
+            reference,
+            marker.vulnerable.directive,
+            level=level,
+            **_run_setting_field("level", VULNERABILITY_LEVEL, run_level),
+        )
 
     @_warning(_redundant_directive("%(reason)s"))
     def redundant_directive(self, reference: Reference, directive: str, reason: RedundancyReason) -> dict[str, object]:
@@ -802,30 +811,6 @@ class Logger:
         """Warn that a marker carries an invalid bracket item."""
         return {"bracket_item": item, "dependency": dependency, "location": location}
 
-    # What every inverted comparison item is reported as; each names what its own comparison does instead.
-    _INVERTED_ITEM = "Incorrect %(item)r in the update-time marker for %(dependency)s in %(location)s: this comparison "
-
-    @_warning(_INVERTED_ITEM + "warns while a release is fresh and goes quiet once it is old, so it sets no threshold")
-    def _inverted_stale_item(self, reference: Reference, item: str) -> dict[str, object]:
-        """Warn that a `stale` item compares the wrong way round."""
-        return self._reference_fields(reference, item=item)
-
-    @_warning(
-        _INVERTED_ITEM + "adopts a release only while it is fresh and holds it back once it is old, so it sets no "
-        "cooldown"
-    )
-    def _inverted_cooldown_item(self, reference: Reference, item: str) -> dict[str, object]:
-        """Warn that a `cooldown` item compares the wrong way round."""
-        return self._reference_fields(reference, item=item)
-
-    @_warning(
-        _INVERTED_ITEM + "warns about the mild vulnerabilities and stays quiet about the severe ones, so it sets no "
-        "risk level"
-    )
-    def _inverted_vulnerable_item(self, reference: Reference, item: str) -> dict[str, object]:
-        """Warn that a `vulnerable` item compares the wrong way round."""
-        return self._reference_fields(reference, item=item)
-
     def report_marker(
         self, dependency: str, marker: Marker, location: Location, *, holds_the_update_back: bool
     ) -> Marker:
@@ -840,17 +825,6 @@ class Logger:
         if holds_the_update_back:
             self.ignored(dependency, marker, location)
         return marker
-
-    def report_inverted_items(self, reference: Reference, marker: Marker) -> None:
-        """Report each of the marker's comparison items whose operator runs the wrong way, so it sets nothing."""
-        inverted_items = (
-            (marker.stale, self._inverted_stale_item),
-            (marker.cooldown, self._inverted_cooldown_item),
-            (marker.vulnerable, self._inverted_vulnerable_item),
-        )
-        for threshold, warn in inverted_items:
-            if threshold.inverted_item is not None:
-                warn(reference, threshold.inverted_item)
 
     @_warning(_redundant_directive("this bound %(redundancy)s at version %(version)s"))
     def warn_if_redundant_bound(self, reference: Reference, marker: Marker) -> dict[str, object] | None:
@@ -884,7 +858,7 @@ class Logger:
     @_debug(_ignoring("updates"))
     def ignored(self, dependency: str, marker: Marker, location: Location) -> dict[str, object]:
         """Log that a marker held a reference's update back."""
-        return self._ignored_fields(dependency, marker.update_directive, location)
+        return self._ignored_fields(dependency, marker.bound_directive, location)
 
     # --- File scanning and selection ---
 

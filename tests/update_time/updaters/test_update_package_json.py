@@ -15,7 +15,7 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Yank
 from update_time.io.log import Logger
 from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker, Scope
+from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.package_managers import node as node_module
 from update_time.package_managers import policy as policy_module
 from update_time.primitives.command import Command
@@ -26,7 +26,7 @@ from update_time.updaters.update_package_json import update_package_jsons
 
 from tests.helpers import FakeFiles, mock_path, mock_response, patch_pathlib_path
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import BARE_IGNORE, FRESH_DATE, STALE_DATE
+from tests.update_time.fixtures import FRESH_DATE, STALE_DATE
 from tests.update_time.helpers import LoggingTestCase, message_of, published_version, staleness_disabled
 from tests.update_time.sources.helpers import github_release_json, npm_registry
 from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
@@ -1028,12 +1028,11 @@ class StaleDependencyTest(NoUpdateTestCase):
 
     @patch("requests.Session.get")
     def test_stale_dependency_a_marker_silences_not_warned(self, get: Mock, mock_run: Mock, glob: Mock):
-        """Test that an `ignore[stale]` marker is reported as recognised, and silences the staleness warning."""
-        contents = self.clipboard_contents(marker="ignore[stale]")
+        """Test that a `set[stale-after=0]` marker is reported as recognised, and silences the staleness warning."""
+        contents = self.clipboard_contents(marker="set[stale-after=0]")
         package_json = self.run_on_package_json(get, mock_run, glob, contents, STALE_DATE)
         self.assert_no_warnings_logged()
-        self.assert_recognised_marker_logged("clipboard", Location(package_json, 4), Marker(ignored_scopes=Scope.STALE))
-        self.assert_ignored_staleness_logged("clipboard", Location(package_json, 4))
+        self.assert_recognised_marker_logged("clipboard", Location(package_json, 4), Marker(stale=Threshold(value=0)))
 
     @patch("requests.Session.get")
     def test_recent_dependency_not_warned(self, get: Mock, mock_run: Mock, glob: Mock):
@@ -1080,18 +1079,6 @@ class MarkerTest(NoUpdateTestCase):
         )
         return self.run_on_package_json(get, mock_run, glob, contents)
 
-    def test_an_inverted_comparison_is_reported(self, get: Mock, mock_run: Mock, glob: Mock):
-        """Test that each item running the wrong way round is reported as incorrect."""
-        messages = {
-            "stale>=90": message_of(Logger._inverted_stale_item),
-            "cooldown>=30": message_of(Logger._inverted_cooldown_item),
-            "vulnerable>=high": message_of(Logger._inverted_vulnerable_item),
-        }
-        for item, message in messages.items():
-            with self.subTest(item=item):
-                package_json = self.run_on_marker(get, mock_run, glob, f"ignore[{item}]")
-                self.assert_logged(message, item=item, dependency="clipboard", location=Location(package_json, 4))
-
     @kills(
         Mutation(
             delegated_module._redundant_update_directives,
@@ -1107,8 +1094,12 @@ class MarkerTest(NoUpdateTestCase):
             "archived": ("^2.0.11", "ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL),
             "archived on an exact pin": ("2.0.11", "ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL),
             "yanked on a range": ("^2.0.11", "ignore[yanked]", Reason.NO_VERSION_TO_CHECK_FOR_A_YANK),
-            "vulnerable on a range": ("^2.0.11", "ignore[vulnerable]", Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY),
-            "cooldown": ("^2.0.11", "ignore[cooldown<30]", Reason.COOLDOWN_PER_RUN),
+            "vulnerable on a range": (
+                "^2.0.11",
+                "set[vulnerability-level=none]",
+                Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
+            ),
+            "cooldown": ("^2.0.11", "set[cooldown=30]", Reason.COOLDOWN_PER_RUN),
             "freeze on a range": ("^2.0.11", "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION),
             "freeze on an exact pin": ("2.0.11", "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION),
             "bound": ("^2.0.11", "allow[update<3]", Reason.BOUND_DECIDES_NOTHING),
@@ -1126,7 +1117,7 @@ class MarkerTest(NoUpdateTestCase):
     ):
         """Test that each warning scope is reported for a dependency whose spec does not name a registry release."""
         spec = "git+https://github.com/zenorocha/clipboard.js.git"
-        for directive in ("ignore[stale]", "ignore[yanked]", "ignore[vulnerable]", "ignore[archived]"):
+        for directive in ("set[stale-after=0]", "ignore[yanked]", "set[vulnerability-level=none]", "ignore[archived]"):
             with self.subTest(directive=directive):
                 package_json = self.run_on_marker(get, mock_run, glob, directive, spec)
                 self.assert_redundant_directive_logged(
@@ -1137,11 +1128,10 @@ class MarkerTest(NoUpdateTestCase):
         self, get: Mock, mock_run: Mock, glob: Mock
     ):
         """Test that a marker under a section that does not declare the name is recognised and reported as redundant."""
-        stale = Marker(ignored_scopes=Scope.STALE)
+        stale = Marker(stale=Threshold(value=0))
         for case, (name, directive, marker) in {
-            "undeclared": ("lodash", "ignore[stale]", stale),
-            "declared in another section": ("is-number", "ignore[stale]", stale),
-            "a bare ignore": ("lodash", "ignore", BARE_IGNORE),
+            "undeclared": ("lodash", "set[stale-after=0]", stale),
+            "declared in another section": ("is-number", "set[stale-after=0]", stale),
         }.items():
             with self.subTest(case=case):
                 package_json = self.run_on_undeclared_markers(get, mock_run, glob, f'"{name}": "{directive}"')
@@ -1159,13 +1149,15 @@ class MarkerTest(NoUpdateTestCase):
     )
     def test_a_marker_in_a_file_npm_does_not_run_for_is_reported(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that a marker in a package.json that does not declare dependencies is reported as redundant."""
-        contents = '{\n  "name": "app",\n  "update-time": {\n    "dependencies": {"lodash": "ignore[stale]"}\n  }\n}\n'
+        contents = (
+            '{\n  "name": "app",\n  "update-time": {\n    "dependencies": {"lodash": "set[stale-after=0]"}\n  }\n}\n'
+        )
         package_json = _discover_package_json(glob, contents)
         update_package_jsons()
         mock_run.assert_not_called()
         get.assert_not_called()
         location = Location(package_json, 4)
-        self.assert_redundant_directive_logged(Reason.UNDECLARED_DEPENDENCY, "lodash", location, "ignore[stale]")
+        self.assert_redundant_directive_logged(Reason.UNDECLARED_DEPENDENCY, "lodash", location, "set[stale-after=0]")
 
     @kills(
         Mutation(
@@ -1191,10 +1183,10 @@ class MarkerTest(NoUpdateTestCase):
         """Test that an undeclared dependency's marker without a directive is left unreported."""
         for case, value in {"empty": '""', "bare text": '"pinned on purpose"'}.items():
             with self.subTest(case=case):
-                markers = f'"lodash": {value}, "left-pad": "ignore[stale]"'
+                markers = f'"lodash": {value}, "left-pad": "set[stale-after=0]"'
                 package_json = self.run_on_undeclared_markers(get, mock_run, glob, markers)
                 self.assert_redundant_directive_logged(
-                    Reason.UNDECLARED_DEPENDENCY, "left-pad", Location(package_json, 5), "ignore[stale]"
+                    Reason.UNDECLARED_DEPENDENCY, "left-pad", Location(package_json, 5), "set[stale-after=0]"
                 )
 
     def test_a_field_of_the_wrong_shape_is_reported_as_invalid_and_the_check_still_runs(
@@ -1221,12 +1213,12 @@ class MarkerTest(NoUpdateTestCase):
             "{\n"
             '  "dependencies": {\n    "clipboard": "^2.0.11"\n  },\n'
             '  "devDependencies": {\n    "clipboard": "^2.0.11"\n  },\n'
-            '  "update-time": {"dependencies": {"clipboard": "ignore[stale]"}}\n'
+            '  "update-time": {"dependencies": {"clipboard": "set[stale-after=0]"}}\n'
             "}\n"
         )
         package_json = self.run_on_package_json(get, mock_run, glob, contents, STALE_DATE)
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 6))
-        self.assert_ignored_staleness_logged("clipboard", Location(package_json, 3))
+        self.assert_no_staleness_warning_logged("clipboard", Location(package_json, 3))
 
     @kills(
         Mutation(

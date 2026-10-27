@@ -49,7 +49,6 @@ A location a file format resolves for one entry names the column too, so an entr
 A location is recognised by its type; a dependency has no type of its own, and its name has no fixed shape to match either, so the field's name identifies it instead.
 A log message: the level it is logged at and the format string the arguments are interpolated into.
 A loop that asserts nothing has no cases to name.
-A marker holding back every check that source answers leaves nothing to ask it for, so the reference is left out and costs no request.
 A marker that holds a scope back carries no text, because the scope has one spelling, which the warning spells out.
 A mock records every argument it was called with, and Update-time passes its credentials to `requests` as arguments, so a failing assertion about a mocked request would print them.
 A moderate vulnerability the advisory item does not name.
@@ -90,7 +89,6 @@ A script's direct dependencies carry no tree prefix (each is its own tree root),
 A second decorator on the same test fails it, as does one given no mutation at all.
 A section whose version is named in prose sits under no heading, so any heading ends it.
 A severity an advisory reports, as a CVSS vector string of the named version.
-A single directive in a marker's directive list: a verb, optionally followed by a bracket.
 A source given it finds no candidate and keeps the current version, so a yanked pin on a frozen reference is still detected.
 A source that reports no archival ignores it.
 A source the rename reaches, since it imports the name from the module the old name qualifies it with, and one it leaves alone, since a definition is resolved against the module it sits in rather than against that one.
@@ -153,11 +151,9 @@ Drop a test from the list only once every test on it passes, or when I tell you 
 Drop parentheses that are no aside: those without word content, and word-attached ones like `(re)writes`.
 Each case declares the same package with a specifier that pins no exact version: another of the PEP 440 operators, or a `==` naming a range.
 Each case: the directive list, the marker it expresses, and the verbatim text the marker keeps.
-Each check the decision reports on, keyed by the scope silencing it.
 Each directive a source may be unable to apply, keyed by the text the warning names it with.
 Each pass locates the lines afresh, so the text a marker is read from is the text the pass before it left; the file they belong to is the one they already record, so no path has to be passed alongside them.
 Each request is answered by the URL it names, so a test needs no expectation about the order they are made in.
-Empty when the reference sets no value, and left out of comparisons, so thresholds that set the same value compare as equal however they were spelled.
 Every directive a source may be unable to apply, in the order their warnings are reported.
 Every module logs, so `get_logger` reads the log level for each of them, and how a run logs is no decision a module takes about what it resolves.
 Expected no to be logged.
@@ -170,15 +166,11 @@ GitHub serves its sponsorship pages under this path, which it reserves, so no ow
 Given no titles, the chapter documents every declared dependency type, so `_problems` reports nothing.
 In a `requirements.txt` it reports no new version, because it resolves none for a requirement that pins no exact version.
 In a file that can hold no comment, the directives are the value of an `update-time` field instead.
-Incorrect 'cooldown>=30' in the update-time marker for in : this comparison adopts a release only while it is fresh and holds it back once it is old, so it sets no cooldown.
-Incorrect 'stale>=90' in the update-time marker for in : this comparison warns while a release is fresh and goes quiet once it is old, so it sets no threshold.
-Incorrect 'vulnerable>=high' in the update-time marker for in : this comparison warns about the mild vulnerabilities and stays quiet about the severe ones, so it sets no risk level.
 Inside a block, a run of fence characters closes it, since code holds no headings to underline.
 It checks a requirement that pins no exact version as well, wherever the file declares it.
 It is also the most urgent, because the browser silently refuses to load the script until the hash matches, which no build step catches.
 It is no number of days, so nothing is ever older than it.
 It is no risk level, so it sits outside `RISK_LEVELS`.
-It names no scope, so a warning would have no directive to name.
 It rides on the Index API response fetched above, so it costs no request of its own.
 It then prints an error, exits with a non-zero status, and touches no files.
 It touches no unrelated file, such as `constraints.txt` or `requirements.in`.
@@ -197,7 +189,6 @@ Neither patch is ever stopped: no test may lift the refusal.
 No newer version; the pin's own release is yanked.
 No newer version; the pin's release is vulnerable.
 Null for an entry that is no file to fetch, such as a directory: pip's root keeps its `news` fragments in one.
-One holding every check back does not, since a bare `ignore` queries no source at all, OSV included.
 One spec packaging rejects outright, the other names a range no version parses from.
 One whose every declaration is held back has no line left to report at, so it is not reported at all.
 Only the spans the regex captured are rewritten, so the same value occurring elsewhere within the match is left alone.
@@ -226,8 +217,6 @@ Return a GitHub contents listing entry for the name, one with no file to fetch w
 Return a getter that resolves an image tag, leaving the references it asks no registry about unchanged.
 Return a message for each dependency type with no section of its own, and each section documenting none.
 Return a message for each internal link that points at an anchor no heading in the document provides.
-Return a mock new-version getter that claims no source capability, as an unregistered getter claims none.
-Return a mock project getter that claims no source capability, as `mock_new_version_getter` explains.
 Return a mock reference resolver answering with the resolved references, claiming no source capability.
 Return each test the run reported as failing, once, in the order reported.
 Return every `Location(...)` the sample generators build.
@@ -237,13 +226,11 @@ Return every id this vulnerability is known by: its own advisory id and its alia
 Return how many tests the run reported running, or None where it reported no count.
 Return the Authorization header for pulling from the registry, or no header for anonymous access.
 Return the datetime the version was published, or None if it can't be fetched or has no distribution files.
-Return the directive steering this scope, as the user wrote it, or the bare `ignore` naming no scope.
 Return the first child carrying the tag, or None where this element holds no such child.
 Return the floating tag as it is, carrying why no version was pinned in its place.
 Return the generated output, which the generator can only produce while the root logger has no handlers.
 Return the index of the line heading the next version's section, or None when no line heads one.
 Return the level the vector's base score bands into, or no level when the vector cannot be scored.
-Return the marker a risk level bracket item expresses, or None when the item names no risk level.
 Return the marker an advisory bracket item expresses, or None when the item names no advisory.
 Return the public module-level constants that no module other than the one assigning them refers to.
 Return the public module-level definitions that no module other than the defining one refers to.
@@ -257,7 +244,6 @@ Return the tag's version without its `v` prefix, leaving a tag that names no ver
 Return the tree listing entry for the path, a directory below the tree when it maps to no text.
 Return the version for a reference that pins no version, carrying its source's report on the project.
 Return the version parsed, or the lowest there is when the source spells it as no version at all.
-Return whether the marker leaves no check to run, so no source need be queried for the reference at all.
 Return whether the pinned image's versions carry a date, which they do not when no registry is asked.
 Rich SVG has no viewBox to size the <img> from.
 Run `uv tree --outdated`, log every new version no marker holds back, and rewrite the file's exact `==` pins.
@@ -275,11 +261,8 @@ Such a warning previously named no directive at all.
 Test that --allow-hash-drift re-pins a re-pointed floating tag to the version and digest it now serves.
 Test that None is returned when no tag matches the requested version.
 Test that `--stale-after 0` skips the staleness pass entirely, so it makes no npm registry request.
-Test that `allow[cooldown<30]` and `ignore[cooldown>=30]` set no cooldown, each carried as its item.
 Test that `allow[floating-pin]` is not reported for a floating pin the source resolved no version for.
 Test that `allow[floating-pin]` on a `FROM` naming no tag leaves it, naming what it resolves to.
-Test that `allow[stale<90]` and `ignore[stale>=90]` set no threshold, each carried as its inverted item.
-Test that `cooldown` without a day count sets no cooldown, whichever verb it follows.
 Test that `ignore[vulnerable=GHSA-…]` names that advisory alone, holding no other check back.
 Test that `ignore[vulnerable=]` names no advisory and is reported as an invalid item.
 Test that a GitHub release without a body yields no changelog.
@@ -295,9 +278,7 @@ Test that a `FROM` that does not open its line introduces no base image, so pros
 Test that a `cooldown` marker on an image off Docker Hub is reported, since no tag there carries a date.
 Test that a `stale` marker on an image off Docker Hub is reported, since no tag there carries a date.
 Test that a `uses:` naming no owner and repository is left alone rather than ending the run.
-Test that a `vulnerable` item comparing the wrong way is reported and sets no level for the pin.
 Test that a bare `allow[update]` (no specifier) applies the update with no bound (the keep-all NO_BOUND).
-Test that a bare `ignore` on a dependency that pins no version names no scope to report as redundant.
 Test that a bound admitting the current version and everything above it is flagged as having no effect.
 Test that a bound pinning the current release exactly (`ignore[patch-update]`) adopts no alias spelling.
 Test that a branch reference is not warned about when its repository has published no release to date.
@@ -330,10 +311,7 @@ Test that a floating tag whose digest no concrete tag serves is left as it is.
 Test that a heading above or below the levels asked for gets no entry.
 Test that a kills decorator given no mutation fails the test, rather than leaving it checking nothing.
 Test that a machine-executor image naming no tag is left unchanged and looked up nowhere.
-Test that a marker is not reported when it sets no value, carrying no item or an inverted one.
 Test that a marker is reported as recognised and as holding the update back, with no update available.
-Test that a marker setting a risk level no vulnerability falls below is reported, whichever verb set it.
-Test that a marker whose `raw` holds no directive of the verb yields an empty text.
 Test that a marker-wrapped dependency name is styled as `repr.dependency` and the markers leave no trace.
 Test that a network error probing the registry yields no token (anonymous) instead of crashing.
 Test that a new version for a dependency that resolves to no registry release is logged at the file.
@@ -383,7 +361,6 @@ Test that a version whose referenced file has no listed hash is left unchanged, 
 Test that a yank the maintainer gave no reason for renders as `reason not specified`.
 Test that advisories sharing no identifier are read as one vulnerability when a third names both.
 Test that an `"image"` naming no tag is pinned to the version and digest `latest` serves.
-Test that an `# update-time: ignore` comment above a jsDelivr URL holds it back, looking up no version.
 Test that an `ignore[update]` on a dependency that pins no version is not reported as holding it back.
 Test that an `ignore[update]` on a dependency that pins no version is reported, since uv resolves it.
 Test that an `ignore[update]` on a dependency that pins no version leaves its new version reported.
@@ -397,11 +374,6 @@ Test that an archived project is warned about although the index lists no releas
 Test that an artefact whose listing dates no version has no pom to read, so nothing follows the listing.
 Test that an entry named like a changelog with no file to fetch is passed over without a request.
 Test that an excluded reference's versions carry no publication date, so a cooldown measures against none.
-Test that an inline `# update-time: ignore` comment leaves the action untouched, looking up no version.
-Test that an inline `# update-time: ignore` comment leaves the line untouched, looking up no version.
-Test that an inline `# update-time: ignore` comment leaves the rev untouched, looking up no version.
-Test that an inverted comparison beside a bare `ignore` is reported, with no source queried for it.
-Test that an inverted comparison sets no threshold, the item carried for the caller to report.
 Test that an item the marker language cannot read warns and freezes the pin, reporting no marker.
 Test that an unpinned action is not changed when no commit SHA is available to pin it to.
 Test that an unpinned reference is not pinned when no digest is available.
@@ -410,10 +382,8 @@ Test that an unreachable registry yields no changelog instead of crashing.
 Test that an unreachable registry yields no publication date instead of crashing.
 Test that an unreachable registry yields no release instead of crashing.
 Test that each `vulnerable` marker is reported when an image has no vulnerability to silence.
-Test that each scope named alone holds that scope back and no other.
 Test that empty npm output (e.g. from a failed command) is treated as no data rather than crashing.
 Test that every scope a marker can hold back has a row, so a scope added later is judged as the rest are.
-Test that every scope the reference's own source answers must be held back.
 Test that fixtures.py defines no function or class, so behaviour is only ever added to helpers.py.
 Test that input holding no separator line is reported, rather than read as one snippet.
 Test that metadata naming no GitHub URL yields no changelog, without raising and without asking GitHub.
@@ -456,12 +426,9 @@ The `changelog` directory answers a text naming no version, rather than raising,
 The `cvss` package ships no type information, scores a v3 vector as a `Decimal` where it scores a v4 one as a float, and types the score as optional because construction sets it after initialising it to None.
 The `item` is the text its creator spelled, compared as no part of the bound, so two spellings of one bound are equal and cache alike.
 The advisories of one vulnerability name each other, by their own ids as much as by the identifiers they share, so an advisory joins every vulnerability it names something of, folding those into one.
-The advisory is moderate, which the item's `high` would silence and the run's `low` does not, so the warning shows the item set no level of its own.
 The advisory the sample vulnerability warning names, rated critical so it is reported at every risk level.
 The advisory the updater tests pin django to a vulnerable version for, and what Update-time reads it as.
-The archival check has no threshold of its own, so `--ignore-archived` is what switches it off.
 The attribute a decorated test carries, holding the mutations it registers.
-The bare form of a scope, which neither a threshold nor a bound can express: `ignore[stale]` silences the staleness warning at every age where `ignore[stale<90]` sets what it warns at, and `ignore[update]` admits no version where a bound narrows which ones it may take.
 The bases a framework finds by scanning rather than by importing: `unittest` discovers a test case, fixit a rule.
 The bound an `ignore[update]` expresses: the complement of `NO_BOUND`, dropping every version.
 The bound on which versions a reference may update to, and the contract every source implements to resolve one.
@@ -481,7 +448,6 @@ The cooldown still only applies to Docker Hub, because the OCI protocol exposes 
 The declared hash is passed in rather than read from `reference`, because the URL's line carries no hash — only the dictionary's line does.
 The default for a release fixture no test asks project URLs of.
 The dependency below it sets no threshold, so no check runs for it and PyPI is not asked about it at all.
-The dependency declared below it carries no marker, so the request it costs shows the pass ran over the file.
 The dependency types every table has to answer for, in the order the tables have to list them in.
 The deprecation npm reports for clipboard 2.0.11: the reason the registry states, and the yank it becomes.
 The directory a monorepo builds the package from.
@@ -506,8 +472,6 @@ The line the URL sits on resolves the version and hands it down to the dictionar
 The lines a jsDelivr reference is declared with, formatted as Ruff would format them: the URL, and below it the attribute dictionary, either declaring the Subresource Integrity hash or, unpinned, declaring none.
 The lines below the three requirements each hold something a requirements file may carry that resolves to no PyPI release.
 The loop above already covers `updaters` for the manifest parsers; an updater parses no `json` either.
-The marker a bare `# update-time: ignore` expresses: every check the marker can hold back is held back.
-The marker a bare `ignore` expresses: hold everything back.
 The marker comment itself carries no reference, so only the reference below it is logged as ignored.
 The marker defaults to one that holds nothing back, which is what a reference with no line of its own to write a marker on carries.
 The marker freezes no pin there, and uv resolves the version whatever it says, so the report is all the reader gets.
@@ -518,11 +482,9 @@ The name the previous page ended on, if any.
 The names a repository gives the changelog file, and the extensions it carries, compared in lower case.
 The names a repository gives the directory it keeps its documentation in, compared in lower case.
 The names an updater hands its file type to: `glob_for` where it walks the files itself, `update_yaml_files` where the walk is done for it because each file is parsed before its references are rewritten.
-The newest release is 100 days old, which is stale against the 90 the item names and not against the run's 365, so the silence shows the item set no threshold of its own.
 The null download URL of the `news` directory answers a text naming no version, rather than raising.
 The number of lines a version's changes are cut at where no later version ends them.
 The number of positional arguments an equality assertion compares, and so the fewest it can be reported on.
-The operator each verb names a threshold with.
 The other ids this vulnerability is known by.
 The package.json a test is given unless it needs another: an engine to update, and nothing else.
 The parallel ones need no list of their own, since which scripts exist at all is pinned against the files on disk.
@@ -534,7 +496,6 @@ The registry dates the versions it lists, so one it does not list — a version 
 The registry publishes no archival signal, so no request answers it.
 The registry serves no manifest, so there is no digest to pin.
 The release the cooldown held back dates it.
-The reported item being the run's only warning shows that item set no threshold.
 The repository publishes no releases.
 The risk levels an advisory can report, least severe first.
 The run sees the sentinels named and no others, so what holds the decorated test back is what the test asked for rather than what a `just mutate` run set.
@@ -543,7 +504,6 @@ The same for a file location, in a code point of its own so the two runs never c
 The same the other way on: made public, and the docstring kept the private one.
 The sample values both README generators use, so the quoted log lines and the screenshot agree.
 The scopes a comparison item sets, such as `cooldown`, have a row without being ignorable.
-The scopes whose checks the reference's own source answers, so a marker holding them all back leaves nothing to ask that source for.
 The second advisory of each pair carries what no other does — an alias of its own, and the only risk level — so a merge that keeps just the advisory a vulnerability was opened with is reported at another id, and at no level.
 The second drops each `@font-face`'s external CDN `url(...)` source, which the raw host's `sandbox` CSP blocks and some renderers reject outright, leaving only the `local(...)` source so text falls back to a system monospace font.
 The section a package.json declares the Node engine in, and the name it declares it under.
@@ -558,11 +518,8 @@ The title documents the type when it holds the type's name.
 The token endpoint the credentials are exchanged at; note that it lives on the user-facing hub.docker.com host, not on the _REGISTRY host above.
 The two ways a version bound can be redundant for the current version (see `VersionBound.redundancy`).
 The upload after it names no version, and the file without an upload time names no date.
-The verb's other operator names the fresh ages rather than the old ones, which neither item can express, so an inverted item of either keyword is returned for the caller to report.
-The verb's other operator names the levels below the threshold rather than the ones from it up, which the item cannot express, so an inverted item is returned for the caller to report.
 The versions no goal may adopt.
 The volta pin is steered by no marker.
-The warning costs no request, the item being unreadable on its own.
 The warning names where the marker would sit rather than the value that is wrong.
 The yank pass asks PyPI for every pin, whichever of the checks a test is about, so the tests that are about another check answer it with an index that lists no version and no distribution file to read a yank from.
 These have no registry to query and are now recognised and left unchanged, instead of being looked up on Docker Hub and logged as unfetchable on every run.
@@ -587,7 +544,6 @@ Update the Node engine to the latest [Node](https://hub.docker.com/_/node) relea
 Update-time adds no hash pin to a Maven dependency, since a pom has nowhere to hold one: a `<version>` element names a version.
 Update-time adds no hash pin to a Python dependency.
 Update-time adds no hash pin to an npm or pnpm dependency.
-Update-time checks a requirement that pins no exact version for staleness and archival, so such a requirement can carry a marker as well: `humanize>=4 # update-time: ignore[stale<1095]` warns once that package's newest release is more than three years old.
 Update-time checks each pin a Python file declares against the newest release of its package on PyPI and reports the stale ones.
 Update-time checks the version the run leaves the reference on.
 Update-time does not check an image, because OSV has no ecosystem for container images.
@@ -601,7 +557,6 @@ Warn when an `# update-time: ignore[yanked]` marker is on a reference whose sour
 Warn when the hash the dictionary declares differs from the one jsDelivr serves for the URL's version.
 Warn when the version a Python dependency or a jsDelivr URL is left on has a known vulnerability, according to the [OSV](https://osv.dev) database.
 Warn when the version a dependency is pinned to has been yanked from PyPI, or deprecated on npm, and hold the warning back with an `# update-time: ignore[yanked]` marker.
-What a marker holds back is each pass's own decision: the vulnerability pass skips a bare `ignore` because OSV is a source, while the loose-requirement pass reports a directive that decides nothing whatever the marker holds back, needing no source to do so.
 What a name in a repository's root listing maps to: a file's text, a directory with no tree to list, or a directory's recursive tree listing as an entry per path below it.
 What follows from naming no release is the caller's.
 What its marker gets wrong is reported whether or not those checks run, since that needs no release.
@@ -617,7 +572,6 @@ Yield each line with its number, empty where the line is a code fence or sits in
 `allow` naming one would keep that warning and drop the warning about every other advisory, which is a rule the language does not offer, so `allow[vulnerable=ID]` names no advisory.
 `allowed_scopes` are the scopes an `allow` directive opts the reference into, each off by default: `allow[hash-drift]` adopts a drifted hash pin, and `allow[floating-pin]` keeps a tag naming no version as it is rather than pinning it to the version it serves.
 `ignore[floating-pin]` is the opposite and the default, so Update-time pins a reference carrying it exactly as one carrying no marker at all.
-`inverted_item` is the item as the user spelled it when its comparison runs the wrong way, so the caller can warn and fall back to the global setting; None when the reference carries no such item.
 `marker` steers every dependency the file declares, since they share the array's line (see `pyproject`).
 `reason` is why the source cannot apply it, and `without_a_version` why it holds nothing back for a reference that pins no version, which is None for a directive such a reference still steers something with.
 `resolved` is that hand-over, empty while no resolved URL is waiting for its dictionary.
@@ -662,9 +616,7 @@ a registration naming no mutation is accepted, so the test it decorates checks n
 a release tagged with something that is no version ends the run with a traceback.
 a repository naming its changelog file `history`, `news`, or `releases` reports no changes.
 a repository whose root answers costs a documentation tree listing it has no need of.
-a resolver reports no archival though its source does, so the same switched-off check skips it.
 a root whose first changelog file names no version reports no changes, though another file names it.
-a scope the reader spelled out is discarded, instead of being kept.
 a section declaring no such name.
 a section of the details chapter that documents no dependency type goes unreported.
 a service declared with no body is read as a mapping, ending the run.
@@ -675,7 +627,6 @@ a traceback the probe passes over.
 a version a space and a comma follow still ends its specifier, so a requirement combining two of them is rewritten into one no version satisfies.
 a version that is no `.0` release reports the changes of the release one component shorter.
 a version the registry dates nowhere in its time map ends the run with a traceback.
-adopts a release only while it is fresh and holds it back once it is old, so it sets no cooldown.
 an `ignore[update]` holds back a dependency that pins no version, whose version uv resolves whatever the marker says, so the new version reaches nobody.
 an unknown tag reaches no constructor, so a Compose override file reads as unparsable.
 every mutation the test did not kill is reported with the first one's regression.
@@ -707,7 +658,3 @@ the updater script '' is on disk but registered for no dependency type.
 the updater script 'stray' is on disk but registered for no dependency type.
 uv then rejects the script, and Update-time reads no dependency from that block.
 version has no such vulnerability.
-version has no vulnerability below.
-version has no vulnerability.
-warns about the mild vulnerabilities and stays quiet about the severe ones, so it sets no risk level.
-warns while a release is fresh and goes quiet once it is old, so it sets no threshold.

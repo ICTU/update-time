@@ -18,7 +18,7 @@ from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.references.resolve import latest_version, report_project_checks
 
 from tests.helpers import patch_environ
-from tests.update_time.fixtures import BARE_IGNORE, DIGEST
+from tests.update_time.fixtures import DIGEST, VULNERABILITY_LEVEL_NONE
 from tests.update_time.helpers import (
     archival_check_disabled,
     bound,
@@ -35,9 +35,9 @@ if TYPE_CHECKING:
     from update_time.domain.reference import Reference
     from update_time.markers.reference import SteeredResolvedReference
 
-# The threshold `ignore[stale<90]` parses to, carrying the directive the parser sets alongside every value it reads.
-_STALE_THRESHOLD = Threshold(value=90, directive="ignore[stale<90]")
-_COOLDOWN_ITEM = Threshold(value=30, directive="ignore[cooldown<30]")
+# The threshold `set[stale-after=90]` parses to, carrying the directive the parser sets alongside every value it reads.
+_STALE_THRESHOLD = Threshold(value=90, directive="set[stale-after=90]")
+_COOLDOWN_ITEM = Threshold(value=30, directive="set[cooldown=30]")
 
 
 @dataclass(frozen=True)
@@ -60,16 +60,13 @@ _REDUNDANT_DIRECTIVES = {
     "ignore[archived]": _RedundancyCase(
         Marker(ignored_scopes=Scope.ARCHIVED), Reason.NO_ARCHIVAL_SIGNAL, archival_reporting
     ),
-    "ignore[vulnerable]": _RedundancyCase(
-        Marker(ignored_scopes=Scope.VULNERABLE), Reason.NO_VULNERABILITY_REPORTS, vulnerability_reporting
+    "set[vulnerability-level=none]": _RedundancyCase(
+        VULNERABILITY_LEVEL_NONE, Reason.NO_VULNERABILITY_REPORTS, vulnerability_reporting
     ),
-    "ignore[stale]": _RedundancyCase(
-        Marker(ignored_scopes=Scope.STALE), Reason.NO_STALENESS_DATES, publication_date_reporting
-    ),
-    "ignore[stale<90]": _RedundancyCase(
+    "set[stale-after=90]": _RedundancyCase(
         Marker(stale=_STALE_THRESHOLD), Reason.NO_STALENESS_DATES, publication_date_reporting
     ),
-    "ignore[cooldown<30]": _RedundancyCase(
+    "set[cooldown=30]": _RedundancyCase(
         Marker(cooldown=_COOLDOWN_ITEM), Reason.NO_COOLDOWN_DATES, publication_date_reporting
     ),
 }
@@ -77,21 +74,18 @@ _REDUNDANT_DIRECTIVES = {
 
 @dataclass(frozen=True)
 class _ReportedCheck:
-    """One of the checks the decision reports the resolved version on.
+    """One of the checks a marker silences that the decision reports the resolved version on.
 
-    `scope` is what a marker silences the check with, `reporter` names the `Logger` method it reports through, and
-    `arguments` are what that method takes beside the resolved reference and the marker.
+    `scope` is what a marker silences the check with, and `reporter` names the `Logger` method it reports through.
     """
 
     scope: Scope
     reporter: str
-    arguments: tuple[object, ...] = ()
 
 
-# Each check the decision reports on, keyed by the scope silencing it. Only the staleness check takes an argument of
-# its own, the threshold it judges the publication date against.
+# A marker can silence each of these checks, which are keyed by the scope silencing them. The decision reports the
+# resolved version on each.
 _CHECKS = {
-    "stale": _ReportedCheck(Scope.STALE, "report_staleness", (STALE_AFTER.default,)),
     "yanked": _ReportedCheck(Scope.YANKED, "report_yank"),
     "archived": _ReportedCheck(Scope.ARCHIVED, "report_archival"),
 }
@@ -177,40 +171,19 @@ class LatestVersionTest(unittest.TestCase):
             with self.subTest(check=name):
                 self.log.reset_mock()  # Judge each case on the calls of its own run.
                 self.latest_version()
-                getattr(self.log, check.reporter).assert_called_once_with(self.resolved(), Marker(), *check.arguments)
+                getattr(self.log, check.reporter).assert_called_once_with(self.resolved(), Marker())
 
     @patch_environ({STALE_AFTER.name: "30"})
     def test_the_configured_threshold_is_used_for_the_staleness_warning(self):
         """Test that the threshold the run was configured with is used, rather than the built-in default."""
         self.latest_version()
-        self.log.report_staleness.assert_called_once_with(self.resolved(), Marker(), 30)
+        self.log.report_staleness.assert_called_once_with(self.resolved(), 30)
 
     def test_the_markers_threshold_is_used_for_the_staleness_warning(self):
         """Test that a reference carrying its own staleness threshold is judged by that one, not the global one."""
         marker = Marker(stale=Threshold(value=90))
         self.latest_version(marker)
-        self.log.report_staleness.assert_called_once_with(self.resolved(marker=marker), marker, 90)
-
-    def test_warns_about_an_inverted_stale_item(self):
-        """Test that a `stale` item comparing the wrong way is reported, and the global threshold is used."""
-        marker = Marker(stale=Threshold(inverted_item="stale>=90"), raw="ignore[stale>=90]")
-        self.latest_version(marker)
-        self.log.report_inverted_items.assert_called_once_with(self.reference(), marker)
-        self.log.report_staleness.assert_called_once_with(self.resolved(marker=marker), marker, STALE_AFTER.default)
-
-    def test_warns_about_an_inverted_cooldown_item(self):
-        """Test that a `cooldown` item comparing the wrong way is reported, and the global cooldown is used."""
-        get_new_version = Mock(return_value=DependencyVersion(version="3.15"))
-        marker = Marker(cooldown=Threshold(inverted_item="cooldown>=30"), raw="ignore[cooldown>=30]")
-        self.latest_version(marker, get_new_version)
-        self.log.report_inverted_items.assert_called_once_with(self.reference(), marker)
-        self.assert_resolved(get_new_version)
-
-    def test_warns_about_an_inverted_vulnerability_item(self):
-        """Test that a `vulnerable` item comparing the wrong way is reported."""
-        marker = Marker(vulnerable=Threshold(inverted_item="vulnerable>=high"), raw="ignore[vulnerable>=high]")
-        self.latest_version(marker)
-        self.log.report_inverted_items.assert_called_once_with(self.reference(), marker)
+        self.log.report_staleness.assert_called_once_with(self.resolved(marker=marker), 90)
 
     def test_a_marker_silencing_a_warning_still_returns_the_update(self):
         """Test that a marker silencing a warning leaves the update in place, and reaches the check that reports it."""
@@ -220,9 +193,7 @@ class LatestVersionTest(unittest.TestCase):
                 marker = Marker(ignored_scopes=check.scope)
                 latest = self.latest_version(marker)
                 self.assertEqual(latest, DependencyVersion(version="3.15"))
-                getattr(self.log, check.reporter).assert_called_once_with(
-                    self.resolved(marker=marker), marker, *check.arguments
-                )
+                getattr(self.log, check.reporter).assert_called_once_with(self.resolved(marker=marker), marker)
 
     def test_warns_about_a_directive_the_source_cannot_apply(self):
         """Test that a directive is reported as redundant when the source cannot apply it, and the update stands."""
@@ -253,7 +224,7 @@ class LatestVersionTest(unittest.TestCase):
             return pinned.name == "node"
 
         get_new_version = publication_date_reporting(new_version_getter("3.15"), when=dates_the_releases_of)
-        for directive in ("ignore[cooldown<30]", "ignore[stale<90]"):
+        for directive in ("set[cooldown=30]", "set[stale-after=90]"):
             case = _REDUNDANT_DIRECTIVES[directive]
             for dependency, reported in (("node", False), ("python", True)):
                 with self.subTest(directive=directive, dependency=dependency):
@@ -261,22 +232,6 @@ class LatestVersionTest(unittest.TestCase):
                     self.latest_version(case.marker, get_new_version, dependency)
                     expected = [call(self.reference(dependency), directive, case.reason)] if reported else []
                     self.assertEqual(self.log.redundant_directive.call_args_list, expected)
-
-    def test_no_redundant_directive_when_the_marker_sets_no_value(self):
-        """Test that a marker is not reported when it sets no value, carrying no item or an inverted one."""
-        markers = {
-            "no item at all": Marker(),
-            "inverted cooldown item": Marker(
-                cooldown=Threshold(inverted_item="cooldown>=30"), raw="ignore[cooldown>=30]"
-            ),
-            "inverted stale item": Marker(stale=Threshold(inverted_item="stale>=90"), raw="ignore[stale>=90]"),
-        }
-        for case, marker in markers.items():
-            with self.subTest(case=case):
-                self.log.reset_mock()  # Judge each case on the calls of its own run.
-                latest = self.latest_version(marker)
-                self.assertEqual(latest, DependencyVersion(version="3.15"))
-                self.log.redundant_directive.assert_not_called()
 
     def test_warns_about_a_redundant_floating_pin_directive(self):
         """Test that `allow[floating-pin]` is reported as redundant when the reference's pin does not float."""
@@ -303,19 +258,13 @@ class LatestVersionTest(unittest.TestCase):
                 self.log.redundant_directive.assert_not_called()
 
     def test_warns_about_a_floating_pin_directive_on_a_held_back_reference(self):
-        """Test that `allow[floating-pin]` on a floating tag is reported as never pinned, whatever freezes it."""
+        """Test that `allow[floating-pin]` on a floating tag `ignore[update]` holds back is reported as redundant."""
         floating = DependencyVersion(version="3.14.7", sha=DIGEST, floating=FloatingPin.RESOLVED)
-        markers = {
-            "ignore[update]": Marker(ignored_scopes=Scope.UPDATE, allowed_scopes=Scope.FLOATING_PIN),
-            "ignore": BARE_IGNORE.merge(Marker(allowed_scopes=Scope.FLOATING_PIN)),
-        }
-        for case, marker in markers.items():
-            with self.subTest(case=case):
-                self.log.reset_mock()  # Judge each case on the calls of its own run.
-                self.assertIsNone(self.latest_version(marker, Mock(return_value=floating)))
-                self.log.redundant_directive.assert_called_once_with(
-                    self.reference(), "allow[floating-pin]", Reason.NEVER_PINNED
-                )
+        marker = Marker(ignored_scopes=Scope.UPDATE, allowed_scopes=Scope.FLOATING_PIN)
+        self.assertIsNone(self.latest_version(marker, Mock(return_value=floating)))
+        self.log.redundant_directive.assert_called_once_with(
+            self.reference(), "allow[floating-pin]", Reason.NEVER_PINNED
+        )
 
     def test_no_redundant_directive_for_the_ignore_spelling_of_the_floating_pin(self):
         """Test that `ignore[floating-pin]` is not reported, since it asks for what happens without it."""
@@ -350,7 +299,7 @@ class ReportProjectChecksTest(unittest.TestCase):
         project = Project(archival=archival)
         resolved = resolved_reference("humanize", self.path, DependencyVersion(version="", project=project))
         self.log.report_archival.assert_called_once_with(resolved, marker)
-        self.log.report_staleness.assert_called_once_with(resolved, marker, STALE_AFTER.default)
+        self.log.report_staleness.assert_called_once_with(resolved, STALE_AFTER.default)
 
     def test_a_source_reporting_no_archival_is_not_asked_with_the_staleness_check_switched_off(self):
         """Test that switching the staleness check off leaves such a source unasked, so it costs no request."""

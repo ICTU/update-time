@@ -20,7 +20,7 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import ArchivedSubject, DependencyVersion, FloatingPin, ImageNotLookedUp, tag_of
 from update_time.domain.reference import Reference, RefKind
 from update_time.domain.staleness import STALE_AFTER
-from update_time.domain.vulnerability import Vulnerability
+from update_time.domain.vulnerability import VULNERABILITY_LEVEL, Vulnerability
 from update_time.io.console import CHANGES, NOTE
 from update_time.io.log import Logger, LogMessage
 from update_time.manifests.pyproject_toml import Declaration
@@ -513,27 +513,12 @@ class LoggingTestCase(CacheClearingTestCase):
         fields = Logger._vulnerability_fields(reference(dependency, location, version), vulnerability)
         self._assert_reported(message_of(Logger.vulnerable_dependency), among_others=among_others, **fields)
 
-    def assert_inverted_vulnerable_item_logged(self, dependency: str, item: str, location: Location) -> None:
-        """Assert that a `vulnerable` item comparing the wrong way round was warned about, among the other records."""
-        self.assert_logged_among_others(
-            message_of(Logger._inverted_vulnerable_item), item=item, dependency=dependency, location=location
-        )
-
     @staticmethod
     def _redundant_suppression_fields(
         dependency: str, version: str, location: Location, directive: object
     ) -> dict[str, object]:
         """Return the fields every redundant vulnerability suppression is warned with."""
         return {"directive": directive, "dependency": dependency, "location": location, "version": version}
-
-    def assert_redundant_vulnerable_scope_logged(
-        self, dependency: str, version: str, location: Location, directive: object = ANY
-    ) -> None:
-        """Assert that a redundant `vulnerable` scope was warned about, among the other records."""
-        self.assert_logged_among_others(
-            message_of(Logger.redundant_vulnerable_scope),
-            **self._redundant_suppression_fields(dependency, version, location, directive),
-        )
 
     def assert_redundant_vulnerable_advisory_logged(
         self, dependency: str, version: str, location: Location, directive: object = ANY
@@ -544,14 +529,23 @@ class LoggingTestCase(CacheClearingTestCase):
             **self._redundant_suppression_fields(dependency, version, location, directive),
         )
 
-    def assert_redundant_vulnerable_level_logged(
-        self, dependency: str, version: str, level: str, location: Location, directive: object = ANY
+    def assert_redundant_vulnerable_level_logged(  # noqa: PLR0913 — the fields of the warning
+        self,
+        dependency: str,
+        version: str,
+        level: str,
+        location: Location,
+        directive: object = ANY,
+        *,
+        run_level: str | None = None,
     ) -> None:
-        """Assert that a risk level no vulnerability fell below was warned about, among the other records."""
+        """Assert that a risk level judging the vulnerabilities as the run's does was warned about, among others."""
+        run_fields = {"default_level": VULNERABILITY_LEVEL.default} if run_level is None else {"run_level": run_level}
         self.assert_logged_among_others(
-            message_of(Logger.redundant_vulnerable_level),
+            message_of(Logger.redundant_vulnerable_level, *run_fields),
             **self._redundant_suppression_fields(dependency, version, location, directive),
             level=level,
+            **run_fields,
         )
 
     def assert_redundant_directive_logged(
@@ -566,18 +560,25 @@ class LoggingTestCase(CacheClearingTestCase):
             reason=reason,
         )
 
+    def assert_no_redundant_vulnerable_level_logged(self) -> None:
+        """Assert that no risk level was warned about as redundant, whichever way the warning names the run's level."""
+        what = "redundant risk level"
+        self.assert_none_logged(message_of(Logger.redundant_vulnerable_level, "run_level"), what)
+        self.assert_none_logged(message_of(Logger.redundant_vulnerable_level, "default_level"), what)
+
     def assert_no_redundant_suppression_logged(self) -> None:
         """Assert that no vulnerability suppression was reported as silencing nothing, whatever else was logged."""
         what = "redundant vulnerability suppression"
-        self.assert_none_logged(message_of(Logger.redundant_vulnerable_scope), what)
         self.assert_none_logged(message_of(Logger.redundant_vulnerable_advisory), what)
-        self.assert_none_logged(message_of(Logger.redundant_vulnerable_level), what)
+        self.assert_no_redundant_vulnerable_level_logged()
         self.assert_none_logged(message_of(Logger.redundant_directive), what, reason=Reason.NO_VULNERABILITY_REPORTS)
 
     def assert_no_redundant_directive_logged(self) -> None:
         """Assert that no directive was reported as redundant, whatever else was logged."""
         self.assert_none_logged(message_of(Logger.redundant_directive), "redundant directive")
-        self.assert_none_logged(message_of(Logger.redundant_stale_threshold), "redundant staleness threshold")
+        what = "redundant staleness threshold"
+        self.assert_none_logged(message_of(Logger.redundant_stale_threshold, "run_threshold"), what)
+        self.assert_none_logged(message_of(Logger.redundant_stale_threshold, "default_threshold"), what)
 
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged."""
@@ -630,14 +631,14 @@ class LoggingTestCase(CacheClearingTestCase):
         }
         self.assert_logged_among_others(message_of(Logger.held_back_by_cooldown, *fields), **fields)
 
-    def assert_ignored_staleness_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
-        """Assert that a staleness warning silenced by a marker was logged, among the other records."""
-        self.assert_logged_among_others(
-            message_of(Logger.report_staleness, "dependency", "location", "directive"),
-            dependency=dependency,
-            location=location,
-            directive=directive,
-        )
+    def assert_no_staleness_warning_logged(self, dependency: str, location: Location) -> None:
+        """Assert that the dependency at the location was not warned about as stale."""
+        message = message_of(Logger.report_staleness, "days")
+        self.assert_none_logged(message, "staleness warning", dependency=dependency, location=location)
+
+    def assert_no_ignored_staleness_logged(self) -> None:
+        """Assert that no staleness warning was reported as silenced, whatever else was logged at that level."""
+        self.assert_none_logged(message_of(Logger.ignored_staleness), "staleness warning silenced by a marker")
 
     def assert_no_ignored_vulnerability_logged(self) -> None:
         """Assert that no vulnerability warning was reported as silenced, whatever else was logged at that level."""
@@ -671,6 +672,15 @@ class LoggingTestCase(CacheClearingTestCase):
             advisory=advisory,
             identifiers=identifiers,
             location=location,
+        )
+
+    def assert_ignored_staleness_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
+        """Assert that a staleness warning silenced by a marker was logged, among the other records."""
+        self.assert_logged_among_others(
+            message_of(Logger.ignored_staleness),
+            dependency=dependency,
+            location=location,
+            directive=directive,
         )
 
     def assert_ignored_yank_logged(self, dependency: str, location: Location, directive: object = ANY) -> None:
@@ -803,6 +813,10 @@ staleness_disabled = patch_environ({STALE_AFTER.name: "0"})
 # Reusable decorator that switches the archival check off run-wide, as --ignore-archived does, for the tests
 # of what a run then leaves unasked and unreported.
 archival_check_disabled = patch_environ({IGNORE_ARCHIVED.name: "1"})
+
+# Reusable decorator that switches the staleness and the archival check off run-wide, as --stale-after 0 and
+# --ignore-archived do.
+project_checks_disabled = patch_environ({STALE_AFTER.name: "0", IGNORE_ARCHIVED.name: "1"})
 
 # Reusable context managers that make every reference in the run adopt hash drift or keep its pin floating, as
 # --allow-hash-drift and --allow-floating-pin do.

@@ -58,12 +58,10 @@ _ARCHIVE_SUFFIXES = (".zip", ".whl", ".tar.gz", ".tar.bz2", ".tar", ".tgz", ".ta
 
 def _warn_about_items_that_decide_nothing(marker: Marker, reference: Reference) -> None:
     """Warn about each item of the requirement's marker that decides nothing."""
-    as_written = marker.as_written
-    _LOG.report_inverted_items(reference, marker)
-    if bound_directive := as_written.bound_directive:
+    if bound_directive := marker.bound_directive:
         _LOG.redundant_directive(reference, bound_directive, Reason.NO_VERSION_TO_UPDATE)
     for directive in DIRECTIVES:
-        if directive.without_a_version is not None and (written := as_written.directive_for(directive.scope)):
+        if directive.without_a_version is not None and (written := marker.directive_for(directive.scope)):
             _LOG.redundant_directive(reference, written, directive.without_a_version)
     # An `ignore[update]` holds nothing back on a requirement that does not pin a version.
     warn_if_the_opt_in_is_redundant(

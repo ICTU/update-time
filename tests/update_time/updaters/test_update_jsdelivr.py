@@ -112,7 +112,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
     def test_cooldown_marker_is_not_reported_as_redundant(self, mock_get: Mock, mock_glob: Mock):
         """Test that a `cooldown` marker on a URL holds something back, since npm dates its versions."""
         self.offer_versions(mock_get, "2.0.11", served_hash=HASH1)
-        marked_url = f"{_URL}  # update-time: ignore[cooldown<30]"
+        marked_url = f"{_URL}  # update-time: set[cooldown=30]"
         mock_conf = self.update(_conf(_entry(marked_url, _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_no_warnings_logged()
@@ -216,7 +216,7 @@ class UpdateJsdelivrsTest(LoggingTestCase):
     def test_bare_url_does_not_pin_the_entry_below_it(self, mock_get: Mock, mock_glob: Mock):
         """Test that a bare URL's hash is not written into the next entry's dictionary when that entry is held back."""
         self.offer_versions(mock_get, "2.0.11")
-        held_back = _entry(f"{_URL}  # update-time: ignore", _NO_INTEGRITY)
+        held_back = _entry(f"{_URL}  # update-time: ignore[update]", _NO_INTEGRITY)
         mock_conf = self.update(_conf(_URL, held_back), mock_glob)
         mock_conf.write_text.assert_not_called()
         self.assert_cannot_pin_logged("clipboard", Location(mock_conf, 2))
@@ -246,28 +246,28 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_vulnerable_dependency_logged("clipboard", "2.0.11", _VULNERABILITY, Location(mock_conf, 3))
 
     def test_marker_holds_the_pin_back_as_well_as_the_update(self, mock_get: Mock, mock_glob: Mock):
-        """Test that an `# update-time: ignore` marker leaves an unpinned URL unpinned, looking nothing up."""
-        mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: ignore", _NO_INTEGRITY)), mock_glob)
+        """Test that an `# update-time: ignore[update]` marker leaves an unpinned URL unpinned."""
+        self.offer_versions(mock_get, "2.0.12")
+        mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: ignore[update]", _NO_INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
-        mock_get.assert_not_called()
         self.assert_ignored_logged("clipboard", Location(mock_conf, 3))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
     def test_marker_above_the_url_holds_it_back(self, mock_get: Mock, mock_glob: Mock):
-        """Test that an `# update-time: ignore` comment above a jsDelivr URL holds it back, looking up no version."""
-        mock_conf = self.update(_conf(_entry("# update-time: ignore", _URL, _INTEGRITY)), mock_glob)
+        """Test that an `# update-time: ignore[update]` comment above a jsDelivr URL holds it back."""
+        self.offer_versions(mock_get, "2.0.12", served_hash=HASH1)
+        mock_conf = self.update(_conf(_entry("# update-time: ignore[update]", _URL, _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
-        mock_get.assert_not_called()
         self.assert_ignored_logged("clipboard", Location(mock_conf, 4))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
     def test_inline_marker_holds_the_url_back(self, mock_get: Mock, mock_glob: Mock):
-        """Test that an `# update-time: ignore` comment on the URL's own line holds it back too."""
-        mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: ignore", _INTEGRITY)), mock_glob)
+        """Test that an `# update-time: ignore[update]` comment on the URL's own line holds it back too."""
+        self.offer_versions(mock_get, "2.0.12", served_hash=HASH1)
+        mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: ignore[update]", _INTEGRITY)), mock_glob)
         mock_conf.write_text.assert_not_called()
-        mock_get.assert_not_called()
         self.assert_ignored_logged("clipboard", Location(mock_conf, 3))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -291,14 +291,13 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_yanked_dependency_logged("clipboard", "2.0.11", location, _DEPRECATED)
         self.assert_ignored_logged("clipboard", location, "ignore[update]")
 
-    def test_ignore_stale_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
-        """Test that an `ignore[stale]` marker on the URL's line silences the warning, but not the update."""
+    def test_stale_after_zero_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
+        """Test that a `set[stale-after=0]` marker on the URL's line silences the warning, but not the update."""
         old = STALE_DATE.isoformat()
         self.offer_versions(mock_get, "2.0.12", "2.0.11", published=old)
-        mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: ignore[stale]", _INTEGRITY)), mock_glob)
+        mock_conf = self.update(_conf(_entry(f"{_URL}  # update-time: set[stale-after=0]", _INTEGRITY)), mock_glob)
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", self.written(mock_conf))
         self.assert_no_warnings_logged()
-        self.assert_ignored_staleness_logged("clipboard", Location(mock_conf, 3), "ignore[stale]")
 
     def test_ignore_yanked_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
         """Test that an `ignore[yanked]` marker on the URL's line silences the deprecation warning."""
@@ -308,15 +307,15 @@ class UpdateJsdelivrsTest(LoggingTestCase):
         self.assert_no_warnings_logged()
         self.assert_ignored_yank_logged("clipboard", Location(mock_conf, 3), "ignore[yanked]")
 
-    def test_ignore_vulnerable_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
-        """Test that an `ignore[vulnerable]` marker silences the vulnerability warning and nothing else."""
+    def test_vulnerability_level_none_marker_silences_the_warning(self, mock_get: Mock, mock_glob: Mock):
+        """Test that a `set[vulnerability-level=none]` marker silences the vulnerability warning and nothing else."""
         self.offer_versions(mock_get, "2.0.12", "2.0.11")
-        marked_url = f"{_URL}  # update-time: ignore[vulnerable]"
+        marked_url = f"{_URL}  # update-time: set[vulnerability-level=none]"
         with osv(_ADVISORY) as mock_post:
             mock_conf = self.update(_conf(_entry(marked_url, _INTEGRITY)), mock_glob)
         self.assertIn("clipboard@2.0.12/dist/clipboard.min.js", self.written(mock_conf))
         mock_post.assert_called()
         self.assert_no_warnings_logged()
         self.assert_ignored_vulnerability_logged(
-            "clipboard", Location(mock_conf, 3), _VULNERABILITY.advisory, "ignore[vulnerable]"
+            "clipboard", Location(mock_conf, 3), _VULNERABILITY.advisory, "set[vulnerability-level=none]"
         )

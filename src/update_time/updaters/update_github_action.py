@@ -62,7 +62,7 @@ def _versioned_actions(lines: list[Line]) -> list[SteeredReference]:
     actions = []
     for line, match, marker in reference_matches(lines, _ACTION_RE):
         reference = github_reference(match, line.location, match.group("dependency"))
-        if names_a_version(reference, marker):
+        if names_a_version(reference):
             normalised = replace(reference, current_version=str(Version(reference.current_version)))
             actions.append(SteeredReference.from_reference(normalised, marker=marker))
     return actions

@@ -18,7 +18,6 @@ from update_time.domain.dependency import Changes, DependencyVersion, Project, R
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.console import LOG_THEME
 from update_time.io.log import Logger, configure_logging
-from update_time.markers.marker import Marker
 from update_time.primitives.digest import SHA256_HEX_CHARS
 from update_time.primitives.location import Location
 
@@ -86,7 +85,7 @@ def generate() -> LogOutput:
         reference("actions/checkout", Location(Path(".github/workflows/ci.yml"), 17)), DependencyVersion("4.3.0")
     )
     stale = DependencyVersion("1.3.0", project=Project(newest=Release("1.3.0", stale_publication_date())))
-    log.report_staleness(resolved("left-pad", Location(Path("package.json"), 24), stale), Marker(), STALE_AFTER.get())
+    log.report_staleness(resolved("left-pad", Location(Path("package.json"), 24), stale), STALE_AFTER.get())
     log.vulnerable_dependency(reference("django", requirements, "3.2.0"), VULNERABILITY)
 
     plain_text = console.export_text(clear=False)  # capture before the export clears the recording

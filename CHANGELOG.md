@@ -6,7 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
-No changes yet.
+### Changed
+
+- Set a value for a reference with a `set` marker, such as `set[cooldown=30]`, `set[stale-after=0]`, or `set[vulnerability-level=high]`. It replaces the comparison items, such as `ignore[stale<90]`, and the items `ignore[stale]` and `ignore[vulnerable]`. Hold a reference back with `ignore[update]` instead of a bare `ignore`. Closes [#496](https://github.com/ICTU/update-time/issues/496).
+- Report a marker's risk level as redundant where it and `--vulnerability-level` report the same vulnerabilities, and log each vulnerability it silences at `DEBUG`. See [#496](https://github.com/ICTU/update-time/issues/496).
+- Report an `ignore[archived]` as redundant in a run passing `--ignore-archived`. See [#496](https://github.com/ICTU/update-time/issues/496).
 
 ## 0.0.54 - 2026-10-27
 

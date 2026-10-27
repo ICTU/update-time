@@ -8,11 +8,11 @@ from unittest.mock import patch
 import update_time
 from update_time.domain.bound import Verb
 from update_time.io.log import Logger
-from update_time.markers.marker import Marker, Scope
 from update_time.sources import pypi
 from update_time.sources.pypi import release_metadata
 
 from tests.helpers import patch_get
+from tests.update_time.fixtures import VULNERABILITY_LEVEL_NONE
 from tests.update_time.helpers import (
     CacheClearingTestCase,
     LoggingTestCase,
@@ -147,5 +147,5 @@ class AssertNoRedundantSuppressionLoggedTest(unittest.TestCase):
         case.setUp()
         self.addCleanup(case.doCleanups)
         pin = reference("django", create_location("requirements.txt", 1), "3.2.0")
-        Logger("test").redundant_vulnerable_scope(pin, Marker(ignored_scopes=Scope.VULNERABLE))
+        Logger("test").redundant_vulnerable_level(pin, VULNERABILITY_LEVEL_NONE, "none", "low")
         self.assertRaises(AssertionError, case.assert_no_redundant_suppression_logged)

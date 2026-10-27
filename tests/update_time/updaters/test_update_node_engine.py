@@ -147,10 +147,10 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_no_new_version_logged()
 
     def test_marker_in_the_update_time_field_holds_the_engine_back(self, mock_glob: Mock):
-        """Test that an `ignore` directive in the `update-time` field holds back the engine's update, and it alone."""
-        mock_package_json = self.update_engine(mock_glob, _package_json(section="volta", directives="ignore"))
+        """Test that an `ignore[update]` in the `update-time` field holds back the engine's update, and it alone."""
+        mock_package_json = self.update_engine(mock_glob, _package_json(section="volta", directives="ignore[update]"))
         mock_package_json.write_text.assert_not_called()
-        self.assert_ignored_logged("node", Location(mock_package_json, 6), "ignore")
+        self.assert_ignored_logged("node", Location(mock_package_json, 6), "ignore[update]")
         self.assertEqual(len(self.records_of(message_of(Logger.ignored))), 1)  # The volta pin is steered by no marker.
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -177,7 +177,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         """Test that a `yanked`, `vulnerable`, or `archived` marker on the engine is reported as redundant."""
         for directives, reason in (
             ("ignore[yanked]", Reason.NO_YANK_CONCEPT),
-            ("ignore[vulnerable]", Reason.NO_VULNERABILITY_REPORTS),
+            ("set[vulnerability-level=none]", Reason.NO_VULNERABILITY_REPORTS),
             ("ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL),
         ):
             with self.subTest(directives=directives):
@@ -188,14 +188,14 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
 
     def test_the_cooldown_scope_is_not_reported_as_redundant(self, mock_glob: Mock):
         """Test that a `cooldown` marker on the engine is not reported as redundant."""
-        directives = "ignore[cooldown<30]"
+        directives = "set[cooldown=30]"
         mock_package_json = self.update_engine(mock_glob, _package_json(directives=directives))
         mock_package_json.write_text.assert_called_once_with(_package_json("19", directives=directives))
         self.assert_no_warnings_logged()
 
     def test_the_stale_scope_warns_at_its_own_threshold(self, mock_glob: Mock):
         """Test that a `stale` threshold on the engine warns at that threshold, rather than being redundant."""
-        directives = "ignore[stale<90]"
+        directives = "set[stale-after=90]"
         mock_package_json = self.update_engine(mock_glob, _package_json(directives=directives))
         mock_package_json.write_text.assert_called_once_with(_package_json("19", directives=directives))
         self.assert_stale_dependency_logged("node", "19", Location(mock_package_json, 3))

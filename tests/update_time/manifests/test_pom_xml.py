@@ -4,7 +4,7 @@ import unittest
 
 from update_time.formats import xml
 from update_time.manifests import pom_xml
-from update_time.markers.marker import Marker, Scope
+from update_time.markers.marker import Marker, Threshold
 
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
@@ -211,7 +211,7 @@ class DeclarationsTest(unittest.TestCase):
     def test_a_marker_on_the_line_above_a_declaration_is_not_read(self):
         """Test that a marker on the line above a dependency's `<version>` line steers nothing."""
         marked_above = guava_element("33.0.0-jre").replace(
-            "<version>", "<!-- update-time: ignore[stale] -->\n<version>"
+            "<version>", "<!-- update-time: set[stale-after=0] -->\n<version>"
         )
         declared = pom_xml.declarations(mock_path(pom_declaring(marked_above))) or []
         self.assertEqual([(reference.dependency, reference.marker) for reference in declared], [(GUAVA, Marker())])
@@ -219,14 +219,14 @@ class DeclarationsTest(unittest.TestCase):
     def test_a_marker_is_read_off_the_line_xml_counts(self):
         """Test that the marker is read off the line expat counts as the declaration's, whatever the line breaks."""
         properties = properties_element({"note": "one\u2028two"})
-        marked = marked_at_its_version(guava_element("33.0.0-jre"), "ignore[stale]")
+        marked = marked_at_its_version(guava_element("33.0.0-jre"), "set[stale-after=0]")
         pom = pom_declaring(marked, properties=properties)
         cases = {
             "a separator inside text": pom,
             "carriage return and line feed": pom.replace("\n", "\r\n"),
             "carriage return": pom.replace("\n", "\r"),
         }
-        stale = Marker(ignored_scopes=Scope.STALE)
+        stale = Marker(stale=Threshold(value=0))
         for case, contents in cases.items():
             with self.subTest(case=case):
                 declared = pom_xml.declarations(mock_path(contents)) or []

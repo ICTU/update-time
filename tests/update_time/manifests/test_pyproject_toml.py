@@ -12,7 +12,6 @@ from update_time.primitives.location import Location
 
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import BARE_IGNORE
 from tests.update_time.helpers import declaration
 from tests.update_time.manifests.helpers import script
 
@@ -437,30 +436,33 @@ class DeclarationsTest(unittest.TestCase):
 
     def test_reads_the_marker_a_declaration_spells_on_its_own_line(self):
         """Test that a declaration carries the marker its own line spells, and the declaration below it carries none."""
-        contents = '[project]\ndependencies = [\n    "pkg==1.0",  # update-time: ignore\n    "other==2.0",\n]\n'
-        self.assertEqual(self.markers(contents), [BARE_IGNORE, Marker()])
+        declaration = '    "pkg==1.0",  # update-time: ignore[update]\n'
+        contents = f'[project]\ndependencies = [\n{declaration}    "other==2.0",\n]\n'
+        self.assertEqual(self.markers(contents), [Marker(ignored_scopes=Scope.UPDATE), Marker()])
 
     def test_reads_the_marker_on_the_line_above_a_declaration(self):
         """Test that a marker steers the declaration on the line below it, and none when that line opens an array."""
         contents = (
             "[project]\n"
-            "# update-time: ignore[stale]\n"  # the line below declares nothing, so this steers no declaration
+            "# update-time: set[stale-after=0]\n"  # the line below declares nothing, so this steers no declaration
             'dependencies = [\n    "pkg==1.0",\n'
-            "    # update-time: ignore\n"
+            "    # update-time: ignore[update]\n"
             '    "other==2.0",\n]\n'
             "[dependency-groups]\n"
             "# update-time: ignore[yanked]\n"  # the line below declares the array's only dependency
             'dev = ["third==3.0"]\n'
         )
-        self.assertEqual(self.markers(contents), [Marker(), BARE_IGNORE, Marker(ignored_scopes=Scope.YANKED)])
+        self.assertEqual(
+            self.markers(contents), [Marker(), Marker(ignored_scopes=Scope.UPDATE), Marker(ignored_scopes=Scope.YANKED)]
+        )
 
     def test_reads_the_marker_of_a_declaration_below_a_line_separator(self):
         """Test that a line separator earlier in the file does not shift the line a marker is read from.
 
         TOML accepts U+2028 inside a string, and Python splits lines on it where a count of newlines does not.
         """
-        contents = '[project]\nname = "a\u2028b"\ndependencies = ["pkg==1.0"]  # update-time: ignore\n'
-        self.assertEqual(self.markers(contents), [BARE_IGNORE])
+        contents = '[project]\nname = "a\u2028b"\ndependencies = ["pkg==1.0"]  # update-time: ignore[update]\n'
+        self.assertEqual(self.markers(contents), [Marker(ignored_scopes=Scope.UPDATE)])
 
     @kills(
         Mutation(
@@ -475,14 +477,14 @@ class DeclarationsTest(unittest.TestCase):
         """Test that a marker written with a `#` of its own inside the block is read, in both its placements."""
         contents = (
             "# /// script\n# dependencies = [\n"
-            '#     "pkg==1.0",  # update-time: ignore\n'  # inline, so it steers this declaration alone
+            '#     "pkg==1.0",  # update-time: ignore[update]\n'  # inline, so it steers it alone
             '#     "other==2.0",\n'
             "#     # update-time: ignore[yanked]\n"  # on the line above, so it steers the declaration below it
             '#     "third==3.0",\n'
             "# ]\n# ///\n"
         )
         markers = self.markers(contents, InlineScript)
-        self.assertEqual(markers, [BARE_IGNORE, Marker(), Marker(ignored_scopes=Scope.YANKED)])
+        self.assertEqual(markers, [Marker(ignored_scopes=Scope.UPDATE), Marker(), Marker(ignored_scopes=Scope.YANKED)])
 
 
 class PinnedDeclarationsTest(unittest.TestCase):

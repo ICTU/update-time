@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from packaging.specifiers import InvalidSpecifier
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
-from update_time.domain.vulnerability import RISK_LEVELS
+from update_time.domain.vulnerability import NO_RISK_LEVEL, RISK_LEVELS
 from update_time.markers.bound import directive as _directive
 from update_time.markers.bound import parse_bound, spell
 
@@ -47,34 +47,29 @@ class Scope(Flag):
 # No scope at all: what a line without a marker names, and what the union in `Marker.merge` starts from.
 _NO_SCOPE = Scope(0)
 
-_IGNORABLE_SCOPES = Scope.UPDATE | Scope.STALE | Scope.YANKED | Scope.VULNERABLE | Scope.ARCHIVED
+_IGNORABLE_SCOPES = Scope.UPDATE | Scope.YANKED | Scope.ARCHIVED
 
 # The scopes that are off until an `allow` directive switches them on, whose `ignore` therefore spells the default.
 _OPTIONAL_SCOPES = Scope.HASH_DRIFT | Scope.FLOATING_PIN
 
-# The scopes whose checks the reference's own source answers, so a marker holding them all back leaves nothing to
-# ask that source for. Spelled as every ignorable scope but the one OSV answers, so `_SOURCE_CHECK_SCOPES` does not
-# need editing when an ignorable scope is added.
-_SOURCE_CHECK_SCOPES = _IGNORABLE_SCOPES & ~Scope.VULNERABLE
+# The keys of the `set` items, each spelled as the command-line option it overrides.
+_STALE_AFTER = "stale-after"
+_COOLDOWN = "cooldown"
+_VULNERABILITY_LEVEL = "vulnerability-level"
 
 
 @dataclass(frozen=True)
 class Threshold[T]:
-    """What a comparison bracket item — a `stale`, a `cooldown`, or a `vulnerable` — sets for the reference carrying it.
+    """What a `set` item sets for the reference carrying it: a staleness threshold, a cooldown, or a risk level.
 
     `value` is what the item sets for this reference alone, overriding the global setting: a number of days for a
-    `stale` or a `cooldown` item, a risk level for a `vulnerable` one; None when the reference sets none.
-    `inverted_item` is the item as the user spelled it when its comparison runs the wrong way, so the caller can warn
-    and fall back to the global setting; None when the reference carries no such item. An item sets one or the other,
-    never both, which is why they travel together.
-    `directive` is the directive that sets `value`, as the verb and item the user spelled (`ignore[cooldown<30]`), so
-    a warning about this item alone never shows the directives beside it, which may hold plenty back. Empty when the
-    reference sets no value, and left out of comparisons, so thresholds that set the same value compare as equal
-    however they were spelled.
+    staleness threshold or a cooldown, a risk level for the vulnerability check; None when the reference sets none.
+    `directive` is the directive that sets `value` (`set[cooldown=30]`), so a warning about this item alone never
+    shows the directives beside it, which may hold plenty back. It is empty when the reference does not set a value.
+    Comparisons leave it out, so two thresholds compare by the value they set.
     """
 
     value: T | None = None
-    inverted_item: str | None = None
     directive: str = field(compare=False, default="")
 
     def value_or(self, setting: T) -> T:
@@ -85,26 +80,16 @@ class Threshold[T]:
         return setting if self.value is None else self.value
 
     def merge(self, other: Threshold[T]) -> Threshold[T]:
-        """Return this threshold combined with another one, this one's values winning where it sets them.
-
-        The directive spells the value, so both are taken from the threshold that sets the value, which keeps a
-        merged threshold from naming a directive that set nothing.
-        """
-        sets_value = self if self.value is not None else other
-        return Threshold(
-            value=sets_value.value,
-            inverted_item=other.inverted_item if self.inverted_item is None else self.inverted_item,
-            directive=sets_value.directive,
-        )
+        """Return this threshold combined with another one, this one winning where it sets a value."""
+        return self if self.value is not None else other
 
 
 @dataclass(frozen=True)
 class Marker:
     """The `# update-time:` directives affecting a line (see `parse_marker`).
 
-    `ignored_scopes` are the scopes an `ignore` directive holds back — the reference's update and its warnings,
-    which `_IGNORABLE_SCOPES` names. A bare `ignore` holds every one of them back, while a directive naming a
-    scope, such as `ignore[stale]`, holds back that one alone.
+    `ignored_scopes` are the scopes an `ignore` holds back outright, which `_IGNORABLE_SCOPES` names: the update,
+    the yank warning, and the archival warning. Each `ignore`, such as `ignore[yanked]`, holds back its scope alone.
     `ignored_advisories` are the advisories an `ignore[vulnerable=ID]` directive silences the warning for, each as
     the identifier the user spelled it by; empty when the reference names none.
     `allowed_scopes` are the scopes an `allow` directive opts the reference into, each off by default:
@@ -112,17 +97,16 @@ class Marker:
     rather than pinning it to the version it serves.
     `version_bound` is the version bound from an `allow`/`ignore` directive (see `VersionBound`), defaulting to
     `NO_BOUND` (keep every candidate) when there is none.
-    `stale`, `cooldown`, and `vulnerable` are what the reference's comparison items set (see `Threshold`).
-    `ignore[stale<90]` sets a staleness threshold in days, `ignore[cooldown<30]` sets a cooldown in days, and
-    `ignore[vulnerable<high]` sets the risk level to warn from. A comparison running the wrong way sets none of
-    them, and is carried as the item to report.
+    `stale`, `cooldown`, and `vulnerable` are what the reference's `set` items set (see `Threshold`).
+    `set[stale-after=90]` sets a staleness threshold in days, `set[cooldown=30]` sets a cooldown in days, and
+    `set[vulnerability-level=high]` sets the risk level to warn from.
     `invalid_item` is the raw text of a bracket item that could not be parsed — an invalid version specifier,
     or an unrecognised item in a comma list — so the caller can warn and leave the reference unchanged; None otherwise.
-    `written_scopes` are the scopes the marker names, telling a scope the reader wrote from one a bare `ignore`
-    holds back without naming (see `as_written`); left out of comparisons, so two markers holding the same thing
-    back compare equal however each was spelled.
+    `written_scopes` are the scopes that are off by default whose `ignore` the marker writes out, so the default it
+    asks for wins over the flag opting every reference in; left out of comparisons, so a marker spelling the default
+    out compares equal to one that does not.
     `raw` is the marker's whole directive text exactly as it appears in the file, so the reference's marker can be
-    echoed to the user verbatim: rendering the marker gives all of it, `raw_directives` gives one verb's directives.
+    echoed to the user verbatim.
     """
 
     ignored_scopes: Scope = _NO_SCOPE
@@ -140,49 +124,17 @@ class Marker:
         """Render the marker as its verbatim directive text, exactly as the user spelled it."""
         return self.raw
 
-    @property
-    def holds_everything_back(self) -> bool:
-        """Return whether the marker leaves no check to run, so no source need be queried for the reference at all.
-
-        A marker holding back only some of the scopes still needs its sources, since the checks it leaves alone have
-        to run.
-        """
-        return _IGNORABLE_SCOPES in self.ignored_scopes
-
-    @property
-    def as_written(self) -> Marker:
-        """Return this marker holding back only the scopes it names.
-
-        Only a bare `ignore` holds a scope back without naming it, since every other directive names the scope it
-        sets, so `ignore ignore[yanked]` returns a marker holding back `yanked` alone.
-        """
-        if not self.holds_everything_back:
-            return self
-        return replace(self, ignored_scopes=self.ignored_scopes & self.written_scopes)
-
-    @property
-    def holds_back_source_checks(self) -> bool:
-        """Return whether the marker holds back every check the reference's own source answers."""
-        return _SOURCE_CHECK_SCOPES in self.ignored_scopes
-
-    @property
-    def update_directive(self) -> str:
-        """Return the directive ignoring or bounding the update, as the user wrote it."""
-        if self.ignores(Scope.UPDATE):
-            return self.written_directive(Scope.UPDATE)
-        return self.version_bound_directive
-
     def directive_for(self, scope: Scope) -> str:
         """Return the directive the marker carries for this scope, as the language spells it, or nothing for none.
 
         A scope taking more than one form is asked for the forms it takes: `vulnerable` names every one the
-        reference wrote, while `stale` and `cooldown` name the bare `ignore` ahead of the threshold, which wins.
+        reference wrote, while `stale` names the threshold it sets.
         It is empty exactly when the marker decides nothing for the scope, so a caller reads it as both.
         """
         if scope is Scope.VULNERABLE:
-            return self.vulnerable_directives
+            return self._vulnerable_directives
         if scope is Scope.STALE:
-            return self.stale_directive
+            return self.stale.directive
         if scope is Scope.COOLDOWN:
             return self.cooldown_directive
         return self.scope_directive(scope)
@@ -193,29 +145,25 @@ class Marker:
         return replace(self, ignored_scopes=self.ignored_scopes | Scope.UPDATE)
 
     def ignores(self, scope: Scope) -> bool:
-        """Return whether an `ignore` directive holds the scope back outright.
+        """Return whether the marker holds the scope back outright.
 
-        The bare form of a scope, which neither a threshold nor a bound can express: `ignore[stale]` silences the
-        staleness warning at every age where `ignore[stale<90]` sets what it warns at, and `ignore[update]` admits
-        no version where a bound narrows which ones it may take. A check whose forms fold into one decision reads
-        this alongside them (see `directive_for`).
+        The outright form of a scope is one that a bound cannot express: `ignore[update]` blocks every version, and a
+        bound narrows the versions an update may take. A check whose forms fold into one decision reads this alongside
+        them (see `directive_for`).
         """
         return scope in self.ignored_scopes
 
     @property
     def cooldown_directive(self) -> str:
-        """Return the directive that sets the cooldown, as the language spells it.
-
-        Either verb can set one, so the item the user wrote is named rather than a spelling of our own.
-        """
+        """Return the directive that sets the cooldown, as the language spells it."""
         return self.cooldown.directive
 
     @property
     def version_bound_directive(self) -> str:
         """Return the directive narrowing which versions an update may take, or nothing when the marker sets none.
 
-        The bound is named as the item the user wrote, since either verb can set one. An `ignore[update]` beside it
-        leaves it named, so a caller judging the two apart can name each.
+        The bound is named as the item the user wrote, since `ignore` and `allow` can each set one. An
+        `ignore[update]` beside it leaves it named, so a caller judging the two apart can name each.
         """
         return "" if self.version_bound == NO_BOUND else spell(self.version_bound)
 
@@ -223,8 +171,8 @@ class Marker:
     def bound_directive(self) -> str:
         """Return the directive bounding the update, as the language spells it, or nothing when the marker sets none.
 
-        A bare `ignore[update]` has one spelling only, so it is spelled out. Where a reference carries both, the
-        bare scope is named, since it holds every update back whatever the bound would admit.
+        An `ignore[update]` has one spelling, so it is spelled out. Where a reference carries both, the `ignore[update]`
+        is named, since it holds every update back whatever the bound would admit.
         """
         if self.ignores(Scope.UPDATE):
             return spell(BLOCK_ALL_UPDATES)
@@ -233,9 +181,9 @@ class Marker:
     def scope_directive(self, scope: Scope) -> str:
         """Return the directive steering the scope, as the language spells it, or nothing when it steers it not.
 
-        Only an `ignore` names a scope on its own, so the directive is spelled out rather than read back from the
-        text the user wrote. Spelling it out leaves out an `ignore` beside it that does hold something back, and
-        names the scope alone when it was written in a bracket it shares with other items.
+        A scope has one spelling, so the directive is spelled out rather than read back from the text the user wrote:
+        an `ignore` naming the scope. Spelling it out leaves out a directive beside it that does hold something back,
+        and names the scope alone when it was written in a bracket it shares with other items.
         """
         return _directive(Verb.IGNORE, str(scope)) if self.ignores(scope) else ""
 
@@ -252,16 +200,6 @@ class Marker:
         return _directive(Verb.ALLOW, str(scope)) if self.allows(scope) else ""
 
     @property
-    def stale_directive(self) -> str:
-        """Return the directive that decides the staleness check, as the language spells it.
-
-        A bare scope has one spelling only, so `ignore[stale]` is spelled out; a threshold is named as the item the
-        user wrote, since either verb can set one. Where a reference carries both, the bare scope is named, since
-        it silences the warning whatever the threshold says.
-        """
-        return self.scope_directive(Scope.STALE) or self.stale.directive
-
-    @property
     def advisory_directives(self) -> str:
         """Return the directive silencing the advisories the marker names, as the language spells it.
 
@@ -273,41 +211,26 @@ class Marker:
         return _directive(Verb.IGNORE, items) if items else ""
 
     @property
-    def vulnerable_directives(self) -> str:
+    def _vulnerable_directives(self) -> str:
         """Return every directive the marker's `vulnerable` scope carries, as the language spells them.
 
-        The scope has three forms and a reference can carry more than one at a time, so this names the lot. Where
-        one form alone is reported, that form's own directive is named instead, since the others may hold plenty
-        back.
+        The scope has two forms and a reference can carry both at a time, so this names both. Where one form alone is
+        reported, that form's own directive is named instead, since the other may hold plenty back.
         """
-        forms = (self.scope_directive(Scope.VULNERABLE), self.advisory_directives, self.vulnerable.directive)
+        forms = (self.advisory_directives, self.vulnerable.directive)
         return " ".join(form for form in forms if form)
-
-    def written_directive(self, scope: Scope) -> str:
-        """Return the directive steering this scope, as the user wrote it, or the bare `ignore` naming no scope.
-
-        Reading it off `as_written` leaves out a scope the user never typed, which a bare `ignore` steers without
-        naming, so such a marker is echoed rather than spelled out as a directive nobody wrote. The `vulnerable`
-        scope is asked for every form it takes, since any of the three can be the one steering it.
-        """
-        return self.as_written.directive_for(scope) or self.raw_directives(Verb.IGNORE)
-
-    def raw_directives(self, verb: Verb) -> str:
-        """Return just the directives of one verb, as the user spelled them."""
-        directives = (match for match in _DIRECTIVE.finditer(self.raw) if match.group("verb") == verb)
-        return " ".join(match.group().strip() for match in directives)
 
     def merge(self, other: Marker) -> Marker:
         """Return this marker combined with another one.
 
-        The scopes held back and the opt-ins combine as unions, so `ignore[update]` and `ignore[stale]` together hold
-        back as much as a bare `ignore`, and so do the advisories named, so two `vulnerable=ID` items silence the
-        warnings about both advisories. A value that cannot combine — a version bound, an invalid item, and the
-        thresholds `Threshold.merge` folds — is taken from the other marker only where this one leaves it unset, so
-        this marker's wins; the `raw` texts concatenate in order, this marker's first. A default `Marker()` leaves
-        every field unset, so it is the identity: merging it with any marker returns that marker's values. This lets
-        markers fold at every level — each item into a bracket's marker, each directive into a text's, and the
-        inline and comment-above texts into the line's.
+        The scopes held back and the opt-ins combine as unions, so `ignore[update]` and `ignore[yanked]` together
+        hold back both scopes, and so do the advisories named, so two `vulnerable=ID` items silence the warnings about
+        both advisories. A value that cannot combine — a version bound, an invalid item, and the thresholds
+        `Threshold.merge` folds — is taken from the other marker only where this one leaves it unset, so this marker's
+        wins; the `raw` texts concatenate in order, this marker's first. A default `Marker()` leaves every field unset,
+        so it is the identity: merging it with any marker returns that marker's values. This lets markers fold at every
+        level — each item into a bracket's marker, each directive into a text's, and the inline and comment-above
+        texts into the line's.
         """
         return Marker(
             ignored_scopes=self.ignored_scopes | other.ignored_scopes,
@@ -336,13 +259,10 @@ class ReferenceMarker:
     marker: Marker
 
 
-# The marker a bare `ignore` expresses: hold everything back.
-_BARE_IGNORE = Marker(ignored_scopes=_IGNORABLE_SCOPES)
-
-# The keyword bracket items each verb recognises, and the marker each expresses. An `ignore` takes a bare item per
-# scope, which holds that scope back and records that the reader named it, so the scopes decide what is recognised.
+# The keyword bracket items each verb recognises, and the marker each expresses. Each ignorable scope takes one item
+# that holds it back, so the scopes decide what is recognised.
 _KEYWORD_ITEMS = (
-    {(Verb.IGNORE, str(scope)): Marker(ignored_scopes=scope, written_scopes=scope) for scope in _IGNORABLE_SCOPES}
+    {(Verb.IGNORE, str(scope)): Marker(ignored_scopes=scope) for scope in _IGNORABLE_SCOPES}
     | {
         (Verb.ALLOW, str(Scope.UPDATE)): Marker(),  # bare `allow[update]`: the default no-op
     }
@@ -364,33 +284,25 @@ _COMMENT_LEADS = ("#", "//", "<!--")
 # Dockerfiles need, as they reject inline comments).
 _MARKER_PREFIX = re.compile(rf"(?:{'|'.join(re.escape(lead) for lead in _COMMENT_LEADS)})\s*update-time:\s*")
 
-# A single directive in a marker's directive list: a verb, optionally followed by a bracket. The `verb` group's
-# text is a `Verb` member value; the `\b` keeps a word merely starting with a verb (`ignores`) from matching. The
-# `bracket` group captures everything between the square brackets, and `unterminated` everything after a `[` that
-# is never closed, to the end of the line. The lookahead requires a `[` after `allow`, so a bare `allow` is not a
-# directive and a match with neither bracket group can only be an `ignore`. The trailing whitespace lets
-# consecutive directives be matched one after another.
-_DIRECTIVE = re.compile(r"(?P<verb>ignore\b|allow(?=\[))(?:\[(?P<bracket>[^\]]*)\]|\[(?P<unterminated>[^\]]*))?\s*")
+# A directive in a marker's directive list is a verb followed by a bracket. The `verb` group's text is a `Verb` member
+# value. The `bracket` group captures everything between the square brackets, and `unterminated` everything after a
+# `[` that is never closed, to the end of the line. A bare `ignore`, followed by whitespace or the end of the text,
+# matches with neither group, so it can be reported. A bare `allow` or `set` does not match, so it reads as the start
+# of the reason. The trailing whitespace lets consecutive directives be matched one after another.
+_DIRECTIVE = re.compile(
+    r"(?P<verb>ignore|allow(?=\[)|set(?=\[))(?:\[(?P<bracket>[^\]]*)\]|\[(?P<unterminated>[^\]]*)|(?=\s|$))\s*"
+)
 
-# A day-count bracket item: a keyword, a comparison operator, and a number of days (`stale<90`, `cooldown<30`). The
-# day count is captured loosely, so a malformed one is still recognised as such an item and reported as malformed.
-_DAY_COUNT_ITEM = re.compile(rf"(?P<keyword>{Scope.STALE}|{Scope.COOLDOWN})(?P<operator><|>=)(?P<days>.*)")
+# A day-count `set` item names the option it overrides and a number of days, as in `stale-after=90`.
+_SETTING_DAY_COUNT_ITEM = re.compile(rf"(?P<key>{_STALE_AFTER}|{_COOLDOWN})=(?P<days>\d+)")
 
-_DAY_COUNT = re.compile(r"\d+")
+# The `set` item for a risk level names the option it overrides and a risk level, as in `vulnerability-level=high`.
+_SETTING_RISK_LEVEL_ITEM = re.compile(rf"{_VULNERABILITY_LEVEL}=(?P<level>{'|'.join([*RISK_LEVELS, NO_RISK_LEVEL])})")
 
 # An advisory bracket item: the `vulnerable` scope narrowed to the advisory the identifier after the `=` names
 # (`vulnerable=GHSA-2gwj-7jmv-h26r`). The identifier is opaque to Update-time, so whatever follows the `=` is taken
 # as the user spelled it, and an item with nothing after the `=` names no advisory.
 _ADVISORY_ITEM = re.compile(rf"{Scope.VULNERABLE}=(?P<advisory>.+)")
-
-# A risk level bracket item: the `vulnerable` scope, a comparison operator, and a risk level (`vulnerable<high`). The
-# level is captured loosely, so a misspelled one is still recognised as such an item and reported as unreadable.
-_RISK_LEVEL_ITEM = re.compile(rf"{Scope.VULNERABLE}(?P<operator><|>=)(?P<level>.*)")
-
-# The operator each verb names a threshold with. A threshold is sensible only when it names the values from the
-# threshold upwards, so `ignore[stale<90]` and `allow[stale>=90]` set the same threshold, as do
-# `ignore[cooldown<30]` and `allow[cooldown>=30]`, and `ignore[vulnerable<high]` and `allow[vulnerable>=high]`.
-_THRESHOLD_OPERATOR = {Verb.IGNORE: "<", Verb.ALLOW: ">="}
 
 
 def parse_marker(line: Line) -> Marker:
@@ -437,13 +349,13 @@ def _parse_directive(directive: re.Match[str]) -> Marker:
     """Return the marker expressed by a single parsed directive.
 
     A bracket left unclosed is reported as an invalid item, keeping its `[` so the message shows that the bracket
-    was never closed. A directive with no bracket at all is the documented bare `ignore`, holding back everything.
-    A closed bracket, even one holding only an unrecognised item, is handled by `_parse_bracket` instead.
+    was never closed. A bare `ignore` is reported as an invalid item too. A closed bracket, even one holding
+    only an unrecognised item, is handled by `_parse_bracket`.
     """
     if (unterminated := directive.group("unterminated")) is not None:
         return Marker(invalid_item=f"[{unterminated}")
     if (bracket := directive.group("bracket")) is None:
-        return _BARE_IGNORE
+        return Marker(invalid_item=directive.group("verb"))
     return _parse_bracket(Verb(directive.group("verb")), bracket)
 
 
@@ -455,7 +367,7 @@ def _parse_bracket(verb: Verb, bracket: str) -> Marker:
     """
     marker = Marker()
     for item in _bracket_items(bracket):
-        item_marker = _parse_bracket_item(verb, item)
+        item_marker = _parse_setting_item(item) if verb is Verb.SET else _parse_bracket_item(verb, item)
         marker = marker.merge(item_marker if item_marker is not None else Marker(invalid_item=item))
     return marker
 
@@ -464,7 +376,7 @@ def _bracket_items(bracket: str) -> list[str]:
     """Split a bracket's contents into its comma-separated items, keeping compound specifiers together.
 
     A segment that starts with a specifier operator continues the previous item's specifier rather than starting a
-    new item, so `update>=3.10,<3.13, stale` is two items: the compound bound `update>=3.10,<3.13` and `stale`.
+    new item, so `update>=3.10,<3.13, yanked` is two items: the compound bound `update>=3.10,<3.13` and `yanked`.
     """
     items: list[str] = []
     for segment in bracket.split(","):
@@ -482,16 +394,23 @@ def _parse_bracket_item(verb: Verb, item: str) -> Marker | None:
         return keyword_marker
     if (advisory_marker := _parse_advisory_item(verb, item)) is not None:
         return advisory_marker
-    if (risk_level_marker := _parse_risk_level_item(verb, item)) is not None:
-        return risk_level_marker
-    if (day_count_marker := _parse_day_count_item(verb, item)) is not None:
-        return day_count_marker
     try:
         version_bound = parse_bound(verb, item)
     except InvalidSpecifier:
         # A bound's `update` names the item rather than the version it bounds, so the item reports its specifier.
         return Marker(invalid_item=item.removeprefix(str(Scope.UPDATE)))
     return Marker(version_bound=version_bound) if version_bound is not None else None
+
+
+def _parse_setting_item(item: str) -> Marker | None:
+    """Return the marker a `set` bracket item expresses, or None when the item sets nothing Update-time knows."""
+    directive = _directive(Verb.SET, item)
+    if (match := _SETTING_RISK_LEVEL_ITEM.fullmatch(item)) is not None:
+        return Marker(vulnerable=Threshold(value=match.group("level"), directive=directive))
+    if (match := _SETTING_DAY_COUNT_ITEM.fullmatch(item)) is None:
+        return None
+    day_count = Threshold(value=int(match.group("days")), directive=directive)
+    return Marker(stale=day_count) if match.group("key") == _STALE_AFTER else Marker(cooldown=day_count)
 
 
 def _parse_advisory_item(verb: Verb, item: str) -> Marker | None:
@@ -505,49 +424,3 @@ def _parse_advisory_item(verb: Verb, item: str) -> Marker | None:
     if match is None or verb is not Verb.IGNORE:
         return None
     return Marker(ignored_advisories=frozenset({match.group("advisory")}))
-
-
-def _threshold[T](verb: Verb, match: re.Match[str], value: T) -> Threshold[T]:
-    """Return the threshold the matched comparison item sets, or the item itself when it compares the wrong way.
-
-    Each verb names a threshold with one operator (see `_THRESHOLD_OPERATOR`), so the other operator sets nothing and
-    leaves the item to be reported. Said once here, since every comparison item is read this way.
-    """
-    if match.group("operator") != _THRESHOLD_OPERATOR[verb]:
-        return Threshold(inverted_item=match.group())
-    return Threshold(value=value, directive=_directive(verb, match.group()))
-
-
-def _parse_risk_level_item(verb: Verb, item: str) -> Marker | None:
-    """Return the marker a risk level bracket item expresses, or None when the item names no risk level.
-
-    Both `ignore[vulnerable<high]` and `allow[vulnerable>=high]` set a threshold of `high`, so the reference is
-    warned about from that level up. The verb's other operator names the levels below the threshold rather than the
-    ones from it up, which the item cannot express, so an inverted item is returned for the caller to report. A level
-    outside `RISK_LEVELS` makes the item an invalid one, and is judged before the direction, so `vulnerable>=hgih` is
-    reported as an unreadable level rather than as an inverted comparison.
-    """
-    match = _RISK_LEVEL_ITEM.fullmatch(item)
-    if match is None:
-        return None
-    if (level := match.group("level")) not in RISK_LEVELS:
-        return Marker(invalid_item=item)
-    return Marker(vulnerable=_threshold(verb, match, level))
-
-
-def _parse_day_count_item(verb: Verb, item: str) -> Marker | None:
-    """Return the marker a day-count bracket item expresses, or None when the item is not a day-count.
-
-    Both `ignore[stale<90]` and `allow[stale>=90]` set a staleness threshold of 90 days, and both
-    `ignore[cooldown<30]` and `allow[cooldown>=30]` set a cooldown of 30 days. The verb's other operator names the
-    fresh ages rather than the old ones, which neither item can express, so an inverted item of either keyword is
-    returned for the caller to report. An unreadable day count makes the item an invalid one, and is judged before
-    the direction, so `stale>=1.5` is reported as an unreadable count rather than as an inverted comparison.
-    """
-    match = _DAY_COUNT_ITEM.fullmatch(item)
-    if match is None:
-        return None
-    if _DAY_COUNT.fullmatch(days := match.group("days")) is None:
-        return Marker(invalid_item=item)
-    day_count = _threshold(verb, match, int(days))
-    return Marker(stale=day_count) if match.group("keyword") == str(Scope.STALE) else Marker(cooldown=day_count)
