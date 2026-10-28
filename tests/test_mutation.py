@@ -286,7 +286,10 @@ class CheckTest(unittest.TestCase):
             'cast("_Function", self.anchor.fget) if isinstance(self.anchor, property) else self.anchor',
             "self.anchor",
             "a property anchor is passed on as it is, so the run ends with a traceback",
-            raises="AttributeError: 'property' object has no attribute '__module__'. Did you mean: '__reduce__'?",
+            raises=(
+                "AttributeError: 'property' object has no attribute '__module__'. "
+                "Did you mean '.__reduce__' instead of '.__module__'?"
+            ),
         )
     )
     def test_a_mutation_anchored_to_a_property_is_applied_inside_its_getter(self):
@@ -302,7 +305,7 @@ class CheckTest(unittest.TestCase):
             "a cached property anchor is passed on as it is, so the run ends with a traceback",
             raises=(
                 "AttributeError: 'cached_property' object has no attribute '__qualname__'. "
-                "Did you mean: '__set_name__'?"
+                "Did you mean '.__set_name__' instead of '.__qualname__'?"
             ),
         )
     )
