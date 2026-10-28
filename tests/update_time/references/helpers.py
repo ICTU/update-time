@@ -26,18 +26,13 @@ def new_version_getter(version: VersionString, sha: str = "") -> NewVersionGette
     return lambda *_args, **_kwargs: DependencyVersion(version=version, sha=sha)
 
 
-def mock_new_version_getter() -> Mock:
-    """Return a mock new-version getter that claims no source capability, as an unregistered getter claims none.
+def mock_project_getter() -> Mock:
+    """Return a mock project getter that does not claim a source capability, as an unregistered getter does not.
 
     A bare `Mock` grows any attribute it is asked for, so it would claim every capability a caller reads off a
     getter (see `primitives.capability`). Specifying it against a callable keeps it callable and lets those reads
-    answer as they do for a source that registers nothing, which the two getters below are specified for too.
+    answer as they do for a source that registers nothing, which the resolver below is specified for too.
     """
-    return Mock(spec=Callable)
-
-
-def mock_project_getter() -> Mock:
-    """Return a mock project getter that claims no source capability, as `mock_new_version_getter` explains."""
     return Mock(spec=Callable, return_value=Project())
 
 

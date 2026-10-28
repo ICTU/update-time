@@ -81,16 +81,16 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_no_warnings_logged()
 
     def test_marker_ignore_holds_the_entry_back(self, mock_glob: Mock):
-        """Test that an `# update-time: ignore` marker above an entry holds it back, even with a newer release."""
-        version_file = self.update_version_file(mock_glob, "# update-time: ignore\n3.12.6\n")
+        """Test that an `# update-time: ignore[update]` marker above an entry holds it back, despite a newer release."""
+        version_file = self.update_version_file(mock_glob, "# update-time: ignore[update]\n3.12.6\n")
         version_file.write_text.assert_not_called()
         self.assert_ignored_logged("python", Location(version_file, 2))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
     def test_inline_marker_ignore(self, mock_glob: Mock):
-        """Test that an inline `# update-time: ignore` marker on the entry's own line holds it back too."""
-        version_file = self.update_version_file(mock_glob, "3.12.6  # update-time: ignore\n")
+        """Test that an inline `# update-time: ignore[update]` marker on the entry's own line holds it back too."""
+        version_file = self.update_version_file(mock_glob, "3.12.6  # update-time: ignore[update]\n")
         version_file.write_text.assert_not_called()
         self.assert_ignored_logged("python", Location(version_file, 1))
         self.assert_no_new_version_logged()
@@ -115,14 +115,14 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
 
     def test_the_cooldown_scope_is_not_reported_as_redundant(self, mock_glob: Mock):
         """Test that a `cooldown` marker on an entry is not reported as redundant."""
-        version_file = self.update_version_file(mock_glob, "# update-time: ignore[cooldown<30]\n3.12.6\n")
-        version_file.write_text.assert_called_once_with("# update-time: ignore[cooldown<30]\n3.13.2\n")
+        version_file = self.update_version_file(mock_glob, "# update-time: set[cooldown=30]\n3.12.6\n")
+        version_file.write_text.assert_called_once_with("# update-time: set[cooldown=30]\n3.13.2\n")
         self.assert_no_warnings_logged()
 
     def test_the_stale_scope_warns_at_its_own_threshold(self, mock_glob: Mock):
         """Test that a `stale` threshold on an entry warns at that threshold, rather than being redundant."""
-        version_file = self.update_version_file(mock_glob, "# update-time: ignore[stale<90]\n3.12.6\n")
-        version_file.write_text.assert_called_once_with("# update-time: ignore[stale<90]\n3.13.2\n")
+        version_file = self.update_version_file(mock_glob, "# update-time: set[stale-after=90]\n3.12.6\n")
+        version_file.write_text.assert_called_once_with("# update-time: set[stale-after=90]\n3.13.2\n")
         self.assert_stale_dependency_logged("python", "3.13.2", Location(version_file, 2))
 
     def test_the_yanked_vulnerable_and_archived_scopes_are_reported_as_redundant(self, mock_glob: Mock):
@@ -130,7 +130,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         for directive, reason in (
             ("ignore[archived]", Reason.NO_ARCHIVAL_SIGNAL),
             ("ignore[yanked]", Reason.NO_YANK_CONCEPT),
-            ("ignore[vulnerable]", Reason.NO_VULNERABILITY_REPORTS),
+            ("set[vulnerability-level=none]", Reason.NO_VULNERABILITY_REPORTS),
         ):
             with self.subTest(directive=directive):
                 version_file = self.update_version_file(mock_glob, f"# update-time: {directive}\n3.12.6\n")

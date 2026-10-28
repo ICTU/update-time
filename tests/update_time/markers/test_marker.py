@@ -10,11 +10,10 @@ from pathlib import Path
 from update_time.domain.bound import Verb
 from update_time.domain.line import Line
 from update_time.markers import marker as marker_module
-from update_time.markers.marker import _IGNORABLE_SCOPES, Marker, Scope, Threshold, parse_directives, parse_marker
+from update_time.markers.marker import Marker, Scope, Threshold, parse_directives, parse_marker
 from update_time.primitives.location import Location
 
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import BARE_IGNORE
 from tests.update_time.helpers import bound
 
 # Advisory identifiers, for the tests of the `vulnerable=ID` bracket item. An advisory is known by identifiers of
@@ -58,86 +57,12 @@ class MergeTest(unittest.TestCase):
 
     def test_raw_texts_concatenate_in_order(self):
         """Test that merging keeps both verbatim directive runs, this marker's first, so the echo reads in order."""
-        merged = Marker(raw="allow[update<3.13]").merge(Marker(raw="ignore[stale]"))
-        self.assertEqual(merged.raw, "allow[update<3.13] ignore[stale]")
+        merged = Marker(raw="allow[update<3.13]").merge(Marker(raw="ignore[yanked]"))
+        self.assertEqual(merged.raw, "allow[update<3.13] ignore[yanked]")
 
     def test_raw_is_excluded_from_equality(self):
         """Test that two markers meaning the same thing compare equal however their directives were spelled."""
         self.assertEqual(Marker(ignored_scopes=Scope.UPDATE, raw="ignore[update]"), Marker(ignored_scopes=Scope.UPDATE))
-
-
-class HoldsEverythingBackTest(unittest.TestCase):
-    """Unit tests for whether a marker leaves any check to run, and so any source to query."""
-
-    def test_only_a_marker_naming_every_scope_holds_everything_back(self):
-        """Test that a bare `ignore` and every scope named together hold everything back, one scope short does not."""
-        cases = {
-            "ignore": True,
-            "ignore[update, stale, yanked, vulnerable, archived]": True,
-            "ignore[stale, yanked, vulnerable, archived]": False,
-            "ignore[update, yanked, vulnerable, archived]": False,
-            "ignore[update, stale, vulnerable, archived]": False,
-            "ignore[update, stale, yanked, archived]": False,
-            "ignore[update, stale, yanked, vulnerable]": False,
-            "ignore[update]": False,
-            "ignore[stale]": False,
-            "ignore[yanked]": False,
-            "ignore[vulnerable]": False,
-            "ignore[archived]": False,
-        }
-        for directive, expected in cases.items():
-            with self.subTest(directive=directive):
-                marker = parse_marker(_line(f"dependency  # update-time: {directive}"))
-                self.assertEqual(marker.holds_everything_back, expected)
-
-
-class HoldsBackSourceChecksTest(unittest.TestCase):
-    """Unit tests for whether a marker holds back every check the reference's own source answers."""
-
-    def test_only_the_scopes_the_source_answers_hold_back_the_source_checks(self):
-        """Test that every scope the reference's own source answers must be held back.
-
-        A `vulnerable` scope beside them changes nothing, since OSV answers that check rather than the source.
-        """
-        cases = {
-            "ignore": True,
-            "ignore[update, stale, yanked, archived]": True,
-            "ignore[update, stale, yanked, archived, vulnerable]": True,
-            "ignore[stale, yanked, archived]": False,
-            "ignore[update, yanked, archived]": False,
-            "ignore[update, stale, archived]": False,
-            "ignore[update, stale, yanked]": False,
-            "ignore[vulnerable]": False,
-        }
-        for directive, expected in cases.items():
-            with self.subTest(directive=directive):
-                marker = parse_marker(_line(f"dependency  # update-time: {directive}"))
-                self.assertEqual(marker.holds_back_source_checks, expected)
-
-
-class AsWrittenTest(unittest.TestCase):
-    """Unit tests for the marker with the scopes it never spelled out cleared."""
-
-    @kills(
-        Mutation(
-            marker_module,
-            "Marker(ignored_scopes=scope, written_scopes=scope)",
-            "Marker(ignored_scopes=scope)",
-            "a scope the reader spelled out is discarded, instead of being kept",
-        )
-    )
-    def test_only_the_scopes_the_marker_spelled_out_survive(self):
-        """Test that a scope a bare `ignore` implies is cleared, while one written beside it is kept."""
-        cases = {
-            "ignore": Marker(),
-            "ignore[yanked]": Marker(ignored_scopes=Scope.YANKED),
-            "ignore ignore[yanked]": Marker(ignored_scopes=Scope.YANKED),
-            "ignore[update, stale, yanked, vulnerable, archived]": BARE_IGNORE,
-        }
-        for directive, expected in cases.items():
-            with self.subTest(directive=directive):
-                marker = parse_marker(_line(f"dependency  # update-time: {directive}"))
-                self.assertEqual(marker.as_written, expected)
 
 
 class DirectiveTest(unittest.TestCase):
@@ -149,34 +74,28 @@ class DirectiveTest(unittest.TestCase):
 
     def test_a_scope_the_marker_leaves_live_is_named_by_nothing(self):
         """Test that a scope the marker does not hold back names no directive."""
-        self.assertEqual(self.marker("ignore[stale]").scope_directive(Scope.YANKED), "")
+        self.assertEqual(self.marker("set[stale-after=0]").scope_directive(Scope.YANKED), "")
 
     def test_a_scope_is_named_alone(self):
         """Test that a scope names its own directive, leaving out an `ignore` beside it that holds plenty back."""
         self.assertEqual(self.marker("ignore[update] ignore[yanked]").scope_directive(Scope.YANKED), "ignore[yanked]")
 
-    def test_a_threshold_is_named_as_the_reader_wrote_it(self):
-        """Test that a `stale` threshold is named as the item the reader wrote, whichever verb set it."""
-        for directive in ("ignore[stale<90]", "allow[stale>=90]"):
-            with self.subTest(directive=directive):
-                self.assertEqual(self.marker(f"{directive} allow[hash-drift]").stale_directive, directive)
+    def test_a_threshold_is_named_alone(self):
+        """Test that a staleness threshold is named as its own directive, leaving out a directive beside it."""
+        marker = self.marker("set[stale-after=90] allow[hash-drift]")
+        self.assertEqual(marker.directive_for(Scope.STALE), "set[stale-after=90]")
 
-    def test_the_bare_stale_scope_is_named_over_a_threshold_beside_it(self):
-        """Test that a marker carrying both is reported under the bare scope, which silences the warning outright."""
-        self.assertEqual(self.marker("ignore[stale] ignore[stale<90]").stale_directive, "ignore[stale]")
-
-    def test_a_cooldown_item_is_named_as_the_reader_wrote_it(self):
-        """Test that a cooldown is named as the item the reader wrote, leaving out a directive beside it."""
-        for directive in ("ignore[cooldown<30]", "allow[cooldown>=30]"):
-            with self.subTest(directive=directive):
-                self.assertEqual(self.marker(f"{directive} allow[hash-drift]").cooldown_directive, directive)
+    def test_a_cooldown_is_named_alone(self):
+        """Test that a cooldown is named as its own directive, leaving out a directive beside it."""
+        marker = self.marker("set[cooldown=30] allow[hash-drift]")
+        self.assertEqual(marker.cooldown_directive, "set[cooldown=30]")
 
     def test_every_vulnerable_form_the_marker_carries_is_named(self):
         """Test that each `vulnerable` form is named, the advisories sharing a bracket and sorted within it."""
-        marker = self.marker("ignore[vulnerable, vulnerable=CVE-2, vulnerable=CVE-1, vulnerable<high]")
+        marker = self.marker("ignore[vulnerable=CVE-2, vulnerable=CVE-1] set[vulnerability-level=high]")
         self.assertEqual(
-            marker.vulnerable_directives,
-            "ignore[vulnerable] ignore[vulnerable=CVE-1, vulnerable=CVE-2] ignore[vulnerable<high]",
+            marker.directive_for(Scope.VULNERABLE),
+            "ignore[vulnerable=CVE-1, vulnerable=CVE-2] set[vulnerability-level=high]",
         )
 
 
@@ -188,30 +107,16 @@ class RawTextTest(unittest.TestCase):
         marker = Marker(raw="ignore[update] allow[hash-drift]")
         self.assertEqual(str(marker), "ignore[update] allow[hash-drift]")
 
-    def test_keeps_only_the_given_verbs_directives(self):
-        """Test that with a verb only that verb's directives are kept, the other verb's directive left out."""
-        marker = Marker(raw="ignore[update] allow[hash-drift]")
-        self.assertEqual(marker.raw_directives(Verb.IGNORE), "ignore[update]")
-        self.assertEqual(marker.raw_directives(Verb.ALLOW), "allow[hash-drift]")
-
-    def test_combined_scopes_stay_as_written(self):
-        """Test that combined scopes are kept verbatim, not collapsed to a bare `ignore`."""
-        marker = Marker(raw="ignore[update] ignore[stale]")
-        self.assertEqual(marker.raw_directives(Verb.IGNORE), "ignore[update] ignore[stale]")
-
-    def test_empty_without_a_matching_directive(self):
-        """Test that a marker whose `raw` holds no directive of the verb yields an empty text."""
-        self.assertEqual(Marker(raw="allow[update<3.13]").raw_directives(Verb.IGNORE), "")
-
 
 class ParseMarkerScopeTest(unittest.TestCase):
     """Unit tests for what an `ignore` directive's bracket expresses."""
 
-    def test_a_bare_item_holds_its_own_scope_back_alone(self):
-        """Test that each scope named alone holds that scope back and no other."""
-        for scope in _IGNORABLE_SCOPES:
-            with self.subTest(scope=scope):
-                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: ignore[{scope}]"))
+    def test_an_ignore_item_holds_its_own_scope_back_alone(self):
+        """Test that an `ignore` naming a scope it can hold back holds that scope back and leaves the others alone."""
+        cases = {"ignore[update]": Scope.UPDATE, "ignore[yanked]": Scope.YANKED, "ignore[archived]": Scope.ARCHIVED}
+        for directive, scope in cases.items():
+            with self.subTest(directive=directive):
+                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: {directive}"))
                 self.assertEqual(marker, Marker(ignored_scopes=scope))
 
     def test_a_scope_naming_its_own_default_is_recognised(self):
@@ -221,16 +126,26 @@ class ParseMarkerScopeTest(unittest.TestCase):
                 marker = parse_marker(_line(f"humanize==4.15.0  # update-time: ignore[{scope}]"))
                 self.assertEqual(marker, Marker(written_scopes=scope))
 
-    def test_a_scope_taking_no_bare_item_is_reported_as_invalid(self):
-        """Test that a scope with no bare form is reported as an invalid item."""
-        # The two scopes that are off by default are left out: their `ignore` names the default, so it is read.
-        for scope in set(Scope) - set(_IGNORABLE_SCOPES) - {Scope.HASH_DRIFT, Scope.FLOATING_PIN}:
-            with self.subTest(scope=scope):
-                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: ignore[{scope}]"))
-                self.assertEqual(marker, Marker(invalid_item=str(scope)))
+    def test_a_verb_naming_a_scope_a_set_item_steers_is_reported_as_invalid(self):
+        """Test that `ignore` or `allow` naming a scope a `set` item steers, such as `stale`, is an invalid item."""
+        for verb in (Verb.IGNORE, Verb.ALLOW):
+            for scope in (Scope.STALE, Scope.VULNERABLE, Scope.COOLDOWN):
+                with self.subTest(directive=f"{verb}[{scope}]"):
+                    marker = parse_marker(_line(f"humanize==4.15.0  # update-time: {verb}[{scope}]"))
+                    self.assertEqual(marker, Marker(invalid_item=str(scope)))
+
+    def test_a_comparison_setting_a_value_is_reported_as_invalid(self):
+        """Test that a comparison item, whichever verb and operator it takes, is reported as an invalid item."""
+        for verb in (Verb.IGNORE, Verb.ALLOW):
+            for operator in ("<", ">="):
+                for keyword, value in (("stale", "90"), ("cooldown", "30"), ("vulnerable", "high")):
+                    item = f"{keyword}{operator}{value}"
+                    with self.subTest(verb=verb, item=item):
+                        marker = parse_marker(_line(f"humanize==4.15.0  # update-time: {verb}[{item}]"))
+                        self.assertEqual(marker, Marker(invalid_item=item))
 
     def test_unrecognised_scope_is_reported_as_invalid(self):
-        """Test that a typo'd scope is reported as an invalid item rather than standing in for a bare `ignore`."""
+        """Test that a typo'd scope is reported as an invalid item rather than read as a directive."""
         marker = parse_marker(_line("humanize==4.15.0  # update-time: ignore[updaet]"))
         self.assertEqual(marker, Marker(invalid_item="updaet"))
 
@@ -239,16 +154,10 @@ class ParseMarkerScopeTest(unittest.TestCase):
         marker = parse_marker(_line("humanize==4.15.0  # update-time: ignore[update<4"))
         self.assertEqual(marker, Marker(invalid_item="[update<4"))
 
-    def test_only_a_bound_is_reported_without_its_update_prefix(self):
-        """Test that an unreadable bound is reported as the specifier it holds, and every other item whole."""
-        for case, (item, reported) in {
-            "a bound": ("update<<3.13", "<<3.13"),
-            "a day count": ("stale>=1.5", "stale>=1.5"),
-            "a risk level": ("vulnerable<hgih", "vulnerable<hgih"),
-        }.items():
-            with self.subTest(case=case):
-                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: allow[{item}]"))
-                self.assertEqual(marker, Marker(invalid_item=reported))
+    def test_an_unreadable_bound_is_reported_without_its_update_prefix(self):
+        """Test that an unreadable bound is reported as the specifier it holds."""
+        marker = parse_marker(_line("humanize==4.15.0  # update-time: allow[update<<3.13]"))
+        self.assertEqual(marker, Marker(invalid_item="<<3.13"))
 
 
 class ParseMarkerAdvisoryTest(unittest.TestCase):
@@ -280,106 +189,59 @@ class ParseMarkerAdvisoryTest(unittest.TestCase):
         self.assertEqual(marker, Marker(invalid_item=f"vulnerable={_GHSA}"))
 
 
-class ParseMarkerVulnerabilityThresholdTest(unittest.TestCase):
-    """Unit tests for the risk level a `vulnerable` bracket item sets as the threshold for the reference carrying it."""
+class ParseMarkerSetTest(unittest.TestCase):
+    """Unit tests for the value a `set` bracket item sets for the reference carrying it."""
 
-    def test_either_verb_sets_the_threshold(self):
-        """Test that `ignore[vulnerable<high]` and `allow[vulnerable>=high]` both set a threshold of high."""
-        for verb, item in ((Verb.IGNORE, "vulnerable<high"), (Verb.ALLOW, "vulnerable>=high")):
+    def test_each_item_sets_its_value(self):
+        """Test that each `set` item sets the value of the option it names."""
+        cases = {
+            "stale-after=90": Marker(stale=Threshold(value=90)),
+            "stale-after=0": Marker(stale=Threshold(value=0)),
+            "stale-after=00": Marker(stale=Threshold(value=0)),
+            "cooldown=30": Marker(cooldown=Threshold(value=30)),
+            "vulnerability-level=high": Marker(vulnerable=Threshold(value="high")),
+            "vulnerability-level=none": Marker(vulnerable=Threshold(value="none")),
+        }
+        for item, expected in cases.items():
             with self.subTest(item=item):
-                marker = parse_marker(_line(f"django==3.2.0  # update-time: {verb}[{item}]"))
-                self.assertEqual(marker, Marker(vulnerable=Threshold(value="high")))
-
-    def test_inverted_directions_set_no_threshold(self):
-        """Test that an inverted comparison sets no threshold, the item carried for the caller to report."""
-        for verb, item in ((Verb.ALLOW, "vulnerable<high"), (Verb.IGNORE, "vulnerable>=high")):
-            with self.subTest(item=item):
-                marker = parse_marker(_line(f"django==3.2.0  # update-time: {verb}[{item}]"))
-                self.assertEqual(marker, Marker(vulnerable=Threshold(inverted_item=item)))
-
-    def test_a_level_the_command_line_takes_but_the_marker_language_does_not_is_rejected(self):
-        """Test that a word only the command line accepts is reported, so a marker names a risk level alone."""
-        for case, level in {"the command line's off switch": "none", "a level in upper case": "HIGH"}.items():
-            item = f"vulnerable<{level}"
-            with self.subTest(case=case):
-                marker = parse_marker(_line(f"django==3.2.0  # update-time: ignore[{item}]"))
-                self.assertEqual(marker, Marker(invalid_item=item))
-
-    def test_unreadable_risk_level_is_rejected(self):
-        """Test that a level Update-time cannot read is reported, for either verb and either operator."""
-        for verb in Verb:
-            for operator in ("<", ">="):
-                for level in ("hgih", ""):
-                    item = f"vulnerable{operator}{level}"
-                    with self.subTest(verb=verb, item=item):
-                        marker = parse_marker(_line(f"django==3.2.0  # update-time: {verb}[{item}]"))
-                        self.assertEqual(marker, Marker(invalid_item=item))
-
-
-class ParseMarkerStaleThresholdTest(unittest.TestCase):
-    """Unit tests for the staleness threshold a `stale` bracket item sets for the reference carrying it."""
-
-    def test_either_verb_sets_the_threshold(self):
-        """Test that `ignore[stale<90]` and `allow[stale>=90]` both set a staleness threshold of 90 days."""
-        for verb, item in ((Verb.IGNORE, "stale<90"), (Verb.ALLOW, "stale>=90")):
-            with self.subTest(item=item):
-                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: {verb}[{item}]"))
-                self.assertEqual(marker, Marker(stale=Threshold(value=90)))
-
-    def test_inverted_directions_set_no_threshold(self):
-        """Test that `allow[stale<90]` and `ignore[stale>=90]` set no threshold, each carried as its inverted item."""
-        for verb, item in ((Verb.ALLOW, "stale<90"), (Verb.IGNORE, "stale>=90")):
-            with self.subTest(item=item):
-                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: {verb}[{item}]"))
-                self.assertEqual(marker, Marker(stale=Threshold(inverted_item=item)))
-
-
-class ParseMarkerCooldownTest(unittest.TestCase):
-    """Unit tests for the cooldown a `cooldown` bracket item sets for the reference carrying it."""
-
-    def test_either_verb_sets_the_cooldown(self):
-        """Test that `ignore[cooldown<30]` and `allow[cooldown>=30]` both set a cooldown of 30 days."""
-        for verb, item in ((Verb.IGNORE, "cooldown<30"), (Verb.ALLOW, "cooldown>=30")):
-            with self.subTest(item=item):
-                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: {verb}[{item}]"))
-                self.assertEqual(marker, Marker(cooldown=Threshold(value=30)))
-
-    def test_inverted_directions_set_no_cooldown(self):
-        """Test that `allow[cooldown<30]` and `ignore[cooldown>=30]` set no cooldown, each carried as its item."""
-        for verb, item in ((Verb.ALLOW, "cooldown<30"), (Verb.IGNORE, "cooldown>=30")):
-            with self.subTest(item=item):
-                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: {verb}[{item}]"))
-                self.assertEqual(marker, Marker(cooldown=Threshold(inverted_item=item)))
+                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: set[{item}]"))
+                self.assertEqual(marker, expected)
 
     @kills(
         Mutation(
             marker_module,
-            "for scope in _IGNORABLE_SCOPES",
-            "for scope in Scope",
-            "a bare cooldown is accepted as a scope rather than rejected, because the check ranges over every "
-            "scope instead of only the ignorable ones",
-        )
+            "(?P<key>{_STALE_AFTER}|{_COOLDOWN})",
+            r"(?P<key>[\w-]+)",
+            "a `set` item takes any key, so one naming a scope rather than an option sets a value",
+        ),
+        Mutation(
+            marker_module,
+            r"=(?P<days>\d+)",
+            r"=(?P<days>-?\d+)",
+            "a `set` item takes a negative day count",
+        ),
+        Mutation(
+            marker_module,
+            "(?P<level>{'|'.join([*RISK_LEVELS, NO_RISK_LEVEL])})",
+            r"(?P<level>\w+)",
+            "a `set` item takes any word as a risk level",
+        ),
     )
-    def test_a_bare_cooldown_item_is_rejected(self):
-        """Test that `cooldown` without a day count sets no cooldown, whichever verb it follows."""
-        for verb in Verb:
-            with self.subTest(verb=verb):
-                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: {verb}[cooldown]"))
-                self.assertEqual(marker, Marker(invalid_item="cooldown"))
-
-
-class ParseMarkerDayCountTest(unittest.TestCase):
-    """Unit tests for the day count both the `stale` and the `cooldown` bracket items take."""
-
-    def test_malformed_day_count_is_rejected(self):
-        """Test that a day count that is not a whole number of days is reported, for either item and either operator."""
-        for keyword in ("stale", "cooldown"):
-            for operator in ("<", ">="):
-                for days in ("-5", "1.5", "10,<30"):
-                    item = f"{keyword}{operator}{days}"
-                    with self.subTest(item=item):
-                        marker = parse_marker(_line(f"humanize==4.15.0  # update-time: ignore[{item}]"))
-                        self.assertEqual(marker, Marker(invalid_item=item))
+    def test_an_unreadable_item_is_rejected(self):
+        """Test that a `set` item Update-time cannot read is reported as an invalid item."""
+        cases = {
+            "a key without a value": "cooldown",
+            "a key naming a scope": "stale=90",
+            "a key naming a bound": "update=3.13",
+            "a negative day count": "cooldown=-5",
+            "a fractional day count": "stale-after=1.5",
+            "a misspelled risk level": "vulnerability-level=hgih",
+            "a comparison": "cooldown<30",
+        }
+        for case, item in cases.items():
+            with self.subTest(case=case):
+                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: set[{item}]"))
+                self.assertEqual(marker, Marker(invalid_item=item))
 
 
 class ParseMarkerPrecedenceTest(unittest.TestCase):
@@ -388,15 +250,12 @@ class ParseMarkerPrecedenceTest(unittest.TestCase):
     # The inline directive, the one on the line above, and the marker the two of them merge to.
     CASES = (
         ("allow[update<3.13]", "allow[update<4]", Marker(version_bound=bound(Verb.ALLOW, "update<3.13"))),
-        ("ignore[stale<30]", "ignore[stale<90]", Marker(stale=Threshold(value=30))),
-        ("ignore[cooldown<30]", "ignore[cooldown<90]", Marker(cooldown=Threshold(value=30))),
-        ("ignore[vulnerable<high]", "ignore[vulnerable<critical]", Marker(vulnerable=Threshold(value="high"))),
-        ("ignore[stale>=30]", "ignore[stale>=90]", Marker(stale=Threshold(inverted_item="stale>=30"))),
-        ("ignore[cooldown>=30]", "ignore[cooldown>=90]", Marker(cooldown=Threshold(inverted_item="cooldown>=30"))),
+        ("set[stale-after=30]", "set[stale-after=90]", Marker(stale=Threshold(value=30))),
+        ("set[cooldown=30]", "set[cooldown=90]", Marker(cooldown=Threshold(value=30))),
         (
-            "ignore[vulnerable>=high]",
-            "ignore[vulnerable>=critical]",
-            Marker(vulnerable=Threshold(inverted_item="vulnerable>=high")),
+            "set[vulnerability-level=high]",
+            "set[vulnerability-level=critical]",
+            Marker(vulnerable=Threshold(value="high")),
         ),
         ("ignore[stlae]", "ignore[updaet]", Marker(invalid_item="stlae")),
     )
@@ -407,21 +266,6 @@ class ParseMarkerPrecedenceTest(unittest.TestCase):
             with self.subTest(inline=inline):
                 marker = parse_marker(_line(f"image: python:3.12  # update-time: {inline}", f"# update-time: {above}"))
                 self.assertEqual(marker, expected)
-
-    @kills(
-        Mutation(
-            Threshold.merge,
-            "directive=sets_value.directive,",
-            "directive=other.directive or self.directive,",
-            "the directive on the line above is named for the value the inline one set",
-        )
-    )
-    def test_the_inline_directive_is_named_for_the_value_it_set(self):
-        """Test that where both placements set a cooldown, the merged marker names the inline directive."""
-        marker = parse_marker(
-            _line("image: python:3.12  # update-time: allow[cooldown>=30]", "# update-time: ignore[cooldown<90]")
-        )
-        self.assertEqual(marker.cooldown_directive, "allow[cooldown>=30]")
 
     def test_every_field_that_cannot_combine_has_a_case(self):
         """Test that the cases pin every field `Marker.merge` takes from one marker."""
@@ -436,8 +280,8 @@ class ParseMarkerRawTest(unittest.TestCase):
 
     def test_verbatim_directives(self):
         """Test that the parsed marker keeps the directives exactly as written."""
-        marker = parse_marker(_line("image: python:3.12  # update-time: ignore[update] ignore[stale]"))
-        self.assertEqual(marker.raw, "ignore[update] ignore[stale]")
+        marker = parse_marker(_line("image: python:3.12  # update-time: ignore[update] set[stale-after=0]"))
+        self.assertEqual(marker.raw, "ignore[update] set[stale-after=0]")
 
     def test_comma_combined_items_kept_together(self):
         """Test that comma-combined bracket items are kept as one directive, not split apart."""
@@ -451,15 +295,15 @@ class ParseMarkerRawTest(unittest.TestCase):
 
     def test_trailing_reason_left_out(self):
         """Test that free text after the last directive (a reason) is not part of the captured text."""
-        marker = parse_marker(_line("image: python:3.12  # update-time: ignore[stale] (until the migration)"))
-        self.assertEqual(marker.raw, "ignore[stale]")
+        marker = parse_marker(_line("image: python:3.12  # update-time: set[stale-after=0] (until the migration)"))
+        self.assertEqual(marker.raw, "set[stale-after=0]")
 
     def test_directives_across_two_lines_are_ordered_inline_first(self):
         """Test that a marker split over a line and the comment above it captures both, inline directives first."""
         marker = parse_marker(
-            _line("image: python:3.14  # update-time: allow[update<3.15]", "# update-time: ignore[stale]")
+            _line("image: python:3.14  # update-time: allow[update<3.15]", "# update-time: set[stale-after=0]")
         )
-        self.assertEqual(marker.raw, "allow[update<3.15] ignore[stale]")
+        self.assertEqual(marker.raw, "allow[update<3.15] set[stale-after=0]")
 
     def test_no_marker_has_empty_raw(self):
         """Test that a line without a marker parses to an empty verbatim text, so nothing is echoed for it."""
@@ -471,8 +315,8 @@ class ParseMarkerCommentTest(unittest.TestCase):
 
     def test_an_xml_comment_carries_a_marker(self):
         """Test that a marker in an XML comment is read."""
-        marker = parse_marker(_line("<version>6.1.0</version>  <!-- update-time: ignore[stale] -->"))
-        self.assertEqual(marker, Marker(ignored_scopes=Scope.STALE))
+        marker = parse_marker(_line("<version>6.1.0</version>  <!-- update-time: set[stale-after=0] -->"))
+        self.assertEqual(marker, Marker(stale=Threshold(value=0)))
 
 
 class ParseDirectivesTest(unittest.TestCase):
@@ -480,20 +324,35 @@ class ParseDirectivesTest(unittest.TestCase):
 
     # Each case: the directive list, the marker it expresses, and the verbatim text the marker keeps.
     CASES = (
-        ("ignore", BARE_IGNORE, "ignore"),
-        ("ignore[stale]", Marker(ignored_scopes=Scope.STALE), "ignore[stale]"),
+        ("ignore", Marker(invalid_item="ignore"), "ignore"),
+        ("allow", Marker(), ""),
+        ("set", Marker(), ""),
+        ("ignore[yanked] allow it for now", Marker(ignored_scopes=Scope.YANKED), "ignore[yanked]"),
+        ("ignore[yanked] set by the security team", Marker(ignored_scopes=Scope.YANKED), "ignore[yanked]"),
         (
-            "ignore[stale] allow[update<23]",
-            Marker(ignored_scopes=Scope.STALE, version_bound=bound(Verb.ALLOW, "update<23")),
-            "ignore[stale] allow[update<23]",
+            "ignore ignore[yanked]",
+            Marker(ignored_scopes=Scope.YANKED, invalid_item="ignore"),
+            "ignore ignore[yanked]",
+        ),
+        ("ignore (pinned on purpose)", Marker(invalid_item="ignore"), "ignore"),
+        ("set[stale-after=0]", Marker(stale=Threshold(value=0)), "set[stale-after=0]"),
+        (
+            "set[stale-after=0] allow[update<23]",
+            Marker(stale=Threshold(value=0), version_bound=bound(Verb.ALLOW, "update<23")),
+            "set[stale-after=0] allow[update<23]",
         ),
         (
             "allow[update<3.15, hash-drift]",
             Marker(version_bound=bound(Verb.ALLOW, "update<3.15"), allowed_scopes=Scope.HASH_DRIFT),
             "allow[update<3.15, hash-drift]",
         ),
+        (
+            "set[stale-after=90, cooldown=30]",
+            Marker(stale=Threshold(value=90), cooldown=Threshold(value=30)),
+            "set[stale-after=90, cooldown=30]",
+        ),
         ("ignore[updaet]", Marker(invalid_item="updaet"), "ignore[updaet]"),
-        ("ignore[stale] (until the migration)", Marker(ignored_scopes=Scope.STALE), "ignore[stale]"),
+        ("set[stale-after=0] (until the migration)", Marker(stale=Threshold(value=0)), "set[stale-after=0]"),
         ("", Marker(), ""),
     )
 

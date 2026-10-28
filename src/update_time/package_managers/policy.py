@@ -48,8 +48,6 @@ def _report_reference_marker[ReferenceT: SteeredReference](
 ) -> Marker:
     """Report the reference's marker, and return it, frozen where an item is invalid."""
     holds_the_update_back = policy.freezes_the_pin(reference) and reference.marker.ignores(Scope.UPDATE)
-    marker = log.report_marker(
+    return log.report_marker(
         reference.dependency, reference.marker, reference.location, holds_the_update_back=holds_the_update_back
     )
-    log.report_inverted_items(reference, reference.marker)
-    return marker

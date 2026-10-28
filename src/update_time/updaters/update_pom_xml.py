@@ -133,21 +133,19 @@ def _report_markers(declared: list[Declaration]) -> None:
         )
         if held_back:
             _LOG.holding_back_range(declaration, held_back, declaration.marker.version_bound_directive)
-        _LOG.report_inverted_items(declaration, declaration.marker)
         _report_redundant_directives(declaration)
 
 
 def _report_redundant_directives(declaration: Declaration) -> None:
     """Report as redundant each directive that decides nothing for the declaration."""
-    as_written = declaration.marker.as_written
+    marker = declaration.marker
     if reason := _why_maven_leaves_the_version(declaration):
-        for steering in filter(None, (as_written.bound_directive, as_written.cooldown_directive)):
+        for steering in filter(None, (marker.bound_directive, marker.cooldown_directive)):
             _LOG.redundant_directive(declaration, steering, reason)
     else:
-        _LOG.warn_if_redundant_bound(declaration, declaration.marker)
-    if yanked := as_written.directive_for(Scope.YANKED):
+        _LOG.warn_if_redundant_bound(declaration, marker)
+    if yanked := marker.directive_for(Scope.YANKED):
         _LOG.redundant_directive(declaration, yanked, Reason.NO_YANK_CONCEPT)
-    marker = declaration.marker
     warn_if_the_opt_in_is_redundant(
         declaration, marker, _LOG, Scope.FLOATING_PIN, Reason.PIN_NOT_FLOATING, update_held_back=False
     )
@@ -166,21 +164,21 @@ def _why_maven_leaves_the_version(declaration: Declaration) -> Reason | None:
 def _report_scopes_checked_at_the_managing_declaration(left_to_another: list[Declaration]) -> None:
     """Report the `stale`, `archived`, and `vulnerable` scopes of each declaration as redundant."""
     for declaration in left_to_another:
-        as_written = declaration.marker.as_written
         for scope in (Scope.STALE, Scope.ARCHIVED, Scope.VULNERABLE):
-            if directive := as_written.directive_for(scope):
+            if directive := declaration.marker.directive_for(scope):
                 _LOG.redundant_directive(declaration, directive, Reason.CHECKED_AT_THE_MANAGING_DECLARATION)
 
 
 def _report_scopes_on_artefacts_maven_central_does_not_serve(declared: list[Declaration]) -> None:
     """Report as redundant each `cooldown`, `stale`, and `archived` scope on an artefact Maven Central does not serve.
 
-    A `cooldown` counts only where Maven updates the version.
+    A `cooldown` counts only where Maven updates the version, and an `archived` scope only in a run that checks
+    archival, since a run switching that check off makes it redundant for its own reason.
     """
     for declaration in declared:
-        as_written = declaration.marker.as_written
-        cooldown = as_written.cooldown_directive if declaration.maven_updates_the_version else ""
-        check_directives = (as_written.directive_for(Scope.STALE), as_written.directive_for(Scope.ARCHIVED))
+        cooldown = declaration.marker.cooldown_directive if declaration.maven_updates_the_version else ""
+        archived = declaration.marker.directive_for(Scope.ARCHIVED) if archival_is_checked() else ""
+        check_directives = (declaration.marker.directive_for(Scope.STALE), archived)
         directives = list(filter(None, (cooldown, *check_directives)))
         if directives and not maven_central.serves(declaration.dependency):
             for directive in directives:
@@ -192,7 +190,7 @@ def _report_archived_scopes_without_a_github_repository(declared: list[Declarati
     if not archival_is_checked():
         return
     for declaration in declared:
-        archived = declaration.marker.as_written.directive_for(Scope.ARCHIVED)
+        archived = declaration.marker.directive_for(Scope.ARCHIVED)
         if archived and maven_central.lacks_a_github_repository(declaration.dependency):
             _LOG.redundant_directive(declaration, archived, Reason.NO_GITHUB_REPOSITORY)
 
@@ -213,7 +211,7 @@ def _warn_about_vulnerabilities(declared: list[Declaration]) -> None:
         if pom_xml_format.fully_resolved(declaration.pinned):
             resolved.append(declaration)
         elif declaration.resolved_by_effective_pom and (
-            vulnerable := declaration.marker.as_written.directive_for(Scope.VULNERABLE)
+            vulnerable := declaration.marker.directive_for(Scope.VULNERABLE)
         ):
             _LOG.redundant_directive(declaration, vulnerable, Reason.NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY)
     warn_about_vulnerable_dependencies([resolved], Ecosystem.MAVEN, _LOG)

@@ -14,7 +14,7 @@ from update_time.domain.archival import archival_is_checked, reports_archival
 from update_time.domain.bound import BLOCK_ALL_UPDATES
 from update_time.domain.dependency import DependencyName, DependencyVersion
 from update_time.domain.image_lookup import why_image_not_looked_up
-from update_time.domain.staleness import STALE_AFTER, release_judged_alike, staleness_is_checked
+from update_time.domain.staleness import STALE_AFTER, release_judged_alike, stale_release, staleness_is_checked
 from update_time.markers.cooldown import cooldown_days
 from update_time.markers.directive import DIRECTIVES, HELD_BACK_OPT_INS, Consequence, ImageNotLookedUpReason, Reason
 from update_time.markers.marker import Scope
@@ -29,15 +29,13 @@ if TYPE_CHECKING:
     from update_time.markers.marker import Marker
 
 
-def report_directives_that_set_nothing(
+def report_directives_the_source_cannot_apply(
     marker: Marker, get_new_version: NewVersionGetter, reference: Reference, log: Logger
 ) -> None:
-    """Report what sets nothing: each item with an inverted comparison, and each directive the source cannot apply."""
-    log.report_inverted_items(reference, marker)
-    as_written = marker.as_written
+    """Report each directive the source cannot apply, since it sets nothing."""
     image_not_looked_up = why_image_not_looked_up(get_new_version, reference.pinned)
     for directive in DIRECTIVES:
-        if (written := as_written.directive_for(directive.scope)) and not directive.is_applied_by(
+        if (written := marker.directive_for(directive.scope)) and not directive.is_applied_by(
             get_new_version, reference.pinned
         ):
             log.redundant_directive(reference, written, directive.reason_given(image_not_looked_up))
@@ -72,17 +70,25 @@ def warn_if_the_opt_in_is_redundant(  # noqa: PLR0913 — whether the update is 
         log.redundant_directive(reference, marker.allow_directive(scope), redundancy)
 
 
-def _why_the_pin_never_floats(latest: DependencyVersion | None) -> RedundancyReason | None:
-    """Return why the reference's pin never floats, or None where it may float or the run did not resolve a version."""
-    if latest is None:
-        return None
+def warn_if_the_archival_check_is_off(
+    source: object, subject: object, reference: Reference, marker: Marker, log: Logger
+) -> None:
+    """Warn that the marker's `archived` scope is redundant where the run switches off the check the source runs."""
+    if archival_is_checked() or not reports_archival(source, subject):
+        return
+    if directive := marker.directive_for(Scope.ARCHIVED):
+        log.redundant_directive(reference, directive, Reason.ARCHIVAL_CHECK_OFF)
+
+
+def _why_the_pin_never_floats(latest: DependencyVersion) -> RedundancyReason | None:
+    """Return why the reference's pin never floats, or None where it may float."""
     if latest.image_not_looked_up is not None:
         return ImageNotLookedUpReason(latest.image_not_looked_up, Consequence.TAG_NEVER_PINNED)
     return None if latest.floating is not None else Reason.PIN_NOT_FLOATING
 
 
 def _warn_if_the_floating_pin_is_redundant(
-    marker: Marker, reference: Reference, log: Logger, latest: DependencyVersion | None
+    marker: Marker, reference: Reference, log: Logger, latest: DependencyVersion
 ) -> None:
     """Warn when the marker's directive to keep the pin floating is redundant, saying why."""
     reason = _why_the_pin_never_floats(latest)
@@ -91,7 +97,7 @@ def _warn_if_the_floating_pin_is_redundant(
     )
 
 
-def staleness_threshold(marker: Marker) -> int:
+def _staleness_threshold(marker: Marker) -> int:
     """Return the number of days the reference is checked for staleness against: its own, or the run's."""
     return marker.stale.value_or(STALE_AFTER.get())
 
@@ -104,10 +110,8 @@ def latest_version(
 ) -> DependencyVersion | None:
     """Return the latest version to update the reference to, or None when the marker holds the update back."""
     log.warn_if_redundant_bound(reference, marker)
-    report_directives_that_set_nothing(marker, get_new_version, reference, log)
-    if marker.holds_back_source_checks:
-        _warn_if_the_floating_pin_is_redundant(marker, reference, log, latest=None)
-        return None
+    report_directives_the_source_cannot_apply(marker, get_new_version, reference, log)
+    warn_if_the_archival_check_is_off(get_new_version, reference.pinned, reference, marker, log)
     version_bound = BLOCK_ALL_UPDATES if marker.ignores(Scope.UPDATE) else marker.version_bound
     days = cooldown_days(marker)
     latest = get_new_version(reference.pinned, version_bound, days, check_archival=archival_is_checked())
@@ -120,19 +124,31 @@ def latest_version(
     return None if marker.ignores(Scope.UPDATE) else latest
 
 
-def project_is_checked(source: object, dependency: DependencyName, threshold: int) -> bool:
-    """Return whether a project check runs: the staleness check at this threshold, or the archival check.
+def project_is_checked(source: object, dependency: DependencyName, marker: Marker) -> bool:
+    """Return whether a project check runs: the run's staleness check, the archival check, or the marker's threshold.
 
-    The archival check has no threshold of its own, so `--ignore-archived` is what switches it off.
+    The marker's threshold is judged for redundancy against the newest release, a threshold of 0 days included.
     """
-    return staleness_is_checked(threshold) or (archival_is_checked() and reports_archival(source, dependency))
+    if marker.stale.value is not None or staleness_is_checked(STALE_AFTER.get()):
+        return True
+    return archival_is_checked() and reports_archival(source, dependency)
 
 
 def report_project(resolved: SteeredResolvedReference, log: Logger) -> None:
     """Report the staleness and the archival of a project a source has already answered for."""
-    log.report_staleness(resolved, resolved.marker, staleness_threshold(resolved.marker))
+    log.report_staleness(resolved, _staleness_threshold(resolved.marker))
+    _log_if_the_staleness_threshold_silences_a_warning(resolved, log)
     _warn_if_the_staleness_threshold_is_redundant(resolved, log)
     log.report_archival(resolved, resolved.marker)
+
+
+def _log_if_the_staleness_threshold_silences_a_warning(resolved: SteeredResolvedReference, log: Logger) -> None:
+    """Log that the marker's staleness threshold keeps quiet about a newest release the run's threshold warns about."""
+    threshold = resolved.marker.stale
+    if threshold.value is None or stale_release(resolved.release, threshold.value) is not None:
+        return
+    if stale_release(resolved.release, STALE_AFTER.get()) is not None:
+        log.ignored_staleness(resolved, threshold.directive)
 
 
 def _warn_if_the_staleness_threshold_is_redundant(resolved: SteeredResolvedReference, log: Logger) -> None:
@@ -146,10 +162,8 @@ def _warn_if_the_staleness_threshold_is_redundant(resolved: SteeredResolvedRefer
 
 def report_project_checks(reference: Reference, marker: Marker, log: Logger, get_project: ProjectGetter) -> None:
     """Ask the source about the reference's project, where a check needs it, and report what it answers."""
-    if marker.holds_everything_back:
-        return
-    threshold = staleness_threshold(marker)
-    if not project_is_checked(get_project, reference.dependency, threshold):
+    warn_if_the_archival_check_is_off(get_project, reference.dependency, reference, marker, log)
+    if not project_is_checked(get_project, reference.dependency, marker):
         return
     release = DependencyVersion.unpinned(get_project(reference.dependency, check_archival=archival_is_checked()))
     resolved = SteeredResolvedReference.from_reference(reference, release=release, marker=marker)

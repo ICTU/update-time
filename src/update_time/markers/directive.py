@@ -26,6 +26,7 @@ class Reason(StrEnum):
     NO_STALENESS_DATES = "this dependency's source does not report a publication date to measure staleness against"
     NO_YANK_CONCEPT = "this dependency's source does not record a yank"
     NO_ARCHIVAL_SIGNAL = "this dependency's source does not publish an archival signal"
+    ARCHIVAL_CHECK_OFF = "--ignore-archived switches the archival check off for the run"
     NO_VERSION_TO_UPDATE = "this requirement does not pin a version to update"
     BOUND_DECIDES_NOTHING = "the package manager resolves this dependency's version, so a bound decides nothing"
     FOLLOWS_A_BRANCH = (

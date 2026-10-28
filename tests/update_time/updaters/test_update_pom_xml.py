@@ -29,7 +29,7 @@ from update_time.updaters.update_pom_xml import update_pom_xmls
 
 from tests.helpers import mock_path, patch_environ, patch_get, patch_pathlib_path, requested_urls
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import BARE_IGNORE
+from tests.update_time.fixtures import VULNERABILITY_LEVEL_NONE
 from tests.update_time.helpers import (
     GUAVA,
     LoggingTestCase,
@@ -562,12 +562,6 @@ class UpdatePomXmlTest(LoggingTestCase):
                 6,
                 "ignore[update]",
             ),
-            "a version under a bare ignore": (
-                _pom_marking_guava("ignore"),
-                GUAVA,
-                6,
-                "ignore",
-            ),
             "an update ignored beside a bound": (
                 _pom_marking_guava("ignore[update] allow[update<34]"),
                 GUAVA,
@@ -609,7 +603,7 @@ class UpdatePomXmlTest(LoggingTestCase):
     def test_a_cooldown_or_a_bound_is_not_reported_as_holding_the_update_back(self, mock_run: Mock, mock_glob: Mock):
         """Test that a marker setting a cooldown or a bound is reported as recognised, and not as holding back."""
         for directives, marker in {
-            "ignore[cooldown<30]": Marker(cooldown=Threshold(value=30)),
+            "set[cooldown=30]": Marker(cooldown=Threshold(value=30)),
             "allow[update<34]": Marker(version_bound=bound(Verb.ALLOW, "update<34")),
         }.items():
             with self.subTest(directives=directives):
@@ -646,10 +640,10 @@ class UpdatePomXmlTest(LoggingTestCase):
     )
     def test_a_marker_two_declarations_of_one_artefact_share_is_reported_once(self, mock_run: Mock, mock_glob: Mock):
         """Test that a marker on a property both declarations of an artefact name, and its range, are reported once."""
-        properties = _marked_property("guava.version", "33.0.0-jre", "ignore[stale, update>=34]")
+        properties = _marked_property("guava.version", "33.0.0-jre", "ignore[update>=34] set[stale-after=0]")
         pom = self.find_pom(mock_run, mock_glob, _guava_twice_by_property(properties))
         update_pom_xmls()
-        marker = Marker(ignored_scopes=Scope.STALE, version_bound=bound(Verb.IGNORE, "update>=34"))
+        marker = Marker(stale=Threshold(value=0), version_bound=bound(Verb.IGNORE, "update>=34"))
         self.assert_recognised_marker_logged(GUAVA, Location(pom, 3), marker)
         self.assertEqual(len(self.records_of(message_of(Logger.recognised_marker))), 1)
         self.assertEqual(len(self.records_of(message_of(Logger.holding_back_range))), 1)
@@ -674,8 +668,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._report_scopes_on_artefacts_maven_central_does_not_serve,
-            'as_written.cooldown_directive if declaration.maven_updates_the_version else ""',
-            "as_written.cooldown_directive",
+            'declaration.marker.cooldown_directive if declaration.maven_updates_the_version else ""',
+            "declaration.marker.cooldown_directive",
             "a `cooldown` on a version Maven does not update is reported twice, once for each reason",
         )
     )
@@ -684,7 +678,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         markers = {
             "ignore[update]": Marker(ignored_scopes=Scope.UPDATE),
             "allow[update>=33]": Marker(version_bound=bound(Verb.ALLOW, "update>=33")),
-            "ignore[cooldown<30]": Marker(cooldown=Threshold(value=30)),
+            "set[cooldown=30]": Marker(cooldown=Threshold(value=30)),
         }
         for directive, marker in markers.items():
             with self.subTest(directive=directive):
@@ -738,30 +732,22 @@ class UpdatePomXmlTest(LoggingTestCase):
         self.assert_invalid_bracket_item_logged(GUAVA, Location(pom, 6), "stlae")
         self.assert_none_logged(message_of(Logger.recognised_marker), "recognised marker")
 
-    def test_an_inverted_cooldown_is_reported_and_leaves_the_runs_cooldown(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a cooldown comparing the wrong way is reported as incorrect, and the run's cooldown applies."""
-        pom = self.find_marked_pom(mock_run, mock_glob, "ignore[cooldown>=30]")
-        with self.hold_back({GUAVA: ("33.7.1-jre",)}):
-            update_pom_xmls()
-        self.assert_logged(
-            message_of(Logger._inverted_cooldown_item), item="cooldown>=30", dependency=GUAVA, location=Location(pom, 6)
-        )
-        self.assertEqual(self.rule_sets, [_GUAVA_33_7_1_HELD_BACK])
-
     def test_a_marker_silences_the_staleness_warning(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a dependency whose marker ignores staleness is reported as silenced rather than as stale."""
-        pom = self.find_marked_pom(mock_run, mock_glob, "ignore[stale]")
+        """Test that a dependency whose marker sets `stale-after=0` is reported as silenced rather than as stale."""
+        pom = self.find_marked_pom(mock_run, mock_glob, "set[stale-after=0]")
         with _stale_release():
             update_pom_xmls()
-        self.assert_ignored_staleness_logged(GUAVA, Location(pom, 6))
         self.assert_no_warnings_logged()
+        self.assert_ignored_staleness_logged(GUAVA, Location(pom, 6), "set[stale-after=0]")
 
     def test_a_marker_silences_the_vulnerability_warning(self, mock_run: Mock, mock_glob: Mock):
         """Test that a dependency whose marker ignores vulnerabilities is reported as silenced, not as vulnerable."""
-        pom = self.find_marked_pom(mock_run, mock_glob, "ignore[vulnerable]")
+        pom = self.find_marked_pom(mock_run, mock_glob, "set[vulnerability-level=none]")
         with osv(ADVISORY):
             update_pom_xmls()
-        self.assert_ignored_vulnerability_logged(GUAVA, Location(pom, 6), VULNERABILITY.advisory, "ignore[vulnerable]")
+        self.assert_ignored_vulnerability_logged(
+            GUAVA, Location(pom, 6), VULNERABILITY.advisory, "set[vulnerability-level=none]"
+        )
         self.assert_no_warnings_logged()
 
     @kills(
@@ -773,14 +759,11 @@ class UpdatePomXmlTest(LoggingTestCase):
         )
     )
     def test_the_yanked_scope_is_reported_as_redundant(self, mock_run: Mock, mock_glob: Mock):
-        """Test that the `yanked` scope is reported as redundant, named alone beside an item or a bare `ignore`."""
-        for directives in ("ignore[update,yanked]", "ignore ignore[yanked]"):
-            with self.subTest(directives=directives):
-                pom = self.find_marked_pom(mock_run, mock_glob, directives)
-                update_pom_xmls()
-                self.assert_redundant_directive_logged(
-                    Reason.NO_YANK_CONCEPT, GUAVA, Location(pom, 6), "ignore[yanked]"
-                )
+        """Test that the `yanked` scope is reported as redundant, named alone beside another item."""
+        directives = "ignore[update,yanked]"
+        pom = self.find_marked_pom(mock_run, mock_glob, directives)
+        update_pom_xmls()
+        self.assert_redundant_directive_logged(Reason.NO_YANK_CONCEPT, GUAVA, Location(pom, 6), "ignore[yanked]")
 
     def test_an_opt_in_is_reported_as_redundant(self, mock_run: Mock, mock_glob: Mock):
         """Test that each opt-in is reported for the reason it decides nothing."""
@@ -793,17 +776,9 @@ class UpdatePomXmlTest(LoggingTestCase):
                 update_pom_xmls()
                 self.assert_redundant_directive_logged(reason, GUAVA, Location(pom, 6), directive)
 
-    @kills(
-        Mutation(
-            update_pom_xml_module._report_scopes_on_artefacts_maven_central_does_not_serve,
-            "directive_for(Scope.STALE)",
-            "scope_directive(Scope.STALE)",
-            "only a bare `ignore[stale]` is reported, so a threshold on an unserved artefact is not",
-        ),
-    )
     def test_a_scope_on_an_artefact_maven_central_does_not_serve_is_redundant(self, mock_run: Mock, mock_glob: Mock):
         """Test that a scope on an artefact whose listing Maven Central does not serve is reported as redundant."""
-        for directive in ("ignore[cooldown<30]", "ignore[stale]", "ignore[stale<90]", "ignore[archived]"):
+        for directive in ("set[cooldown=30]", "set[stale-after=0]", "set[stale-after=90]", "ignore[archived]"):
             with self.subTest(directive=directive):
                 pom = self.find_marked_pom(mock_run, mock_glob, directive)
                 with (
@@ -813,14 +788,29 @@ class UpdatePomXmlTest(LoggingTestCase):
                     update_pom_xmls()
                 self.assert_redundant_directive_logged(Reason.NOT_ON_MAVEN_CENTRAL, GUAVA, Location(pom, 6), directive)
 
+    @archival_check_disabled
+    def test_an_archived_scope_on_an_unserved_artefact_is_redundant_once_with_the_archival_check_off(
+        self, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that an `ignore[archived]` on an unserved artefact is reported once, as the run's switched-off check."""
+        pom = self.find_marked_pom(mock_run, mock_glob, "ignore[archived]")
+        with (
+            patch.object(maven_central_module, "serves", maven_central_serves),
+            patch_get(ok=False, status_code=404, reason="Not Found", text=""),
+        ):
+            update_pom_xmls()
+        self.assert_redundant_directive_logged(Reason.ARCHIVAL_CHECK_OFF, GUAVA, Location(pom, 6), "ignore[archived]")
+
     def test_a_vulnerable_scope_on_an_artefact_maven_central_does_not_serve_is_not_redundant(
         self, mock_run: Mock, mock_glob: Mock
     ):
         """Test that a `vulnerable` scope on an artefact Maven Central does not serve is not redundant."""
-        pom = self.find_marked_pom(mock_run, mock_glob, "ignore[stale, vulnerable]")
+        pom = self.find_marked_pom(mock_run, mock_glob, "set[stale-after=0] set[vulnerability-level=none]")
         with osv(ADVISORY), patch.object(maven_central_module, "serves", Mock(return_value=False)):
             update_pom_xmls()
-        self.assert_redundant_directive_logged(Reason.NOT_ON_MAVEN_CENTRAL, GUAVA, Location(pom, 6), "ignore[stale]")
+        self.assert_redundant_directive_logged(
+            Reason.NOT_ON_MAVEN_CENTRAL, GUAVA, Location(pom, 6), "set[stale-after=0]"
+        )
 
     def test_an_archived_scope_on_an_artefact_without_a_github_repository_is_redundant(
         self, mock_run: Mock, mock_glob: Mock
@@ -850,15 +840,15 @@ class UpdatePomXmlTest(LoggingTestCase):
         )
     )
     @archival_check_disabled
-    def test_a_run_that_checks_nothing_for_archival_reads_no_pom_to_judge_an_archived_scope(
+    def test_a_run_that_checks_nothing_for_archival_reports_an_archived_scope_without_reading_a_pom(
         self, mock_run: Mock, mock_glob: Mock
     ):
-        """Test that a run with the archival check switched off does not fetch a pom to judge an `archived` scope."""
-        self.find_marked_pom(mock_run, mock_glob, "ignore[archived]")
+        """Test that a run with the archival check switched off reports the `archived` scope without fetching a pom."""
+        pom = self.find_marked_pom(mock_run, mock_glob, "ignore[archived]")
         with self.maven_central_answering(_POM_OUTSIDE_GITHUB) as mock_get:
             update_pom_xmls()
         self.assertEqual(requested_urls(mock_get), [maven_central_listing_url(GUAVA)])
-        self.assert_no_redundant_directive_logged()
+        self.assert_redundant_directive_logged(Reason.ARCHIVAL_CHECK_OFF, GUAVA, Location(pom, 6), "ignore[archived]")
 
     @kills(
         Mutation(
@@ -880,8 +870,8 @@ class UpdatePomXmlTest(LoggingTestCase):
         """Test that Maven Central is asked only about the artefact marked with a `cooldown`, `stale`, or `archived`."""
         commons_io = dependency_element("commons-io", "commons-io", "2.16.1")
         declared = pom_declaring(
-            marked_at_its_version(guava_element("33.0.0-jre"), "ignore[vulnerable]"),
-            marked_at_its_version(commons_io, "ignore[stale, archived]"),
+            marked_at_its_version(guava_element("33.0.0-jre"), "set[vulnerability-level=none]"),
+            marked_at_its_version(commons_io, "ignore[archived] set[stale-after=0]"),
         )
         self.find_pom(mock_run, mock_glob, declared)
         with (
@@ -895,17 +885,20 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._warn_about_vulnerabilities,
-            "as_written.directive_for(Scope.VULNERABLE)",
-            "as_written.scope_directive(Scope.VULNERABLE)",
-            "only a bare `ignore[vulnerable]` is reported, so a level or an advisory on an unresolved version is not",
+            "declaration.marker.directive_for(Scope.VULNERABLE)",
+            "declaration.marker.scope_directive(Scope.VULNERABLE)",
+            "a `set` item on a version Maven leaves unresolved is not reported, nor is an advisory",
         )
     )
     def test_a_vulnerable_scope_on_an_unresolved_version_is_redundant(self, mock_run: Mock, mock_glob: Mock):
         """Test that a `vulnerable` scope on a version Maven leaves unresolved is reported as redundant."""
-        pom = self.find_unresolved_pom(mock_run, mock_glob, "ignore[vulnerable<high]")
+        pom = self.find_unresolved_pom(mock_run, mock_glob, "set[vulnerability-level=high]")
         update_pom_xmls()
         self.assert_redundant_directive_logged(
-            Reason.NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY, GUAVA, Location(pom, 7), "ignore[vulnerable<high]"
+            Reason.NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
+            GUAVA,
+            Location(pom, 7),
+            "set[vulnerability-level=high]",
         )
 
     @kills(
@@ -924,38 +917,11 @@ class UpdatePomXmlTest(LoggingTestCase):
         }
         for case, (element, artefact) in cases.items():
             with self.subTest(case=case):
-                declared = pom_declaring(marked_at_its_version(element, "ignore[vulnerable]"))
+                declared = pom_declaring(marked_at_its_version(element, "set[vulnerability-level=none]"))
                 pom = self.find_pom(mock_run, mock_glob, declared, effective_pom="")
                 update_pom_xmls()
-                marker = Marker(ignored_scopes=Scope.VULNERABLE)
+                marker = VULNERABILITY_LEVEL_NONE
                 self.assert_recognised_marker_logged(artefact, Location(pom, 6), marker)
-                self.assert_no_redundant_directive_logged()
-
-    @kills(
-        Mutation(
-            update_pom_xml_module._warn_about_vulnerabilities,
-            "declaration.marker.as_written.directive_for(Scope.VULNERABLE)",
-            "declaration.marker.directive_for(Scope.VULNERABLE)",
-            "a bare `ignore` reads as naming `vulnerable`, so it is reported as redundant on an unresolved version",
-        ),
-        Mutation(
-            update_pom_xml_module._report_scopes_checked_at_the_managing_declaration,
-            "declaration.marker.as_written",
-            "declaration.marker",
-            "a bare `ignore` reads as naming each check's scope, so it is redundant on a version a scanned pom manages",
-        ),
-    )
-    def test_a_bare_ignore_is_not_reported_as_redundant(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a bare `ignore` is not reported as redundant, on a version the pom does not hold or resolve."""
-        cases = {
-            "an unresolved version": (self.find_unresolved_pom, 7),
-            "a version a scanned parent manages": (self.find_child_leaving_its_version, 5),
-        }
-        for case, (find, line) in cases.items():
-            with self.subTest(case=case):
-                pom = find(mock_run, mock_glob, "ignore")
-                update_pom_xmls()
-                self.assert_recognised_marker_logged(GUAVA, Location(pom, line), BARE_IGNORE)
                 self.assert_no_redundant_directive_logged()
 
     def test_osv_is_asked_about_the_version_the_run_lands_on(self, mock_run: Mock, mock_glob: Mock):
@@ -1148,7 +1114,7 @@ class UpdatePomXmlTest(LoggingTestCase):
     )
     def test_a_check_scope_on_a_version_a_scanned_pom_manages_is_redundant(self, mock_run: Mock, mock_glob: Mock):
         """Test that a scope steering a check of a child leaving its version to a scanned parent is redundant."""
-        for directive in ("ignore[stale<90]", "ignore[archived]", "ignore[vulnerable<high]"):
+        for directive in ("set[stale-after=90]", "ignore[archived]", "set[vulnerability-level=high]"):
             with self.subTest(directive=directive):
                 child_pom = self.find_child_leaving_its_version(mock_run, mock_glob, directive)
                 with patch.object(maven_central_module, "serves", Mock(return_value=False)):
@@ -1160,7 +1126,7 @@ class UpdatePomXmlTest(LoggingTestCase):
     def test_a_child_overriding_its_managed_version_keeps_its_checks_and_marker(self, mock_run: Mock, mock_glob: Mock):
         """Test that a child overriding its managed version is checked at its own, and its marker is not redundant."""
         child = pom_declaring(
-            _marked_at_its_element(guava_element(None), "ignore[stale]"),
+            _marked_at_its_element(guava_element(None), "set[stale-after=0]"),
             coordinates=SCANNED_POM_COORDINATES,
             properties=properties_element({"guava.version": "33.7.1-jre"}),
         )
@@ -1347,12 +1313,6 @@ class UpdatePomXmlTest(LoggingTestCase):
             "def project",
             "the repository reports no archival, so a switched-off staleness check skips the pom it reads",
         ),
-        Mutation(
-            delegated_module.project_resolver,
-            "archival_reporting(resolve, when=partial(reports_archival, get_project))",
-            "resolve",
-            "a resolver reports no archival though its source does, so the same switched-off check skips it",
-        ),
     )
     @staleness_disabled
     def test_staleness_disabled_still_warns_about_an_archived_dependency(self, mock_run: Mock, mock_glob: Mock):
@@ -1438,13 +1398,12 @@ class UpdatePomXmlTest(LoggingTestCase):
         self.assert_maven_ran(mock_run, rules=_RULES)
 
     def test_a_marker_holding_every_version_back_gets_a_rule_for_every_version(self, mock_run: Mock, mock_glob: Mock):
-        """Test that an `ignore`, an unreadable item, or a bound naming a non-release holds every version back."""
+        """Test that `ignore[update]`, an unreadable item, or a bound naming a non-release holds every version back."""
         for directives in (
             "ignore[update]",
             "ignore[update] allow[update<34]",
-            "ignore",
             "ignore[stlae]",
-            "ignore[cooldown<30, stlae]",
+            "set[cooldown=30, stlae]",
             "ignore[update<=34.1rc1]",
             "ignore[update===nightly]",
         ):
@@ -1618,7 +1577,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         """Test that a twice-declared artefact's rule holds back what either marker does, and keeps either variant."""
         guava = guava_element("33.0.0-jre")
         ignoring = marked_at_its_version(guava, "ignore[update]")
-        shorter = marked_at_its_version(guava, "allow[cooldown>=0]")
+        shorter = marked_at_its_version(guava, "set[cooldown=0]")
         from_34 = marked_at_its_version(guava, "ignore[update>=34]")
         from_35 = marked_at_its_version(guava, "ignore[update>=35]")
         on_34 = marked_at_its_version(guava, "ignore[update==34.*]")
@@ -1701,14 +1660,14 @@ class UpdatePomXmlTest(LoggingTestCase):
         # rewrote the pom, but Update-time cannot read the effective pom that would resolve the group.
         inherited = dependency_element("${spring.group}", "spring-core", "${spring.version}")
         before = pom_declaring(
-            marked_at_its_version(guava_element("33.0.0-jre"), "ignore[cooldown<30]"),
+            marked_at_its_version(guava_element("33.0.0-jre"), "set[cooldown=30]"),
             inherited,
-            properties=_marked_property("spring.version", "6.1.0", "ignore[cooldown<30]"),
+            properties=_marked_property("spring.version", "6.1.0", "set[cooldown=30]"),
         )
         after = pom_declaring(
-            marked_at_its_version(guava_element("33.7.1-jre"), "ignore[cooldown<30]"),
+            marked_at_its_version(guava_element("33.7.1-jre"), "set[cooldown=30]"),
             inherited,
-            properties=_marked_property("spring.version", "7.1.0", "ignore[cooldown<30]"),
+            properties=_marked_property("spring.version", "7.1.0", "set[cooldown=30]"),
         )
         self.find_rewritten_pom(mock_run, mock_glob, before, after, effective_pom="")
         mock_project = Mock(return_value=Project())
@@ -1769,7 +1728,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         """Test that the rule names the versions inside the cooldown the marker sets, whatever cooldown the run sets."""
         for case, run_cooldown in {"no cooldown": "0", "a longer cooldown": "60"}.items():
             with self.subTest(case=case), patch_environ({COOLDOWN.name: run_cooldown}):
-                self.find_marked_pom(mock_run, mock_glob, "ignore[cooldown<30]")
+                self.find_marked_pom(mock_run, mock_glob, "set[cooldown=30]")
                 with self.hold_back({GUAVA: ("33.7.1-jre",)}, cooldown_days=30):
                     update_pom_xmls()
                 self.assertEqual(self.rule_sets, [_GUAVA_33_7_1_HELD_BACK])
@@ -1854,7 +1813,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         guava = guava_element("33.0.0-jre")
         cases = {
             "the run's cooldown": ({COOLDOWN.name: "0"}, guava),
-            "a marker's cooldown": ({}, marked_at_its_version(guava, "allow[cooldown>=0]")),
+            "a marker's cooldown": ({}, marked_at_its_version(guava, "set[cooldown=0]")),
         }
         for case, (environment, declared) in cases.items():
             with self.subTest(case=case), patch_environ(environment):

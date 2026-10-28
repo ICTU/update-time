@@ -33,10 +33,7 @@ def reference_matches(lines: list[Line], regexp: str | re.Pattern[str]) -> Itera
     """Yield each line the regexp matches, with its match and its marker.
 
     Shared by the passes that report on lines without rewriting them. A line the regexp doesn't match is skipped,
-    since it carries no reference and a marker on it belongs to the line below. What a marker holds back is each
-    pass's own decision: the vulnerability pass skips a bare `ignore` because OSV is a source, while the
-    loose-requirement pass reports a directive that decides nothing whatever the marker holds back, needing no
-    source to do so.
+    since it carries no reference and a marker on it belongs to the line below.
     """
     for line in lines:
         match = re.search(regexp, line.text)

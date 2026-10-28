@@ -3,8 +3,9 @@
 The updaters that edit files line by line share this engine: Dockerfiles, CI configs, manifests, requirements,
 workflows, and the rest. Given a regexp that captures a reference and a function that returns its new version, it
 rewrites each matched reference in place, touching only the captured spans and skipping any reference whose update
-an `# update-time: ignore` marker holds back. Which version a reference should update to is `resolve.latest_version`'s
-decision; this module owns the text surgery around it, reporting what it changed through a `Logger`.
+an `# update-time: ignore[update]` marker holds back. Which version a reference should update to is
+`resolve.latest_version`'s decision; this module owns the text surgery around it, reporting what it changed through
+a `Logger`.
 """
 
 import re

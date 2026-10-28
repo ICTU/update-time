@@ -111,7 +111,7 @@ def parse_args() -> argparse.Namespace:
         default=COOLDOWN.default,
         metavar="DAYS",
         help="number of days to hold back a newly published version, except for references that set a cooldown of "
-        "their own with an # update-time: ignore[cooldown<DAYS] marker (default: %(default)s)",
+        "their own with an # update-time: set[cooldown=DAYS] marker (default: %(default)s)",
     )
     parser.add_argument(
         "--stale-after",
@@ -119,7 +119,7 @@ def parse_args() -> argparse.Namespace:
         default=STALE_AFTER.default,
         metavar="DAYS",
         help="warn when a dependency's newest release is older than this many days; 0 disables the check, except "
-        "for references that set a threshold of their own with an # update-time: ignore[stale<DAYS] marker "
+        "for references that set a threshold of their own with an # update-time: set[stale-after=DAYS] marker "
         "(default: %(default)s)",
     )
     parser.add_argument(
@@ -128,9 +128,10 @@ def parse_args() -> argparse.Namespace:
         choices=[*RISK_LEVELS, NO_RISK_LEVEL],
         default=VULNERABILITY_LEVEL.default,
         help="warn about a known vulnerability in the version a dependency is pinned to when the advisory's risk "
-        "level is at least this severe; a vulnerability whose risk level cannot be read is always warned about. "
-        f"Pass {NO_RISK_LEVEL} to switch the check off, which queries the advisory database not at all, except for "
-        "references that set a level of their own with an # update-time: ignore[vulnerable<LEVEL] marker "
+        "level is at least this severe; a vulnerability whose risk level cannot be read is warned about at every "
+        "level from low to critical. "
+        f"Pass {NO_RISK_LEVEL} to switch the check off, except for "
+        "references that set a level of their own with an # update-time: set[vulnerability-level=LEVEL] marker "
         "(default: %(default)s)",
     )
     parser.add_argument(
@@ -167,9 +168,9 @@ def parse_args() -> argparse.Namespace:
         "--allow-hash-drift",
         action="store_true",
         help="adopt hash drift instead of only warning about it. Hash drift is an image tag re-pushed with another "
-        "digest, or a tag or branch moved to another commit. Update-time adopts the new digest or commit once it is "
-        "older than the cooldown. Equivalent to marking every reference with # update-time: allow[hash-drift] (a "
-        "marker that holds the reference back, such as # update-time: ignore, still wins)",
+        "digest, or a tag or branch moved to another commit. Update-time adopts the new digest or commit as soon as "
+        "it is older than the cooldown. Equivalent to marking every reference with # update-time: allow[hash-drift] "
+        "(a marker that holds the reference back, such as # update-time: ignore[update], still wins)",
     )
     parser.add_argument(
         "--allow-floating-pin",

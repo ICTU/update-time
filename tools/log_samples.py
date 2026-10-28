@@ -81,21 +81,20 @@ def _redundant_directives(
 ) -> dict[str, str]:
     """Log a sample per warning about a marker directive that holds nothing back, paired with the block's placeholder.
 
-    A redundancy warning is handed the directive it names, so most samples pass one as text; the three about a
+    A redundancy warning is handed the directive it names, so most samples pass one as text; the two about a
     vulnerability suppression read theirs off a marker, which is what their warnings take.
     """
-    log.redundant_vulnerable_scope(reference("django", requirements, "4.2.0"), Marker(ignored_scopes=Scope.VULNERABLE))
-    redundant_vulnerable_scope = capture.take()
-
     suppression = Marker(ignored_advisories=frozenset({"CVE-2022-28346"}))
     log.redundant_vulnerable_advisory(reference("django", requirements, "4.2.0"), suppression)
     redundant_vulnerable_advisory = capture.take()
 
-    level = Marker(vulnerable=Threshold(value="high", directive="ignore[vulnerable<high]"))
-    log.redundant_vulnerable_level(reference("django", requirements, "4.2.0"), level, "high")
+    level = Marker(vulnerable=Threshold(value="high", directive="set[vulnerability-level=high]"))
+    log.redundant_vulnerable_level(reference("django", requirements, "4.2.0"), level, "high", "low")
     redundant_vulnerable_level = capture.take()
 
-    log.redundant_directive(reference("python", dockerfile), "ignore[vulnerable]", Reason.NO_VULNERABILITY_REPORTS)
+    log.redundant_directive(
+        reference("python", dockerfile), "set[vulnerability-level=none]", Reason.NO_VULNERABILITY_REPORTS
+    )
     redundant_vulnerable_source = capture.take()
 
     log.redundant_directive(reference("python", dockerfile), "ignore[yanked]", Reason.NO_YANK_CONCEPT)
@@ -113,43 +112,46 @@ def _redundant_directives(
     log.redundant_directive(commons_lang, "ignore[archived]", Reason.NO_GITHUB_REPOSITORY)
     redundant_archived_without_a_github_repository = capture.take()
 
+    log.redundant_directive(reference("humanize", requirements), "ignore[archived]", Reason.ARCHIVAL_CHECK_OFF)
+    redundant_archived_check_off = capture.take()
+
     internal_lib = reference("nl.example:internal-lib", Location(Path("pom.xml"), 12))
-    log.redundant_directive(internal_lib, "ignore[cooldown<30]", Reason.NOT_ON_MAVEN_CENTRAL)
+    log.redundant_directive(internal_lib, "set[cooldown=30]", Reason.NOT_ON_MAVEN_CENTRAL)
     redundant_unserved_maven_artefact = capture.take()
 
     log.redundant_directive(
-        reference("humanize", requirements), "ignore[vulnerable]", Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY
+        reference("humanize", requirements),
+        "set[vulnerability-level=none]",
+        Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
     )
     log.redundant_directive(
         reference("nl.example:internal-lib", Location(Path("pom.xml"), 12)),
-        "ignore[vulnerable]",
+        "set[vulnerability-level=none]",
         Reason.NO_RESOLVED_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
     )
     log.redundant_directive(
         reference("actions/checkout", Location(Path(".github/workflows/ci.yml"), 17)),
-        "ignore[vulnerable]",
+        "set[vulnerability-level=none]",
         Reason.NO_NAMED_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
     )
     redundant_vulnerable_without_a_version = capture.take()
 
     held_elsewhere = reference("commons-io:commons-io", Location(Path("child/pom.xml"), 5))
-    log.redundant_directive(held_elsewhere, "ignore[stale]", Reason.CHECKED_AT_THE_MANAGING_DECLARATION)
+    log.redundant_directive(held_elsewhere, "set[stale-after=0]", Reason.CHECKED_AT_THE_MANAGING_DECLARATION)
     redundant_scope_on_a_managed_version = capture.take()
 
-    log.redundant_directive(
-        reference("ghcr.io/astral-sh/uv", dockerfile), "ignore[cooldown<30]", Reason.NO_COOLDOWN_DATES
-    )
+    log.redundant_directive(reference("ghcr.io/astral-sh/uv", dockerfile), "set[cooldown=30]", Reason.NO_COOLDOWN_DATES)
     redundant_cooldown_item = capture.take()
 
     log.redundant_directive(
-        reference("ghcr.io/astral-sh/uv", dockerfile), "ignore[stale<90]", Reason.NO_STALENESS_DATES
+        reference("ghcr.io/astral-sh/uv", dockerfile), "set[stale-after=90]", Reason.NO_STALENESS_DATES
     )
     redundant_stale_source = capture.take()
 
     variable = reference("redis", Location(Path("docker-compose.yml"), 7))
     through_a_variable = ImageNotLookedUp.THROUGH_A_VARIABLE
     stale_never_checked = ImageNotLookedUpReason(through_a_variable, Consequence.STALENESS_NEVER_CHECKED)
-    log.redundant_directive(variable, "ignore[stale<90]", stale_never_checked)
+    log.redundant_directive(variable, "set[stale-after=90]", stale_never_checked)
     redundant_stale_not_looked_up = capture.take()
 
     log.redundant_directive(reference("python", dockerfile), "allow[floating-pin]", Reason.PIN_NOT_FLOATING)
@@ -169,7 +171,6 @@ def _redundant_directives(
         built, "allow[floating-pin]", ImageNotLookedUpReason(ImageNotLookedUp.BUILT_IMAGE, Consequence.TAG_NEVER_PINNED)
     )
     return {
-        "@@REDUNDANT_VULNERABLE_SCOPE_WARNING@@": redundant_vulnerable_scope,
         "@@REDUNDANT_VULNERABLE_ADVISORY_WARNING@@": redundant_vulnerable_advisory,
         "@@REDUNDANT_VULNERABLE_LEVEL_WARNING@@": redundant_vulnerable_level,
         "@@REDUNDANT_VULNERABLE_SOURCE_WARNING@@": redundant_vulnerable_source,
@@ -177,6 +178,7 @@ def _redundant_directives(
         "@@REDUNDANT_YANK_WITHOUT_A_VERSION_WARNING@@": redundant_yank_without_a_version,
         "@@REDUNDANT_ARCHIVED_SCOPE_WARNING@@": redundant_archived_scope,
         "@@REDUNDANT_ARCHIVED_WITHOUT_A_GITHUB_REPOSITORY_WARNING@@": redundant_archived_without_a_github_repository,
+        "@@REDUNDANT_ARCHIVED_CHECK_OFF_WARNING@@": redundant_archived_check_off,
         "@@REDUNDANT_UNSERVED_MAVEN_ARTEFACT_WARNING@@": redundant_unserved_maven_artefact,
         "@@REDUNDANT_VULNERABLE_WITHOUT_A_VERSION_WARNINGS@@": redundant_vulnerable_without_a_version,
         "@@REDUNDANT_SCOPE_ON_A_MANAGED_VERSION_WARNING@@": redundant_scope_on_a_managed_version,
@@ -194,12 +196,12 @@ def _redundant_directives(
 def _redundant_package_json_markers(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log a sample per redundancy warning particular to a package.json marker, paired with the placeholder."""
     log.redundant_directive(
-        reference("bats", Location(Path("package.json"), 4)), "ignore[stale]", Reason.NO_NPM_RELEASE
+        reference("bats", Location(Path("package.json"), 4)), "set[stale-after=0]", Reason.NO_NPM_RELEASE
     )
     unserved = capture.take()
 
     undeclared = reference("lodash", Location(Path("package.json"), 9))
-    log.redundant_directive(undeclared, "ignore[stale]", Reason.UNDECLARED_DEPENDENCY)
+    log.redundant_directive(undeclared, "set[stale-after=0]", Reason.UNDECLARED_DEPENDENCY)
     return {
         "@@REDUNDANT_UNSERVED_NPM_DEPENDENCY_WARNING@@": unserved,
         "@@REDUNDANT_UNDECLARED_DEPENDENCY_WARNING@@": capture.take(),
@@ -216,13 +218,13 @@ def _redundant_for_the_dependency_type(
     branch = reference("actions/setup-python", Location(Path(".github/workflows/ci.yml"), 18))
     held_elsewhere = reference("commons-io:commons-io", Location(Path("child/pom.xml"), 5))
     plugin = reference("org.apache.maven.plugins:maven-surefire-plugin", Location(Path("pom.xml"), 30))
-    log.redundant_directive(managed, "ignore[cooldown<30]", Reason.COOLDOWN_PER_RUN)
-    log.redundant_directive(loose, "ignore[cooldown<30]", Reason.NO_VERSION_TO_UPDATE)
-    log.redundant_directive(commit, "ignore[cooldown<30]", Reason.NO_COOLDOWN_FOR_A_COMMIT)
-    log.redundant_directive(held_elsewhere, "ignore[cooldown<30]", Reason.VERSION_HELD_ELSEWHERE)
+    log.redundant_directive(managed, "set[cooldown=30]", Reason.COOLDOWN_PER_RUN)
+    log.redundant_directive(loose, "set[cooldown=30]", Reason.NO_VERSION_TO_UPDATE)
+    log.redundant_directive(commit, "set[cooldown=30]", Reason.NO_COOLDOWN_FOR_A_COMMIT)
+    log.redundant_directive(held_elsewhere, "set[cooldown=30]", Reason.VERSION_HELD_ELSEWHERE)
     variable = reference("redis", Location(Path("docker-compose.yml"), 7))
     never_updated = ImageNotLookedUpReason(ImageNotLookedUp.THROUGH_A_VARIABLE, Consequence.NEVER_UPDATED)
-    log.redundant_directive(variable, "ignore[cooldown<30]", never_updated)
+    log.redundant_directive(variable, "set[cooldown=30]", never_updated)
     cooldowns = capture.take()
 
     log.redundant_directive(loose, "allow[hash-drift]", Reason.NO_HASH_PIN)
@@ -265,25 +267,6 @@ def _bounds_deciding_nothing(log: Logger, capture: _Capture, dockerfile: Locatio
     for directives in ("allow[update>=3.12]", "ignore[update>=3.12]"):
         log.warn_if_redundant_bound(reference("python", dockerfile, "3.12"), parse_directives(directives))
     return {"@@BOUNDS_DECIDING_NOTHING@@": capture.take()}
-
-
-def _inverted_items(log: Logger, capture: _Capture, requirements: Location, dockerfile: Location) -> dict[str, str]:
-    """Log a sample per warning about a comparison item running the wrong way, paired with the block's placeholder."""
-    stale_marker = Marker(stale=Threshold(inverted_item="stale>=90"))
-    log.report_inverted_items(reference("python", dockerfile), stale_marker)
-    stale = capture.take()
-
-    cooldown_marker = Marker(cooldown=Threshold(inverted_item="cooldown>=30"))
-    log.report_inverted_items(reference("python", dockerfile), cooldown_marker)
-    cooldown = capture.take()
-
-    vulnerable_marker = Marker(vulnerable=Threshold(inverted_item="vulnerable>=high"))
-    log.report_inverted_items(reference("django", requirements), vulnerable_marker)
-    return {
-        "@@INVERTED_STALE_WARNING@@": stale,
-        "@@INVERTED_COOLDOWN_WARNING@@": cooldown,
-        "@@INVERTED_VULNERABLE_WARNING@@": capture.take(),
-    }
 
 
 def _unreadable_reactors(log: Logger, capture: _Capture) -> dict[str, str]:
@@ -413,7 +396,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     published = stale_publication_date()
     stale = DependencyVersion("4.15.0", project=Project(newest=Release("4.15.0", published)))
-    log.report_staleness(resolved("humanize", requirements, stale), Marker(), STALE_AFTER.get())
+    log.report_staleness(resolved("humanize", requirements, stale), STALE_AFTER.get())
     staleness = capture.take()
 
     yanked = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason="accidentally broke Python 3.10 support"))
@@ -438,8 +421,6 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
     redundant_for_the_type = _redundant_for_the_dependency_type(log, capture, requirements, workflow)
 
     invalid = _invalid_items(log, capture, dockerfile)
-
-    inverted = _inverted_items(log, capture, requirements, dockerfile)
 
     pinned_tag = DependencyVersion("3.14.7", sha=_ELIDED_DIGEST)
     log.pinned(reference("python", Location(Path("Dockerfile"), 1)), pinned_tag)
@@ -467,7 +448,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     held_back_by_cooldown = _held_back_by_cooldown(log, capture, dockerfile)
 
-    understood_markers = _understood_markers(log, capture, dockerfile, stale)
+    understood_markers = _understood_markers(log, capture, requirements)
     return {
         "@@DRIFT_WARNINGS@@": drift,
         "@@PINNED_FLOATING_TAG@@": pinned_floating_tag,
@@ -498,7 +479,6 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **redundant_for_the_type,
         **_redundant_package_json_markers(log, capture),
         **invalid,
-        **inverted,
         **_bounds_deciding_nothing(log, capture, dockerfile),
         **understood_markers,
     }
@@ -507,12 +487,9 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 def _redundant_suppressions(
     log: Logger, capture: _Capture, requirements: Location, workflow: Location
 ) -> dict[str, str]:
-    """Log a sample per warning about a staleness, yank, or archival directive that decides nothing."""
+    """Log a sample per warning about a staleness threshold, yank, or archival directive that decides nothing."""
     recent = Release("4.15.0", datetime.now(UTC) - timedelta(days=30))
     standing = DependencyVersion("4.15.0", yank=Yank(), project=Project(newest=recent, archival=Archival()))
-    ignore_stale = Marker(ignored_scopes=Scope.STALE)
-    log.report_staleness(resolved("humanize", requirements, standing), ignore_stale, STALE_AFTER.get())
-    stale = capture.take()
     log.report_yank(resolved("humanize", requirements, standing), Marker(ignored_scopes=Scope.YANKED))
     yank = capture.take()
     log.report_archival(resolved("humanize", requirements, standing), Marker(ignored_scopes=Scope.ARCHIVED))
@@ -521,10 +498,9 @@ def _redundant_suppressions(
         resolved("actions/checkout", workflow, active_repository), Marker(ignored_scopes=Scope.ARCHIVED)
     )
     archival = capture.take()
-    threshold = Threshold(value=90, directive="ignore[stale<90]")
+    threshold = Threshold(value=90, directive="set[stale-after=90]")
     log.redundant_stale_threshold(reference("humanize", requirements), threshold, recent, STALE_AFTER.get())
     return {
-        "@@REDUNDANT_STALE_SUPPRESSION_WARNING@@": stale,
         "@@REDUNDANT_YANK_SUPPRESSION_WARNING@@": yank,
         "@@REDUNDANT_ARCHIVED_SUPPRESSION_WARNINGS@@": archival,
         "@@REDUNDANT_STALE_THRESHOLD_WARNING@@": capture.take(),
@@ -582,18 +558,17 @@ def _held_back_by_cooldown(log: Logger, capture: _Capture, dockerfile: Location)
     published = datetime(2026, 10, 8, 13, 1, tzinfo=UTC)
     workflow = Location(Path(".github/workflows/ci.yml"), 5)
     log.held_back_by_cooldown(reference("github/codeql-action/init", workflow), Release("4.38.3", published), 7, "")
-    log.held_back_by_cooldown(reference("python", dockerfile), Release("3.15.0", published), 30, "ignore[cooldown<30]")
+    log.held_back_by_cooldown(reference("python", dockerfile), Release("3.15.0", published), 30, "set[cooldown=30]")
     return capture.take()
 
 
-def _understood_markers(
-    log: Logger, capture: _Capture, dockerfile: Location, stale: DependencyVersion
-) -> dict[str, str]:
+def _understood_markers(log: Logger, capture: _Capture, requirements: Location) -> dict[str, str]:
     """Log the lines confirming a marker was understood, and pair them with their placeholders."""
-    marker = Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")
-    log.recognised_marker("python", marker, dockerfile)
+    marker = Marker(ignored_scopes=Scope.YANKED, raw="ignore[yanked]")
+    log.recognised_marker("humanize", marker, requirements)
     recognised = capture.take()
-    log.report_staleness(resolved("python", dockerfile, stale), marker, STALE_AFTER.get())
+    yanked = DependencyVersion("4.15.0", yank=Yank(yanked=True, reason=""))
+    log.report_yank(resolved("humanize", requirements, yanked), marker)
     silenced = capture.take()
     log.holding_back_range(
         reference("com.google.guava:guava", Location(Path("pom.xml"), 12)), "[34,)", "ignore[update>=34]"

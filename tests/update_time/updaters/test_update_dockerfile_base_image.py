@@ -228,7 +228,9 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
     def test_build_argument_written_under_different_markers_is_left_alone_and_reported(self):
         """Test that an `ARG` two `FROM` lines with different markers write into is left alone, whatever is served."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
-        mock_dockerfile = mock_path("ARG PY=3.14\nFROM python:$PY AS build\n# update-time: ignore\nFROM python:${PY}\n")
+        mock_dockerfile = mock_path(
+            "ARG PY=3.14\nFROM python:$PY AS build\n# update-time: ignore[update]\nFROM python:${PY}\n"
+        )
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_not_called()
         self.requests.assert_not_called()
@@ -338,14 +340,14 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         )
     )
     def test_stale_scope_on_a_refused_reference_is_reported_as_redundant_because_of_the_refusal(self):
-        """Test that `ignore[stale]` on a reference left alone for its build arguments is redundant for that reason."""
+        """Test that `set[stale-after=0]` is redundant for the reason a reference is left alone: its build arguments."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
-        mock_dockerfile = mock_path("ARG MINOR=14\n# update-time: ignore[stale]\nFROM python:3.$MINOR\n")
+        mock_dockerfile = mock_path("ARG MINOR=14\n# update-time: set[stale-after=0]\nFROM python:3.$MINOR\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_not_called()
         self.requests.assert_not_called()
         reason = ImageNotLookedUpReason(ImageNotLookedUp.VERSION_ACROSS_LINES, Consequence.STALENESS_NEVER_CHECKED)
-        self.assert_redundant_directive_logged(reason, "python", Location(mock_dockerfile, 3), "ignore[stale]")
+        self.assert_redundant_directive_logged(reason, "python", Location(mock_dockerfile, 3), "set[stale-after=0]")
 
     def test_digest_beside_a_build_argument_is_left_alone_and_reported(self):
         """Test that a `FROM` pinning a digest beside a build argument is left alone, as the digest overrules it."""
@@ -493,15 +495,11 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         self.assert_no_warnings_logged()
 
     def test_ignore_marker_leaves_base_image_untouched(self):
-        """Test that a base image a preceding `# update-time: ignore` comment holds back is not updated or queried."""
+        """Test that a base image a preceding `# update-time: ignore[update]` comment holds back is not updated."""
         cases = {
-            "a reference": (
-                "# update-time: ignore\nFROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim\n",
-                "ghcr.io/astral-sh/uv",
-                2,
-            ),
+            "a reference": ("# update-time: ignore[update]\nFROM python:3.14\n", "python", 2),
             "a reference through a build argument": (
-                "ARG V=3.14\n# update-time: ignore\nFROM python:$V\n",
+                "ARG V=3.14\n# update-time: ignore[update]\nFROM python:$V\n",
                 "python",
                 3,
             ),
@@ -512,7 +510,6 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
                 mock_dockerfile = mock_path(dockerfile)
                 self.run_updater(mock_dockerfile)
                 mock_dockerfile.write_text.assert_not_called()
-                self.requests.assert_not_called()
                 self.assert_ignored_logged(image, Location(mock_dockerfile, line))
                 self.assert_no_new_version_logged()
                 self.assert_no_redundant_suppression_logged()
@@ -556,20 +553,19 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
     def test_redundant_cooldown_names_the_cooldown_directive_alone(self):
         """Test that the warning names the `cooldown` directive, leaving out one on the same line that does apply."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
-        marker = self.marker_line("ignore[cooldown<30] allow[hash-drift]")
+        marker = self.marker_line("set[cooldown=30] allow[hash-drift]")
         mock_dockerfile = mock_path(marker + self.reference(f"ghcr.io/owner/python:3.14@{DIGEST1}"))
         self.run_updater(mock_dockerfile)
         self.assert_redundant_directive_logged(
-            Reason.NO_COOLDOWN_DATES, "ghcr.io/owner/python", Location(mock_dockerfile, 2), "ignore[cooldown<30]"
+            Reason.NO_COOLDOWN_DATES, "ghcr.io/owner/python", Location(mock_dockerfile, 2), "set[cooldown=30]"
         )
 
     def test_vulnerable_scope_is_reported_as_redundant(self):
         """Test that each `vulnerable` marker is reported when an image has no vulnerability to silence."""
         directives = (
-            "ignore[vulnerable]",
+            "set[vulnerability-level=none]",
             "ignore[vulnerable=GHSA-2gwj-7jmv-h26r]",
-            "ignore[vulnerable<high]",
-            "allow[vulnerable>=high]",  # `allow` sets a level too, so the warning must name it rather than nothing
+            "set[vulnerability-level=high]",
         )
         for directive in directives:
             with self.subTest(directive=directive):
@@ -585,7 +581,11 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     def test_redundant_vulnerable_scope_beside_another_ignore_names_the_scope_alone(self):
         """Test that a `vulnerable` scope is named on its own, without an `ignore` beside it that freezes the image."""
-        for directive in ("ignore[vulnerable]", "ignore[vulnerable=GHSA-2gwj-7jmv-h26r]", "allow[vulnerable>=high]"):
+        for directive in (
+            "set[vulnerability-level=none]",
+            "ignore[vulnerable=GHSA-2gwj-7jmv-h26r]",
+            "set[vulnerability-level=high]",
+        ):
             with self.subTest(directive=directive):
                 self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
                 mock_dockerfile = mock_path(f"# update-time: ignore[update] {directive}\nFROM python:3.14\n")

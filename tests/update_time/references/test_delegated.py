@@ -32,7 +32,7 @@ class WarnAboutProjectsTest(unittest.TestCase):
         projects = mock_reference_resolver(resolved)
         warn_about_projects([self.declared], projects, self.log)
         projects.assert_called_once_with(self.declared)
-        self.log.report_staleness.assert_called_once_with(resolved, Marker(), STALE_AFTER.default)
+        self.log.report_staleness.assert_called_once_with(resolved, STALE_AFTER.default)
         self.log.report_archival.assert_called_once_with(resolved, Marker())
 
     def test_disabled_skips_a_resolver_that_reports_no_archival(self):

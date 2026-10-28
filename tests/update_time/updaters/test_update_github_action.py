@@ -25,7 +25,12 @@ from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import COMMIT_SHA1 as OLD_SHA
 from tests.update_time.fixtures import COMMIT_SHA2 as NEW_SHA
 from tests.update_time.fixtures import COMMIT_SHA3 as PAST_COOLDOWN_SHA
-from tests.update_time.fixtures import FRESH_DATE, GITHUB_UNCACHED, PAST_COOLDOWN_DATE, STALE_DATE
+from tests.update_time.fixtures import (
+    FRESH_DATE,
+    GITHUB_UNCACHED,
+    PAST_COOLDOWN_DATE,
+    STALE_DATE,
+)
 from tests.update_time.helpers import (
     LoggingTestCase,
     bound,
@@ -303,23 +308,23 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         self.assert_no_warnings_logged()  # a major-update bound on a v4 pin is live, so no redundancy warning
 
     def test_inline_ignore_marker_leaves_action_untouched(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that an inline `# update-time: ignore` comment leaves the action untouched, looking up no version."""
-        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore\n")
+        """Test that an inline `# update-time: ignore[update]` comment leaves the action untouched."""
+        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore[update]\n")
         mock_glob.side_effect = [[workflow_yml], []]
+        mock_get_latest_version.return_value = github_version("1.1")
         update_github_actions()
         workflow_yml.write_text.assert_not_called()
-        mock_get_latest_version.assert_not_called()
         self.assert_ignored_logged("action/action", Location(workflow_yml, 1))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
 
     def test_preceding_ignore_marker_leaves_action_untouched(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that a standalone `# update-time: ignore` comment leaves the action on the line below it untouched."""
-        workflow_yml = mock_path(f"# update-time: ignore\nuses: action/action@{OLD_SHA} # v1.0\n")
+        """Test that a standalone `# update-time: ignore[update]` comment holds back the action on the line below it."""
+        workflow_yml = mock_path(f"# update-time: ignore[update]\nuses: action/action@{OLD_SHA} # v1.0\n")
         mock_glob.side_effect = [[workflow_yml], []]
+        mock_get_latest_version.return_value = github_version("1.1")
         update_github_actions()
         workflow_yml.write_text.assert_not_called()
-        mock_get_latest_version.assert_not_called()
         self.assert_ignored_logged("action/action", Location(workflow_yml, 2))
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
@@ -339,29 +344,27 @@ class UpdateGitHubActionsTest(LoggingTestCase):
     def test_hash_drift_marker_on_a_held_back_version_tag_is_reported(self, mock_glob: Mock, mock_latest: Mock):
         """Test that a version tag whose update is held back keeps its drifted pin, its `allow[hash-drift]` reported."""
         mock_latest.return_value = DependencyVersion(version="1.0", sha=NEW_SHA)
-        for marker in ("ignore[update] allow[hash-drift]", "ignore allow[hash-drift]"):
-            with self.subTest(marker=marker):
-                workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: {marker}\n")
-                mock_glob.side_effect = [[workflow_yml], []]
-                update_github_actions()
-                workflow_yml.write_text.assert_not_called()
-                self.assert_redundant_directive_logged(
-                    Reason.DRIFT_NEVER_ADOPTED, "action/action", Location(workflow_yml, 1), "allow[hash-drift]"
-                )
+        marker = "ignore[update] allow[hash-drift]"
+        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: {marker}\n")
+        mock_glob.side_effect = [[workflow_yml], []]
+        update_github_actions()
+        workflow_yml.write_text.assert_not_called()
+        self.assert_redundant_directive_logged(
+            Reason.DRIFT_NEVER_ADOPTED, "action/action", Location(workflow_yml, 1), "allow[hash-drift]"
+        )
 
-    def test_ignore_stale_marker_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
-        """Test that `ignore[stale]` repins the action but skips the staleness check even for an old release."""
+    def test_stale_after_zero_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
+        """Test that `set[stale-after=0]` repins the action but skips the staleness check even for an old release."""
         newest = Release("1.2", STALE_DATE)
         mock_latest.return_value = github_version("1.1", Project(newest=newest))
-        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: ignore[stale]\n")
+        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0  # update-time: set[stale-after=0]\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()
         workflow_yml.write_text.assert_called_once_with(
-            f"uses: action/action@{NEW_SHA} # v1.1  # update-time: ignore[stale]\n"
+            f"uses: action/action@{NEW_SHA} # v1.1  # update-time: set[stale-after=0]\n"
         )
         location = Location(workflow_yml, 1)
         self.assert_new_version_logged("action/action", "1.1", location)
-        self.assert_ignored_staleness_logged("action/action", location, "ignore[stale]")
         self.assert_no_warnings_logged()  # staleness skipped despite the old release
 
     def test_unpinned_action_without_sha_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -384,18 +387,6 @@ class UpdateGitHubActionsTest(LoggingTestCase):
         workflow_yml.write_text.assert_not_called()
         mock_project.assert_not_called()
         mock_get_latest_version.assert_not_called()
-        self.assert_no_warnings_logged()
-
-    @patch("update_time.references.github.project")
-    def test_a_bare_ignore_on_a_branch_reference_asks_github_nothing(
-        self, mock_project: Mock, mock_glob: Mock, mock_get_latest_version: Mock
-    ):
-        """Test that a bare `ignore` on a branch reference silences the staleness check, GitHub unasked."""
-        workflow_yml = mock_path("uses: actions/checkout@main  # update-time: ignore\n")
-        mock_glob.side_effect = [[workflow_yml], []]
-        update_github_actions()
-        mock_project.assert_not_called()
-        mock_get_latest_version.assert_not_called()  # A branch names no version to resolve an update for.
         self.assert_no_warnings_logged()
 
 
@@ -423,10 +414,9 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @patch_github(
         releases=[github_release_json("v1.0", published_at=STALE_DATE)], tags=[], commit=github_commits_json(NEW_SHA)
     )
-    def test_an_ignore_stale_marker_on_a_branch_reference_silences_the_warning(self, mock_glob: Mock):
-        """Test that `ignore[stale]` on a branch reference silences the warning its old repository would get."""
-        workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@main  # update-time: ignore[stale]\n")
-        self.assert_ignored_staleness_logged("actions/checkout", Location(workflow_yml, 1), "ignore[stale]")
+    def test_stale_after_zero_on_a_branch_reference_silences_the_warning(self, mock_glob: Mock):
+        """Test that `set[stale-after=0]` on a branch reference silences the warning its old repository would get."""
+        self.scanned_workflow(mock_glob, "uses: actions/checkout@main  # update-time: set[stale-after=0]\n")
         self.assert_no_warnings_logged()
 
     @patch_github(
@@ -435,8 +425,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         commit=github_commits_json(NEW_SHA),
     )
     def test_a_branch_reference_is_warned_about_at_its_own_threshold(self, mock_glob: Mock):
-        """Test that `ignore[stale<90]` on a branch reference warns at 90 days, where the default 365 would not."""
-        workflow = "uses: actions/checkout@main  # update-time: ignore[stale<90]\n"
+        """Test that `set[stale-after=90]` on a branch reference warns at 90 days, where the default 365 would not."""
+        workflow = "uses: actions/checkout@main  # update-time: set[stale-after=90]\n"
         workflow_yml = self.scanned_workflow(mock_glob, workflow)
         self.assert_stale_dependency_logged("actions/checkout", "1.0", Location(workflow_yml, 1))
 
@@ -480,7 +470,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     )
     def test_cooldown_marker_is_not_reported_as_redundant(self, mock_glob: Mock):
         """Test that a `cooldown` marker on a version, or what this run pins as one or as a branch, is not reported."""
-        marker = "  # update-time: ignore[cooldown<30]"
+        marker = "  # update-time: set[cooldown=30]"
         cases = {
             "version": (f"{OLD_SHA} # v1.0", [], f"{NEW_SHA} # v1.1"),
             "branch": ("main", [], f"{NEW_SHA} # main"),
@@ -498,15 +488,15 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                 self.assert_no_warnings_logged()
 
     @patch_github(releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(NEW_SHA))
-    def test_ignore_vulnerable_marker_silences_the_warning(self, mock_glob: Mock):
-        """Test that `ignore[vulnerable]` on an action silences its warning, and the action is still updated."""
-        marker = "  # update-time: ignore[vulnerable]"
+    def test_vulnerability_level_none_marker_silences_the_warning(self, mock_glob: Mock):
+        """Test that `set[vulnerability-level=none]` on an action silences its warning, and the action still updates."""
+        marker = "  # update-time: set[vulnerability-level=none]"
         with osv(_action_advisory("action/action", {"introduced": "0"})):
             workflow_yml = self.scanned_workflow(mock_glob, f"uses: action/action@{OLD_SHA} # v1.0{marker}\n")
         workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.1{marker}\n")
         location = Location(workflow_yml, 1)
         self.assert_ignored_vulnerability_logged(
-            "action/action", location, VULNERABILITY.advisory, "ignore[vulnerable]"
+            "action/action", location, VULNERABILITY.advisory, "set[vulnerability-level=none]"
         )
         self.assert_no_warnings_logged()
 
@@ -533,19 +523,6 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         workflow_yml.write_text.assert_not_called()
         cast("Mock", requests.Session.get).assert_not_called()  # A reference naming no repository asks GitHub nothing.
         self.assert_no_warnings_logged()
-
-    def test_a_bare_ignore_asks_github_nothing(self, mock_glob: Mock):
-        """Test that a bare `ignore` on a version tag or a short commit SHA leaves it as it is, GitHub unasked."""
-        tags = [github_tag_json("v4", NEW_SHA)]
-        cases = {"version tag": "v4", "short commit SHA": "3e8a870", "short commit SHA parsing as a version": "1234567"}
-        for case, ref in cases.items():
-            with self.subTest(case), patch_github(releases=[github_release_json("v4.1.1")], tags=tags):
-                workflow_yml = self.scanned_workflow(
-                    mock_glob, f"uses: actions/checkout@{ref}  # update-time: ignore\n"
-                )
-                workflow_yml.write_text.assert_not_called()
-                cast("Mock", requests.Session.get).assert_not_called()
-                self.assert_ignored_logged("actions/checkout", Location(workflow_yml, 1))
 
     @patch_github(releases=[github_release_json("1.1")], tags=[], commit=github_commits_json(NEW_SHA))
     def test_a_scope_the_source_cannot_apply_is_reported_on_a_reference_naming_no_version(self, mock_glob: Mock):
@@ -655,7 +632,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA, date=FRESH_DATE + timedelta(days=1)))
     def test_branch_under_a_zero_day_cooldown_moves_to_its_head_whatever_its_date(self, mock_glob: Mock):
         """Test that a branch under a zero-day cooldown lists its head alone, and moves to it however it is dated."""
-        marker = "  # update-time: allow[hash-drift] allow[cooldown>=0]"
+        marker = "  # update-time: allow[hash-drift] set[cooldown=0]"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
         workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # main{marker}\n")
         self.assertEqual(github_commit_listing_queries(), [{"sha": ["main"], "per_page": ["1"]}])
@@ -1107,7 +1084,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     )
     def test_moved_tag_under_a_zero_day_cooldown_is_adopted_without_dating_its_commit(self, mock_glob: Mock):
         """Test that a tag opted into hash drift with a zero-day cooldown is re-pinned, its new commit left undated."""
-        marker = "  # update-time: allow[hash-drift] allow[cooldown>=0]"
+        marker = "  # update-time: allow[hash-drift] set[cooldown=0]"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # v1.0{marker}\n")
         workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # v1.0{marker}\n")
         self.assertEqual(github_requests("commits"), [])
@@ -1176,19 +1153,6 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                 cause = _ALLOW_FLOATING_PIN
                 self.assert_kept_ref_logged(dependency, "main", release, Location(workflow_yml, 1), cause)
                 self.assert_no_warnings_logged()
-
-    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
-    def test_inverted_item_on_a_branch_is_reported_and_the_branch_still_pinned(self, mock_glob: Mock):
-        """Test that an inverted comparison on a branch reference is reported, the branch pinned as usual."""
-        marker = "  # update-time: ignore[cooldown>=30]"
-        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@main{marker}\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # main{marker}\n")
-        self.assert_logged_among_others(
-            message_of(Logger._inverted_cooldown_item),
-            item="cooldown>=30",
-            dependency="actions/checkout",
-            location=Location(workflow_yml, 1),
-        )
 
     def test_pin_branch_by_its_whole_name(self, mock_glob: Mock):
         """Test that a branch is looked up and pinned by its whole name, a leading `v` or a slash included."""
@@ -1304,28 +1268,24 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
     def test_a_floating_pin_directive_on_a_held_back_branch_is_reported(self, mock_glob: Mock):
         """Test that a branch whose update is held back stays unpinned, its `allow[floating-pin]` reported."""
-        for marker in ("ignore[update] allow[floating-pin]", "ignore allow[floating-pin]"):
-            with self.subTest(marker=marker):
-                workflow_yml = self.scanned_workflow(
-                    mock_glob, f"uses: actions/checkout@main  # update-time: {marker}\n"
-                )
-                workflow_yml.write_text.assert_not_called()
-                self.assert_redundant_directive_logged(
-                    Reason.NEVER_PINNED, "actions/checkout", Location(workflow_yml, 1), "allow[floating-pin]"
-                )
+        marker = "ignore[update] allow[floating-pin]"
+        workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@main  # update-time: {marker}\n")
+        workflow_yml.write_text.assert_not_called()
+        self.assert_redundant_directive_logged(
+            Reason.NEVER_PINNED, "actions/checkout", Location(workflow_yml, 1), "allow[floating-pin]"
+        )
 
     @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
     def test_a_hash_drift_directive_on_a_held_back_branch_is_reported(self, mock_glob: Mock):
         """Test that a pinned branch whose update is held back keeps its pin, its `allow[hash-drift]` reported."""
-        for marker in ("ignore[update] allow[hash-drift]", "ignore allow[hash-drift]"):
-            with self.subTest(marker=marker):
-                workflow_yml = self.scanned_workflow(
-                    mock_glob, f"uses: actions/checkout@{OLD_SHA} # main  # update-time: {marker}\n"
-                )
-                workflow_yml.write_text.assert_not_called()
-                self.assert_redundant_directive_logged(
-                    Reason.DRIFT_NEVER_ADOPTED, "actions/checkout", Location(workflow_yml, 1), "allow[hash-drift]"
-                )
+        marker = "ignore[update] allow[hash-drift]"
+        workflow_yml = self.scanned_workflow(
+            mock_glob, f"uses: actions/checkout@{OLD_SHA} # main  # update-time: {marker}\n"
+        )
+        workflow_yml.write_text.assert_not_called()
+        self.assert_redundant_directive_logged(
+            Reason.DRIFT_NEVER_ADOPTED, "actions/checkout", Location(workflow_yml, 1), "allow[hash-drift]"
+        )
 
     @kills(
         Mutation(
@@ -1386,7 +1346,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
         A full commit SHA whose comment does not name a tag or branch is such a commit SHA too.
         """
-        marker = "  # update-time: ignore[cooldown<30]"
+        marker = "  # update-time: set[cooldown=30]"
         commit, listed_commits = github_commits_json(full_commit_sha("3e8a870")), github_not_found()
         cases = {
             "full commit SHA": OLD_SHA,
@@ -1400,7 +1360,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
                     Reason.NO_COOLDOWN_FOR_A_COMMIT,
                     "actions/checkout",
                     Location(workflow_yml, 1),
-                    "ignore[cooldown<30]",
+                    "set[cooldown=30]",
                 )
 
     def test_a_bound_on_a_bare_commit_sha_is_reported(self, mock_glob: Mock):
@@ -1518,8 +1478,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         mock_post.assert_not_called()
         self.assert_no_warnings_logged()
 
-    def test_an_ignore_vulnerable_marker_on_a_reference_naming_no_version_is_reported(self, mock_glob: Mock):
-        """Test that `ignore[vulnerable]` on a branch or a bare commit SHA is reported as redundant."""
+    def test_a_vulnerability_level_none_marker_on_a_reference_naming_no_version_is_reported(self, mock_glob: Mock):
+        """Test that `set[vulnerability-level=none]` on a branch or a bare commit SHA is reported as redundant."""
         cases = {
             "branch": "actions/checkout@main",
             "bare commit SHA": f"actions/checkout@{OLD_SHA}",
@@ -1527,26 +1487,28 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         commit = github_commits_json(OLD_SHA)
         for case, uses in cases.items():
             with self.subTest(case), patch_github(releases=[], tags=[], commit=commit):
-                workflow_yml = self.scanned_workflow(mock_glob, f"uses: {uses}  # update-time: ignore[vulnerable]\n")
+                workflow_yml = self.scanned_workflow(
+                    mock_glob, f"uses: {uses}  # update-time: set[vulnerability-level=none]\n"
+                )
                 self.assert_redundant_directive_logged(
                     Reason.NO_NAMED_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
                     "actions/checkout",
                     Location(workflow_yml, 1),
-                    "ignore[vulnerable]",
+                    "set[vulnerability-level=none]",
                 )
 
     @patch_github(releases=[], tags=[github_tag_json("v5.0.0", OLD_SHA)], commit=github_commits_json(OLD_SHA))
-    def test_an_ignore_vulnerable_marker_on_a_branch_pinned_to_a_version_tag_is_judged_at_that_version(
+    def test_a_vulnerability_level_none_marker_on_a_branch_pinned_to_a_version_tag_is_judged_at_that_version(
         self, mock_glob: Mock
     ):
-        """Test that `ignore[vulnerable]` on a branch this run pins to a version tag silences the warning there."""
-        marker = "  # update-time: ignore[vulnerable]"
+        """Test that `set[vulnerability-level=none]` on a branch the run pins to a version tag silences the warning."""
+        marker = "  # update-time: set[vulnerability-level=none]"
         with osv(_action_advisory("actions/checkout", {"introduced": "0"})):
             workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@main{marker}\n")
         workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{OLD_SHA} # v5.0.0{marker}\n")
         location = Location(workflow_yml, 1)
         self.assert_ignored_vulnerability_logged(
-            "actions/checkout", location, VULNERABILITY.advisory, "ignore[vulnerable]"
+            "actions/checkout", location, VULNERABILITY.advisory, "set[vulnerability-level=none]"
         )
         self.assert_no_warnings_logged()
 

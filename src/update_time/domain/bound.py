@@ -77,10 +77,11 @@ class _Redundancy(enum.StrEnum):
 
 
 class Verb(enum.StrEnum):
-    """The two verbs of the marker language, exact complements: `allow` keeps what it names, `ignore` drops it."""
+    """The verbs of the marker language: `allow` keeps what it names, `ignore` drops it, and `set` sets a value."""
 
     ALLOW = "allow"
     IGNORE = "ignore"
+    SET = "set"
 
 
 class UpdateLevel(enum.IntEnum):

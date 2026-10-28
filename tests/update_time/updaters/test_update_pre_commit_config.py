@@ -349,35 +349,35 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         self.assert_archived_repository_logged(self.HOOK, Location(config_file, 3))
 
     def test_inline_ignore_marker(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that an inline `# update-time: ignore` comment leaves the rev untouched, looking up no version."""
-        config_file = mock_path(config("rev: v4.5.0  # update-time: ignore\n"))
+        """Test that an inline `# update-time: ignore[update]` comment leaves the rev untouched."""
+        config_file = mock_path(config("rev: v4.5.0  # update-time: ignore[update]\n"))
         mock_glob.return_value = [config_file]
+        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
-        mock_get_latest_version.assert_not_called()
         self.assert_ignored_logged(self.HOOK, Location(config_file, 3))
         self.assert_no_warnings_logged()
 
     def test_inline_ignore_marker_after_frozen_comment(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an inline marker following the frozen comment on the same line holds the rev back."""
-        config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0  # update-time: ignore\n"))
+        config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0  # update-time: ignore[update]\n"))
         mock_glob.return_value = [config_file]
+        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
-        mock_get_latest_version.assert_not_called()
         self.assert_ignored_logged(self.HOOK, Location(config_file, 3))
 
     def test_preceding_ignore_marker(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that a standalone `# update-time: ignore` comment holds back the rev on the line below it."""
+        """Test that a standalone `# update-time: ignore[update]` comment holds back the rev on the line below it."""
         content = (
             "repos:\n  - repo: https://github.com/pre-commit/pre-commit-hooks\n"
-            "    # update-time: ignore\n    rev: v4.5.0\n"
+            "    # update-time: ignore[update]\n    rev: v4.5.0\n"
         )
         config_file = mock_path(content)
         mock_glob.return_value = [config_file]
+        mock_get_latest_version.return_value = DependencyVersion(version="4.6.0", sha=NEW_SHA)
         update_pre_commit_configs()
         config_file.write_text.assert_not_called()
-        mock_get_latest_version.assert_not_called()
         self.assert_ignored_logged(self.HOOK, Location(config_file, 4))
 
     def test_ignore_update_marker_skips_repin_but_still_checks_staleness(self, mock_glob: Mock, mock_latest: Mock):
@@ -392,20 +392,19 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         self.assert_stale_dependency_logged(self.HOOK, "4.7.0", location)
         self.assert_ignored_logged(self.HOOK, location)
 
-    def test_ignore_stale_marker_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
-        """Test that `ignore[stale]` bumps the rev but skips the staleness check even for an old release."""
+    def test_stale_after_zero_repins_but_skips_staleness(self, mock_glob: Mock, mock_latest: Mock):
+        """Test that `set[stale-after=0]` bumps the rev but skips the staleness check even for an old release."""
         newest = Release("4.7.0", STALE_DATE)
         mock_latest.return_value = github_version("4.6.0", Project(newest=newest))
-        config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0  # update-time: ignore[stale]\n"))
+        config_file = mock_path(config(f"rev: {OLD_SHA}  # frozen: v4.5.0  # update-time: set[stale-after=0]\n"))
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(
-            config(f"rev: {NEW_SHA}  # frozen: v4.6.0  # update-time: ignore[stale]\n")
+            config(f"rev: {NEW_SHA}  # frozen: v4.6.0  # update-time: set[stale-after=0]\n")
         )
         location = Location(config_file, 3)
         self.assert_new_version_logged(self.HOOK, "4.6.0", location)
         self.assert_no_warnings_logged()
-        self.assert_ignored_staleness_logged(self.HOOK, location, "ignore[stale]")
 
     def test_allow_update_bound_passes_bound_and_pins(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an `allow[update<…>]` marker passes the bound to the source and pins the bounded release."""
@@ -453,18 +452,21 @@ class UpdatePreCommitConfigsThroughTheSourceTest(LoggingTestCase):
             references_github._PinResolver._report_redundant_directives,
             "reports_vulnerabilities(self.source, reference.pinned) and ",
             "",
-            "an `ignore[vulnerable]` on a pre-commit hook naming a branch is reported twice",
+            "a `set[vulnerability-level=none]` on a pre-commit hook naming a branch is reported twice",
         )
     )
     @patch_github(releases=[github_release_json("v1.1")], tags=[], commit=github_commits_json(NEW_SHA))
-    def test_ignore_vulnerable_marker_is_reported_as_redundant(self, mock_glob: Mock):
-        """Test that `ignore[vulnerable]` on a pre-commit hook, at a version or a branch, is reported once."""
+    def test_vulnerability_level_none_marker_is_reported_as_redundant(self, mock_glob: Mock):
+        """Test that `set[vulnerability-level=none]` on a pre-commit hook, at a version or branch, is reported once."""
         for case, rev in {"version": f"{OLD_SHA}  # frozen: v1.0", "branch": "main"}.items():
             with self.subTest(case):
-                config_file = mock_path(config(f"rev: {rev}  # update-time: ignore[vulnerable]\n"))
+                config_file = mock_path(config(f"rev: {rev}  # update-time: set[vulnerability-level=none]\n"))
                 mock_glob.return_value = [config_file]
                 update_pre_commit_configs()
                 location = Location(config_file, 3)
                 self.assert_redundant_directive_logged(
-                    Reason.NO_VULNERABILITY_REPORTS, "pre-commit/pre-commit-hooks", location, "ignore[vulnerable]"
+                    Reason.NO_VULNERABILITY_REPORTS,
+                    "pre-commit/pre-commit-hooks",
+                    location,
+                    "set[vulnerability-level=none]",
                 )

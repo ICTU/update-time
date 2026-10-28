@@ -275,7 +275,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
 
     def test_tag_inside_the_cooldown_is_logged_as_held_back(self) -> None:
         """Test that a tag pushed inside the cooldown is logged as held back, naming the marker that sets a cooldown."""
-        cases = {"the run's cooldown": ("", COOLDOWN.default, 1), "a marker's cooldown": ("ignore[cooldown<30]", 30, 2)}
+        cases = {"the run's cooldown": ("", COOLDOWN.default, 1), "a marker's cooldown": ("set[cooldown=30]", 30, 2)}
         for case, (directive, days, line) in cases.items():
             with self.subTest(case):
                 self.requests.side_effect = mock_docker_registry(
@@ -292,23 +292,23 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
     def test_cooldown_marker_outside_docker_hub_is_reported_as_redundant(self) -> None:
         """Test that a `cooldown` marker on an image off Docker Hub is reported, since no tag there carries a date."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
-        marker = self.marker_line("ignore[cooldown<30]")
+        marker = self.marker_line("set[cooldown=30]")
         mock_file = mock_path(marker + self.reference(f"ghcr.io/owner/python:3.14@{DIGEST1}"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(marker + self.reference(f"ghcr.io/owner/python:3.15@{DIGEST2}"))
         self.assert_redundant_directive_logged(
-            Reason.NO_COOLDOWN_DATES, "ghcr.io/owner/python", Location(mock_file, 2), "ignore[cooldown<30]"
+            Reason.NO_COOLDOWN_DATES, "ghcr.io/owner/python", Location(mock_file, 2), "set[cooldown=30]"
         )
 
     def test_stale_marker_outside_docker_hub_is_reported_as_redundant(self) -> None:
         """Test that a `stale` marker on an image off Docker Hub is reported, since no tag there carries a date."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST2))
-        marker = self.marker_line("ignore[stale<90]")
+        marker = self.marker_line("set[stale-after=90]")
         mock_file = mock_path(marker + self.reference(f"ghcr.io/owner/python:3.14@{DIGEST1}"))
         self.run_updater(mock_file)
         mock_file.write_text.assert_called_once_with(marker + self.reference(f"ghcr.io/owner/python:3.15@{DIGEST2}"))
         self.assert_redundant_directive_logged(
-            Reason.NO_STALENESS_DATES, "ghcr.io/owner/python", Location(mock_file, 2), "ignore[stale<90]"
+            Reason.NO_STALENESS_DATES, "ghcr.io/owner/python", Location(mock_file, 2), "set[stale-after=90]"
         )
 
     def test_floating_pin_marker_on_a_version_tag_is_reported_as_redundant(self) -> None:
@@ -423,7 +423,7 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
     def test_digest_drift_under_a_zero_day_cooldown_is_adopted_without_its_push_date(self) -> None:
         """Test that a re-pushed tag opted into drift with a zero-day cooldown is re-pinned although it is undated."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.14", DIGEST2), unavailable=Endpoint.PUSH_DATE)
-        marker = self.marker_line("allow[cooldown>=0]")
+        marker = self.marker_line("set[cooldown=0]")
         mock_file = mock_path(marker + self.reference(f"python:3.14@{DIGEST1}"))
         with hash_drift_allowed:
             self.run_updater(mock_file)
@@ -727,13 +727,12 @@ class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
         """Test that a `stale` or `cooldown` marker on a reference through a variable is reported as redundant."""
         self.requests.side_effect = mock_docker_registry(docker_tag("3.15", DIGEST))
         cases = {
-            "ignore[stale<90]": ("ignore[stale<90]", Consequence.STALENESS_NEVER_CHECKED),
-            "ignore[cooldown<30]": ("ignore[cooldown<30]", Consequence.NEVER_UPDATED),
-            "ignore ignore[stale<90]": ("ignore[stale<90]", Consequence.STALENESS_NEVER_CHECKED),
+            "set[stale-after=90]": Consequence.STALENESS_NEVER_CHECKED,
+            "set[cooldown=30]": Consequence.NEVER_UPDATED,
         }
-        for marker, (directive, consequence) in cases.items():
-            with self.subTest(marker=marker):
-                mock_file = mock_path(self.marker_line(marker) + self.reference("app:${TAG}"))
+        for directive, consequence in cases.items():
+            with self.subTest(directive=directive):
+                mock_file = mock_path(self.marker_line(directive) + self.reference("app:${TAG}"))
                 self.run_updater(mock_file)
                 mock_file.write_text.assert_not_called()
                 reason = ImageNotLookedUpReason(ImageNotLookedUp.THROUGH_A_VARIABLE, consequence)

@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from update_time.markers.marker import _IGNORABLE_SCOPES, _SOURCE_CHECK_SCOPES, Marker
+from update_time.markers.marker import parse_directives
 from update_time.sources import github
 
 from tests.mutation import Mutation
@@ -23,16 +23,8 @@ COMMIT_SHA = COMMIT_SHA1 = "a" * 40
 COMMIT_SHA2 = "b" * 40
 COMMIT_SHA3 = "c" * 40
 
-# The marker a bare `# update-time: ignore` expresses: every check the marker can hold back is held back.
-BARE_IGNORE = Marker(ignored_scopes=_IGNORABLE_SCOPES)
-
-# The directives naming every scope an `ignore` can hold back, so a marker carrying them holds back as much as a
-# bare `ignore` does. Derived from the language, so a scope added to it reaches each test that needs the whole set.
-EVERY_IGNORABLE_SCOPE = " ".join(f"ignore[{scope}]" for scope in _IGNORABLE_SCOPES)
-
-# The directives naming every scope the reference's own source answers, so a marker carrying them leaves that
-# source nothing to be asked for.
-EVERY_SOURCE_CHECK_SCOPE = " ".join(f"ignore[{scope}]" for scope in _SOURCE_CHECK_SCOPES)
+# The marker setting the risk level `none`, which silences every vulnerability warning.
+VULNERABILITY_LEVEL_NONE = parse_directives("set[vulnerability-level=none]")
 
 # A publication date old enough that the default staleness threshold warns about it, and one inside the default
 # cooldown.

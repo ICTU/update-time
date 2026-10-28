@@ -23,7 +23,7 @@ from update_time.references.drift import adopts_drift
 from update_time.references.match import matched_dependency
 from update_time.references.resolve import (
     latest_version,
-    report_directives_that_set_nothing,
+    report_directives_the_source_cannot_apply,
     report_project_checks,
     warn_if_the_opt_in_is_redundant,
 )
@@ -83,11 +83,11 @@ def _names_a_short_sha(reference: Reference) -> bool:
     return sha is None or sha.startswith(ref)
 
 
-def _commit_sha(reference: Reference, marker: Marker) -> _CommitSha:
-    """Return how the reference names a commit, leaving GitHub unasked where the marker holds everything back."""
+def _commit_sha(reference: Reference) -> _CommitSha:
+    """Return how the reference names a commit."""
     if re.fullmatch(COMMIT_SHA, reference.current_version):
         return _CommitSha.FULL
-    if not marker.holds_everything_back and _names_a_short_sha(reference):
+    if _names_a_short_sha(reference):
         return _CommitSha.SHORT
     return _CommitSha.NONE
 
@@ -97,9 +97,9 @@ def _reads_as_a_version(reference: Reference, commit_sha: _CommitSha) -> bool:
     return is_valid(reference.current_version) and commit_sha is not _CommitSha.SHORT
 
 
-def names_a_version(reference: Reference, marker: Marker) -> bool:
+def names_a_version(reference: Reference) -> bool:
     """Return whether the reference names a version, rather than a branch, a tag such as `stable-2024`, or a commit."""
-    return _reads_as_a_version(reference, _commit_sha(reference, marker))
+    return _reads_as_a_version(reference, _commit_sha(reference))
 
 
 def _ref_kind(reference: Reference) -> RefKind:
@@ -141,11 +141,11 @@ class _PinResolver:
     def latest_pin(self, reference: Reference) -> DependencyVersion | None:
         """Return the version or ref to pin the GitHub reference to, or None to leave the reference as it is."""
         current_version, current_sha = reference.current_version, reference.current_sha
-        commit_sha = _commit_sha(reference, self.marker)
+        commit_sha = _commit_sha(reference)
         if not _reads_as_a_version(reference, commit_sha):
             return self._unversioned_pin(reference, commit_sha)
         # The reference uses the commit its tag points at, named by the highest version tag at it.
-        if not current_sha and not self.marker.holds_back_source_checks:
+        if not current_sha:
             reference = replace(reference, current_version=version_at_tag(reference.dependency, current_version))
         latest = latest_version(reference, self.source, self.marker, self.log)
         warn_if_the_opt_in_is_redundant(
@@ -182,7 +182,7 @@ class _PinResolver:
     def _report_what_the_marker_decides(self, reference: Reference, *, names_a_commit: bool) -> None:
         """Report the directives that set nothing, the project checks, and a floating-pin opt-in that keeps nothing."""
         marker, log = self.marker, self.log
-        report_directives_that_set_nothing(marker, self.source, reference, log)
+        report_directives_the_source_cannot_apply(marker, self.source, reference, log)
         report_project_checks(reference, marker, log, project)
         pin_does_not_float = Reason.PIN_NOT_FLOATING if names_a_commit else None
         warn_if_the_opt_in_is_redundant(
@@ -213,17 +213,17 @@ class _PinResolver:
         if pin is not None and pin.tag_name:
             log.warn_if_redundant_bound(replace(reference, current_version=pin.version), marker)
             return
-        if names_a_commit and (cooldown := marker.as_written.directive_for(Scope.COOLDOWN)):
+        if names_a_commit and (cooldown := marker.cooldown_directive):
             log.redundant_directive(reference, cooldown, Reason.NO_COOLDOWN_FOR_A_COMMIT)
         no_drift = Reason.NO_DRIFT_FOR_A_COMMIT if names_a_commit else None
         warn_if_the_opt_in_is_redundant(
             reference, marker, log, Scope.HASH_DRIFT, no_drift, update_held_back=marker.ignores(Scope.UPDATE)
         )
-        if bound := marker.as_written.version_bound_directive:
+        if bound := marker.version_bound_directive:
             reason = Reason.PINS_A_COMMIT if names_a_commit else Reason.FOLLOWS_A_BRANCH
             log.redundant_directive(reference, bound, reason)
         if reports_vulnerabilities(self.source, reference.pinned) and (
-            vulnerable := marker.as_written.directive_for(Scope.VULNERABLE)
+            vulnerable := marker.directive_for(Scope.VULNERABLE)
         ):
             log.redundant_directive(reference, vulnerable, Reason.NO_NAMED_VERSION_TO_CHECK_FOR_A_VULNERABILITY)
 

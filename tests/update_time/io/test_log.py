@@ -26,7 +26,6 @@ from update_time.domain.dependency import (
     Yank,
 )
 from update_time.domain.reference import DriftedPin, RefKind
-from update_time.domain.staleness import _NO_STALENESS_CHECK
 from update_time.io import log as log_module
 from update_time.io.console import (
     CHANGES,
@@ -39,13 +38,20 @@ from update_time.io.log import (
     get_logger,
 )
 from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker, Scope, Threshold
+from update_time.markers.marker import Marker, Scope, Threshold, parse_directives
 from update_time.primitives.location import Location
 from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import utc_date_and_time
 
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import BARE_IGNORE, COMMIT_SHA1, COMMIT_SHA2, DIGEST, DIGEST1, DIGEST2, FRESH_DATE
+from tests.update_time.fixtures import (
+    COMMIT_SHA1,
+    COMMIT_SHA2,
+    DIGEST,
+    DIGEST1,
+    DIGEST2,
+    FRESH_DATE,
+)
 from tests.update_time.helpers import (
     adopted_drift_report,
     bound,
@@ -584,7 +590,7 @@ class LoggerTests(TestCase):
         published = datetime.now(UTC) - timedelta(days=512, hours=1)
         version = DependencyVersion("4.15.0", project=Project(newest=Release("5.0.0", published)))
         location = create_location("requirements.txt", 9)
-        _new_logger().report_staleness(resolved_reference("humanize", location, version), Marker(), 90)
+        _new_logger().report_staleness(resolved_reference("humanize", location, version), 90)
         self.assert_message(
             mock_log,
             message_of(Logger.report_staleness, "days"),
@@ -594,66 +600,43 @@ class LoggerTests(TestCase):
         )
 
     def test_report_staleness(self, mock_log: Mock):
-        """Test that staleness is reported as a warning, or as the marker that silences it.
+        """Test that staleness is reported as a warning at the threshold given.
 
         The release is 100 days old, which is stale against the 90 passed in and not against the global default, so
-        either line is logged only when the given threshold is the one applied.
+        the warning is logged only when the given threshold is the one applied.
         """
         published = datetime.now(UTC) - timedelta(days=100, hours=1)
         version = DependencyVersion("4.15.0", project=Project(newest=Release("4.15.0", published)))
         resolved = resolved_reference("humanize", create_location("requirements.txt", 9), version)
-        _new_logger().report_staleness(resolved, Marker(), 90)
+        _new_logger().report_staleness(resolved, 90)
         mock_log.assert_called_once_with(
-            message_of(Logger.report_staleness, "days").level,
-            message_of(Logger.report_staleness, "days"),
-            ANY,
-        )
-        mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
-        _new_logger().report_staleness(
-            resolved,
-            Marker(
-                ignored_scopes=Scope.UPDATE | Scope.STALE,
-                written_scopes=Scope.UPDATE | Scope.STALE,
-                raw="ignore[update] ignore[stale] allow[hash-drift]",
-            ),
-            90,
-        )
-        self.assert_message(
-            mock_log,
-            message_of(Logger.report_staleness, "dependency", "location", "directive"),
-            logging.DEBUG,
-            f"Ignoring the staleness warning for {dependency('humanize')} in {at('requirements.txt:9')} "
-            "(update-time: ignore[stale])",
-        )
-
-    def test_report_staleness_warns_about_an_ignore_stale_on_a_recent_release(self, mock_log: Mock):
-        """Test that an `ignore[stale]` on a project whose newest release is recent is reported as redundant."""
-        version = DependencyVersion("4.15.0", project=Project(newest=Release("4.15.0", FRESH_DATE)))
-        resolved = resolved_reference("humanize", create_location("requirements.txt", 9), version)
-        _new_logger().report_staleness(resolved, Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]"), 90)
-        self.assert_message(
-            mock_log,
-            message_of(Logger.report_staleness, "directive", "threshold"),
-            logging.WARNING,
-            f"Redundant update-time directive ignore[stale] for {dependency('humanize')} in "
-            f"{at('requirements.txt:9')}: newest release 4.15.0 is not older than 90 days",
+            message_of(Logger.report_staleness).level, message_of(Logger.report_staleness), ANY
         )
 
     def test_redundant_stale_threshold(self, mock_log: Mock):
-        """Test that the warning names the threshold as written, the run's threshold, and the newest release's age."""
+        """Test that the warning names the threshold as written, the run's threshold, and the newest release's age.
+
+        The run's threshold is named as the default where it is one, and by the option otherwise.
+        """
         newest = Release("4.15.0", datetime.now(UTC) - timedelta(days=30, hours=1))
         location = create_location("requirements.txt", 9)
-        for directive in ("ignore[stale<90]", "allow[stale>=90]"):
-            with self.subTest(directive=directive):
-                threshold = Threshold(value=90, directive=directive)
-                _new_logger().redundant_stale_threshold(reference("humanize", location), threshold, newest, 365)
+        threshold = Threshold(value=90, directive="set[stale-after=90]")
+        runs = {
+            365: ("default_threshold", "the default of 365 days"),
+            400: ("run_threshold", "--stale-after 400"),
+        }
+        for run_threshold, (run_field, run_words) in runs.items():
+            with self.subTest(run_threshold=run_threshold):
+                _new_logger().redundant_stale_threshold(
+                    reference("humanize", location), threshold, newest, run_threshold
+                )
                 self.assert_message(
                     mock_log,
-                    message_of(Logger.redundant_stale_threshold),
+                    message_of(Logger.redundant_stale_threshold, run_field),
                     logging.WARNING,
-                    f"Redundant update-time directive {directive} for {dependency('humanize')} in "
+                    f"Redundant update-time directive set[stale-after=90] for {dependency('humanize')} in "
                     f"{at('requirements.txt:9')}: newest release 4.15.0 was published 30 days ago, which the "
-                    "threshold of 90 days and --stale-after 365 judge alike",
+                    f"threshold of 90 days and {run_words} judge alike",
                 )
 
     def test_yanked_dependency_warning(self, mock_log: Mock):
@@ -722,47 +705,6 @@ class LoggerTests(TestCase):
             "leaving the reference unchanged",
         )
 
-    def test_inverted_stale_item(self, mock_log: Mock):
-        """Test that a `stale` item comparing the wrong way round is warned about at warning level."""
-        location = create_location("Dockerfile", 2)
-        marker = Marker(stale=Threshold(inverted_item="stale>=90"))
-        _new_logger().report_inverted_items(reference("python", location), marker)
-        self.assert_message(
-            mock_log,
-            message_of(Logger._inverted_stale_item),
-            logging.WARNING,
-            f"Incorrect 'stale>=90' in the update-time marker for {dependency('python')} in {at('Dockerfile:2')}: "
-            "this comparison warns while a release is fresh and goes quiet once it is old, so it sets no threshold",
-        )
-
-    def test_inverted_cooldown_item(self, mock_log: Mock):
-        """Test that a `cooldown` item comparing the wrong way round is warned about at warning level."""
-        location = create_location("Dockerfile", 2)
-        marker = Marker(cooldown=Threshold(inverted_item="cooldown>=30"))
-        _new_logger().report_inverted_items(reference("python", location), marker)
-        self.assert_message(
-            mock_log,
-            message_of(Logger._inverted_cooldown_item),
-            logging.WARNING,
-            f"Incorrect 'cooldown>=30' in the update-time marker for {dependency('python')} in {at('Dockerfile:2')}: "
-            "this comparison adopts a release only while it is fresh and holds it back once it is old, "
-            "so it sets no cooldown",
-        )
-
-    def test_inverted_vulnerable_item(self, mock_log: Mock):
-        """Test that a `vulnerable` item comparing the wrong way round is warned about at warning level."""
-        location = create_location("Dockerfile", 2)
-        marker = Marker(vulnerable=Threshold(inverted_item="vulnerable>=high"))
-        _new_logger().report_inverted_items(reference("python", location), marker)
-        self.assert_message(
-            mock_log,
-            message_of(Logger._inverted_vulnerable_item),
-            logging.WARNING,
-            f"Incorrect 'vulnerable>=high' in the update-time marker for {dependency('python')} in "
-            f"{at('Dockerfile:2')}: this comparison warns about the mild vulnerabilities and stays quiet about the "
-            "severe ones, so it sets no risk level",
-        )
-
     def test_warn_if_redundant_bound(self, mock_log: Mock):
         """Test that a bound deciding nothing for a 3.12 pin is warned about, naming it and how it is redundant."""
         location = create_location("Dockerfile", 6)
@@ -800,13 +742,8 @@ class LoggerTests(TestCase):
     def test_recognised_marker(self, mock_log: Mock):
         """Test that a reference's marker is logged at debug level verbatim, exactly as the user wrote it."""
         # The raw text combines scopes and bracket items, so echoing it verbatim shows the log takes the user's marker.
-        raw = "ignore[update] ignore[stale] allow[update<3.13, hash-drift]"
-        marker = Marker(
-            ignored_scopes=Scope.STALE,
-            allowed_scopes=Scope.HASH_DRIFT,
-            version_bound=bound(Verb.ALLOW, "update<3.13"),
-            raw=raw,
-        )
+        raw = "ignore[update] set[stale-after=0] allow[update<3.13, hash-drift]"
+        marker = parse_directives(raw)
         location = create_location("Dockerfile", 6)
         _new_logger().recognised_marker("python", marker, location)
         self.assert_message(
@@ -823,11 +760,7 @@ class LoggerTests(TestCase):
 
     def test_ignored(self, mock_log: Mock):
         """Test that a held-back reference names the directive that held it back, not the ones written beside it."""
-        marker = Marker(
-            ignored_scopes=Scope.UPDATE,
-            written_scopes=Scope.UPDATE | Scope.STALE,
-            raw="ignore[update] ignore[stale] allow[hash-drift]",
-        )
+        marker = parse_directives("ignore[update] set[stale-after=0] allow[hash-drift]")
         location = create_location("Dockerfile", 6)
         _new_logger().ignored("python", marker, location)
         self.assert_message(
@@ -837,39 +770,15 @@ class LoggerTests(TestCase):
             f"Ignoring updates for {dependency('python')} in {at('Dockerfile:6')} (update-time: ignore[update])",
         )
 
-    def test_ignored_by_a_bare_marker(self, mock_log: Mock):
-        """Test that a bare `ignore` names itself, rather than a scoped directive the user never wrote."""
-        marker = Marker(ignored_scopes=BARE_IGNORE.ignored_scopes, raw="ignore")
-        location = create_location("Dockerfile", 6)
-        _new_logger().ignored("python", marker, location)
-        self.assert_message(
-            mock_log,
-            message_of(Logger.ignored),
-            logging.DEBUG,
-            f"Ignoring updates for {dependency('python')} in {at('Dockerfile:6')} (update-time: ignore)",
-        )
-
     def test_report_staleness_does_nothing_when_not_stale(self, mock_log: Mock):
-        """Test that an unmarked recent release is not reported, and an undated one is not either, marked or not."""
+        """Test that a recent release is not reported, and an undated one is not either."""
         newest = Release("4.15.0", FRESH_DATE)
         recent = DependencyVersion("4.15.0", project=Project(newest=newest))
         undated = DependencyVersion("4.15.0")
         logger = _new_logger()
         location = create_location("requirements.txt", 9)
-        logger.report_staleness(resolved_reference("humanize", location, recent), Marker(), 90)
-        mock_log.assert_not_called()
-        for marker in (Marker(), Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]")):
-            with self.subTest(marker=marker.raw or "no marker"):
-                logger.report_staleness(resolved_reference("humanize", location, undated), marker, 90)
-                mock_log.assert_not_called()
-
-    def test_report_staleness_reports_no_ignore_stale_in_a_run_that_switches_the_check_off(self, mock_log: Mock):
-        """Test that an `ignore[stale]` on a recent release is not reported in a run with `--stale-after 0`."""
-        recent = DependencyVersion("4.15.0", project=Project(newest=Release("4.15.0", FRESH_DATE)))
-        resolved = resolved_reference("humanize", create_location("requirements.txt", 9), recent)
-        _new_logger().report_staleness(
-            resolved, Marker(ignored_scopes=Scope.STALE, raw="ignore[stale]"), _NO_STALENESS_CHECK
-        )
+        logger.report_staleness(resolved_reference("humanize", location, recent), 90)
+        logger.report_staleness(resolved_reference("humanize", location, undated), 90)
         mock_log.assert_not_called()
 
     def test_report_yank(self, mock_log: Mock):
@@ -883,11 +792,7 @@ class LoggerTests(TestCase):
         mock_log.reset_mock()  # Judge the marker that silences it on the records of its own run.
         _new_logger().report_yank(
             resolved,
-            Marker(
-                ignored_scopes=Scope.UPDATE | Scope.YANKED,
-                written_scopes=Scope.UPDATE | Scope.YANKED,
-                raw="ignore[update] ignore[yanked] allow[hash-drift]",
-            ),
+            parse_directives("ignore[update] ignore[yanked] allow[hash-drift]"),
         )
         self.assert_message(
             mock_log,
@@ -926,16 +831,15 @@ class LoggerTests(TestCase):
     )
     def test_ignored_vulnerability(self, mock_log: Mock):
         """Test that a vulnerability warning a marker silenced reads with the advisory it silenced."""
-        marker = Marker(ignored_scopes=Scope.VULNERABLE, written_scopes=Scope.VULNERABLE, raw="ignore[vulnerable]")
         pin = reference("django", create_location("requirements.txt", 9), "3.2.0")
         reported = vulnerability("GHSA-2gwj-7jmv-h26r", "SQL Injection in Django", "critical")
-        _new_logger().ignored_vulnerability(pin, reported, marker)
+        _new_logger().ignored_vulnerability(pin, reported, "set[vulnerability-level=none]")
         self.assert_message(
             mock_log,
             message_of(Logger.ignored_vulnerability),
             logging.DEBUG,
             f"Ignoring the GHSA-2gwj-7jmv-h26r vulnerability warning for {dependency('django')} "
-            f"in {at('requirements.txt:9')} (update-time: ignore[vulnerable])",
+            f"in {at('requirements.txt:9')} (update-time: set[vulnerability-level=none])",
         )
 
     @kills(
@@ -963,9 +867,9 @@ class LoggerTests(TestCase):
     def test_redundant_directive(self, mock_log: Mock):
         """Test that a directive holding nothing back is reported with the directive and the reason, as given."""
         cases = {
-            "ignore[cooldown<30]": Reason.NO_COOLDOWN_DATES,
+            "set[cooldown=30]": Reason.NO_COOLDOWN_DATES,
             "ignore[yanked]": Reason.NO_YANK_CONCEPT,
-            "allow[stale>=90]": Reason.NO_STALENESS_DATES,
+            "set[stale-after=90]": Reason.NO_STALENESS_DATES,
         }
         for directive, reason in cases.items():
             with self.subTest(directive=directive):

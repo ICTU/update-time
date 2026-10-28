@@ -15,7 +15,7 @@ from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 
 from tests.helpers import mock_path, mock_response, patch_pathlib_path
 from tests.mutation import Mutation, kills
-from tests.update_time.fixtures import BARE_IGNORE, CHANGELOG
+from tests.update_time.fixtures import CHANGELOG
 from tests.update_time.helpers import LoggingTestCase, message_of, published_version, pyproject
 from tests.update_time.sources.helpers import github_commits_json, github_release_json
 from tests.update_time.updaters.helpers import (
@@ -151,11 +151,11 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     def test_a_marker_on_a_pin_uv_reports_no_update_for_is_reported(self, run: Mock, get: Mock, glob: Mock):
         """Test that a marker is reported as recognised and as holding the update back, with no update available."""
-        mock_pyproject_toml, location = self.updated_marked_pin(run, get, glob, "ignore", latest="")
+        mock_pyproject_toml, location = self.updated_marked_pin(run, get, glob, "ignore[update]", latest="")
         mock_pyproject_toml.write_text.assert_not_called()
         self.assert_no_new_version_logged()
-        self.assert_recognised_marker_logged("package", location, BARE_IGNORE)
-        self.assert_ignored_logged("package", location, "ignore", among_others=True)
+        self.assert_recognised_marker_logged("package", location, Marker(ignored_scopes=Scope.UPDATE))
+        self.assert_ignored_logged("package", location, "ignore[update]", among_others=True)
 
     @kills(
         Mutation(
@@ -188,14 +188,12 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     def test_a_marker_holds_the_update_back(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pin whose marker holds its update back keeps its version, and is reported as held back."""
-        for directive, marker in {"ignore": BARE_IGNORE, "ignore[update]": Marker(ignored_scopes=Scope.UPDATE)}.items():
-            with self.subTest(directive=directive):
-                mock_pyproject_toml, location = self.updated_marked_pin(run, get, glob, directive)
-                mock_pyproject_toml.write_text.assert_not_called()
-                get.assert_not_called()  # a pin nothing updates costs no request for its changelog
-                self.assert_no_new_version_logged()
-                self.assert_recognised_marker_logged("package", location, marker)
-                self.assert_ignored_logged("package", location, directive, among_others=True)
+        mock_pyproject_toml, location = self.updated_marked_pin(run, get, glob, "ignore[update]")
+        mock_pyproject_toml.write_text.assert_not_called()
+        get.assert_not_called()  # a pin nothing updates costs no request for its changelog
+        self.assert_no_new_version_logged()
+        self.assert_recognised_marker_logged("package", location, Marker(ignored_scopes=Scope.UPDATE))
+        self.assert_ignored_logged("package", location, "ignore[update]", among_others=True)
 
     @kills(
         Mutation(
@@ -226,11 +224,11 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     def test_a_marker_freezes_one_declaration_of_a_name_while_the_other_updates(self, run: Mock, get: Mock, glob: Mock):
         """Test that a name declared twice is frozen on the line its marker steers, and updated on the other."""
-        frozen = '[project]\ndependencies = ["package==1.0"]  # update-time: ignore\n[dependency-groups]\n'
+        frozen = '[project]\ndependencies = ["package==1.0"]  # update-time: ignore[update]\n[dependency-groups]\n'
         mock_pyproject_toml = self.updated_pyproject_toml(run, get, glob, f'{frozen}dev = ["package==1.0"]\n')
         mock_pyproject_toml.write_text.assert_called_once_with(f'{frozen}dev = ["package==1.1"]\n')
         self.assert_new_version_logged("package", _NEW_VERSION, Location(mock_pyproject_toml, 4))
-        self.assert_ignored_logged("package", Location(mock_pyproject_toml, 2), "ignore", among_others=True)
+        self.assert_ignored_logged("package", Location(mock_pyproject_toml, 2), "ignore[update]", among_others=True)
 
     def test_an_invalid_bracket_item_leaves_the_pin_unchanged(self, run: Mock, get: Mock, glob: Mock):
         """Test that an item the marker language cannot read warns and freezes the pin, reporting no marker."""
@@ -262,36 +260,6 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         mock_pyproject_toml.write_text.assert_called_once_with(f'{frozen}dev = ["package==1.1"]\n')
         self.assert_new_version_logged("package", _NEW_VERSION, Location(mock_pyproject_toml, 4))
         self.assert_invalid_bracket_item_logged("package", Location(mock_pyproject_toml, 2), "stlae")
-
-    def test_an_inverted_comparison_is_reported(self, run: Mock, get: Mock, glob: Mock):
-        """Test that each item running the wrong way round is reported, and the dependency updates as usual."""
-        messages = {
-            "stale>=90": message_of(Logger._inverted_stale_item),
-            "cooldown>=30": message_of(Logger._inverted_cooldown_item),
-            "vulnerable>=high": message_of(Logger._inverted_vulnerable_item),
-        }
-        for spec in ("package==1.0", "package>=1.0"):
-            for item, message in messages.items():
-                with self.subTest(spec=spec, item=item):
-                    mock_pyproject_toml = self.updated_pyproject_toml(
-                        run, get, glob, pyproject(spec, marker=f"ignore[{item}]")
-                    )
-                    location = Location(mock_pyproject_toml, 2)
-                    self.assert_logged(message, item=item, dependency="package", location=location)
-                    self.assert_new_version_logged("package", _NEW_VERSION, location)
-
-    def test_a_pin_with_inverted_comparisons_still_updates(self, run: Mock, get: Mock, glob: Mock):
-        """Test that items comparing the wrong way round leave the pin updated and its marker recognised."""
-        items = "stale>=90, cooldown>=30, vulnerable>=high"
-        mock_pyproject_toml, location = self.updated_marked_pin(run, get, glob, f"ignore[{items}]")
-        mock_pyproject_toml.write_text.assert_called_once_with(pyproject("package==1.1", marker=f"ignore[{items}]"))
-        self.assert_new_version_logged("package", _NEW_VERSION, location)
-        inverted = Marker(
-            stale=Threshold(inverted_item="stale>=90"),
-            cooldown=Threshold(inverted_item="cooldown>=30"),
-            vulnerable=Threshold(inverted_item="vulnerable>=high"),
-        )
-        self.assert_recognised_marker_logged("package", location, inverted)
 
     def test_update_with_changelog(self, run: Mock, get: Mock, glob: Mock):
         """Test updating a pyproject.toml with changelog."""
@@ -452,9 +420,9 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     def test_a_marker_in_a_file_uv_does_not_run_for_is_recognised(self, run: Mock, get: Mock, glob: Mock):
         """Test that the marker on a build requirement of a pyproject.toml that uv does not run for is reported."""
-        contents = '[build-system]\nrequires = ["hatchling==1.20.0"]  # update-time: ignore[stale]\n'
+        contents = '[build-system]\nrequires = ["hatchling==1.20.0"]  # update-time: set[stale-after=0]\n'
         mock_pyproject_toml = self.updated_pyproject_toml(run, get, glob, contents, latest="")
-        marker = Marker(ignored_scopes=Scope.STALE)
+        marker = Marker(stale=Threshold(value=0))
         self.assert_recognised_marker_logged("hatchling", Location(mock_pyproject_toml, 2), marker)
 
     @kills(
