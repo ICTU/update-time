@@ -1,13 +1,12 @@
 """Pin the `rev:` of each GitHub-hosted hook in pre-commit configs to a commit, and bump it to the latest version."""
 
-import re
 from functools import partial
 from typing import TYPE_CHECKING
 
 from update_time.domain.file_type import PRE_COMMIT_CONFIG
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
-from update_time.primitives.digest import COMMIT_SHA
+from update_time.manifests.pre_commit_config import REPOSITORY_KEY, REV_REFERENCE, spell_rev
 from update_time.references.file import rewrite_file
 from update_time.references.github import PinUpdater
 from update_time.references.rewrite import apply_marker
@@ -15,30 +14,9 @@ from update_time.sources.github import github_repository
 
 if TYPE_CHECKING:
     from update_time.domain.line import Line
-    from update_time.domain.reference import Reference
 
 _LOG = get_logger("pre-commit config")
-
-# Match a `repo:` key and capture its value: a repository URL (`https://github.com/owner/repo`), or the `local` /
-# `meta` sentinels that carry no `rev:`. The value sets the repository the following `rev:` lines belong to.
-_REPO_RE = re.compile(r"repo:\s*(?P<repo>\S+)")
-# Match a `rev:` value that is either already pinned to a commit SHA with a pre-commit `# frozen:` comment naming a
-# version or a branch (`rev: <sha> # frozen: v4.5.0`, `rev: <sha> # frozen: main`), or unpinned (`rev: v4.5.0`,
-# optionally quoted). The tag group also takes an unpinned branch, a tag such as `stable-2024`, and a bare commit
-# SHA. The tag stops at whitespace, a quote, or a `#`, so a trailing `# update-time:` marker (or any comment) is left
-# outside the match and preserved.
-_REV_RE = re.compile(
-    r"rev:\s*"
-    rf"(?:(?P<sha>{COMMIT_SHA})\s*#\s*frozen:\s*(?P<version>\S+)|(?P<quote>['\"]?)(?P<tag>[^\s'\"#]+)(?P=quote))"
-)
-
-
-def _spell_rev(_reference: Reference, sha: str, comment: str) -> str:
-    """Return the `rev:` pinned to the commit SHA, with the tag or branch, if any, in a `# frozen:` comment."""
-    return f"rev: {sha}" + (f"  # frozen: {comment}" if comment else "")
-
-
-_REV = PinUpdater(_spell_rev, _LOG)
+_REV = PinUpdater(spell_rev, _LOG)
 
 
 def _updated_lines(lines: list[Line]) -> list[str]:
@@ -51,10 +29,10 @@ def _updated_lines(lines: list[Line]) -> list[str]:
     result = []
     repository = None  # The repository of the `repo:` in scope, None for `local`, `meta`, and a host other than GitHub
     for line in lines:
-        if repo_match := _REPO_RE.search(line.text):
-            repository = github_repository(repo_match.group("repo").strip("'\""))
+        if repo_match := REPOSITORY_KEY.search(line.text):
+            repository = github_repository(repo_match.group("repo"))
             result.append(line.text)
-        elif (rev_match := _REV_RE.search(line.text)) and repository is not None:
+        elif (rev_match := REV_REFERENCE.search(line.text)) and repository is not None:
             dependency = str(repository)
             update_line = partial(_REV.update_line, dependency=dependency)
             result.append(apply_marker(line, rev_match, update_line, _LOG, dependency))

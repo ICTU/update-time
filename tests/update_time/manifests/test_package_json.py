@@ -5,7 +5,6 @@ import unittest
 from typing import TYPE_CHECKING
 
 from update_time.domain.reference import Reference
-from update_time.formats import json as json_format
 from update_time.manifests import package_json
 from update_time.manifests.package_json import Declaration
 from update_time.primitives.location import Location
@@ -22,7 +21,7 @@ class ReferenceMarkerTest(unittest.TestCase):
     @staticmethod
     def location(path: Mock) -> Location:
         """Return where the package.json declares its Node engine."""
-        return package_json.reference_marker(json_format.read(path), "engines", "node").reference_location
+        return package_json.PackageJson.read(path).node_engine_marker().reference_location
 
     def test_the_entry_the_section_declares(self):
         """Test that the entry is located at the line and the column the section declares it on."""
@@ -41,7 +40,7 @@ class DependencyLocationsTest(unittest.TestCase):
     @staticmethod
     def locations(path: Mock) -> dict[str, list[Location]]:
         """Return each direct registry dependency of the package.json and where its entries sit."""
-        return package_json.dependency_locations(json_format.read(path))
+        return package_json.PackageJson.read(path).dependency_locations()
 
     def test_every_entry_across_the_sections(self):
         """Test that every entry in the dependency sections is returned, in order, each at its own line."""
@@ -113,7 +112,7 @@ class DeclaredRangesTest(unittest.TestCase):
     @staticmethod
     def ranges(path: Mock) -> dict[tuple[str, str], Reference]:
         """Return a reference to the range each registry dependency of the package.json declares."""
-        return package_json.declared_ranges(json_format.read(path))
+        return package_json.PackageJson.read(path).declared_ranges()
 
     def test_a_range_per_section_declaring_the_name(self):
         """Test that a name two sections declare has a range per section, each at its own line."""
@@ -152,7 +151,7 @@ class DeclarationsTest(unittest.TestCase):
             "}\n"
         )
         self.assertEqual(
-            list(package_json.declarations(json_format.read(path))),
+            list(package_json.PackageJson.read(path).declarations()),
             [
                 Declaration("react", "18.2.0", Location(path, 3, 4), names_a_release=True),
                 Declaration("left-pad", "", Location(path, 4, 4), names_a_release=True),
@@ -175,5 +174,5 @@ class DeclarationsTest(unittest.TestCase):
         ]:
             with self.subTest(spec=spec):
                 path = mock_path(json.dumps({"dependencies": {"left-pad": spec}}))
-                (reference,) = package_json.declarations(json_format.read(path))
+                (reference,) = package_json.PackageJson.read(path).declarations()
                 self.assertEqual(reference.current_version, version)

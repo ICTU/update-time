@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
 from update_time.io.log import Logger
-from update_time.manifests import pyproject_toml
-from update_time.manifests.dependency_file import PyprojectToml
+from update_time.manifests import python_dependency_toml as python_dependency_toml_manifest
+from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.package_managers import uv
 from update_time.primitives.location import Location
@@ -159,7 +159,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pyproject_toml.Declaration.updatable,
+            python_dependency_toml_manifest.Declaration.updatable,
             "return not (self.pins_a_version and self.marker.ignores(Scope.UPDATE))",
             "return not self.marker.ignores(Scope.UPDATE)",
             "an `ignore[update]` holds back a dependency that pins no version, whose version uv resolves whatever "
@@ -427,8 +427,8 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pyproject_toml.declares_a_dependency,
-            "any(_uv_dependency_arrays(config))",
+            PyprojectToml.declares_a_dependency,
+            "any(uv_dependency_arrays(config))",
             'bool(config.get("project", {}).get("dependencies"))',
             "uv runs only for a dependency the project's own array declares",
         )
@@ -458,8 +458,8 @@ class CheckedPinsTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pyproject_tomls,
-            "warn_about_pins([PyprojectToml(path) for path in uv_projects], _LOG)",
-            "warn_about_pins(pyproject_tomls, _LOG)",
+            "warn_about_pins(uv_projects, _LOG)",
+            "warn_about_pins(projects_with_dependencies, _LOG)",
             "a pyproject.toml that uv does not run for is not checked either",
         )
     )

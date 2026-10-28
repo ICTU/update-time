@@ -5,8 +5,8 @@ from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DEVCONTAINER_CONFIGS
+from update_time.manifests import devcontainer_json as devcontainer_json_manifest
 from update_time.primitives.location import Location
-from update_time.updaters import update_devcontainer
 from update_time.updaters.update_devcontainer import update_devcontainers
 
 from tests.helpers import mock_path
@@ -79,10 +79,10 @@ class UpdateDevcontainerTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            update_devcontainer,
-            r"""_FEATURE_RE = rf'"{IMAGE_REFERENCE}":\s*{{'""",
-            r"""_FEATURE_RE = r'"(?P<dependency>[\w./-]+)(?::(?=[\w.-]))?(?P<version>[\w.-]*)"""
-            r"""(?:@(?P<sha>sha256:[0-9a-f]{64}))?":\s*{'""",
+            devcontainer_json_manifest,
+            r"""FEATURE_REFERENCE = re.compile(rf'"{IMAGE_REFERENCE}":\s*{{')""",
+            r"""FEATURE_REFERENCE = re.compile(r'"(?P<dependency>[\w./-]+)(?::(?=[\w.-]))?(?P<version>[\w.-]*)"""
+            r"""(?:@(?P<sha>sha256:[0-9a-f]{64}))?":\s*{')""",
             "a JSON key naming no version is read as a feature reference without a tag",
         )
     )

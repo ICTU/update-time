@@ -360,6 +360,10 @@ check-justfile:
 [private]
 check-readme-is-up-to-date: (py-check "check-readme-is-up-to-date" f"{{ python_m }} tools.generate_readme --check")
 
+# Check that docs/architecture.md draws the dependencies the layers have.
+[private]
+check-architecture-is-up-to-date: (py-check "check-architecture-is-up-to-date" f"{{ python_m }} tools.generate_architecture --check")
+
 # Check that the README documents every dependency type the same way, and that its internal links resolve.
 [private]
 check-readme-structure: install-py-dependencies
@@ -377,7 +381,7 @@ check: fixit bandit pip-audit uv-audit zizmor unconditional-checks
 # The quality checks that run whatever changed.
 [parallel]
 [private]
-unconditional-checks: ty mypy ruff pyproject-fmt troml vulture codespell check-justfile check-readme-is-up-to-date check-readme-structure check-readability vale yamllint
+unconditional-checks: ty mypy ruff pyproject-fmt troml vulture codespell check-justfile check-readme-is-up-to-date check-architecture-is-up-to-date check-readme-structure check-readability vale yamllint
 
 # The exit status `run_if_changed` gives where it skips a command. A command it runs that exits with this status makes
 # the tool exit with 1, so the failure never reads as a skip.
@@ -517,6 +521,10 @@ alias update-deps := update-dependencies
 # Regenerate README.md from docs/README.md.in (fills in `update-time -h` and the log output; rewrites the screenshot).
 readme: install-py-dependencies
     {{ python_m }} tools.generate_readme
+
+# Regenerate docs/architecture.md, which draws the layers of the package and the dependencies between them.
+architecture: install-py-dependencies
+    {{ python_m }} tools.generate_architecture
 
 # === CI ===
 

@@ -1,31 +1,15 @@
 """Manifest image updater script finds image tags and updates them to latest compatible versions."""
 
-from typing import TYPE_CHECKING
-
 from update_time.domain.dependency import ImageNotLookedUp
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
-from update_time.domain.reference import YAML_IMAGE_REFERENCE
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
+from update_time.manifests.docker_compose import built_images
+from update_time.manifests.yaml_image import YAML_IMAGE_REFERENCE
 from update_time.references.file import update_file, update_yaml_files
-from update_time.sources.oci import tag_getter, tag_getter_excluding_each
-
-if TYPE_CHECKING:
-    from update_time.formats.yaml import Document
+from update_time.sources.oci import TagGetter
 
 _LOG = get_logger("manifest images")
-
-
-def _built_images(document: Document) -> set[str]:
-    """Return the images the Compose file builds: the `image:` of each service that also declares a `build:`."""
-    services = document.get("services") if isinstance(document, dict) else None
-    if not isinstance(services, dict):
-        return set()
-    return {
-        service["image"]
-        for service in services.values()
-        if isinstance(service, dict) and "build" in service and isinstance(service.get("image"), str)
-    }
 
 
 def update_manifest_images() -> None:
@@ -37,11 +21,12 @@ def update_manifest_images() -> None:
     update_yaml_files(
         DOCKER_COMPOSE_FILES,
         regexp=YAML_IMAGE_REFERENCE,
-        get_new_version_for=tag_getter_excluding_each(_built_images, ImageNotLookedUp.BUILT_IMAGE),
+        find_images=built_images,
+        reason=ImageNotLookedUp.BUILT_IMAGE,
         logger=_LOG,
     )
     for helm_chart in glob_for(HELM_CHARTS):
-        update_file(helm_chart, YAML_IMAGE_REFERENCE, get_new_version=tag_getter(), logger=_LOG)
+        update_file(helm_chart, YAML_IMAGE_REFERENCE, get_new_version=TagGetter(), logger=_LOG)
 
 
 def main() -> None:  # pragma: no cover

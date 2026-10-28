@@ -16,7 +16,7 @@ from update_time.domain.dependency_type import DEPENDENCY_TYPES, DependencyType
 from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
 from update_time.io.cli import VERSION, parse_args
-from update_time.io.filesystem import EXCLUDE_PATHS, inside_git_repository
+from update_time.io.filesystem import configure_excluded_paths, inside_git_repository
 from update_time.io.log import get_logger, set_log_level
 from update_time.io.network import report_network_settings
 from update_time.io.process import Processes
@@ -26,6 +26,7 @@ from update_time.primitives.command import Command
 from update_time.sources import docker_hub, github
 
 if TYPE_CHECKING:
+    from argparse import Namespace
     from collections.abc import Iterator, Mapping
 
     from update_time.io.log import Logger
@@ -135,24 +136,16 @@ def _stop(processes: Processes, logger: Logger, signal_number: int, _frame: obje
     processes.stop(Signals(signal_number))
 
 
-def _configure_excluded_paths(paths: list[Path]) -> None:
-    """Pass the excluded directories down to the updater subprocesses and log them once for the whole run.
-
-    The walk runs inside each subprocess, so the excluded set travels through the environment (like the cooldown and
-    log level). Logging happens here, in the parent, so each excluded path is reported once rather than once per
-    subprocess. Existence is checked relative to the scan root, where the parent has already chdir'd. A path that
-    does not exist is not an error, since layouts vary between checkouts, but it is surfaced at WARNING and left out
-    of the environment, so what is passed down reflects what is actually held back.
-    """
-    logger = get_logger(__name__)
-    existing = []
-    for path in paths:
-        if path.exists():
-            logger.excluded_path(path)
-            existing.append(path)
-        else:
-            logger.missing_excluded_path(path)
-    EXCLUDE_PATHS.set(existing)
+def _pass_settings_down(args: Namespace, logger: Logger) -> None:
+    """Set what the command line configures the updaters with, in the environment their subprocesses inherit."""
+    COOLDOWN.set(args.cooldown)
+    STALE_AFTER.set(args.stale_after)
+    VULNERABILITY_LEVEL.set(args.vulnerability_level)
+    IGNORE_VULNERABILITIES.set(args.ignore_vulnerability)
+    IGNORE_ARCHIVED.set(args.ignore_archived)
+    ALLOW_HASH_DRIFT.set(args.allow_hash_drift)
+    ALLOW_FLOATING_PIN.set(args.allow_floating_pin)
+    configure_excluded_paths(args.exclude_path, logger)
 
 
 def main() -> int:
@@ -160,16 +153,7 @@ def main() -> int:
     args = parse_args()
     # Scope the whole run to the requested directory; everything downstream keys off the current working directory.
     os.chdir(args.path)
-    # Pass the cooldown, thresholds, ignored advisories, the archival check, log level, and the drift and
-    # floating-pin opt-ins down to the subprocesses via the environment.
-    COOLDOWN.set(args.cooldown)
-    STALE_AFTER.set(args.stale_after)
-    VULNERABILITY_LEVEL.set(args.vulnerability_level)
-    IGNORE_VULNERABILITIES.set(args.ignore_vulnerability)
-    IGNORE_ARCHIVED.set(args.ignore_archived)
     set_log_level(args.log_level)
-    ALLOW_HASH_DRIFT.set(args.allow_hash_drift)
-    ALLOW_FLOATING_PIN.set(args.allow_floating_pin)
     logger = get_logger(__name__)
     _report_context(logger)
     # parse_args has already refused to run outside a git repository unless --force was given; when it was, warn that
@@ -177,7 +161,7 @@ def main() -> int:
     scan_root = Path.cwd()
     if not inside_git_repository(scan_root):
         logger.forced_outside_git_repository(scan_root)
-    _configure_excluded_paths(args.exclude_path)
+    _pass_settings_down(args, logger)
     processes = Processes()
     for signal_number in _STOP_SIGNALS:
         signal.signal(signal_number, partial(_stop, processes, logger))

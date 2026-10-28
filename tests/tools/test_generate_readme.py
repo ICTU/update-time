@@ -126,48 +126,13 @@ class TableOfContentsTest(unittest.TestCase):
 
 @patch("tools.generate_readme.render")
 class MainTest(unittest.TestCase):
-    """Unit tests for writing the generated files, and for naming the ones that are out of date."""
+    """Unit tests for regenerating the README and its screenshot."""
 
-    CONTENT = "the generated content"
-
-    def generated_file(self, on_disk: str | None) -> Mock:
-        """Return a mock generated file that holds the given content, or that raises when read if there is none."""
-        exists = on_disk is not None
-        read_text = Mock(return_value=on_disk) if exists else Mock(side_effect=FileNotFoundError)
-        path = Mock(is_file=Mock(return_value=exists), read_text=read_text)
+    def test_stale_file_is_named_with_the_recipe_that_regenerates_it(self, render: Mock):
+        """Test that a stale generated file is named with `just readme`, the recipe that regenerates it."""
+        path = Mock(is_file=Mock(return_value=False))
         path.relative_to.return_value = "README.md"
-        return path
-
-    def check(self, render: Mock, path: Mock) -> None:
-        """Run the generator over the one file, in checking mode."""
-        render.return_value = {path: self.CONTENT}
-        with patch.object(sys, "argv", ["generate_readme", "--check"]):
+        render.return_value = {path: "the generated content"}
+        with patch.object(sys, "argv", ["generate_readme", "--check"]), self.assertRaises(SystemExit) as raised:
             main()
-
-    def test_files_are_written(self, render: Mock):
-        """Test that each generated file is written when the generator is not checking."""
-        path = self.generated_file("what it held before")
-        render.return_value = {path: self.CONTENT}
-        with patch.object(sys, "argv", ["generate_readme"]):
-            main()
-        path.write_text.assert_called_once_with(self.CONTENT)
-
-    def test_current_file_passes_the_check(self, render: Mock):
-        """Test that a file already holding the generated content is not reported, and is not written either."""
-        path = self.generated_file(self.CONTENT)
-        self.check(render, path)
-        path.write_text.assert_not_called()
-
-    def test_stale_file_is_named(self, render: Mock):
-        """Test that a file whose content has drifted exits the run, naming it and how to regenerate it."""
-        path = self.generated_file("what it held before")
-        with self.assertRaises(SystemExit) as raised:
-            self.check(render, path)
         self.assertIn("README.md out of date, run `just readme` to regenerate", str(raised.exception))
-        path.write_text.assert_not_called()
-
-    def test_missing_file_is_named(self, render: Mock):
-        """Test that a generated file that does not exist yet counts as out of date."""
-        path = self.generated_file(None)
-        with self.assertRaises(SystemExit):
-            self.check(render, path)

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tools.generate_log_svg import generate as generate_log_output
+from tools.generated_files import write_or_check
 from tools.log_samples import sample_log_lines
 from tools.markdown import anchor, headings
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
@@ -102,22 +103,9 @@ def render() -> dict[Path, str]:
     return {_README: readme, _SCREENSHOT: log_output.svg}
 
 
-def _out_of_date(generated: dict[Path, str]) -> list[Path]:
-    """Return the generated files whose content on disk is not what regenerating them produces."""
-    return [path for path, content in generated.items() if not path.is_file() or path.read_text() != content]
-
-
 def main() -> None:
     """Write the generated files, or, given `--check`, report the ones that are out of date without writing any."""
-    checking = "--check" in sys.argv[1:]
-    generated = render()
-    if not checking:
-        for path, content in generated.items():
-            path.write_text(content)
-        return
-    if stale := _out_of_date(generated):
-        names = ", ".join(str(path.relative_to(_ROOT)) for path in sorted(stale))
-        sys.exit(f"{names} out of date, run `just readme` to regenerate")
+    write_or_check(render(), _ROOT, "just readme")
 
 
 if __name__ == "__main__":  # pragma: no cover

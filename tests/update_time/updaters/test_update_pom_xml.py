@@ -11,7 +11,7 @@ from update_time.domain.bound import Verb, _Redundancy
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import NO_CHANGES, UNDATED, Archival, ArchivedSubject, Changes, Project, Release
 from update_time.io.log import Logger, LogMessage
-from update_time.manifests import pom_xml as pom_xml_module
+from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.package_managers import maven as maven_module
@@ -380,7 +380,7 @@ _CHILDS_EFFECTIVE_POM_LISTING_A_PROFILE = effective_pom_declaring(
 @patch.object(maven_central_module, "lacks_a_github_repository", Mock(return_value=False))
 @patch.object(maven_central_module, "get_changes", Mock(return_value=NO_CHANGES))
 @patch.object(maven_central_module, "publication", Mock(return_value=UNDATED))
-@patch.object(maven_module, "versions_held_back", Mock(return_value=()))
+@patch.object(maven_central_module, "versions_held_back", Mock(return_value=()))
 @patch_pathlib_path("rglob", cwd=Path("/"), exists=False)
 @patch("subprocess.run")
 class UpdatePomXmlTest(LoggingTestCase):
@@ -521,7 +521,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             asked.append(artefact)
             return ()
 
-        with patch.object(maven_module, "versions_held_back", versions_held_back):
+        with patch.object(maven_central_module, "versions_held_back", versions_held_back):
             yield asked
 
     @contextlib.contextmanager
@@ -546,7 +546,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         def versions_held_back(artefact: str, days: int) -> tuple[str, ...]:
             return versions.get(artefact, ()) if days == cooldown_days else ()
 
-        with patch.object(maven_module, "versions_held_back", versions_held_back):
+        with patch.object(maven_central_module, "versions_held_back", versions_held_back):
             yield
 
     def test_a_marker_holding_every_version_back_is_reported_as_holding_it_back(self, mock_run: Mock, mock_glob: Mock):
@@ -703,7 +703,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pom_xml_module._declaration,
+            pom_xml_manifest._declaration,
             "literal_plugin_version=versioned_by_its_pom and ",
             "literal_plugin_version=",
             "a plugin naming a parent's property reads as a literal version, so its marker gets the wrong reason",
@@ -1151,7 +1151,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pom_xml_module._managed_versions,
+            pom_xml_manifest._managed_versions,
             "_interpolated(version.text, property_elements) for",
             "version.text for",
             "a managed version naming a property never matches a child's, so every child is warned about again",
@@ -1213,13 +1213,13 @@ class UpdatePomXmlTest(LoggingTestCase):
             "an effective pom without input locations resolves nothing, and Update-time says nothing about it",
         ),
         Mutation(
-            pom_xml_module.has_input_locations,
+            pom_xml_manifest.has_input_locations,
             "return bool(_effective_pom_name(effective_pom))",
             "return True",
             "every effective pom counts as having input locations, so one without them goes unnoticed",
         ),
         Mutation(
-            pom_xml_module._input_location,
+            pom_xml_manifest._input_location,
             "return _InputLocation()",
             "return _InputLocation(line=5)",
             "without input locations, a dependency takes the version of any entry the line number happens to match",
@@ -1630,14 +1630,14 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pom_xml_module.with_resolved_coordinates,
+            pom_xml_manifest.with_resolved_coordinates,
             " if is_resolved(declaration.dependency)",
             "",
             "a pom inheriting a group from its parent is asked about coordinates that resolve to nothing",
         ),
         Mutation(
-            update_pom_xml_module._new_version,
-            "if not pom_xml_format.fully_resolved(update.effective.pinned):",
+            maven_module._new_version,
+            "if not pom_xml_manifest.fully_resolved(update.effective.pinned):",
             "if False:",
             "Maven Central is asked for the changes and the date of coordinates holding an unresolved property",
         ),
@@ -1648,7 +1648,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             "Update-time skips the updates wherever it cannot read the effective pom, although the run succeeded",
         ),
         Mutation(
-            pom_xml_module.versioned_declarations,
+            pom_xml_manifest.versioned_declarations,
             " and is_resolved(declaration.dependency)",
             "",
             "the repository is asked which versions to hold back for coordinates holding a parent's property",
@@ -1841,8 +1841,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "_report_new_versions(before, after, resolved)",
-            "_report_new_versions(before, after, after)",
+            "maven.report_new_versions(before, after, resolved)",
+            "maven.report_new_versions(before, after, after)",
             "the report names a dependency as the pom spells it, so a group the parent declares stays a property",
         ),
     )
@@ -1886,7 +1886,7 @@ class UpdatePomXmlTest(LoggingTestCase):
         mock_held_back = Mock(side_effect=maven_central_module.versions_held_back)
         mock_project = Mock(side_effect=maven_central_project)
         with (
-            patch.object(maven_module, "versions_held_back", mock_held_back),
+            patch.object(maven_central_module, "versions_held_back", mock_held_back),
             patch.object(maven_central_module, "project", mock_project),
             patch.object(maven_central_module, "publication", maven_central_publication),
             patch_maven_central(listing, _POM_ON_GITHUB) as mock_get,
@@ -1959,7 +1959,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module._unreportable_updates,
+            maven_module._unreportable_updates,
             "update.new.version_property in properties_on_central",
             "properties_on_central",
             "an unserved artefact goes unreported whenever a served artefact moved, whatever property each names",
@@ -1995,7 +1995,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module._report_new_versions,
+            maven_module.report_new_versions,
             "in unique(zip(before, after, resolved, strict=True))",
             "in zip(before, after, resolved, strict=True)",
             "a property two declarations of one artefact name is reported as moved once per declaration, at one line",
@@ -2024,8 +2024,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "_report_new_versions(before, after, resolved)",
-            "_report_new_versions(before, resolved, resolved)",
+            "maven.report_new_versions(before, after, resolved)",
+            "maven.report_new_versions(before, resolved, resolved)",
             "Update-time reports a move from the parent's property to the version it holds, though Maven moved nothing",
         ),
     )
@@ -2146,7 +2146,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pom_xml_module.module_directories,
+            pom_xml_manifest.module_directories,
             'project.child("modules")',
             'next(project.descendants("modules"), None)',
             "Maven runs a module from a reactor root whose inactive profile leaves that module out, so the run fails",

@@ -114,6 +114,11 @@ lint.isort.sections.tests = [
 [tool.codespell]
 skip = "*.lock,./.git,./.venv,./build,./dist,./htmlcov,./.mypy_cache,./.ruff_cache"
 
+[tool.vulture]
+ignore_names = [
+    "__call__", # Python calls it implicitly, so the code never names it where it runs
+]
+
 [tool.pyproject-fmt]
 indent = 4
 keep_full_version = true  # Don't remove trailing zero's from version specifiers

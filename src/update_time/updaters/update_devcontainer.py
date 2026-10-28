@@ -2,35 +2,22 @@
 
 Images in a Dockerfile or Compose file the devcontainer.json points at (`build.dockerfile`, `dockerComposeFile`)
 are left to those updaters.
-
-The file is edited line by line with the same machinery as the other image updaters rather than parsed as JSON, so
-comments and trailing commas (which devcontainer.json allows, and plain JSON forbids) are preserved untouched.
 """
 
 from update_time.domain.file_type import DEVCONTAINER_CONFIGS
-from update_time.domain.reference import IMAGE_REFERENCE, OPTIONALLY_TAGGED_IMAGE_REFERENCE
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
+from update_time.manifests.devcontainer_json import BASE_IMAGE_REFERENCE, FEATURE_REFERENCE
 from update_time.references.file import update_file
-from update_time.sources.oci import tag_getter
+from update_time.sources.oci import TagGetter
 
 _LOG = get_logger("devcontainer")
-
-# The base image, as a JSON string value: `"image": "mcr.microsoft.com/devcontainers/typescript-node:1"`. Its tag
-# is optional, the `"image"` key naming what a value without one is, so it is pinned like a Dockerfile's `FROM`.
-_IMAGE_RE = rf'"image":\s*"{OPTIONALLY_TAGGED_IMAGE_REFERENCE}"'
-# A feature, as a JSON object key: `"ghcr.io/devcontainers/features/node:1": { ... }`. The trailing `: {` anchors
-# the match to a feature key (an OCI reference mapping to an options object), so ordinary string values whose text
-# happens to look like `name:version` (e.g. `"appPort": "3000:3000"`) are not matched. Here the tag is required,
-# since the reference is the key itself: without one, every object key would read as a feature, `"customizations"`
-# and a local feature's `"./my-feature"` alike.
-_FEATURE_RE = rf'"{IMAGE_REFERENCE}":\s*{{'
 
 
 def update_devcontainers() -> None:
     """Update the base image and feature references in the repository's devcontainer.json files."""
     for devcontainer in glob_for(DEVCONTAINER_CONFIGS):
-        update_file(devcontainer, _IMAGE_RE, _FEATURE_RE, get_new_version=tag_getter(), logger=_LOG)
+        update_file(devcontainer, BASE_IMAGE_REFERENCE, FEATURE_REFERENCE, get_new_version=TagGetter(), logger=_LOG)
 
 
 def main() -> None:  # pragma: no cover

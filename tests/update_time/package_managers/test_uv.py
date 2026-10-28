@@ -6,8 +6,7 @@ from unittest.mock import ANY, Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
-from update_time.manifests.dependency_file import PyprojectToml
-from update_time.manifests.pyproject_toml import declarations
+from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.package_managers import uv
 from update_time.package_managers.uv import (
     _persist_exclude_newer,
@@ -195,9 +194,9 @@ class PypiServedDependenciesTest(unittest.TestCase):
             '[tool.uv.sources]\nlocal = {path = "../local"}\nloose = {path = "../loose"}\n'
         )
         path = mock_path(contents)
-        self.assertEqual(pypi_served(declarations(PyprojectToml(path))), [declaration("other", "2.0", path, 2, 3)])
+        self.assertEqual(pypi_served(PyprojectToml(path).declarations()), [declaration("other", "2.0", path, 2, 3)])
 
     def test_a_direct_reference_is_skipped(self):
         """Test that a dependency given as a URL is left out, since it resolves to no release on PyPI."""
         path = mock_path('dependencies = ["pkg @ git+https://github.com/org/repo.git", "other>=2.0"]\n')
-        self.assertEqual(pypi_served(declarations(PyprojectToml(path))), [declaration("other", "", path, 1, 2)])
+        self.assertEqual(pypi_served(PyprojectToml(path).declarations()), [declaration("other", "", path, 1, 2)])

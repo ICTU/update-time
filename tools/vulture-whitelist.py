@@ -1,5 +1,3 @@
-__call__  # unused function (src/update_time/domain/bound.py:27)
-__call__  # unused function (src/update_time/domain/dependency.py:24)
 _.trail  # unused attribute (src/update_time/formats/toml.py:113)
 _.StartElementHandler  # unused attribute (src/update_time/formats/xml.py:117)
 _.CharacterDataHandler  # unused attribute (src/update_time/formats/xml.py:118)

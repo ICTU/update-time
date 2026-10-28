@@ -145,6 +145,8 @@ _MINIMATCH_REWRITE = {"dependency": "minimatch", "range": "^3.1.2", "new_range":
 # What a package.json holds that cannot be read, and the error reading it raises.
 _UNREADABLE = "{"
 _UNREADABLE_ERROR = json.JSONDecodeError("Expecting property name enclosed in double quotes", _UNREADABLE, 1)
+# The error reading a package.json raises whose JSON is not an object, such as `[]`.
+_NOT_AN_OBJECT_ERROR = ValueError("the JSON is not an object")
 
 
 def _discover_package_json(glob: Mock, contents: str) -> Mock:
@@ -305,30 +307,34 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
 
     def test_invalid_package_json_above_is_warned_about_and_passed_over(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json above that does not parse is warned about, and passed over."""
-        self.run_below_package_json(mock_run, mock_glob, _UNREADABLE)
-        self.assert_logged(
-            message_of(Logger.unreadable_manager_declaration),
-            location=Location(Path("/package.json")),
-            error=str(_UNREADABLE_ERROR),
-        )
+        cases = {"invalid JSON": (_UNREADABLE, _UNREADABLE_ERROR), "not an object": ("[]", _NOT_AN_OBJECT_ERROR)}
+        for case, (contents, error) in cases.items():
+            with self.subTest(case):
+                self.run_below_package_json(mock_run, mock_glob, contents)
+                self.assert_logged(
+                    message_of(Logger.unreadable_manager_declaration),
+                    location=Location(Path("/package.json")),
+                    error=str(error),
+                )
 
     def test_package_json_that_does_not_parse_is_warned_about_and_passed_over(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json the scan finds that does not parse is warned about, and the others still update."""
-        root = self.write_package_json(json.dumps(_GIT_DEPENDENCY))
-        fixture = self.write_package_json(_UNREADABLE, Path("/fixtures"))
-        mock_glob.return_value = [root, fixture]
-        mock_run.side_effect = _npm_runs(*_npm_no_update())
-        update_package_jsons()
-        self.assert_npm_called(mock_run)
-        self.assert_unreadable_package_json_warned(fixture)
-
-    def test_package_json_above_of_the_wrong_shape_is_passed_over(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a package.json above that holds a list, or a `packageManager` number, is passed over silently."""
-        cases = {"not an object": "[]", "a field that is not a string": '{"packageManager": 9}'}
-        for case, contents in cases.items():
+        cases = {"invalid JSON": (_UNREADABLE, _UNREADABLE_ERROR), "not an object": ("[]", _NOT_AN_OBJECT_ERROR)}
+        for case, (contents, error) in cases.items():
             with self.subTest(case):
-                self.run_below_package_json(mock_run, mock_glob, contents)
-                self.assert_no_warnings_logged()
+                mock_run.reset_mock()
+                root = self.write_package_json(json.dumps(_GIT_DEPENDENCY))
+                fixture = self.write_package_json(contents, Path("/fixtures"))
+                mock_glob.return_value = [root, fixture]
+                mock_run.side_effect = _npm_runs(*_npm_no_update())
+                update_package_jsons()
+                self.assert_npm_called(mock_run)
+                self.assert_unreadable_package_json_warned(fixture, error)
+
+    def test_package_json_above_naming_no_manager_string_is_passed_over(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a package.json above whose `packageManager` is a number is passed over silently."""
+        self.run_below_package_json(mock_run, mock_glob, '{"packageManager": 9}')
+        self.assert_no_warnings_logged()
 
     @patch("requests.Session.get", _package_lookup_responses())
     def test_update(self, mock_run: Mock, mock_glob: Mock):

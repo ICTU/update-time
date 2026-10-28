@@ -46,8 +46,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
 
-    from update_time.domain.bound import NewVersionGetter, VersionBound
-    from update_time.formats.yaml import Document
+    from update_time.domain.bound import VersionBound
     from update_time.io.fetch import Response
     from update_time.primitives.lookup import Lookup
 
@@ -382,47 +381,52 @@ def _pulled(_pinned: PinnedDependency) -> ImageNotLookedUp | None:
     return None
 
 
-def tag_getter(image_not_pulled: Callable[[PinnedDependency], ImageNotLookedUp | None] = _pulled) -> NewVersionGetter:
-    """Return a getter that resolves an image tag, leaving the references it asks no registry about unchanged."""
+@dataclass(eq=False)
+class TagGetter:
+    """A getter that resolves image tags, and says which images it does not look up."""
 
-    def image_not_looked_up(pinned: PinnedDependency) -> ImageNotLookedUp | None:
-        """Return why no registry is asked about the pinned image, or None when one is."""
-        if re.search(VARIABLE, f"{pinned.name}:{pinned.version}"):
-            return ImageNotLookedUp.THROUGH_A_VARIABLE
-        return image_not_pulled(pinned)
+    image_not_pulled: Callable[[PinnedDependency], ImageNotLookedUp | None] = _pulled
 
-    def dates_the_versions_of(pinned: PinnedDependency) -> bool:
-        """Return whether the pinned image's versions carry a date, which they do not when no registry is asked."""
-        return image_not_looked_up(pinned) is None and reports_publication_dates(get_latest_tag, pinned)
+    def __post_init__(self) -> None:
+        """Register which references the getter dates the versions of, and which images it does not look up."""
+        publication_date_reporting(self, when=self._dates_the_versions_of)
+        explaining_skipped_lookups(self, self._image_not_looked_up)
 
-    @partial(publication_date_reporting, when=dates_the_versions_of)
-    def get_new_version(
-        pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
+    def __call__(
+        self, pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, /, *, check_archival: bool
     ) -> DependencyVersion:
-        if (reason := image_not_looked_up(pinned)) is not None:
+        """Return the tag to pin the reference to, or the reference as it is where its image is not looked up."""
+        if (reason := self._image_not_looked_up(pinned)) is not None:
             return DependencyVersion(version=pinned.version, image_not_looked_up=reason)
         return get_latest_tag(pinned, version_bound, cooldown_days, check_archival=check_archival)
 
-    return explaining_skipped_lookups(get_new_version, image_not_looked_up)
+    def _image_not_looked_up(self, pinned: PinnedDependency) -> ImageNotLookedUp | None:
+        """Return why no registry is asked about the pinned image, or None when one is."""
+        if re.search(VARIABLE, f"{pinned.name}:{pinned.version}"):
+            return ImageNotLookedUp.THROUGH_A_VARIABLE
+        return self.image_not_pulled(pinned)
+
+    def _dates_the_versions_of(self, pinned: PinnedDependency) -> bool:
+        """Return whether the pinned image's versions carry a date, which they do not when no registry is asked."""
+        return self._image_not_looked_up(pinned) is None and reports_publication_dates(get_latest_tag, pinned)
 
 
-def tag_getter_excluding(images: set[str], reason: ImageNotLookedUp) -> NewVersionGetter:
-    """Return a getter resolving every image but the ones given, which it leaves unchanged."""
-    without_digests = {image.partition("@")[0] for image in images}
+@dataclass(frozen=True)
+class ImagesNotPulled:
+    """Which images a file does not pull, and why."""
 
-    def image_not_pulled(pinned: PinnedDependency) -> ImageNotLookedUp | None:
-        """Return the one reason when the reference is among the ones given, or None when it is not."""
+    images: set[str]
+    reason: ImageNotLookedUp
+
+    @cached_property
+    def _without_digests(self) -> frozenset[str]:
+        """Return the images without their digests, since a reference is matched by name and tag."""
+        return frozenset(image.partition("@")[0] for image in self.images)
+
+    def __call__(self, pinned: PinnedDependency) -> ImageNotLookedUp | None:
+        """Return the reason when the reference is among the images, or None when it is not."""
         as_written = f"{pinned.name}{tag_of(pinned.version)}"
-        return reason if as_written in without_digests else None
-
-    return tag_getter(image_not_pulled)
-
-
-def tag_getter_excluding_each(
-    find_images: Callable[[Document], set[str]], reason: ImageNotLookedUp
-) -> Callable[[Document], NewVersionGetter]:
-    """Return what builds one file's getter, leaving the images `find_images` reads from that file unchanged."""
-    return lambda document: tag_getter_excluding(find_images(document), reason)
+        return self.reason if as_written in self._without_digests else None
 
 
 def _is_floating(tag: Tag) -> bool:

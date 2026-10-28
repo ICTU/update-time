@@ -1,23 +1,17 @@
 """Unit tests for the requirements.txt update script."""
 
 import contextlib
-import re
-import unittest
 from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
 from update_time.io.log import Logger
+from update_time.manifests import requirements_txt as requirements_txt_manifest
 from update_time.markers import directive as directive_module
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.primitives.location import Location
 from update_time.references import vulnerability as vulnerability_module
-from update_time.updaters import update_requirements_txt as update_requirements_txt_module
-from update_time.updaters.update_requirements_txt import (
-    _LOOSE_REQUIREMENT_RE,
-    _REQUIREMENT_RE,
-    update_requirements_txts,
-)
+from update_time.updaters.update_requirements_txt import update_requirements_txts
 
 from tests.helpers import patch_environ
 from tests.mutation import Mutation, kills
@@ -175,7 +169,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_requirements_txt_module,
+            requirements_txt_manifest,
             r'_VERSION_ENDS = r"(?![A-Za-z0-9._!+*,-])(?!\s*,)"',
             r'_VERSION_ENDS = r"(?![A-Za-z0-9._!+*,-])"',
             "a version a space and a comma follow still ends its specifier, so a requirement combining two of them "
@@ -1025,38 +1019,3 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_no_debug_logged()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
-
-
-class RequirementPatternTest(unittest.TestCase):
-    """Unit tests for the patterns that tell an exact pin from a requirement pinning no version."""
-
-    @kills(
-        Mutation(
-            update_requirements_txt_module,
-            r'_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*{_VERSION}{_VERSION_ENDS}"',
-            r'_EXACT_PIN = rf"^\s*{_NAME}{_EXTRAS}\s*==\s*[A-Za-z0-9][A-Za-z0-9._+-]*{_VERSION_ENDS}"',
-            "the lookahead's copy of the pin drifts from the pin itself, so a spelling only one of them "
-            "accepts matches both patterns and is read twice",
-        )
-    )
-    def test_a_requirement_matches_one_pattern(self):
-        """Test that a requirement is read as an exact pin or as pinning none, and never as both or as neither."""
-        for line in (
-            "humanize==4.15.0",
-            "humanize[fast] == 4.15.0",
-            "humanize==4.15.0  # keep",
-            "humanize==4.15.0; python_version<'3.13'",
-            "humanize==1.0+local",
-            "humanize==1!2.0",
-            "humanize==4.15.*",
-            "humanize == 4.15.*",
-            "humanize==4.15.0,!=4.15.1",
-            "humanize==4.15.0,!=4.14.*",
-            "humanize===nightly",
-            "humanize>=4",
-            "humanize",
-        ):
-            with self.subTest(line=line):
-                pinned = re.search(_REQUIREMENT_RE, line) is not None
-                pins_nothing = re.search(_LOOSE_REQUIREMENT_RE, line) is not None
-                self.assertNotEqual(pinned, pins_nothing)

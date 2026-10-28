@@ -14,7 +14,9 @@ class ReadTest(unittest.TestCase):
         """Test that a JSON file is read as its text and the contents parsed from that text."""
         contents = '{"name": "x", "version": "1.0"}'
         path = mock_path(contents)
-        self.assertEqual(json_format.read(path), json_format.JsonFile(path, contents, {"name": "x", "version": "1.0"}))
+        self.assertEqual(
+            json_format.JsonFile.read(path), json_format.JsonFile(path, contents, {"name": "x", "version": "1.0"})
+        )
 
 
 class EntryOffsetTest(unittest.TestCase):

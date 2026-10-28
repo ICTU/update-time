@@ -20,7 +20,7 @@ class PluginVersionTest(unittest.TestCase):
 
     def test_a_shipped_pom_declaring_no_release(self):
         """Test that a pom declaring no release raises an error naming the file, rather than one about a lookup."""
-        patched = patch.object(maven.pom_xml_format, "properties", Mock(return_value={}))
+        patched = patch.object(maven.pom_xml_manifest, "properties", Mock(return_value={}))
         with patched, self.assertRaises(RuntimeError) as error:
             maven._declared_plugin_version("help.plugin.version")
         self.assertIn("pom.xml", str(error.exception))

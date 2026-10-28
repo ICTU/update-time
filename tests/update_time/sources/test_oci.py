@@ -17,10 +17,11 @@ from update_time.sources import docker_hub, oci
 from update_time.sources.docker_hub import _MAX_TAG_LISTING_PAGES, _TAG_LISTING_PAGE_SIZE
 from update_time.sources.oci import (
     _MAX_FLOATING_TAG_PROBES,
+    ImagesNotPulled,
     Tag,
+    TagGetter,
     _registry_token,
     is_docker_hub_image,
-    tag_getter_excluding,
 )
 
 from tests.helpers import patch_environ, requested_urls
@@ -98,41 +99,41 @@ class TagTest(unittest.TestCase):
 
 
 @patch_environ()
-class TagGetterExcludingTest(RegistryRequestsMixin, unittest.TestCase):
+class ImagesNotPulledTest(RegistryRequestsMixin, unittest.TestCase):
     """Unit tests for the getter that leaves the references to an image the file does not pull as they are."""
 
     # How a file writes a reference to an image it does not pull: one naming a tag and one naming none.
-    EXCLUDED = ("ubuntu-2204:2024.01.1", "default")
+    NOT_PULLED = ("ubuntu-2204:2024.01.1", "default")
     REASON = ImageNotLookedUp.MACHINE_EXECUTOR_IMAGE
 
     def getter(self) -> NewVersionGetter:
         """Return a getter excluding those references, as an updater builds it from what its file declares."""
-        return tag_getter_excluding(set(self.EXCLUDED), self.REASON)
+        return TagGetter(ImagesNotPulled(set(self.NOT_PULLED), self.REASON))
 
     def resolve(self, image: str, tag: str) -> DependencyVersion:
         """Return what the getter resolves for the reference, with the registry offering a newer tag."""
         self.requests.side_effect = mock_docker_registry(docker_tag("9.9", DIGEST))
         return self.getter()(PinnedDependency(image, tag), NO_BOUND, COOLDOWN.default, check_archival=True)
 
-    def test_an_excluded_reference_keeps_its_version_where_another_resolves(self):
-        """Test that an excluded reference is left as it is, saying why, where one the getter resolves moves on."""
-        excluded = self.resolve("ubuntu-2204", "2024.01.1")
-        self.assertEqual(excluded, DependencyVersion(version="2024.01.1", image_not_looked_up=self.REASON))
+    def test_a_reference_not_pulled_keeps_its_version_where_another_resolves(self):
+        """Test that a reference not pulled is left as it is, saying why, where one the getter resolves moves on."""
+        not_pulled = self.resolve("ubuntu-2204", "2024.01.1")
+        self.assertEqual(not_pulled, DependencyVersion(version="2024.01.1", image_not_looked_up=self.REASON))
         self.requests.assert_not_called()
         self.assertEqual(self.resolve("python", "3.14").version, "9.9")
 
-    def test_an_excluded_reference_naming_no_tag_is_left_as_it_is(self):
+    def test_a_reference_not_pulled_naming_no_tag_is_left_as_it_is(self):
         """Test that an entry listed without a tag matches the reference that names none."""
         resolved = self.resolve("default", "")
         self.assertEqual(resolved, DependencyVersion(version="", image_not_looked_up=self.REASON))
         self.requests.assert_not_called()
 
-    def test_an_excluded_reference_is_dated_by_nothing(self):
-        """Test that an excluded reference's versions carry no publication date, so a cooldown measures against none."""
-        excluded = PinnedDependency("ubuntu-2204", "2024.01.1")
-        self.assertFalse(reports_publication_dates(self.getter(), excluded))
+    def test_a_reference_not_pulled_is_dated_by_nothing(self):
+        """Test that the getter does not date the versions of a reference not pulled."""
+        not_pulled = PinnedDependency("ubuntu-2204", "2024.01.1")
+        self.assertFalse(reports_publication_dates(self.getter(), not_pulled))
 
-    def test_a_reference_that_is_not_excluded_is_dated_by_docker_hub(self):
+    def test_a_reference_pulled_is_dated_by_docker_hub(self):
         """Test that a reference the getter resolves on Docker Hub is dated, since Docker Hub dates its tags."""
         served = PinnedDependency("python", "3.14")
         self.assertTrue(reports_publication_dates(self.getter(), served))
