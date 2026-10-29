@@ -49,7 +49,7 @@ def get_latest_tag(
 ) -> DependencyVersion:
     """Return what the source resolves for the image and tag, as a test writes them."""
     pinned = PinnedDependency(image, current_tag)
-    return oci.get_latest_tag(pinned, version_bound, cooldown_days, check_archival=True)
+    return oci.get_latest_tag(pinned, version_bound, cooldown_days)
 
 
 class IsDockerHubImageTest(unittest.TestCase):
@@ -113,7 +113,7 @@ class ImagesNotPulledTest(RegistryRequestsMixin, unittest.TestCase):
     def resolve(self, image: str, tag: str) -> DependencyVersion:
         """Return what the getter resolves for the reference, with the registry offering a newer tag."""
         self.requests.side_effect = mock_docker_registry(docker_tag("9.9", DIGEST))
-        return self.getter()(PinnedDependency(image, tag), NO_BOUND, COOLDOWN.default, check_archival=True)
+        return self.getter()(PinnedDependency(image, tag), NO_BOUND, COOLDOWN.default)
 
     def test_a_reference_not_pulled_keeps_its_version_where_another_resolves(self):
         """Test that a reference not pulled is left as it is, saying why, where one the getter resolves moves on."""

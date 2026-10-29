@@ -10,7 +10,6 @@ from pathlib import Path
 from signal import Signals
 from typing import TYPE_CHECKING
 
-from update_time.domain.archival import IGNORE_ARCHIVED
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES, DependencyType
 from update_time.domain.staleness import STALE_AFTER
@@ -20,8 +19,6 @@ from update_time.io.filesystem import configure_excluded_paths, inside_git_repos
 from update_time.io.log import get_logger, set_log_level
 from update_time.io.network import report_network_settings
 from update_time.io.process import Processes
-from update_time.markers.drift import ALLOW_HASH_DRIFT
-from update_time.markers.floating import ALLOW_FLOATING_PIN
 from update_time.primitives.command import Command
 from update_time.sources import docker_hub, github
 
@@ -142,9 +139,6 @@ def _pass_settings_down(args: Namespace, logger: Logger) -> None:
     STALE_AFTER.set(args.stale_after)
     VULNERABILITY_LEVEL.set(args.vulnerability_level)
     IGNORE_VULNERABILITIES.set(args.ignore_vulnerability)
-    IGNORE_ARCHIVED.set(args.ignore_archived)
-    ALLOW_HASH_DRIFT.set(args.allow_hash_drift)
-    ALLOW_FLOATING_PIN.set(args.allow_floating_pin)
     configure_excluded_paths(args.exclude_path, logger)
 
 

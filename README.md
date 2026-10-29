@@ -93,11 +93,9 @@ update-time
 ```console
 $ update-time -h
 usage: update-time [-h] [-V] [--cooldown DAYS] [--stale-after DAYS]
-                   [--vulnerability-level {low,moderate,high,critical,none}]
-                   [--ignore-vulnerability IDS] [--ignore-archived]
-                   [--exclude-path PATHS] [--allow-hash-drift]
-                   [--allow-floating-pin] [--force]
-                   [--log-level {DEBUG,INFO,WARNING,ERROR}]
+                   [--vulnerability-level {low,moderate,high,critical}]
+                   [--ignore-vulnerability IDS] [--exclude-path PATHS]
+                   [--force] [--log-level {DEBUG,INFO,WARNING,ERROR}]
                    [PATH]
 
 Scan the PATH for pinned dependencies and update them to their latest
@@ -125,15 +123,14 @@ options:
                         references that set a threshold of their own with an #
                         update-time: set[stale-after=DAYS] marker (default:
                         365)
-  --vulnerability-level {low,moderate,high,critical,none}
+  --vulnerability-level {low,moderate,high,critical}
                         warn about a known vulnerability in the version a
                         dependency is pinned to when the advisory's risk level
-                        is at least this severe; a vulnerability whose risk
-                        level cannot be read is warned about at every level
-                        from low to critical. Pass none to switch the check
-                        off, except for references that set a level of their
-                        own with an # update-time: set[vulnerability-
-                        level=LEVEL] marker (default: low)
+                        is at least this severe, except for references that
+                        set a level of their own with an # update-time:
+                        set[vulnerability-level=LEVEL] marker. A vulnerability
+                        whose risk level cannot be read is warned about at
+                        every level (default: low)
   --ignore-vulnerability IDS
                         comma-separated list of advisories to never warn
                         about, wherever in the run they turn up, for example
@@ -142,10 +139,6 @@ options:
                         silence one for a single reference instead, mark that
                         reference with an # update-time: ignore[vulnerable=ID]
                         marker
-  --ignore-archived     switch the archival check off, so no dependency is
-                        warned about as archived. To silence the warning for a
-                        single reference instead, mark that reference with an
-                        # update-time: ignore[archived] marker
   --exclude-path PATHS  comma-separated list of directories, relative to the
                         scan root, to exclude from the scan, for example
                         vendor,packages/legacy. Every file under an excluded
@@ -160,22 +153,6 @@ options:
                         log-level WARNING. Absolute paths, or paths that
                         escape the scan root (../…), are rejected. Run with
                         --log-level DEBUG to see excluded directories
-  --allow-hash-drift    adopt hash drift instead of only warning about it.
-                        Hash drift is an image tag re-pushed with another
-                        digest, or a tag or branch moved to another commit.
-                        Update-time adopts the new digest or commit as soon as
-                        it is older than the cooldown. Equivalent to marking
-                        every reference with # update-time: allow[hash-drift]
-                        (a marker that holds the reference back, such as #
-                        update-time: ignore[update], still wins)
-  --allow-floating-pin  keep every floating tag and branch in the run as it
-                        is, such as python:latest, stable-2024, or main.
-                        Without this flag, Update-time pins a floating image
-                        tag to the version and digest it serves, and a branch
-                        or another floating tag to the commit it points at.
-                        Equivalent to marking every reference with # update-
-                        time: allow[floating-pin] (an # update-time:
-                        ignore[floating-pin] marker still pins that reference)
   --force               run even when not inside a git repository (changes are
                         made in place and cannot be reverted)
   --log-level {DEBUG,INFO,WARNING,ERROR}
@@ -191,6 +168,9 @@ whether anything was updated. Inspect the diff or the INFO-level log for that.
 ```
 
 </details>
+
+> [!WARNING]
+> As long as Update-time is alpha (version `0.0.X`), command-line options are subject to change without deprecation notice or migration support.
 
 Update-time logs at four levels. `--log-level` sets the lowest one shown, which by default is `INFO`.
 
@@ -349,7 +329,7 @@ A floating image tag that carries a digest, and a branch pinned to a commit, can
 
 A reference without hash pin has nothing that can drift. So Update-time checks no `requirements.txt` pin, no `.python-version` entry, and no Node engine version. It checks none of the dependencies it delegates to a package manager either.
 
-Update-time warns about a moved tag or a re-pushed image right away, without waiting for the [cooldown](#-cooldown), since a pin exists to catch exactly that. A branch is meant to move, so Update-time warns about it only when a new commit on it is older than the cooldown. To have Update-time adopt drift instead of warning about it, mark the reference `allow[hash-drift]` or pass `--allow-hash-drift` (see [Adopting hash drift](#adopting-hash-drift)).
+Update-time warns about a moved tag or a re-pushed image right away, without waiting for the [cooldown](#-cooldown), since a pin exists to catch exactly that. A branch is meant to move, so Update-time warns about it only when a new commit on it is older than the cooldown. To have Update-time adopt drift instead of warning about it, mark the reference `allow[hash-drift]` (see [Adopting hash drift](#adopting-hash-drift)).
 
 Update-time never adopts an integrity hash mismatch, whatever you opt in to. The whole point of the hash is to refuse content that doesn't match it. So Update-time reports the mismatch and leaves correcting it to you.
 
@@ -453,7 +433,7 @@ A reference that takes a marker can set a risk level of its own, silence one adv
 
 To silence one advisory across the whole run, rather than on the one reference that carries a marker, pass `--ignore-vulnerability`. The option takes a comma-separated list: `--ignore-vulnerability GHSA-2gwj-7jmv-h26r,CVE-2021-31542`. It names an advisory the way a marker does, so any identifier the vulnerability is known by will do. Update-time logs what the option silenced at `DEBUG`. That line names the advisory OSV answered under, and quotes back the identifiers you passed for it. Where a reference's own marker silences the same advisory, the marker is the one reported.
 
-Update-time warns about every risk level by default. To hear only about the more severe ones, raise the threshold with `--vulnerability-level`, for example `--vulnerability-level high`. Update-time warns about a vulnerability whose risk level it cannot read, whatever the threshold is. Pass `--vulnerability-level none` to switch the check off.
+Update-time warns about every risk level by default. To hear only about the more severe ones, raise the threshold with `--vulnerability-level`, for example `--vulnerability-level high`. Update-time warns about a vulnerability whose risk level it cannot read, whatever the threshold is.
 
 Which dependencies are checked follows from what OSV holds advisories for:
 
@@ -471,7 +451,7 @@ Which dependencies are checked follows from what OSV holds advisories for:
 
 ### 🗄️ Archived dependencies
 
-An archived dependency is one its maintainer declared finished: expect no further release. Update-time warns when a dependency's source declares it archived, and `--ignore-archived` switches that check off for the whole run. For example, Update-time reports an archived project and an archived repository as:
+An archived dependency is one its maintainer declared finished: expect no further release. Update-time warns when a dependency's source declares it archived. For example, Update-time reports an archived project and an archived repository as:
 
 ```console
 WARNING Archived dependency aioredis in docs/requirements.txt:12: the project was archived
@@ -480,7 +460,7 @@ WARNING Archived dependency actions/setup-ruby in .github/workflows/ci.yml:17: t
 
 The clause after the colon names what the source archived: PyPI archives a project, GitHub a repository. The warning quotes a reason if the source publishes one.
 
-An archived dependency is still updated to its newest release, if one is available.
+An archived dependency is still updated to its newest release, if one is available. To silence the warning for a dependency you decided to keep using, mark it `# update-time: ignore[archived]` (see [Silencing a warning](#silencing-a-warning)).
 
 Which dependencies are checked follows from where an archival declaration can be read:
 
@@ -568,7 +548,7 @@ Each warning has a directive that silences it for one reference, while the refer
 | `# update-time: set[vulnerability-level=none]` | checked | checked | silenced | checked |
 | `# update-time: ignore[archived]` | checked | checked | checked | silenced |
 
-So `# update-time: set[stale-after=0]` silences a staleness warning you acknowledged, and `# update-time: ignore[yanked]` a yank you decided to live with. `# update-time: set[vulnerability-level=none]` silences the vulnerability warnings for a dependency you assessed. `# update-time: ignore[archived]` silences the archival warning for a dependency you decided to keep using. To silence it for every dependency in the run, pass `--ignore-archived` (see [Archived dependencies](#-archived-dependencies)). Combine directives to silence more, or to freeze the reference as well, as in `# update-time: ignore[update, yanked] set[stale-after=0]`.
+So `# update-time: set[stale-after=0]` silences a staleness warning you acknowledged, and `# update-time: ignore[yanked]` a yank you decided to live with. `# update-time: set[vulnerability-level=none]` silences the vulnerability warnings for a dependency you assessed. `# update-time: ignore[archived]` silences the archival warning for a dependency you decided to keep using. Combine directives to silence more, or to freeze the reference as well, as in `# update-time: ignore[update, yanked] set[stale-after=0]`.
 
 Update-time reports a directive that silences a warning as [redundant](#redundant-markers) where the reference never gets the warning it silences. Examples are an `ignore[yanked]` on a version that was never yanked, and an `ignore[archived]` on a Docker image, since a registry does not publish an archival signal.
 
@@ -642,13 +622,13 @@ The override reaches the dependencies whose cooldown Update-time enforces itself
 django==3.2.0  # update-time: set[vulnerability-level=high] (we act on high and worse for this dependency)
 ```
 
-The level wins over `--vulnerability-level`, `--vulnerability-level none` included. As with the global level, Update-time warns about a vulnerability whose risk level it cannot read, whatever level from `low` to `critical` is in force. `set[vulnerability-level=none]` silences every vulnerability warning for one reference, a vulnerability of unknown severity included. Update-time reports a level as [redundant](#the-vulnerable-scope) while it and `--vulnerability-level` report the same vulnerabilities, as `set[vulnerability-level=high]` and the default `low` do for a version whose vulnerabilities are all `high` or `critical`.
+The level wins over `--vulnerability-level`. As with the global level, Update-time warns about a vulnerability whose risk level it cannot read, whatever level from `low` to `critical` is in force. `set[vulnerability-level=none]` silences every vulnerability warning for one reference, a vulnerability of unknown severity included. Update-time reports a level as [redundant](#the-vulnerable-scope) while it and `--vulnerability-level` report the same vulnerabilities, as `set[vulnerability-level=high]` and the default `low` do for a version whose vulnerabilities are all `high` or `critical`.
 
 ### Adopting hash drift
 
-`# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting its drift, in this run and in every later one (see [Hash drift](#hash-drift)). Update-time then re-pins the reference to the new digest or commit, instead of only warning about the drift, and logs that at `INFO` like any other change. As with an update, Update-time waits until the new digest or commit is older than the [cooldown](#-cooldown), and holds the drift back without a warning until then. For a branch, it takes the newest commit that is. A registry other than Docker Hub does not date an image, so there it re-pins at once. The global `--allow-hash-drift` flag applies it to every reference in the run. A marker that holds the reference back wins over both, so a reference you deliberately froze is never re-pinned (see [Holding a reference back](#holding-a-reference-back)).
+`# update-time: allow[hash-drift]` opts an already-pinned reference *into* adopting its drift, in this run and in every later one (see [Hash drift](#hash-drift)). Update-time then re-pins the reference to the new digest or commit, instead of only warning about the drift, and logs that at `INFO` like any other change. As with an update, Update-time waits until the new digest or commit is older than the [cooldown](#-cooldown), and holds the drift back without a warning until then. For a branch, it takes the newest commit that is. A registry other than Docker Hub does not date an image, so there it re-pins at once. A marker that holds the reference back wins over `allow[hash-drift]`, so a reference you deliberately froze is never re-pinned (see [Holding a reference back](#holding-a-reference-back)).
 
-`ignore[hash-drift]` is the opposite and the default. A reference carrying it keeps its pin exactly as one carrying no marker at all, in a run passing `--allow-hash-drift` as well.
+`ignore[hash-drift]` is the opposite and the default, so a reference carrying it keeps its pin. Update-time reports it as [redundant](#a-directive-asking-for-the-default).
 
 Update-time reports an `allow[hash-drift]` as redundant on a reference whose drift it never adopts (see [The `hash-drift` scope](#the-hash-drift-scope)).
 
@@ -665,7 +645,7 @@ Update-time keeps a reference without a tag the same way. The `DEBUG` line then 
 
 Update-time still checks a reference kept floating for [hash drift](#hash-drift). It warns about the drift when the image tag now serves another digest than the reference records, or when the branch moved on from the commit the reference records. A reference opted into drift adopts the new digest or commit, while its tag or branch stays as it is.
 
-The global `--allow-floating-pin` flag keeps every reference in the run floating at once. `ignore[floating-pin]` is the opposite and the default, so Update-time pins a reference carrying it exactly as one carrying no marker at all. It pins that reference in a run passing `--allow-floating-pin` as well.
+`ignore[floating-pin]` is the opposite and the default, so Update-time pins a reference carrying it. Update-time reports it as [redundant](#a-directive-asking-for-the-default).
 
 ### Bounding an update
 
@@ -813,7 +793,7 @@ DEBUG Holding back the versions [34,) of com.google.guava:guava in pom.xml:12 (u
 
 ### Redundant markers
 
-A directive is redundant when it decides nothing for the reference it sits on: a scope silencing a warning that reference never gets, a staleness threshold judging the newest release as `--stale-after` does, a risk level reporting the vulnerabilities `--vulnerability-level` reports, or a bound narrowing nothing. Update-time reports each one at `WARNING`.
+A directive is redundant when it decides nothing for the reference it sits on. A scope can silence a warning that reference never gets. A staleness threshold can judge the newest release as `--stale-after` does, and a risk level can report the vulnerabilities `--vulnerability-level` reports. A bound can narrow nothing, and a directive can ask for what Update-time does without it. Update-time reports each one at `WARNING`.
 
 #### The warning scopes
 
@@ -832,8 +812,7 @@ A check also passes over a reference of a type it covers in these cases, and the
 - The image sits on a registry other than Docker Hub. Such a registry does not report a publication date, so the `stale` scope is redundant there.
 - A `pom.xml` declaration leaves its version to the declaration managing it (see [Maven dependencies](#markers-2)).
 - The `yanked` and `vulnerable` scopes judge a version, so they are redundant on a reference that does not name one. Examples are a requirement that does not pin an exact version, a `pom.xml` declaration whose version Maven leaves unresolved, and a GitHub Action that names a branch, a tag such as `stable-2024`, or a commit SHA. In the run that pins such an action to a version tag, Update-time checks it at that version.
-- The poms of a `pom.xml` artefact do not name a GitHub repository, so the `archived` scope is redundant (see [Archived dependencies](#archived-dependencies-2)). Update-time reports this redundancy only in a run that checks archival.
-- The run switches the archival check off with `--ignore-archived`, so the `archived` scope is redundant on every reference whose source publishes an archival signal.
+- The poms of a `pom.xml` artefact do not name a GitHub repository, so the `archived` scope is redundant (see [Archived dependencies](#archived-dependencies-2)).
 
 Update-time reports those cases as:
 
@@ -845,7 +824,6 @@ WARNING Redundant update-time directive set[vulnerability-level=none] for humani
 WARNING Redundant update-time directive set[vulnerability-level=none] for nl.example:internal-lib in pom.xml:12: this dependency does not resolve to a version to check for a vulnerability
 WARNING Redundant update-time directive set[vulnerability-level=none] for actions/checkout in .github/workflows/ci.yml:17: this reference does not name a version to check for a vulnerability
 WARNING Redundant update-time directive ignore[archived] for org.apache.commons:commons-lang3 in pom.xml:12: Update-time does not find a GitHub repository to check this dependency for archival
-WARNING Redundant update-time directive ignore[archived] for humanize in docs/requirements.txt:12: --ignore-archived switches the archival check off for the run
 ```
 
 Update-time reports an `ignore[yanked]` or an `ignore[archived]` as redundant where its check finds nothing to silence. A suppression can outlive what it was written for, and the check is what tells you it did:
@@ -985,6 +963,15 @@ WARNING Redundant update-time directive allow[update<5] for actions/checkout in 
 WARNING Redundant update-time directive allow[update<6] for actions/setup-python in .github/workflows/ci.yml:18: this reference follows a branch or a floating tag rather than a version, so a bound decides nothing
 WARNING Redundant update-time directive ignore[major-update] for commons-io:commons-io in child/pom.xml:5: this declaration does not hold its version, so Maven does not update that version here
 WARNING Redundant update-time directive allow[update<4] for org.apache.maven.plugins:maven-surefire-plugin in pom.xml:30: Maven does not update this plugin's version
+```
+
+#### A directive asking for the default
+
+Three directives ask for what Update-time does without them: `ignore[hash-drift]`, `ignore[floating-pin]`, and a bare `allow[update]`. Update-time reports each of them as redundant on every reference, and updates the reference as usual:
+
+```console
+WARNING Redundant update-time directive ignore[hash-drift] for python in Dockerfile:2: Update-time does this by default
+WARNING Redundant update-time directive allow[update] for humanize in docs/requirements.txt:12: Update-time does this by default
 ```
 
 ### Invalid markers

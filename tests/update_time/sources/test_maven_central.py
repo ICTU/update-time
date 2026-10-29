@@ -130,7 +130,7 @@ class ProjectTest(LoggingTestCase):
             with self.subTest(case=case):
                 served = maven_central_pom(scm, tag, parent=_GUAVA_PARENT)
                 with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
-                    self.assert_archived(mock_get, project(GUAVA, check_archival=True).archival, _GUAVA_REPOSITORY)
+                    self.assert_archived(mock_get, project(GUAVA).archival, _GUAVA_REPOSITORY)
 
     def test_a_pom_naming_its_repository_through_its_coordinates(self):
         """Test that a pom naming its repository through its own coordinates is checked with them filled in."""
@@ -147,7 +147,7 @@ class ProjectTest(LoggingTestCase):
         }
         for case, (served, name) in cases.items():
             with self.subTest(case=case), patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
-                archival = project(GUAVA, check_archival=True).archival
+                archival = project(GUAVA).archival
                 self.assert_archived(mock_get, archival, repository_url(f"google/{name}"))
 
     def test_a_pom_naming_its_repository_through_its_own_properties(self):
@@ -155,7 +155,7 @@ class ProjectTest(LoggingTestCase):
         scm = "https://github.com/${github.org}/${project.artifactId}"
         served = maven_central_pom(scm, properties=properties_element({"github.org": "google"}))
         with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
-            self.assert_archived(mock_get, project(GUAVA, check_archival=True).archival, _GUAVA_REPOSITORY)
+            self.assert_archived(mock_get, project(GUAVA).archival, _GUAVA_REPOSITORY)
 
     def test_a_url_is_passed_over_where_its_owner_or_repository_names_a_property(self):
         """Test that a URL is passed over where its owner or repository names a property, not where its path does."""
@@ -169,7 +169,7 @@ class ProjectTest(LoggingTestCase):
             with self.subTest(case=case):
                 served = maven_central_pom(scm, project_url=_GUAVA_UMBRELLA)
                 with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
-                    self.assert_archived(mock_get, project(GUAVA, check_archival=True).archival, repository)
+                    self.assert_archived(mock_get, project(GUAVA).archival, repository)
 
     def test_a_pom_naming_no_repository_takes_the_one_its_parent_pom_names(self):
         """Test that an artefact whose own pom does not name a GitHub repository is checked against its parent's.
@@ -181,7 +181,7 @@ class ProjectTest(LoggingTestCase):
             with self.subTest(case=case), patch("requests.Session.get") as mock_get:
                 archived = {_GUAVA_REPOSITORY: mock_response({"archived": True})}
                 _serve_guava_with_parent(mock_get, maven_central_pom(scm), archived)
-                archival = project(GUAVA, check_archival=True).archival
+                archival = project(GUAVA).archival
                 self.assert_archived(mock_get, archival, _GUAVA_PARENT_POM, _GUAVA_REPOSITORY)
 
     def test_a_parent_pom_naming_no_repository_leaves_its_own_parent_unread(self):
@@ -189,7 +189,7 @@ class ProjectTest(LoggingTestCase):
         parent_pom = maven_central_pom(parent=f"com.google.guava:guava-grandparent:{_GUAVA_VERSION}")
         with patch("requests.Session.get") as mock_get:
             _serve_guava_with_parent(mock_get, parent_pom)
-            archival = project(GUAVA, check_archival=True).archival
+            archival = project(GUAVA).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM, _GUAVA_PARENT_POM)
 
     def test_a_pom_naming_no_repository_and_no_complete_parent_leaves_github_unasked(self):
@@ -206,7 +206,7 @@ class ProjectTest(LoggingTestCase):
             with self.subTest(case=case):
                 served = maven_central_pom(parent=parent)
                 with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
-                    archival = project(GUAVA, check_archival=True).archival
+                    archival = project(GUAVA).archival
                 self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
 
     @kills(
@@ -222,21 +222,21 @@ class ProjectTest(LoggingTestCase):
         elsewhere = GITBOX_SCM
         served = maven_central_pom(elsewhere, parent=_GUAVA_PARENT)
         with patch_maven_central(_DATED_LISTING, served, archived=True) as mock_get:
-            archival = project(GUAVA, check_archival=True).archival
+            archival = project(GUAVA).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
 
     def test_an_artefact_the_repository_dates_no_version_for(self):
         """Test that an artefact whose listing dates no version has no pom to read, so nothing follows the listing."""
         undated = maven_central_listing()
         with patch_maven_central(undated, maven_central_pom(GUAVA_SCM), archived=True) as mock_get:
-            reported = project(GUAVA, check_archival=True)
+            reported = project(GUAVA)
         self.assertEqual(reported, Project())
         self.assertEqual(requested_urls(mock_get), [_GUAVA_LISTING])
 
     def test_a_pom_the_repository_does_not_serve(self):
         """Test that a pom the repository withholds is warned about, and leaves GitHub unasked about the artefact."""
         with patch_maven_central(_DATED_LISTING, None, archived=True) as mock_get:
-            archival = project(GUAVA, check_archival=True).archival
+            archival = project(GUAVA).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
         self.assert_could_not_fetch_logged(_GUAVA_POM, status=404, reason="Not Found")
 
@@ -251,7 +251,7 @@ class ProjectTest(LoggingTestCase):
     def test_a_pom_whose_xml_does_not_parse(self):
         """Test that an artefact whose pom does not parse is warned about, and leaves GitHub unasked."""
         with patch_maven_central(_DATED_LISTING, "<project><scm>", archived=True) as mock_get:
-            archival = project(GUAVA, check_archival=True).archival
+            archival = project(GUAVA).archival
         self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING, _GUAVA_POM)
         self.assert_logged(message_of(Logger.invalid_pom), url=_GUAVA_POM)
 
@@ -266,8 +266,8 @@ class ProjectTest(LoggingTestCase):
     def test_an_artefact_is_asked_for_its_pom_once_per_run(self):
         """Test that two poms declaring the same artefact cost one pom request between them."""
         with patch_maven_central(_DATED_LISTING, maven_central_pom(GUAVA_SCM), archived=True) as mock_get:
-            first = project(GUAVA, check_archival=True).archival
-            second = project(GUAVA, check_archival=True).archival
+            first = project(GUAVA).archival
+            second = project(GUAVA).archival
         # Asserting what each answered, so the one request says the pom was shared rather than never read.
         self.assert_archived(mock_get, first, _GUAVA_REPOSITORY)
         self.assertEqual(second, first)
@@ -283,15 +283,9 @@ class ProjectTest(LoggingTestCase):
     def test_artefacts_sharing_a_parent_are_asked_for_its_pom_once_per_run(self):
         """Test that two artefacts whose poms name the same parent cost one request for the parent's pom."""
         with patch_maven_central(_DATED_LISTING, maven_central_pom(parent=_GUAVA_PARENT)) as mock_get:
-            project(GUAVA, check_archival=True)
-            project("com.google.guava:guava-testlib", check_archival=True)
+            project(GUAVA)
+            project("com.google.guava:guava-testlib")
         self.assertEqual(requested_urls(mock_get).count(_GUAVA_PARENT_POM), 1)
-
-    def test_a_run_that_checks_nothing_for_archival(self):
-        """Test that a run checking no dependency for archival reads no pom, so the listing is all it asks for."""
-        with patch_maven_central(_DATED_LISTING, maven_central_pom(GUAVA_SCM), archived=True) as mock_get:
-            archival = project(GUAVA, check_archival=False).archival
-        self.assert_github_unasked(mock_get, archival, _GUAVA_LISTING)
 
 
 class LacksAGitHubRepositoryTest(LoggingTestCase):

@@ -38,7 +38,7 @@ from update_time.io.log import (
     get_logger,
 )
 from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker, Scope, Threshold, parse_directives
+from update_time.markers.marker import Marker, Scope, parse_directives
 from update_time.primitives.location import Location
 from update_time.primitives.lookup import LookedUp
 from update_time.primitives.timestamp import utc_date_and_time
@@ -51,6 +51,7 @@ from tests.update_time.fixtures import (
     DIGEST1,
     DIGEST2,
     FRESH_DATE,
+    STALE_AFTER_90,
 )
 from tests.update_time.helpers import (
     adopted_drift_report,
@@ -368,44 +369,44 @@ class LoggerTests(TestCase):
         """Test that keeping a floating tag is reported with the tag it names and what it resolves to."""
         location = create_location("Dockerfile", 1)
         release = DependencyVersion("3.14.7", sha=DIGEST)
-        cause = "update-time: allow[floating-pin]"
-        _new_logger().keeping_floating_tag(reference("python", location, "latest"), release, cause)
+        directive = "allow[floating-pin]"
+        _new_logger().keeping_floating_tag(reference("python", location, "latest"), release, directive)
         self.assert_message(
             mock_log,
             message_of(Logger.keeping_floating_tag),
             logging.DEBUG,
             f"Keeping the floating tag {dependency('python')}:latest in {at('Dockerfile:1')}: it resolves to "
-            f"3.14.7@{DIGEST} ({cause})",
+            f"3.14.7@{DIGEST} (update-time: {directive})",
         )
 
     def test_keeping_a_ref(self, mock_log: Mock):
         """Test that keeping a branch or tag is reported by its kind, with the name it has and what it resolves to."""
         location = create_location(".github/workflows/ci.yml", 17)
-        cause = "update-time: allow[floating-pin]"
+        directive = "allow[floating-pin]"
         release = DependencyVersion("4.3.0", sha=COMMIT_SHA1)
         for kind, ref in ((RefKind.BRANCH, "branch"), (RefKind.TAG, "tag")):
             with self.subTest(ref):
-                _new_logger().keeping_ref(reference("actions/checkout", location, "main"), release, cause, kind)
+                _new_logger().keeping_ref(reference("actions/checkout", location, "main"), release, directive, kind)
                 self.assert_message(
                     mock_log,
                     message_of(Logger.keeping_ref),
                     logging.DEBUG,
                     f"Keeping the {ref} {dependency('actions/checkout')}@main in {at('.github/workflows/ci.yml:17')}: "
-                    f"it resolves to 4.3.0@{COMMIT_SHA1} ({cause})",
+                    f"it resolves to 4.3.0@{COMMIT_SHA1} (update-time: {directive})",
                 )
 
     def test_keeping_a_reference_that_names_no_tag(self, mock_log: Mock):
         """Test that a reference naming no tag is reported by its name alone, there being no tag to name after it."""
         location = create_location("Dockerfile", 1)
         release = DependencyVersion("3.14.7", sha=DIGEST)
-        cause = "--allow-floating-pin"
-        _new_logger().keeping_floating_tag(reference("python", location), release, cause)
+        directive = "allow[floating-pin]"
+        _new_logger().keeping_floating_tag(reference("python", location), release, directive)
         self.assert_message(
             mock_log,
             message_of(Logger.keeping_floating_tag),
             logging.DEBUG,
             f"Keeping the floating tag {dependency('python')} in {at('Dockerfile:1')}: it resolves to "
-            f"3.14.7@{DIGEST} ({cause})",
+            f"3.14.7@{DIGEST} (update-time: {directive})",
         )
 
     def test_drift(self, mock_log: Mock):
@@ -537,7 +538,7 @@ class LoggerTests(TestCase):
 
     def test_adopted_drift(self, mock_log: Mock):
         """Test that adopted drift is logged at info level, naming the kind of drift and the opt-in that caused it."""
-        cause = "update-time: allow[hash-drift]"
+        directive = "allow[hash-drift]"
         dockerfile, workflow = create_location("Dockerfile", 2), create_location(".github/workflows/ci.yml", 17)
         checkout, ci = dependency("actions/checkout"), at(".github/workflows/ci.yml:17")
         cases = {
@@ -546,7 +547,7 @@ class LoggerTests(TestCase):
                 DriftedPin("dependency", "3.14", dockerfile, DIGEST1, new_sha=DIGEST2),
                 (
                     f"Adopted digest drift for {dependency('dependency')}:3.14 in {at('Dockerfile:2')}: "
-                    f"re-pinned from {DIGEST1} to {DIGEST2} ({cause})"
+                    f"re-pinned from {DIGEST1} to {DIGEST2} (update-time: {directive})"
                 ),
             ),
             "tag": (
@@ -554,7 +555,7 @@ class LoggerTests(TestCase):
                 DriftedPin("actions/checkout", "4.1.1", workflow, COMMIT_SHA1, new_sha=COMMIT_SHA2),
                 (
                     f"Adopted tag drift for {checkout}@4.1.1 in {ci}: "
-                    f"re-pinned from commit {COMMIT_SHA1} to {COMMIT_SHA2} ({cause})"
+                    f"re-pinned from commit {COMMIT_SHA1} to {COMMIT_SHA2} (update-time: {directive})"
                 ),
             ),
             "branch": (
@@ -562,7 +563,7 @@ class LoggerTests(TestCase):
                 DriftedPin("actions/checkout", "main", workflow, COMMIT_SHA1, new_sha=COMMIT_SHA2),
                 (
                     f"Adopted branch drift for {checkout}@main in {ci}: "
-                    f"re-pinned from commit {COMMIT_SHA1} to {COMMIT_SHA2} ({cause})"
+                    f"re-pinned from commit {COMMIT_SHA1} to {COMMIT_SHA2} (update-time: {directive})"
                 ),
             ),
             "ref": (
@@ -570,14 +571,14 @@ class LoggerTests(TestCase):
                 DriftedPin("actions/checkout", "stable-2024", workflow, COMMIT_SHA1, new_sha=COMMIT_SHA2),
                 (
                     f"Adopted ref drift for {checkout}@stable-2024 in {ci}: "
-                    f"re-pinned from commit {COMMIT_SHA1} to {COMMIT_SHA2} ({cause})"
+                    f"re-pinned from commit {COMMIT_SHA1} to {COMMIT_SHA2} (update-time: {directive})"
                 ),
             ),
         }
         for name, (kind, drifted, rendered) in cases.items():
             with self.subTest(name):
-                _new_logger().adopted_drift(kind, drifted, cause)
-                message, _fields = adopted_drift_report(kind, drifted, cause)
+                _new_logger().adopted_drift(kind, drifted, directive)
+                message, _fields = adopted_drift_report(kind, drifted, directive)
                 self.assert_message(mock_log, message, logging.INFO, rendered)
 
     def test_stale_dependency_warning(self, mock_log: Mock):
@@ -620,7 +621,7 @@ class LoggerTests(TestCase):
         """
         newest = Release("4.15.0", datetime.now(UTC) - timedelta(days=30, hours=1))
         location = create_location("requirements.txt", 9)
-        threshold = Threshold(value=90, directive="set[stale-after=90]")
+        threshold = STALE_AFTER_90.stale
         runs = {
             365: ("default_threshold", "the default of 365 days"),
             400: ("run_threshold", "--stale-after 400"),

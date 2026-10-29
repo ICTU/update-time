@@ -2,7 +2,6 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.domain.archival import archival_is_checked
 from update_time.domain.file_type import POM_XML
 from update_time.formats import xml
 from update_time.io.filesystem import glob_for
@@ -112,14 +111,13 @@ def _report_scopes_checked_at_the_managing_declaration(left_to_another: list[pom
 def _report_scopes_on_artefacts_maven_central_does_not_serve(declared: list[pom_xml_manifest.Declaration]) -> None:
     """Report as redundant each `cooldown`, `stale`, and `archived` scope on an artefact Maven Central does not serve.
 
-    A `cooldown` counts only where Maven updates the version, and an `archived` scope only in a run that checks
-    archival, since a run switching that check off makes it redundant for its own reason.
+    A `cooldown` counts only where Maven updates the version.
     """
     for declaration in declared:
         cooldown = declaration.marker.cooldown_directive if declaration.maven_updates_the_version else ""
-        archived = declaration.marker.directive_for(Scope.ARCHIVED) if archival_is_checked() else ""
-        check_directives = (declaration.marker.directive_for(Scope.STALE), archived)
-        directives = list(filter(None, (cooldown, *check_directives)))
+        stale = declaration.marker.directive_for(Scope.STALE)
+        archived = declaration.marker.directive_for(Scope.ARCHIVED)
+        directives = list(filter(None, (cooldown, stale, archived)))
         if directives and not maven_central.serves(declaration.dependency):
             for directive in directives:
                 _LOG.redundant_directive(declaration, directive, Reason.NOT_ON_MAVEN_CENTRAL)
@@ -127,8 +125,6 @@ def _report_scopes_on_artefacts_maven_central_does_not_serve(declared: list[pom_
 
 def _report_archived_scopes_without_a_github_repository(declared: list[pom_xml_manifest.Declaration]) -> None:
     """Report as redundant each `archived` scope on an artefact whose poms do not name a GitHub repository."""
-    if not archival_is_checked():
-        return
     for declaration in declared:
         archived = declaration.marker.directive_for(Scope.ARCHIVED)
         if archived and maven_central.lacks_a_github_repository(declaration.dependency):

@@ -26,7 +26,7 @@ def _get_latest_version(
 ) -> DependencyVersion:
     """Return the version the source resolves for the file the URL references, unbounded."""
     pinned = PinnedDependency(dependency, current_version)
-    return version_getter(filename)(pinned, NO_BOUND, cooldown_days, check_archival=True)
+    return version_getter(filename)(pinned, NO_BOUND, cooldown_days)
 
 
 # npm publication dates, relative to now so the cooldown decision is independent of the wall clock.
@@ -170,8 +170,8 @@ class GetLatestVersionTest(LoggingTestCase):
     @kills(
         Mutation(
             jsdelivr.version_getter,
-            "return replace(latest, project=npm_project(pinned.name, check_archival=check_archival))",
-            "_p = npm_project(pinned.name, check_archival=check_archival)\n"
+            "return replace(latest, project=npm_project(pinned.name))",
+            "_p = npm_project(pinned.name)\n"
             "        return replace(latest, project=replace(_p, "
             "newest=_p.newest and replace(_p.newest, version=latest.version)))",
             "the release attached names the version the run leaves the URL on, not the package's newest",

@@ -112,9 +112,6 @@ def _redundant_directives(
     log.redundant_directive(commons_lang, "ignore[archived]", Reason.NO_GITHUB_REPOSITORY)
     redundant_archived_without_a_github_repository = capture.take()
 
-    log.redundant_directive(reference("humanize", requirements), "ignore[archived]", Reason.ARCHIVAL_CHECK_OFF)
-    redundant_archived_check_off = capture.take()
-
     internal_lib = reference("nl.example:internal-lib", Location(Path("pom.xml"), 12))
     log.redundant_directive(internal_lib, "set[cooldown=30]", Reason.NOT_ON_MAVEN_CENTRAL)
     redundant_unserved_maven_artefact = capture.take()
@@ -178,7 +175,6 @@ def _redundant_directives(
         "@@REDUNDANT_YANK_WITHOUT_A_VERSION_WARNING@@": redundant_yank_without_a_version,
         "@@REDUNDANT_ARCHIVED_SCOPE_WARNING@@": redundant_archived_scope,
         "@@REDUNDANT_ARCHIVED_WITHOUT_A_GITHUB_REPOSITORY_WARNING@@": redundant_archived_without_a_github_repository,
-        "@@REDUNDANT_ARCHIVED_CHECK_OFF_WARNING@@": redundant_archived_check_off,
         "@@REDUNDANT_UNSERVED_MAVEN_ARTEFACT_WARNING@@": redundant_unserved_maven_artefact,
         "@@REDUNDANT_VULNERABLE_WITHOUT_A_VERSION_WARNINGS@@": redundant_vulnerable_without_a_version,
         "@@REDUNDANT_SCOPE_ON_A_MANAGED_VERSION_WARNING@@": redundant_scope_on_a_managed_version,
@@ -260,6 +256,15 @@ def _invalid_items(log: Logger, capture: _Capture, dockerfile: Location) -> dict
 
     log.invalid_bracket_item("node", "update-time.engines.node", Location(Path("package.json"), 3))
     return {"@@UNRECOGNISED_ITEM_WARNING@@": unrecognised, "@@INVALID_FIELD_WARNING@@": capture.take()}
+
+
+def _directives_asking_for_the_default(
+    log: Logger, capture: _Capture, requirements: Location, dockerfile: Location
+) -> dict[str, str]:
+    """Log a directive asking for what Update-time does without it, on an image and on a requirement."""
+    log.redundant_directive(reference("python", dockerfile), "ignore[hash-drift]", Reason.ASKS_FOR_THE_DEFAULT)
+    log.redundant_directive(reference("humanize", requirements), "allow[update]", Reason.ASKS_FOR_THE_DEFAULT)
+    return {"@@DIRECTIVES_ASKING_FOR_THE_DEFAULT@@": capture.take()}
 
 
 def _bounds_deciding_nothing(log: Logger, capture: _Capture, dockerfile: Location) -> dict[str, str]:
@@ -345,8 +350,8 @@ def _no_release_tagged(log: Logger, capture: _Capture, workflow: Location) -> di
 def _github_refs(log: Logger, capture: _Capture, workflow: Location) -> dict[str, str]:
     """Log a branch kept floating, refs left unpinned, unchecked drift, and undated commits, with placeholders."""
     branch = reference("actions/checkout", workflow, "main")
-    cause, rate_limited = "update-time: allow[floating-pin]", "HTTP 403, API rate limit exceeded"
-    log.keeping_ref(branch, DependencyVersion("4.3.0", sha=_ELIDED), cause, RefKind.BRANCH)
+    directive, rate_limited = "allow[floating-pin]", "HTTP 403, API rate limit exceeded"
+    log.keeping_ref(branch, DependencyVersion("4.3.0", sha=_ELIDED), directive, RefKind.BRANCH)
     kept = capture.take()
     log.unpinned_ref(branch, rate_limited, RefKind.REF)
     unpinned = capture.take()
@@ -434,7 +439,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
 
     unpinned_floating_tag = _unpinned_floating_tags(log, capture)
 
-    log.keeping_floating_tag(reference("python", dockerfile, "latest"), pinned_tag, "update-time: allow[floating-pin]")
+    log.keeping_floating_tag(reference("python", dockerfile, "latest"), pinned_tag, "allow[floating-pin]")
     kept_floating_tag = capture.take()
 
     github_refs = _github_refs(log, capture, workflow)
@@ -480,6 +485,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_redundant_package_json_markers(log, capture),
         **invalid,
         **_bounds_deciding_nothing(log, capture, dockerfile),
+        **_directives_asking_for_the_default(log, capture, requirements, dockerfile),
         **understood_markers,
     }
 

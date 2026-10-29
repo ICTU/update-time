@@ -17,7 +17,6 @@ from update_time.domain.line import located_lines
 from update_time.domain.reference import DriftedPin, hash_drifted
 from update_time.io.log import Logger
 from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
-from update_time.markers.floating import floating_pin_cause
 from update_time.markers.marker import Scope, parse_marker
 from update_time.primitives.text import rewrite_string
 from update_time.references.drift import adopts_drift
@@ -116,10 +115,10 @@ class _Rewriter:
         the digest alone.
         """
         drifted = self._drifted(match, latest)
-        if (cause := floating_pin_cause(marker)) is not None:
+        if directive := marker.allow_directive(Scope.FLOATING_PIN):
             if drifted:
                 return self._drifted_pin(match, marker, latest, reference)
-            self.logger.keeping_floating_tag(reference, latest, cause)
+            self.logger.keeping_floating_tag(reference, latest, directive)
             return match.string
         if drifted and not self._adopts_drift(match, marker, latest, reference):
             return match.string

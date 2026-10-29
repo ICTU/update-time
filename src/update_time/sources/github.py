@@ -594,9 +594,7 @@ def _tagged_versions(repository: GitHubRepository) -> list[TaggedVersion] | None
 @archival_reporting
 @publication_date_reporting
 @cache
-def get_latest_version(
-    pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
-) -> DependencyVersion:
+def get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int) -> DependencyVersion:
     """Return the latest eligible version of the GitHub repository, or the current version unchanged.
 
     Where the repository does not tag a release to update to, the current version comes back marked as unserved.
@@ -606,7 +604,7 @@ def get_latest_version(
     """
     action, current_version = pinned.name, pinned.version
     repository = repository_of(action)
-    repository_project = project(action, check_archival=check_archival)
+    repository_project = project(action)
     tagged_versions = _tagged_versions(repository)
     if tagged_versions is None:  # Couldn't reach GitHub; the fetches already logged a warning.
         return DependencyVersion(current_version, project=repository_project)
@@ -681,21 +679,15 @@ def _newest_tag_beyond_releases(repository: GitHubRepository) -> _TagJSON | None
 
 
 @archival_reporting
-def project(dependency: DependencyName, *, check_archival: bool) -> Project:
+def project(dependency: DependencyName) -> Project:
     """Return what GitHub reports about the repository the dependency names: its newest release, and its archival."""
     repository = repository_of(dependency)
     newest = _newest_release(repository)
-    return Project(newest=newest, archival=archival(repository, check_archival=check_archival))
+    return Project(newest=newest, archival=archival(repository))
 
 
-def archival(repository: GitHubRepository, *, check_archival: bool) -> Archival | None:
-    """Return what GitHub declares about the repository: whether it is archived, or None where it is not known.
-
-    It is not known in a run that does not check archival, since Update-time does not ask GitHub then, and where the
-    repository can't be fetched.
-    """
-    if not check_archival:
-        return None
+def archival(repository: GitHubRepository) -> Archival | None:
+    """Return what GitHub declares about the repository: whether it is archived, or None where it can't be read."""
     if (metadata := _repository_metadata(repository)) is None:
         return None
     if not isinstance(archived := metadata.get("archived"), bool):

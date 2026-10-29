@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
-from update_time.domain.vulnerability import NO_RISK_LEVEL, RISK_LEVELS, VULNERABILITY_LEVEL
+from update_time.domain.vulnerability import RISK_LEVELS, VULNERABILITY_LEVEL
 from update_time.io import cli as cli_module
 from update_time.io.cli import parse_args
 from update_time.io.log import LOG_LEVEL
@@ -211,7 +211,7 @@ class CommandLineInterfaceTest(unittest.TestCase):
 
     def test_help_enumerates_the_vulnerability_levels(self):
         """Test that the help names every value --vulnerability-level accepts."""
-        levels = ",".join([*RISK_LEVELS, NO_RISK_LEVEL])
+        levels = ",".join(RISK_LEVELS)
         self.assertIn(f"--vulnerability-level {{{levels}}}", self.stdout_of("--help"))
 
     def test_default_exclude_path(self):

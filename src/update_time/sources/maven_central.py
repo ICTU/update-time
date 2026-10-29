@@ -48,10 +48,9 @@ _PUBLISHED_FORMAT = "%Y-%m-%d %H:%M"
 
 
 @archival_reporting
-def project(artefact: DependencyName, *, check_archival: bool) -> Project:
+def project(artefact: DependencyName) -> Project:
     """Return the artefact's newest release on Maven Central, with the archival GitHub declares for its source."""
-    newest = _newest_release(artefact)
-    return Project(newest=newest, archival=_archival(artefact) if check_archival else None)
+    return Project(newest=_newest_release(artefact), archival=_archival(artefact))
 
 
 def _archival(artefact: DependencyName) -> Archival | None:
@@ -61,7 +60,7 @@ def _archival(artefact: DependencyName) -> Archival | None:
     name.
     """
     repository = _repository(artefact).value
-    return None if repository is None else github_archival(repository, check_archival=True)
+    return None if repository is None else github_archival(repository)
 
 
 def get_changes(artefact: DependencyName, version: VersionString) -> Changes:

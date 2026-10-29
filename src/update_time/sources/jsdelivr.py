@@ -47,7 +47,7 @@ def version_getter(filename: str) -> NewVersionGetter:
     """
 
     def get_latest_version(
-        pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
+        pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int
     ) -> DependencyVersion:
         """Return the latest jsDelivr version published outside the cooldown, with the file's integrity hash.
 
@@ -69,7 +69,7 @@ def version_getter(filename: str) -> NewVersionGetter:
             cooldown_days,
         )
         latest = with_yank_state(latest, pinned.version, partial(deprecation, pinned.name))
-        return replace(latest, project=npm_project(pinned.name, check_archival=check_archival))
+        return replace(latest, project=npm_project(pinned.name))
 
     return publication_date_reporting(vulnerability_reporting(yank_reporting(get_latest_version)))
 

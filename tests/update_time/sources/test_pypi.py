@@ -59,7 +59,7 @@ def get_latest_version(
 ) -> DependencyVersion:
     """Return what the source resolves for the package and version, as a test writes them."""
     pinned = PinnedDependency(package, current_version)
-    return pypi.get_latest_version(pinned, version_bound, cooldown_days, check_archival=True)
+    return pypi.get_latest_version(pinned, version_bound, cooldown_days)
 
 
 @patch("requests.Session.get")
@@ -829,17 +829,12 @@ class ArchivalTest(LoggingTestCase):
         for package, (body, expected) in cases.items():
             with self.subTest(package=package):
                 mock_get.return_value = mock_response(body)
-                self.assertEqual(_archival(package, check_archival=True), expected)
-
-    @patch_get({"project-status": {"status": "archived"}})
-    def test_a_run_that_checks_no_archival_leaves_the_archival_unknown(self):
-        """Test that a run that does not check archival leaves it unknown, whatever PyPI declares."""
-        self.assertIsNone(_archival("not-checked", check_archival=False))
+                self.assertEqual(_archival(package), expected)
 
     @patch_get(ok=False)
     def test_a_failed_request_leaves_the_archival_unknown(self):
         """Test that a failed Index API request leaves the archival unknown, rather than reading as active."""
-        self.assertIsNone(_archival("unreachable", check_archival=True))
+        self.assertIsNone(_archival("unreachable"))
         self.assert_could_not_fetch_logged()
 
 
