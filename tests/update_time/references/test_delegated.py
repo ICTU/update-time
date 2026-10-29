@@ -10,8 +10,11 @@ from update_time.domain.staleness import STALE_AFTER
 from update_time.markers.marker import Marker
 from update_time.markers.reference import SteeredReference
 from update_time.primitives.location import Location
+from update_time.references import delegated as delegated_module
 from update_time.references.delegated import warn_about_projects
 
+from tests.mutation import Mutation, kills
+from tests.update_time.fixtures import STALE_AFTER_90
 from tests.update_time.helpers import resolved_reference, staleness_disabled
 from tests.update_time.references.helpers import mock_reference_resolver
 
@@ -35,7 +38,7 @@ class WarnAboutProjectsTest(unittest.TestCase):
         self.log.report_staleness.assert_called_once_with(resolved, STALE_AFTER.default)
         self.log.report_archival.assert_called_once_with(resolved, Marker())
 
-    def test_disabled_skips_a_resolver_that_reports_no_archival(self):
+    def test_a_resolver_reporting_no_archival_is_not_asked_with_the_staleness_check_switched_off(self):
         """Test that a threshold of 0 skips the pass, so such a resolver never runs and makes no request."""
         projects = mock_reference_resolver(resolved_reference("humanize", self.location, self.release))
         with staleness_disabled:
@@ -43,6 +46,25 @@ class WarnAboutProjectsTest(unittest.TestCase):
         projects.assert_not_called()
         self.log.report_staleness.assert_not_called()
         self.log.report_archival.assert_not_called()
+
+    @kills(
+        Mutation(
+            delegated_module._checked_references,
+            "project_is_checked(projects, reference.dependency, reference.marker)",
+            "project_is_checked(projects, reference.dependency, type(reference.marker)())",
+            "a reference's own threshold does not reach the gate, so a run with the check off looks it up for none",
+        )
+    )
+    def test_a_resolver_reporting_no_archival_is_asked_about_a_reference_with_a_threshold_of_its_own(self):
+        """Test that a run with the staleness check off asks about the references setting a threshold of their own."""
+        location = Location(self.location.path, 5)
+        reference_with_a_threshold = SteeredReference("rich", "", location, marker=STALE_AFTER_90)
+        resolved = resolved_reference("rich", location, self.release, marker=STALE_AFTER_90)
+        projects = mock_reference_resolver(resolved)
+        with staleness_disabled:
+            warn_about_projects([[*self.declared, reference_with_a_threshold]], projects, self.log)
+        projects.assert_called_once_with([reference_with_a_threshold])
+        self.log.report_staleness.assert_called_once_with(resolved, 90)
 
     def test_asks_about_the_dependency_the_resolver_is_about_to_resolve(self):
         """Test that the resolver's archival capability is asked about one dependency, not about a batch of them."""

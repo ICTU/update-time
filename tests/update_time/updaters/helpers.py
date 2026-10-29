@@ -6,9 +6,8 @@ from unittest.mock import ANY, Mock, patch
 from urllib.parse import parse_qs, urlparse
 
 from update_time.domain.dependency import DependencyVersion, Project
-from update_time.domain.vulnerability import NO_RISK_LEVEL, VULNERABILITY_LEVEL
 
-from tests.helpers import mock_response, patch_environ
+from tests.helpers import mock_response
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA2, FRESH_DATE
 from tests.update_time.helpers import vulnerability
 from tests.update_time.sources.helpers import (
@@ -97,10 +96,6 @@ def unreachable_osv() -> _patch:
 # Reusable class decorator that answers OSV with no advisories, for update tests that focus on the update flow.
 # Without it their pins are looked up at OSV for real, since nothing else in those tests patches `Session.post`.
 no_vulnerabilities = osv()
-
-# Reusable decorator that switches the vulnerability check off, for update tests that focus on the update flow and
-# would otherwise trigger the vulnerability pass's own OSV request.
-vulnerability_check_disabled = patch_environ({VULNERABILITY_LEVEL.name: NO_RISK_LEVEL})
 
 
 # Reusable decorator for the tests that patch the GitHub source's getter: the commit a reference's own tag points at

@@ -44,10 +44,9 @@ class _Refusal:
         explaining_skipped_lookups(self, lambda _pinned: self.reason)
 
     def __call__(
-        self, pinned: PinnedDependency, _version_bound: VersionBound, _cooldown_days: int, /, *, check_archival: bool
+        self, pinned: PinnedDependency, _version_bound: VersionBound, _cooldown_days: int, /
     ) -> DependencyVersion:
         """Return the reference as it is, saying why its image is not looked up."""
-        del check_archival
         return DependencyVersion(version=pinned.version, image_not_looked_up=self.reason)
 
 

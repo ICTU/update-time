@@ -1,6 +1,6 @@
 """Unit tests for the pre-commit config update script."""
 
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import ANY, Mock, call, patch
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb, VersionBound
 from update_time.domain.cooldown import COOLDOWN
@@ -61,7 +61,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
     ) -> None:
         """Assert the source was asked once about the hook repository at the rev, under the bound the marker sets."""
         mock_get_latest_version.assert_called_once_with(
-            PinnedDependency(self.HOOK, rev), version_bound, COOLDOWN.default, check_archival=True
+            PinnedDependency(self.HOOK, rev), version_bound, COOLDOWN.default
         )
 
     def test_pin_unpinned_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -165,7 +165,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: main{marker}\n"))
         mock_get_latest_version.assert_not_called()
         drifted = self.drifted(config_file, "main")
-        self.assert_adopted_drift_logged(Logger.BRANCH_DRIFT, drifted, "update-time: allow[hash-drift]")
+        self.assert_adopted_drift_logged(Logger.BRANCH_DRIFT, drifted, "allow[hash-drift]")
         self.assert_no_warnings_logged()
 
     @patch_github(commit=github_commits_json(NEW_SHA, date=PAST_COOLDOWN_DATE))
@@ -177,7 +177,7 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         mock_glob.return_value = [config_file]
         update_pre_commit_configs()
         config_file.write_text.assert_called_once_with(config(f"rev: {NEW_SHA}  # frozen: v4.5.0{marker}\n"))
-        self.assert_adopted_drift_logged(Logger.TAG_DRIFT, self.drifted(config_file), "update-time: allow[hash-drift]")
+        self.assert_adopted_drift_logged(Logger.TAG_DRIFT, self.drifted(config_file), "allow[hash-drift]")
         self.assert_no_warnings_logged()
 
     def test_local_repo_is_left_alone(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -333,8 +333,8 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         self.assertEqual(
             mock_get_latest_version.call_args_list,
             [
-                ((PinnedDependency(self.HOOK, "v4.5.0"), NO_BOUND, COOLDOWN.default), {"check_archival": True}),
-                ((PinnedDependency("psf/black", "22.10.0"), NO_BOUND, COOLDOWN.default), {"check_archival": True}),
+                call(PinnedDependency(self.HOOK, "v4.5.0"), NO_BOUND, COOLDOWN.default),
+                call(PinnedDependency("psf/black", "22.10.0"), NO_BOUND, COOLDOWN.default),
             ],
         )
 

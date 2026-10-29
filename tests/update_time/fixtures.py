@@ -26,6 +26,12 @@ COMMIT_SHA3 = "c" * 40
 # The marker setting the risk level `none`, which silences every vulnerability warning.
 VULNERABILITY_LEVEL_NONE = parse_directives("set[vulnerability-level=none]")
 
+# The marker setting a staleness threshold of 90 days.
+STALE_AFTER_90 = parse_directives("set[stale-after=90]")
+
+# The marker setting a cooldown of 30 days.
+COOLDOWN_30 = parse_directives("set[cooldown=30]")
+
 # A publication date old enough that the default staleness threshold warns about it, and one inside the default
 # cooldown.
 STALE_DATE = datetime.now(UTC) - timedelta(days=512)

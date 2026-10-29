@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Protocol
 from unittest.mock import ANY, Mock, call, patch
 
 import update_time
-from update_time.domain.archival import IGNORE_ARCHIVED
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import ArchivedSubject, DependencyVersion, FloatingPin, ImageNotLookedUp, tag_of
 from update_time.domain.reference import Reference, RefKind
@@ -26,8 +25,6 @@ from update_time.io.log import Logger, LogMessage
 from update_time.manifests.python_dependency_toml import Declaration
 from update_time.markers.bound import parse_bound
 from update_time.markers.directive import Reason
-from update_time.markers.drift import ALLOW_HASH_DRIFT
-from update_time.markers.floating import ALLOW_FLOATING_PIN
 from update_time.markers.marker import Marker
 from update_time.markers.reference import SteeredResolvedReference
 from update_time.primitives.location import Location
@@ -353,7 +350,7 @@ class LoggingTestCase(CacheClearingTestCase):
         )
 
     def assert_kept_floating_logged(
-        self, dependency: str, version: str, release: DependencyVersion, location: Location, cause: object = ANY
+        self, dependency: str, version: str, release: DependencyVersion, location: Location, directive: object = ANY
     ) -> None:
         """Assert that a floating tag left as it is was reported, naming the release it resolves to."""
         self.assert_logged_among_others(
@@ -363,7 +360,7 @@ class LoggingTestCase(CacheClearingTestCase):
             resolved=release.version,
             sha=release.sha,
             location=location,
-            cause=cause,
+            directive=directive,
         )
 
     def assert_comment_naming_no_ref_logged(self, dependency: str, name: str, location: Location) -> None:
@@ -378,7 +375,7 @@ class LoggingTestCase(CacheClearingTestCase):
         name: str,
         release: DependencyVersion,
         location: Location,
-        cause: str,
+        directive: str,
         *,
         ref: RefKind = RefKind.BRANCH,
     ) -> None:
@@ -391,7 +388,7 @@ class LoggingTestCase(CacheClearingTestCase):
             resolved=release.version,
             sha=release.sha,
             location=location,
-            cause=cause,
+            directive=directive,
         )
 
     def assert_image_not_looked_up_logged(
@@ -416,10 +413,10 @@ class LoggingTestCase(CacheClearingTestCase):
         self._assert_reported(message, among_others=among_others, **fields)
 
     def assert_adopted_drift_logged(
-        self, kind: Drift, drifted: DriftedPin, cause: object = ANY, *, among_others: bool = False
+        self, kind: Drift, drifted: DriftedPin, directive: object = ANY, *, among_others: bool = False
     ) -> None:
         """Assert that the adopted drift was logged, as the file's only record at its level by default."""
-        message, fields = adopted_drift_report(kind, drifted, cause)
+        message, fields = adopted_drift_report(kind, drifted, directive)
         self._assert_reported(message, among_others=among_others, **fields)
 
     def assert_undated_commit_logged(self, kind: Drift, drifted: DriftedPin, reason: str) -> None:
@@ -549,11 +546,18 @@ class LoggingTestCase(CacheClearingTestCase):
         )
 
     def assert_redundant_directive_logged(
-        self, reason: RedundancyReason, dependency: str, location: Location, directive: object = ANY
+        self,
+        reason: RedundancyReason,
+        dependency: str,
+        location: Location,
+        directive: object = ANY,
+        *,
+        among_others: bool = False,
     ) -> None:
-        """Assert that the run's only warning reports the directive as redundant, saying why."""
-        self.assert_logged(
+        """Assert that a warning reports the directive as redundant, saying why, as the only warning by default."""
+        self._assert_reported(
             message_of(Logger.redundant_directive),
+            among_others=among_others,
             directive=directive,
             dependency=dependency,
             location=location,
@@ -755,9 +759,9 @@ def drift_warning(kind: Drift, drifted: DriftedPin) -> tuple[LogMessage, dict[st
     return message_of(Logger.drift, *fields), fields
 
 
-def adopted_drift_report(kind: Drift, drifted: DriftedPin, cause: object) -> tuple[LogMessage, dict[str, object]]:
+def adopted_drift_report(kind: Drift, drifted: DriftedPin, directive: object) -> tuple[LogMessage, dict[str, object]]:
     """Return the report that the drift was adopted, and the fields it carries."""
-    fields = Logger._drift_fields(kind, drifted, cause=cause, **kind.adopted_words)
+    fields = Logger._drift_fields(kind, drifted, directive=directive, **kind.adopted_words)
     return message_of(Logger.adopted_drift, *fields), fields
 
 
@@ -809,19 +813,6 @@ def bound(verb: Verb, item: str) -> VersionBound:
 # Reusable decorator that disables the staleness check, for update tests that focus on the update flow and would
 # otherwise trigger the staleness pass's own registry requests. The staleness pass has its own dedicated tests.
 staleness_disabled = patch_environ({STALE_AFTER.name: "0"})
-
-# Reusable decorator that switches the archival check off run-wide, as --ignore-archived does, for the tests
-# of what a run then leaves unasked and unreported.
-archival_check_disabled = patch_environ({IGNORE_ARCHIVED.name: "1"})
-
-# Reusable decorator that switches the staleness and the archival check off run-wide, as --stale-after 0 and
-# --ignore-archived do.
-project_checks_disabled = patch_environ({STALE_AFTER.name: "0", IGNORE_ARCHIVED.name: "1"})
-
-# Reusable context managers that make every reference in the run adopt hash drift or keep its pin floating, as
-# --allow-hash-drift and --allow-floating-pin do.
-hash_drift_allowed = patch_environ({ALLOW_HASH_DRIFT.name: "1"})
-floating_pin_allowed = patch_environ({ALLOW_FLOATING_PIN.name: "1"})
 
 
 def pyproject(*specs: str, marker: str = "") -> str:

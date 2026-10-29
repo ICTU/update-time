@@ -4,17 +4,13 @@ from functools import partial
 from itertools import chain
 from typing import TYPE_CHECKING
 
-from update_time.domain.archival import archival_is_checked, archival_reporting, reports_archival
+from update_time.domain.archival import archival_reporting, reports_archival
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.reference import resolved_references
 from update_time.markers.directive import WARNING_DIRECTIVES, Reason
 from update_time.markers.marker import Scope
 from update_time.markers.reference import SteeredReference, SteeredResolvedReference
-from update_time.references.resolve import (
-    project_is_checked,
-    report_project,
-    warn_if_the_archival_check_is_off,
-)
+from update_time.references.resolve import project_is_checked, report_project
 from update_time.references.vulnerability import warn_about_vulnerable_dependencies
 
 if TYPE_CHECKING:
@@ -35,11 +31,10 @@ def project_resolver(get_project: ProjectGetter) -> ReferenceResolver[SteeredRef
     """
 
     def resolve(references: Iterable[SteeredReference]) -> Iterable[SteeredResolvedReference]:
-        check_archival = archival_is_checked()
         return (
             SteeredResolvedReference.from_reference(
                 reference,
-                release=DependencyVersion.unpinned(get_project(reference.dependency, check_archival=check_archival)),
+                release=DependencyVersion.unpinned(get_project(reference.dependency)),
             )
             for reference in references
         )
@@ -72,15 +67,7 @@ def warn_about_projects[ReferenceT: SteeredReference](
     projects: ReferenceResolver[ReferenceT, SteeredResolvedReference],
     log: Logger,
 ) -> None:
-    """Ask the resolver about each reference a check needs it for, and report what it answers.
-
-    A reference carrying a staleness threshold of its own is asked about at that threshold, so it is looked up in a
-    run that switches both project checks off.
-    An `archived` scope is reported as redundant in a run that switches the archival check off, looked up or not.
-    """
-    for declared_in_file in declared:
-        for reference in declared_in_file:
-            warn_if_the_archival_check_is_off(projects, reference.dependency, reference, reference.marker, log)
+    """Ask the resolver about each reference a check needs it for, and report what it answers."""
     checked = [
         references for declared_in_file in declared if (references := _checked_references(projects, declared_in_file))
     ]

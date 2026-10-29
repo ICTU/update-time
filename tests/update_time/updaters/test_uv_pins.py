@@ -2,10 +2,9 @@
 
 from pathlib import Path
 from typing import ClassVar
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import Mock, patch
 
 from update_time.domain.dependency import Yank
-from update_time.domain.vulnerability import NO_RISK_LEVEL, VULNERABILITY_LEVEL
 from update_time.formats import toml as toml_module
 from update_time.io.log import Logger, get_logger
 from update_time.manifests.inline_script import InlineScript
@@ -16,13 +15,11 @@ from update_time.primitives.location import Location
 from update_time.references import delegated as delegated_module
 from update_time.updaters.uv_pins import warn_about_pins
 
-from tests.helpers import mock_path, patch_environ, requested_urls
+from tests.helpers import mock_path, requested_urls
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
     LoggingTestCase,
-    archival_check_disabled,
     message_of,
-    project_checks_disabled,
     pyproject,
     staleness_disabled,
 )
@@ -43,7 +40,6 @@ from tests.update_time.updaters.helpers import (
     osv,
     osv_queries,
     pyproject_per_line,
-    vulnerability_check_disabled,
 )
 
 _LOG = get_logger("uv pins")
@@ -144,28 +140,6 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
         file = self.dependency_toml_file("package==1.0", marker="set[stale-after=90]")
         warn_about_pins([file], _LOG)
         self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
-
-    @kills(
-        Mutation(
-            delegated_module._checked_references,
-            "project_is_checked(projects, reference.dependency, reference.marker)",
-            "project_is_checked(projects, reference.dependency, type(reference.marker)())",
-            "a reference's own threshold does not reach the gate, so a run with both checks off looks it up for none",
-        )
-    )
-    @project_checks_disabled
-    def test_the_markers_threshold_survives_the_checks_being_switched_off(self, get: Mock):
-        """Test that the dependency with a threshold of its own is the only one looked up once both checks are off.
-
-        The newest release is 100 days old, so it is stale against the marker's 90, which the `--stale-after 0` in
-        force run-wide does not override. The dependency below it sets no threshold, so no check runs for it and
-        PyPI is not asked about it at all.
-        """
-        get.return_value = dated_pypi_index("1.0", upload_time=PYPI_PAST_COOLDOWN_UPLOAD)
-        file = self.file_holding(pyproject_per_line("package>=1.0", "other>=1.0", marker="set[stale-after=90]"))
-        warn_about_pins([file], _LOG)
-        self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 3))
-        self.assertEqual(get.call_count, 1)
 
     def test_recent_pin_not_warned(self, get: Mock):
         """Test that a pin whose newest release is recent is not warned about as stale."""
@@ -317,23 +291,10 @@ class VulnerablePinTest(PythonDependencyTomlTestCase):
         self.assert_ignored_vulnerability_logged("package", Location(file.path, 3), VULNERABILITY.advisory, directive)
 
     def test_the_markers_risk_level_is_used(self):
-        """Test that a pin's own risk level decides what it is warned about, whatever level the run is set to."""
-        for run_wide_level in (VULNERABILITY_LEVEL.default, NO_RISK_LEVEL):
-            with self.subTest(run_wide_level=run_wide_level), patch_environ({VULNERABILITY_LEVEL.name: run_wide_level}):
-                file = self.dependency_toml_file("django==3.2.0", marker="set[vulnerability-level=high]")
-                self.check_pins(file, DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY)
-                self.assert_vulnerable_dependency_logged(
-                    "django", "3.2.0", DJANGO_VULNERABILITY, Location(file.path, 2)
-                )
-
-    @vulnerability_check_disabled
-    def test_a_pin_without_a_level_of_its_own_stays_out_of_the_batch(self):
-        """Test that a run with the check switched off looks up the pin setting a level of its own, and no other."""
-        file = self.file_holding(
-            pyproject_per_line("django==3.2.0", "other==1.0", marker="set[vulnerability-level=high]")
-        )
-        mock_post = self.check_pins(file, DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY)
-        mock_post.assert_any_call(ANY, timeout=ANY, json=osv_queries(("django", "3.2.0")))
+        """Test that a pin's own risk level decides what it is warned about, rather than the level of the run."""
+        file = self.dependency_toml_file("django==3.2.0", marker="set[vulnerability-level=high]")
+        self.check_pins(file, DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY)
+        self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(file.path, 2))
 
     def test_every_redundant_suppression_is_reported(self):
         """Test that each of a marker's vulnerability suppressions is reported when it silences nothing."""
@@ -345,13 +306,6 @@ class VulnerablePinTest(PythonDependencyTomlTestCase):
         self.assert_redundant_vulnerable_level_logged(
             "package", "1.0", "high", location, "set[vulnerability-level=high]"
         )
-
-    @vulnerability_check_disabled
-    def test_disabled_makes_no_osv_request(self):
-        """Test that `--vulnerability-level none` skips the check, so OSV is not asked at all."""
-        mock_post = self.check_pins(self.dependency_toml_file("django==3.2.0"), DJANGO_ADVISORY)
-        mock_post.assert_not_called()
-        self.assert_no_warnings_logged()
 
 
 @no_vulnerabilities
@@ -373,22 +327,6 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         warn_about_pins([file], _LOG)
         self.assert_no_warnings_logged()
         self.assert_ignored_archival_logged("package", Location(file.path, 2))
-
-    def test_ignore_archived_is_redundant_with_the_archival_check_switched_off(self, get: Mock):
-        """Test that an `ignore[archived]` is redundant in a run passing `--ignore-archived`, looked up or not."""
-        cases = {
-            "a pin": ("package==1.0", archival_check_disabled),
-            "a range in a run switching both checks off": ("package>=1.0", project_checks_disabled),
-        }
-        for case, (declaration, run) in cases.items():
-            with self.subTest(case=case):
-                get.return_value = dated_pypi_index("1.0", upload_time=PYPI_RECENT_UPLOAD)
-                file = self.dependency_toml_file(declaration, marker="ignore[archived]")
-                with run:
-                    warn_about_pins([file], _LOG)
-                self.assert_redundant_directive_logged(
-                    Reason.ARCHIVAL_CHECK_OFF, "package", Location(file.path, 2), "ignore[archived]"
-                )
 
     def test_a_marker_silences_a_dependency_that_pins_no_version(self, get: Mock):
         """Test that both project scopes silence their warning for a dependency declared without an exact pin."""

@@ -66,7 +66,6 @@ A question left out of one type's section is invisible in prose review, so it is
 A raw file host labels every file it serves `text/plain`, so the URL's own extension answers where the content type does not.
 A reference a marker keeps floating is left as it is.
 A reference a source has answered for, and the marker steering what is reported about the answer.
-A reference carrying it keeps its pin exactly as one carrying no marker at all, in a run passing `--allow-hash-drift` as well.
 A reference is on Docker Hub when it uses an explicit Docker Hub host (e.g. `docker.io/library/redis`) or no registry host at all.
 A reference naming no repository asks GitHub nothing.
 A reference naming no tag equals `latest`, so it resolves the way a floating tag does.
@@ -90,7 +89,6 @@ A second decorator on the same test fails it, as does one given no mutation at a
 A section whose version is named in prose sits under no heading, so any heading ends it.
 A severity an advisory reports, as a CVSS vector string of the named version.
 A source given it finds no candidate and keeps the current version, so a yanked pin on a frozen reference is still detected.
-A source that reports no archival ignores it.
 A source the rename reaches, since it imports the name from the module the old name qualifies it with, and one it leaves alone, since a definition is resolved against the module it sits in rather than against that one.
 A spec another declaration spells identically, and one TOML spells with an escape, are each located at their own line too.
 A step that only removes behaviour drives no test either, so don't offer one asserting that the removed thing is gone.
@@ -120,7 +118,6 @@ An annotation carrying no value binds nothing, so it leaves the earlier binding 
 An archived dependency is one its maintainer declared finished: expect no further release.
 An attribute counts only when read off an imported module, so a class of the file's own carrying a member of that name — `Scope.COOLDOWN` beside the `COOLDOWN` setting — is no violation.
 An element the parser has started but not yet closed, and what it has reported for it so far.
-An empty directive means the marker says nothing about this behaviour, whatever else it opts into, so the flag decides — unless the reference asked for the default itself, which no command-line option overrides.
 An empty path leaves the package no module to walk into.
 An empty string signals the caller to leave the reference unchanged.
 An endpoint of the registry a test can make unavailable, so the code under test meets that failure.
@@ -128,7 +125,6 @@ An engine the file declares but whose entry cannot be found is reported rather t
 An external command, as the sequence of words a shell would run.
 An image a pipeline builds without pushing it is the common case, and a deleted or mistyped tag reads the same way.
 An inline marker steers every dependency declared on its line, so a marker beside `dependencies = ["a==1", "b==2"]` steers both.
-An option the CLI either passes or does not is carried this way, so each declares its name alone.
 An unpinned reference has no pinned digest to drift from.
 An unreadable item holds the update back too, but gets no such line: Update-time reports it as invalid instead.
 Assert that a floating tag pinned to no version was reported, with its reason, among the other records.
@@ -234,7 +230,6 @@ Return the public module-level constants that no module other than the one assig
 Return the public module-level definitions that no module other than the defining one refers to.
 Return the public names each module yields that no module other than the one defining them refers to.
 Return the record's risk level, or no level at all when it reports none Update-time can read.
-Return the reference to look up at OSV, at the level in force for it, or None when no check runs for it.
 Return the root listing entry for the name, one with no file to fetch when the name maps to no text.
 Return the script's metadata block as the TOML it comments out, or None when the file carries no block.
 Return the stdout parsed as JSON, or an empty dict when the command produced no output.
@@ -256,7 +251,6 @@ Such a cooldown excludes every release anyway, so clamping keeps the meaning.
 Such a requirement pins no version to resolve an update for, so it takes the project checks instead.
 Such a requirement pins no version to update, but the project behind it is checked all the same.
 Such a warning previously named no directive at all.
-Test that --allow-hash-drift re-pins a re-pointed floating tag to the version and digest it now serves.
 Test that None is returned when no tag matches the requested version.
 Test that `--stale-after 0` skips the staleness pass entirely, so it makes no npm registry request.
 Test that `allow[floating-pin]` is not reported for a floating pin the source resolved no version for.
@@ -334,9 +328,7 @@ Test that a requirement whose package the index lists no version for is not warn
 Test that a response without a Link header has no next page.
 Test that a root holding a changelog file naming no version is searched on for one that names it.
 Test that a root listing that can't be fetched yields no changes, and is reported as unreachable.
-Test that a run checking no dependency for archival reads no pom, so the listing is all it asks for.
 Test that a run updating away from a yanked pin reports no yank, since the pin no longer sits on one.
-Test that a run with the check switched off looks up the pin setting a level of its own, and no other.
 Test that a scope GitHub can never apply is reported for a branch reference, which resolves no update.
 Test that a scope the marker does not hold back names no directive.
 Test that a scope whose check needs a version reports that the requirement pins no version.
@@ -345,7 +337,6 @@ Test that a section in the details chapter naming no declared dependency type is
 Test that a section or subsection heading gets no entry, so the table of contents lists chapters only.
 Test that a snapshot tag the registry serves no manifest for keeps its tag, with no digest to pin it.
 Test that a snippet the file doesn't hold leaves the file alone and runs no command.
-Test that a source reporting archival is left unasked once both checks are off, so it costs no request.
 Test that a tag is skipped, and the skip logged with the reason, when its commit has no committer date.
 Test that a tag naming a Python object is refused, so reading a file constructs no arbitrary object.
 Test that a tag such as `dev-2024` the registry serves no manifest for is dated by no release.
@@ -443,7 +434,6 @@ The cooldown probe returns a value, so Update-time adds no cooldown of its own:.
 The cooldown still only applies to Docker Hub, because the OCI protocol exposes no publication date.
 The declared hash is passed in rather than read from `reference`, because the URL's line carries no hash — only the dictionary's line does.
 The default for a release fixture no test asks project URLs of.
-The dependency below it sets no threshold, so no check runs for it and PyPI is not asked about it at all.
 The dependency types every table has to answer for, in the order the tables have to list them in.
 The deprecation npm reports for clipboard 2.0.11: the reason the registry states, and the yank it becomes.
 The directory a monorepo builds the package from.
@@ -489,7 +479,6 @@ The prefix is `!`, so `!!python/object` still reaches no constructor and the loa
 The project status PEP 792 defines for a project that expects no further release.
 The reason the source published, empty when it published none.
 The registry dates the versions it lists, so one it does not list — a version published moments ago, or one it no longer serves — has no date to read.
-The registry publishes no archival signal, so no request answers it.
 The registry serves no manifest, so there is no digest to pin.
 The release the cooldown held back dates it.
 The repository publishes no releases.
@@ -556,7 +545,6 @@ Warn when the version a dependency is pinned to has been yanked from PyPI, or de
 What a name in a repository's root listing maps to: a file's text, a directory with no tree to list, or a directory's recursive tree listing as an entry per path below it.
 What its marker gets wrong is reported whether or not those checks run, since that needs no release.
 What orders the aliases of one digest: the version, how precisely it is spelled, the version of each variant label the floating tag asked for, and the shorter name last.
-What to ask for to be warned about no vulnerability at all, which switches the check off rather than setting a level.
 Where possible, it [pins](#-pinning) references — no more `latest` — and adds hashes.
 Where the file declares no such entry, it is located at the file rather than at a line guessed from elsewhere.
 Which those are is read off the pom before and after the run, rather than from Maven's own report, which names no line to report a change at.
@@ -566,7 +554,6 @@ Yield each line with its number, empty where the line is a code fence or sits in
 `_TAG` reads no version in one, its prefix admitting no dash, so the label is read as the prefix here and the date as the version, which puts such a snapshot on the line its label names.
 `allow` naming one would keep that warning and drop the warning about every other advisory, which is a rule the language does not offer, so `allow[vulnerable=ID]` names no advisory.
 `allowed_scopes` are the scopes an `allow` directive opts the reference into, each off by default: `allow[hash-drift]` adopts a drifted hash pin, and `allow[floating-pin]` keeps a tag naming no version as it is rather than pinning it to the version it serves.
-`ignore[floating-pin]` is the opposite and the default, so Update-time pins a reference carrying it exactly as one carrying no marker at all.
 `marker` steers every dependency the file declares, since they share the array's line (see `pyproject`).
 `reason` is why the source cannot apply it, and `without_a_version` why it holds nothing back for a reference that pins no version, which is None for a directive such a reference still steers something with.
 `resolved` is that hand-over, empty while no resolved URL is waiting for its dictionary.
@@ -635,7 +622,6 @@ one pin's marker steers every pin the file declares, rather than the one carryin
 only the first of the mutations a registration holds is checked.
 scripts have no lockfile.
 standard input holds no line separating the snippet from its replacement.
-switch the archival check off, so no dependency is warned about as archived.
 the Markdown parser traces every block rule it tries, burying the run's own debug output.
 the changelog file of a package a monorepo builds from a directory is looked for in the root.
 the commit has no committer date.

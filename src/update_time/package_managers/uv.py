@@ -9,7 +9,7 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from update_time.domain.archival import archival_is_checked, archival_reporting
+from update_time.domain.archival import archival_reporting
 from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
 from update_time.domain.dependency import DependencyVersion, normalized_python_name
 from update_time.domain.reference import Reference
@@ -294,7 +294,7 @@ def pypi_served(declarations: Iterable[Declaration]) -> list[Declaration]:
 def pypi_projects(declarations: Iterable[Declaration]) -> Iterable[SteeredResolvedReference]:
     """Yield each of the declarations, carrying PyPI's report on the project it names."""
     for declaration in declarations:
-        release = DependencyVersion.unpinned(project(declaration.dependency, check_archival=archival_is_checked()))
+        release = DependencyVersion.unpinned(project(declaration.dependency))
         yield SteeredResolvedReference.from_reference(declaration, release=release)
 
 

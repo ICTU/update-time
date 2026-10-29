@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, call, patch
 
-from update_time.domain.archival import IGNORE_ARCHIVED
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES
@@ -21,8 +20,6 @@ from update_time.io import process as process_module
 from update_time.io.filesystem import _EXCLUDE_PATHS
 from update_time.io.log import LOG_LEVEL
 from update_time.io.process import Processes
-from update_time.markers.drift import ALLOW_HASH_DRIFT
-from update_time.markers.floating import ALLOW_FLOATING_PIN
 from update_time.updaters import update as update_module
 from update_time.updaters.update import _SCRIPTS, _SRC, _Script, _Scripts, main
 
@@ -231,42 +228,6 @@ class UpdateMainTest(unittest.TestCase):
         exit_code, environment = self.run_main(mock_popen, "--log-level", "debug")
         self.assertEqual(exit_code, 0)
         self.assertEqual(environment[LOG_LEVEL.name], "DEBUG")
-
-    def test_main_passes_allow_hash_drift_off_by_default(self, mock_popen: Mock):
-        """Test that main exports the drift opt-in as off when --allow-hash-drift is not given."""
-        exit_code, environment = self.run_main(mock_popen)
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[ALLOW_HASH_DRIFT.name], "0")
-
-    def test_main_passes_allow_hash_drift_when_set(self, mock_popen: Mock):
-        """Test that main exports the drift opt-in as on when --allow-hash-drift is given."""
-        exit_code, environment = self.run_main(mock_popen, "--allow-hash-drift")
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[ALLOW_HASH_DRIFT.name], "1")
-
-    def test_main_passes_allow_floating_pin_off_by_default(self, mock_popen: Mock):
-        """Test that main exports the floating-pin opt-in as off when --allow-floating-pin is not given."""
-        exit_code, environment = self.run_main(mock_popen)
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[ALLOW_FLOATING_PIN.name], "0")
-
-    def test_main_passes_allow_floating_pin_when_set(self, mock_popen: Mock):
-        """Test that main exports the floating-pin opt-in as on when --allow-floating-pin is given."""
-        exit_code, environment = self.run_main(mock_popen, "--allow-floating-pin")
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[ALLOW_FLOATING_PIN.name], "1")
-
-    def test_main_passes_ignore_archived_off_by_default(self, mock_popen: Mock):
-        """Test that main exports the archival switch as off when --ignore-archived is not given."""
-        exit_code, environment = self.run_main(mock_popen)
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[IGNORE_ARCHIVED.name], "0")
-
-    def test_main_passes_ignore_archived_when_set(self, mock_popen: Mock):
-        """Test that main exports the archival switch as on when --ignore-archived is given."""
-        exit_code, environment = self.run_main(mock_popen, "--ignore-archived")
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[IGNORE_ARCHIVED.name], "1")
 
     def test_main_passes_ignored_vulnerabilities_to_subprocesses(self, mock_popen: Mock):
         """Test that main exports the advisories to ignore so the updater subprocesses inherit them."""

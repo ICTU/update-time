@@ -21,12 +21,8 @@ if TYPE_CHECKING:
     class ProjectGetter(Protocol):
         """The contract the project checks bind and a source implements, answering what it reports about a project."""
 
-        def __call__(self, dependency: DependencyName, /, *, check_archival: bool) -> Project:
-            """Return what the source reports about the dependency's project.
-
-            `check_archival` is the run's archival setting, so a source that pays a request to answer it can skip
-            that request rather than reading the setting itself.
-            """
+        def __call__(self, dependency: DependencyName, /) -> Project:
+            """Return what the source reports about the dependency's project."""
             ...
 
 

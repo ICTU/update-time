@@ -34,8 +34,6 @@ from tests.update_time.fixtures import (
 from tests.update_time.helpers import (
     LoggingTestCase,
     bound,
-    floating_pin_allowed,
-    hash_drift_allowed,
     message_of,
     staleness_disabled,
 )
@@ -71,8 +69,8 @@ if TYPE_CHECKING:
     from contextlib import ContextDecorator
 
 # The directives the tests write in a marker, and expect named as what opted a reference in.
-_ALLOW_HASH_DRIFT = "update-time: allow[hash-drift]"
-_ALLOW_FLOATING_PIN = "update-time: allow[floating-pin]"
+_ALLOW_HASH_DRIFT = "allow[hash-drift]"
+_ALLOW_FLOATING_PIN = "allow[floating-pin]"
 # As many tags as GitHub lists on its first page, naming neither a version nor a ref a test pins.
 _FULL_PAGE_OF_TAGS = [github_tag_json(f"build-{index:03}", PAST_COOLDOWN_SHA) for index in range(100)]
 
@@ -128,7 +126,7 @@ class UpdateGitHubActionsTest(LoggingTestCase):
     ) -> None:
         """Assert the source was asked once about `actions/checkout` at the version, under the bound the marker sets."""
         mock_get_latest_version.assert_called_once_with(
-            PinnedDependency("actions/checkout", version), version_bound, COOLDOWN.default, check_archival=True
+            PinnedDependency("actions/checkout", version), version_bound, COOLDOWN.default
         )
 
     def test_multiple_files(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -223,25 +221,13 @@ class UpdateGitHubActionsTest(LoggingTestCase):
     def test_allow_hash_drift_marker_adopts_moved_tag(self, mock_glob: Mock, mock_get_latest_version: Mock):
         """Test that an `allow[hash-drift]` marker re-pins a moved tag to its new commit, dated by that commit's SHA."""
         mock_get_latest_version.return_value = github_version("1.0")
-        marker = f"  # {_ALLOW_HASH_DRIFT}"
+        marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
         workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0{marker}\n")
         mock_glob.side_effect = [[workflow_yml], []]
         update_github_actions()
         workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0{marker}\n")
         self.assertEqual(github_requests("commits"), [_commits_url(NEW_SHA, "action/action")])
         self.assert_adopted_drift_logged(Logger.TAG_DRIFT, self.drifted(workflow_yml), _ALLOW_HASH_DRIFT)
-        self.assert_no_warnings_logged()
-
-    @patch_github(commit=github_commits_json(NEW_SHA, date=PAST_COOLDOWN_DATE))
-    def test_flag_adopts_moved_tag_repo_wide(self, mock_glob: Mock, mock_get_latest_version: Mock):
-        """Test that the `--allow-hash-drift` flag re-pins a moved tag to the commit it now points at."""
-        mock_get_latest_version.return_value = github_version("1.0")
-        workflow_yml = mock_path(f"uses: action/action@{OLD_SHA} # v1.0\n")
-        mock_glob.side_effect = [[workflow_yml], []]
-        with hash_drift_allowed:
-            update_github_actions()
-        workflow_yml.write_text.assert_called_once_with(f"uses: action/action@{NEW_SHA} # v1.0\n")
-        self.assert_adopted_drift_logged(Logger.TAG_DRIFT, self.drifted(workflow_yml), "--allow-hash-drift")
         self.assert_no_warnings_logged()
 
     def test_stale_action_warned(self, mock_glob: Mock, mock_get_latest_version: Mock):
@@ -738,7 +724,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
             "merged branch older than the cooldown": [merge, merged, pin],
             "every commit fresh": [commit],  # The head is the first commit of a fresh history
         }
-        markers = {"not opted into drift": "", "opted into drift": f"  # {_ALLOW_HASH_DRIFT}"}
+        markers = {"not opted into drift": "", "opted into drift": f"  # update-time: {_ALLOW_HASH_DRIFT}"}
         for (listing, listed_commits), (opt_in, marker) in itertools.product(listings.items(), markers.items()):
             with (
                 self.subTest(listing=listing, opt_in=opt_in),
@@ -754,7 +740,10 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         """Test that a pinned branch never moves back to a commit older than its pin, and is not warned about."""
         commit = github_commits_json(NEW_SHA, date=FRESH_DATE)
         listed_commits = [github_commits_json(PAST_COOLDOWN_SHA, date=PAST_COOLDOWN_DATE)]
-        for case, marker in {"not opted into drift": "", "opted into drift": f"  # {_ALLOW_HASH_DRIFT}"}.items():
+        for case, marker in {
+            "not opted into drift": "",
+            "opted into drift": f"  # update-time: {_ALLOW_HASH_DRIFT}",
+        }.items():
             with (
                 self.subTest(case),
                 patch_github(
@@ -831,7 +820,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     )
     def test_branch_force_pushed_past_its_pin_is_adopted_when_opted_into_drift(self, mock_glob: Mock):
         """Test that a branch opted into drift adopts its newest commit older than the cooldown, diverged or not."""
-        marker = f"  # {_ALLOW_HASH_DRIFT}"
+        marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
         workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{PAST_COOLDOWN_SHA} # main{marker}\n")
         drifted = _drifted(workflow_yml, new_sha=PAST_COOLDOWN_SHA)
@@ -893,18 +882,18 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     def test_tag_kept_floating_is_reported_as_a_tag_or_else_as_a_ref(self, mock_glob: Mock):
         """Test that a tag kept floating is reported as a tag, or as a ref when the tags cannot be listed."""
-        marker = f"  # {_ALLOW_FLOATING_PIN}"
+        marker = f"  # update-time: {_ALLOW_FLOATING_PIN}"
         cases = {
             "listed tag": ([github_tag_json("stable-2024", NEW_SHA)], RefKind.TAG),
             "unlisted tags": (None, RefKind.REF),
         }
-        release, cause = DependencyVersion("stable-2024", sha=NEW_SHA), _ALLOW_FLOATING_PIN
+        release, directive = DependencyVersion("stable-2024", sha=NEW_SHA), _ALLOW_FLOATING_PIN
         for case, (tags, kind) in cases.items():
             with self.subTest(case), patch_github(releases=[], tags=tags, commit=github_commits_json(NEW_SHA)):
                 workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@stable-2024{marker}\n")
                 workflow_yml.write_text.assert_not_called()
                 location = Location(workflow_yml, 1)
-                self.assert_kept_ref_logged("actions/checkout", "stable-2024", release, location, cause, ref=kind)
+                self.assert_kept_ref_logged("actions/checkout", "stable-2024", release, location, directive, ref=kind)
 
     @patch_github(
         releases=[],
@@ -940,7 +929,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     def test_allow_hash_drift_marker_adopts_moved_ref(self, mock_glob: Mock):
         """Test that an `allow[hash-drift]` marker re-pins a moved branch or tag to its new commit, fetched once."""
-        marker = f"  # {_ALLOW_HASH_DRIFT}"
+        marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
         commit = github_commits_json(NEW_SHA, date=PAST_COOLDOWN_DATE)
         cases = {
             "main": ([], Logger.BRANCH_DRIFT),
@@ -958,7 +947,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @patch_github(releases=[], tags=None, commit=github_commits_json(NEW_SHA, date=PAST_COOLDOWN_DATE))
     def test_allow_hash_drift_marker_adopts_moved_ref_as_ref_drift_when_tags_cannot_be_listed(self, mock_glob: Mock):
         """Test that a moved ref opted into hash drift, its tags unlisted, is reported as adopted ref drift."""
-        marker = f"  # {_ALLOW_HASH_DRIFT}"
+        marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # stable-2024{marker}\n")
         workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # stable-2024{marker}\n")
         drifted = _drifted(workflow_yml, version="stable-2024")
@@ -1054,7 +1043,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         """Test that a tag opted into hash drift is left as it is, unreported, while the commit it moved to is fresh."""
         cases = {"owner/released": [github_release_json("v1.0", published_at=PAST_COOLDOWN_DATE)], "owner/tagged": []}
         tags, commit = [github_tag_json("v1.0", NEW_SHA)], github_commits_json(NEW_SHA, date=FRESH_DATE)
-        marker = f"  # {_ALLOW_HASH_DRIFT}"
+        marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
         for dependency, releases in cases.items():
             with self.subTest(dependency), patch_github(releases=releases, tags=tags, commit=commit):
                 workflow_yml = self.scanned_workflow(mock_glob, f"uses: {dependency}@{OLD_SHA} # v1.0{marker}\n")
@@ -1070,7 +1059,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     )
     def test_moved_tag_whose_commit_cannot_be_dated_is_held_back_with_the_reason(self, mock_glob: Mock):
         """Test that a tag opted into hash drift is left as it is when its new commit cannot be dated, naming why."""
-        marker = f"  # {_ALLOW_HASH_DRIFT}"
+        marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # v1.0{marker}\n")
         workflow_yml.write_text.assert_not_called()
         self.assert_no_warnings_logged()
@@ -1099,7 +1088,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     )
     def test_moved_branch_at_a_version_tag_is_pinned_as_that_version(self, mock_glob: Mock):
         """Test that a branch opted into drift adopts its newest commit older than the cooldown as the version there."""
-        marker = f"  # {_ALLOW_HASH_DRIFT}"
+        marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
         workflow_yml.write_text.assert_called_once_with(
             f"uses: actions/checkout@{PAST_COOLDOWN_SHA} # v4.4.0{marker}\n"
@@ -1127,7 +1116,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
     def test_moved_branch_kept_floating_warned_not_repinned(self, mock_glob: Mock):
         """Test that a branch kept floating, though not opted into hash drift, is warned about when it moved."""
-        marker = f"  # {_ALLOW_FLOATING_PIN}"
+        marker = f"  # update-time: {_ALLOW_FLOATING_PIN}"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
         workflow_yml.write_text.assert_not_called()
         drifted = _drifted(workflow_yml)
@@ -1143,15 +1132,15 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     def test_unmoved_branch_kept_floating_is_left_alone_and_reported_as_kept(self, mock_glob: Mock):
         """Test that a pinned branch kept floating, still at its commit, is reported with what it resolves to."""
-        marker = f"  # {_ALLOW_FLOATING_PIN}"
+        marker = f"  # update-time: {_ALLOW_FLOATING_PIN}"
         cases = {"owner/untagged": ([], "main"), "owner/tagged": ([github_tag_json("v4.3.1", OLD_SHA)], "4.3.1")}
         for dependency, (tags, resolved) in cases.items():
             with self.subTest(dependency), patch_github(releases=[], tags=tags, commit=github_commits_json(OLD_SHA)):
                 workflow_yml = self.scanned_workflow(mock_glob, f"uses: {dependency}@{OLD_SHA} # main{marker}\n")
                 workflow_yml.write_text.assert_not_called()
                 release = DependencyVersion(resolved, sha=OLD_SHA)
-                cause = _ALLOW_FLOATING_PIN
-                self.assert_kept_ref_logged(dependency, "main", release, Location(workflow_yml, 1), cause)
+                location = Location(workflow_yml, 1)
+                self.assert_kept_ref_logged(dependency, "main", release, location, _ALLOW_FLOATING_PIN)
                 self.assert_no_warnings_logged()
 
     def test_pin_branch_by_its_whole_name(self, mock_glob: Mock):
@@ -1230,21 +1219,11 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
         self, mock_glob: Mock
     ):
         """Test that a branch opted into drift, its head fresh, adopts the newest commit older than the cooldown."""
-        marker = f"  # {_ALLOW_HASH_DRIFT}"
+        marker = f"  # update-time: {_ALLOW_HASH_DRIFT}"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main{marker}\n")
         workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{PAST_COOLDOWN_SHA} # main{marker}\n")
         drifted = _drifted(workflow_yml, new_sha=PAST_COOLDOWN_SHA)
         self.assert_adopted_drift_logged(Logger.BRANCH_DRIFT, drifted, _ALLOW_HASH_DRIFT)
-        self.assert_no_warnings_logged()
-
-    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA, date=PAST_COOLDOWN_DATE))
-    def test_flag_adopts_moved_branch_repo_wide(self, mock_glob: Mock):
-        """Test that the `--allow-hash-drift` flag re-pins a moved branch to the commit it now points at."""
-        with hash_drift_allowed:
-            workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@{OLD_SHA} # main\n")
-        workflow_yml.write_text.assert_called_once_with(f"uses: actions/checkout@{NEW_SHA} # main\n")
-        drifted = _drifted(workflow_yml)
-        self.assert_adopted_drift_logged(Logger.BRANCH_DRIFT, drifted, "--allow-hash-drift")
         self.assert_no_warnings_logged()
 
     @kills(
@@ -1332,7 +1311,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @patch_github(releases=[], tags=[], commit=github_commits_json(full_commit_sha("3e8a870")))
     def test_a_floating_pin_directive_on_a_short_commit_sha_is_reported(self, mock_glob: Mock):
         """Test that a short commit SHA is pinned to its full SHA, its `allow[floating-pin]` reported as redundant."""
-        marker = f"  # {_ALLOW_FLOATING_PIN}"
+        marker = f"  # update-time: {_ALLOW_FLOATING_PIN}"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@3e8a870{marker}\n")
         workflow_yml.write_text.assert_called_once_with(
             f"uses: actions/checkout@{full_commit_sha('3e8a870')}{marker}\n"
@@ -1570,23 +1549,12 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @patch_github(releases=[], tags=[github_tag_json("v4.3.0", NEW_SHA)], commit=github_commits_json(NEW_SHA))
     def test_marker_keeps_the_branch_floating(self, mock_glob: Mock):
         """Test that a marker allowing the floating pin leaves a branch as it is, naming what it resolves to."""
-        marker = f"  # {_ALLOW_FLOATING_PIN}"
+        marker = f"  # update-time: {_ALLOW_FLOATING_PIN}"
         workflow_yml = self.scanned_workflow(mock_glob, f"uses: actions/checkout@main{marker}\n")
         workflow_yml.write_text.assert_not_called()
         location = Location(workflow_yml, 1)
         resolved = DependencyVersion("4.3.0", sha=NEW_SHA)
         self.assert_kept_ref_logged("actions/checkout", "main", resolved, location, _ALLOW_FLOATING_PIN)
-        self.assert_no_warnings_logged()
-
-    @patch_github(releases=[], tags=[], commit=github_commits_json(NEW_SHA))
-    def test_flag_keeps_every_branch_floating(self, mock_glob: Mock):
-        """Test that --allow-floating-pin leaves a branch reference as it is, naming the flag as what kept it."""
-        with floating_pin_allowed:
-            workflow_yml = self.scanned_workflow(mock_glob, "uses: actions/checkout@main\n")
-        workflow_yml.write_text.assert_not_called()
-        location = Location(workflow_yml, 1)
-        resolved = DependencyVersion("main", sha=NEW_SHA)
-        self.assert_kept_ref_logged("actions/checkout", "main", resolved, location, "--allow-floating-pin")
         self.assert_no_warnings_logged()
 
     @patch_github(
@@ -1603,8 +1571,8 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
     @kills(
         Mutation(
             sources_github,
-            "@archival_reporting\ndef project(dependency: DependencyName, *, check_archival: bool) -> Project:",
-            "def project(dependency: DependencyName, *, check_archival: bool) -> Project:",
+            "@archival_reporting\ndef project(dependency: DependencyName) -> Project:",
+            "def project(dependency: DependencyName) -> Project:",
             "the source claims to report no archival, so switching the staleness check off leaves it unasked",
         )
     )

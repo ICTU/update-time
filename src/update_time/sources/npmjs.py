@@ -130,9 +130,8 @@ def deprecation(package: str, version: str) -> Yank | None:
     return Yank(yanked=bool(deprecated), reason=deprecated if isinstance(deprecated, str) else "")
 
 
-def project(package: str, *, check_archival: bool) -> Project:
+def project(package: str) -> Project:
     """Return what the registry reports about the package: its newest release."""
-    del check_archival  # The registry publishes no archival signal, so no request answers it.
     return Project(newest=newest_release(package))
 
 

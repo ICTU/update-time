@@ -9,7 +9,7 @@ from unittest.mock import Mock, call, patch
 
 from update_time.domain.bound import Verb, _Redundancy
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import NO_CHANGES, UNDATED, Archival, ArchivedSubject, Changes, Project, Release
+from update_time.domain.dependency import NO_CHANGES, UNDATED, Changes, Project, Release
 from update_time.io.log import Logger, LogMessage
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.markers.directive import Reason
@@ -18,7 +18,6 @@ from update_time.package_managers import maven as maven_module
 from update_time.package_managers import maven_range as maven_range_module
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
-from update_time.references import delegated as delegated_module
 from update_time.sources import maven_central as maven_central_module
 from update_time.sources.maven_central import lacks_a_github_repository as maven_central_lacks_a_github_repository
 from update_time.sources.maven_central import project as maven_central_project
@@ -33,7 +32,6 @@ from tests.update_time.fixtures import VULNERABILITY_LEVEL_NONE
 from tests.update_time.helpers import (
     GUAVA,
     LoggingTestCase,
-    archival_check_disabled,
     bound,
     days_ago,
     message_of,
@@ -102,16 +100,6 @@ def _stale_release(version: str = "33.0.0-jre") -> Generator[None]:
         maven_central_module, "project", Mock(return_value=Project(newest=Release(version, days_ago(500))))
     ):
         yield
-
-
-def _archived(_artefact: str, *, check_archival: bool) -> Project:
-    """Return what Maven Central reports about an artefact whose GitHub repository is archived.
-
-    The archival is read only when the run asks for it, so a run that does not is told nothing.
-    """
-    return Project(
-        archival=Archival(archived=True, subject=ArchivedSubject.REPOSITORY) if check_archival else Archival()
-    )
 
 
 def _plugin_version(plugin: str) -> str:
@@ -788,19 +776,6 @@ class UpdatePomXmlTest(LoggingTestCase):
                     update_pom_xmls()
                 self.assert_redundant_directive_logged(Reason.NOT_ON_MAVEN_CENTRAL, GUAVA, Location(pom, 6), directive)
 
-    @archival_check_disabled
-    def test_an_archived_scope_on_an_unserved_artefact_is_redundant_once_with_the_archival_check_off(
-        self, mock_run: Mock, mock_glob: Mock
-    ):
-        """Test that an `ignore[archived]` on an unserved artefact is reported once, as the run's switched-off check."""
-        pom = self.find_marked_pom(mock_run, mock_glob, "ignore[archived]")
-        with (
-            patch.object(maven_central_module, "serves", maven_central_serves),
-            patch_get(ok=False, status_code=404, reason="Not Found", text=""),
-        ):
-            update_pom_xmls()
-        self.assert_redundant_directive_logged(Reason.ARCHIVAL_CHECK_OFF, GUAVA, Location(pom, 6), "ignore[archived]")
-
     def test_a_vulnerable_scope_on_an_artefact_maven_central_does_not_serve_is_not_redundant(
         self, mock_run: Mock, mock_glob: Mock
     ):
@@ -830,25 +805,6 @@ class UpdatePomXmlTest(LoggingTestCase):
             update_pom_xmls()
         self.assertIn(maven_central_pom_url(GUAVA, "33.0.0-jre"), requested_urls(mock_get))
         self.assert_no_redundant_directive_logged()
-
-    @kills(
-        Mutation(
-            update_pom_xml_module._report_archived_scopes_without_a_github_repository,
-            "    if not archival_is_checked():\n        return\n",
-            "",
-            "a run that checks nothing for archival fetches poms all the same, to judge an `archived` scope",
-        )
-    )
-    @archival_check_disabled
-    def test_a_run_that_checks_nothing_for_archival_reports_an_archived_scope_without_reading_a_pom(
-        self, mock_run: Mock, mock_glob: Mock
-    ):
-        """Test that a run with the archival check switched off reports the `archived` scope without fetching a pom."""
-        pom = self.find_marked_pom(mock_run, mock_glob, "ignore[archived]")
-        with self.maven_central_answering(_POM_OUTSIDE_GITHUB) as mock_get:
-            update_pom_xmls()
-        self.assertEqual(requested_urls(mock_get), [maven_central_listing_url(GUAVA)])
-        self.assert_redundant_directive_logged(Reason.ARCHIVAL_CHECK_OFF, GUAVA, Location(pom, 6), "ignore[archived]")
 
     @kills(
         Mutation(
@@ -1302,12 +1258,6 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            delegated_module.project_resolver,
-            "check_archival=check_archival",
-            "check_archival=False",
-            "a delegated source is told the run checks nothing for archival, so it reads none and reports none",
-        ),
-        Mutation(
             maven_central_module,
             "@archival_reporting\ndef project",
             "def project",
@@ -1324,16 +1274,6 @@ class UpdatePomXmlTest(LoggingTestCase):
         with self.maven_central_answering(_POM_ON_GITHUB, archived=True):
             update_pom_xmls()
         self.assert_archived_repository_logged(GUAVA, Location(pom, 6))
-
-    @archival_check_disabled
-    def test_a_run_that_checks_nothing_for_archival(self, mock_run: Mock, mock_glob: Mock):
-        """Test that a run with the archival check switched off tells the repository so, and warns about nothing."""
-        self.find_pom(mock_run, mock_glob, _POM_DECLARING_GUAVA)
-        mock_project = Mock(side_effect=_archived)
-        with patch.object(maven_central_module, "project", mock_project):
-            update_pom_xmls()
-        mock_project.assert_called_once_with(GUAVA, check_archival=False)
-        self.assert_no_warnings_logged()
 
     def test_an_artefact_holding_nothing_back_gets_a_rule_keeping_it_on_its_variant(
         self, mock_run: Mock, mock_glob: Mock

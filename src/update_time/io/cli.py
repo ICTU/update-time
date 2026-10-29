@@ -9,12 +9,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.staleness import STALE_AFTER
-from update_time.domain.vulnerability import (
-    IGNORE_VULNERABILITIES,
-    NO_RISK_LEVEL,
-    RISK_LEVELS,
-    VULNERABILITY_LEVEL,
-)
+from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, RISK_LEVELS, VULNERABILITY_LEVEL
 from update_time.io.filesystem import ALWAYS_IGNORED_DIRECTORIES, inside_git_repository
 from update_time.io.log import LOG_LEVEL, LOG_LEVELS
 from update_time.primitives.iterables import unique
@@ -125,14 +120,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--vulnerability-level",
         type=str.lower,
-        choices=[*RISK_LEVELS, NO_RISK_LEVEL],
+        choices=RISK_LEVELS,
         default=VULNERABILITY_LEVEL.default,
         help="warn about a known vulnerability in the version a dependency is pinned to when the advisory's risk "
-        "level is at least this severe; a vulnerability whose risk level cannot be read is warned about at every "
-        "level from low to critical. "
-        f"Pass {NO_RISK_LEVEL} to switch the check off, except for "
-        "references that set a level of their own with an # update-time: set[vulnerability-level=LEVEL] marker "
-        "(default: %(default)s)",
+        "level is at least this severe, except for references that set a level of their own with an # update-time: "
+        "set[vulnerability-level=LEVEL] marker. A vulnerability whose risk level cannot be read is warned about at "
+        "every level (default: %(default)s)",
     )
     parser.add_argument(
         "--ignore-vulnerability",
@@ -143,12 +136,6 @@ def parse_args() -> argparse.Namespace:
         "example GHSA-2gwj-7jmv-h26r,CVE-2021-31542. An advisory can be named by any of the identifiers it is known "
         "by. To silence one for a single reference instead, mark that reference with an # update-time: "
         "ignore[vulnerable=ID] marker",
-    )
-    parser.add_argument(
-        "--ignore-archived",
-        action="store_true",
-        help="switch the archival check off, so no dependency is warned about as archived. To silence the warning "
-        "for a single reference instead, mark that reference with an # update-time: ignore[archived] marker",
     )
     parser.add_argument(
         "--exclude-path",
@@ -163,22 +150,6 @@ def parse_args() -> argparse.Namespace:
         "--exclude-path vendor excludes vendor/ at the root but not sub/vendor/. Directories that don't exist are "
         "ignored and logged at log-level WARNING. Absolute paths, or paths that escape the scan root (../…), "
         "are rejected. Run with --log-level DEBUG to see excluded directories",
-    )
-    parser.add_argument(
-        "--allow-hash-drift",
-        action="store_true",
-        help="adopt hash drift instead of only warning about it. Hash drift is an image tag re-pushed with another "
-        "digest, or a tag or branch moved to another commit. Update-time adopts the new digest or commit as soon as "
-        "it is older than the cooldown. Equivalent to marking every reference with # update-time: allow[hash-drift] "
-        "(a marker that holds the reference back, such as # update-time: ignore[update], still wins)",
-    )
-    parser.add_argument(
-        "--allow-floating-pin",
-        action="store_true",
-        help="keep every floating tag and branch in the run as it is, such as python:latest, stable-2024, or main. "
-        "Without this flag, Update-time pins a floating image tag to the version and digest it serves, and a branch "
-        "or another floating tag to the commit it points at. Equivalent to marking every reference with "
-        "# update-time: allow[floating-pin] (an # update-time: ignore[floating-pin] marker still pins that reference)",
     )
     parser.add_argument(
         "--force",

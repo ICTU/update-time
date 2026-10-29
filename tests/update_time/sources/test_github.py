@@ -64,7 +64,7 @@ def get_latest_version(
 ) -> DependencyVersion:
     """Return what the source resolves for the action and version, as a test writes them."""
     pinned = PinnedDependency(action, current_version)
-    return github.get_latest_version(pinned, version_bound, cooldown_days, check_archival=True)
+    return github.get_latest_version(pinned, version_bound, cooldown_days)
 
 
 class GitHubURLtoRawTest(unittest.TestCase):
@@ -519,7 +519,7 @@ class ArchivalTest(LoggingTestCase):
         for repository, (response, expected, warns) in cases.items():
             with self.subTest(repository=repository):
                 mock_get.return_value = response
-                self.assertEqual(archival(GitHubRepository("owner", repository), check_archival=True), expected)
+                self.assertEqual(archival(GitHubRepository("owner", repository)), expected)
                 if warns:
                     self.assert_could_not_fetch_logged()
                 else:
@@ -534,24 +534,8 @@ class ArchivalTest(LoggingTestCase):
             with self.subTest(case=case):
                 mock_get.return_value = mock_response(body)
                 repository = GitHubRepository("owner", case)
-                self.assertIsNone(archival(repository, check_archival=True))
+                self.assertIsNone(archival(repository))
                 self.assert_logged(message_of(Logger.unreadable_archival), repository=str(repository))
-
-    @kills(
-        Mutation(
-            github.archival,
-            "if not check_archival:",
-            "_repository_metadata(repository)\n    if not check_archival:",
-            "the source is told not to check for archival but fetches the repository anyway, so the run pays for a "
-            "check it does not make",
-        )
-    )
-    @patch("requests.Session.get")
-    def test_a_source_told_not_to_check_asks_github_nothing(self, mock_get: Mock):
-        """Test that a source told not to check asks GitHub nothing and leaves the archival unknown."""
-        mock_get.return_value = mock_response({"archived": True})
-        self.assertIsNone(archival(GitHubRepository("owner", "not checked"), check_archival=False))
-        mock_get.assert_not_called()
 
 
 class GetReleaseTest(LoggingTestCase):
@@ -899,7 +883,7 @@ class GitHubHeadersTest(CacheClearingTestCase):
     def assert_request_headers(self, mock_get: Mock, expected: dict[str, str]) -> None:
         """Assert that a GitHub request carries the expected headers."""
         mock_get.return_value = mock_response({})
-        archival(GitHubRepository("owner", "repository"), check_archival=True)
+        archival(GitHubRepository("owner", "repository"))
         self.assertEqual(mock_get.call_args.kwargs["headers"], expected)
 
     @patch_environ({"GITHUB_TOKEN": "pat123"})  # nosec
@@ -945,7 +929,7 @@ class GitHubRateLimitTest(LoggingTestCase):
             ("with a token", {"GITHUB_TOKEN": "a-token"}, message_of(Logger.github_token_rate_limit_used_up)),  # nosec B105
         ):
             with self.subTest(case), patch_environ(environment, clear=True):
-                archival(GitHubRepository("owner", "repository"), check_archival=True)
+                archival(GitHubRepository("owner", "repository"))
                 self.assert_error_logged(message, limit=60, reset=utc_date_and_time(self.RESET))
 
     @kills(
@@ -962,7 +946,7 @@ class GitHubRateLimitTest(LoggingTestCase):
         """Test that a process reports the used-up rate limit once, however many responses say so."""
         mock_get.return_value = self.refused_response()
         for name in ("first", "second"):
-            archival(GitHubRepository("owner", name), check_archival=True)
+            archival(GitHubRepository("owner", name))
         self.assertEqual(mock_get.call_count, 2)
         self.assert_error_logged(
             message_of(Logger.github_rate_limit_used_up), limit=60, reset=utc_date_and_time(self.RESET)
@@ -981,7 +965,7 @@ class GitHubRateLimitTest(LoggingTestCase):
     def test_a_rate_limit_that_is_not_used_up_is_not_reported(self, mock_get: Mock):
         """Test that a failed response is not reported as a used-up rate limit while requests remain."""
         mock_get.return_value = self.refused_response({"X-RateLimit-Remaining": "59"})
-        archival(GitHubRepository("owner", "repository"), check_archival=True)
+        archival(GitHubRepository("owner", "repository"))
         mock_get.assert_called_once()
         self.assertEqual(self.records(ERROR), [])
 
@@ -996,5 +980,5 @@ class GitHubRateLimitTest(LoggingTestCase):
         ):
             with self.subTest(case):
                 mock_get.return_value = self.refused_response(overrides)
-                archival(GitHubRepository("owner", "repository"), check_archival=True)
+                archival(GitHubRepository("owner", "repository"))
                 self.assert_logged(message_of(Logger.unreadable_github_rate_limit), error=error)

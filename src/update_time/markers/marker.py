@@ -102,9 +102,9 @@ class Marker:
     `set[vulnerability-level=high]` sets the risk level to warn from.
     `invalid_item` is the raw text of a bracket item that could not be parsed — an invalid version specifier,
     or an unrecognised item in a comma list — so the caller can warn and leave the reference unchanged; None otherwise.
-    `written_scopes` are the scopes that are off by default whose `ignore` the marker writes out, so the default it
-    asks for wins over the flag opting every reference in; left out of comparisons, so a marker spelling the default
-    out compares equal to one that does not.
+    `default_directives` are the directives that ask for what Update-time does without them, such as
+    `ignore[hash-drift]` or a bare `allow[update]`, as the language spells them; left out of comparisons, so a marker
+    asking for the default compares equal to one that does not.
     `raw` is the marker's whole directive text exactly as it appears in the file, so the reference's marker can be
     echoed to the user verbatim.
     """
@@ -117,7 +117,7 @@ class Marker:
     cooldown: Threshold[int] = Threshold()
     vulnerable: Threshold[str] = Threshold()
     invalid_item: str | None = None
-    written_scopes: Scope = field(compare=False, default=_NO_SCOPE)
+    default_directives: tuple[str, ...] = field(compare=False, default=())
     raw: str = field(compare=False, default="")
 
     def __str__(self) -> str:
@@ -227,10 +227,10 @@ class Marker:
         hold back both scopes, and so do the advisories named, so two `vulnerable=ID` items silence the warnings about
         both advisories. A value that cannot combine — a version bound, an invalid item, and the thresholds
         `Threshold.merge` folds — is taken from the other marker only where this one leaves it unset, so this marker's
-        wins; the `raw` texts concatenate in order, this marker's first. A default `Marker()` leaves every field unset,
-        so it is the identity: merging it with any marker returns that marker's values. This lets markers fold at every
-        level — each item into a bracket's marker, each directive into a text's, and the inline and comment-above
-        texts into the line's.
+        wins. The `raw` texts and the directives asking for the default concatenate in order, this marker's first. A
+        default `Marker()` leaves every field unset, so it is the identity: merging it with any marker returns that
+        marker's values. This lets markers fold at every level — each item into a bracket's marker, each directive into
+        a text's, and the inline and comment-above texts into the line's.
         """
         return Marker(
             ignored_scopes=self.ignored_scopes | other.ignored_scopes,
@@ -241,7 +241,7 @@ class Marker:
             cooldown=self.cooldown.merge(other.cooldown),
             vulnerable=self.vulnerable.merge(other.vulnerable),
             invalid_item=other.invalid_item if self.invalid_item is None else self.invalid_item,
-            written_scopes=self.written_scopes | other.written_scopes,
+            default_directives=self.default_directives + other.default_directives,
             raw=" ".join(part for part in (self.raw, other.raw) if part),
         )
 
@@ -263,15 +263,11 @@ class ReferenceMarker:
 # that holds it back, so the scopes decide what is recognised.
 _KEYWORD_ITEMS = (
     {(Verb.IGNORE, str(scope)): Marker(ignored_scopes=scope) for scope in _IGNORABLE_SCOPES}
-    | {
-        (Verb.ALLOW, str(Scope.UPDATE)): Marker(),  # bare `allow[update]`: the default no-op
-    }
     | {(Verb.ALLOW, str(scope)): Marker(allowed_scopes=scope) for scope in _OPTIONAL_SCOPES}
     | {
-        # The `ignore` of an optional scope spells the default out, recorded as written so it wins over the flag
-        # that opts every reference in.
-        (Verb.IGNORE, str(scope)): Marker(written_scopes=scope)
-        for scope in _OPTIONAL_SCOPES
+        # A bare `allow[update]` and the `ignore` of an optional scope ask for the default, recorded as written.
+        item: Marker(default_directives=(_directive(*item),))
+        for item in [(Verb.ALLOW, str(Scope.UPDATE)), *((Verb.IGNORE, str(scope)) for scope in _OPTIONAL_SCOPES)]
     }
 )
 

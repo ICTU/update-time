@@ -17,9 +17,7 @@ from tests.helpers import patch_environ
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
     LoggingTestCase,
-    archival_check_disabled,
     message_of,
-    project_checks_disabled,
     published_version,
     staleness_disabled,
 )
@@ -34,14 +32,11 @@ from tests.update_time.updaters.fixtures import (
     PYPI_RECENT_UPLOAD,
 )
 from tests.update_time.updaters.helpers import (
-    OSV_BATCH_URL,
     assert_osv_asked_about,
     dated_pypi_index,
     no_vulnerabilities,
     osv,
-    osv_queries,
     unreachable_osv,
-    vulnerability_check_disabled,
 )
 
 _PUBLISHED = published_version("1.1", PYPI_OLD_UPLOAD)
@@ -120,16 +115,14 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt.write_text.assert_not_called()
         self.assert_no_warnings_logged()
 
-    def test_ignore_hash_drift_is_not_reported_as_redundant(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that `ignore[hash-drift]` on a pin is not reported as redundant."""
-        requirements_txt = self.discovered_requirements_txt(
-            mock_rglob, "flask==1.0  # update-time: ignore[hash-drift]\n"
-        )
+    def test_a_directive_asking_for_the_default_is_reported_as_redundant(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a bare `allow[update]`, which asks for the default, is reported as redundant."""
+        requirements_txt = self.discovered_requirements_txt(mock_rglob, "flask==1.0  # update-time: allow[update]\n")
         mock_get.side_effect = self.pypi("1.0")
         update_requirements_txts()
-        requirements_txt.write_text.assert_not_called()
-        self.assertEqual(self.queried_packages(mock_get), ["flask"])
-        self.assert_no_warnings_logged()
+        self.assert_redundant_directive_logged(
+            Reason.ASKS_FOR_THE_DEFAULT, "flask", Location(requirements_txt, 1), "allow[update]"
+        )
 
     def test_hash_drift_opt_in_is_reported_as_redundant(self, mock_rglob: Mock, mock_get: Mock):
         """Test that an `allow[hash-drift]` on a pin is reported for its own reason, whether or not it is held back."""
@@ -243,7 +236,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_archived_dependency_logged("humanize", location, among_others=True)
 
     def test_the_markers_threshold_survives_the_check_being_switched_off(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a loose requirement with a threshold of its own is looked up although the check is switched off.
+        """Test that a loose requirement with a threshold of its own is warned about although the check is switched off.
 
         The newest release is 100 days old, so it is stale against the marker's 90, which the `--stale-after 0` in
         force run-wide does not override.
@@ -253,7 +246,6 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=published)
         with staleness_disabled:
             update_requirements_txts()
-        self.assertEqual(self.queried_packages(mock_get), ["humanize"])
         self.assert_stale_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
     def test_stale_requirement_without_a_specifier_warned(self, mock_rglob: Mock, mock_get: Mock):
@@ -278,33 +270,6 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         update_requirements_txts()
         requirements_txt.write_text.assert_not_called()
         self.assert_archived_dependency_logged("humanize", Location(requirements_txt, 1))
-
-    def test_archival_check_disabled(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that an archived project is not warned about when the check is switched off run-wide."""
-        self.loose_requirement(mock_rglob)
-        mock_get.side_effect = [pypi_index("4.15.0", archived=True)]
-        with archival_check_disabled:
-            update_requirements_txts()
-        self.assertEqual(self.queried_packages(mock_get), ["humanize"])  # the project was examined, just not reported
-        self.assert_no_warnings_logged()
-
-    def test_ignore_archived_is_redundant_with_the_archival_check_switched_off(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that an `ignore[archived]` is redundant in a run passing `--ignore-archived`, looked up or not."""
-        cases = {
-            "a pin": ("humanize==4.15.0", archival_check_disabled),
-            "a range": ("humanize>=4", archival_check_disabled),
-            "a range in a run switching both checks off": ("humanize>=4", project_checks_disabled),
-        }
-        for case, (requirement, run) in cases.items():
-            with self.subTest(case=case):
-                contents = f"{requirement}  # update-time: ignore[archived]\n"
-                requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
-                mock_get.side_effect = self.stale_pypi("4.15.0", upload_time=PYPI_RECENT_UPLOAD)
-                with run:
-                    update_requirements_txts()
-                self.assert_redundant_directive_logged(
-                    Reason.ARCHIVAL_CHECK_OFF, "humanize", Location(requirements_txt, 1), "ignore[archived]"
-                )
 
     def test_a_scope_needing_a_version_is_redundant_on_a_loose_requirement(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a scope whose check needs a version reports that the requirement pins no version."""
@@ -478,7 +443,6 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         runs: dict[str, tuple[contextlib.AbstractContextManager[object], dict[str, int]]] = {
             "the default run": (contextlib.nullcontext(), {"default_threshold": 365}),
             "a run switching the check off": (staleness_disabled, {"run_threshold": 0}),
-            "a run switching both checks off": (project_checks_disabled, {"run_threshold": 0}),
         }
         for threshold in (90, 0):
             directive = f"set[stale-after={threshold}]"
@@ -516,6 +480,19 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         # The unreadable item is the run's only warning, so the staleness warning was silenced:
         self.assert_invalid_bracket_item_logged("humanize", Location(requirements_txt, 1), "stlae")
         self.assert_no_staleness_warning_logged("humanize", Location(requirements_txt, 1))
+
+    def test_a_default_beside_an_unreadable_item_is_reported_as_redundant(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that an `ignore[hash-drift]` sharing a bracket with an unreadable item is reported as redundant."""
+        requirements_txt = self.discovered_requirements_txt(
+            mock_rglob, "flask==1.0  # update-time: ignore[hash-drift, stlae]\n"
+        )
+        mock_get.side_effect = self.pypi("1.0")
+        update_requirements_txts()
+        location = Location(requirements_txt, 1)
+        self.assert_invalid_bracket_item_logged("flask", location, "stlae", among_others=True)
+        self.assert_redundant_directive_logged(
+            Reason.ASKS_FOR_THE_DEFAULT, "flask", location, "ignore[hash-drift]", among_others=True
+        )
 
     def test_yanked_dependency_warned(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a pin left on a yanked version is warned about, without being changed."""
@@ -601,15 +578,6 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         requirements_txt.write_text.assert_not_called()
         self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(requirements_txt, 1))
 
-    def test_vulnerability_check_disabled(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that no vulnerability is reported, and OSV is not asked at all, when the check is switched off."""
-        requirements_txt = self.django_pin(mock_rglob, mock_get)
-        with osv(DJANGO_ADVISORY) as mock_post, vulnerability_check_disabled:
-            update_requirements_txts()
-        mock_post.assert_not_called()
-        self.assert_path_logged(requirements_txt)  # the file was checked for updates, just not for vulnerabilities
-        self.assert_no_warnings_logged()
-
     def test_vulnerability_below_the_risk_level_in_force(self, mock_rglob: Mock, mock_get: Mock):
         """Test that of the advisories affecting a pin, only those at or above the level in force are warned about."""
         requirements_txt = self.django_pin(mock_rglob, mock_get)
@@ -642,14 +610,6 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             "django", "3.2.0", DJANGO_VULNERABILITY, Location(requirements_txt, 1), among_others=True
         )
 
-    @kills(
-        Mutation(
-            vulnerability_module._report_redundant_suppressions,
-            "if (level := marker.vulnerable.value) is not None and all(",
-            "if (level := marker.vulnerable.value) is not None and run_wide_level != NO_RISK_LEVEL and all(",
-            "a risk level is never redundant in a run switching the check off",
-        )
-    )
     def test_a_risk_level_judging_the_vulnerabilities_as_the_run_does_is_redundant(
         self, mock_rglob: Mock, mock_get: Mock
     ):
@@ -657,7 +617,6 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         cases = {
             "the run's own level": ("high", "high", (DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY), True),
             "none where the run reports nothing either": ("none", "high", (OTHER_DJANGO_ADVISORY,), True),
-            "none in a run switching the check off": ("none", "none", (OTHER_DJANGO_ADVISORY,), True),
             "a lower level reporting what the run does not": ("low", "high", (OTHER_DJANGO_ADVISORY,), False),
         }
         for case, (level, run_level, advisories, redundant) in cases.items():
@@ -674,16 +633,6 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                     self.assert_no_ignored_vulnerability_logged()
                 else:
                     self.assert_no_redundant_suppression_logged()
-
-    def test_the_markers_risk_level_survives_the_check_being_switched_off(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a pin with a risk level of its own is looked up although the check is switched off run-wide."""
-        contents = "django==3.2.0  # update-time: set[vulnerability-level=high]\nflask==1.0\n"
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
-        mock_get.side_effect = [pypi_index("3.2.0"), pypi_index("1.0")]
-        with osv(DJANGO_ADVISORY, OTHER_DJANGO_ADVISORY) as mock_post, vulnerability_check_disabled:
-            update_requirements_txts()
-        mock_post.assert_any_call(OSV_BATCH_URL, timeout=ANY, json=osv_queries(("django", "3.2.0")))
-        self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, Location(requirements_txt, 1))
 
     def test_clean_pins_cost_one_osv_request(self, mock_rglob: Mock, mock_get: Mock):
         """Test that the pins of one file are looked up in a single batch, which answers for a clean file on its own."""

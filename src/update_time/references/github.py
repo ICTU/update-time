@@ -14,7 +14,6 @@ from update_time.domain.vulnerability import reports_vulnerabilities, vulnerabil
 from update_time.io.log import Logger
 from update_time.markers.cooldown import cooldown_days
 from update_time.markers.directive import Reason
-from update_time.markers.floating import floating_pin_cause
 from update_time.markers.marker import Scope
 from update_time.primitives.digest import COMMIT_SHA, SHORT_COMMIT_SHA
 from update_time.primitives.lookup import DeferredLookup
@@ -47,7 +46,6 @@ if TYPE_CHECKING:
     from update_time.domain.dependency import PinnedDependency
     from update_time.io.log import Drift
     from update_time.markers.marker import Marker
-    from update_time.markers.opt_in import OptInCause
     from update_time.primitives.location import Location
     from update_time.primitives.lookup import LookedUp, Lookup
 
@@ -120,14 +118,14 @@ _DRIFT = {drift.ref: drift for drift in (Logger.TAG_DRIFT, Logger.BRANCH_DRIFT, 
 @vulnerability_reporting
 @wraps(get_latest_version, assigned=())
 def _get_latest_action_version(
-    pinned: PinnedDependency, version_bound: VersionBound, days: int, /, *, check_archival: bool
+    pinned: PinnedDependency, version_bound: VersionBound, days: int, /
 ) -> DependencyVersion:
     """Return the latest version of the action, as `get_latest_version` does.
 
     The getter carries the capabilities of `get_latest_version`, and reports vulnerabilities on top of them, since OSV
     holds advisories for actions.
     """
-    return get_latest_version(pinned, version_bound, days, check_archival=check_archival)
+    return get_latest_version(pinned, version_bound, days)
 
 
 @dataclass(frozen=True)
@@ -237,10 +235,10 @@ class _PinResolver:
             if found.reason:  # A branch without a commit older than the cooldown is held back without a report
                 self._report_unfetched_commit(reference, found, commit_sha)
             return None
-        kept_floating_by = None if commit_sha.names_a_commit else floating_pin_cause(self.marker)
+        kept_floating_by = "" if commit_sha.names_a_commit else self.marker.allow_directive(Scope.FLOATING_PIN)
         if reference.current_sha and hash_drifted(pinned.sha, reference.current_sha):
             return self._moved_ref_pin(reference, pinned, kept_floating_by)
-        if kept_floating_by is not None:
+        if kept_floating_by:
             self.log.keeping_ref(reference, pinned, kept_floating_by, _ref_kind(reference))
             return None
         if reference.current_sha and pinned.version == ref:
@@ -256,7 +254,7 @@ class _PinResolver:
         return pinned_ref(dependency, ref)
 
     def _moved_ref_pin(
-        self, reference: Reference, moved: DependencyVersion, kept_floating_by: OptInCause | None
+        self, reference: Reference, moved: DependencyVersion, kept_floating_by: str
     ) -> DependencyVersion | None:
         """Return the commit the ref moved to, if the reference adopts it, or None to leave the reference as it is.
 
@@ -267,7 +265,7 @@ class _PinResolver:
             return None
         # A ref kept floating keeps following the ref.
         kept = DependencyVersion(reference.current_version, sha=moved.sha)
-        pin = moved if kept_floating_by is None else kept
+        pin = kept if kept_floating_by else moved
         adopted = self._drifted_pin(_DRIFT[kind], reference, pin, publication=moved.publication)
         if adopted is not None and adopted.tag_name:  # The reference comes to name a version rather than the ref
             self.log.pinned(reference, adopted)

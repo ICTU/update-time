@@ -14,11 +14,12 @@ from rich.console import Console
 from update_time.domain.bound import NO_BOUND
 from update_time.domain.cooldown import cooldown_end
 from update_time.domain.dependency import tag_of
-from update_time.domain.reference import RefKind
+from update_time.domain.reference import Reference, RefKind
 from update_time.domain.staleness import STALE_AFTER, stale_release
 from update_time.domain.vulnerability import VULNERABILITY_LEVEL
 from update_time.io.console import CHANGES, LOG_THEME, NOTE, configure_logging, delimit_dependency, delimit_location
 from update_time.markers.bound import spell
+from update_time.markers.directive import Reason
 from update_time.markers.marker import Scope
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
@@ -38,11 +39,10 @@ if TYPE_CHECKING:
         Release,
         VersionString,
     )
-    from update_time.domain.reference import DriftedPin, Reference, ResolvedReference
+    from update_time.domain.reference import DriftedPin, ResolvedReference
     from update_time.domain.vulnerability import Vulnerability
     from update_time.markers.directive import RedundancyReason
     from update_time.markers.marker import Marker, Threshold
-    from update_time.markers.opt_in import OptInCause
     from update_time.primitives.command import Command
 
 
@@ -423,27 +423,28 @@ class Logger:
 
     @_debug(
         "Keeping the floating tag %(dependency)s%(tag)s in %(location)s: it resolves to %(resolved)s@%(sha)s "
-        "(%(cause)s)"
+        "(update-time: %(directive)s)"
     )
     def keeping_floating_tag(
-        self, reference: Reference, release: DependencyVersion, cause: OptInCause
+        self, reference: Reference, release: DependencyVersion, directive: str
     ) -> dict[str, object]:
         """Log that a floating tag was kept floating.
 
         A reference naming no tag is named by its image alone, the release naming what it resolves to already.
         """
         fields = self._tagged_fields(reference)
-        return {**fields, "resolved": release.version, "sha": release.sha, "cause": cause}
+        return {**fields, "resolved": release.version, "sha": release.sha, "directive": directive}
 
     @_debug(
-        "Keeping the %(ref)s %(dependency)s@%(name)s in %(location)s: it resolves to %(resolved)s@%(sha)s (%(cause)s)"
+        "Keeping the %(ref)s %(dependency)s@%(name)s in %(location)s: it resolves to %(resolved)s@%(sha)s "
+        "(update-time: %(directive)s)"
     )
     def keeping_ref(
-        self, reference: Reference, release: DependencyVersion, cause: OptInCause, kind: RefKind
+        self, reference: Reference, release: DependencyVersion, directive: str, kind: RefKind
     ) -> dict[str, object]:
         """Log that a branch, a tag, or a ref was kept floating."""
         fields = self._reference_fields(reference, ref=kind, name=reference.current_version)
-        return {**fields, "resolved": release.version, "sha": release.sha, "cause": cause}
+        return {**fields, "resolved": release.version, "sha": release.sha, "directive": directive}
 
     @_error(
         "Could not fetch the commit of the %(ref)s %(dependency)s@%(name)s in %(location)s, so it was left as it is "
@@ -545,15 +546,15 @@ class Logger:
 
     @_info(
         "Adopted %(ref)s drift for %(dependency)s%(tag)s in %(location)s: "
-        "re-pinned from commit %(current_sha)s to %(new_sha)s (%(cause)s)"
+        "re-pinned from commit %(current_sha)s to %(new_sha)s (update-time: %(directive)s)"
     )
     @_info(
         "Adopted digest drift for %(dependency)s%(tag)s in %(location)s: "
-        "re-pinned from %(current_sha)s to %(new_sha)s (%(cause)s)"
+        "re-pinned from %(current_sha)s to %(new_sha)s (update-time: %(directive)s)"
     )
-    def adopted_drift(self, kind: Drift, drifted: DriftedPin, cause: OptInCause) -> dict[str, object]:
+    def adopted_drift(self, kind: Drift, drifted: DriftedPin, directive: str) -> dict[str, object]:
         """Log that a reference adopted the drift of its hash pin."""
-        return self._drift_fields(kind, drifted, cause=cause, **kind.adopted_words)
+        return self._drift_fields(kind, drifted, directive=directive, **kind.adopted_words)
 
     @_warning(
         "Integrity hash mismatch for %(dependency)s@%(version)s in %(location)s: declares %(declared_hash)s but "
@@ -818,6 +819,8 @@ class Logger:
 
         An invalid item may have been meant to hold the update back.
         """
+        for directive in marker.default_directives:
+            self.redundant_directive(Reference(dependency, "", location), directive, Reason.ASKS_FOR_THE_DEFAULT)
         if marker.invalid_item is not None:
             self.invalid_bracket_item(dependency, marker.invalid_item, location)
             return marker.frozen

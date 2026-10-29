@@ -119,12 +119,28 @@ class ParseMarkerScopeTest(unittest.TestCase):
                 marker = parse_marker(_line(f"humanize==4.15.0  # update-time: {directive}"))
                 self.assertEqual(marker, Marker(ignored_scopes=scope))
 
-    def test_a_scope_naming_its_own_default_is_recognised(self):
-        """Test that the `ignore` of a scope that is off by default is read, and recorded as the user wrote it."""
-        for scope in (Scope.HASH_DRIFT, Scope.FLOATING_PIN):
-            with self.subTest(scope=scope):
-                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: ignore[{scope}]"))
-                self.assertEqual(marker, Marker(written_scopes=scope))
+    def test_a_directive_asking_for_the_default_is_recorded_as_written(self):
+        """Test that a directive asking for the default is read, steering nothing, and recorded as the user wrote it."""
+        for directive in ("ignore[hash-drift]", "ignore[floating-pin]", "allow[update]"):
+            with self.subTest(directive=directive):
+                marker = parse_marker(_line(f"humanize==4.15.0  # update-time: {directive}"))
+                self.assertEqual(marker, Marker())
+                self.assertEqual(marker.default_directives, (directive,))
+
+    @kills(
+        Mutation(
+            marker_module.Marker.merge,
+            "default_directives=self.default_directives + other.default_directives,",
+            "default_directives=self.default_directives or other.default_directives,",
+            "a marker asking for the default more than once is reported for the first such directive alone",
+        )
+    )
+    def test_every_directive_asking_for_the_default_is_recorded_in_the_order_written(self):
+        """Test that the directives asking for the default in a bracket and on the line above are all recorded."""
+        marker = parse_marker(
+            _line("humanize==4.15.0  # update-time: ignore[hash-drift, floating-pin]", "# update-time: allow[update]")
+        )
+        self.assertEqual(marker.default_directives, ("ignore[hash-drift]", "ignore[floating-pin]", "allow[update]"))
 
     def test_a_verb_naming_a_scope_a_set_item_steers_is_reported_as_invalid(self):
         """Test that `ignore` or `allow` naming a scope a `set` item steers, such as `stale`, is an invalid item."""

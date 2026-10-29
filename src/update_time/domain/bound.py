@@ -30,14 +30,10 @@ if TYPE_CHECKING:
             version_bound: VersionBound,
             cooldown_days: int,
             /,
-            *,
-            check_archival: bool,
         ) -> DependencyVersion:
             """Return the version to update the pinned dependency to.
 
             The bound and the cooldown are the two constraints on the candidates, by version and by age.
-            `check_archival` is the run's archival setting, so a source that pays a request to answer it can skip
-            that request rather than reading the setting itself. A source that reports no archival ignores it.
             """
 
 

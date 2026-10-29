@@ -196,18 +196,16 @@ _ARCHIVED_STATUS = "archived"
 
 
 @archival_reporting
-def project(package: DependencyName, *, check_archival: bool) -> Project:
+def project(package: DependencyName) -> Project:
     """Return what PyPI reports about the project: its newest release, and whether it declares it archived."""
-    return Project(newest=_newest_release(package), archival=_archival(package, check_archival=check_archival))
+    return Project(newest=_newest_release(package), archival=_archival(package))
 
 
-def _archival(package: DependencyName, *, check_archival: bool) -> Archival | None:
+def _archival(package: DependencyName) -> Archival | None:
     """Return what PyPI declares about the project: whether it is archived, and the reason published beside it.
 
-    The archival is None in a run that does not check archival, and where the Index API can't be fetched.
+    The archival is None where the Index API can't be fetched.
     """
-    if not check_archival:
-        return None
     if (metadata := _project_metadata(package)) is None:
         return None
     project_status = metadata.get("project-status") or {}
@@ -225,9 +223,7 @@ def _release_datetime(urls: list[_Distribution]) -> datetime | None:
 @publication_date_reporting
 @vulnerability_reporting
 @yank_reporting
-def get_latest_version(
-    pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
-) -> DependencyVersion:
+def get_latest_version(pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int) -> DependencyVersion:
     """Return the latest stable release of the package that is available outside the cooldown.
 
     Returns the current version unchanged when it is invalid or already the latest eligible version.
@@ -251,7 +247,7 @@ def get_latest_version(
     latest = with_yank_state(latest, current_version, partial(yank_state, package))
     # Always attach what PyPI reports about the project, so a pin that is already up to date can still be reported
     # as stale or archived. It rides on the Index API response fetched above, so it costs no request of its own.
-    return replace(latest, project=project(package, check_archival=check_archival))
+    return replace(latest, project=project(package))
 
 
 def yank_state(package: str, version: str) -> Yank | None:

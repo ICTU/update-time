@@ -14,13 +14,14 @@ from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import vulnerability_reporting
 from update_time.domain.yank import yank_reporting
 from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker, Scope, Threshold
+from update_time.markers.marker import Marker, Scope
+from update_time.references import resolve as resolve_module
 from update_time.references.resolve import latest_version, report_project_checks
 
 from tests.helpers import patch_environ
-from tests.update_time.fixtures import DIGEST, VULNERABILITY_LEVEL_NONE
+from tests.mutation import Mutation, kills
+from tests.update_time.fixtures import COOLDOWN_30, DIGEST, STALE_AFTER_90, VULNERABILITY_LEVEL_NONE
 from tests.update_time.helpers import (
-    archival_check_disabled,
     bound,
     reference,
     resolved_reference,
@@ -34,10 +35,6 @@ if TYPE_CHECKING:
     from update_time.domain.bound import NewVersionGetter, VersionBound
     from update_time.domain.reference import Reference
     from update_time.markers.reference import SteeredResolvedReference
-
-# The threshold `set[stale-after=90]` parses to, carrying the directive the parser sets alongside every value it reads.
-_STALE_THRESHOLD = Threshold(value=90, directive="set[stale-after=90]")
-_COOLDOWN_ITEM = Threshold(value=30, directive="set[cooldown=30]")
 
 
 @dataclass(frozen=True)
@@ -53,8 +50,8 @@ class _RedundancyCase:
 
 
 # Each directive a source may be unable to apply, keyed by the text the warning names it with. A marker that sets a
-# value carries the directive that set it, because a threshold on its own names none. A marker that holds a scope
-# back carries no text, because the scope has one spelling, which the warning spells out.
+# value is parsed from that text, so it carries the directive the warning names. A marker that holds a scope back
+# carries no text, because the scope has one spelling, which the warning spells out.
 _REDUNDANT_DIRECTIVES = {
     "ignore[yanked]": _RedundancyCase(Marker(ignored_scopes=Scope.YANKED), Reason.NO_YANK_CONCEPT, yank_reporting),
     "ignore[archived]": _RedundancyCase(
@@ -63,12 +60,8 @@ _REDUNDANT_DIRECTIVES = {
     "set[vulnerability-level=none]": _RedundancyCase(
         VULNERABILITY_LEVEL_NONE, Reason.NO_VULNERABILITY_REPORTS, vulnerability_reporting
     ),
-    "set[stale-after=90]": _RedundancyCase(
-        Marker(stale=_STALE_THRESHOLD), Reason.NO_STALENESS_DATES, publication_date_reporting
-    ),
-    "set[cooldown=30]": _RedundancyCase(
-        Marker(cooldown=_COOLDOWN_ITEM), Reason.NO_COOLDOWN_DATES, publication_date_reporting
-    ),
+    "set[stale-after=90]": _RedundancyCase(STALE_AFTER_90, Reason.NO_STALENESS_DATES, publication_date_reporting),
+    "set[cooldown=30]": _RedundancyCase(COOLDOWN_30, Reason.NO_COOLDOWN_DATES, publication_date_reporting),
 }
 
 
@@ -123,7 +116,7 @@ class LatestVersionTest(unittest.TestCase):
         self, get_new_version: Mock, version_bound: VersionBound = NO_BOUND, cooldown: int = COOLDOWN.default
     ) -> None:
         """Assert the source was asked once about the reference's pin, under the bound and cooldown given."""
-        get_new_version.assert_called_once_with(self.reference().pinned, version_bound, cooldown, check_archival=True)
+        get_new_version.assert_called_once_with(self.reference().pinned, version_bound, cooldown)
 
     def test_returns_the_resolved_version(self):
         """Test that the version the getter resolves is returned."""
@@ -156,7 +149,7 @@ class LatestVersionTest(unittest.TestCase):
     def test_the_markers_cooldown_is_passed_to_the_getter(self):
         """Test that a reference carrying its own cooldown is resolved with that one, not the global one."""
         get_new_version = Mock(return_value=DependencyVersion(version="3.15"))
-        self.latest_version(Marker(cooldown=Threshold(value=30)), get_new_version)
+        self.latest_version(COOLDOWN_30, get_new_version)
         self.assert_resolved(get_new_version, cooldown=30)
 
     def test_warns_about_a_redundant_bound(self):
@@ -181,9 +174,8 @@ class LatestVersionTest(unittest.TestCase):
 
     def test_the_markers_threshold_is_used_for_the_staleness_warning(self):
         """Test that a reference carrying its own staleness threshold is judged by that one, not the global one."""
-        marker = Marker(stale=Threshold(value=90))
-        self.latest_version(marker)
-        self.log.report_staleness.assert_called_once_with(self.resolved(marker=marker), 90)
+        self.latest_version(STALE_AFTER_90)
+        self.log.report_staleness.assert_called_once_with(self.resolved(marker=STALE_AFTER_90), 90)
 
     def test_a_marker_silencing_a_warning_still_returns_the_update(self):
         """Test that a marker silencing a warning leaves the update in place, and reaches the check that reports it."""
@@ -266,12 +258,6 @@ class LatestVersionTest(unittest.TestCase):
             self.reference(), "allow[floating-pin]", Reason.NEVER_PINNED
         )
 
-    def test_no_redundant_directive_for_the_ignore_spelling_of_the_floating_pin(self):
-        """Test that `ignore[floating-pin]` is not reported, since it asks for what happens without it."""
-        marker = Marker(written_scopes=Scope.FLOATING_PIN, raw="ignore[floating-pin]")
-        self.assertEqual(self.latest_version(marker), DependencyVersion(version="3.15"))
-        self.log.redundant_directive.assert_not_called()
-
     def test_ignore_update_returns_none(self):
         """Test that `ignore[update]` holds back the update, after the staleness check has still run."""
         self.assertIsNone(self.latest_version(Marker(ignored_scopes=Scope.UPDATE)))
@@ -310,11 +296,21 @@ class ReportProjectChecksTest(unittest.TestCase):
         self.log.report_staleness.assert_not_called()
         self.log.report_archival.assert_not_called()
 
-    def test_a_source_reporting_archival_is_not_asked_with_both_checks_switched_off(self):
-        """Test that a source reporting archival is left unasked once both checks are off, so it costs no request."""
-        get_project = archival_reporting(mock_project_getter())
-        with staleness_disabled, archival_check_disabled:
-            report_project_checks(reference("humanize", self.path), Marker(), self.log, get_project)
-        get_project.assert_not_called()
-        self.log.report_staleness.assert_not_called()
-        self.log.report_archival.assert_not_called()
+    @kills(
+        Mutation(
+            resolve_module.report_project_checks,
+            "project_is_checked(get_project, reference.dependency, marker)",
+            "project_is_checked(get_project, reference.dependency, type(marker)())",
+            "a reference's own threshold does not reach the gate, so a run with the check off looks it up for none",
+        )
+    )
+    def test_a_source_reporting_no_archival_is_asked_about_a_reference_with_a_threshold_of_its_own(self):
+        """Test that a reference setting a staleness threshold of its own is looked up with the check switched off."""
+        get_project = mock_project_getter()
+        with staleness_disabled:
+            report_project_checks(reference("humanize", self.path), STALE_AFTER_90, self.log, get_project)
+        get_project.assert_called_once_with("humanize")
+        resolved = resolved_reference(
+            "humanize", self.path, DependencyVersion(version="", project=Project()), marker=STALE_AFTER_90
+        )
+        self.log.report_staleness.assert_called_once_with(resolved, 90)

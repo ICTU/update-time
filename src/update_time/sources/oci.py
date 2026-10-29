@@ -309,9 +309,7 @@ def _is_on_docker_hub(pinned: PinnedDependency) -> bool:
 
 
 @partial(publication_date_reporting, when=_is_on_docker_hub)
-def get_latest_tag(
-    pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, *, check_archival: bool
-) -> DependencyVersion:
+def get_latest_tag(pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int) -> DependencyVersion:
     """Return the tag to pin the reference to, carrying the image's newest release where one dates it.
 
     Resolves images on any OCI registry (Docker Hub, ghcr.io, mcr.microsoft.com, quay.io, ...). The digest comes
@@ -319,7 +317,6 @@ def get_latest_tag(
     bumping its version. A reference whose tag the registry does not serve names no image in the repository, so
     the image's newest release does not date the reference.
     """
-    del check_archival
     image = pinned.name
     resolved = _resolved_tag(image, pinned.version, version_bound, cooldown_days)
     if resolved.unserved is not None:
@@ -393,12 +390,12 @@ class TagGetter:
         explaining_skipped_lookups(self, self._image_not_looked_up)
 
     def __call__(
-        self, pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, /, *, check_archival: bool
+        self, pinned: PinnedDependency, version_bound: VersionBound, cooldown_days: int, /
     ) -> DependencyVersion:
         """Return the tag to pin the reference to, or the reference as it is where its image is not looked up."""
         if (reason := self._image_not_looked_up(pinned)) is not None:
             return DependencyVersion(version=pinned.version, image_not_looked_up=reason)
-        return get_latest_tag(pinned, version_bound, cooldown_days, check_archival=check_archival)
+        return get_latest_tag(pinned, version_bound, cooldown_days)
 
     def _image_not_looked_up(self, pinned: PinnedDependency) -> ImageNotLookedUp | None:
         """Return why no registry is asked about the pinned image, or None when one is."""
