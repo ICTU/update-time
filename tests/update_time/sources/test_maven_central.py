@@ -9,7 +9,7 @@ import requests
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import Archival, ArchivedSubject, Project, Release
 from update_time.io.log import Logger
-from update_time.manifests import pom_xml as pom_xml_format
+from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.sources import maven_central
 from update_time.sources.maven_central import _newest_release, _published, get_changes, project, versions_held_back
 
@@ -110,7 +110,7 @@ class ProjectTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            pom_xml_format,
+            pom_xml_manifest,
             '("url", "connection", "developerConnection")',
             '("url",)',
             "a pom naming its repository in a connection alone is read as naming none, so its archival goes unread",
@@ -212,7 +212,7 @@ class ProjectTest(LoggingTestCase):
     @kills(
         Mutation(
             maven_central._parent_pom,
-            "    if pom_xml_format.scm_urls(pom):\n        return LookedUp(None, absent=True)\n",
+            "    if pom_xml_manifest.scm_urls(pom):\n        return LookedUp(None, absent=True)\n",
             "",
             "an artefact whose pom names its repository on another host is given its generic parent's repository",
         )

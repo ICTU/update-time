@@ -13,11 +13,11 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, PinnedDependency, Project, Release
 from update_time.domain.reference import DriftedPin, RefKind
 from update_time.io.log import Drift, Logger
+from update_time.manifests import github_workflow as github_workflow_manifest
 from update_time.markers.directive import Reason
 from update_time.primitives.location import Location
 from update_time.references import github as references_github
 from update_time.sources import github as sources_github
-from update_time.updaters import update_github_action
 from update_time.updaters.update_github_action import update_github_actions
 
 from tests.helpers import mock_path
@@ -509,7 +509,7 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_github_action,
+            github_workflow_manifest,
             r'r"uses: (?P<dependency>[\w\d\.-]+/[\w\d\./-]+)@"',
             r'r"uses: (?P<dependency>[\w\d\./-]+)@"',
             "a reference naming no repository is read as one, ending the run over that single line",
@@ -1173,13 +1173,13 @@ class UpdateGitHubActionsThroughTheSourceTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_github_action,
+            github_workflow_manifest,
             r"(?!{_REF_CHARACTER})",
             r"(?={_ALONE})",
             "a version comment followed by more text leaves the commit SHA bare, as a branch comment does",
         ),
         Mutation(
-            update_github_action,
+            github_workflow_manifest,
             r"(?!{_REF_CHARACTER})",
             r"(?=\s|$)",
             "a version comment followed by punctuation leaves the commit SHA bare, with nothing logged",

@@ -18,7 +18,7 @@ from update_time.domain.dependency_type import DEPENDENCY_TYPES
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES
 from update_time.io import log as log_module
 from update_time.io import process as process_module
-from update_time.io.filesystem import EXCLUDE_PATHS
+from update_time.io.filesystem import _EXCLUDE_PATHS
 from update_time.io.log import LOG_LEVEL
 from update_time.io.process import Processes
 from update_time.markers.drift import ALLOW_HASH_DRIFT
@@ -286,43 +286,13 @@ class UpdateMainTest(unittest.TestCase):
         """Test that main exports the excluded paths in the environment so the updater subprocesses inherit them."""
         exit_code, environment = self.run_main(mock_popen, "--exclude-path", "vendor,packages/legacy")
         self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[EXCLUDE_PATHS.name], "vendor,packages/legacy")
+        self.assertEqual(environment[_EXCLUDE_PATHS.name], "vendor,packages/legacy")
 
     def test_main_passes_no_excluded_paths_by_default(self, mock_popen: Mock):
         """Test that main exports an empty excluded-paths variable when --exclude-path is not given."""
         exit_code, environment = self.run_main(mock_popen)
         self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[EXCLUDE_PATHS.name], "")
-
-    def test_main_leaves_non_existing_excluded_paths_out_of_the_environment(self, mock_popen: Mock):
-        """Test that a non-existing excluded path is warned about but not passed down to the subprocesses."""
-        mock_logger = Mock()
-        with (
-            patch("update_time.updaters.update.get_logger", Mock(return_value=mock_logger)),
-            patch("pathlib.Path.exists", autospec=True, side_effect=lambda self: self == Path("vendor")),
-        ):
-            exit_code, environment = self.run_main(mock_popen, "--exclude-path", "vendor,missing")
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(environment[EXCLUDE_PATHS.name], "vendor")
-        mock_logger.missing_excluded_path.assert_called_once_with(Path("missing"))
-
-    @patch_pathlib_path(exists=True)
-    def test_main_logs_existing_excluded_path(self, mock_popen: Mock):
-        """Test that main logs an existing excluded path once at DEBUG."""
-        mock_logger = Mock()
-        with patch("update_time.updaters.update.get_logger", Mock(return_value=mock_logger)):
-            self.run_main(mock_popen, "--exclude-path", "vendor")
-        mock_logger.excluded_path.assert_called_once_with(Path("vendor"))
-        mock_logger.missing_excluded_path.assert_not_called()
-
-    @patch_pathlib_path(exists=False)
-    def test_main_warns_about_missing_excluded_path(self, mock_popen: Mock):
-        """Test that main warns about a non-existing excluded path instead of failing the run."""
-        mock_logger = Mock()
-        with patch("update_time.updaters.update.get_logger", Mock(return_value=mock_logger)):
-            self.run_main(mock_popen, "--exclude-path", "vendor")
-        mock_logger.missing_excluded_path.assert_called_once_with(Path("vendor"))
-        mock_logger.excluded_path.assert_not_called()
+        self.assertEqual(environment[_EXCLUDE_PATHS.name], "")
 
     def test_main_changes_to_the_default_directory(self, mock_popen: Mock):
         """Test that main changes to the current directory when no path is given."""

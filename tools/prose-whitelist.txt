@@ -141,7 +141,6 @@ Both name a version of a runtime rather than a release of a package, which is no
 Both npm and pnpm update a dependency to the newest version that satisfies the range declared in the `package.json`.
 Cannot pin in : the URL is declared as a bare string, so it has no attribute dictionary to hold an integrity hash.
 Check each requirement that pins no exact version.
-CircleCI machine-executor images (the `image:` under a `machine:` key, e.g. `ubuntu-2204:2024.01.1`) are not on Docker Hub and have no registry to query, so they are detected by parsing the YAML and left unchanged.
 Converting is what the bands, which are floats, compare against; an unset score would band as no level.
 Coverage stays at 100%, and `just test` enforces it, so you need no separate coverage command.
 Create PyPI release metadata without project URLs, so the test needs no changelog response mocked.
@@ -214,7 +213,6 @@ Report the changes for a release its changelog heads one component shorter, such
 Report the staleness and the archival of a project a source has already answered for.
 Reproducible builds commonly zero that annotation (`SOURCE_DATE_EPOCH`), so it is no substitute.
 Return a GitHub contents listing entry for the name, one with no file to fetch when it is a directory.
-Return a getter that resolves an image tag, leaving the references it asks no registry about unchanged.
 Return a message for each dependency type with no section of its own, and each section documenting none.
 Return a message for each internal link that points at an anchor no heading in the document provides.
 Return a mock reference resolver answering with the resolved references, claiming no source capability.
@@ -373,7 +371,6 @@ Test that an anonymous registry token is requested (no basic auth) when no crede
 Test that an archived project is warned about although the index lists no release for it.
 Test that an artefact whose listing dates no version has no pom to read, so nothing follows the listing.
 Test that an entry named like a changelog with no file to fetch is passed over without a request.
-Test that an excluded reference's versions carry no publication date, so a cooldown measures against none.
 Test that an item the marker language cannot read warns and freezes the pin, reporting no marker.
 Test that an unpinned action is not changed when no commit SHA is available to pin it to.
 Test that an unpinned reference is not pinned when no digest is available.
@@ -421,7 +418,6 @@ The OCI protocol exposes no publish date.
 The `# update-time:` marker language: what a marker says, and what each directive it carries steers.
 The `++` and the `[^"]*` match each pair without giving characters back.
 The `DEBUG` line then names the image alone, since the reference has no tag to name.
-The `DependencyTomlFile` the caller hands over says where in the file that TOML sits, so nothing here knows which of the two kinds of file it is looking at.
 The `changelog` directory answers a text naming no version, rather than raising, so a request for it fails the assertion below rather than the whole test.
 The `cvss` package ships no type information, scores a v3 vector as a `Decimal` where it scores a v4 one as a float, and types the score as optional because construction sets it after initialising it to None.
 The `item` is the text its creator spelled, compared as no part of the bound, so two spellings of one bound are equal and cache alike.
@@ -558,7 +554,6 @@ Warn when the hash the dictionary declares differs from the one jsDelivr serves 
 Warn when the version a Python dependency or a jsDelivr URL is left on has a known vulnerability, according to the [OSV](https://osv.dev) database.
 Warn when the version a dependency is pinned to has been yanked from PyPI, or deprecated on npm, and hold the warning back with an `# update-time: ignore[yanked]` marker.
 What a name in a repository's root listing maps to: a file's text, a directory with no tree to list, or a directory's recursive tree listing as an entry per path below it.
-What follows from naming no release is the caller's.
 What its marker gets wrong is reported whether or not those checks run, since that needs no release.
 What orders the aliases of one digest: the version, how precisely it is spelled, the version of each variant label the floating tag asked for, and the shorter name last.
 What to ask for to be warned about no vulnerability at all, which switches the check off rather than setting a level.

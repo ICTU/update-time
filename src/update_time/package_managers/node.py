@@ -9,10 +9,9 @@ from typing import TYPE_CHECKING
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.reference import Reference
-from update_time.formats import json as json_format
 from update_time.io.log import get_logger
 from update_time.io.process import run
-from update_time.manifests.package_json import DEPENDENCY_SECTIONS, declared_ranges, dependency_locations
+from update_time.manifests.package_json import DEPENDENCY_SECTIONS, PackageJson
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Scope
 from update_time.package_managers.policy import ManagerPolicy
@@ -25,10 +24,14 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from update_time.domain.dependency import DependencyName, VersionString
-    from update_time.formats.json import JsonFile
     from update_time.manifests.package_json import Declaration
 
 _LOG = get_logger("package.json")
+# Files that signal which package manager a project uses, checked when there is no corepack `packageManager` field.
+# pnpm is handled like npm; yarn and bun are detected only to be skipped (see `SUPPORTED_MANAGERS`). npm's
+# `package-lock.json` is deliberately absent: npm is the default when nothing else matches, so listing it would be a
+# no-op, and leaving it out lets a real non-npm lockfile win over a stale `package-lock.json` left by a migration.
+_MANAGER_FILES = {"pnpm-lock.yaml": "pnpm", "pnpm-workspace.yaml": "pnpm", "yarn.lock": "yarn", "bun.lockb": "bun"}
 _COMMON_NPM_OPTIONS = ["--include=dev", "--silent"]
 
 # pnpm measures its cooldown (`minimumReleaseAge`) in minutes, while Update-time's --cooldown option is in days.
@@ -117,7 +120,7 @@ class _PackageManager:
         """Return the top-level versions the lock file in the directory records, per project."""
         return self.locked_versions(run(self.list_locked, directory).json)
 
-    def update_package_json(self, package_json: JsonFile) -> JsonFile | None:
+    def update_package_json(self, package_json: PackageJson) -> PackageJson | None:
         """Update the package.json and its lockfile using this package manager, and log what it moved and rewrote.
 
         The update moves the dependencies of the package.json's project, and those of the workspace members below.
@@ -133,7 +136,7 @@ class _PackageManager:
         for member in listed_before:
             if _is_below(member, project):
                 member_path = directory / member.relative_to(project) / "package.json"
-                member_json = readable_package_json(member_path)
+                member_json = PackageJson.readable(member_path)
                 snapshots.append(_ProjectSnapshot(member, member_path, member_json, listed_before[member]))
         run(Command(*self.update, *cooldown), cwd=directory)
         listed_after = self._locked_in(directory)
@@ -155,7 +158,7 @@ class _ProjectSnapshot:
 
     listed: PurePosixPath
     path: Path
-    package_json: JsonFile | None
+    package_json: PackageJson | None
     locked: dict[DependencyName, VersionString]
 
 
@@ -164,7 +167,7 @@ class _ProjectUpdate:
     """The snapshot of a project from before the update, with its package.json and locked versions after it."""
 
     before: _ProjectSnapshot
-    after: JsonFile | None
+    after: PackageJson | None
     locked_after: dict[DependencyName, VersionString]
 
     @classmethod
@@ -178,7 +181,7 @@ class _ProjectUpdate:
         locked_after = listed_after.get(before.listed, {})
         if before.package_json is None and not _moved_versions(before.locked, locked_after):
             return cls(before, None, locked_after)
-        return cls(before, readable_package_json(before.path, _LOG.unreadable_package_json), locked_after)
+        return cls(before, PackageJson.readable(before.path, _LOG.unreadable_package_json), locked_after)
 
     @property
     def moved_versions(self) -> dict[DependencyName, VersionString]:
@@ -187,7 +190,7 @@ class _ProjectUpdate:
 
     def log_new_versions(self) -> None:
         """Log each moved version at the lines declaring its dependency, or at the package.json where none does."""
-        declarations = {} if self.after is None else dependency_locations(self.after)
+        declarations = {} if self.after is None else self.after.dependency_locations()
         for package, new_version in self.moved_versions.items():
             current = self.before.locked[package]
             changes = get_changes(package, new_version)
@@ -200,9 +203,9 @@ class _ProjectUpdate:
         """Log each rewrite of a range in the package.json, for a dependency with an unmoved locked version."""
         if self.before.package_json is None or self.after is None:
             return
-        ranges_before = declared_ranges(self.before.package_json)
+        ranges_before = self.before.package_json.declared_ranges()
         moved_versions = self.moved_versions
-        for key, range_after in declared_ranges(self.after).items():
+        for key, range_after in self.after.declared_ranges().items():
             range_before = ranges_before.get(key)
             if range_before is None or range_before.current_version == range_after.current_version:
                 continue
@@ -211,18 +214,6 @@ class _ProjectUpdate:
             reference = Reference(range_after.dependency, range_before.current_version, range_after.location)
             version_before = self.before.locked.get(range_after.dependency, "")
             _LOG.range_rewrite(manager, reference, range_after.current_version, version_before)
-
-
-def readable_package_json(
-    package_json: Path, report: Callable[[Path, OSError | ValueError], None] | None = None
-) -> JsonFile | None:
-    """Return the package.json, or None where it cannot be read, after reporting why where a report is given."""
-    try:
-        return json_format.read(package_json)
-    except (OSError, ValueError) as error:
-        if report is not None:
-            report(package_json, error)
-        return None
 
 
 def _moved_versions(
@@ -282,3 +273,33 @@ def _unchecked_scopes(declaration: Declaration) -> dict[Scope, Reason]:
 
 # npm and pnpm move a dependency within the range its package.json declares, whatever a marker says about it.
 POLICY = ManagerPolicy(honours_a_freeze=False, unchecked_scopes=_unchecked_scopes)
+
+
+def manager_name(package_json: PackageJson) -> str:
+    """Return the name of the project's package manager (npm, pnpm, yarn, bun), defaulting to npm.
+
+    The nearest directory that names a manager decides, from the package.json's own upwards, so a workspace member
+    takes the manager of its workspace root. In each directory, the corepack `packageManager` field of its
+    package.json (e.g. `"pnpm@9.15.0"`) wins over a lockfile or a workspace file.
+    """
+    directory = package_json.path.parent
+    if manager := package_json.declared_manager() or _signalled_manager(directory):
+        return manager
+    for ancestor in directory.parents:
+        if manager := _declared_manager_in(ancestor) or _signalled_manager(ancestor):
+            return manager
+    return "npm"
+
+
+def _declared_manager_in(directory: Path) -> str:
+    """Return the name of the manager that the package.json in the directory names, if any."""
+    package_json = directory / "package.json"
+    if not package_json.exists():
+        return ""
+    readable = PackageJson.readable(package_json, _LOG.unreadable_manager_declaration)
+    return "" if readable is None else readable.declared_manager()
+
+
+def _signalled_manager(directory: Path) -> str:
+    """Return the name of the manager that a lockfile or a workspace file in the directory signals, if any."""
+    return next((manager for name, manager in _MANAGER_FILES.items() if (directory / name).exists()), "")

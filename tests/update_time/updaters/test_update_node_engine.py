@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from update_time.io.log import Logger
+from update_time.manifests import package_json as package_json_manifest
 from update_time.markers.directive import Reason
 from update_time.primitives.location import Location
 from update_time.references import rewrite
@@ -81,6 +82,17 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         self.assert_new_version_logged("node", docker_hub_version("19"), Location(mock_package_json, 1))
         self.assert_no_warnings_logged()
 
+    def test_a_package_json_that_does_not_parse_is_warned_about_and_passed_over(self, mock_glob: Mock):
+        """Test that a package.json that does not parse is warned about, and the one after it still gets updated."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("19", DIGEST))
+        unreadable = mock_path("{", parent=Path("/fixtures"))
+        mock_package_json = mock_path(_PACKAGE_JSON, parent=Path("/"))
+        mock_glob.return_value = [unreadable, mock_package_json]
+        update_node_engines()
+        mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "19" }}\n')
+        error = "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+        self.assert_logged(message_of(Logger.unreadable_node_engine), location=Location(unreadable), error=error)
+
     def test_a_node_version_outside_the_engines_section_is_left_as_it_is(self, mock_glob: Mock):
         """Test that a node version another section declares is not taken for the engine."""
         mock_package_json = self.update_engine(mock_glob, _package_json(section="volta"))
@@ -105,9 +117,9 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
 
     @kills(
         Mutation(
-            update_node_engine._has_node_engine,
-            "return isinstance(engines, dict) and _NODE in engines",
-            "return engines is not None and _NODE in engines",
+            package_json_manifest.PackageJson.declares_a_node_engine,
+            "return isinstance(engines, dict) and NODE_ENGINE in engines",
+            "return engines is not None and NODE_ENGINE in engines",
             "a section that is a string or a list is read as one naming the engine, so the file is opened for it",
         )
     )
@@ -130,7 +142,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
         Mutation(
             update_node_engine._update_node_engine,
             """if engine_marker.reference_location.line_number is None:
-        _LOG.no_entry(_NODE, package_json.path)
+        _LOG.no_entry(package_json_manifest.NODE_ENGINE, package_json.path)
         return
     update_file(""",
             "update_file(",

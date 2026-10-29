@@ -131,7 +131,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            dockerfile_manifest.build_arguments,
+            dockerfile_manifest.Dockerfile._build_arguments,
             "in enumerate(lines[:first_from])",
             "in [*enumerate(lines[:first_from])][::-1]",
             "the first declaration of a build argument holds, so the new version is written onto one Docker ignores",
@@ -220,8 +220,8 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
     @kills(
         Mutation(
             update_dockerfile_base_image._shared_lines,
-            "(substituted_line.substituted_reference, parse_marker(substituted_line))",
-            "(substituted_line.substituted_reference, None)",
+            "(substituted.substituted_reference, parse_marker(substituted))",
+            "(substituted.substituted_reference, None)",
             "`FROM` lines sharing an `ARG` are compared without their markers, so one overwrites the other's update",
         )
     )
@@ -242,8 +242,8 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
     @kills(
         Mutation(
             update_dockerfile_base_image._shared_lines,
-            "(substituted_line.substituted_reference, parse_marker",
-            "(substituted_line.text, parse_marker",
+            "(substituted.substituted_reference, parse_marker",
+            "(substituted.text, parse_marker",
             "two `FROM` lines are compared by their text, so spelling the same reference differently refuses it",
         )
     )
@@ -333,9 +333,9 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            update_dockerfile_base_image._refusal,
-            "return explaining_skipped_lookups(get_new_version, lambda _pinned: reason)",
-            "return get_new_version",
+            update_dockerfile_base_image._Refusal.__post_init__,
+            "explaining_skipped_lookups(self, lambda _pinned: self.reason)",
+            "pass",
             "a refused reference does not say why it is never looked up, so a redundant marker names another reason",
         )
     )
@@ -431,10 +431,9 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            dockerfile_manifest.stage_names,
-            'return frozenset(match.group("stage").lower() for match in _STAGE_NAME_RE.finditer'
-            "(dockerfile.read_text()))",
-            'return frozenset(match.group("stage") for match in _STAGE_NAME_RE.finditer(dockerfile.read_text()))',
+            dockerfile_manifest.Dockerfile._stage_names,
+            'match.group("stage").lower() for match in',
+            'match.group("stage") for match in',
             "a stage whose name is written in another case than the `FROM` naming it is not matched",
         )
     )
@@ -444,6 +443,23 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         mock_dockerfile = mock_path("FROM python:3.14 AS Deps\nFROM deps\n")
         self.run_updater(mock_dockerfile)
         mock_dockerfile.write_text.assert_called_once_with(f"FROM python:3.14.7@{DIGEST} AS Deps\nFROM deps\n")
+        self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            dockerfile_manifest.Dockerfile._stage_names,
+            'text = "".join(line.text for line in self.lines)\n'
+            '        return frozenset(match.group("stage").lower() for match in _STAGE_NAME_RE.finditer(text))\n',
+            'return frozenset(m["stage"].lower() for line in self.lines for m in _STAGE_NAME_RE.finditer(line.text))\n',
+            "a stage is read per line, so one whose `AS` sits on a continuation line is looked up as an image",
+        )
+    )
+    def test_a_stage_named_on_a_continuation_line_is_matched(self):
+        """Test that a `FROM` naming a stage whose `AS` sits on the continuation line names that stage."""
+        self.requests.side_effect = mock_docker_registry(docker_tag("latest", DIGEST), docker_tag("3.14.7", DIGEST))
+        mock_dockerfile = mock_path("FROM python:3.14 \\\nAS deps\nFROM deps\n")
+        self.run_updater(mock_dockerfile)
+        mock_dockerfile.write_text.assert_called_once_with(f"FROM python:3.14.7@{DIGEST} \\\nAS deps\nFROM deps\n")
         self.assert_no_warnings_logged()
 
     def test_stage_alias_is_preserved_when_pinning(self):
@@ -457,9 +473,9 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            update_dockerfile_base_image._pins_a_digest_beside_a_variable,
-            'ARGUMENT_VARIABLE_RE.search(line, reference.start("dependency")',
-            "ARGUMENT_VARIABLE_RE.search(line, 0",
+            dockerfile_manifest.pins_a_digest_beside_a_variable,
+            '_ARGUMENT_VARIABLE_RE.search(line, reference.start("dependency")',
+            "_ARGUMENT_VARIABLE_RE.search(line, 0",
             "a digest is read as overruling the `--platform` flag's variable, so the image is left alone",
         )
     )
@@ -474,9 +490,9 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            update_dockerfile_base_image._substituted_line,
-            "ARGUMENT_VARIABLE_RE.finditer(line.text, start, end)",
-            "ARGUMENT_VARIABLE_RE.finditer(line.text, 0, end)",
+            dockerfile_manifest._substituted_line,
+            "_ARGUMENT_VARIABLE_RE.finditer(line.text, start, end)",
+            "_ARGUMENT_VARIABLE_RE.finditer(line.text, 0, end)",
             "the `--platform` flag's variable is substituted too, so the reference is reported as through a variable",
         )
     )

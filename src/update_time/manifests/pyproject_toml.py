@@ -1,275 +1,52 @@
-"""Read, edit, and rewrite pyproject.toml files, preserving their formatting.
+"""Read and edit what only a pyproject.toml holds: its `[tool]` tables, and whether it declares dependencies."""
 
-An inline script metadata block declares its dependencies as the same TOML, so reading and rewriting those go
-through here too. The `DependencyTomlFile` the caller hands over says where in the file that TOML sits, so
-nothing here knows which of the two kinds of file it is looking at.
-"""
-
-import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from packaging.requirements import InvalidRequirement, Requirement
-
-from update_time.domain.dependency import is_valid, normalized_python_name
-from update_time.domain.line import Line, located_lines
 from update_time.formats import toml
-from update_time.markers.marker import Marker, Scope, parse_marker
-from update_time.markers.reference import SteeredReference
-from update_time.primitives.location import Location
-from update_time.primitives.text import line_number
+from update_time.manifests.python_dependency_toml import PythonDependencyToml, uv_dependency_arrays
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, MutableSequence
-    from pathlib import Path
-
-    from update_time.domain.dependency import DependencyName, VersionString
-    from update_time.manifests.dependency_file import DependencyTomlFile
+    from collections.abc import Mapping
 
 # The `[project]` fields that a project can list as `dynamic`, leaving the build backend to fill in the dependencies
 # that uv then resolves.
 _DYNAMIC_DEPENDENCY_FIELDS = ("dependencies", "optional-dependencies")
 
-type _DeclarationPosition = int
 
+@dataclass(frozen=True)
+class PyprojectToml(PythonDependencyToml):
+    """A file that is TOML throughout, so it declares its dependencies in the file itself."""
 
-def _placeholder(position: _DeclarationPosition) -> str:
-    """Return the text put in a spec's place to find the line declaring it, distinct from every other spec's.
+    def toml(self, contents: str) -> str:
+        """Return the contents, which are TOML."""
+        return contents
 
-    The position is wrapped rather than appended, so one placeholder is never the start of another.
-    """
-    return f"update-time-spec-{position}-update-time-spec"
+    def with_toml(self, _contents: str, /, toml_text: str) -> str:
+        """Return the TOML, which is the whole file."""
+        return toml_text
 
+    @staticmethod
+    def declares_a_dependency(config: Mapping) -> bool:
+        """Return whether the config declares a dependency uv resolves, in an array or through the build backend."""
+        dynamic = config.get("project", {}).get("dynamic", [])
+        return any(uv_dependency_arrays(config)) or any(field in dynamic for field in _DYNAMIC_DEPENDENCY_FIELDS)
 
-def tool_key(path: Path, table: str, key: str) -> tuple[str, str] | None:
-    """Return the (value, trailing-comment) of `[tool.<table>] <key>`, or None when it isn't set.
+    def tool_key(self, table: str, key: str) -> tuple[str, str] | None:
+        """Return the (value, trailing-comment) of `[tool.<table>] <key>`, or None when it isn't set.
 
-    The trailing comment is returned verbatim (with its leading `#`, or empty when there is none), so a caller can
-    recognise a line it wrote itself.
-    """
-    return toml.nested_value(toml.read_document(path), "tool", table, key)
-
-
-def set_tool_key(path: Path, table: str, key: str, value: str, *, comment: str = "") -> bool:
-    """Set `[tool.<table>] <key> = value` (with an optional trailing comment), write the file back, and return True.
-
-    Return False, leaving the file as it is, when its `tool` or `tool.<table>` is not a table.
-    """
-    document = toml.read_document(path)
-    if not toml.set_nested_value(document, "tool", table, key, value=value, comment=comment):
-        return False
-    path.write_text(toml.dumps(document))
-    return True
-
-
-def rewrite_pinned_versions(file: DependencyTomlFile, versions: dict[Declaration, VersionString]) -> None:
-    """Rewrite each declaration to the version `versions` holds for it; write the file if changed.
-
-    One declaration of a name is rewritten while another declaration of that name keeps its pinned version. Each
-    declaration is one that `declarations` read from this file.
-    """
-    by_position = {declaration.position: declaration for declaration in versions}
-
-    def new_spec(position: _DeclarationPosition, spec: str) -> str | None:
-        if (declaration := by_position.get(position)) is None:
-            return None
-        rewritten = _rewritten_spec(spec, declaration, versions[declaration])
-        return rewritten if rewritten != spec else None
-
-    if (rewritten_contents := _replaced_specs(file, file.read(), new_spec)) is not None:
-        file.write(rewritten_contents)
-
-
-def _replaced_specs(
-    file: DependencyTomlFile, contents: str, replace: Callable[[_DeclarationPosition, str], str | None]
-) -> str | None:
-    """Return the file's text with each declared spec `replace` gives a replacement for, or None when it gives none.
-
-    Every call walks the arrays in the same order, so a spec has the same position in each of them.
-
-    Only the specs in the dependency arrays change. A string spelled like a spec elsewhere in the file, and the
-    comments, quoting, and whitespace around the specs, come back as they were. A file that is not valid TOML
-    comes back as None as well, so one malformed file does not abort the run.
-    """
-    if (document := toml.parse_document(file.toml(contents))) is None:
-        return None
-    replaced = False
-    position = 0
-    for array in _dependency_arrays(document):
-        for index, spec in enumerate(array):
-            if not toml.is_string(spec):
-                continue
-            position += 1
-            if (new_spec := replace(position, spec)) is not None:
-                array[index] = toml.string(new_spec, quoted_as=spec)
-                replaced = True
-    return file.with_toml(contents, toml.dumps(document)) if replaced else None
-
-
-def _config(toml_text: str) -> dict:
-    """Return the TOML parsed, or an empty config when it isn't valid TOML."""
-    return toml.parse(toml_text) or {}
-
-
-def _uv_table(config: Mapping) -> Mapping:
-    """Return the config's `[tool.uv]` table, or an empty table when it has none."""
-    return config.get("tool", {}).get("uv", {})
-
-
-def _uv_source_names(config: dict) -> set[DependencyName]:
-    """Return the names of the dependencies uv resolves from a source of its own, each normalised.
-
-    uv matches a `sources` key to a dependency by the normalised name, so a key spells the dependency any of the
-    ways that normalize to the same name.
-    """
-    return {normalized_python_name(name) for name in _uv_table(config).get("sources", {})}
-
-
-def declares_a_dependency(config: Mapping) -> bool:
-    """Return whether the config declares a dependency for uv to resolve, in an array or through the build backend."""
-    dynamic = config.get("project", {}).get("dynamic", [])
-    return any(_uv_dependency_arrays(config)) or any(field in dynamic for field in _DYNAMIC_DEPENDENCY_FIELDS)
-
-
-def _dependency_arrays(config: Mapping) -> list[MutableSequence]:
-    """Return every array of dependency specs the config declares: the ones uv resolves, and the build requirements."""
-    return [*_uv_dependency_arrays(config), config.get("build-system", {}).get("requires", [])]
-
-
-def _uv_dependency_arrays(config: Mapping) -> list[MutableSequence]:
-    """Return every array of dependency specs that uv resolves.
-
-    A pyproject.toml declares them in the project's own array, in an array per extra, in an array per dependency
-    group, and in uv's legacy `[tool.uv] dev-dependencies`. uv still resolves that legacy array, so it is read like
-    the rest. An inline script metadata block declares them in one array of its own.
-    """
-    project = config.get("project", {})
-    return [
-        project.get("dependencies", []),
-        *project.get("optional-dependencies", {}).values(),
-        *config.get("dependency-groups", {}).values(),
-        _uv_table(config).get("dev-dependencies", []),
-        config.get("dependencies", []),
-    ]
-
-
-@dataclass(frozen=True, kw_only=True)
-class Declaration(SteeredReference):
-    """A dependency a file declares, and where the file says its release comes from.
-
-    `uv_sourced` says the file names this dependency in its `[tool.uv] sources` table, so uv resolves it from a
-    path, a workspace member, a git repository, or an index of its own. `direct_url` says the declaration points
-    at a URL or a git repository rather than at a release. What follows from naming no release is the caller's.
-    `position` says which spec of the file this declaration is, counting from one.
-    """
-
-    uv_sourced: bool
-    direct_url: bool
-    position: _DeclarationPosition
-
-    @property
-    def pins_a_version(self) -> bool:
-        """Return whether the declaration pins an exact version, so a check about that version has one to run on."""
-        return bool(self.current_version)
-
-    @property
-    def names_a_release(self) -> bool:
-        """Return whether the declaration points at a release of the package it names."""
-        return not (self.direct_url or self.uv_sourced)
-
-    @property
-    def updatable(self) -> bool:
-        """Return whether the declaration's own marker leaves its version to be updated.
-
-        A declaration that pins no exact version has no pin to freeze, so an `ignore[update]` on it holds nothing
-        back.
+        The trailing comment is returned verbatim (with its leading `#`, or empty when there is none), so a caller can
+        recognise a line it wrote itself.
         """
-        return not (self.pins_a_version and self.marker.ignores(Scope.UPDATE))
+        return toml.nested_value(toml.read_document(self.path), "tool", table, key)
 
+    def set_tool_key(self, table: str, key: str, value: str, *, comment: str = "") -> bool:
+        """Set `[tool.<table>] <key> = value` (with an optional trailing comment), write the file back, and return True.
 
-def declarations(file: DependencyTomlFile) -> list[Declaration]:
-    """Return every dependency the file declares, each parsed once and located and marked at the line declaring it.
-
-    Only the dependency arrays are read, so a string spelled like a spec elsewhere in the file is not one. A spec
-    another declaration spells identically, and one TOML spells with an escape, are each located at their own line
-    too. A spec that does not parse is left out, without shifting the positions of the declarations after it.
-    """
-    contents = file.read()
-    sourced = _uv_source_names(_config(file.toml(contents)))
-    specs: dict[_DeclarationPosition, str] = {}
-
-    def place(position: _DeclarationPosition, spec: str) -> str:
-        specs[position] = spec
-        return _placeholder(position)
-
-    placed = _replaced_specs(file, contents, place)
-    if placed is None:
-        return []
-    requirements = {
-        position: requirement for position, spec in specs.items() if (requirement := _requirement(spec)) is not None
-    }
-    lines = located_lines(file.path, file.toml(placed).split("\n"))
-    locations = {
-        position: Location(file.path, line_number(placed, placed.index(_placeholder(position))))
-        for position in requirements
-    }
-    return [
-        Declaration(
-            requirement.name,
-            _pinned_version(requirement),
-            locations[position],
-            uv_sourced=normalized_python_name(requirement.name) in sourced,
-            direct_url=bool(requirement.url),
-            position=position,
-            marker=_marker(lines, position, locations[position]),
-        )
-        for position, requirement in requirements.items()
-    ]
-
-
-def _marker(lines: list[Line], position: _DeclarationPosition, location: Location) -> Marker:
-    """Return the marker steering the declaration at the position, read from the line holding its placeholder.
-
-    The lines are the TOML's rather than the file's, so a marker inside a `# /// script` block is read without the
-    `#` that comments the block out. They are located from the TOML's own start, so the declaration's location
-    replaces the one its line was given.
-    """
-    line = next(line for line in lines if _placeholder(position) in line.text)
-    return parse_marker(replace(line, location=location))
-
-
-def _requirement(spec: str) -> Requirement | None:
-    """Return the requirement the spec declares, or None when the spec does not parse as one.
-
-    A spec with a typo in it — `pkg=1.0`, say — reads back as None, which keeps one bad declaration from aborting
-    the run.
-    """
-    try:
-        return Requirement(spec)
-    except InvalidRequirement:
-        return None
-
-
-def _pinned_version(requirement: Requirement) -> VersionString:
-    """Return the version the requirement pins exactly, or the empty string when it pins none.
-
-    A requirement pins one when its only specifier is an `==` naming a version rather than a wildcard, whatever the
-    declaration spells around it: an extra, an environment marker, and spaces are all part of the declaration rather
-    than of the version. Arbitrary equality (`===`) names a string the source need not resolve to a version, so it
-    pins none either.
-    """
-    specifiers = list(requirement.specifier)
-    if len(specifiers) == 1 and specifiers[0].operator == "==" and is_valid(specifiers[0].version):
-        return specifiers[0].version
-    return ""
-
-
-def _rewritten_spec(spec: str, declaration: Declaration, new_version: VersionString) -> str:
-    """Return the spec with the version the declaration pins replaced by the new one.
-
-    A declaration pinning no exact version has none to replace, so its spec comes back as it was. Only the version
-    is replaced, so whatever the declaration spells around it stays as it is.
-    """
-    if not (current := declaration.current_version):
-        return spec
-    return re.sub(rf"(==\s*){re.escape(current)}", lambda match: match[1] + new_version, spec, count=1)
+        Return False, leaving the file as it is, when its `tool` or `tool.<table>` is not a table.
+        """
+        document = toml.read_document(self.path)
+        if not toml.set_nested_value(document, "tool", table, key, value=value, comment=comment):
+            return False
+        self.write(toml.dumps(document))
+        return True

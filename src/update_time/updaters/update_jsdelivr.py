@@ -9,7 +9,6 @@ or bounds it. A Sphinx config is Python, so the marker travels in a `#` comment,
 on the line directly above the URL.
 """
 
-import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -17,6 +16,7 @@ from update_time.domain.file_type import SPHINX_CONFIG
 from update_time.domain.reference import ResolvedReference, hash_drifted
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
+from update_time.manifests.sphinx_config import ATTRIBUTES, URL_REFERENCE, spell_integrity
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Scope
 from update_time.primitives.text import rewrite_string
@@ -29,20 +29,13 @@ from update_time.sources.jsdelivr import integrity_hash, version_getter
 from update_time.sources.osv import Ecosystem
 
 if TYPE_CHECKING:
+    import re
+
     from update_time.domain.line import Line
     from update_time.markers.marker import Marker
     from update_time.primitives.location import Location
 
 _LOG = get_logger("jsdelivr")
-
-# A jsDelivr npm URL. The file path after the version is captured so its (instead of the package default's) integrity
-# hash is what gets updated.
-_URL_RE = re.compile(r'https://cdn\.jsdelivr\.net/npm/(?P<dependency>[\w-]+)@(?P<version>[\d.]+)(?P<filename>/[^"]*)')
-
-# The attribute dictionary a URL is accompanied by, and the Subresource Integrity hash it declares. The hash is
-# optional, so a dictionary that declares none matches too; pinning it inserts the key in front of the entries it
-# already has, which is what replacing `open` does.
-_ATTRIBUTES_RE = re.compile(r'(?P<open>\{)(?:"integrity": "(?P<sha>sha\d+-[A-Za-z0-9+/=]+)", )?')
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -63,15 +56,14 @@ class _ResolvedURL(ResolvedReference):
     def _pin(self, match: re.Match[str]) -> str:
         """Return the dictionary with the resolved version's hash inserted, pinning a URL that declared none.
 
-        Such a URL loads whatever the CDN serves, so the hash goes in front of the entries the dictionary already
-        has. It is the hash the version decision resolved, or, for a URL staying on its version, one looked up for
-        that version. The pin is only reported when the version stayed put: when it moved, the new version is the
-        change to report and the pin travels with it.
+        Such a URL loads whatever the CDN serves. The hash is the one the version decision resolved, or, for a URL
+        staying on its version, one looked up for that version. The pin is only reported when the version stayed put:
+        when it moved, the new version is the change to report and the pin travels with it.
         """
         sha = self.release.sha or integrity_hash(self.dependency, self.release.version, self.filename)
         if not self.version_moved:
             _LOG.pinned(self, replace(self.release, sha=sha))
-        return rewrite_string(match, {"open": f'{{"integrity": "{sha}", '})
+        return rewrite_string(match, {"open": spell_integrity(sha)})
 
     def _refresh(self, match: re.Match[str]) -> str:
         """Return the dictionary with its declared hash rewritten to the resolved version's, or left as it is.
@@ -145,10 +137,10 @@ class _Rewriter:
         """
         result = []
         for line in lines:
-            if url_match := _URL_RE.search(line.text):
+            if url_match := URL_REFERENCE.search(line.text):
                 self._end_entry()
                 result.append(apply_marker(line, url_match, self.update_url, _LOG))
-            elif (resolved := self.resolved) and (attributes_match := _ATTRIBUTES_RE.search(line.text)):
+            elif (resolved := self.resolved) and (attributes_match := ATTRIBUTES.search(line.text)):
                 self.resolved = None
                 result.append(resolved.update_attributes(attributes_match))
             else:
@@ -171,7 +163,7 @@ def update_jsdelivrs() -> None:
     """Find the Sphinx config files under docs/ and update the jsDelivr URLs in them."""
     for sphinx_config_py in glob_for(SPHINX_CONFIG):
         lines = rewrite_file(sphinx_config_py, _Rewriter().updated_lines, _LOG)
-        warn_about_vulnerable_references(lines, _URL_RE, Ecosystem.NPM, _LOG)
+        warn_about_vulnerable_references(lines, URL_REFERENCE, Ecosystem.NPM, _LOG)
 
 
 def main() -> None:  # pragma: no cover

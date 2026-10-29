@@ -3,10 +3,9 @@
 from typing import TYPE_CHECKING
 
 from update_time.domain.file_type import PACKAGE_JSON
-from update_time.formats import json as json_format
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
-from update_time.manifests import package_json as package_json_format
+from update_time.manifests.package_json import PackageJson
 from update_time.markers.directive import Reason
 from update_time.package_managers import node
 from update_time.package_managers.policy import report_markers
@@ -19,57 +18,9 @@ from update_time.sources import npmjs
 from update_time.sources.osv import Ecosystem
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
-    from update_time.formats.json import JsonFile
     from update_time.markers.reference import SteeredReference
 
 _LOG = get_logger("package.json")
-# Files that signal which package manager a project uses, checked when there is no corepack `packageManager` field.
-# pnpm is handled like npm; yarn and bun are detected only to be skipped (see node.SUPPORTED_MANAGERS). npm's
-# `package-lock.json` is deliberately absent: npm is the default when nothing else matches, so listing it would be a
-# no-op, and leaving it out lets a real non-npm lockfile win over a stale `package-lock.json` left by a migration.
-_MANAGER_FILES = {"pnpm-lock.yaml": "pnpm", "pnpm-workspace.yaml": "pnpm", "yarn.lock": "yarn", "bun.lockb": "bun"}
-
-
-def _package_manager(package_json: JsonFile) -> str:
-    """Return the name of the project's package manager (npm, pnpm, yarn, bun), defaulting to npm.
-
-    The nearest directory that names a manager decides, from the package.json's own upwards, so a workspace member
-    takes the manager of its workspace root. In each directory, the corepack `packageManager` field of its
-    package.json (e.g. `"pnpm@9.15.0"`) wins over a lockfile or a workspace file.
-    """
-    directory = package_json.path.parent
-    if manager := _declared_manager(package_json) or _signalled_manager(directory):
-        return manager
-    for ancestor in directory.parents:
-        if manager := _declared_manager_in(ancestor) or _signalled_manager(ancestor):
-            return manager
-    return "npm"
-
-
-def _declared_manager(package_json: JsonFile) -> str:
-    """Return the name of the manager that the package.json's corepack `packageManager` field names, if any."""
-    contents = package_json.contents
-    declared = contents.get("packageManager") if isinstance(contents, dict) else None
-    return declared.split("@", maxsplit=1)[0] if isinstance(declared, str) else ""
-
-
-def _declared_manager_in(directory: Path) -> str:
-    """Return the name of the manager that the package.json in the directory names, if any."""
-    package_json = directory / "package.json"
-    if not package_json.exists():
-        return ""
-    try:
-        return _declared_manager(json_format.read(package_json))
-    except (OSError, ValueError) as error:
-        _LOG.unreadable_manager_declaration(package_json, error)
-        return ""
-
-
-def _signalled_manager(directory: Path) -> str:
-    """Return the name of the manager that a lockfile or a workspace file in the directory signals, if any."""
-    return next((manager for name, manager in _MANAGER_FILES.items() if (directory / name).exists()), "")
 
 
 def update_package_jsons() -> None:
@@ -81,12 +32,12 @@ def update_package_jsons() -> None:
     supported = []
     # npm rewrites the ranges of a workspace's members as it updates the root, so the root runs first and logs them:
     for package_json in sorted(glob_for(PACKAGE_JSON), key=lambda path: len(path.parts)):
-        if (file := node.readable_package_json(package_json, _LOG.unreadable_package_json)) is None:
+        if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:
             continue
-        if (manager := node.SUPPORTED_MANAGERS.get(name := _package_manager(file))) is None:
+        if (manager := node.SUPPORTED_MANAGERS.get(name := node.manager_name(file))) is None:
             _LOG.unsupported_package_manager(package_json, name, " and ".join(node.SUPPORTED_MANAGERS))
             continue
-        if package_json_format.declares_a_dependency(file):
+        if file.declares_a_dependency():
             checked_package_json = manager.update_package_json(file)
         else:
             _LOG.no_dependencies(package_json, name, "install")
@@ -96,9 +47,9 @@ def update_package_jsons() -> None:
     _warn_about_dependencies(supported)
 
 
-def _warn_about_dependencies(files: list[JsonFile]) -> None:
+def _warn_about_dependencies(files: list[PackageJson]) -> None:
     """Report the marker of each dependency, and check the dependencies of each package.json."""
-    declarations = [list(package_json_format.declarations(file)) for file in files]
+    declarations = [list(file.declarations()) for file in files]
     check_targets = [report_markers(file_declarations, _LOG, node.POLICY) for file_declarations in declarations]
     warn_about_redundant_directives(declarations, _LOG, node.POLICY)
     _report_undeclared_references(files)
@@ -108,10 +59,10 @@ def _warn_about_dependencies(files: list[JsonFile]) -> None:
     )
 
 
-def _report_undeclared_references(files: list[JsonFile]) -> None:
+def _report_undeclared_references(files: list[PackageJson]) -> None:
     """Report the marker of each dependency that the `update-time` field names and its section does not declare."""
     for file in files:
-        for reference in package_json_format.undeclared_references(file):
+        for reference in file.undeclared_references():
             _report_undeclared_reference(reference)
 
 

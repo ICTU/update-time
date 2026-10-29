@@ -234,7 +234,7 @@ _UNSERVED_REPOSITORIES = {
 
 
 class ImageUpdaterTestMixin(RegistryRequestsMixin, LoggingTestCase):
-    """Shared tests for the updaters that rewrite `image:tag[@digest]` references via `update_file`/`tag_getter`.
+    """Shared tests for the updaters that rewrite `image:tag[@digest]` references via `update_file`/`TagGetter`.
 
     All these updaters do the same thing to a reference (leave it when already latest, bump the tag and digest, pin a
     tag-only reference); they differ only in how a reference is written in their file format and how the file is

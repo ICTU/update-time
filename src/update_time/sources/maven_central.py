@@ -17,7 +17,7 @@ from update_time.domain.dependency import NO_CHANGES, Archival, Changes, Project
 from update_time.formats import xml
 from update_time.io.fetch import fetch
 from update_time.io.log import get_logger
-from update_time.manifests import pom_xml as pom_xml_format
+from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.primitives.iterables import unique
 from update_time.primitives.lookup import LookedUp
 from update_time.sources.github import (
@@ -92,7 +92,7 @@ def _release_tags(artefact: DependencyName, repository: GitHubRepository, versio
 
     A repository may tag a release by the artifact's name, without its group, or by its own name.
     """
-    _group_id, artifact_id = pom_xml_format.coordinates(artefact)
+    _group_id, artifact_id = pom_xml_manifest.coordinates(artefact)
     tags = (
         tag
         for spelling in _spellings(version)
@@ -152,24 +152,24 @@ def _parent_pom(pom: XmlElement) -> LookedUp[XmlElement]:
 
     There is none where the pom's `<scm>` names a URL of its own, or where the pom does not name a parent.
     """
-    if pom_xml_format.scm_urls(pom):
+    if pom_xml_manifest.scm_urls(pom):
         return LookedUp(None, absent=True)
-    parent = pom_xml_format.parent(pom)
+    parent = pom_xml_manifest.parent(pom)
     return LookedUp(None, absent=True) if parent is None else LookedUp(_pom(parent.name, parent.version))
 
 
 def _named_repository(pom: XmlElement, artefact: DependencyName) -> LookedUp[GitHubRepository]:
     """Return the GitHub repository the pom names for the artefact, absent where it names none."""
-    for url in pom_xml_format.source_urls(pom, artefact):
+    for url in pom_xml_manifest.source_urls(pom, artefact):
         repository = github_repository(url)
-        if repository is not None and pom_xml_format.is_resolved(str(repository)):
+        if repository is not None and pom_xml_manifest.is_resolved(str(repository)):
             return LookedUp(repository)
     return LookedUp(None, absent=True)
 
 
 def _pom_url(artefact: DependencyName, version: VersionString) -> str:
     """Return the URL of the pom Maven Central serves beside the artefact's version, named after the artifact."""
-    _group_id, artifact_id = pom_xml_format.coordinates(artefact)
+    _group_id, artifact_id = pom_xml_manifest.coordinates(artefact)
     return f"{_artefact_url(artefact)}/{version}/{artifact_id}-{version}.pom"
 
 
@@ -220,7 +220,7 @@ def _artefact_url(artefact: DependencyName) -> str:
 
     Maven names an artefact `groupId:artifactId`, and serves it under the group's dots spelled as directories.
     """
-    group_id, artifact_id = pom_xml_format.coordinates(artefact)
+    group_id, artifact_id = pom_xml_manifest.coordinates(artefact)
     return f"{_MAVEN_CENTRAL}/{group_id.replace('.', '/')}/{artifact_id}"
 
 

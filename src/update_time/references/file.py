@@ -10,6 +10,7 @@ from update_time.domain.line import located_lines
 from update_time.formats import yaml as yaml_format
 from update_time.io.filesystem import glob_for
 from update_time.references.rewrite import update_references_in_lines
+from update_time.sources.oci import ImagesNotPulled, TagGetter
 
 if TYPE_CHECKING:
     import re
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from update_time.domain.bound import NewVersionGetter
+    from update_time.domain.dependency import ImageNotLookedUp
     from update_time.domain.file_type import FileType
     from update_time.domain.line import Line
     from update_time.formats.yaml import Document
@@ -73,12 +75,18 @@ def update_file(
 
 
 def update_yaml_files(
-    file_type: FileType, *, regexp: str, get_new_version_for: Callable[[Document], NewVersionGetter], logger: Logger
+    file_type: FileType,
+    *,
+    regexp: str | re.Pattern[str],
+    find_images: Callable[[Document], set[str]],
+    reason: ImageNotLookedUp,
+    logger: Logger,
 ) -> None:
-    """Update the files of this kind, parsing each of them to build the getter that resolves its references."""
+    """Update the images in the files of this kind, leaving the ones `find_images` reads from each file unchanged."""
     for path in glob_for(file_type):
         document = yaml_format.read(path)
-        if document is yaml_format.UNPARSABLE:
+        if document is None:
             logger.invalid_file(path, yaml_format.FORMAT)
         else:
-            update_file(path, regexp, get_new_version=get_new_version_for(document), logger=logger)
+            get_new_version = TagGetter(ImagesNotPulled(find_images(document), reason))
+            update_file(path, regexp, get_new_version=get_new_version, logger=logger)

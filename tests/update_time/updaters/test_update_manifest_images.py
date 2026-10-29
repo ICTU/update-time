@@ -5,12 +5,13 @@ from unittest.mock import Mock, patch
 
 from update_time.domain.dependency import FloatingPin, ImageNotLookedUp
 from update_time.domain.file_type import DOCKER_COMPOSE_FILES, HELM_CHARTS
+from update_time.formats import yaml as yaml_format
+from update_time.manifests import docker_compose as docker_compose_manifest
 from update_time.markers.directive import Consequence, ImageNotLookedUpReason
 from update_time.primitives.location import Location
 from update_time.references import file as references_file
 from update_time.references import resolve as references_resolve
 from update_time.sources import oci
-from update_time.updaters import update_manifest_images as manifest_images
 from update_time.updaters.update_manifest_images import update_manifest_images
 
 from tests.helpers import mock_path
@@ -76,9 +77,9 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            manifest_images._built_images,
-            "for service in services.values()\n",
-            "for service in list(services.values())[:1]\n",
+            docker_compose_manifest.built_images,
+            'for service in document["services"].values()\n',
+            'for service in document["services"].values()[:1]\n',
             "only the first service is read, so an image a later service builds is looked up on a registry",
         )
     )
@@ -105,9 +106,9 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            oci.tag_getter_excluding,
-            'without_digests = {image.partition("@")[0] for image in images}\n',
-            "without_digests = set(images)\n",
+            oci.ImagesNotPulled,
+            'frozenset(image.partition("@")[0] for image in self.images)',
+            "frozenset(self.images)",
             "a digest the file records beside a built image's tag survives into the match, so the image is looked up",
         )
     )
@@ -120,11 +121,11 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            manifest_images._built_images,
-            'if isinstance(service, dict) and "build" in service and isinstance(service.get("image"), str)\n',
-            'if isinstance(service, dict) and "build" in service\n',
+            docker_compose_manifest.built_images,
+            '(image := service["image"].string()) is not None\n',
+            '((image := service["image"].string()) or True)\n',
             "a service that builds an image without tagging one aborts the run",
-            raises="KeyError: 'image'",
+            raises="AttributeError: 'NoneType' object has no attribute 'partition'",
         ),
     )
     def test_image_the_file_does_not_build_is_updated(self):
@@ -149,23 +150,9 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            manifest_images._built_images,
-            'services = document.get("services") if isinstance(document, dict) else None\n',
-            'services = document.get("services")\n',
-            "a Compose file that is not a mapping is read as one, ending the run",
-            raises="AttributeError: 'list' object has no attribute 'get'",
-        ),
-        Mutation(
-            manifest_images._built_images,
-            "if not isinstance(services, dict):\n",
-            "if services is None:\n",
-            "a `services:` that is not a mapping is read as one, ending the run",
-            raises="AttributeError: 'list' object has no attribute 'values'",
-        ),
-        Mutation(
-            manifest_images._built_images,
-            'if isinstance(service, dict) and "build" in service and isinstance(service.get("image"), str)\n',
-            'if "build" in service and isinstance(service.get("image"), str)\n',
+            yaml_format.Document.__contains__,
+            "return isinstance(self._value, dict) and key in self._value\n",
+            "return key in self._value\n",
             "a service declared with no body is read as a mapping, ending the run",
             raises="TypeError: argument of type 'NoneType' is not a container or iterable",
         ),
@@ -188,10 +175,10 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
 
     @kills(
         Mutation(
-            oci.tag_getter_excluding,
+            oci.ImagesNotPulled.__call__,
             'as_written = f"{pinned.name}{tag_of(pinned.version)}"\n'
-            "        return reason if as_written in without_digests else None\n",
-            'return reason if pinned.name in {name.split(":", maxsplit=1)[0] for name in without_digests} else None\n',
+            "        return self.reason if as_written in self._without_digests else None\n",
+            'return self.reason if pinned.name in {i.partition(":")[0] for i in self._without_digests} else None\n',
             "a reference is matched on its name alone, so every tag of a built repository is left alone",
         )
     )
@@ -208,9 +195,9 @@ class UpdateManifestImagesTest(registry.ImageUpdaterTestMixin):
     @kills(
         Mutation(
             references_file.update_yaml_files,
-            "update_file(path, regexp, get_new_version=get_new_version_for(document), logger=logger)\n",
-            'getter = getter if "getter" in dir() else get_new_version_for(document)\n'
-            "            update_file(path, regexp, get_new_version=getter, logger=logger)\n",
+            "get_new_version = TagGetter(ImagesNotPulled(find_images(document), reason))\n",
+            'get_new_version = get_new_version if "get_new_version" in dir() else '
+            "TagGetter(ImagesNotPulled(find_images(document), reason))\n",
             "the getter built for one file judges the files after it, so what one file builds reaches them all",
         )
     )

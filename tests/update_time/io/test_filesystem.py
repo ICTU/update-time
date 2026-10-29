@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from unittest.mock import _patch
 
 from update_time.domain.file_type import FileType
-from update_time.io.filesystem import EXCLUDE_PATHS, glob_for, inside_git_repository
+from update_time.io.filesystem import _EXCLUDE_PATHS, configure_excluded_paths, glob_for, inside_git_repository
 
 from tests.helpers import patch_environ, patch_pathlib_path
 
@@ -107,19 +107,19 @@ class GlobForTest(unittest.TestCase):
         mock_glob.return_value = [Path("/.git/.devcontainer/devcontainer.json"), visited]
         self.assertEqual(list(glob_for(_DEVCONTAINER_IN_FOLDER)), [visited])
 
-    @patch_environ({EXCLUDE_PATHS.name: "vendor"})
+    @patch_environ({_EXCLUDE_PATHS.name: "vendor"})
     def test_excluded_folder_is_skipped(self, mock_glob: Mock):
         """Test that files under a directory passed to --exclude-path are skipped."""
         mock_glob.return_value = [Path("/vendor/file.txt"), Path("/src/file.txt")]
         self.assertEqual(list(glob_for(_TEXT_FILES)), [Path("/src/file.txt")])
 
-    @patch_environ({EXCLUDE_PATHS.name: "vendor"})
+    @patch_environ({_EXCLUDE_PATHS.name: "vendor"})
     def test_excluded_folder_matches_by_prefix_not_by_name(self, mock_glob: Mock):
         """Test that --exclude-path matches a relative path prefix, not a folder name anywhere in the tree."""
         mock_glob.return_value = [Path("/vendor/file.txt"), Path("/src/vendor/file.txt")]
         self.assertEqual(list(glob_for(_TEXT_FILES)), [Path("/src/vendor/file.txt")])
 
-    @patch_environ({EXCLUDE_PATHS.name: "vendor,packages/legacy"})
+    @patch_environ({_EXCLUDE_PATHS.name: "vendor,packages/legacy"})
     def test_multiple_excluded_folders_are_skipped(self, mock_glob: Mock):
         """Test that every directory in a comma-separated --exclude-path list is skipped."""
         mock_glob.return_value = [Path("/vendor/a.txt"), Path("/packages/legacy/b.txt"), Path("/packages/kept/c.txt")]
@@ -170,14 +170,43 @@ class ExcludedPathsTest(unittest.TestCase):
     def test_no_excluded_paths(self):
         """Test that no excluded paths are returned when the environment variable is not set."""
         with patch_environ():
-            self.assertEqual(EXCLUDE_PATHS.get(), [])
+            self.assertEqual(_EXCLUDE_PATHS.get(), [])
 
     def test_empty_excluded_paths(self):
         """Test that an empty environment variable yields no excluded paths."""
-        with patch_environ({EXCLUDE_PATHS.name: ""}):
-            self.assertEqual(EXCLUDE_PATHS.get(), [])
+        with patch_environ({_EXCLUDE_PATHS.name: ""}):
+            self.assertEqual(_EXCLUDE_PATHS.get(), [])
 
     def test_excluded_paths(self):
         """Test that the comma-separated excluded paths are parsed into a list of paths."""
-        with patch_environ({EXCLUDE_PATHS.name: "vendor,packages/legacy"}):
-            self.assertEqual(EXCLUDE_PATHS.get(), [Path("vendor"), Path("packages/legacy")])
+        with patch_environ({_EXCLUDE_PATHS.name: "vendor,packages/legacy"}):
+            self.assertEqual(_EXCLUDE_PATHS.get(), [Path("vendor"), Path("packages/legacy")])
+
+
+@patch_environ()
+class ConfigureExcludedPathsTest(unittest.TestCase):
+    """Unit tests for setting the excluded directories that exist, and logging each directory given."""
+
+    def test_a_directory_that_does_not_exist_is_left_out(self):
+        """Test that a directory that does not exist is warned about and left out, and one that exists is kept."""
+        logger = Mock()
+        with patch("pathlib.Path.exists", autospec=True, side_effect=lambda self: self == Path("vendor")):
+            configure_excluded_paths([Path("vendor"), Path("missing")], logger)
+        self.assertEqual(_EXCLUDE_PATHS.get(), [Path("vendor")])
+        logger.missing_excluded_path.assert_called_once_with(Path("missing"))
+
+    @patch_pathlib_path(exists=True)
+    def test_an_existing_directory_is_logged(self):
+        """Test that an existing directory is logged once at DEBUG, and not warned about."""
+        logger = Mock()
+        configure_excluded_paths([Path("vendor")], logger)
+        logger.excluded_path.assert_called_once_with(Path("vendor"))
+        logger.missing_excluded_path.assert_not_called()
+
+    @patch_pathlib_path(exists=False)
+    def test_a_missing_directory_is_warned_about(self):
+        """Test that a directory that does not exist is warned about rather than failing the run."""
+        logger = Mock()
+        configure_excluded_paths([Path("vendor")], logger)
+        logger.missing_excluded_path.assert_called_once_with(Path("vendor"))
+        logger.excluded_path.assert_not_called()

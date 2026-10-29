@@ -9,10 +9,11 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
     from update_time.domain.file_type import FileType
+    from update_time.io.log import Logger
 
 # Private channel that passes --exclude-path from the CLI to the updater subprocesses. The scan-root-relative
 # directories to skip, validated by the CLI (relative, non-escaping) so they are trusted here.
-EXCLUDE_PATHS: EnvVar[list[Path]] = EnvVar(
+_EXCLUDE_PATHS: EnvVar[list[Path]] = EnvVar(
     "_UPDATE_TIME_EXCLUDE_PATHS",
     default=[],
     parse=lambda value: [Path(entry) for entry in value.split(",") if entry],
@@ -53,12 +54,12 @@ def glob_for(file_type: FileType) -> Iterator[Path]:
     Hidden folders and files (dot-prefixed, e.g. `.git`, `.venv`) and build-output folders are skipped, so a broad
     pattern like `*.yml` doesn't reach into them. A hidden folder or file that a hidden segment of the pattern matches
     is the exception: a `.devcontainer/devcontainer.json` pattern visits `.devcontainer`, and a `.*.Dockerfile` pattern
-    visits `.gitpod.Dockerfile`. Directories passed to `--exclude-path` (see `EXCLUDE_PATHS`) are skipped on top of
+    visits `.gitpod.Dockerfile`. Directories passed to `--exclude-path` (see `_EXCLUDE_PATHS`) are skipped on top of
     these built-in ignores. A walk that is not recursive searches the start directory alone, which is what a file its
     format keeps in one place needs.
     """
     start = Path.cwd() / file_type.start
-    excluded = EXCLUDE_PATHS.get()
+    excluded = _EXCLUDE_PATHS.get()
     for glob_pattern in file_type.patterns:
         hidden_segments = _hidden(PurePath(glob_pattern).parts)
         case_sensitive = file_type.case_sensitivity(glob_pattern)
@@ -72,3 +73,18 @@ def glob_for(file_type: FileType) -> Iterator[Path]:
             if any(relative_path.is_relative_to(excluded_dir) for excluded_dir in excluded):
                 continue
             yield path
+
+
+def configure_excluded_paths(paths: list[Path], logger: Logger) -> None:
+    """Set the excluded directories that exist for `glob_for` to skip, and log each directory given.
+
+    A directory is checked relative to the current one. One that does not exist is warned about and left out.
+    """
+    existing = []
+    for path in paths:
+        if path.exists():
+            logger.excluded_path(path)
+            existing.append(path)
+        else:
+            logger.missing_excluded_path(path)
+    _EXCLUDE_PATHS.set(existing)

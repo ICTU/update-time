@@ -23,7 +23,7 @@ from update_time.domain.staleness import STALE_AFTER
 from update_time.domain.vulnerability import VULNERABILITY_LEVEL, Vulnerability
 from update_time.io.console import CHANGES, NOTE
 from update_time.io.log import Logger, LogMessage
-from update_time.manifests.pyproject_toml import Declaration
+from update_time.manifests.python_dependency_toml import Declaration
 from update_time.markers.bound import parse_bound
 from update_time.markers.directive import Reason
 from update_time.markers.drift import ALLOW_HASH_DRIFT

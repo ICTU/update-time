@@ -14,6 +14,7 @@ from update_time.domain.dependency import (
 )
 from update_time.domain.reference import DriftedPin
 from update_time.io.log import Logger
+from update_time.manifests import pre_commit_config as pre_commit_config_manifest
 from update_time.markers.directive import Reason
 from update_time.primitives import digest
 from update_time.primitives.location import Location
@@ -208,6 +209,27 @@ class UpdatePreCommitConfigsTest(LoggingTestCase):
         self.assert_resolved(mock_get_latest_version)
         self.assert_pinned_logged(self.HOOK, "4.6.0", NEW_SHA, Location(config_file, 3))
         self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            pre_commit_config_manifest,
+            """(?P<quote>['\\"]?)(?P<repo>[^\\s'\\"]+)(?P=quote)")""",
+            """(?P<repo>\\S+)")""",
+            "a quoted repository URL keeps its quotes, so it does not name a GitHub repository and its hook stays",
+        )
+    )
+    def test_quoted_repo_is_updated(self, mock_glob: Mock, mock_get_latest_version: Mock):
+        """Test that a hook repository whose URL the config quotes is updated, whichever quote it uses."""
+        for quote in ("'", '"'):
+            with self.subTest(quote=quote):
+                mock_get_latest_version.reset_mock()
+                mock_get_latest_version.return_value = github_version("4.6.0")
+                repo = f"repos:\n  - repo: {quote}https://github.com/{self.HOOK}{quote}\n"
+                config_file = mock_path(f"{repo}    rev: v4.5.0\n")
+                mock_glob.return_value = [config_file]
+                update_pre_commit_configs()
+                config_file.write_text.assert_called_once_with(f"{repo}    rev: {NEW_SHA}  # frozen: v4.6.0\n")
+                self.assert_resolved(mock_get_latest_version)
 
     @patch_github(
         releases=[github_release_json("v4.5.0", published_at=STALE_DATE)], tags=[], commit=github_commits_json(NEW_SHA)

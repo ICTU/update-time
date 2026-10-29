@@ -16,7 +16,7 @@ from update_time.domain.reference import Reference
 from update_time.formats import toml
 from update_time.io.log import get_logger
 from update_time.io.process import run
-from update_time.manifests import pyproject_toml as pyproject_toml_format
+from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.markers.directive import Reason
 from update_time.markers.reference import SteeredResolvedReference
 from update_time.package_managers.policy import ManagerPolicy, report_markers
@@ -30,8 +30,11 @@ if TYPE_CHECKING:
 
     from update_time.domain.dependency import DependencyName, VersionString
     from update_time.io.log import Logger
-    from update_time.manifests.dependency_file import DependencyTomlFile, InlineScript, PyprojectToml
-    from update_time.manifests.pyproject_toml import Declaration
+    from update_time.manifests.inline_script import InlineScript
+    from update_time.manifests.python_dependency_toml import (
+        Declaration,
+        PythonDependencyToml,
+    )
     from update_time.markers.marker import Scope
 
 _LOG = get_logger("pyproject.toml")
@@ -47,7 +50,7 @@ _EXCLUDE_NEWER_COMMENT = "managed by Update-time — remove this comment to prev
 _EXCLUDE_NEWER_MARKER = "update-time"
 
 
-def python_manager(pyproject_toml: Path, config: dict) -> str:
+def manager_name(pyproject_toml: Path, config: dict) -> str:
     """Return the project's Python dependency manager (uv, poetry, pdm), defaulting to uv.
 
     A `[tool.poetry]`/`[tool.pdm]` section is authoritative; otherwise a sibling lockfile is used as a fallback. The
@@ -91,7 +94,8 @@ def _persist_exclude_newer(pyproject_toml: Path) -> None:
     A value carrying Update-time's marker comment is kept in sync with the cooldown; a value without the marker is
     the user's own and is left untouched, as is an already-current marked value (which is not rewritten).
     """
-    existing = pyproject_toml_format.tool_key(pyproject_toml, "uv", "exclude-newer")
+    file = PyprojectToml(pyproject_toml)
+    existing = file.tool_key("uv", "exclude-newer")
     cooldown = f"{COOLDOWN.get()} days"
     if existing is not None:
         value, comment = existing
@@ -99,9 +103,7 @@ def _persist_exclude_newer(pyproject_toml: Path) -> None:
             return  # A user-set exclude-newer: leave it alone.
         if value == cooldown:
             return  # Already Update-time's and already current.
-    if pyproject_toml_format.set_tool_key(
-        pyproject_toml, "uv", "exclude-newer", cooldown, comment=_EXCLUDE_NEWER_COMMENT
-    ):
+    if file.set_tool_key("uv", "exclude-newer", cooldown, comment=_EXCLUDE_NEWER_COMMENT):
         _LOG.configured_uv_cooldown(pyproject_toml, cooldown)
     else:
         _LOG.uv_cooldown_not_set(pyproject_toml)
@@ -188,12 +190,12 @@ def _log_new_version(log: Logger, package: DependencyName, version: VersionStrin
         log.new_version(Reference(package, "", location), dependency_version)
 
 
-def report_file_markers(file: DependencyTomlFile, log: Logger) -> list[Declaration]:
+def report_file_markers(file: PythonDependencyToml, log: Logger) -> list[Declaration]:
     """Report the marker of each declaration in the file, and return the declarations with those markers frozen."""
-    return report_markers(pyproject_toml_format.declarations(file), log, POLICY)
+    return report_markers(file.declarations(), log, POLICY)
 
 
-def _update_dependencies(uv_tree: Command, file: DependencyTomlFile, log: Logger) -> bool:
+def _update_dependencies(uv_tree: Command, file: PythonDependencyToml, log: Logger) -> bool:
     """Run `uv tree --outdated`, log every new version no marker holds back, and rewrite the file's exact `==` pins.
 
     Shared by the pyproject.toml and inline-script-metadata updaters: both read outdated dependencies from uv and
@@ -221,7 +223,7 @@ def _update_dependencies(uv_tree: Command, file: DependencyTomlFile, log: Logger
         locations = [reference.location for reference in updatable] if declared else [Location(file.path)]
         if locations:
             _log_new_version(log, package, version, locations)
-    pyproject_toml_format.rewrite_pinned_versions(file, latest_versions)
+    file.rewrite_pinned_versions(latest_versions)
     return True
 
 

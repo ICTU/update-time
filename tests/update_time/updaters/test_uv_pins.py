@@ -8,7 +8,8 @@ from update_time.domain.dependency import Yank
 from update_time.domain.vulnerability import NO_RISK_LEVEL, VULNERABILITY_LEVEL
 from update_time.formats import toml as toml_module
 from update_time.io.log import Logger, get_logger
-from update_time.manifests.dependency_file import InlineScript, PyprojectToml
+from update_time.manifests.inline_script import InlineScript
+from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.markers.directive import Reason
 from update_time.package_managers import uv as uv_module
 from update_time.primitives.location import Location
@@ -55,7 +56,7 @@ _UV_SOURCE = '[tool.uv.sources]\nlocal = {path = "../local"}\n'
 _no_yanks = patch("requests.Session.get", Mock(return_value=pypi_index()))
 
 
-class DependencyTomlFileTestCase(LoggingTestCase):
+class PythonDependencyTomlTestCase(LoggingTestCase):
     """Base for the tests of the checks both uv-delegated updaters share.
 
     The dependencies are read from the file rather than from uv, so no check needs a package manager to run: each
@@ -76,7 +77,7 @@ class DependencyTomlFileTestCase(LoggingTestCase):
 
 @no_vulnerabilities
 @patch("requests.Session.get")
-class StaleDependencyTest(DependencyTomlFileTestCase):
+class StaleDependencyTest(PythonDependencyTomlTestCase):
     """Unit tests for the staleness check, which reads the newest release PyPI lists for each dependency."""
 
     def test_stale_dependency_warned(self, get: Mock):
@@ -175,7 +176,7 @@ class StaleDependencyTest(DependencyTomlFileTestCase):
 
 @no_vulnerabilities
 @patch("requests.Session.get")
-class YankedPinTest(DependencyTomlFileTestCase):
+class YankedPinTest(PythonDependencyTomlTestCase):
     """Unit tests for the yank check, which reads the yank state PyPI reports for the version each pin is left on."""
 
     reason: ClassVar = "broke Python 3.10"
@@ -257,7 +258,7 @@ class YankedPinTest(DependencyTomlFileTestCase):
 
 @_no_yanks
 @staleness_disabled
-class VulnerablePinTest(DependencyTomlFileTestCase):
+class VulnerablePinTest(PythonDependencyTomlTestCase):
     """Unit tests for the vulnerability check, whose OSV pass looks each pin up."""
 
     def check_pins(self, file: PyprojectToml, *advisories: dict[str, object]) -> Mock:
@@ -355,7 +356,7 @@ class VulnerablePinTest(DependencyTomlFileTestCase):
 
 @no_vulnerabilities
 @patch("requests.Session.get")
-class ArchivedDependencyTest(DependencyTomlFileTestCase):
+class ArchivedDependencyTest(PythonDependencyTomlTestCase):
     """Unit tests for the archival check, which reads the project status PyPI publishes for each dependency."""
 
     def test_archived_dependency_without_an_exact_pin_warned(self, get: Mock):
@@ -452,7 +453,7 @@ class ArchivedDependencyTest(DependencyTomlFileTestCase):
 
 @no_vulnerabilities
 @patch("requests.Session.get")
-class RedundantDirectiveTest(DependencyTomlFileTestCase):
+class RedundantDirectiveTest(PythonDependencyTomlTestCase):
     """Unit tests for the directives that hold nothing back for the dependency carrying them."""
 
     def check_dependencies(self, get: Mock, file: PyprojectToml) -> None:
@@ -590,7 +591,7 @@ class RedundantDirectiveTest(DependencyTomlFileTestCase):
 
 
 @patch("requests.Session.get")
-class UvSourcedDependencyTest(DependencyTomlFileTestCase):
+class UvSourcedDependencyTest(PythonDependencyTomlTestCase):
     """Unit tests for the dependencies uv resolves from a source of its own, which PyPI serves no release for."""
 
     def test_a_pin_with_a_uv_source_is_asked_about_nowhere(self, get: Mock):

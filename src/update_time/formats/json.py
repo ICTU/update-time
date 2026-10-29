@@ -5,7 +5,7 @@ Note: `import json` below resolves to the standard library's module, not this on
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 # What reads one JSON value and reports where it ends, and the characters JSON ignores between two values.
 _DECODER = json.JSONDecoder()
 _WHITESPACE = " \t\n\r"
+
+# Why a file holding valid JSON other than an object, such as `[]`, cannot be read as one.
+_NOT_AN_OBJECT = "the JSON is not an object"
 
 
 @dataclass(frozen=True)
@@ -27,11 +30,13 @@ class JsonFile:
     text: str
     contents: dict
 
-
-def read(path: Path) -> JsonFile:
-    """Return the JSON file at the path, read and parsed."""
-    text = path.read_text()
-    return JsonFile(path, text, json.loads(text))
+    @classmethod
+    def read(cls, path: Path) -> Self:
+        """Return the JSON file at the path, read and parsed, raising a `ValueError` where the JSON is not an object."""
+        text = path.read_text()
+        if not isinstance(contents := json.loads(text), dict):
+            raise ValueError(_NOT_AN_OBJECT)  # noqa: TRY004 — the error JSON that does not parse raises too
+        return cls(path, text, contents)
 
 
 def entry_offset(contents: str, *keys: str) -> int | None:

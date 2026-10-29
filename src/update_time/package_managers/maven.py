@@ -1,4 +1,4 @@
-"""The Maven runs Update-time makes over the poms of a reactor, and the goals, options, and rule sets they take."""
+"""Run Maven over the reactors the scanned poms form, with its goals, options, and rule sets, and report what moved."""
 
 import re
 import tempfile
@@ -9,22 +9,24 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from update_time.domain.bound import NO_BOUND
+from update_time.domain.dependency import DependencyVersion
+from update_time.domain.reference import Reference
 from update_time.formats import xml
 from update_time.io.log import get_logger
 from update_time.io.process import run
-from update_time.manifests import pom_xml as pom_xml_format
+from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.markers.cooldown import cooldown_days
+from update_time.markers.directive import Reason
 from update_time.package_managers.maven_range import maven_range
 from update_time.primitives.command import Command
 from update_time.primitives.iterables import unique
-from update_time.sources.maven_central import versions_held_back
+from update_time.sources import maven_central
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Mapping
 
     from update_time.domain.dependency import DependencyName, VersionString
     from update_time.formats.xml import XmlElement
-    from update_time.manifests.pom_xml import Declaration
     from update_time.primitives.command import Result
 
 _LOG = get_logger("pom.xml")
@@ -37,7 +39,7 @@ _POM = Path(__file__).parent / "pom.xml"
 
 def _declared_plugin_version(version_property: str) -> str:
     """Return the plugin release the shipped pom declares in the property."""
-    declared = pom_xml_format.properties(_POM).get(version_property)
+    declared = pom_xml_manifest.properties(_POM).get(version_property)
     if declared is None:
         message = f"{_POM} does not declare {version_property}, so there is no plugin release to run"
         raise RuntimeError(message)
@@ -176,7 +178,7 @@ class _ReactorModule:
             effective_pom = _effective_pom_written_elsewhere(result.stdout)
         if result.succeeded and effective_pom is None:
             _LOG.effective_pom_unreadable(self.pom_xml)
-        if effective_pom is not None and not pom_xml_format.has_input_locations(effective_pom):
+        if effective_pom is not None and not pom_xml_manifest.has_input_locations(effective_pom):
             _LOG.effective_pom_without_input_locations(self.pom_xml)
         return result, effective_pom
 
@@ -186,12 +188,12 @@ class _ReactorModule:
         The effective pom is the one Maven wrote before it updated the pom. A pom leaving a group or an artifact to its
         parent gets the effective pom in a Maven run of its own, so the rule set names the coordinates Maven resolves.
         """
-        if not pom_xml_format.leaves_coordinates_unresolved(self.pom_xml):
-            with _versions_options(pom_xml_format.versioned_declarations(self.pom_xml)) as options:
+        if not pom_xml_manifest.leaves_coordinates_unresolved(self.pom_xml):
+            with _versions_options(pom_xml_manifest.versioned_declarations(self.pom_xml)) as options:
                 return self._run_goals_writing_effective_pom(options, _VERSIONS_GOALS)
         result, effective_pom = self._run_goals_writing_effective_pom()
         if result.succeeded:  # A single run failing at the same point would not reach the updates either.
-            with _versions_options(pom_xml_format.versioned_declarations(self.pom_xml, effective_pom)) as options:
+            with _versions_options(pom_xml_manifest.versioned_declarations(self.pom_xml, effective_pom)) as options:
                 self._run_goals(options, _VERSIONS_GOALS)
         return result, effective_pom
 
@@ -265,6 +267,35 @@ class Reactor:
         return self._pom_xmls[self._pom_xmls.index(pom_xml) + 1 :]
 
 
+def reactors(pom_xmls: list[Path]) -> dict[Path, Reactor]:
+    """Return the reactor each pom is part of, which holds its poms in the scan's order."""
+    aggregators = _aggregators(pom_xmls)
+    pom_xmls_by_root: dict[Path, list[Path]] = {}
+    for pom_xml in pom_xmls:
+        pom_xmls_by_root.setdefault(_reactor_root(pom_xml.parent, aggregators), []).append(pom_xml)
+    reactors_by_pom: dict[Path, Reactor] = {}
+    for root, reactor_pom_xmls in pom_xmls_by_root.items():
+        reactors_by_pom |= dict.fromkeys(reactor_pom_xmls, Reactor(root, reactor_pom_xmls))
+    return reactors_by_pom
+
+
+def _aggregators(pom_xmls: list[Path]) -> dict[Path, Path]:
+    """Return the directory of the pom listing each module, keyed by the module's directory."""
+    return {module: pom_xml.parent for pom_xml in pom_xmls for module in pom_xml_manifest.module_directories(pom_xml)}
+
+
+def _reactor_root(directory: Path, aggregators: Mapping[Path, Path]) -> Path:
+    """Return the directory of the topmost pom whose modules reach the directory, or the directory itself.
+
+    The climb stops at a directory it reached before, where poms list each other as modules.
+    """
+    reached = {directory}
+    while (aggregator := aggregators.get(directory)) is not None and aggregator not in reached:
+        reached.add(aggregator)
+        directory = aggregator
+    return directory
+
+
 def _lines(pom_xml: Path) -> list[str] | None:
     """Return the lines of the pom, or None where it cannot be read or does not parse."""
     document = xml.read_document(pom_xml)
@@ -278,7 +309,7 @@ def _effective_pom_written_elsewhere(stdout: str) -> XmlElement | None:
 
 
 @contextmanager
-def _versions_options(declarations: list[Declaration]) -> Generator[tuple[str, ...]]:
+def _versions_options(declarations: list[pom_xml_manifest.Declaration]) -> Generator[tuple[str, ...]]:
     """Yield the options the versions plugin's goals take, naming a rule set where anything is held back.
 
     `update-properties` advances a property wherever in the reactor it is declared or named. So a run over a module
@@ -296,13 +327,13 @@ def _versions_options(declarations: list[Declaration]) -> Generator[tuple[str, .
         yield (*options, f"-Dmaven.version.rules={path.as_uri()}")
 
 
-def _rules(declarations: list[Declaration]) -> str:
+def _rules(declarations: list[pom_xml_manifest.Declaration]) -> str:
     """Return a rule per artefact whose versions anything holds back, or nothing where nothing does.
 
     An artefact several declarations name gets one rule. The rule holds back what each of their markers holds back, and
     keeps the artefact on any of their variants.
     """
-    declarations_by_artefact: dict[DependencyName, list[Declaration]] = {}
+    declarations_by_artefact: dict[DependencyName, list[pom_xml_manifest.Declaration]] = {}
     for declaration in declarations:
         declarations_by_artefact.setdefault(declaration.dependency, []).append(declaration)
     return "".join(starmap(_artefact_rule, declarations_by_artefact.items()))
@@ -312,7 +343,7 @@ def _rules(declarations: list[Declaration]) -> str:
 _EVERY_VERSION = '<ignoreVersion type="regex">.*</ignoreVersion>'
 
 
-def _artefact_rule(artefact: DependencyName, declarations: list[Declaration]) -> str:
+def _artefact_rule(artefact: DependencyName, declarations: list[pom_xml_manifest.Declaration]) -> str:
     """Return the rule holding back what the markers, the variants, and the cooldown do, or nothing where none does.
 
     A marker that holds every version back does not have a range, and leaves the repository unasked.
@@ -326,13 +357,13 @@ def _artefact_rule(artefact: DependencyName, declarations: list[Declaration]) ->
     return _rule(artefact, *ignored) if ignored else ""
 
 
-def _variant_versions(declarations: list[Declaration]) -> tuple[str, ...]:
+def _variant_versions(declarations: list[pom_xml_manifest.Declaration]) -> tuple[str, ...]:
     """Return an `ignoreVersion` matching every version on a variant none of the declarations is on, if any."""
     other_variants = _other_variants(*(declaration.current_version for declaration in declarations))
     return (f'<ignoreVersion type="regex">{other_variants}</ignoreVersion>',) if other_variants else ()
 
 
-def range_held_back(declaration: Declaration) -> str | None:
+def range_held_back(declaration: pom_xml_manifest.Declaration) -> str | None:
     """Return the Maven range of the versions the declaration's marker holds back, or None where it holds every one.
 
     The range is empty where the marker does not hold any version back. Where the rule set cannot express a bound,
@@ -352,12 +383,14 @@ def _cooldown_versions(artefact: DependencyName, days: int) -> tuple[str, ...]:
     """
     if days <= 0:
         return ()
-    return tuple(f"<ignoreVersion>{version}</ignoreVersion>" for version in versions_held_back(artefact, days))
+    return tuple(
+        f"<ignoreVersion>{version}</ignoreVersion>" for version in maven_central.versions_held_back(artefact, days)
+    )
 
 
 def _rule(artefact: DependencyName, *ignore_versions: str) -> str:
     """Return the rule for the artefact, holding the given `ignoreVersion` elements."""
-    group_id, artifact_id = pom_xml_format.coordinates(artefact)
+    group_id, artifact_id = pom_xml_manifest.coordinates(artefact)
     ignored = "".join(f"        {ignore_version}\n" for ignore_version in ignore_versions)
     return (
         f'    <rule groupId="{group_id}" artifactId="{artifact_id}">\n'
@@ -381,3 +414,82 @@ def _effective_pom_file() -> Generator[Path]:
     with tempfile.NamedTemporaryFile(suffix=".xml", delete_on_close=False) as file:
         file.close()
         yield Path(file.name)
+
+
+def reason_maven_leaves_the_version(declaration: pom_xml_manifest.Declaration) -> Reason | None:
+    """Return why Maven does not update the declaration's version, or None where it does."""
+    if declaration.maven_updates_the_version:
+        return None
+    return Reason.PLUGIN_NOT_UPDATED if declaration.literal_plugin_version else Reason.VERSION_HELD_ELSEWHERE
+
+
+@dataclass(frozen=True)
+class _Update:
+    """A declaration Maven updated, as the pom held it before and after the update and as the effective pom lists it."""
+
+    old: pom_xml_manifest.Declaration
+    new: pom_xml_manifest.Declaration
+    effective: pom_xml_manifest.Declaration
+
+    @property
+    def reference(self) -> Reference:
+        """Return the reference at the version it had, named as the effective pom names it."""
+        return Reference(self.effective.dependency, self.old.current_version, self.new.location)
+
+    @property
+    def is_resolvable(self) -> bool:
+        """Return whether the effective pom names the artefact whole, so a repository can be asked about it."""
+        return pom_xml_manifest.is_resolved(self.effective.dependency)
+
+
+def report_new_versions(
+    before: list[pom_xml_manifest.Declaration],
+    after: list[pom_xml_manifest.Declaration],
+    resolved: list[pom_xml_manifest.Declaration],
+) -> None:
+    """Report each dependency and plugin whose version differs between the two readings, with its changes and date.
+
+    The name is the one the effective pom gives the declaration, where it resolves one. Two declarations of one
+    artefact naming one property read the same in each reading, so they are reported once. The new version of an
+    artefact Maven Central does not serve goes unreported, where a served artefact names its property too.
+    """
+    updates = [
+        _Update(old, new, effective)
+        for old, new, effective in unique(zip(before, after, resolved, strict=True))
+        if old.current_version != new.current_version
+    ]
+    unreportable = _unreportable_updates(updates)
+    for update in updates:
+        reference, new = update.reference, update.new
+        if update in unreportable:
+            _LOG.new_version_not_reported(reference, new.version_property, new.current_version)
+            continue
+        _LOG.new_version(reference, _new_version(update))
+
+
+def _new_version(update: _Update) -> DependencyVersion:
+    """Return the version Maven moved to, with its changes and publication date where the coordinates resolve."""
+    artefact, version = update.effective.dependency, update.new.current_version
+    if not pom_xml_manifest.fully_resolved(update.effective.pinned):
+        return DependencyVersion(version)
+    changes = maven_central.get_changes(artefact, version)
+    return DependencyVersion(version, changes, publication=maven_central.publication(artefact, version))
+
+
+def _unreportable_updates(updates: list[_Update]) -> list[_Update]:
+    """Return the updates of an artefact Maven Central does not serve, whose property a served artefact names too.
+
+    Maven moves a property to a version that every artefact naming it has, so the move says nothing about an artefact
+    whose versions Maven does not find.
+    """
+    candidates = [update for update in updates if update.new.version_property and update.is_resolvable]
+    artefacts = {update.effective.dependency for update in candidates}
+    off_central = {artefact for artefact in artefacts if not maven_central.serves(artefact)}
+    properties_on_central = {
+        update.new.version_property for update in candidates if update.effective.dependency not in off_central
+    }
+    return [
+        update
+        for update in candidates
+        if update.effective.dependency in off_central and update.new.version_property in properties_on_central
+    ]

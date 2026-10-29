@@ -927,6 +927,11 @@ class Logger:
         """Warn that a package.json can't be read, so the package manager it may name goes unread."""
         return self._file_fields(path, error=str(error))
 
+    @_warning("Could not read %(location)s to find the Node engine it declares (%(error)s)")
+    def unreadable_node_engine(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
+        """Warn that a package.json can't be read, so the Node engine it may declare goes unread."""
+        return self._file_fields(path, error=str(error))
+
     @_warning("Could not read the pom at %(url)s: it is not valid XML")
     def invalid_pom(self, url: str) -> dict[str, object]:
         """Warn that a pom a repository served does not parse."""
