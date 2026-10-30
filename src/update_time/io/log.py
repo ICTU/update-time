@@ -23,6 +23,7 @@ from update_time.markers.directive import Reason
 from update_time.markers.marker import Scope
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
+from update_time.primitives.text import prose_list
 from update_time.primitives.timestamp import days_since, utc_date_and_time
 
 if TYPE_CHECKING:
@@ -252,11 +253,15 @@ class Logger:
     def _render_field(cls, name: str, value: object) -> object:
         """Return the field's value, wrapped in its delimiter when the highlighter styles it as one token.
 
+        A tuple of locations renders as a list of such tokens, as a sentence lists them.
+
         A location is recognised by its type; a dependency has no type of its own, and its name has no fixed shape
         to match either, so the field's name identifies it instead.
         """
         if isinstance(value, Location):
             return delimit_location(value)
+        if isinstance(value, tuple) and value and all(isinstance(item, Location) for item in value):
+            return prose_list([delimit_location(location) for location in value])
         if name == "dependency":
             return delimit_dependency(str(value))
         return value
@@ -880,10 +885,28 @@ class Logger:
         """Warn that a directory passed to `--exclude-path` does not exist."""
         return {"path": path}
 
-    @_info("Skipping %(location)s: %(reason)s")
-    def skipped(self, path: Path, reason: str) -> dict[str, object]:
-        """Log that a file was deliberately skipped without being checked for updates."""
-        return self._file_fields(path, reason=reason)
+    @_debug(
+        "Skipping %(location)s: a compiled or hash-pinned requirements file that does not name a requirements "
+        "file as its source"
+    )
+    def compiled_file_without_a_source(self, path: Path) -> dict[str, object]:
+        """Log that a compiled requirements file is skipped, since it does not name a requirements file to update."""
+        return self._file_fields(path)
+
+    @_info("Leaving %(location)s as it is: Update-time updates the pins in %(sources)s, but does not recompile it")
+    def compiled_file_left_as_it_is(self, path: Path, sources: Sequence[Path]) -> dict[str, object]:
+        """Log that a compiled requirements file is left as it is, while its sources are updated."""
+        return self._file_fields(path, sources=tuple(Location(source) for source in sources))
+
+    @_debug("Leaving %(location)s and its source %(source)s as they are: the scan leaves %(source)s out")
+    def source_outside_the_scan(self, path: Path, source: Path) -> dict[str, object]:
+        """Log that the source of a compiled requirements file lies outside the scan, so neither file is updated."""
+        return self._file_fields(path, source=Location(source))
+
+    @_warning("Could not find %(source)s, a source %(location)s names; leaving %(location)s as it is")
+    def source_not_found(self, path: Path, source: Path) -> dict[str, object]:
+        """Log that a source the compiled requirements file names does not exist."""
+        return self._file_fields(path, source=Location(source))
 
     # --- Updater-specific diagnostics ---
 

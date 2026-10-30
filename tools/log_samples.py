@@ -469,6 +469,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_manifests_without_dependencies(log, capture),
         **_range_rewrites(log, capture),
         **_uv_cooldown_not_set(log, capture),
+        **_compiled_requirements_files(log, capture),
         **rate_limits,
         "@@HELD_BACK_BY_COOLDOWN@@": held_back_by_cooldown,
         "@@NO_PUSH_DATE@@": undated_pushes,
@@ -527,6 +528,16 @@ def _range_rewrites(log: Logger, capture: _Capture) -> dict[str, str]:
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.1.2"), "^3.1.5", "3.1.5")
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.0.0"), "^3.1.5", "")
     return {"@@RANGE_REWRITES@@": capture.take()}
+
+
+def _compiled_requirements_files(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log what happens to a compiled requirements file and to the sources it names, and pair the lines."""
+    compiled = Path("docs/requirements.txt")
+    log.compiled_file_left_as_it_is(compiled, [Path("docs/requirements.in")])
+    log.source_not_found(compiled, Path("docs/dev.in"))
+    log.source_outside_the_scan(compiled, Path("vendor/requirements.in"))
+    log.compiled_file_without_a_source(Path("requirements-lock.txt"))
+    return {"@@COMPILED_REQUIREMENTS_FILES@@": capture.take()}
 
 
 def _uv_cooldown_not_set(log: Logger, capture: _Capture) -> dict[str, str]:

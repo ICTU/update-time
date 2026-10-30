@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Update the sources of a compiled requirements file, such as its `requirements.in`, and leave the compiled file as it is. See [#491](https://github.com/ICTU/update-time/issues/491).
+
 ### Changed
 
 - Set a value for a reference with a `set` marker, such as `set[cooldown=30]`, `set[stale-after=0]`, or `set[vulnerability-level=high]`. It replaces the comparison items, such as `ignore[stale<90]`, and the items `ignore[stale]` and `ignore[vulnerable]`. Hold a reference back with `ignore[update]` instead of a bare `ignore`. Closes [#496](https://github.com/ICTU/update-time/issues/496).

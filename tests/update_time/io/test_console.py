@@ -111,8 +111,8 @@ class RecordRenderingTests(TestCase):
     )
     def test_a_record_without_changes_gets_no_empty_block(self):
         """Test that a record carrying no changes renders as its message alone."""
-        rendered = self.rendered(lambda log: log.skipped(Path("a.txt"), "it is compiled"))
-        self.assertIn("Skipping a.txt: it is compiled", rendered)
+        rendered = self.rendered(lambda log: log.configured_uv_cooldown(Path("a.txt"), "7 days"))
+        self.assertIn("Set uv exclude-newer to '7 days' in a.txt to apply the cooldown", rendered)
         self.assertEqual(rendered.splitlines()[1:], [])
 
     @kills(

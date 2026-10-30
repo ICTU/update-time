@@ -104,7 +104,7 @@ Update-time updates the following types of dependencies, found in the listed fil
 
 | Dependency type | Files | Source | Updated by |
 | :-------------- | :---- | :----- | :--------- |
-| [Python dependencies](#python-dependencies) | `pyproject.toml`, `requirements.txt`, and PEP 723 inline script metadata (`# /// script` blocks in `*.py` files) | [PyPI](https://pypi.org) | Update-time for `requirements.txt`. For the other two, uv resolves the versions and Update-time writes the pins |
+| [Python dependencies](#python-dependencies) | `pyproject.toml`, `requirements.txt` and the sources of a compiled one, and PEP 723 inline script metadata (`# /// script` blocks in `*.py` files) | [PyPI](https://pypi.org) | Update-time for `requirements.txt` and the sources of a compiled one. For the other two, uv resolves the versions and Update-time writes the pins |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | `package.json` (and their lock files) | [npm registry](https://registry.npmjs.org) | delegated to npm or pnpm, whichever manages the `package.json` |
 | [Maven dependencies](#maven-dependencies) | `pom.xml` | the repositories the project's Maven build resolves from | delegated to Maven's [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/) |
 | [Node engine version](#node-engine-version-and-python-version) | `package.json` | the latest [Node](https://hub.docker.com/_/node) release on Docker Hub | Update-time |
@@ -208,7 +208,7 @@ To avoid adopting releases that are too fresh to trust, Update-time honours a co
 
 | Dependency type | Applied by | Measured against |
 | :-------------- | :--------- | :--------------- |
-| [Python dependencies](#python-dependencies) | Update-time for `requirements.txt`, uv for the rest | the release's publication date on PyPI |
+| [Python dependencies](#python-dependencies) | Update-time for `requirements.txt` and the sources of a compiled one, uv for the rest | the release's publication date on PyPI |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | npm and pnpm | the release's age on the npm registry |
 | [Maven dependencies](#maven-dependencies) | Update-time, for the artefacts Maven Central serves | the version's publication date on Maven Central |
 | [Node engine version](#node-engine-version-and-python-version) | Update-time | the Node image tag's push date |
@@ -273,7 +273,7 @@ Which dependencies are checked follows from where a yank can be observed. PyPI r
 
 | Dependency type | Yank check |
 | :-------------- | :--------- |
-| [Python dependencies](#python-dependencies) | `requirements.txt`, `pyproject.toml`, and inline script metadata pins, against PyPI's yank metadata |
+| [Python dependencies](#python-dependencies) | `requirements.txt` and the sources of a compiled one, `pyproject.toml`, and inline script metadata pins, against PyPI's yank metadata |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | `package.json` exact pins, against the npm registry's deprecation of the pinned version |
 | [Maven dependencies](#maven-dependencies) | none: Maven Central does not report a withdrawal |
 | [Node engine version](#node-engine-version-and-python-version) | none: its source does not record a yank |
@@ -307,7 +307,7 @@ Which dependencies are checked follows from what OSV holds advisories for:
 
 | Dependency type | Vulnerability check |
 | :-------------- | :------------------ |
-| [Python dependencies](#python-dependencies) | `requirements.txt`, `pyproject.toml`, and inline script metadata pins, against OSV's PyPI advisories |
+| [Python dependencies](#python-dependencies) | `requirements.txt` and the sources of a compiled one, `pyproject.toml`, and inline script metadata pins, against OSV's PyPI advisories |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | `package.json` exact pins, against OSV's npm advisories |
 | [Maven dependencies](#maven-dependencies) | the version each `pom.xml` dependency and plugin is left on, against OSV's Maven advisories |
 | [Node engine version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
@@ -853,11 +853,19 @@ For each dependency type, this chapter answers the same questions: what files, d
 
 #### What files are updated?
 
-Update-time discovers Python files containing requirements by name, case-sensitively. Those are `pyproject.toml`, `requirements.txt`, `requirements-<purpose>.txt` and `<purpose>-requirements.txt` (for example `requirements-dev.txt` and `dev-requirements.txt`), and any `.txt` file in a `requirements/` directory. It touches no unrelated file, such as `constraints.txt` or `requirements.in`.
+Update-time discovers Python files containing requirements by name, case-sensitively. Those are `pyproject.toml`, `requirements.txt`, `requirements-<purpose>.txt` and `<purpose>-requirements.txt` (for example `requirements-dev.txt` and `dev-requirements.txt`), and any `.txt` file in a `requirements/` directory. It leaves unrelated files alone, such as `constraints.txt`.
 
 Update-time also updates any `*.py` file that carries a [PEP 723](https://peps.python.org/pep-0723/) inline script metadata block. That is a `# /// script … # ///` comment block declaring the standalone script's dependencies. A `*.py` file without such a block stays untouched and never invokes uv.
 
-Update-time skips compiled or hash-pinned requirements files entirely, such as a `requirements.txt` generated by [pip-tools](https://github.com/jazzband/pip-tools) or `uv pip compile`. Bumping a single pin without recompiling its transitive dependencies and hashes would corrupt the file. Regenerate these with your package manager instead. Update-time recognises compiled or hash-pinned files by their contents, an autogenerated header or `--hash=` lines. It also recognises them by a sibling `.in` file.
+Update-time leaves a compiled or hash-pinned requirements file as it is, such as a `requirements.txt` generated by [pip-tools](https://github.com/jazzband/pip-tools) or `uv pip compile`. Bumping a single pin without recompiling its transitive dependencies and hashes would corrupt the file. Update-time recognises such a file by its contents, an autogenerated header or `--hash=` lines. It also recognises one by a sibling `.in` file.
+
+Update-time updates the sources of a compiled file instead, such as its `requirements.in`. It finds them in the `# via -r` annotations of the compiled file. Those paths are relative to the directory the file was compiled in, which Update-time reads off the output path in the header, such as `-o docs/requirements.txt`. Where the header does not name an output, the paths are relative to the directory the compiled file sits in. Update-time updates the exact pins in a source as it updates those in a `requirements.txt`. Recompile the file with your package manager to bring its pins in line with its sources.
+
+A source that is itself compiled stays as it is, as every compiled file does, and Update-time updates the sources it names in turn. Update-time warns about a source that does not exist. It leaves a source alone where the scan leaves it out. It skips a compiled file whose annotations do not name a requirements file as its source, such as one compiled with `--no-annotate`. It reports what it does with each compiled file:
+
+```console
+@@COMPILED_REQUIREMENTS_FILES@@
+```
 
 Update-time runs uv only for a `pyproject.toml` that declares dependencies for uv to resolve: under `[project]`, in an extra, in a dependency group, or in uv's legacy `[tool.uv] dev-dependencies`. A project that lists `dependencies` or `optional-dependencies` as `dynamic`, leaving them to its build backend, declares them as well. uv would write a `uv.lock` beside a `pyproject.toml` that declares none, such as one that only configures tools, so Update-time leaves such a file as it is and reports it at `DEBUG`:
 
@@ -899,7 +907,7 @@ Update-time updates none of the dependencies in a `pyproject.toml` or an inline 
 
 #### Pinning
 
-Update-time adds no hash pin to a Python dependency. uv records each distribution's hash in the `uv.lock` file beside a `pyproject.toml`. Update-time skips a `requirements.txt` file with `--hash=` lines (see [What files are updated?](#what-files-are-updated)).
+Update-time adds no hash pin to a Python dependency. uv records each distribution's hash in the `uv.lock` file beside a `pyproject.toml`. Update-time leaves a `requirements.txt` file with `--hash=` lines as it is, and updates the sources it names instead (see [What files are updated?](#what-files-are-updated)).
 
 #### Cooldown
 
@@ -935,7 +943,7 @@ PyPI publishes a project status. Update-time reads it for each dependency a Pyth
 
 #### Markers
 
-Write a marker for a `requirements.txt` pin inline, on the pin's own line. A `pyproject.toml` dependency and an inline script metadata dependency take one in either placement. See [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference) for the directives and where they go.
+Write a marker for a pin in a `requirements.txt`, or in the source of a compiled file such as `requirements.in`, inline, on the pin's own line. Write it in the source rather than in the compiled file, since recompiling drops every comment in the compiled file. A `pyproject.toml` dependency and an inline script metadata dependency take one in either placement. See [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference) for the directives and where they go.
 
 An `ignore[update]` holds the dependency's update back, so Update-time leaves that pin as the file wrote it and reports no new version for it. The pin is what constrains uv, so a pin Update-time declines to rewrite is the version uv keeps resolving. A dependency that pins no exact version has no pin to freeze, since uv both resolves and records its version. A name a file declares twice is steered per declaration, so a marker steers the line it sits on and leaves the other line alone.
 

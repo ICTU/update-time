@@ -168,7 +168,6 @@ It is no number of days, so nothing is ever older than it.
 It is no risk level, so it sits outside `RISK_LEVELS`.
 It rides on the Index API response fetched above, so it costs no request of its own.
 It then prints an error, exits with a non-zero status, and touches no files.
-It touches no unrelated file, such as `constraints.txt` or `requirements.in`.
 JSON has no comments, so a marker cannot sit beside the reference it steers, and npm keeps a field it does not know, so the file can carry one.
 Keep an image tag's spelling when the registry lists the same version under another name: a reference pinned to, for example, `node:22.15.0` was sometimes rewritten to the alias tag `node:22.15` — the same version, spelled shorter — when no newer version was eligible.
 Leave a `requirements.txt` requirement combining `==` with another specifier unchanged, instead of rewriting it into one no version satisfies.

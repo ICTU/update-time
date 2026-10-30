@@ -705,10 +705,6 @@ class LoggingTestCase(CacheClearingTestCase):
             directive=directive,
         )
 
-    def assert_skipped_logged(self, path: Path, reason: str) -> None:
-        """Assert that deliberately skipping a file was logged with the given reason."""
-        self.assert_logged(message_of(Logger.skipped), location=Location(path), reason=reason)
-
     def assert_unsupported_package_manager_logged(self, path: Path, manager: str, supported: str) -> None:
         """Assert that an unsupported package manager was logged for the file."""
         self.assert_logged(
