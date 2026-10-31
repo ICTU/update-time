@@ -114,8 +114,9 @@ class _Directive:
         return ImageNotLookedUpReason(image_not_looked_up, self.consequence)
 
 
-# Every directive a source may be unable to apply, in the order their warnings are reported. `update` is the one
-# scope with no row: every source resolves a version, so there is no capability a source could lack for it.
+# These are the directives a source may be unable to apply. A pass over them reports their warnings in this order.
+# `update` is the one scope with no row: every source resolves a version, so there is no capability a source could lack
+# for it.
 DIRECTIVES = (
     _Directive(
         Scope.YANKED,

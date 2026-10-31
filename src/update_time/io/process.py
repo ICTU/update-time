@@ -1,6 +1,7 @@
 """Run processes."""
 
 import os
+import shutil
 import subprocess  # nosec
 from contextlib import suppress
 from functools import cache
@@ -11,6 +12,11 @@ from update_time.io.log import get_logger
 from update_time.primitives.command import Command, Result
 
 _LOG = get_logger("process")
+
+
+def is_installed(executable: str) -> bool:
+    """Return whether the executable is on the path."""
+    return shutil.which(executable) is not None
 
 
 def run(command: Command, cwd: Path | None = None) -> Result:

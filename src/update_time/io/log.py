@@ -956,6 +956,11 @@ class Logger:
         """Log that `uv tree` failed for a file."""
         return self._file_fields(path)
 
+    @_error("Could not update the dependencies in %(location)s: uv is not on the path")
+    def uv_not_on_path(self, path: Path) -> dict[str, object]:
+        """Log that uv, which updates a file's dependencies, is not on the path."""
+        return self._file_fields(path)
+
     @_warning("Could not read %(version)r, the version %(location)s pins %(dependency)s to; not upgrading it")
     def pinned_version_unreadable(self, path: Path, dependency: str, version: str) -> dict[str, object]:
         """Warn that a compiled requirements file pins a package to a version that is not PEP 440."""
@@ -965,6 +970,11 @@ class Logger:
     def compiled_file_not_recompiled(self, path: Path, tool: str) -> dict[str, object]:
         """Log that the tool failed to recompile a compiled requirements file."""
         return self._file_fields(path, tool=tool)
+
+    @_error("Could not recompile %(location)s: %(executable)s is not on the path")
+    def compiler_not_on_path(self, path: Path, executable: str) -> dict[str, object]:
+        """Log that the tool that compiled a requirements file is not on the path."""
+        return self._file_fields(path, executable=executable)
 
     @_warning("Skipping %(location)s: %(manager)s is not supported, only %(supported)s")
     def unsupported_package_manager(self, path: Path, manager: str, supported: str) -> dict[str, object]:

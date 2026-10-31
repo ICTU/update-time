@@ -199,13 +199,9 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         Mutation(
             uv._update_dependencies,
             "declarations = _by_name(report_file_markers(file, log))\n"
-            "    outdated = run(uv_tree)\n"
-            "    if not outdated.ok:\n"
-            "        log.uv_dependencies_not_updated(file.path)\n"
+            "    if (outdated := _outdated(uv_tree, file, log)) is None:\n"
             "        return False\n",
-            "outdated = run(uv_tree)\n"
-            "    if not outdated.ok:\n"
-            "        log.uv_dependencies_not_updated(file.path)\n"
+            "if (outdated := _outdated(uv_tree, file, log)) is None:\n"
             "        return False\n"
             "    declarations = _by_name(report_file_markers(file, log))\n",
             "a failed uv tree skips the marker report, so a marker on a pin reads as unrecognised",
@@ -365,6 +361,26 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         get.assert_not_called()
         self.assert_command_stderr_logged(stderr="error: offline")  # only uv tree's stderr is surfaced
         self.assert_uv_dependencies_not_updated_logged(mock_pyproject_toml)
+
+    @kills(
+        Mutation(
+            uv._outdated,
+            "log.uv_not_on_path(file.path)",
+            "log.uv_dependencies_not_updated(file.path)",
+            "a uv missing from the path is reported as a uv tree that failed",
+        )
+    )
+    @patch("shutil.which", Mock(return_value=None))
+    def test_a_uv_missing_from_the_path_is_reported_in_one_line(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a missing uv is reported in one line naming the file, and that Update-time does not run it."""
+        run.side_effect = FileNotFoundError("uv")
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
+        glob.return_value = [mock_pyproject_toml]
+        update_pyproject_tomls()
+        run.assert_not_called()
+        mock_pyproject_toml.write_text.assert_not_called()
+        get.assert_not_called()
+        self.assert_error_logged(message_of(Logger.uv_not_on_path), location=Location(mock_pyproject_toml))
 
     def test_skip_non_uv_tool_section(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pyproject.toml with a non-uv tool section (e.g. [tool.poetry]) is skipped without running uv."""

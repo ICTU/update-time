@@ -13,7 +13,7 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, normalized_python_name
 from update_time.domain.reference import Reference
 from update_time.io.log import get_logger
-from update_time.io.process import run
+from update_time.io.process import is_installed, run
 from update_time.manifests import requirements_txt
 from update_time.markers.marker import Marker
 from update_time.primitives.command import Command
@@ -31,10 +31,6 @@ if TYPE_CHECKING:
 
 type _ByPackage = Mapping[DependencyName, Sequence[SteeredReference]]
 
-# The comment that marks a cutoff as Update-time's own. Update-time keeps a cutoff carrying it in step with the
-# cooldown, and leaves a cutoff without it alone, as the user's.
-MANAGED_BY_COMMENT = "managed by Update-time — remove this comment to prevent Update-time from changing it"
-
 
 @dataclass(frozen=True)
 class RequirementsCompiler(ABC):
@@ -45,7 +41,6 @@ class RequirementsCompiler(ABC):
     setting: ClassVar[str]  # The tool and its cutoff option, as the log names them
     cutoff_option: ClassVar[str]
     package_cooldown_option: ClassVar[str | None]  # None for a tool that takes a cutoff for the whole run alone
-    managed_by_comment_line: ClassVar[str]  # The line in a source that says Update-time manages the cutoff
     log: ClassVar[Logger] = get_logger("requirements.txt")
 
     def recompile(self) -> None:
@@ -54,13 +49,29 @@ class RequirementsCompiler(ABC):
         Where the tool takes the cooldown of a package, the markers alone set it, in place of each package cooldown the
         header records.
         """
-        compiled = self.compiled
-        if not (command := compiled.recompile_command):
+        if not (command := self.compiled.recompile_command):
             return
+        if not is_installed(command.executable):
+            self.log.compiler_not_on_path(self.compiled.path, command.executable)
+        elif not self._recompiled(command):
+            self.log.compiled_file_not_recompiled(self.compiled.path, self.tool)
+
+    @property
+    def _managed_by_comment_line(self) -> str:
+        """Return the line in a source that says Update-time sets the cutoff the compiled file's header records."""
+        cutoff = self.cutoff_option.removeprefix("--")
+        return (
+            f"# Update-time sets the {cutoff} in the compiled file's header; remove this line to set the {cutoff} "
+            "yourself"
+        )
+
+    def _recompiled(self, command: Command) -> bool:
+        """Recompile the file with the command, and return whether the tool succeeded."""
+        compiled = self.compiled
         # The cutoff of a compiled requirements file lives in its header, which a recompile rewrites. So Update-time
         # writes the managed-by comment on a line of its own at the top of the file's source instead. It recognises the
         # comment by its whole line, since a marker in a source holds `update-time` as well.
-        line = self.managed_by_comment_line
+        line = self._managed_by_comment_line
         commented = any(requirements_txt.holds_line(source, line) for source in compiled.sources)
         declarations = [
             declaration for source in compiled.sources for declaration in requirements_txt.declarations(source)
@@ -71,13 +82,16 @@ class RequirementsCompiler(ABC):
         command, cooldown = self._managed_cutoff(command, commented=commented)
         cutoff = (self.cutoff_option, cooldown) if cooldown else ()
         options = (*cutoff, *self._package_cooldowns(steering), *self._upgrades(steering))
-        if not run(Command(*command, "--quiet", *options), cwd=compiled.compile_directory).succeeded:
-            self.log.compiled_file_not_recompiled(compiled.path, self.tool)
-            return
+        result = run(Command(*command, "--quiet", *options), cwd=compiled.compile_directory)
+        if not result.succeeded:
+            return False
+        if compiled.writes_to_standard_output:
+            compiled.path.write_text(result.stdout)
         if cooldown and not commented:
             requirements_txt.prepend_line(compiled.first_source, line)
             self.log.managed_by_comment_written(compiled.first_source, compiled.path, cooldown, self.setting)
         self._report_moved_versions(declarations)
+        return True
 
     def _managed_cutoff(self, command: Command, *, commented: bool) -> tuple[Command, str | None]:
         """Return the command without the cutoff Update-time manages, and the cooldown to pass in its place.

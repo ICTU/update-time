@@ -9,8 +9,8 @@ from tests.update_time.helpers import LoggingTestCase
 if TYPE_CHECKING:
     from update_time.primitives.command import Command
 
-# The comment Update-time writes beside a cutoff it manages, spelled out so the tests pin the wording.
-MANAGED_BY_COMMENT = "managed by Update-time — remove this comment to prevent Update-time from changing it"
+# The comment Update-time writes beside the exclude-newer it manages in a pyproject.toml.
+MANAGED_BY_COMMENT = "managed by Update-time — remove this comment to set exclude-newer yourself"
 
 # How `uv --show-settings` prints an `exclude-newer` that is set.
 CONFIGURED_EXCLUDE_NEWER = "Some(Absolute(2024-06-01T22:00:00Z))"
@@ -26,11 +26,12 @@ class UvSettingsTestCase(LoggingTestCase):
     """A test case whose stubbed processes answer `uv --show-settings`, without an `exclude-newer` unless set."""
 
     def setUp(self) -> None:
-        """Stub out subprocess.run, so a test does not start a process."""
+        """Stub out subprocess.run, so a test does not start a process, and find every executable on the path."""
         super().setUp()
         self.configured_exclude_newer = "None"
         self.settings_answer: object = None
         self.mock_run = self.enterContext(patch("subprocess.run", side_effect=self.run_tool))
+        self.which = self.enterContext(patch("shutil.which", side_effect=lambda executable: f"/bin/{executable}"))
 
     def run_tool(self, _command: Command, /, **_options: object) -> object:
         """Answer the command as `uv --show-settings` does."""

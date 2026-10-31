@@ -20,7 +20,6 @@ from tests.update_time.helpers import message_of, published_version
 from tests.update_time.manifests.helpers import requirements_compiled_by_pip_compile, requirements_compiled_by_uv
 from tests.update_time.package_managers.helpers import (
     CONFIGURED_EXCLUDE_NEWER,
-    MANAGED_BY_COMMENT,
     UNREADABLE_SETTINGS,
     UvSettingsTestCase,
 )
@@ -30,9 +29,15 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 # The line Update-time writes into a source to say it manages the `exclude-newer` the compiled file records.
-_UV_MANAGED_BY_COMMENT_LINE = f"# exclude-newer: {MANAGED_BY_COMMENT}"
+_UV_MANAGED_BY_COMMENT_LINE = (
+    "# Update-time sets the exclude-newer in the compiled file's header; remove this line to set the "
+    "exclude-newer yourself"
+)
 # The line Update-time writes into a source to say it manages the `uploaded-prior-to` a pip-compile file records.
-_PIP_MANAGED_BY_COMMENT_LINE = f"# uploaded-prior-to: {MANAGED_BY_COMMENT}"
+_PIP_MANAGED_BY_COMMENT_LINE = (
+    "# Update-time sets the uploaded-prior-to in the compiled file's header; remove this line to set the "
+    "uploaded-prior-to yourself"
+)
 
 # The compiled file sits in the directory it was compiled in, and names `base.in` there as its source.
 _ROOT = Path.cwd()
@@ -58,8 +63,8 @@ def _compiled_from_dev_and_base(options: str = "") -> str:
 
 
 def _is_the_recompile(command: Command) -> bool:
-    """Return whether the command is the `uv pip compile` that recompiles the file, rather than a settings query."""
-    return command[:3] == _UV_TOOL and "--show-settings" not in command
+    """Return whether the command is the uv or pip-compile run that recompiles the file, not a settings query."""
+    return (command[:3] == _UV_TOOL and "--show-settings" not in command) or command[0] == "pip-compile"
 
 
 class RecompileTest(UvSettingsTestCase):
@@ -96,6 +101,16 @@ class RecompileTest(UvSettingsTestCase):
             return self.run_tool(command, **options)
 
         self.mock_run.side_effect = compile_the_contents
+
+    def have_uv_print(self, contents: str) -> None:
+        """Have the stubbed uv print the contents to standard output when it compiles."""
+
+        def print_the_contents(command: Command, **options: object) -> object:
+            if _is_the_recompile(command):
+                return Mock(stdout=contents, stderr="")
+            return self.run_tool(command, **options)
+
+        self.mock_run.side_effect = print_the_contents
 
     def assert_recompiled(self, *options: str, command: tuple[str, ...] = _UV_COMMAND, cwd: Path = _ROOT) -> None:
         """Assert that the tool ran the command the header records, quietly and with the options, in the directory."""
@@ -173,10 +188,30 @@ class RecompileTest(UvSettingsTestCase):
         upgrades = ("--upgrade-package", "aaa", "--upgrade-package", "flask")
         self.assert_recompiled("--uploaded-prior-to", "P7D", *upgrades, command=("pip-compile", "sub/requirements.in"))
 
-    def test_a_file_uv_compiled_to_standard_output_does_not_start_a_process(self):
-        """Test that a file uv compiled to standard output is left to the user."""
-        self.recompile({_COMPILED: requirements_compiled_by_uv("base.in", output=None), _SOURCE: "flask==1.0\n"})
+    def test_a_file_uv_compiled_to_another_file_does_not_start_a_process(self):
+        """Test that a file whose header records another file as its output is left to the user."""
+        compiled = requirements_compiled_by_uv("base.in", output="other.txt")
+        self.recompile({_COMPILED: compiled, _SOURCE: "flask==1.0\n"})
         self.mock_run.assert_not_called()
+
+    @kills(
+        Mutation(
+            requirements_compiler.RequirementsCompiler._recompiled,
+            "compiled.path.write_text(result.stdout)",
+            "pass",
+            "a file compiled to standard output keeps its old pins, though uv printed new ones",
+        )
+    )
+    def test_a_file_uv_compiled_to_standard_output_becomes_what_uv_prints(self):
+        """Test that uv recompiles a file it printed, in the file's directory, and that what it prints is the file."""
+        compiled = requirements_compiled_by_uv("base.in", output=None)
+        printed = compiled + "werkzeug==3.1\n    # via flask\n"
+        self.have_uv_print(printed)
+        files = self.recompile({_COMPILED: compiled, _SOURCE: "flask==1.0\n"})
+        self.assert_recompiled(
+            "--exclude-newer", "7 days", "--upgrade-package", "flask", command=(*_UV_TOOL, "base.in")
+        )
+        self.assertEqual(files[_COMPILED], printed)
 
     @patch_environ({COOLDOWN.name: "14"})
     def test_the_cooldown_is_passed_and_the_managed_by_comment_written_where_the_header_records_no_exclude_newer(self):
@@ -498,31 +533,70 @@ class RecompileTest(UvSettingsTestCase):
     @kills(
         Mutation(
             requirements_compiler.RequirementsCompiler.recompile,
-            "self.log.compiled_file_not_recompiled(compiled.path, self.tool)",
-            'self.log.compiled_file_not_recompiled(compiled.path, "uv pip compile")',
-            "the error about a failed pip-compile names uv",
+            "if not is_installed(command.executable):",
+            "if False:",
+            "Update-time asks a tool missing from the path for its settings, and then runs it",
+        ),
+        Mutation(
+            requirements_compiler.RequirementsCompiler.recompile,
+            "self.log.compiler_not_on_path(self.compiled.path, command.executable)",
+            "self.log.compiled_file_not_recompiled(self.compiled.path, self.tool)",
+            "a tool missing from the path is reported as a tool that failed",
+        ),
+    )
+    def test_a_tool_missing_from_the_path_is_reported_without_asking_for_its_settings(self):
+        """Test that Update-time reports a missing pip-compile in one line, and runs neither it nor a settings query."""
+        self.which.side_effect = lambda _executable: None
+        self.recompile({_COMPILED: requirements_compiled_by_pip_compile("base.in"), _SOURCE: "flask==1.0\n"})
+        self.mock_run.assert_not_called()
+        self.assert_errors_logged(
+            (message_of(Logger.compiler_not_on_path), {"location": Location(_COMPILED), "executable": "pip-compile"}),
         )
+
+    @kills(
+        Mutation(
+            requirements_compiler.RequirementsCompiler.recompile,
+            "self.log.compiled_file_not_recompiled(self.compiled.path, self.tool)",
+            'self.log.compiled_file_not_recompiled(self.compiled.path, "uv pip compile")',
+            "the error about a failed pip-compile names uv",
+        ),
+        Mutation(
+            requirements_compiler.RequirementsCompiler._recompiled,
+            "if not result.succeeded:\n"
+            "            return False\n"
+            "        if compiled.writes_to_standard_output:\n"
+            "            compiled.path.write_text(result.stdout)\n",
+            "if compiled.writes_to_standard_output:\n"
+            "            compiled.path.write_text(result.stdout)\n"
+            "        if not result.succeeded:\n"
+            "            return False\n",
+            "a failed recompile to standard output empties the file",
+        ),
     )
     def test_a_failed_recompile_is_reported_naming_the_tool(self):
-        """Test that a failed recompile is reported, naming the tool, and does not write the managed-by comment."""
+        """Test that a failed recompile is reported, naming the tool, and changes neither the source nor the file."""
 
         def fail_the_compile(command: Command, **options: object) -> object:
-            if _is_the_recompile(command) or command[0] == "pip-compile":
+            if _is_the_recompile(command):
                 raise CalledProcessError(1, command[0], "", "error: No solution found when resolving dependencies")
             return self.run_tool(command, **options)
 
         cases = {
-            "uv pip compile": requirements_compiled_by_uv("base.in"),
-            "pip-compile": requirements_compiled_by_pip_compile("base.in"),
+            "uv pip compile": ("uv pip compile", requirements_compiled_by_uv("base.in")),
+            "pip-compile": ("pip-compile", requirements_compiled_by_pip_compile("base.in")),
+            "uv pip compile to standard output": (
+                "uv pip compile",
+                requirements_compiled_by_uv("base.in", output=None),
+            ),
         }
-        for tool, compiled in cases.items():
-            with self.subTest(tool):
+        for case, (tool, compiled) in cases.items():
+            with self.subTest(case):
                 self.mock_run.side_effect = fail_the_compile
                 files = self.recompile({_COMPILED: compiled, _SOURCE: "flask==1.0\n"})
                 self.assert_error_logged(
                     message_of(Logger.compiled_file_not_recompiled), location=Location(_COMPILED), tool=tool
                 )
-                self.assertEqual(files[_SOURCE], "flask==1.0\n")
+                self.assertEqual((files[_SOURCE], files[_COMPILED]), ("flask==1.0\n", compiled))
                 self.assertEqual(self.records_of(message_of(Logger.managed_by_comment_written)), [])
 
     @patch("requests.Session.get", Mock(side_effect=[pypi_release(PYPI_OLD_UPLOAD)]))
@@ -565,7 +639,7 @@ class RecompileTest(UvSettingsTestCase):
 
     @kills(
         Mutation(
-            requirements_compiler.RequirementsCompiler.recompile,
+            requirements_compiler.RequirementsCompiler._recompiled,
             "for source in compiled.sources)",
             "for source in compiled.sources[:1])",
             "a managed-by comment in a source other than the first is missed, so the cooldown stops being applied",

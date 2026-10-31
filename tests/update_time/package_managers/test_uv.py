@@ -42,6 +42,14 @@ class PersistExcludeNewerTest(UvSettingsTestCase):
         _persist_exclude_newer(pyproject_toml)
         return pyproject_toml
 
+    @kills(
+        Mutation(
+            uv,
+            'remove this comment to set exclude-newer yourself"',
+            'remove this comment to prevent Update-time from changing it"',
+            "the managed-by comment does not name the setting it hands over",
+        )
+    )
     def test_writes_when_absent(self):
         """Test that the cooldown is written, with the managed-by comment, when the project configures none."""
         pyproject_toml = self.persist(pyproject("a==1.0"))
@@ -111,6 +119,21 @@ class PersistExcludeNewerTest(UvSettingsTestCase):
                 pyproject_toml = self.persist(pyproject("a==1.0"))
                 self.assertIn(f'exclude-newer = "{COOLDOWN.default} days"', pyproject_toml.write_text.call_args.args[0])
                 self.assert_logged_among_others(message_of(Logger.uv_settings_unreadable), location=ANY)
+
+    @kills(
+        Mutation(
+            uv._persist_exclude_newer,
+            'if not is_installed("uv"):',
+            "if False:",
+            "Update-time queries a missing uv, and writes a cooldown nothing reads",
+        )
+    )
+    def test_writes_nothing_where_uv_is_not_on_the_path(self):
+        """Test that Update-time neither asks a missing uv for its settings nor writes a cooldown for it."""
+        self.which.side_effect = lambda _executable: None
+        pyproject_toml = self.persist(pyproject("a==1.0"))
+        pyproject_toml.write_text.assert_not_called()
+        self.mock_run.assert_not_called()
 
     def test_does_not_rewrite_when_already_current(self):
         """Test that Update-time's own value is not rewritten where it already matches the cooldown."""

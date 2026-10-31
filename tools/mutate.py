@@ -34,7 +34,8 @@ _ERRORS = re.compile(r"^FAILED \(.*\berrors=(?P<errors>\d+)", re.MULTILINE)
 
 # How many tests a run reported running, which a stub that broke the file cuts short. A failing run replays
 # unittest's own `Ran N tests`, while a passing one is summarised by the recipe as `PASS (N tests)`, so a comparison
-# between the two has to read both spellings.
+# between the two has to read both spellings. A failing run reports the count of each failing test module before the
+# total, so the total is the last count.
 _TESTS_RUN = re.compile(r"(?:^Ran |PASS \()(?P<tests>\d+) tests?\b", re.MULTILINE)
 
 # A test the run reported as failing, as unittest names it: the method, where it lives, and a `subTest` case's
@@ -163,9 +164,9 @@ def _killed_by(output: str) -> list[str]:
 
 
 def _tests_run(output: str) -> int | None:
-    """Return how many tests the run reported running, or None where it reported no count."""
-    match = _TESTS_RUN.search(output)
-    return int(match.group("tests")) if match else None
+    """Return how many tests the run reported running in total, or None where it does not report a count."""
+    counts = _TESTS_RUN.findall(output)
+    return int(counts[-1]) if counts else None
 
 
 if __name__ == "__main__":  # pragma: no cover

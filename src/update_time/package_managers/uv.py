@@ -16,13 +16,12 @@ from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
 from update_time.domain.dependency import DependencyVersion, normalized_python_name
 from update_time.formats import toml
 from update_time.io.log import get_logger
-from update_time.io.process import run
+from update_time.io.process import is_installed, run
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.markers.directive import Reason
 from update_time.markers.reference import SteeredResolvedReference
 from update_time.package_managers.policy import ManagerPolicy, report_markers
 from update_time.package_managers.requirements_compiler import (
-    MANAGED_BY_COMMENT,
     RequirementsCompiler,
     log_new_pypi_version,
 )
@@ -50,6 +49,7 @@ _NON_UV_LOCKFILES = {"poetry.lock": "poetry", "pdm.lock": "pdm"}
 
 # Update-time writes its cooldown into `[tool.uv] exclude-newer` with the managed-by comment. It recognises the comment
 # there by the lower-cased `update-time` word, so the prose can change.
+_MANAGED_BY_COMMENT = "managed by Update-time — remove this comment to set exclude-newer yourself"
 _MANAGED_BY_COMMENT_WORD = "update-time"
 _EXCLUDE_NEWER_OPTION = "--exclude-newer"
 # What `--show-settings` prints about `exclude-newer`: `Some(…)` where the project's config, the user's config, or
@@ -96,11 +96,14 @@ def configure_cooldown(pyproject_tomls: list[Path]) -> None:
 def _persist_exclude_newer(pyproject_toml: Path) -> None:
     """Write `exclude-newer = "<N> days"`, with the managed-by comment, to the pyproject.toml, unless a user set it.
 
-    A file whose `tool` or `tool.uv` is not a table gets a warning instead.
+    A file whose `tool` or `tool.uv` is not a table gets a warning instead. Without uv on the path, nothing is written,
+    and the uv run that follows reports uv missing.
 
     A value carrying the managed-by comment is kept in sync with the cooldown; a value without the comment is
     the user's own and is left untouched, as is an already-current value carrying it (which is not rewritten).
     """
+    if not is_installed("uv"):
+        return
     file = PyprojectToml(pyproject_toml)
     existing = file.tool_key("uv", "exclude-newer")
     cooldown = _duration(COOLDOWN.get())
@@ -113,7 +116,7 @@ def _persist_exclude_newer(pyproject_toml: Path) -> None:
             return  # A user-set exclude-newer: leave it alone.
         if value == cooldown:
             return  # Already Update-time's and already current.
-    if file.set_tool_key("uv", "exclude-newer", cooldown, comment=MANAGED_BY_COMMENT):
+    if file.set_tool_key("uv", "exclude-newer", cooldown, comment=_MANAGED_BY_COMMENT):
         _LOG.configured_uv_cooldown(pyproject_toml, cooldown)
     else:
         _LOG.uv_cooldown_not_set(pyproject_toml)
@@ -143,7 +146,6 @@ class UvPipCompile(RequirementsCompiler):
     setting: ClassVar[str] = "uv exclude-newer"
     cutoff_option: ClassVar[str] = _EXCLUDE_NEWER_OPTION
     package_cooldown_option: ClassVar[str | None] = "--exclude-newer-package"
-    managed_by_comment_line: ClassVar[str] = f"# exclude-newer: {MANAGED_BY_COMMENT}"
 
     @override
     def settings_hold_cutoff(self, command: Command) -> bool:
@@ -228,6 +230,18 @@ def report_file_markers(file: PythonDependencyToml, log: Logger) -> list[Declara
     return report_markers(file.declarations(), log, POLICY)
 
 
+def _outdated(uv_tree: Command, file: PythonDependencyToml, log: Logger) -> str | None:
+    """Return what `uv tree --outdated` reports for the file, or None after logging why uv reported nothing."""
+    if not is_installed(uv_tree.executable):
+        log.uv_not_on_path(file.path)
+        return None
+    outdated = run(uv_tree)
+    if not outdated.ok:
+        log.uv_dependencies_not_updated(file.path)
+        return None
+    return outdated.stdout
+
+
 def _update_dependencies(uv_tree: Command, file: PythonDependencyToml, log: Logger) -> bool:
     """Run `uv tree --outdated`, log every new version no marker holds back, and rewrite the file's exact `==` pins.
 
@@ -239,11 +253,9 @@ def _update_dependencies(uv_tree: Command, file: PythonDependencyToml, log: Logg
     """
     log.path(file.path)
     declarations = _by_name(report_file_markers(file, log))
-    outdated = run(uv_tree)
-    if not outdated.ok:
-        log.uv_dependencies_not_updated(file.path)
+    if (outdated := _outdated(uv_tree, file, log)) is None:
         return False
-    lines_with_updates = [line for line in outdated.stdout.splitlines() if " (latest: " in line]
+    lines_with_updates = [line for line in outdated.splitlines() if " (latest: " in line]
     latest_versions: dict[Declaration, VersionString] = {}
     for line in lines_with_updates:
         package, version = _parse_line_with_update(line)

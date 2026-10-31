@@ -4,7 +4,7 @@ import re
 from typing import ClassVar, override
 
 from update_time.io.process import run_unlogged
-from update_time.package_managers.requirements_compiler import MANAGED_BY_COMMENT, RequirementsCompiler
+from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.primitives.command import Command
 
 # What `pip config list` prints about `uploaded-prior-to`, a line per place that sets it: `global.uploaded-prior-to=…`
@@ -19,7 +19,6 @@ class PipCompile(RequirementsCompiler):
     setting: ClassVar[str] = "pip-compile uploaded-prior-to"
     cutoff_option: ClassVar[str] = "--uploaded-prior-to"
     package_cooldown_option: ClassVar[str | None] = None
-    managed_by_comment_line: ClassVar[str] = f"# uploaded-prior-to: {MANAGED_BY_COMMENT}"
 
     @override
     def settings_hold_cutoff(self, command: Command) -> bool:
