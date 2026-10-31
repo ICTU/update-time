@@ -6,8 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Update the sources of a compiled requirements file, such as its `requirements.in`, and have uv or pip-compile recompile the file, whichever compiled it. See [#491](https://github.com/ICTU/update-time/issues/491).
+- Warn about a yanked or vulnerable version that a compiled requirements file pins for a requirement of its source that does not pin an exact version. See [#491](https://github.com/ICTU/update-time/issues/491).
+
 ### Changed
 
+- Write no `exclude-newer` into a `pyproject.toml` where uv reads one from elsewhere, such as a `uv.toml`. See [#491](https://github.com/ICTU/update-time/issues/491).
 - Set a value for a reference with a `set` marker, such as `set[cooldown=30]`, `set[stale-after=0]`, or `set[vulnerability-level=high]`. It replaces the comparison items, such as `ignore[stale<90]`, and the items `ignore[stale]` and `ignore[vulnerable]`. Hold a reference back with `ignore[update]` instead of a bare `ignore`. Closes [#496](https://github.com/ICTU/update-time/issues/496).
 - Report a marker's risk level as redundant where it and `--vulnerability-level` report the same vulnerabilities, and log each vulnerability it silences at `DEBUG`. See [#496](https://github.com/ICTU/update-time/issues/496).
 - Report `ignore[hash-drift]`, `ignore[floating-pin]`, and a bare `allow[update]` as redundant, since each asks for what Update-time does by default. See [#502](https://github.com/ICTU/update-time/issues/502).

@@ -1,19 +1,26 @@
 """Unit tests for the requirements.txt update script."""
 
 import contextlib
+from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
+from update_time.io.filesystem import _EXCLUDE_PATHS
 from update_time.io.log import Logger
 from update_time.manifests import requirements_txt as requirements_txt_manifest
+from update_time.manifests.requirements_txt import Unrecompilable
 from update_time.markers import directive as directive_module
 from update_time.markers.directive import Reason
-from update_time.markers.marker import Marker, Scope, Threshold
+from update_time.markers.marker import Marker, Scope, Threshold, parse_directives
+from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.primitives.location import Location
 from update_time.references import vulnerability as vulnerability_module
+from update_time.sources import pypi as pypi_module
+from update_time.updaters import update_requirements_txt
 from update_time.updaters.update_requirements_txt import update_requirements_txts
 
-from tests.helpers import patch_environ
+from tests.helpers import FakeFiles, patch_environ
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
     LoggingTestCase,
@@ -21,7 +28,11 @@ from tests.update_time.helpers import (
     published_version,
     staleness_disabled,
 )
-from tests.update_time.manifests.helpers import requirements_file
+from tests.update_time.manifests.helpers import (
+    requirements_compiled_by_pip_compile,
+    requirements_compiled_by_uv,
+    requirements_file,
+)
 from tests.update_time.sources.helpers import PYPI_OLD_UPLOAD, osv_advisory, pypi_index, pypi_release, yanked_file
 from tests.update_time.updaters.fixtures import (
     DJANGO_ADVISORY,
@@ -39,7 +50,15 @@ from tests.update_time.updaters.helpers import (
     unreachable_osv,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
 _PUBLISHED = published_version("1.1", PYPI_OLD_UPLOAD)
+
+# The scan root, a compiled file in it, and `base.in`, the source that file names.
+_ROOT = Path.cwd()
+_COMPILED = _ROOT / "requirements.txt"
+_SOURCE = _ROOT / "base.in"
 
 # The endpoint a package's versions and release dates are read from; `queried_packages` reads its name back off it.
 _PYPI_INDEX_URL = "https://pypi.org/simple/"
@@ -51,11 +70,38 @@ _PYPI_INDEX_URL = "https://pypi.org/simple/"
 class UpdateRequirementsTxtTest(LoggingTestCase):
     """Unit tests for the update requirements.txt function."""
 
-    def discovered_requirements_txt(self, rglob: Mock, contents: str, *, sibling_in: bool = False) -> Mock:
+    def setUp(self) -> None:
+        """Stub out the recompile, so a compiled file's run is asked for without a compiler being started."""
+        super().setUp()
+        self.mock_recompile = self.enterContext(patch.object(RequirementsCompiler, "recompile", autospec=True))
+
+    def discovered_requirements_txt(self, rglob: Mock, contents: str) -> Mock:
         """Return the single requirements file the scan discovers, holding the contents."""
-        requirements_txt = requirements_file(contents, sibling_in=sibling_in)
+        requirements_txt = requirements_file(contents)
         rglob.return_value = [requirements_txt]
         return requirements_txt
+
+    def run_update(  # noqa: PLR0913 — the run's mocks, the files, and what the scan and PyPI answer
+        self,
+        rglob: Mock,
+        get: Mock,
+        files: Mapping[str | Path, str],
+        *,
+        discovered: Iterable[Path] = (_COMPILED,),
+        directories: Iterable[Path] = (),
+        responses: list | None = None,
+    ) -> FakeFiles:
+        """Run the update over the files, PyPI giving the responses, and return the files the run left.
+
+        Without responses, PyPI offers flask 1.1 over 1.0.
+        """
+        fake_files = FakeFiles(files, directories=directories)
+        self.mock_recompile.reset_mock()  # So a case of a table sees only the recompiles its own run asked for
+        rglob.return_value = list(discovered)
+        get.side_effect = self.pypi("1.0", "1.1", bump=True) if responses is None else responses
+        with fake_files.patched():
+            update_requirements_txts()
+        return fake_files
 
     def pypi(self, *versions: str, bump: bool = False, upload_time: str = PYPI_OLD_UPLOAD) -> list:
         """Return mock PyPI responses: the Index API versions, plus per-version metadata when a bump is expected."""
@@ -77,6 +123,13 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         """Return the discovered file declaring `humanize>=4` with the marker, a requirement naming a range."""
         comment = f"  # update-time: {marker}" if marker else ""
         return self.discovered_requirements_txt(rglob, f"humanize>=4{comment}\n")
+
+    def update_a_source(  # noqa: PLR0913 — the run's mocks, and what the two files hold
+        self, rglob: Mock, get: Mock, pin: str, requirement: str, responses: list, *, compiled: str = ""
+    ) -> None:
+        """Run the update over a compiled file, uv's by default, with its `flask==1.0` replaced by the pin."""
+        compiled = (compiled or requirements_compiled_by_uv("base.in")).replace("flask==1.0", pin)
+        self.run_update(rglob, get, {_COMPILED: compiled, _SOURCE: f"{requirement}\n"}, responses=responses)
 
     def django_pin(self, rglob: Mock, get: Mock, marker: str = "") -> Mock:
         """Return the discovered file pinning `django==3.2.0` with the marker, PyPI listing that version as newest."""
@@ -506,7 +559,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_yanked_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
     def test_ignore_update_marker_still_warns_about_a_yank(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a pin frozen on a yanked version by `ignore[update]` is still warned about."""
+        """Test that a pin `ignore[update]` keeps on a yanked version is still warned about."""
         contents = "humanize==4.15.0  # update-time: ignore[update]\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         yanked = [yanked_file("humanize-4.15.0.tar.gz", reason="broke Python 3.10")]
@@ -516,7 +569,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.assert_yanked_dependency_logged("humanize", "4.15.0", Location(requirements_txt, 1))
 
     def test_ignore_update_marker_still_warns_about_an_archived_project(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a pin frozen by `ignore[update]` is still warned about when its project is archived."""
+        """Test that a pin `ignore[update]` holds back is still warned about when its project is archived."""
         contents = "humanize==4.15.0  # update-time: ignore[update]\n"
         requirements_txt = self.discovered_requirements_txt(mock_rglob, contents)
         mock_get.side_effect = [pypi_index("4.15.0", "4.16.0", archived=True)]
@@ -955,16 +1008,423 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 self.assert_no_new_version_logged()
                 self.assert_no_warnings_logged()
 
-    def test_a_compiled_file_is_skipped_entirely(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a compiled file is skipped whole, its pins left as the file wrote them.
+    def test_a_compiled_file_is_recompiled_once_its_sources_are_updated(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that the recompile reads the source with its pin already bumped."""
+        sources_at_the_recompile = []
+        self.mock_recompile.side_effect = lambda _compiler: sources_at_the_recompile.append(_SOURCE.read_text())
+        self.run_update(
+            mock_rglob, mock_get, {_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: "flask==1.0\n"}
+        )
+        self.assertEqual(sources_at_the_recompile, ["flask==1.1\n"])
+
+    @kills(
+        Mutation(
+            requirements_txt_manifest.CompiledRequirementsTxt._output_name,
+            'return None if output[1] == "-" else output[1]',
+            "return output[1]",
+            "Update-time reports a file pip-compile wrote to standard output as recording another output",
+        )
+    )
+    def test_a_compiled_file_update_time_cannot_recompile_is_left_as_it_is_with_the_reason(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that the line about a compiled file Update-time does not recompile says why."""
+        uv_compiled = requirements_compiled_by_uv("base.in")
+        cases = {
+            "compiled by uv to standard output": (
+                requirements_compiled_by_uv("base.in", output=None),
+                Unrecompilable.NO_OUTPUT,
+            ),
+            "compiled by pip-compile to standard output": (
+                requirements_compiled_by_pip_compile("base.in", output="-"),
+                Unrecompilable.NO_OUTPUT,
+            ),
+            "compiled by uv to another file": (
+                requirements_compiled_by_uv("base.in", output="other.txt"),
+                Unrecompilable.OTHER_OUTPUT,
+            ),
+            "compiled with a custom command": (
+                uv_compiled.replace("uv pip compile base.in -o requirements.txt", "make lock"),
+                Unrecompilable.NO_COMMAND,
+            ),
+            "compiled with an unclosed quote": (
+                requirements_compiled_by_uv("base.in", options='"--quiet'),
+                Unrecompilable.NO_COMMAND,
+            ),
+        }
+        for case, (contents, reason) in cases.items():
+            with self.subTest(case):
+                self.run_update(mock_rglob, mock_get, {_COMPILED: contents, _SOURCE: "flask==1.0\n"})
+                self.assert_logged_among_others(
+                    message_of(Logger.compiled_file_left_as_it_is),
+                    location=Location(_COMPILED),
+                    sources=(Location(_SOURCE),),
+                    reason=reason,
+                )
+
+    def test_a_compiled_file_whose_sources_the_run_reaches_is_recompiled(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a file uv or pip-compile compiled is handed to the recompile, and not reported as left as it is."""
+        cases = {
+            "compiled by uv": requirements_compiled_by_uv("base.in"),
+            "compiled by pip-compile": requirements_compiled_by_pip_compile("base.in"),
+        }
+        for case, compiled in cases.items():
+            with self.subTest(case):
+                self.run_update(mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: "flask==1.0\n"})
+                recompiled = [call.args[0].compiled.path for call in self.mock_recompile.call_args_list]
+                self.assertEqual(recompiled, [_COMPILED])
+                self.assertEqual(self.records_of(message_of(Logger.compiled_file_left_as_it_is)), [])
+
+    def test_the_source_of_a_compiled_file_is_updated(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that the pin in the source of a file uv compiled to standard output is bumped, the file left alone."""
+        compiled = requirements_compiled_by_uv("base.in", output=None)
+        files = self.run_update(mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: "flask==1.0\n"})
+        self.assertEqual(files[_SOURCE], "flask==1.1\n")
+        self.assertEqual(files[_COMPILED], compiled)
+        self.assert_logged_among_others(
+            message_of(Logger.compiled_file_left_as_it_is),
+            location=Location(_COMPILED),
+            sources=(Location(_SOURCE),),
+            reason=Unrecompilable.NO_OUTPUT,
+        )
+        self.assert_new_version_logged_among_others("flask", _PUBLISHED, Location(_SOURCE, 1))
+        self.assert_no_warnings_logged()
+
+    def test_a_directive_steering_the_update_is_not_redundant_where_the_file_is_recompiled(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that a directive steering the recompile is not redundant in the source of a recompiled file."""
+        cases = {
+            "uv": (
+                requirements_compiled_by_uv("base.in"),
+                ("set[cooldown=30]", "ignore[update]", "allow[update<5]", "ignore[minor-update]"),
+            ),
+            "pip-compile": (requirements_compiled_by_pip_compile("base.in"), ("ignore[update]", "allow[update<5]")),
+        }
+        for tool, (compiled, directives) in cases.items():
+            for directive in directives:
+                with self.subTest(f"{tool}: {directive}"):
+                    source = f"flask>=0.1  # update-time: {directive}\n"
+                    self.run_update(mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: source})
+                    self.assert_recognised_marker_logged("flask", Location(_SOURCE, 1), parse_directives(directive))
+                    self.assert_no_redundant_directive_logged()
+
+    @kills(
+        Mutation(
+            update_requirements_txt._warn_about_items_that_decide_nothing,
+            "_LOG.redundant_directive(reference, cooldown, Reason.COOLDOWN_PER_RUN)",
+            "pass",
+            "Update-time stays silent about a cooldown that pip-compile cannot apply to one package",
+        )
+    )
+    def test_a_cooldown_is_redundant_on_a_requirement_without_an_exact_pin_where_pip_compile_recompiles_the_file(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that a cooldown on a requirement naming a range is reported in a source pip-compile recompiles from."""
+        source = "flask>=0.1  # update-time: set[cooldown=30]\n"
+        compiled = requirements_compiled_by_pip_compile("base.in")
+        self.run_update(mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: source})
+        self.assert_redundant_directive_logged(
+            Reason.COOLDOWN_PER_RUN, "flask", Location(_SOURCE, 1), "set[cooldown=30]", among_others=True
+        )
+
+    def test_a_requirement_in_a_source_is_checked_for_a_yank_at_the_version_the_compiled_file_pins(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that a requirement without an exact pin is warned about where the compiled file pins a yank."""
+        yanked = pypi_index("4.15.0", files=[yanked_file("humanize-4.15.0.tar.gz", reason="broken")])
+        self.update_a_source(mock_rglob, mock_get, "humanize==4.15.0", "humanize>=4", [yanked])
+        self.assert_yanked_dependency_logged("humanize", "4.15.0", Location(_SOURCE, 1))
+
+    def test_the_marker_in_a_source_silences_a_vulnerability_at_the_version_the_compiled_file_pins(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that an `ignore[vulnerable=…]` in the source silences that vulnerability of the pinned version."""
+        directive = f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]"
+        with osv(DJANGO_ADVISORY):
+            requirement = f"django>=3  # update-time: {directive}"
+            self.update_a_source(mock_rglob, mock_get, "django==3.2.0", requirement, self.pypi("3.2.0"))
+        self.assertEqual(self.records_of(message_of(Logger.vulnerable_dependency)), [])
+        location = Location(_SOURCE, 1)
+        self.assert_ignored_vulnerability_logged("django", location, DJANGO_VULNERABILITY.advisory, directive)
+
+    @kills(
+        Mutation(
+            pypi_module.yank_state,
+            "if not is_valid(version) or (metadata := _project_metadata(package)) is None:",
+            "if (metadata := _project_metadata(package)) is None:",
+            "a compiled pin that is not PEP 440 aborts the run",
+            raises="packaging.version.InvalidVersion: Invalid version: '3.2.0-weird.x'",
+        )
+    )
+    def test_a_compiled_pin_that_is_not_pep_440_is_checked_without_a_yank(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a pinned version outside PEP 440 is checked for vulnerabilities alone."""
+        with osv(DJANGO_ADVISORY):
+            pin = "django==3.2.0-weird.x"
+            self.update_a_source(mock_rglob, mock_get, pin, "django>=3", self.pypi("3.2.0"))
+        self.assert_vulnerable_dependency_logged("django", "3.2.0-weird.x", DJANGO_VULNERABILITY, Location(_SOURCE, 1))
+
+    def test_a_source_two_compiled_files_share_is_checked_at_each_version_they_pin(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that a requirement two compiled files pin at different versions is checked at both."""
+        other = _ROOT / "requirements-py312.txt"
+        files: dict[str | Path, str] = {
+            _COMPILED: requirements_compiled_by_uv("base.in").replace("flask==1.0", "django==3.2.0"),
+            other: requirements_compiled_by_uv("base.in", output=other.name).replace("flask==1.0", "django==4.0.0"),
+            _SOURCE: "django>=3\n",
+        }
+        mock_rglob.return_value = [_COMPILED, other]
+        mock_get.side_effect = self.pypi("3.2.0", "4.0.0")
+        with FakeFiles(files).patched(), osv(DJANGO_ADVISORY):
+            update_requirements_txts()
+        location = Location(_SOURCE, 1)
+        self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, location, among_others=True)
+        self.assert_vulnerable_dependency_logged("django", "4.0.0", DJANGO_VULNERABILITY, location, among_others=True)
+
+    def test_a_transitive_pin_in_a_compiled_file_is_not_checked(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a pin the compiled file holds for a dependency of a source's requirement is not checked."""
+        compiled = requirements_compiled_by_uv("base.in") + "django==3.2.0\n    # via flask\n"
+        with osv(DJANGO_ADVISORY):
+            self.update_a_source(mock_rglob, mock_get, "flask==1.0", "flask>=1", self.pypi("1.0"), compiled=compiled)
+        self.assert_vulnerable_dependency_logged("flask", "1.0", DJANGO_VULNERABILITY, Location(_SOURCE, 1))
+
+    @kills(
+        Mutation(
+            update_requirements_txt.update_requirements_txts,
+            "_check_pinned_versions(plain_files, compiled_files)",
+            "_check_pinned_versions(plain_files, recompilable)",
+            "Update-time checks the versions only of the compiled files it recompiles",
+        )
+    )
+    def test_a_requirement_in_a_source_is_checked_for_vulnerabilities_at_the_version_the_compiled_file_pins(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that a requirement without an exact pin is checked at the version the compiled file pins."""
+        uv_compiled = requirements_compiled_by_uv("base.in")
+        cases = {
+            "compiled by uv": uv_compiled,
+            "compiled with a custom command": uv_compiled.replace(
+                "uv pip compile base.in -o requirements.txt", "make lock"
+            ),
+        }
+        for case, compiled in cases.items():
+            with self.subTest(case), osv(DJANGO_ADVISORY):
+                self.update_a_source(
+                    mock_rglob, mock_get, "django==3.2.0", "django>=3", self.pypi("3.2.0"), compiled=compiled
+                )
+                location = Location(_SOURCE, 1)
+                self.assert_vulnerable_dependency_logged("django", "3.2.0", DJANGO_VULNERABILITY, location)
+
+    @kills(
+        Mutation(
+            update_requirements_txt._pins_by_source,
+            "CompiledRequirementsTxt.read(compiled.path).pins",
+            "compiled.pins",
+            "Update-time checks the old pins of a recompiled file",
+        )
+    )
+    def test_a_recompiled_file_is_checked_at_the_version_the_recompile_leaves(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a requirement in a source is checked at the version the recompiled file pins, not the old one."""
+        recompiled = requirements_compiled_by_uv("base.in").replace("flask==1.0", "django==4.0.0")
+        self.mock_recompile.side_effect = lambda _compiler: _COMPILED.write_text(recompiled)
+        with osv(DJANGO_ADVISORY):
+            self.update_a_source(mock_rglob, mock_get, "django==3.2.0", "django>=3", self.pypi("3.2.0", "4.0.0"))
+        self.assert_vulnerable_dependency_logged("django", "4.0.0", DJANGO_VULNERABILITY, Location(_SOURCE, 1))
+
+    def test_a_version_check_in_a_source_is_judged_at_the_pinned_version_or_lacks_one(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that a yank or vulnerability directive is judged at the compiled file's version, if it pins one."""
+        cases = {
+            "ignore[yanked]": (
+                Reason.NO_VERSION_TO_CHECK_FOR_A_YANK,
+                message_of(Logger.report_yank, "directive", "version"),
+            ),
+            f"ignore[vulnerable={DJANGO_VULNERABILITY.advisory}]": (
+                Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
+                message_of(Logger.redundant_vulnerable_advisory),
+            ),
+        }
+        redundant = message_of(Logger.redundant_directive)
+        for directive, (lacking_a_version, judged_at_the_version) in cases.items():
+            requirement = f"humanize>=4  # update-time: {directive}"
+            with self.subTest(f"{directive}, pinned"):
+                self.update_a_source(mock_rglob, mock_get, "humanize==4.15.0", requirement, [pypi_index("4.15.0")])
+                self.assertEqual(self.records_of(redundant, reason=lacking_a_version), [])
+                self.assertNotEqual(self.records_of(judged_at_the_version, version="4.15.0"), [])
+            with self.subTest(f"{directive}, not pinned"):
+                self.update_a_source(mock_rglob, mock_get, "flask==1.0", requirement, [pypi_index("4.15.0")])
+                self.assertNotEqual(self.records_of(redundant, reason=lacking_a_version), [])
+
+    def test_an_ignore_update_in_a_source_uv_recompiles_from_is_logged_as_holding_the_update_back(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that an `ignore[update]` on a requirement without an exact pin gets the line saying it held it back."""
+        source = "flask>=0.1  # update-time: ignore[update]\n"
+        self.run_update(mock_rglob, mock_get, {_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: source})
+        self.assert_ignored_logged("flask", Location(_SOURCE, 1), "ignore[update]", among_others=True)
+
+    def test_each_source_of_a_compiled_file_is_updated(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that each source of a compiled file is bumped, and that one line names the sources that exist."""
+        dev, missing = _ROOT / "dev.in", _ROOT / "missing.in"
+        compiled = requirements_compiled_by_uv("base.in", output=None) + "    #   -r missing.in\n    #   -r dev.in\n"
+        files = self.run_update(
+            mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: "flask==1.0\n", dev: "flask==1.0\n"}
+        )
+        self.assertEqual((files[_SOURCE], files[dev]), ("flask==1.1\n", "flask==1.1\n"))
+        self.assert_logged_among_others(
+            message_of(Logger.compiled_file_left_as_it_is),
+            location=Location(_COMPILED),
+            sources=(Location(_SOURCE), Location(dev)),
+            reason=Unrecompilable.NO_OUTPUT,
+        )
+        self.assert_logged(message_of(Logger.source_not_found), location=Location(_COMPILED), source=Location(missing))
+
+    def test_a_source_is_found_relative_to_the_directory_the_file_was_compiled_in(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that a source is found where the compile ran, and beside the file where the header lacks an output."""
+        compiled, source = _ROOT / "docs" / "requirements.txt", _ROOT / "docs" / "requirements.in"
+        cases = {
+            "compiled from another directory": requirements_compiled_by_uv(
+                "docs/requirements.in", output="docs/requirements.txt"
+            ),
+            "compiled to standard output": requirements_compiled_by_uv("requirements.in", output=None),
+        }
+        for case, contents in cases.items():
+            with self.subTest(case):
+                self.run_update(
+                    mock_rglob, mock_get, {compiled: contents, source: "flask==1.0\n"}, discovered=[compiled]
+                )
+                self.assert_new_versions_logged(_PUBLISHED, Location(source, 1), "flask")
+                self.assert_no_warnings_logged()
+
+    def test_a_compiled_file_naming_a_compiled_source_is_skipped(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a compiled file with a compiled source is warned about, and neither its sources nor it change."""
+        dev_compiled, dev_source = _ROOT / "dev-requirements.txt", _ROOT / "dev.in"
+        base_compiled = _ROOT / "base.txt"
+        files = self.run_update(
+            mock_rglob,
+            mock_get,
+            {
+                dev_compiled: requirements_compiled_by_uv("dev.in", output="dev-requirements.txt")
+                + "    # via -r base.txt\n",
+                dev_source: "-r base.txt\nflask==1.0\n",
+                base_compiled: requirements_compiled_by_pip_compile("base.in", output="base.txt"),
+                _SOURCE: "flask==1.0\n",
+            },
+            discovered=[dev_compiled],
+        )
+        self.assertEqual((files[dev_source], files[_SOURCE]), ("-r base.txt\nflask==1.0\n", "flask==1.0\n"))
+        self.mock_recompile.assert_not_called()
+        self.assert_logged(
+            message_of(Logger.compiled_source_unsupported),
+            location=Location(dev_compiled),
+            source=Location(base_compiled),
+        )
+
+    def test_a_source_that_is_a_directory_is_warned_about(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a source the compiled file names but that is a directory is warned about as not found."""
+        self.run_update(
+            mock_rglob, mock_get, {_COMPILED: requirements_compiled_by_uv("base.in")}, directories=[_SOURCE]
+        )
+        mock_get.assert_not_called()
+        self.mock_recompile.assert_not_called()
+        self.assert_logged(message_of(Logger.source_not_found), location=Location(_COMPILED), source=Location(_SOURCE))
+
+    def test_a_missing_source_of_a_compiled_file_is_warned_about(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a source the compiled file names but that does not exist is warned about, and nothing updated."""
+        for case, contents in {
+            "uv": requirements_compiled_by_uv("base.in"),
+            "pip-compile": requirements_compiled_by_pip_compile("base.in"),
+        }.items():
+            with self.subTest(case):
+                files = self.run_update(mock_rglob, mock_get, {_COMPILED: contents})
+                mock_get.assert_not_called()
+                self.mock_recompile.assert_not_called()
+                self.assertEqual(files.files, {str(_COMPILED): contents})
+                self.assert_logged(
+                    message_of(Logger.source_not_found), location=Location(_COMPILED), source=Location(_SOURCE)
+                )
+                self.assert_no_info_logged()
+
+    def test_a_compiled_file_missing_one_of_its_sources_is_not_recompiled(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that the source that exists is bumped, and the compiled file not recompiled without the other."""
+        missing = _ROOT / "missing.in"
+        compiled = requirements_compiled_by_uv("base.in") + "    #   -r missing.in\n"
+        files = self.run_update(mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: "flask==1.0\n"})
+        self.assertEqual(files[_SOURCE], "flask==1.1\n")
+        self.mock_recompile.assert_not_called()
+        self.assert_logged_among_others(
+            message_of(Logger.source_not_found), location=Location(_COMPILED), source=Location(missing)
+        )
+
+    def test_a_source_is_updated_once(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a source two compiled files name, or that the scan finds as well, is read and bumped once."""
+        dev, base_txt = _ROOT / "dev-requirements.txt", _ROOT / "requirements-base.txt"
+        cases: dict[str, tuple[Path, dict[str | Path, str]]] = {
+            "two compiled files": (
+                _SOURCE,
+                {
+                    _COMPILED: requirements_compiled_by_uv("base.in"),
+                    dev: requirements_compiled_by_uv("base.in", output="dev-requirements.txt"),
+                },
+            ),
+            "a source the scan finds": (
+                base_txt,
+                {_COMPILED: requirements_compiled_by_uv("requirements-base.txt"), base_txt: ""},
+            ),
+        }
+        for case, (source, compiled_files) in cases.items():
+            with self.subTest(case):
+                files = {**compiled_files, source: "flask==1.0\n"}
+                self.run_update(mock_rglob, mock_get, files, discovered=[Path(path) for path in compiled_files])
+                self.assertEqual(len(self.records_of(message_of(Logger.path), location=Location(source))), 1)
+                self.assert_new_versions_logged(_PUBLISHED, Location(source, 1), "flask")
+
+    @patch_environ({_EXCLUDE_PATHS.name: "vendor"})
+    def test_a_source_the_scan_leaves_out_is_left_alone(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a source the scan leaves out is not updated, and not looked for outside the scan root."""
+        cases = {
+            "outside the scan root": ("../base.in", _ROOT.parent / "base.in", "flask==1.0\n"),
+            "outside the scan root, where no file exists": ("../base.in", _ROOT.parent / "base.in", None),
+            "under an excluded directory": ("vendor/base.in", _ROOT / "vendor" / "base.in", "flask==1.0\n"),
+            "under a hidden directory": (".venv/base.in", _ROOT / ".venv" / "base.in", "flask==1.0\n"),
+        }
+        for case, (source_name, source, contents) in cases.items():
+            with self.subTest(case):
+                files: dict[str | Path, str] = {_COMPILED: requirements_compiled_by_uv(source_name)}
+                if contents is not None:
+                    files[source] = contents
+                fake_files = self.run_update(mock_rglob, mock_get, files)
+                mock_get.assert_not_called()
+                self.mock_recompile.assert_not_called()
+                self.assertEqual(fake_files.files.get(str(source)), contents)
+                self.assert_logged(
+                    message_of(Logger.source_outside_the_scan), location=Location(_COMPILED), source=Location(source)
+                )
+                self.assert_no_info_logged()
+                self.assert_no_warnings_logged()
+
+    def test_a_compiled_file_without_a_source_is_skipped(self, mock_rglob: Mock, mock_get: Mock):
+        """Test that a compiled file that does not name a requirements file as its source is skipped whole.
 
         Which files count as compiled is pinned by the tests of `is_compiled` itself.
         """
-        requirements_txt = self.discovered_requirements_txt(mock_rglob, "flask==1.0 \\\n    --hash=sha256:abc\n")
-        update_requirements_txts()
-        requirements_txt.write_text.assert_not_called()
-        mock_get.assert_not_called()
-        self.assert_skipped_logged(requirements_txt, "compiled or hash-pinned requirements file")
-        self.assert_no_debug_logged()
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
+        cases = {
+            "a hash-pinned file without a header": "flask==1.0 \\\n    --hash=sha256:abc\n",
+            "a file uv compiled without annotations": requirements_compiled_by_uv("base.in").replace(
+                "    # via -r base.in\n", ""
+            ),
+        }
+        for case, contents in cases.items():
+            with self.subTest(case):
+                files = self.run_update(mock_rglob, mock_get, {_COMPILED: contents})
+                self.assertEqual(files[_COMPILED], contents)
+                mock_get.assert_not_called()
+                self.mock_recompile.assert_not_called()
+                self.assert_logged(message_of(Logger.compiled_file_without_a_source), location=Location(_COMPILED))
+                self.assert_no_info_logged()
+                self.assert_no_new_version_logged()
+                self.assert_no_warnings_logged()

@@ -1,5 +1,7 @@
 """Update uv-managed Python dependencies (work-around for the missing `uv update` command), and uv's marker policy.
 
+uv also recompiles a requirements file it compiled, as `UvPipCompile`.
+
 Covers both pyproject.toml projects and PEP 723 inline script metadata, which declare their dependencies the same
 way and are both resolved through uv. See https://github.com/astral-sh/uv/issues/6794.
 """
@@ -7,12 +9,11 @@ way and are both resolved through uv. See https://github.com/astral-sh/uv/issues
 import os
 import re
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar, override
 
 from update_time.domain.archival import archival_reporting
 from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
 from update_time.domain.dependency import DependencyVersion, normalized_python_name
-from update_time.domain.reference import Reference
 from update_time.formats import toml
 from update_time.io.log import get_logger
 from update_time.io.process import run
@@ -20,10 +21,14 @@ from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.markers.directive import Reason
 from update_time.markers.reference import SteeredResolvedReference
 from update_time.package_managers.policy import ManagerPolicy, report_markers
+from update_time.package_managers.requirements_compiler import (
+    MANAGED_BY_COMMENT,
+    RequirementsCompiler,
+    log_new_pypi_version,
+)
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
-from update_time.primitives.lookup import LookedUp
-from update_time.sources.pypi import get_changes, get_publication_datetime, project
+from update_time.sources.pypi import project
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -43,11 +48,13 @@ _LOG = get_logger("pyproject.toml")
 _NON_UV_TOOL_SECTIONS = ("poetry", "pdm")  # `[tool.poetry]` / `[tool.pdm]`
 _NON_UV_LOCKFILES = {"poetry.lock": "poetry", "pdm.lock": "pdm"}
 
-# Update-time writes its cooldown into `[tool.uv] exclude-newer` with this comment. The comment both explains the
-# line and marks it as Update-time's own: a value carrying the marker is kept in sync with `--cooldown`, one without
-# it is the user's and left untouched. Detection is on the lower-cased `update-time` token, so the prose can change.
-_EXCLUDE_NEWER_COMMENT = "managed by Update-time — remove this comment to prevent Update-time from changing it"
-_EXCLUDE_NEWER_MARKER = "update-time"
+# Update-time writes its cooldown into `[tool.uv] exclude-newer` with the managed-by comment. It recognises the comment
+# there by the lower-cased `update-time` word, so the prose can change.
+_MANAGED_BY_COMMENT_WORD = "update-time"
+_EXCLUDE_NEWER_OPTION = "--exclude-newer"
+# What `--show-settings` prints about `exclude-newer`: `Some(…)` where the project's config, the user's config, or
+# `UV_EXCLUDE_NEWER` sets one, and `None` where none of them does.
+_SETTINGS_EXCLUDE_NEWER = re.compile(r"exclude_newer: ExcludeNewer \{\s*global: (?P<value>None|Some)\b")
 
 
 def manager_name(pyproject_toml: Path, config: dict) -> str:
@@ -87,26 +94,66 @@ def configure_cooldown(pyproject_tomls: list[Path]) -> None:
 
 
 def _persist_exclude_newer(pyproject_toml: Path) -> None:
-    """Write `exclude-newer = "<N> days"` (tagged as Update-time's) to the pyproject.toml, unless a user set it.
+    """Write `exclude-newer = "<N> days"`, with the managed-by comment, to the pyproject.toml, unless a user set it.
 
     A file whose `tool` or `tool.uv` is not a table gets a warning instead.
 
-    A value carrying Update-time's marker comment is kept in sync with the cooldown; a value without the marker is
-    the user's own and is left untouched, as is an already-current marked value (which is not rewritten).
+    A value carrying the managed-by comment is kept in sync with the cooldown; a value without the comment is
+    the user's own and is left untouched, as is an already-current value carrying it (which is not rewritten).
     """
     file = PyprojectToml(pyproject_toml)
     existing = file.tool_key("uv", "exclude-newer")
-    cooldown = f"{COOLDOWN.get()} days"
+    cooldown = _duration(COOLDOWN.get())
+    uv_lock = Command("uv", "lock")
+    if existing is None and _settings_hold_exclude_newer(uv_lock, pyproject_toml.parent, pyproject_toml, _LOG):
+        return  # An exclude-newer set outside the file, such as in a uv.toml: leave it alone.
     if existing is not None:
         value, comment = existing
-        if _EXCLUDE_NEWER_MARKER not in comment.lower():
+        if _MANAGED_BY_COMMENT_WORD not in comment.lower():
             return  # A user-set exclude-newer: leave it alone.
         if value == cooldown:
             return  # Already Update-time's and already current.
-    if file.set_tool_key("uv", "exclude-newer", cooldown, comment=_EXCLUDE_NEWER_COMMENT):
+    if file.set_tool_key("uv", "exclude-newer", cooldown, comment=MANAGED_BY_COMMENT):
         _LOG.configured_uv_cooldown(pyproject_toml, cooldown)
     else:
         _LOG.uv_cooldown_not_set(pyproject_toml)
+
+
+def _duration(days: int) -> str:
+    """Return the number of days as uv reads a relative `exclude-newer`."""
+    return f"{days} days"
+
+
+def _settings_hold_exclude_newer(command: Command, directory: Path, file: Path, log: Logger) -> bool:
+    """Return whether uv's settings for the file's command, run in the directory, hold an `exclude-newer`.
+
+    Where Update-time cannot read from uv's settings whether they hold one, it warns and treats them as holding none.
+    """
+    settings = run(Command(*command, "--show-settings"), cwd=directory)
+    if not (match := _SETTINGS_EXCLUDE_NEWER.search(settings.stdout)):
+        log.uv_settings_unreadable(file)
+        return False
+    return match["value"] == "Some"
+
+
+class UvPipCompile(RequirementsCompiler):
+    """uv as the tool that recompiles a requirements file it compiled, with its `exclude-newer` as the cutoff."""
+
+    tool: ClassVar[str] = "uv pip compile"
+    setting: ClassVar[str] = "uv exclude-newer"
+    cutoff_option: ClassVar[str] = _EXCLUDE_NEWER_OPTION
+    package_cooldown_option: ClassVar[str | None] = "--exclude-newer-package"
+    managed_by_comment_line: ClassVar[str] = f"# exclude-newer: {MANAGED_BY_COMMENT}"
+
+    @override
+    def settings_hold_cutoff(self, command: Command) -> bool:
+        """Return whether uv's settings for the command hold an `exclude-newer`."""
+        return _settings_hold_exclude_newer(command, self.compiled.compile_directory, self.compiled.path, self.log)
+
+    @override
+    def duration(self, days: int) -> str:
+        """Return the number of days as uv reads a relative `exclude-newer`."""
+        return _duration(days)
 
 
 def _workspace_root(pyproject_toml: Path) -> Path:
@@ -176,22 +223,8 @@ def _by_name(declarations: Iterable[Declaration]) -> dict[DependencyName, list[D
     return by_name
 
 
-def _log_new_version(log: Logger, package: DependencyName, version: VersionString, locations: list[Location]) -> None:
-    """Log that a new version is available for the package, at each of the locations declaring it.
-
-    The package is named as uv reports it, so one package is named one way however each line spells it. The changelog
-    and publication date are fetched once, whichever locations the version is reported at.
-    """
-    changes = get_changes(package, version)
-    published = get_publication_datetime(package, version)
-    dependency_version = DependencyVersion(version, changes, publication=LookedUp(published))
-    for location in locations:
-        # This message renders no version the reference is pinned to, so the reference names none.
-        log.new_version(Reference(package, "", location), dependency_version)
-
-
 def report_file_markers(file: PythonDependencyToml, log: Logger) -> list[Declaration]:
-    """Report the marker of each declaration in the file, and return the declarations with those markers frozen."""
+    """Report each declaration's marker, and return the declarations, each with the directives Update-time acts on."""
     return report_markers(file.declarations(), log, POLICY)
 
 
@@ -222,7 +255,7 @@ def _update_dependencies(uv_tree: Command, file: PythonDependencyToml, log: Logg
         # One whose every declaration is held back has no line left to report at, so it is not reported at all.
         locations = [reference.location for reference in updatable] if declared else [Location(file.path)]
         if locations:
-            _log_new_version(log, package, version, locations)
+            log_new_pypi_version(log, package, version, locations)
     file.rewrite_pinned_versions(latest_versions)
     return True
 
@@ -264,7 +297,7 @@ def update_python_inline_script_metadata(script: InlineScript, log: Logger) -> b
         "--quiet",
         "--depth=0",
         "--outdated",
-        "--exclude-newer",
+        _EXCLUDE_NEWER_OPTION,
         cooldown_cutoff(COOLDOWN.get()),
     )
     return _update_dependencies(uv_tree, script, log)
@@ -279,7 +312,7 @@ def _unchecked_scopes(declaration: Declaration) -> dict[Scope, Reason]:
 
 
 # uv resolves the version an exact pin names, so a pin Update-time leaves as the file writes it stays where it is.
-POLICY = ManagerPolicy(honours_a_freeze=True, unchecked_scopes=_unchecked_scopes)
+POLICY = ManagerPolicy(keeps_held_back_pins=True, unchecked_scopes=_unchecked_scopes)
 
 
 def pypi_served(declarations: Iterable[Declaration]) -> list[Declaration]:

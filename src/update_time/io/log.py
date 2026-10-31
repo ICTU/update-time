@@ -23,6 +23,7 @@ from update_time.markers.directive import Reason
 from update_time.markers.marker import Scope
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
+from update_time.primitives.text import prose_list
 from update_time.primitives.timestamp import days_since, utc_date_and_time
 
 if TYPE_CHECKING:
@@ -252,11 +253,15 @@ class Logger:
     def _render_field(cls, name: str, value: object) -> object:
         """Return the field's value, wrapped in its delimiter when the highlighter styles it as one token.
 
+        A tuple of locations renders as a list of such tokens, as a sentence lists them.
+
         A location is recognised by its type; a dependency has no type of its own, and its name has no fixed shape
         to match either, so the field's name identifies it instead.
         """
         if isinstance(value, Location):
             return delimit_location(value)
+        if isinstance(value, tuple) and value and all(isinstance(item, Location) for item in value):
+            return prose_list([delimit_location(location) for location in value])
         if name == "dependency":
             return delimit_dependency(str(value))
         return value
@@ -815,15 +820,12 @@ class Logger:
     def report_marker(
         self, dependency: str, marker: Marker, location: Location, *, holds_the_update_back: bool
     ) -> Marker:
-        """Report a reference's marker, and return it, frozen where an item is invalid.
-
-        An invalid item may have been meant to hold the update back.
-        """
+        """Report a reference's marker, and return the directives Update-time acts on."""
         for directive in marker.default_directives:
             self.redundant_directive(Reference(dependency, "", location), directive, Reason.ASKS_FOR_THE_DEFAULT)
         if marker.invalid_item is not None:
             self.invalid_bracket_item(dependency, marker.invalid_item, location)
-            return marker.frozen
+            return marker.effective_directives
         self.recognised_marker(dependency, marker, location)
         if holds_the_update_back:
             self.ignored(dependency, marker, location)
@@ -880,10 +882,36 @@ class Logger:
         """Warn that a directory passed to `--exclude-path` does not exist."""
         return {"path": path}
 
-    @_info("Skipping %(location)s: %(reason)s")
-    def skipped(self, path: Path, reason: str) -> dict[str, object]:
-        """Log that a file was deliberately skipped without being checked for updates."""
-        return self._file_fields(path, reason=reason)
+    @_debug(
+        "Skipping %(location)s: a compiled or hash-pinned requirements file that does not name a requirements "
+        "file as its source"
+    )
+    def compiled_file_without_a_source(self, path: Path) -> dict[str, object]:
+        """Log that a compiled requirements file is skipped, since it does not name a requirements file to update."""
+        return self._file_fields(path)
+
+    @_warning("Skipping %(location)s: its source %(source)s is itself compiled, which Update-time does not support")
+    def compiled_source_unsupported(self, path: Path, source: Path) -> dict[str, object]:
+        """Warn that a compiled requirements file is skipped, since a source it names is itself compiled."""
+        return self._file_fields(path, source=Location(source))
+
+    @_info(
+        "Leaving %(location)s as it is: Update-time updates the pins in %(sources)s, but does not recompile it, as "
+        "%(reason)s"
+    )
+    def compiled_file_left_as_it_is(self, path: Path, sources: Sequence[Path], reason: str) -> dict[str, object]:
+        """Log that a compiled requirements file is left as it is, while its sources are updated, and why."""
+        return self._file_fields(path, sources=tuple(Location(source) for source in sources), reason=reason)
+
+    @_debug("Leaving %(location)s and its source %(source)s as they are: the scan leaves %(source)s out")
+    def source_outside_the_scan(self, path: Path, source: Path) -> dict[str, object]:
+        """Log that the source of a compiled requirements file lies outside the scan, so neither file is updated."""
+        return self._file_fields(path, source=Location(source))
+
+    @_warning("Could not find %(source)s, a source %(location)s names; leaving %(location)s as it is")
+    def source_not_found(self, path: Path, source: Path) -> dict[str, object]:
+        """Log that a source the compiled requirements file names does not exist."""
+        return self._file_fields(path, source=Location(source))
 
     # --- Updater-specific diagnostics ---
 
@@ -891,6 +919,13 @@ class Logger:
     def configured_uv_cooldown(self, path: Path, cooldown: str) -> dict[str, object]:
         """Log that Update-time wrote its cooldown into the project's uv configuration."""
         return self._file_fields(path, cooldown=cooldown)
+
+    @_info("Set %(setting)s to %(cooldown)r for %(compiled)s, and recorded in %(location)s that Update-time manages it")
+    def managed_by_comment_written(
+        self, source: Path, compiled: Path, cooldown: str, setting: str
+    ) -> dict[str, object]:
+        """Log that Update-time passed its cooldown to a recompile, and wrote the managed-by comment into the source."""
+        return self._file_fields(source, compiled=Location(compiled), cooldown=cooldown, setting=setting)
 
     @_warning(
         "Could not set uv exclude-newer in %(location)s to apply the cooldown: its tool, or the uv in it, is not a "
@@ -900,10 +935,36 @@ class Logger:
         """Warn that the project's uv configuration cannot hold the cooldown."""
         return self._file_fields(path)
 
+    @_warning(
+        "Could not read from uv's settings whether the project sets an exclude-newer for %(location)s; applying the "
+        "cooldown"
+    )
+    def uv_settings_unreadable(self, path: Path) -> dict[str, object]:
+        """Warn that uv's settings do not say whether the project sets an `exclude-newer` for the file."""
+        return self._file_fields(path)
+
+    @_warning(
+        "Could not read from pip's settings whether they set an uploaded-prior-to for %(location)s (%(reason)s); "
+        "applying the cooldown"
+    )
+    def pip_settings_unreadable(self, path: Path, reason: str) -> dict[str, object]:
+        """Warn that pip does not list its settings, which say whether they set an `uploaded-prior-to` for the file."""
+        return self._file_fields(path, reason=reason)
+
     @_error("Could not update the dependencies in %(location)s: uv tree failed")
     def uv_dependencies_not_updated(self, path: Path) -> dict[str, object]:
         """Log that `uv tree` failed for a file."""
         return self._file_fields(path)
+
+    @_warning("Could not read %(version)r, the version %(location)s pins %(dependency)s to; not upgrading it")
+    def pinned_version_unreadable(self, path: Path, dependency: str, version: str) -> dict[str, object]:
+        """Warn that a compiled requirements file pins a package to a version that is not PEP 440."""
+        return self._file_fields(path, dependency=dependency, version=version)
+
+    @_error("Could not recompile %(location)s: %(tool)s failed")
+    def compiled_file_not_recompiled(self, path: Path, tool: str) -> dict[str, object]:
+        """Log that the tool failed to recompile a compiled requirements file."""
+        return self._file_fields(path, tool=tool)
 
     @_warning("Skipping %(location)s: %(manager)s is not supported, only %(supported)s")
     def unsupported_package_manager(self, path: Path, manager: str, supported: str) -> dict[str, object]:

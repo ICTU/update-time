@@ -26,6 +26,21 @@ class Command(tuple[str, ...]):
         """Return the executable the command runs, the first of its words."""
         return self[0]
 
+    def has_option(self, option: str) -> bool:
+        """Return whether the command holds the option, written `--option value` or `--option=value`."""
+        return any(word == option or word.startswith(f"{option}=") for word in self)
+
+    def without_option(self, option: str) -> Command:
+        """Return the command without each occurrence of the option, written `--option value` or `--option=value`."""
+        words: list[str] = []
+        remaining = iter(self)
+        for word in remaining:
+            if word == option:
+                next(remaining, None)
+            elif not word.startswith(f"{option}="):
+                words.append(word)
+        return Command(*words)
+
 
 @dataclass(frozen=True)
 class Result:

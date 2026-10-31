@@ -272,7 +272,7 @@ def _unchecked_scopes(declaration: Declaration) -> dict[Scope, Reason]:
 
 
 # npm and pnpm move a dependency within the range its package.json declares, whatever a marker says about it.
-POLICY = ManagerPolicy(honours_a_freeze=False, unchecked_scopes=_unchecked_scopes)
+POLICY = ManagerPolicy(keeps_held_back_pins=False, unchecked_scopes=_unchecked_scopes)
 
 
 def manager_name(package_json: PackageJson) -> str:

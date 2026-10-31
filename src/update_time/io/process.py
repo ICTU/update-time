@@ -17,7 +17,7 @@ def run(command: Command, cwd: Path | None = None) -> Result:
     """Run a command and return its result, logging a failure, and the executable's version when the log shows debug."""
     if _LOG.logs_debug():
         _log_version(command.executable, Path.cwd() if cwd is None else cwd)
-    outcome = _execute(command, cwd)
+    outcome = run_unlogged(command, cwd)
     if isinstance(outcome, FileNotFoundError):
         _LOG.command_not_found(command)
         return Result("", "", succeeded=False)
@@ -32,7 +32,7 @@ def run(command: Command, cwd: Path | None = None) -> Result:
 @cache
 def _log_version(executable: str, directory: Path) -> None:
     """Log the version of the executable in the directory, or warn why it is unknown."""
-    outcome = _execute(Command(executable, "--version"), directory)
+    outcome = run_unlogged(Command(executable, "--version"), directory)
     if isinstance(outcome, OSError):
         return  # The command's own run reports a tool the system cannot run
     if not outcome.succeeded:
@@ -45,7 +45,7 @@ def _log_version(executable: str, directory: Path) -> None:
     _LOG.tool_version_unknown(executable, directory, reason)
 
 
-def _execute(command: Command, cwd: Path | None) -> Result | OSError:
+def run_unlogged(command: Command, cwd: Path | None) -> Result | OSError:
     """Run a command and return its result, or the error that kept the system from running it."""
     try:
         completed = subprocess.run(command, capture_output=True, text=True, check=True, cwd=cwd)  # noqa: S603 # nosec
