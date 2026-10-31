@@ -3,17 +3,21 @@
 import re
 from dataclasses import dataclass, field, replace
 from enum import Flag, auto
+from functools import reduce
 from typing import TYPE_CHECKING
 
 from packaging.specifiers import InvalidSpecifier
 
-from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb
+from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb, keeping_each
 from update_time.domain.vulnerability import NO_RISK_LEVEL, RISK_LEVELS
 from update_time.markers.bound import directive as _directive
 from update_time.markers.bound import parse_bound, spell
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from update_time.domain.bound import VersionBound
+    from update_time.domain.dependency import VersionString
     from update_time.domain.line import Line
     from update_time.primitives.location import Location
 
@@ -139,11 +143,6 @@ class Marker:
             return self.cooldown_directive
         return self.scope_directive(scope)
 
-    @property
-    def frozen(self) -> Marker:
-        """Return this marker with the update held back as well, keeping everything else it says."""
-        return replace(self, ignored_scopes=self.ignored_scopes | Scope.UPDATE)
-
     def ignores(self, scope: Scope) -> bool:
         """Return whether the marker holds the scope back outright.
 
@@ -152,6 +151,18 @@ class Marker:
         them (see `directive_for`).
         """
         return scope in self.ignored_scopes
+
+    @property
+    def effective_directives(self) -> Marker:
+        """Return the directives Update-time acts on, with an `ignore[update]` added where an item is unreadable."""
+        if self.invalid_item is None:
+            return self
+        return replace(self, ignored_scopes=self.ignored_scopes | Scope.UPDATE)
+
+    @property
+    def holds_the_update_back(self) -> bool:
+        """Return whether the marker ignores the update, or carries an item that may have meant to."""
+        return self.effective_directives.ignores(Scope.UPDATE)
 
     @property
     def cooldown_directive(self) -> str:
@@ -244,6 +255,23 @@ class Marker:
             default_directives=self.default_directives + other.default_directives,
             raw=" ".join(part for part in (self.raw, other.raw) if part),
         )
+
+    @staticmethod
+    def combined(markers: Sequence[Marker], current_version: VersionString, run_cooldown: int) -> Marker:
+        """Return one marker holding back what each of the markers holds back, for a reference at the current version.
+
+        The markers combine as `merge` combines them, except for the bound and the cooldown. The bound keeps the
+        versions each marker's bound keeps, and where the bounds do not combine, the update is held back. The longest
+        cooldown applies, the run's counting for a marker that does not set one.
+        """
+        merged = reduce(Marker.merge, markers, Marker())
+        bound = keeping_each((marker.version_bound for marker in markers), current_version)
+        held_back = Scope.UPDATE if bound == BLOCK_ALL_UPDATES else _NO_SCOPE
+        cooldown = merged.cooldown
+        if cooldown.value is not None:
+            longest = max(markers, key=lambda marker: marker.cooldown.value_or(run_cooldown))
+            cooldown = Threshold(longest.cooldown.value_or(run_cooldown), longest.cooldown.directive)
+        return replace(merged, ignored_scopes=merged.ignored_scopes | held_back, version_bound=bound, cooldown=cooldown)
 
 
 @dataclass(frozen=True)

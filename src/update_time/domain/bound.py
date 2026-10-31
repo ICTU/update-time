@@ -19,6 +19,7 @@ from update_time.domain.dependency import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from typing import Protocol
 
     class NewVersionGetter(Protocol):
@@ -92,6 +93,11 @@ class UpdateLevel(enum.IntEnum):
         return self.name.lower()
 
 
+# The operator keeping exactly the versions a clause with the other operator drops, so the bound an `ignore` item
+# draws on one side can be written as the specifier of the versions it keeps.
+_COMPLEMENTS = {">=": "<", ">": "<=", "<": ">=", "<=": ">", "==": "!=", "!=": "=="}
+
+
 @dataclass(frozen=True)
 class VersionBound:
     """A constraint on the versions a reference may update to: keep the candidates it matches, or drop them.
@@ -115,6 +121,19 @@ class VersionBound:
         if (specifier := self.specifier) is None:
             return (self.anchored(current_version) or NO_BOUND).keeps(version, current_version)
         return specifier.contains(version, prereleases=True) == (self.verb is Verb.ALLOW)
+
+    def specifier_in_allow_form(self, current_version: VersionString) -> str | None:
+        """Return the specifier an `allow[update…]` item would carry to keep the same versions, or None if none can.
+
+        A level-based bound is anchored to the current version first, as `keeps` anchors it.
+        """
+        bound = self.anchored(current_version) or NO_BOUND
+        if bound.verb is Verb.ALLOW:
+            return str(bound.specifier)
+        clauses = list(bound.specifier or ())
+        if len(clauses) != 1 or clauses[0].operator not in _COMPLEMENTS:
+            return None
+        return f"{_COMPLEMENTS[clauses[0].operator]}{clauses[0].version}"
 
     def anchored(self, current_version: VersionString) -> VersionBound | None:
         """Return the bound as an absolute one: this bound, or a level-based one anchored to the current version.
@@ -187,5 +206,21 @@ class VersionBound:
 NO_BOUND = VersionBound(Verb.ALLOW, SpecifierSet(""), item="update")
 
 # The bound an `ignore[update]` expresses: the complement of `NO_BOUND`, dropping every version. A source given it
-# finds no candidate and keeps the current version, so a yanked pin on a frozen reference is still detected.
+# does not find a candidate and keeps the current version, so a yanked pin whose update is held back is still
+# detected.
 BLOCK_ALL_UPDATES = VersionBound(Verb.IGNORE, SpecifierSet(""), item="update")
+
+
+def keeping_each(bounds: Iterable[VersionBound], current_version: VersionString) -> VersionBound:
+    """Return the bound keeping the versions each of the bounds keeps, for a reference at the current version.
+
+    Where a bound does not have an allow form, the bound returned blocks every update.
+    """
+    specifiers = []
+    for bound in bounds:
+        if (specifier := bound.specifier_in_allow_form(current_version)) is None:
+            return BLOCK_ALL_UPDATES
+        specifiers.append(specifier)
+    if not (kept := SpecifierSet(",".join(specifiers))):
+        return NO_BOUND
+    return VersionBound(Verb.ALLOW, kept, item=f"update{kept}")

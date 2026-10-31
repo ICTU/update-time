@@ -30,6 +30,7 @@ from update_time.domain.reference import DriftedPin, RefKind
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.console import undelimited
 from update_time.io.log import Logger
+from update_time.manifests.requirements_txt import Unrecompilable
 from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.markers.marker import Marker, Scope, Threshold, parse_directives
 from update_time.primitives.location import Location
@@ -158,10 +159,10 @@ def _redundant_directives(
     redundant_range_floating_pin = capture.take()
 
     log.redundant_directive(reference("python", dockerfile), "allow[floating-pin]", Reason.NEVER_PINNED)
-    redundant_frozen_floating_pin = capture.take()
+    redundant_held_back_floating_pin = capture.take()
 
     log.redundant_directive(reference("python", dockerfile), "allow[hash-drift]", Reason.DRIFT_NEVER_ADOPTED)
-    redundant_frozen_hash_drift = capture.take()
+    redundant_held_back_hash_drift = capture.take()
 
     built = reference("acme/api", Location(Path("docker-compose.yml"), 4), "dev")
     log.redundant_directive(
@@ -183,8 +184,8 @@ def _redundant_directives(
         "@@REDUNDANT_STALE_NOT_LOOKED_UP_WARNING@@": redundant_stale_not_looked_up,
         "@@REDUNDANT_FLOATING_PIN_WARNING@@": redundant_floating_pin,
         "@@REDUNDANT_RANGE_FLOATING_PIN_WARNING@@": redundant_range_floating_pin,
-        "@@REDUNDANT_FROZEN_FLOATING_PIN_WARNING@@": redundant_frozen_floating_pin,
-        "@@REDUNDANT_FROZEN_HASH_DRIFT_WARNING@@": redundant_frozen_hash_drift,
+        "@@REDUNDANT_HELD_BACK_FLOATING_PIN_WARNING@@": redundant_held_back_floating_pin,
+        "@@REDUNDANT_HELD_BACK_HASH_DRIFT_WARNING@@": redundant_held_back_hash_drift,
         "@@REDUNDANT_NOT_PULLED_FLOATING_PIN_WARNING@@": capture.take(),
     }
 
@@ -470,6 +471,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_range_rewrites(log, capture),
         **_uv_cooldown_not_set(log, capture),
         **_compiled_requirements_files(log, capture),
+        **_recompiles(log, capture),
         **rate_limits,
         "@@HELD_BACK_BY_COOLDOWN@@": held_back_by_cooldown,
         "@@NO_PUSH_DATE@@": undated_pushes,
@@ -533,11 +535,27 @@ def _range_rewrites(log: Logger, capture: _Capture) -> dict[str, str]:
 def _compiled_requirements_files(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log what happens to a compiled requirements file and to the sources it names, and pair the lines."""
     compiled = Path("docs/requirements.txt")
-    log.compiled_file_left_as_it_is(compiled, [Path("docs/requirements.in")])
+    log.compiled_file_left_as_it_is(compiled, [Path("docs/requirements.in")], Unrecompilable.OTHER_TOOL)
     log.source_not_found(compiled, Path("docs/dev.in"))
     log.source_outside_the_scan(compiled, Path("vendor/requirements.in"))
+    log.compiled_source_unsupported(Path("requirements-dev.txt"), Path("requirements.txt"))
     log.compiled_file_without_a_source(Path("requirements-lock.txt"))
     return {"@@COMPILED_REQUIREMENTS_FILES@@": capture.take()}
+
+
+def _recompiles(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log a sample per line about recompiling a requirements file, each paired with its block's placeholder."""
+    compiled = Path("docs/requirements.txt")
+    log.compiled_file_not_recompiled(compiled)
+    not_recompiled = capture.take()
+    log.managed_by_comment_written(Path("docs/requirements.in"), compiled, "7 days")
+    managed_by_comment_written = capture.take()
+    log.uv_settings_unreadable(compiled)
+    return {
+        "@@COMPILED_FILE_NOT_RECOMPILED@@": not_recompiled,
+        "@@MANAGED_BY_COMMENT_WRITTEN@@": managed_by_comment_written,
+        "@@UV_SETTINGS_UNREADABLE@@": capture.take(),
+    }
 
 
 def _uv_cooldown_not_set(log: Logger, capture: _Capture) -> dict[str, str]:

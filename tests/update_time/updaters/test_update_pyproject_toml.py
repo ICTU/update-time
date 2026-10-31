@@ -169,7 +169,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
     def test_a_new_version_is_reported_for_a_dependency_that_pins_no_version(self, run: Mock, get: Mock, glob: Mock):
         """Test that an `ignore[update]` on a dependency that pins no version leaves its new version reported.
 
-        The marker freezes no pin there, and uv resolves the version whatever it says, so the report is all the
+        The marker does not keep a pin there, and uv resolves the version whatever it says, so the report is all the
         reader gets.
         """
         contents = pyproject("package>=1.0", marker="ignore[update]")
@@ -222,16 +222,18 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_recognised_marker_logged("package", Location(mock_pyproject_toml, 2), marker)
         self.assert_uv_dependencies_not_updated_logged(mock_pyproject_toml)
 
-    def test_a_marker_freezes_one_declaration_of_a_name_while_the_other_updates(self, run: Mock, get: Mock, glob: Mock):
-        """Test that a name declared twice is frozen on the line its marker steers, and updated on the other."""
-        frozen = '[project]\ndependencies = ["package==1.0"]  # update-time: ignore[update]\n[dependency-groups]\n'
-        mock_pyproject_toml = self.updated_pyproject_toml(run, get, glob, f'{frozen}dev = ["package==1.0"]\n')
-        mock_pyproject_toml.write_text.assert_called_once_with(f'{frozen}dev = ["package==1.1"]\n')
+    def test_a_marker_holds_back_one_declaration_of_a_name_while_the_other_updates(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that a name declared twice is held back on the line its marker steers, and updated on the other."""
+        held_back = '[project]\ndependencies = ["package==1.0"]  # update-time: ignore[update]\n[dependency-groups]\n'
+        mock_pyproject_toml = self.updated_pyproject_toml(run, get, glob, f'{held_back}dev = ["package==1.0"]\n')
+        mock_pyproject_toml.write_text.assert_called_once_with(f'{held_back}dev = ["package==1.1"]\n')
         self.assert_new_version_logged("package", _NEW_VERSION, Location(mock_pyproject_toml, 4))
         self.assert_ignored_logged("package", Location(mock_pyproject_toml, 2), "ignore[update]", among_others=True)
 
     def test_an_invalid_bracket_item_leaves_the_pin_unchanged(self, run: Mock, get: Mock, glob: Mock):
-        """Test that an item the marker language cannot read warns and freezes the pin, reporting no marker."""
+        """Test that an item the marker language cannot read warns and keeps the pin, without reporting the marker."""
         for directive, item in {"ignore[stlae]": "stlae", "ignore[update": "[update"}.items():
             with self.subTest(directive=directive):
                 mock_pyproject_toml, location = self.updated_marked_pin(run, get, glob, directive)
@@ -248,16 +250,16 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             uv._update_dependencies,
             "if declaration.updatable",
             "if declaration.updatable and not any(one.marker.invalid_item for one in declared)",
-            "an unreadable item freezes every declaration of its name rather than the one carrying it",
+            "an unreadable item holds back every declaration of its name rather than the one carrying it",
         )
     )
-    def test_an_invalid_item_freezes_one_declaration_of_a_name_while_the_other_updates(
+    def test_an_invalid_item_holds_back_one_declaration_of_a_name_while_the_other_updates(
         self, run: Mock, get: Mock, glob: Mock
     ):
-        """Test that a name declared twice is frozen on the line whose item cannot be read, and updated on the other."""
-        frozen = '[project]\ndependencies = ["package==1.0"]  # update-time: ignore[stlae]\n[dependency-groups]\n'
-        mock_pyproject_toml = self.updated_pyproject_toml(run, get, glob, f'{frozen}dev = ["package==1.0"]\n')
-        mock_pyproject_toml.write_text.assert_called_once_with(f'{frozen}dev = ["package==1.1"]\n')
+        """Test that a name declared twice is held back where its item is unreadable, and updated on the other line."""
+        held_back = '[project]\ndependencies = ["package==1.0"]  # update-time: ignore[stlae]\n[dependency-groups]\n'
+        mock_pyproject_toml = self.updated_pyproject_toml(run, get, glob, f'{held_back}dev = ["package==1.0"]\n')
+        mock_pyproject_toml.write_text.assert_called_once_with(f'{held_back}dev = ["package==1.1"]\n')
         self.assert_new_version_logged("package", _NEW_VERSION, Location(mock_pyproject_toml, 4))
         self.assert_invalid_bracket_item_logged("package", Location(mock_pyproject_toml, 2), "stlae")
 

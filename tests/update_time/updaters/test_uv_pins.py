@@ -219,7 +219,7 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         self.assert_ignored_yank_logged("package", Location(file.path, 3))
 
     def test_ignore_update_marker_still_warns_about_a_yanked_pin(self, get: Mock):
-        """Test that a pin frozen by `ignore[update]` still reports the yank of the version it is left on."""
+        """Test that a pin `ignore[update]` holds back still reports the yank of the version it is left on."""
         file = self.check_a_yanked_pin(get, "ignore[update]")
         self.assert_yanked_dependency_logged("package", "1.0", Location(file.path, 2))
 
@@ -423,7 +423,7 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
                     Reason.COOLDOWN_PER_RUN, "package", Location(file.path, 2), "set[cooldown=30]"
                 )
 
-    def test_an_ignore_update_is_reported_when_it_freezes_no_pin(self, get: Mock):
+    def test_an_ignore_update_is_reported_when_it_keeps_no_pin(self, get: Mock):
         """Test that an `ignore[update]` on a dependency that pins no version is reported, since uv resolves it."""
         file = self.dependency_toml_file("package>=1.0", marker="ignore[update]")
         self.check_dependencies(get, file)
@@ -439,8 +439,8 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
             "direct URL": pyproject("local @ https://example.com/local-1.0.tar.gz", marker=directive),
         }
 
-    def test_an_ignore_update_freezing_an_unserved_pin_is_not_reported(self, get: Mock):
-        """Test that an `ignore[update]` steering two dependencies is reported for the one it freezes not."""
+    def test_an_ignore_update_keeping_an_unserved_pin_is_not_reported(self, get: Mock):
+        """Test that an `ignore[update]` on two dependencies is reported for the one that does not pin a version."""
         file = self.file_holding(pyproject("local==1.0", "other>=1.0", marker="ignore[update]") + _UV_SOURCE)
         self.check_dependencies(get, file)
         self.assert_redundant_directive_logged(
@@ -486,8 +486,8 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
             "the `ignore[update]` beside a bound hides it, so the directive that decides nothing goes unreported",
         )
     )
-    def test_a_bound_beside_a_freeze_is_reported(self, get: Mock):
-        """Test that a bound on a pin is reported, though the `ignore[update]` beside it does freeze that pin."""
+    def test_a_bound_beside_an_ignore_update_is_reported(self, get: Mock):
+        """Test that a bound on a pin is reported, though the `ignore[update]` beside it does keep that pin."""
         file = self.dependency_toml_file("package==1.0", marker="ignore[update] allow[update<5]")
         self.check_dependencies(get, file)
         self.assert_redundant_directive_logged(

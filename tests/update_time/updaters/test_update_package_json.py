@@ -1088,9 +1088,9 @@ class MarkerTest(NoUpdateTestCase):
     @kills(
         Mutation(
             delegated_module._redundant_update_directives,
-            "not policy.freezes_the_pin(reference)",
+            "not policy.keeps_the_pin(reference)",
             "not reference.current_version",
-            "an `ignore[update]` on an exact pin reads as freezing it, though npm and pnpm leave such a pin where it "
+            "an `ignore[update]` on an exact pin reads as keeping it, though npm and pnpm leave such a pin where it "
             "is whatever the marker says",
         )
     )
@@ -1106,8 +1106,8 @@ class MarkerTest(NoUpdateTestCase):
                 Reason.NO_VERSION_TO_CHECK_FOR_A_VULNERABILITY,
             ),
             "cooldown": ("^2.0.11", "set[cooldown=30]", Reason.COOLDOWN_PER_RUN),
-            "freeze on a range": ("^2.0.11", "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION),
-            "freeze on an exact pin": ("2.0.11", "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION),
+            "ignore[update] on a range": ("^2.0.11", "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION),
+            "ignore[update] on an exact pin": ("2.0.11", "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION),
             "bound": ("^2.0.11", "allow[update<3]", Reason.BOUND_DECIDES_NOTHING),
             "hash drift": ("^2.0.11", "allow[hash-drift]", Reason.NO_HASH_PIN),
             "floating pin on an exact pin": ("2.0.11", "allow[floating-pin]", Reason.PIN_NOT_FLOATING),
@@ -1229,12 +1229,12 @@ class MarkerTest(NoUpdateTestCase):
     @kills(
         Mutation(
             policy_module._report_reference_marker,
-            "policy.freezes_the_pin(reference) and",
+            "policy.keeps_the_pin(reference) and",
             "bool(reference.current_version) and",
             "an `ignore[update]` on an exact pin reads as holding its update back, though npm decides the update",
         )
     )
-    def test_a_freeze_on_an_exact_pin_is_not_reported_as_holding_the_update_back(
+    def test_an_ignore_update_on_an_exact_pin_is_not_reported_as_holding_the_update_back(
         self, get: Mock, mock_run: Mock, glob: Mock
     ):
         """Test that an `ignore[update]` on an exact pin is not reported as holding the update back."""
