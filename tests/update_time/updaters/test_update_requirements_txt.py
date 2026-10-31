@@ -13,9 +13,10 @@ from update_time.manifests.requirements_txt import Unrecompilable
 from update_time.markers import directive as directive_module
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold, parse_directives
-from update_time.package_managers import uv_pip_compile
+from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.primitives.location import Location
 from update_time.references import vulnerability as vulnerability_module
+from update_time.updaters import update_requirements_txt
 from update_time.updaters.update_requirements_txt import update_requirements_txts
 
 from tests.helpers import FakeFiles, patch_environ
@@ -69,9 +70,9 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     """Unit tests for the update requirements.txt function."""
 
     def setUp(self) -> None:
-        """Stub out the recompile, so a compiled file's run is asked for without uv being started."""
+        """Stub out the recompile, so a compiled file's run is asked for without a compiler being started."""
         super().setUp()
-        self.mock_recompile = self.enterContext(patch.object(uv_pip_compile, "recompile"))
+        self.mock_recompile = self.enterContext(patch.object(RequirementsCompiler, "recompile", autospec=True))
 
     def discovered_requirements_txt(self, rglob: Mock, contents: str) -> Mock:
         """Return the single requirements file the scan discovers, holding the contents."""
@@ -998,22 +999,37 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_a_compiled_file_is_recompiled_once_its_sources_are_updated(self, mock_rglob: Mock, mock_get: Mock):
         """Test that the recompile reads the source with its pin already bumped."""
         sources_at_the_recompile = []
-        self.mock_recompile.side_effect = lambda _compiled: sources_at_the_recompile.append(_SOURCE.read_text())
+        self.mock_recompile.side_effect = lambda _compiler: sources_at_the_recompile.append(_SOURCE.read_text())
         self.run_update(
             mock_rglob, mock_get, {_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: "flask==1.0\n"}
         )
         self.assertEqual(sources_at_the_recompile, ["flask==1.1\n"])
 
-    def test_a_compiled_file_uv_cannot_recompile_is_left_as_it_is_with_the_reason(
+    @kills(
+        Mutation(
+            requirements_txt_manifest.CompiledRequirementsTxt._output_name,
+            'return None if output[1] == "-" else output[1]',
+            "return output[1]",
+            "Update-time reports a file pip-compile wrote to standard output as recording another output",
+        )
+    )
+    def test_a_compiled_file_update_time_cannot_recompile_is_left_as_it_is_with_the_reason(
         self, mock_rglob: Mock, mock_get: Mock
     ):
         """Test that the line about a compiled file Update-time does not recompile says why."""
         uv_compiled = requirements_compiled_by_uv("base.in")
         cases = {
-            "compiled by pip-compile": (requirements_compiled_by_pip_compile("base.in"), Unrecompilable.OTHER_TOOL),
             "compiled by uv to standard output": (
                 requirements_compiled_by_uv("base.in", output=None),
                 Unrecompilable.NO_OUTPUT,
+            ),
+            "compiled by pip-compile to standard output": (
+                requirements_compiled_by_pip_compile("base.in", output="-"),
+                Unrecompilable.NO_OUTPUT,
+            ),
+            "compiled by uv to another file": (
+                requirements_compiled_by_uv("base.in", output="other.txt"),
+                Unrecompilable.OTHER_OUTPUT,
             ),
             "compiled with a custom command": (
                 uv_compiled.replace("uv pip compile base.in -o requirements.txt", "make lock"),
@@ -1035,41 +1051,70 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
                 )
 
     def test_a_compiled_file_whose_sources_the_run_reaches_is_recompiled(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that a file uv compiled is handed to the recompile, and not reported as left as it is."""
-        self.run_update(
-            mock_rglob, mock_get, {_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: "flask==1.0\n"}
-        )
-        self.assertEqual([call.args[0].path for call in self.mock_recompile.call_args_list], [_COMPILED])
-        self.assertEqual(self.records_of(message_of(Logger.compiled_file_left_as_it_is)), [])
+        """Test that a file uv or pip-compile compiled is handed to the recompile, and not reported as left as it is."""
+        cases = {
+            "compiled by uv": requirements_compiled_by_uv("base.in"),
+            "compiled by pip-compile": requirements_compiled_by_pip_compile("base.in"),
+        }
+        for case, compiled in cases.items():
+            with self.subTest(case):
+                self.run_update(mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: "flask==1.0\n"})
+                recompiled = [call.args[0].compiled.path for call in self.mock_recompile.call_args_list]
+                self.assertEqual(recompiled, [_COMPILED])
+                self.assertEqual(self.records_of(message_of(Logger.compiled_file_left_as_it_is)), [])
 
     def test_the_source_of_a_compiled_file_is_updated(self, mock_rglob: Mock, mock_get: Mock):
-        """Test that the pin in the source of a file pip-compile compiled is bumped, and the file left as it is."""
-        files = self.run_update(
-            mock_rglob, mock_get, {_COMPILED: requirements_compiled_by_pip_compile("base.in"), _SOURCE: "flask==1.0\n"}
-        )
+        """Test that the pin in the source of a file uv compiled to standard output is bumped, the file left alone."""
+        compiled = requirements_compiled_by_uv("base.in", output=None)
+        files = self.run_update(mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: "flask==1.0\n"})
         self.assertEqual(files[_SOURCE], "flask==1.1\n")
-        self.assertEqual(files[_COMPILED], requirements_compiled_by_pip_compile("base.in"))
+        self.assertEqual(files[_COMPILED], compiled)
         self.assert_logged_among_others(
             message_of(Logger.compiled_file_left_as_it_is),
             location=Location(_COMPILED),
             sources=(Location(_SOURCE),),
-            reason=Unrecompilable.OTHER_TOOL,
+            reason=Unrecompilable.NO_OUTPUT,
         )
         self.assert_new_version_logged_among_others("flask", _PUBLISHED, Location(_SOURCE, 1))
         self.assert_no_warnings_logged()
 
-    def test_a_directive_steering_the_update_is_not_redundant_where_uv_recompiles_the_file(
+    def test_a_directive_steering_the_update_is_not_redundant_where_the_file_is_recompiled(
         self, mock_rglob: Mock, mock_get: Mock
     ):
-        """Test that a cooldown, a bound, or an `ignore[update]` in a source uv recompiles from is not redundant."""
-        for directive in ("set[cooldown=30]", "ignore[update]", "allow[update<5]", "ignore[minor-update]"):
-            with self.subTest(directive):
-                source = f"flask>=0.1  # update-time: {directive}\n"
-                self.run_update(
-                    mock_rglob, mock_get, {_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: source}
-                )
-                self.assert_recognised_marker_logged("flask", Location(_SOURCE, 1), parse_directives(directive))
-                self.assert_no_redundant_directive_logged()
+        """Test that a directive steering the recompile is not redundant in the source of a recompiled file."""
+        cases = {
+            "uv": (
+                requirements_compiled_by_uv("base.in"),
+                ("set[cooldown=30]", "ignore[update]", "allow[update<5]", "ignore[minor-update]"),
+            ),
+            "pip-compile": (requirements_compiled_by_pip_compile("base.in"), ("ignore[update]", "allow[update<5]")),
+        }
+        for tool, (compiled, directives) in cases.items():
+            for directive in directives:
+                with self.subTest(f"{tool}: {directive}"):
+                    source = f"flask>=0.1  # update-time: {directive}\n"
+                    self.run_update(mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: source})
+                    self.assert_recognised_marker_logged("flask", Location(_SOURCE, 1), parse_directives(directive))
+                    self.assert_no_redundant_directive_logged()
+
+    @kills(
+        Mutation(
+            update_requirements_txt._warn_about_items_that_decide_nothing,
+            "_LOG.redundant_directive(reference, cooldown, Reason.COOLDOWN_PER_RUN)",
+            "pass",
+            "Update-time stays silent about a cooldown that pip-compile cannot apply to one package",
+        )
+    )
+    def test_a_cooldown_is_redundant_on_a_requirement_without_an_exact_pin_where_pip_compile_recompiles_the_file(
+        self, mock_rglob: Mock, mock_get: Mock
+    ):
+        """Test that a cooldown on a requirement naming a range is reported in a source pip-compile recompiles from."""
+        source = "flask>=0.1  # update-time: set[cooldown=30]\n"
+        compiled = requirements_compiled_by_pip_compile("base.in")
+        self.run_update(mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: source})
+        self.assert_redundant_directive_logged(
+            Reason.COOLDOWN_PER_RUN, "flask", Location(_SOURCE, 1), "set[cooldown=30]", among_others=True
+        )
 
     def test_an_ignore_update_in_a_source_uv_recompiles_from_is_logged_as_holding_the_update_back(
         self, mock_rglob: Mock, mock_get: Mock
@@ -1079,22 +1124,10 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self.run_update(mock_rglob, mock_get, {_COMPILED: requirements_compiled_by_uv("base.in"), _SOURCE: source})
         self.assert_ignored_logged("flask", Location(_SOURCE, 1), "ignore[update]", among_others=True)
 
-    def test_a_directive_steering_the_update_stays_redundant_where_pip_compile_compiled_the_file(
-        self, mock_rglob: Mock, mock_get: Mock
-    ):
-        """Test that a pip-compile source reports an `ignore[update]` on a requirement that does not pin a version."""
-        source = "flask>=0.1  # update-time: ignore[update]\n"
-        self.run_update(
-            mock_rglob, mock_get, {_COMPILED: requirements_compiled_by_pip_compile("base.in"), _SOURCE: source}
-        )
-        self.assert_redundant_directive_logged(
-            Reason.NO_VERSION_TO_UPDATE, "flask", Location(_SOURCE, 1), "ignore[update]", among_others=True
-        )
-
     def test_each_source_of_a_compiled_file_is_updated(self, mock_rglob: Mock, mock_get: Mock):
         """Test that each source of a compiled file is bumped, and that one line names the sources that exist."""
         dev, missing = _ROOT / "dev.in", _ROOT / "missing.in"
-        compiled = requirements_compiled_by_pip_compile("base.in") + "    #   -r missing.in\n    #   -r dev.in\n"
+        compiled = requirements_compiled_by_uv("base.in", output=None) + "    #   -r missing.in\n    #   -r dev.in\n"
         files = self.run_update(
             mock_rglob, mock_get, {_COMPILED: compiled, _SOURCE: "flask==1.0\n", dev: "flask==1.0\n"}
         )
@@ -1103,7 +1136,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             message_of(Logger.compiled_file_left_as_it_is),
             location=Location(_COMPILED),
             sources=(Location(_SOURCE), Location(dev)),
-            reason=Unrecompilable.OTHER_TOOL,
+            reason=Unrecompilable.NO_OUTPUT,
         )
         self.assert_logged(message_of(Logger.source_not_found), location=Location(_COMPILED), source=Location(missing))
 

@@ -22,7 +22,7 @@ _ANNOTATION = re.compile(r"#\s*(via\b.*|-r\s.*)")
 _SOURCE_ANNOTATION = re.compile(r"(?:^|\s)-r\s+([^\s,]+)")
 # The header of a compiled file records the command that compiled it, and that command the file it wrote to. uv records
 # the options as they were typed, pip-compile as `--output-file=<path>`.
-_COMMAND = re.compile(r"^#\s+((?:uv pip compile|pip-compile)\s.*)$", re.MULTILINE)
+_COMMAND = re.compile(r"^#\s+((?:uv pip compile|pip-compile)(?:[ \t].*)?)$", re.MULTILINE)
 # uv records a relative exclude-newer as typed, so `--exclude-newer "7 days"` reaches the header without its quotes.
 _EXCLUDE_NEWER_OPTIONS = ("--exclude-newer", "--exclude-newer-package")
 _OUTPUT = re.compile(r"(?:^|\s)(?:-o|--output-file)(?:=|\s+)(\S+)")
@@ -69,12 +69,19 @@ def is_compiled(path: Path) -> bool:
     return (sibling := path.parent / f"{path.stem}.in") != path and sibling.exists()
 
 
+class CompiledBy(StrEnum):
+    """A tool that compiles a requirements file, named as its command starts."""
+
+    UV = "uv"
+    PIP_COMPILE = "pip-compile"
+
+
 class Unrecompilable(StrEnum):
-    """Why uv cannot recompile a compiled requirements file."""
+    """Why Update-time cannot recompile a compiled requirements file."""
 
     NO_COMMAND = "its header does not record a command Update-time can run"
-    OTHER_TOOL = "uv did not compile it"
-    NO_OUTPUT = "uv compiled it to standard output"
+    NO_OUTPUT = "it was compiled to standard output"
+    OTHER_OUTPUT = "its header records another file as its output"
 
 
 def _command(command_line: str) -> Command | None:
@@ -122,27 +129,45 @@ class CompiledRequirementsTxt:
 
     @property
     def unrecompilable(self) -> Unrecompilable | None:
-        """Return why uv cannot recompile the file, or None where it can.
+        """Return why Update-time cannot recompile the file, or None where it can.
 
-        uv reads the pins a recompile keeps from the output, so it cannot recompile a file compiled to standard output.
+        A recompile reads the pins it keeps from the output, so Update-time recompiles only a file the command writes.
         """
         if not self.command:
             return Unrecompilable.NO_COMMAND
-        if self.command[:3] != ("uv", "pip", "compile"):
-            return Unrecompilable.OTHER_TOOL
-        return None if self._output_name else Unrecompilable.NO_OUTPUT
+        if not self._output_name:
+            return Unrecompilable.NO_OUTPUT
+        return None if self._output_parts else Unrecompilable.OTHER_OUTPUT
 
     @property
-    def uv_command(self) -> Command | None:
-        """Return the uv command the header records where uv can recompile the file with it, or None where it cannot."""
+    def compiled_by(self) -> CompiledBy | None:
+        """Return the tool the header's command runs, or None where the header does not record a command."""
+        return CompiledBy(self.command[0]) if self.command else None
+
+    @property
+    def recompile_command(self) -> Command | None:
+        """Return the command the header records where Update-time can recompile the file with it, or None."""
         return None if self.unrecompilable else self.command
 
     @property
     def _output_name(self) -> str | None:
-        """Return the output the command writes to, spelled as written, or None for none."""
+        """Return the output the command writes to, spelled as written, or None for standard output.
+
+        Where the command does not name an output, pip-compile writes beside the source it names, with `.txt` in place
+        of the source's suffix. A command that does not name a source compiles `requirements.in`.
+        """
         if not self.command:
             return None
-        return output[1] if (output := _OUTPUT.search(str(self.command))) else None
+        if output := _OUTPUT.search(str(self.command)):
+            return None if output[1] == "-" else output[1]  # pip-compile writes the output `-` to standard output
+        if self.compiled_by is CompiledBy.PIP_COMPILE:
+            return str(Path(self._named_source_name or "requirements.in").with_suffix(".txt"))
+        return None
+
+    @property
+    def _named_source_name(self) -> str | None:
+        """Return the first source the command names, spelled as the annotations write it, or None for none."""
+        return next((word for word in self.command or () if word in self.source_names), None)
 
     @property
     def compile_directory(self) -> Path:
@@ -150,21 +175,21 @@ class CompiledRequirementsTxt:
 
         Where the command does not record an output that ends the file's path, the file's own directory is returned.
         """
-        output_parts = Path(os.path.normpath(output)).parts if (output := self._output_name) else ()
-        if output_parts and self.path.parts[-len(output_parts) :] == output_parts:
+        if output_parts := self._output_parts:
             return Path(*self.path.parts[: -len(output_parts)])
         return self.path.parent
 
     @property
+    def _output_parts(self) -> tuple[str, ...]:
+        """Return the parts of the output path the command records, where they end the file's path, or none."""
+        output_parts = Path(os.path.normpath(output)).parts if (output := self._output_name) else ()
+        return output_parts if output_parts and self.path.parts[-len(output_parts) :] == output_parts else ()
+
+    @property
     def first_source(self) -> Path:
         """Return the source the command names first, or the source the annotations name first where it names none."""
-        named = [
-            source
-            for word in self.command or ()
-            for name, source in zip(self.source_names, self.sources, strict=True)
-            if word == name
-        ]
-        return named[0] if named else self.sources[0]
+        named = self._named_source_name
+        return self.sources[self.source_names.index(named) if named else 0]
 
     @property
     def sources(self) -> tuple[Path, ...]:
@@ -184,6 +209,16 @@ def declarations(path: Path) -> list[SteeredReference]:
             continue
         requirements.append(SteeredReference(dependency, version, line.location, marker=parse_marker(line)))
     return requirements
+
+
+def holds_line(path: Path, line: str) -> bool:
+    """Return whether the requirements file holds the line, whole."""
+    return line in path.read_text().splitlines()
+
+
+def prepend_line(path: Path, line: str) -> None:
+    """Write the line at the top of the requirements file."""
+    path.write_text(f"{line}\n{path.read_text()}")
 
 
 def names_an_archive(dependency: str) -> bool:

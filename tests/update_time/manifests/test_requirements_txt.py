@@ -119,8 +119,8 @@ class FirstSourceTest(unittest.TestCase):
     @kills(
         Mutation(
             requirements_txt.CompiledRequirementsTxt.first_source,
-            "else self.sources[0]",
-            "else self.sources[-1]",
+            "if named else 0]",
+            "if named else -1]",
             "the managed-by comment goes into another source than the one annotated first",
         )
     )

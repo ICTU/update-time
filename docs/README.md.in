@@ -104,7 +104,7 @@ Update-time updates the following types of dependencies, found in the listed fil
 
 | Dependency type | Files | Source | Updated by |
 | :-------------- | :---- | :----- | :--------- |
-| [Python dependencies](#python-dependencies) | `pyproject.toml`, `requirements.txt` and the sources of a compiled one, and PEP 723 inline script metadata (`# /// script` blocks in `*.py` files) | [PyPI](https://pypi.org) | Update-time for `requirements.txt` and the sources of a compiled one, which uv recompiles where uv compiled it. For the other two, uv resolves the versions and Update-time writes the pins |
+| [Python dependencies](#python-dependencies) | `pyproject.toml`, `requirements.txt` and the sources of a compiled one, and PEP 723 inline script metadata (`# /// script` blocks in `*.py` files) | [PyPI](https://pypi.org) | Update-time for `requirements.txt` and the sources of a compiled one, which uv or pip-compile recompiles, whichever compiled it. For the other two, uv resolves the versions and Update-time writes the pins |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | `package.json` (and their lock files) | [npm registry](https://registry.npmjs.org) | delegated to npm or pnpm, whichever manages the `package.json` |
 | [Maven dependencies](#maven-dependencies) | `pom.xml` | the repositories the project's Maven build resolves from | delegated to Maven's [versions plugin](https://www.mojohaus.org/versions/versions-maven-plugin/) |
 | [Node engine version](#node-engine-version-and-python-version) | `package.json` | the latest [Node](https://hub.docker.com/_/node) release on Docker Hub | Update-time |
@@ -208,7 +208,7 @@ To avoid adopting releases that are too fresh to trust, Update-time honours a co
 
 | Dependency type | Applied by | Measured against |
 | :-------------- | :--------- | :--------------- |
-| [Python dependencies](#python-dependencies) | Update-time for `requirements.txt` and the sources of a compiled one, uv for the rest | the release's publication date on PyPI |
+| [Python dependencies](#python-dependencies) | Update-time for `requirements.txt` and the sources of a compiled one, pip-compile for a compiled file it recompiles, uv for the rest | the release's publication date on PyPI |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | npm and pnpm | the release's age on the npm registry |
 | [Maven dependencies](#maven-dependencies) | Update-time, for the artefacts Maven Central serves | the version's publication date on Maven Central |
 | [Node engine version](#node-engine-version-and-python-version) | Update-time | the Node image tag's push date |
@@ -224,7 +224,7 @@ Where Update-time applies the cooldown itself, it holds back every version publi
 @@HELD_BACK_BY_COOLDOWN@@
 ```
 
-Where a package manager applies the cooldown, Update-time hands the value to uv, npm, or pnpm. Each of them takes the value per run rather than per dependency, except uv when it recompiles a requirements file. Each of them also leaves a cooldown your project already configures in place. [Python dependencies](#python-dependencies) and [npm and pnpm dependencies](#npm-and-pnpm-dependencies) describe what that means per dependency type.
+Where a package manager applies the cooldown, Update-time hands the value to uv, pip-compile, npm, or pnpm. Each of them takes the value per run rather than per dependency, except uv when it recompiles a requirements file. Each of them also leaves a cooldown your project already configures in place. [Python dependencies](#python-dependencies) and [npm and pnpm dependencies](#npm-and-pnpm-dependencies) describe what that means per dependency type.
 
 > [!NOTE]
 > The cooldown holds back updates and the adoption of [hash drift](#hash-drift). Pinning does not change what the reference resolves to, so the cooldown does not hold back a [pin](#-pinning).
@@ -402,7 +402,7 @@ A marker wins over the command-line option that sets the same thing, whatever th
 
 An `ignore[update]` wins over any directive beside it that would change the reference: a [bound](#bounding-an-update), an [`allow[hash-drift]`](#adopting-hash-drift), or an [`allow[floating-pin]`](#keeping-a-pin-floating). Update-time leaves the reference untouched.
 
-Update-time reports an `ignore[update]` as [redundant](#a-bound) where it holds nothing back. npm and pnpm move a `package.json` dependency within the range the file declares, whatever its marker says. It holds nothing back either on a `requirements.txt`, `pyproject.toml`, or inline script metadata dependency that does not pin an exact version, or on a `pom.xml` declaration whose version Maven does not update. The source of a file Update-time recompiles is the exception, since there the `ignore[update]` keeps uv from upgrading the package (see [Python dependencies](#markers)).
+Update-time reports an `ignore[update]` as [redundant](#a-bound) where it holds nothing back. npm and pnpm move a `package.json` dependency within the range the file declares, whatever its marker says. It holds nothing back either on a `requirements.txt`, `pyproject.toml`, or inline script metadata dependency that does not pin an exact version, or on a `pom.xml` declaration whose version Maven does not update. The source of a file Update-time recompiles is the exception, since there the `ignore[update]` keeps uv or pip-compile from upgrading the package (see [Python dependencies](#markers)).
 
 ### Silencing a warning
 
@@ -479,7 +479,7 @@ The cooldown wins over `--cooldown`. To adopt new releases for one reference as 
 
 Run with `--log-level DEBUG` to see the version the cooldown holds back (see [Cooldown](#-cooldown)).
 
-The override reaches the dependencies whose cooldown Update-time enforces itself, and the packages of a requirements file uv recompiles (see [Python dependencies](#cooldown)). It does nothing for the other dependencies handed to uv, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)).
+The override reaches the dependencies whose cooldown Update-time enforces itself, and the packages of a requirements file uv recompiles (see [Python dependencies](#cooldown)). It does nothing for the other dependencies handed to uv, pip-compile, npm, or pnpm, which take a cooldown per run rather than per dependency (see [Cooldown](#-cooldown)).
 
 #### Setting a risk level
 
@@ -728,7 +728,7 @@ Update-time reports a risk level such as `set[vulnerability-level=high]` as redu
 
 A cooldown holds nothing back in these cases, so Update-time reports the `cooldown` scope as redundant there:
 
-- uv, npm, or pnpm applies the cooldown. They take one per run rather than per dependency (see [Cooldown](#-cooldown)).
+- uv, pip-compile, npm, or pnpm applies the cooldown. They take one per run rather than per dependency, except uv when it recompiles a requirements file (see [Cooldown](#-cooldown)).
 - The source does not report a publication date. That holds for an image on a registry other than Docker Hub, and for an artefact Maven Central does not serve.
 - Update-time does not update the reference. That holds for a `requirements.txt` requirement that does not pin an exact version, unless it sits in the source of a file Update-time recompiles. It holds for a GitHub Action or pre-commit hook that names a commit SHA. A short SHA that a version tag names is the exception: Update-time pins it as that version, and from the next run on the cooldown governs its updates. Not updated either are a `pom.xml` declaration whose version Maven does not update, an image the file does not pull, and a reference through a variable or a template that Update-time cannot substitute.
 
@@ -859,19 +859,19 @@ Update-time also updates any `*.py` file that carries a [PEP 723](https://peps.p
 
 Update-time never rewrites a pin in a compiled or hash-pinned requirements file, such as a `requirements.txt` generated by [pip-tools](https://github.com/jazzband/pip-tools) or `uv pip compile`. Bumping a single pin without recompiling its transitive dependencies and hashes would corrupt the file. Update-time recognises such a file by its contents, an autogenerated header or `--hash=` lines. It also recognises one by a sibling `.in` file.
 
-Update-time updates the sources of a compiled file instead, such as its `requirements.in`. It finds them in the `# via -r` annotations of the compiled file. Those paths are relative to the directory the file was compiled in, which Update-time reads off the output path in the header, such as `-o docs/requirements.txt`. Where the header does not name an output, the paths are relative to the directory the compiled file sits in. Update-time updates the exact pins in a source as it updates those in a `requirements.txt`.
+Update-time updates the sources of a compiled file instead, such as its `requirements.in`. It finds them in the `# via -r` annotations of the compiled file. Those paths are relative to the directory the file was compiled in, which Update-time reads off the output path in the header, such as `-o docs/requirements.txt`. Where a uv header does not name an output, the paths are relative to the directory the compiled file sits in. pip-compile writes such a file beside its source, such as `docs/requirements.txt` for `pip-compile docs/requirements.in`, so Update-time reads the directory off the source path. Update-time updates the exact pins in a source as it updates those in a `requirements.txt`.
 
-Where uv compiled the file, Update-time then has uv recompile it, with the options the file's header records. The recompile updates the transitive dependencies as well.
+Update-time then has the tool that compiled the file, uv or pip-compile, recompile it with the options the file's header records. The recompile updates the transitive dependencies as well.
 
 Update-time skips a compiled file whose sources include a compiled file, with a warning. It handles that compiled source as a compiled file of its own where the scan finds it. Update-time warns about a source that does not exist. It leaves a source alone where the scan leaves it out. It recompiles a file only where the run reaches every source the file names. It skips a compiled file whose annotations do not name a requirements file as its source, such as one compiled with `--no-annotate`.
 
-Update-time recompiles a file only where uv compiled it to a file rather than to standard output, and the header records a command Update-time can run. Recompile any other compiled file yourself to bring its pins in line with its sources. Update-time reports what it does with each compiled file:
+Update-time recompiles a file only where the tool compiled it to that file itself, rather than to standard output or to another file, and the header records a command Update-time can run. Recompile any other compiled file yourself to bring its pins in line with its sources. Update-time reports what it does with each compiled file:
 
 ```console
 @@COMPILED_REQUIREMENTS_FILES@@
 ```
 
-Where uv fails to recompile the file, Update-time logs uv's error at `WARNING`, and reports at `ERROR` which file it did not recompile:
+Where the tool fails to recompile the file, Update-time logs the tool's error at `WARNING`, and reports at `ERROR` which file it did not recompile:
 
 ```console
 @@COMPILED_FILE_NOT_RECOMPILED@@
@@ -917,17 +917,21 @@ Update-time updates none of the dependencies in a `pyproject.toml` or an inline 
 
 #### Pinning
 
-Update-time adds no hash pin to a Python dependency. uv records each distribution's hash in the `uv.lock` file beside a `pyproject.toml`. Update-time does not rewrite a pin in a `requirements.txt` file with `--hash=` lines. It updates the sources the file names instead, and has uv recompile the file where uv compiled it (see [What files are updated?](#what-files-are-updated)).
+Update-time adds no hash pin to a Python dependency. uv records each distribution's hash in the `uv.lock` file beside a `pyproject.toml`. Update-time does not rewrite a pin in a `requirements.txt` file with `--hash=` lines. It updates the sources the file names instead, and has the tool that compiled the file recompile it (see [What files are updated?](#what-files-are-updated)).
 
 #### Cooldown
 
 For a `requirements.txt` pin, Update-time enforces the cooldown itself, against the release's publication date on PyPI.
 
-For a compiled file Update-time recompiles, uv applies the cooldown, and records it in the file's header. Update-time writes a line at the top of the first source the header names, saying that it manages that cooldown, and logs that at `INFO`:
+For a compiled file Update-time recompiles, the tool that recompiles it applies the cooldown, and records it in the file's header: uv as an `exclude-newer`, pip-compile as an `uploaded-prior-to`. Update-time writes a line at the top of the first source the header names, saying that it manages that cooldown, and logs that at `INFO`:
 
 ```text
 # exclude-newer: managed by Update-time — remove this comment to prevent Update-time from changing it
 ```
+
+For pip-compile, the line starts with `# uploaded-prior-to:` instead.
+
+pip-compile takes a cooldown from pip-tools 7.6.0 on, and needs pip 26.1 or later to apply it. With an older pip-tools or pip, the recompile fails, and Update-time reports that at `ERROR`.
 
 ```console
 @@MANAGED_BY_COMMENT_WRITTEN@@
@@ -935,13 +939,14 @@ For a compiled file Update-time recompiles, uv applies the cooldown, and records
 
 While a source carries that line, Update-time keeps the header's cooldown in step with `--cooldown`. Where the sources lack the line, the header keeps the cooldown it records, since that cooldown is yours. Remove the line to take ownership of the cooldown.
 
-Update-time applies no cooldown of its own where uv's settings hold an `exclude-newer` already. uv reads those settings from a `uv.toml` in the project, from your own and the system's `uv.toml`, and from the `UV_EXCLUDE_NEWER` environment variable. The last three belong to the machine that runs Update-time. Where only they set an `exclude-newer`, the file's header records none, so a recompile on another machine, such as in CI, may have different results. Where Update-time cannot read from uv's settings whether they hold an `exclude-newer`, it warns and applies the cooldown:
+Update-time applies no cooldown of its own where uv's or pip's settings hold a cooldown already. uv reads its `exclude-newer` from a `uv.toml` in the project, from your own and the system's `uv.toml`, and from the `UV_EXCLUDE_NEWER` environment variable. pip-compile reads its `uploaded-prior-to` from pip's config files and from the `PIP_UPLOADED_PRIOR_TO` environment variable. Update-time asks the `pip` on your path for those. Each of these settings belongs to the machine that runs Update-time, except a `uv.toml` in the project. Where only the machine sets a cooldown, the file's header records none, so a recompile on another machine, such as in CI, may have different results. Where Update-time cannot read from the tool's settings whether they hold a cooldown, it warns and applies the cooldown:
 
 ```console
 @@UV_SETTINGS_UNREADABLE@@
+@@PIP_SETTINGS_UNREADABLE@@
 ```
 
-A marker in a source sets the cooldown of its package, such as `set[cooldown=30]`. Update-time drops each package cooldown the header records, so set one you want to keep with a marker.
+Where uv recompiles the file, a marker in a source sets the cooldown of its package, such as `set[cooldown=30]`. Update-time drops each package cooldown the header records, so set one you want to keep with a marker. pip-compile takes one cooldown for the whole file. So in its sources, a marker's cooldown reaches only an exact pin, which Update-time updates itself.
 
 For `pyproject.toml` dependencies, Update-time applies the cooldown through uv's `exclude-newer` setting. It writes the setting into the workspace root's `pyproject.toml` under `[tool.uv]`. The value is a relative one such as `exclude-newer = "7 days"`, tagged with a `managed by Update-time` comment. The setting then applies to every uv command in the project (`uv lock`, `uv add`, CI), not just to Update-time.
 
@@ -979,7 +984,9 @@ An `ignore[update]` holds the dependency's update back, so Update-time leaves th
 
 Update-time checks a requirement that does not pin an exact version for staleness and archival, so such a requirement can carry a marker as well: `humanize>=4  # update-time: set[stale-after=1095]` warns as soon as the package's newest release is more than three years old.
 
-In the source of a file Update-time recompiles, a marker steers the recompile as well, whether or not its requirement pins an exact version. An `ignore[update]` keeps uv from upgrading the package. A bound narrows the versions uv may upgrade the package to, so `humanize>=4  # update-time: allow[update<5]` keeps it below 5. Where uv cannot honour a bound, such as one that leaves out the version the file pins, Update-time holds the package back. A `set[cooldown=…]` sets the package's [cooldown](#cooldown). Where the sources declare a package more than once, the markers of those declarations steer the recompile together. An `ignore[update]` on any of them holds the package back. The package moves only to versions that each bound keeps, and the longest cooldown applies, the run's counting for a declaration without one.
+In the source of a file Update-time recompiles, a marker steers the recompile as well, whether or not its requirement pins an exact version. An `ignore[update]` keeps the tool from upgrading the package. A bound narrows the versions the tool may upgrade the package to, so `humanize>=4  # update-time: allow[update<5]` keeps it below 5. Where the tool cannot honour a bound, such as one that leaves out the version the file pins, Update-time holds the package back. Where uv recompiles, a `set[cooldown=…]` sets the package's [cooldown](#cooldown). Where the sources declare a package more than once, the markers of those declarations steer the recompile together. An `ignore[update]` on any of them holds the package back. The package moves only to versions that each bound keeps. Where uv recompiles, the longest cooldown applies, the run's counting for a declaration without one.
+
+pip-compile takes one cooldown for the whole file, so Update-time reports a `set[cooldown=…]` as [redundant](#the-cooldown-scope) on a requirement in its sources that does not pin an exact version.
 
 Update-time reports every warning scope as redundant on a dependency PyPI does not serve a release for: one pointing at a URL or a git repository, or one uv resolves through a `[tool.uv] sources` entry.
 

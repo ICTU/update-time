@@ -535,7 +535,7 @@ def _range_rewrites(log: Logger, capture: _Capture) -> dict[str, str]:
 def _compiled_requirements_files(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log what happens to a compiled requirements file and to the sources it names, and pair the lines."""
     compiled = Path("docs/requirements.txt")
-    log.compiled_file_left_as_it_is(compiled, [Path("docs/requirements.in")], Unrecompilable.OTHER_TOOL)
+    log.compiled_file_left_as_it_is(compiled, [Path("docs/requirements.in")], Unrecompilable.NO_OUTPUT)
     log.source_not_found(compiled, Path("docs/dev.in"))
     log.source_outside_the_scan(compiled, Path("vendor/requirements.in"))
     log.compiled_source_unsupported(Path("requirements-dev.txt"), Path("requirements.txt"))
@@ -546,15 +546,18 @@ def _compiled_requirements_files(log: Logger, capture: _Capture) -> dict[str, st
 def _recompiles(log: Logger, capture: _Capture) -> dict[str, str]:
     """Log a sample per line about recompiling a requirements file, each paired with its block's placeholder."""
     compiled = Path("docs/requirements.txt")
-    log.compiled_file_not_recompiled(compiled)
+    log.compiled_file_not_recompiled(compiled, "uv pip compile")
     not_recompiled = capture.take()
-    log.managed_by_comment_written(Path("docs/requirements.in"), compiled, "7 days")
+    log.managed_by_comment_written(Path("docs/requirements.in"), compiled, "7 days", "uv exclude-newer")
     managed_by_comment_written = capture.take()
     log.uv_settings_unreadable(compiled)
+    uv_settings_unreadable = capture.take()
+    log.pip_settings_unreadable(compiled, "[Errno 2] No such file or directory: 'pip'")
     return {
         "@@COMPILED_FILE_NOT_RECOMPILED@@": not_recompiled,
         "@@MANAGED_BY_COMMENT_WRITTEN@@": managed_by_comment_written,
-        "@@UV_SETTINGS_UNREADABLE@@": capture.take(),
+        "@@UV_SETTINGS_UNREADABLE@@": uv_settings_unreadable,
+        "@@PIP_SETTINGS_UNREADABLE@@": capture.take(),
     }
 
 

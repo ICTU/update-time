@@ -920,13 +920,12 @@ class Logger:
         """Log that Update-time wrote its cooldown into the project's uv configuration."""
         return self._file_fields(path, cooldown=cooldown)
 
-    @_info(
-        "Set uv exclude-newer to %(cooldown)r for %(compiled)s, and recorded in %(location)s that Update-time "
-        "manages it"
-    )
-    def managed_by_comment_written(self, source: Path, compiled: Path, cooldown: str) -> dict[str, object]:
+    @_info("Set %(setting)s to %(cooldown)r for %(compiled)s, and recorded in %(location)s that Update-time manages it")
+    def managed_by_comment_written(
+        self, source: Path, compiled: Path, cooldown: str, setting: str
+    ) -> dict[str, object]:
         """Log that Update-time passed its cooldown to a recompile, and wrote the managed-by comment into the source."""
-        return self._file_fields(source, compiled=Location(compiled), cooldown=cooldown)
+        return self._file_fields(source, compiled=Location(compiled), cooldown=cooldown, setting=setting)
 
     @_warning(
         "Could not set uv exclude-newer in %(location)s to apply the cooldown: its tool, or the uv in it, is not a "
@@ -944,6 +943,14 @@ class Logger:
         """Warn that uv's settings do not say whether the project sets an `exclude-newer` for the file."""
         return self._file_fields(path)
 
+    @_warning(
+        "Could not read from pip's settings whether they set an uploaded-prior-to for %(location)s (%(reason)s); "
+        "applying the cooldown"
+    )
+    def pip_settings_unreadable(self, path: Path, reason: str) -> dict[str, object]:
+        """Warn that pip does not list its settings, which say whether they set an `uploaded-prior-to` for the file."""
+        return self._file_fields(path, reason=reason)
+
     @_error("Could not update the dependencies in %(location)s: uv tree failed")
     def uv_dependencies_not_updated(self, path: Path) -> dict[str, object]:
         """Log that `uv tree` failed for a file."""
@@ -954,10 +961,10 @@ class Logger:
         """Warn that a compiled requirements file pins a package to a version that is not PEP 440."""
         return self._file_fields(path, dependency=dependency, version=version)
 
-    @_error("Could not recompile %(location)s: uv pip compile failed")
-    def compiled_file_not_recompiled(self, path: Path) -> dict[str, object]:
-        """Log that `uv pip compile` failed for a compiled requirements file."""
-        return self._file_fields(path)
+    @_error("Could not recompile %(location)s: %(tool)s failed")
+    def compiled_file_not_recompiled(self, path: Path, tool: str) -> dict[str, object]:
+        """Log that the tool failed to recompile a compiled requirements file."""
+        return self._file_fields(path, tool=tool)
 
     @_warning("Skipping %(location)s: %(manager)s is not supported, only %(supported)s")
     def unsupported_package_manager(self, path: Path, manager: str, supported: str) -> dict[str, object]:

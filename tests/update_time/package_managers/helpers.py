@@ -9,7 +9,7 @@ from tests.update_time.helpers import LoggingTestCase
 if TYPE_CHECKING:
     from update_time.primitives.command import Command
 
-# The comment Update-time writes beside the uv `exclude-newer` it manages, spelled out so the tests pin the wording.
+# The comment Update-time writes beside a cutoff it manages, spelled out so the tests pin the wording.
 MANAGED_BY_COMMENT = "managed by Update-time — remove this comment to prevent Update-time from changing it"
 
 # How `uv --show-settings` prints an `exclude-newer` that is set.
@@ -30,9 +30,9 @@ class UvSettingsTestCase(LoggingTestCase):
         super().setUp()
         self.configured_exclude_newer = "None"
         self.settings_answer: object = None
-        self.mock_run = self.enterContext(patch("subprocess.run", side_effect=self.run_uv))
+        self.mock_run = self.enterContext(patch("subprocess.run", side_effect=self.run_tool))
 
-    def run_uv(self, _command: Command, /, **_options: object) -> object:
+    def run_tool(self, _command: Command, /, **_options: object) -> object:
         """Answer the command as `uv --show-settings` does."""
         return self.uv_settings(self.configured_exclude_newer)
 
