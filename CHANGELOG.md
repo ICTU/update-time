@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Added
 
 - Update the sources of a compiled requirements file, such as its `requirements.in`, and have uv or pip-compile recompile the file, whichever compiled it. See [#491](https://github.com/ICTU/update-time/issues/491).
+- Warn about a yanked or vulnerable version that a compiled requirements file pins for a requirement of its source that does not pin an exact version. See [#491](https://github.com/ICTU/update-time/issues/491).
 
 ### Changed
 

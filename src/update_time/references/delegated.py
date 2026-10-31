@@ -177,5 +177,15 @@ def warn_about_delegated_checks[ReferenceT: SteeredReference](
     """
     warn_about_projects(served, projects, log)
     pinned = [[reference for reference in references if reference.current_version] for references in served]
+    warn_about_pinned_versions(pinned, log, yank, ecosystem)
+
+
+def warn_about_pinned_versions[ReferenceT: SteeredReference](
+    pinned: Sequence[Sequence[ReferenceT]],
+    log: Logger,
+    yank: Callable[[DependencyName, VersionString], Yank | None],
+    ecosystem: Ecosystem,
+) -> None:
+    """Run the yank and vulnerability checks over the versions the dependencies are pinned to."""
     _warn_about_yanked_dependencies(pinned, pin_resolver(yank), log)
     warn_about_vulnerable_dependencies(pinned, ecosystem, log)

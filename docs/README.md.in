@@ -273,7 +273,7 @@ Which dependencies are checked follows from where a yank can be observed. PyPI r
 
 | Dependency type | Yank check |
 | :-------------- | :--------- |
-| [Python dependencies](#python-dependencies) | `requirements.txt` and the sources of a compiled one, `pyproject.toml`, and inline script metadata pins, against PyPI's yank metadata |
+| [Python dependencies](#python-dependencies) | exact pins in `requirements.txt`, the sources of a compiled one, `pyproject.toml`, and inline script metadata, and the version a compiled file pins for a source's requirement without an exact pin, against PyPI's yank metadata |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | `package.json` exact pins, against the npm registry's deprecation of the pinned version |
 | [Maven dependencies](#maven-dependencies) | none: Maven Central does not report a withdrawal |
 | [Node engine version](#node-engine-version-and-python-version) | none: its source does not record a yank |
@@ -307,7 +307,7 @@ Which dependencies are checked follows from what OSV holds advisories for:
 
 | Dependency type | Vulnerability check |
 | :-------------- | :------------------ |
-| [Python dependencies](#python-dependencies) | `requirements.txt` and the sources of a compiled one, `pyproject.toml`, and inline script metadata pins, against OSV's PyPI advisories |
+| [Python dependencies](#python-dependencies) | exact pins in `requirements.txt`, the sources of a compiled one, `pyproject.toml`, and inline script metadata, and the version a compiled file pins for a source's requirement without an exact pin, against OSV's PyPI advisories |
 | [npm and pnpm dependencies](#npm-and-pnpm-dependencies) | `package.json` exact pins, against OSV's npm advisories |
 | [Maven dependencies](#maven-dependencies) | the version each `pom.xml` dependency and plugin is left on, against OSV's Maven advisories |
 | [Node engine version](#node-engine-version-and-python-version) | none: it names a runtime version rather than a package release |
@@ -678,7 +678,7 @@ A check also passes over a reference of a type it covers in these cases, and the
 - The file does not pull the image, as with a CircleCI machine-executor image or an image a Docker Compose file builds. Or the reference goes through a variable or a template that Update-time cannot substitute, such as `redis:7.2-${VARIANT}`. Update-time does not ask a registry about either.
 - The image sits on a registry other than Docker Hub. Such a registry does not report a publication date, so the `stale` scope is redundant there.
 - A `pom.xml` declaration leaves its version to the declaration managing it (see [Maven dependencies](#markers-2)).
-- The `yanked` and `vulnerable` scopes judge a version, so they are redundant on a reference that does not name one. Examples are a requirement that does not pin an exact version, a `pom.xml` declaration whose version Maven leaves unresolved, and a GitHub Action that names a branch, a tag such as `stable-2024`, or a commit SHA. In the run that pins such an action to a version tag, Update-time checks it at that version.
+- The `yanked` and `vulnerable` scopes judge a version, so they are redundant on a reference that does not name one. Examples are a requirement that does not pin an exact version, a `pom.xml` declaration whose version Maven leaves unresolved, and a GitHub Action that names a branch, a tag such as `stable-2024`, or a commit SHA. In the run that pins such an action to a version tag, Update-time checks it at that version. In the source of a compiled file, Update-time checks such a requirement at the version the compiled file pins.
 - The poms of a `pom.xml` artefact do not name a GitHub repository, so the `archived` scope is redundant (see [Archived dependencies](#archived-dependencies-2)).
 
 Update-time reports those cases as:
@@ -901,7 +901,7 @@ Update-time rewrites a dependency's declaration when it pins one exact version w
 
 Update-time leaves every other specifier untouched, so you can pin a maximum version, such as `humanize<5`, to opt a dependency out of automatic updates. A `==` that names a range, such as `humanize==4.15.*`, does not pin an exact version either.
 
-Update-time still reports a new version for a dependency that pins no exact version, both in a `pyproject.toml` and in an inline script metadata block. In a `pyproject.toml` uv also applies it: uv resolves the specifier and records the version it picks in the `uv.lock` file. So `humanize>=4` moves from one release to the next without its line changing. A script has no lock file, so there Update-time reports the new version and nothing more. In a `requirements.txt` it reports no new version, because it resolves none for a requirement that pins no exact version. It still checks that requirement's package for staleness and archival. The source of a file Update-time recompiles is the exception: where the recompile moves the version of a package the source declares without an exact pin, Update-time reports the new version at the source's line.
+Update-time still reports a new version for a dependency that pins no exact version, both in a `pyproject.toml` and in an inline script metadata block. In a `pyproject.toml` uv also applies it: uv resolves the specifier and records the version it picks in the `uv.lock` file. So `humanize>=4` moves from one release to the next without its line changing. A script has no lock file, so there Update-time reports the new version and nothing more. In a `requirements.txt` it reports no new version, because it resolves none for a requirement that pins no exact version. The source of a file Update-time recompiles is the exception: where the recompile moves the version of a package the source declares without an exact pin, Update-time reports the new version at the source's line.
 
 For a `requirements.txt` pin, Update-time reads from PyPI whether each newer release was yanked and when it was published. When PyPI does not serve that for a release, Update-time stays on the version the pin names rather than trying the versions in between. It logs why at `ERROR`:
 
@@ -966,11 +966,13 @@ Update-time checks each pin a Python file declares against the newest release of
 
 #### Yanked dependencies
 
-Update-time checks each exact pin a Python file declares against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI. It skips a yanked release when picking a new version. The version checked is the one the file holds when the run ends. Update-time does not check a dependency declared without an exact pin. A yank is about the version a reference is left on, and such a declaration names none.
+Update-time checks each exact pin a Python file declares against [PEP 592](https://peps.python.org/pep-0592/)'s yank metadata on PyPI. It skips a yanked release when picking a new version. The version checked is the one the file holds when the run ends.
+
+In the source of a compiled file, Update-time also checks a dependency declared without an exact pin, at the version the compiled file pins when the run ends. It reports the warning at the source's line. It skips the compiled file's transitive pins. Elsewhere, a dependency declared without an exact pin goes unchecked, since a yank is about a version, and such a declaration names none.
 
 #### Vulnerable dependencies
 
-Update-time checks each exact pin a Python file declares against OSV's PyPI advisories. It does not check a dependency declared without an exact pin. An advisory is matched against a version, and such a declaration names none.
+Update-time checks each exact pin a Python file declares against OSV's PyPI advisories. In the source of a compiled file, Update-time also checks a dependency declared without an exact pin, at the version the compiled file pins when the run ends. It reports the warning at the source's line. It skips the compiled file's transitive pins. Elsewhere, a dependency declared without an exact pin goes unchecked, since an advisory is matched against a version, and such a declaration names none.
 
 #### Archived dependencies
 
@@ -982,7 +984,7 @@ Write a marker for a pin in a `requirements.txt`, or in the source of a compiled
 
 An `ignore[update]` holds the dependency's update back, so Update-time leaves that pin as the file wrote it and reports no new version for it. The pin is what constrains uv, so a pin Update-time declines to rewrite is the version uv keeps resolving. On a dependency that does not pin an exact version, an `ignore[update]` keeps nothing, since uv both resolves and records its version. A name a file declares twice is steered per declaration, so a marker steers the line it sits on and leaves the other line alone.
 
-Update-time checks a requirement that does not pin an exact version for staleness and archival, so such a requirement can carry a marker as well: `humanize>=4  # update-time: set[stale-after=1095]` warns as soon as the package's newest release is more than three years old.
+Update-time checks a requirement that does not pin an exact version for staleness and archival, so such a requirement can carry a marker as well: `humanize>=4  # update-time: set[stale-after=1095]` warns as soon as the package's newest release is more than three years old. In the source of a compiled file, such a requirement is checked for yanks and vulnerabilities as well, at the version the compiled file pins, so the `yanked` and `vulnerable` scopes apply to it too.
 
 In the source of a file Update-time recompiles, a marker steers the recompile as well, whether or not its requirement pins an exact version. An `ignore[update]` keeps the tool from upgrading the package. A bound narrows the versions the tool may upgrade the package to, so `humanize>=4  # update-time: allow[update<5]` keeps it below 5. Where the tool cannot honour a bound, such as one that leaves out the version the file pins, Update-time holds the package back. Where uv recompiles, a `set[cooldown=…]` sets the package's [cooldown](#cooldown). Where the sources declare a package more than once, the markers of those declarations steer the recompile together. An `ignore[update]` on any of them holds the package back. The package moves only to versions that each bound keeps. Where uv recompiles, the longest cooldown applies, the run's counting for a declaration without one.
 

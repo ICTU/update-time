@@ -76,7 +76,6 @@ A reference, and the release a source resolved for that reference.
 A regexp that captures no `dependency` group — a `.python-version` entry is a bare version — names it in `dependency`.
 A replacement the test passes against, so nothing it asserts breaks.
 A request to a host name is refused at the lookup, before it reaches the resolver; one to a literal address needs no lookup and is refused at the socket.
-A requirement that pins no exact version is rewritten not at all: the project behind it is checked instead.
 A rule every module has to remember is duplication too, so state it once, where nobody can forget it.
 A run that sets no DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN leaves the requests anonymous.
 A score below the `low` band means the advisory reports no risk at all, which is no level to name.
@@ -146,7 +145,6 @@ Each case: the directive list, the marker it expresses, and the verbatim text th
 Each directive a source may be unable to apply, keyed by the text the warning names it with.
 Each pass locates the lines afresh, so the text a marker is read from is the text the pass before it left; the file they belong to is the one they already record, so no path has to be passed alongside them.
 Each request is answered by the URL it names, so a test needs no expectation about the order they are made in.
-Every directive a source may be unable to apply, in the order their warnings are reported.
 Every module logs, so `get_logger` reads the log level for each of them, and how a run logs is no decision a module takes about what it resolves.
 Expected no to be logged.
 Find requirements files, bump the exact pins in them, and check the requirements that pin no exact version.
@@ -536,7 +534,6 @@ Warn when the hash the dictionary declares differs from the one jsDelivr serves 
 Warn when the version a Python dependency or a jsDelivr URL is left on has a known vulnerability, according to the [OSV](https://osv.dev) database.
 Warn when the version a dependency is pinned to has been yanked from PyPI, or deprecated on npm, and hold the warning back with an `# update-time: ignore[yanked]` marker.
 What a name in a repository's root listing maps to: a file's text, a directory with no tree to list, or a directory's recursive tree listing as an entry per path below it.
-What its marker gets wrong is reported whether or not those checks run, since that needs no release.
 What orders the aliases of one digest: the version, how precisely it is spelled, the version of each variant label the floating tag asked for, and the shorter name last.
 Where possible, it [pins](#-pinning) references — no more `latest` — and adds hashes.
 Where the file declares no such entry, it is located at the file rather than at a line guessed from elsewhere.
