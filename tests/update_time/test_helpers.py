@@ -8,6 +8,7 @@ from unittest.mock import patch
 import update_time
 from update_time.domain.bound import Verb
 from update_time.io.log import Logger
+from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.sources import pypi
 from update_time.sources.pypi import release_metadata
 
@@ -65,8 +66,10 @@ class CachedFunctionsTest(unittest.TestCase):
         self.assertIn(release_metadata, _all_cached_functions(update_time))
 
     def test_the_loggers_of_the_package_are_found(self):
-        """Test that walking the package reaches the logger a module nested in it holds."""
-        self.assertIn(pypi._LOG, _all_loggers(update_time))
+        """Test that walking the package reaches the loggers a module nested in it holds, or a class in it holds."""
+        loggers = _all_loggers(update_time)
+        self.assertIn(pypi._LOG, loggers)
+        self.assertIn(RequirementsCompiler.log, loggers)
 
     def test_only_the_cached_function_the_module_defines_is_returned(self):
         """Test that the discovery returns the module's own cached function, not its plain or its imported one."""

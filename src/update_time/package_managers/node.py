@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion
 from update_time.domain.reference import Reference
+from update_time.domain.version_scheme import SEMVER
 from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.manifests.package_json import DEPENDENCY_SECTIONS, PackageJson
@@ -142,7 +143,7 @@ class _PackageManager:
         listed_after = self._locked_in(directory)
         updates = [_ProjectUpdate.of(snapshot, listed_after) for snapshot in snapshots]
         for update in updates:
-            update.log_new_versions()
+            update.log_moved_versions(self.name)
             update.log_range_rewrites(self.name)
         return updates[0].after  # The package.json of the project in the directory, as the update left it
 
@@ -188,15 +189,20 @@ class _ProjectUpdate:
         """Return each version that differs from the locked one."""
         return _moved_versions(self.before.locked, self.locked_after)
 
-    def log_new_versions(self) -> None:
-        """Log each moved version at the lines declaring its dependency, or at the package.json where none does."""
+    def log_moved_versions(self, manager: str) -> None:
+        """Log each moved version, up or back, at the lines declaring its dependency, or else at the package.json."""
         declarations = {} if self.after is None else self.after.dependency_locations()
         for package, new_version in self.moved_versions.items():
             current = self.before.locked[package]
+            locations = declarations.get(package, [Location(self.before.path)])
+            if SEMVER.is_downgrade(current, new_version):
+                for location in locations:
+                    _LOG.version_moved_back(manager, Reference(package, current, location), new_version)
+                continue
             changes = get_changes(package, new_version)
             published = get_publication_datetime(package, new_version)
             package_version = DependencyVersion(new_version, changes, publication=LookedUp(published))
-            for location in declarations.get(package, [Location(self.before.path)]):
+            for location in locations:
                 _LOG.new_version(Reference(package, current, location), package_version)
 
     def log_range_rewrites(self, manager: str) -> None:

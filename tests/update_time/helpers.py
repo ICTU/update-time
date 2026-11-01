@@ -128,10 +128,10 @@ def _cached_functions(module: ModuleType) -> list[_Cached]:
 
 
 def _all_loggers(package: ModuleType) -> list[Logger]:
-    """Return the loggers the package's modules hold as module constants."""
-    return [
-        value for module in _package_modules(package) for value in vars(module).values() if isinstance(value, Logger)
-    ]
+    """Return the loggers the package's modules hold, as module constants or as attributes of their classes."""
+    values = [value for module in _package_modules(package) for value in vars(module).values()]
+    attributes = [attribute for value in values if isinstance(value, type) for attribute in vars(value).values()]
+    return [value for value in values + attributes if isinstance(value, Logger)]
 
 
 class CacheClearingTestCase(unittest.TestCase):
@@ -283,6 +283,15 @@ class LoggingTestCase(CacheClearingTestCase):
             for dependency in dependencies
         ]
         self.assertEqual(self.new_version_records(), expected)
+
+    def assert_moved_back_logged(
+        self, manager: str, dependency: str, version: str, new_version: str, *locations: Location
+    ) -> None:
+        """Assert that the manager moving the version back, at each location, was all the run logged at its level."""
+        message = message_of(Logger.version_moved_back)
+        fields = {"manager": manager, "dependency": dependency, "version": version, "new_version": new_version}
+        expected = [self._expected_call(message, {**fields, "location": location}) for location in locations]
+        self.assertEqual(self.records(message.level), expected)
 
     def records_of(self, message: LogMessage, **fields: object) -> list[_Call]:
         """Return the records logged for the message, ignoring the other records at its level.

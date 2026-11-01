@@ -391,6 +391,13 @@ class Logger:
         )
         return {**fields, "version": version} if version else fields
 
+    @_info("%(manager)s moved %(dependency)s in %(location)s back from %(version)s to %(new_version)s")
+    def version_moved_back(self, manager: str, reference: Reference, new_version: VersionString) -> dict[str, object]:
+        """Log that a package manager moved the version of a reference back to an older one."""
+        return self._reference_fields(
+            reference, manager=manager, version=reference.current_version, new_version=new_version
+        )
+
     _HELD_BACK_BY_COOLDOWN = (
         "Holding back version %(version)s of %(dependency)s in %(location)s: published %(published)s, within the "
         "cooldown of %(days)d days until %(until)s"

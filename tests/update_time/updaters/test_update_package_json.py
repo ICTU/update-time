@@ -364,6 +364,46 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
             "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json, 3), changes="Changelog"
         )
 
+    @kills(
+        Mutation(
+            node_module._ProjectUpdate.log_moved_versions,
+            "version_moved_back(manager, Reference(package, current, location)",
+            "version_moved_back(manager, Reference(package, current, locations[0])",
+            "a version moved back is reported at the first line declaring it alone",
+        )
+    )
+    @patch("requests.Session.get", side_effect=_package_lookup_responses().side_effect)
+    def test_version_moved_back_is_logged_as_moved_back_at_each_line_declaring_the_dependency(
+        self, get: Mock, mock_run: Mock, mock_glob: Mock
+    ):
+        """Test that a locked version npm moved back is logged as moved back, without a changelog or a range rewrite."""
+        original = (
+            "{\n"
+            '  "dependencies": {\n    "package": "^1.1.0"\n  },\n'
+            '  "devDependencies": {\n    "package": "^1.1.0"\n  }\n'
+            "}\n"
+        )
+        package_json = self.create_package_json(original)
+        mock_glob.return_value = [package_json]
+        runs = _npm_runs(_npm_lock(package="1.1"), Mock(stdout=""), _npm_lock(package="1.0"))
+        mock_run.side_effect = self.update_stub(package_json, original.replace("^1.1.0", "^1.0.0"), runs)
+        update_package_jsons()
+        self.assert_moved_back_logged(
+            "npm", "package", "1.1", "1.0", Location(package_json, 3), Location(package_json, 6)
+        )
+        get.assert_not_called()
+
+    @patch("requests.Session.get", _package_lookup_responses())
+    def test_version_moved_back_from_a_pre_release_is_logged_as_moved_back(self, mock_run: Mock, mock_glob: Mock):
+        """Test that npm moving a pre-release back to an older release is logged as moved back, ordered as semver."""
+        package_json = self.create_package_json()
+        mock_glob.return_value = [package_json]
+        mock_run.side_effect = _npm_runs(
+            _npm_lock(package="15.0.0-canary.5"), Mock(stdout=""), _npm_lock(package="14.2.3")
+        )
+        update_package_jsons()
+        self.assert_moved_back_logged("npm", "package", "15.0.0-canary.5", "14.2.3", Location(package_json))
+
     @patch("requests.Session.get", _package_lookup_responses())
     def test_new_version_is_logged_at_each_line_declaring_the_dependency(self, mock_run: Mock, mock_glob: Mock):
         """Test that a dependency two sections declare has its new version logged at each of those lines."""
@@ -767,6 +807,23 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
             "package", published_version("1.1", _PUBLICATION_TIME), Location(package_json), changes="Changelog"
         )
         self.assert_no_warnings_logged()
+
+    @kills(
+        Mutation(
+            node_module._PackageManager.update_package_json,
+            "update.log_moved_versions(self.name)",
+            'update.log_moved_versions("npm")',
+            "a version pnpm moved back is reported as moved back by npm",
+        )
+    )
+    @patch("requests.Session.get", _package_lookup_responses())
+    def test_version_moved_back_is_logged_naming_pnpm(self, mock_run: Mock, mock_glob: Mock):
+        """Test that a locked version pnpm moved back is logged as moved back by pnpm."""
+        package_json = self.create_package_json()
+        mock_glob.return_value = [package_json]
+        mock_run.side_effect = _pnpm_runs(_pnpm_lock(package="1.1"), Mock(stdout=""), _pnpm_lock(package="1.0"))
+        update_package_jsons()
+        self.assert_moved_back_logged("pnpm", "package", "1.1", "1.0", Location(package_json))
 
     def test_unmoved_version_not_logged(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package is not logged when pnpm update did not move its locked version."""
