@@ -849,6 +849,36 @@ class Logger:
         """Log the range of versions a bound holds the reference back from, as the package manager reads it."""
         return self._reference_fields(reference, range=maven_range, directive=directive)
 
+    @_debug(
+        "Holding back the versions of %(dependency)s in %(location)s that the requires-python %(requires_python)s "
+        "of %(pyproject_toml)s excludes"
+    )
+    def held_back_by_requires_python(self, reference: Reference, requires_python: Reference) -> dict[str, object]:
+        """Log that the project's `requires-python` holds the reference back from the versions it excludes."""
+        return self._reference_fields(
+            reference, requires_python=requires_python.current_version, pyproject_toml=requires_python.location
+        )
+
+    @_warning("Ignoring the requires-python of %(location)s: it is not a version specifier")
+    def invalid_requires_python(self, requires_python: Reference) -> dict[str, object]:
+        """Warn that the project's `requires-python` is not a version specifier, so it does not bound the update."""
+        return {"location": requires_python.location}
+
+    @_warning(
+        "Incompatible Python version %(dependency)s in %(location)s: version %(version)s falls outside the "
+        "requires-python %(requires_python)s of %(pyproject_toml)s, so uv refuses to run for the project"
+    )
+    def python_version_outside_requires_python(
+        self, reference: Reference, requires_python: Reference
+    ) -> dict[str, object]:
+        """Warn that the reference names a Python version the project's `requires-python` excludes."""
+        return self._reference_fields(
+            reference,
+            version=reference.current_version,
+            requires_python=requires_python.current_version,
+            pyproject_toml=requires_python.location,
+        )
+
     @_debug("Recognised update-time marker %(directives)s for %(dependency)s in %(location)s")
     def recognised_marker(self, dependency: str, marker: Marker, location: Location) -> dict[str, object] | None:
         """Log that a reference's marker was recognised.
@@ -1004,6 +1034,11 @@ class Logger:
     @_warning("Could not read %(location)s to find the Node engine it declares (%(error)s)")
     def unreadable_node_engine(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
         """Warn that a package.json can't be read, so the Node engine it may declare goes unread."""
+        return self._file_fields(path, error=str(error))
+
+    @_warning("Could not read %(location)s to find the requires-python it declares (%(error)s)")
+    def unreadable_requires_python(self, path: Path, error: OSError | UnicodeDecodeError) -> dict[str, object]:
+        """Warn that a pyproject.toml can't be read, so the `requires-python` it may declare goes unread."""
         return self._file_fields(path, error=str(error))
 
     @_warning("Could not read the pom at %(url)s: it is not valid XML")

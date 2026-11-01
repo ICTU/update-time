@@ -609,6 +609,28 @@ class LoggerTests(TestCase):
             "newest release 5.0.0 was published 512 days ago (> 90)",
         )
 
+    @kills(
+        Mutation(
+            log_module,
+            '"Incompatible Python version %(dependency)s in %(location)s: version %(version)s falls outside the "',
+            '"%(dependency)s %(version)s in %(location)s falls outside the "',
+            "the warning opens with the bare dependency name, unlike every other warning about a dependency",
+        )
+    )
+    def test_python_version_outside_requires_python_warning(self, mock_log: Mock):
+        """Test that an entry outside the `requires-python` is warned about with a label, as a dependency is."""
+        entry = reference("python", create_location(".python-version", 1), "3.13.2")
+        requires_python = reference("python", create_location("pyproject.toml", 2), ">=3.10,<3.12")
+        _new_logger().python_version_outside_requires_python(entry, requires_python)
+        self.assert_message(
+            mock_log,
+            message_of(Logger.python_version_outside_requires_python),
+            logging.WARNING,
+            f"Incompatible Python version {dependency('python')} in {at('.python-version:1')}: version 3.13.2 "
+            f"falls outside the requires-python >=3.10,<3.12 of {at('pyproject.toml:2')}, "
+            "so uv refuses to run for the project",
+        )
+
     def test_report_staleness(self, mock_log: Mock):
         """Test that staleness is reported as a warning at the threshold given.
 

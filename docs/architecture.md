@@ -6,6 +6,7 @@ The package has a folder per layer. An arrow points from a layer to a layer it i
 flowchart TD
   domain --> formats
   domain --> primitives
+  formats --> primitives
   io --> domain
   io --> markers
   io --> primitives

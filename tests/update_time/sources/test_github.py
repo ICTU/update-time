@@ -882,7 +882,7 @@ class GitHubHeadersTest(CacheClearingTestCase):
 
     def assert_request_headers(self, mock_get: Mock, expected: dict[str, str]) -> None:
         """Assert that a GitHub request carries the expected headers."""
-        mock_get.return_value = mock_response({})
+        mock_get.return_value = mock_response({"archived": False})
         archival(GitHubRepository("owner", "repository"))
         self.assertEqual(mock_get.call_args.kwargs["headers"], expected)
 

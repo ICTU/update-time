@@ -119,6 +119,7 @@ class FakeFiles:
     ) -> None:
         """Hold the files, the directories, and the error each write raises after leaving half its text behind."""
         self.files = {str(path): text for path, text in (files or {}).items()}
+        self.read_errors: dict[str, Exception] = {}  # The error reading a file raises, by the file's path.
         self._directories = {str(path) for path in directories}
         self._failing_write = failing_write
 
@@ -128,7 +129,7 @@ class FakeFiles:
 
     @contextlib.contextmanager
     def patched(self) -> Generator[None]:
-        """Stand in for the `Path` methods that look up, read, write, replace, and make files and folders."""
+        """Stand in for the `Path` methods that look up, glob, read, write, replace, and make files and folders."""
         with (
             patch.object(Path, "read_text", autospec=True, side_effect=self._read_text),
             patch.object(Path, "write_text", autospec=True, side_effect=self._write_text),
@@ -136,13 +137,21 @@ class FakeFiles:
             patch.object(Path, "exists", autospec=True, side_effect=self._exists),
             patch.object(Path, "is_file", autospec=True, side_effect=lambda path: str(path) in self.files),
             patch.object(Path, "mkdir", autospec=True),
+            patch.object(Path, "glob", autospec=True, side_effect=self._glob),
         ):
             yield
 
     def _exists(self, path: Path) -> bool:
         return str(path) in self.files or str(path) in self._directories
 
+    def _glob(self, path: Path, pattern: str, *_arguments: object, **_options: object) -> list[Path]:
+        known = [Path(name) for name in (*self.files, *self._directories)]
+        entries = {entry for name in known for entry in (name, *name.parents) if entry.is_relative_to(path)}
+        return sorted(entry for entry in entries if entry != path and entry.relative_to(path).full_match(pattern))
+
     def _read_text(self, path: Path, *_arguments: object, **_options: object) -> str:
+        if (error := self.read_errors.get(str(path))) is not None:
+            raise error
         if str(path) not in self.files:
             raise FileNotFoundError(2, "No such file or directory", str(path))
         return self.files[str(path)]

@@ -31,6 +31,21 @@ if TYPE_CHECKING:
 # What the log renders for the new version `updated_pyproject_toml` has uv and PyPI report.
 _NEW_VERSION = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
 
+# The pyproject.toml updater checks these tables. Each entry names the table's row, the case of the test below that
+# pins it, and the error a run stops with once the row is gone. The `project` table is left out: another test guards
+# its row too.
+_CHECKED_TABLES = (
+    (
+        '("project", "optional-dependencies")',
+        "project.optional-dependencies",
+        "AttributeError: 'str' object has no attribute 'values'",
+    ),
+    ('("dependency-groups",)', "dependency-groups", "AttributeError: 'str' object has no attribute 'values'"),
+    ('("tool",)', "tool", "AttributeError: 'str' object has no attribute 'get'"),
+    ('("tool", "uv")', "tool.uv", "AttributeError: 'str' object has no attribute 'get'"),
+    ('("build-system",)', "build-system", "AttributeError: 'str' object has no attribute 'get'"),
+)
+
 # A pyproject.toml that declares build requirements alone, which uv neither resolves nor locks.
 _BUILD_REQUIREMENTS_ALONE = '[build-system]\nrequires = ["hatchling==1.20.0"]\n'
 
@@ -407,14 +422,62 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
 
     def test_skip_invalid_pyproject_toml(self, run: Mock, get: Mock, glob: Mock):
         """Test that an unparsable pyproject.toml is skipped with a warning, without running uv or crashing."""
-        mock_pyproject_toml = self.create_pyproject_toml('[project]\ndependencies = ["package==1.0"\n')  # missing ]
-        glob.return_value = [mock_pyproject_toml]
-        update_pyproject_tomls()
-        run.assert_not_called()
-        get.assert_not_called()
-        mock_pyproject_toml.write_text.assert_not_called()
-        self.assert_invalid_file_logged(mock_pyproject_toml, "TOML")
-        self.assert_no_new_version_logged()
+        not_utf_8 = self.create_pyproject_toml("")
+        not_utf_8.read_text.side_effect = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        for case, mock_pyproject_toml in (
+            ("a missing bracket", self.create_pyproject_toml('[project]\ndependencies = ["package==1.0"\n')),
+            ("a file that is not UTF-8", not_utf_8),
+        ):
+            with self.subTest(case):
+                glob.return_value = [mock_pyproject_toml]
+                update_pyproject_tomls()
+                run.assert_not_called()
+                get.assert_not_called()
+                mock_pyproject_toml.write_text.assert_not_called()
+                self.assert_invalid_file_logged(mock_pyproject_toml, "TOML")
+                self.assert_no_new_version_logged()
+
+    @kills(
+        *(
+            Mutation(
+                python_dependency_toml_manifest,
+                f"    {row},\n",
+                "",
+                f"a pyproject.toml whose {table} is not a table stops the run",
+                raises=error,
+            )
+            for row, table, error in _CHECKED_TABLES
+        ),
+        Mutation(
+            python_dependency_toml_manifest.is_well_formed,
+            "return all(isinstance(array, list) for array in _dependency_arrays(config))",
+            "return True",
+            "a pyproject.toml whose dependency array is not an array has uv run for it",
+        ),
+    )
+    def test_skip_pyproject_toml_whose_tables_or_arrays_hold_another_value(self, run: Mock, get: Mock, glob: Mock):
+        """Test that the updater warns about and skips a pyproject.toml whose tables or arrays hold another value."""
+        cases = {
+            "project": 'project = "x"\n',
+            "tool": 'tool = "x"\n',
+            "tool.uv": '[tool]\nuv = "x"\n',
+            "project.optional-dependencies": '[project]\noptional-dependencies = "x"\n',
+            "dependency-groups": 'dependency-groups = "x"\n',
+            "build-system": 'build-system = "x"\n',
+            "project.dependencies": '[project]\ndependencies = "x"\n',
+            "build-system.requires": '[build-system]\nrequires = "x"\n',
+        }
+        for case, contents in cases.items():
+            with self.subTest(case):
+                run.reset_mock()
+                get.reset_mock()
+                mock_pyproject_toml = self.create_pyproject_toml(contents)
+                glob.return_value = [mock_pyproject_toml]
+                update_pyproject_tomls()
+                run.assert_not_called()
+                get.assert_not_called()
+                mock_pyproject_toml.write_text.assert_not_called()
+                self.assert_invalid_file_logged(mock_pyproject_toml, "pyproject.toml")
 
     def test_uv_not_run_for_a_file_that_declares_nothing_to_lock(self, run: Mock, get: Mock, glob: Mock):
         """Test that uv does not run, nor get its cooldown, for a pyproject.toml that declares nothing to lock."""

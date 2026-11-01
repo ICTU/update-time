@@ -104,7 +104,7 @@ class Mutation:
     anchor: types.ModuleType | _Function | types.MethodType | property | functools.cached_property[Any]
     old: str
     new: str
-    regression: str = ""
+    regression: str
     raises: str = ""
 
     @property

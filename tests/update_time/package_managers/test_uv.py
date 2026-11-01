@@ -6,6 +6,7 @@ from unittest.mock import ANY, Mock, call, patch
 
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
+from update_time.manifests import python_dependency_toml as python_dependency_toml_manifest
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.package_managers import uv
 from update_time.package_managers.uv import (
@@ -235,9 +236,28 @@ class WorkspaceTableTest(unittest.TestCase):
         """Test that a missing/unreadable pyproject.toml (e.g. an ancestor with none) yields None, not an error."""
         self.assertIsNone(_workspace_table(Mock(read_text=Mock(side_effect=OSError))))
 
-    def test_malformed_toml(self):
+    @kills(
+        Mutation(
+            uv._workspace_table,
+            "if config is None or not is_well_formed(config):",
+            "if config is None:",
+            "a workspace table that is not a table is taken for one, so the walk up the tree stops with a traceback",
+        ),
+        Mutation(
+            python_dependency_toml_manifest,
+            '    ("tool", "uv", "workspace"),\n',
+            "",
+            "a pyproject.toml whose workspace is not a table counts as well formed",
+        ),
+    )
+    def test_malformed_pyproject_toml(self):
         """Test that an unrelated, malformed pyproject.toml up the tree yields None instead of crashing."""
-        self.assertIsNone(_workspace_table(mock_path("this is not valid toml =")))
+        for case, contents in (
+            ("not valid TOML", "this is not valid toml ="),
+            ("a workspace that is not a table", '[tool.uv]\nworkspace = "x"\n'),
+        ):
+            with self.subTest(case):
+                self.assertIsNone(_workspace_table(mock_path(contents)))
 
 
 class PypiServedDependenciesTest(unittest.TestCase):

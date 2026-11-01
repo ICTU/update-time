@@ -469,6 +469,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_uv_dependencies_not_updated(log, capture),
         **_manifests_without_dependencies(log, capture),
         **_range_rewrites(log, capture),
+        **_requires_python_reports(log, capture),
         **_uv_cooldown_not_set(log, capture),
         **_compiled_requirements_files(log, capture),
         **_recompiles(log, capture),
@@ -530,6 +531,22 @@ def _range_rewrites(log: Logger, capture: _Capture) -> dict[str, str]:
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.1.2"), "^3.1.5", "3.1.5")
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.0.0"), "^3.1.5", "")
     return {"@@RANGE_REWRITES@@": capture.take()}
+
+
+def _requires_python_reports(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log the three reports about a `requires-python`, and pair each with its placeholder."""
+    version_file = Location(Path(".python-version"), 1)
+    requires_python = reference("python", Location(Path("pyproject.toml"), 2), ">=3.10,<3.12")
+    log.held_back_by_requires_python(reference("python", version_file, "3.11.9"), requires_python)
+    held_back = capture.take()
+    log.python_version_outside_requires_python(reference("python", version_file, "3.13.2"), requires_python)
+    outside = capture.take()
+    log.invalid_requires_python(requires_python)
+    return {
+        "@@HELD_BACK_BY_REQUIRES_PYTHON@@": held_back,
+        "@@OUTSIDE_REQUIRES_PYTHON@@": outside,
+        "@@INVALID_REQUIRES_PYTHON@@": capture.take(),
+    }
 
 
 def _compiled_requirements_files(log: Logger, capture: _Capture) -> dict[str, str]:

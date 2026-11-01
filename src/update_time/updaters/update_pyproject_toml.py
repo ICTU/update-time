@@ -4,7 +4,9 @@ from update_time.domain.file_type import PYPROJECT_TOML
 from update_time.formats import toml
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
+from update_time.manifests import pyproject_toml as pyproject_toml_manifest
 from update_time.manifests.pyproject_toml import PyprojectToml
+from update_time.manifests.python_dependency_toml import is_well_formed
 from update_time.package_managers import uv
 from update_time.updaters.uv_pins import warn_about_pins
 
@@ -23,6 +25,8 @@ def update_pyproject_tomls() -> None:
         config = toml.read(path)
         if config is None:
             _LOG.invalid_file(path, toml.FORMAT)  # Exists but isn't valid TOML: skip rather than crash on it.
+        elif not is_well_formed(config):
+            _LOG.invalid_file(path, pyproject_toml_manifest.FORMAT)
         elif (name := uv.manager_name(path, config)) != "uv":
             _LOG.unsupported_package_manager(path, name, "uv")
         else:
