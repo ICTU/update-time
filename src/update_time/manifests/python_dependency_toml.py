@@ -28,6 +28,19 @@ if TYPE_CHECKING:
 type _DeclarationPosition = int
 
 
+# The manifests read these tables, each named by the keys that lead to it. Each follows the table that holds it, so
+# that table is known to be a table by the time the one inside it is read.
+_TABLES = (
+    ("project",),
+    ("project", "optional-dependencies"),
+    ("dependency-groups",),
+    ("tool",),
+    ("tool", "uv"),
+    ("tool", "uv", "workspace"),
+    ("build-system",),
+)
+
+
 def _placeholder(position: _DeclarationPosition) -> str:
     """Return the text put in a spec's place to find the line declaring it, distinct from every other spec's.
 
@@ -36,9 +49,27 @@ def _placeholder(position: _DeclarationPosition) -> str:
     return f"update-time-spec-{position}-update-time-spec"
 
 
-def _config(toml_text: str) -> dict:
-    """Return the TOML parsed, or an empty config when it isn't valid TOML."""
-    return toml.parse(toml_text) or {}
+def parsed_config(toml_text: str) -> dict | None:
+    """Return the TOML parsed, or None when it isn't valid TOML or a table the manifests read is not a table."""
+    if (config := toml.parse(toml_text)) is None or not is_well_formed(config):
+        return None
+    return config
+
+
+def is_well_formed(config: Mapping) -> bool:
+    """Return whether each table the manifests read is a table, and each dependency array an array, where declared."""
+    if not all(_is_table_or_absent(config, keys) for keys in _TABLES):
+        return False
+    return all(isinstance(array, list) for array in _dependency_arrays(config))
+
+
+def _is_table_or_absent(config: Mapping, keys: tuple[str, ...]) -> bool:
+    """Return whether the keys lead to a table, or to nothing the config declares."""
+    *parents, key = keys
+    table = config
+    for parent in parents:
+        table = table.get(parent, {})
+    return isinstance(table.get(key, {}), dict)
 
 
 def _uv_table(config: Mapping) -> Mapping:
@@ -144,7 +175,7 @@ class PythonDependencyToml:
         too. A spec that does not parse is left out, without shifting the positions of the declarations after it.
         """
         contents = self.read()
-        sourced = _uv_source_names(_config(self.toml(contents)))
+        sourced = _uv_source_names(parsed_config(self.toml(contents)) or {})
         specs: dict[_DeclarationPosition, str] = {}
 
         def place(position: _DeclarationPosition, spec: str) -> str:

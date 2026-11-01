@@ -8,12 +8,17 @@ import tomlkit.container
 import tomlkit.exceptions
 import tomlkit.items
 
+from update_time.primitives.text import line_number
+
 if TYPE_CHECKING:
     from pathlib import Path
 
 
 # What this format is called in a message about a file that does not parse.
 FORMAT = "TOML"
+
+# The text that stands in for a value, so the line holding the value can be found.
+_PLACEHOLDER = "update-time: placeholder"
 
 
 def parse(text: str) -> dict | None:
@@ -25,10 +30,10 @@ def parse(text: str) -> dict | None:
 
 
 def read(path: Path) -> dict | None:
-    """Return the parsed TOML, or None when the file can't be read or isn't valid TOML."""
+    """Return the parsed TOML, or None when the file can't be read, isn't UTF-8, or isn't valid TOML."""
     try:
         text = path.read_text()
-    except OSError:
+    except OSError, UnicodeDecodeError:
         return None
     return parse(text)
 
@@ -49,6 +54,14 @@ def read_document(path: Path) -> tomlkit.TOMLDocument:
 def dumps(document: tomlkit.TOMLDocument) -> str:
     """Return the document as the TOML text it stands for."""
     return tomlkit.dumps(document)
+
+
+def line_of(text: str, table: str, key: str) -> int:
+    """Return the number of the line holding the key of the table, which the TOML text has to declare."""
+    document = tomlkit.parse(text)
+    cast("dict[str, object]", document[table])[key] = _PLACEHOLDER
+    placed = tomlkit.dumps(document)
+    return line_number(placed, placed.index(_PLACEHOLDER))
 
 
 def is_string(value: object) -> bool:

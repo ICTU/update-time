@@ -1,13 +1,19 @@
-"""Read and edit what only a pyproject.toml holds: its `[tool]` tables, and whether it declares dependencies."""
+"""What only a pyproject.toml holds: `[tool]` tables, the `requires-python`, and whether it declares dependencies."""
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from update_time.domain.reference import Reference
 from update_time.formats import toml
-from update_time.manifests.python_dependency_toml import PythonDependencyToml, uv_dependency_arrays
+from update_time.manifests.python_dependency_toml import PythonDependencyToml, parsed_config, uv_dependency_arrays
+from update_time.manifests.python_version import PYTHON
+from update_time.primitives.location import Location
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+# What a pyproject.toml is called in a message about one whose tables are not tables.
+FORMAT = "pyproject.toml"
 
 # The `[project]` fields that a project can list as `dynamic`, leaving the build backend to fill in the dependencies
 # that uv then resolves.
@@ -50,3 +56,12 @@ class PyprojectToml(PythonDependencyToml):
             return False
         self.write(toml.dumps(document))
         return True
+
+    def requires_python(self) -> Reference | None:
+        """Return the `requires-python` the file declares, as a reference to Python, or None if it declares none."""
+        text = self.read()
+        if (specifier := (parsed_config(text) or {}).get("project", {}).get("requires-python")) is None:
+            return None
+        line = toml.line_of(text, "project", "requires-python")
+        # A value that is not a string, such as the number 3.10, is turned into one, and is not a specifier either.
+        return Reference(PYTHON, str(specifier), Location(self.path, line))

@@ -105,12 +105,14 @@ class VersionBound:
     The bound holds exactly one of two forms: a `specifier` is absolute (`update<3.13`), a `level` is relative to
     whatever version is currently pinned (`minor-update`, see `anchored`). The `item` is the text its
     creator spelled, compared as no part of the bound, so two spellings of one bound are equal and cache alike.
+    A `joint_bound` holds `clauses` instead, and keeps what each of them keeps. Only `keeps` reads the clauses.
     """
 
     verb: Verb
     specifier: SpecifierSet | None = None
     level: UpdateLevel | None = None
     item: str = field(compare=False, default="")
+    clauses: tuple[VersionBound, ...] = ()
 
     def keeps(self, version: Version, current_version: VersionString) -> bool:
         """Return whether a candidate version survives the bound for a reference currently at `current_version`.
@@ -118,6 +120,8 @@ class VersionBound:
         An absolute bound is unaffected by the current version; a level-based bound is anchored to it first, and keeps
         every version where it cannot be.
         """
+        if self.clauses:
+            return all(clause.keeps(version, current_version) for clause in self.clauses)
         if (specifier := self.specifier) is None:
             return (self.anchored(current_version) or NO_BOUND).keeps(version, current_version)
         return specifier.contains(version, prereleases=True) == (self.verb is Verb.ALLOW)
@@ -224,3 +228,8 @@ def keeping_each(bounds: Iterable[VersionBound], current_version: VersionString)
     if not (kept := SpecifierSet(",".join(specifiers))):
         return NO_BOUND
     return VersionBound(Verb.ALLOW, kept, item=f"update{kept}")
+
+
+def joint_bound(*bounds: VersionBound) -> VersionBound:
+    """Return the bound keeping the versions each of the bounds keeps, whether or not one specifier can say which."""
+    return VersionBound(Verb.ALLOW, clauses=bounds) if bounds else NO_BOUND

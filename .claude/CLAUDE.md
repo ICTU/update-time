@@ -78,6 +78,7 @@ Each cycle has three steps:
      - None killed it: the test does not guard what its name claims. Fix the test, not the probe.
      - Only the new test killed it: register the mutation with `@kills` on that test, unless the replacement is longer than its snippet.
      - Other tests killed it too: leave it unregistered. Where the new test, or a case of its table, does not add a kill of its own, delete it. Reshape what the deletion leaves, such as a table with one case left.
+     - An earlier test's registration that the new test kills as well comes off. The earlier test stays.
    - When the step adds or changes a check, run that check over the real tree as well. A check that passes its fixtures can still be blind to the real file, which someone wrote without sharing its assumptions. Read what it reports, then mutate that file: `just mutate <that file> just <check>` when `just check` runs the check, plain `just mutate <that file>` when the test suite does.
    - End the step with `just verify`, green. When the smallest change that passes the test leaves a check failing, the step is too small: widen it rather than ending red.
 3. **Refactor**:
@@ -86,7 +87,7 @@ Each cycle has three steps:
    - Review the whole diff, and include the code around the change.
    - Review comments and docstrings: the ones you wrote, and the ones that stayed the same while the code they describe changed. Ask of each whether it should exist at all, not only whether it is still true. A sentence you edited is yours entire, so judge the words you kept as hard as the words you added.
    - Review the call sites of anything whose signature, fields, or behaviour the step changed, and their docstrings. The diff doesn't show them.
-   - Review the architecture. A step that adds a dependency between modules, or widens what a module exposes, wants a new or a tightened architecture test.
+   - Review the architecture. Put each new definition in the layer its concept belongs to, not in the layer that lets it import. `tests/update_time/test_architecture.py` ranks what a layer may import, while `docs/architecture.md` only draws what each layer imports today. A step that adds a dependency between modules, or widens what a module exposes, wants a new or a tightened architecture test.
    - Work through the findings one at a time, running `just verify` after all findings have been fixed.
    - The cycle ends here, not at step 2. Say what you fixed and move on.
 

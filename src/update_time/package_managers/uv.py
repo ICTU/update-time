@@ -18,6 +18,7 @@ from update_time.formats import toml
 from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
 from update_time.manifests.pyproject_toml import PyprojectToml
+from update_time.manifests.python_dependency_toml import is_well_formed
 from update_time.markers.directive import Reason
 from update_time.markers.reference import SteeredResolvedReference
 from update_time.package_managers.policy import ManagerPolicy, report_markers
@@ -158,6 +159,21 @@ class UvPipCompile(RequirementsCompiler):
         return _duration(days)
 
 
+def workspace_pyproject_tomls(pyproject_toml: Path) -> list[Path]:
+    """Return the pyproject.toml of each project in the uv workspace of the project, or the project's own alone."""
+    root = _workspace_root(pyproject_toml)
+    if (workspace := _workspace_table(root)) is None:
+        return [pyproject_toml]
+    root_dir = root.parent
+    members = {
+        member / "pyproject.toml"
+        for pattern in workspace.get("members", [])
+        for member in root_dir.glob(pattern)
+        if (member / "pyproject.toml").exists() and _workspace_includes(root_dir, workspace, member)
+    }
+    return [root, *sorted(members - {root})]
+
+
 def _workspace_root(pyproject_toml: Path) -> Path:
     """Return the pyproject.toml of the uv workspace root governing the project, or the project itself.
 
@@ -180,7 +196,9 @@ def _workspace_table(pyproject_toml: Path) -> dict | None:
     A missing (probing an ancestor) or malformed pyproject.toml reads back as None, so resolution keeps walking up
     rather than aborting.
     """
-    config = toml.read(pyproject_toml) or {}
+    config = toml.read(pyproject_toml)
+    if config is None or not is_well_formed(config):
+        return None
     return config.get("tool", {}).get("uv", {}).get("workspace")
 
 
