@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Fixed
 
 - Keep a `.python-version` entry within the `requires-python` of the project's `pyproject.toml`, so uv still runs for the project, and warn about an entry outside it. Closes [#509](https://github.com/ICTU/update-time/issues/509).
+- Match each directory `--exclude-path` names relative to the scan root, also for the YAML files under `.github/`, CircleCI configs, Helm charts, and the Sphinx config. Closes [#504](https://github.com/ICTU/update-time/issues/504).
 
 ## 0.0.55 - 2026-11-01
 

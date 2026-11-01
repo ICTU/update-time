@@ -29,7 +29,7 @@ def _hidden(names: Iterable[str]) -> list[str]:
     return [name for name in names if name.startswith(".")]
 
 
-def _skipped_as_hidden(relative_path: Path, hidden_segments: list[str], *, case_sensitive: bool | None) -> bool:
+def _holds_unnamed_hidden_part(relative_path: Path, hidden_segments: list[str], *, case_sensitive: bool | None) -> bool:
     """Return whether a hidden part of the path does not match any of the pattern's hidden segments."""
     return any(
         not any(PurePath(part).full_match(segment, case_sensitive=case_sensitive) for segment in hidden_segments)
@@ -37,22 +37,25 @@ def _skipped_as_hidden(relative_path: Path, hidden_segments: list[str], *, case_
     )
 
 
-def _skipped(
-    relative_path: Path, hidden_segments: list[str], excluded: list[Path], *, case_sensitive: bool | None
-) -> bool:
-    """Return whether the path holds a hidden part the pattern does not name, or an ignored or excluded directory."""
-    if _skipped_as_hidden(relative_path, hidden_segments, case_sensitive=case_sensitive):
+def _is_skipped(relative_path: Path, hidden_segments: list[str], *, case_sensitive: bool | None) -> bool:
+    """Return whether the path holds a hidden part the pattern does not name, or an ignored directory."""
+    if _holds_unnamed_hidden_part(relative_path, hidden_segments, case_sensitive=case_sensitive):
         return True
-    if any(part in ALWAYS_IGNORED_DIRECTORIES for part in relative_path.parts):
-        return True
-    return any(relative_path.is_relative_to(excluded_dir) for excluded_dir in excluded)
+    return any(part in ALWAYS_IGNORED_DIRECTORIES for part in relative_path.parts)
+
+
+def _is_excluded(relative_path: Path) -> bool:
+    """Return whether the path, relative to the scan root, lies in a directory passed to `--exclude-path`."""
+    return any(relative_path.is_relative_to(excluded_dir) for excluded_dir in _EXCLUDE_PATHS.get())
 
 
 def is_scanned(path: Path) -> bool:
     """Return whether the scan reaches the file, under the scan root and outside the directories it skips."""
     root = Path.cwd()
-    excluded = _EXCLUDE_PATHS.get()
-    return path.is_relative_to(root) and not _skipped(path.relative_to(root), [], excluded, case_sensitive=None)
+    if not path.is_relative_to(root):
+        return False
+    relative_path = path.relative_to(root)
+    return not _is_skipped(relative_path, [], case_sensitive=None) and not _is_excluded(relative_path)
 
 
 def inside_git_repository(start: Path | None = None) -> bool:
@@ -72,18 +75,20 @@ def glob_for(file_type: FileType) -> Iterator[Path]:
     Hidden folders and files (dot-prefixed, e.g. `.git`, `.venv`) and build-output folders are skipped, so a broad
     pattern like `*.yml` doesn't reach into them. A hidden folder or file that a hidden segment of the pattern matches
     is the exception: a `.devcontainer/devcontainer.json` pattern visits `.devcontainer`, and a `.*.Dockerfile` pattern
-    visits `.gitpod.Dockerfile`. Directories passed to `--exclude-path` (see `_EXCLUDE_PATHS`) are skipped on top of
-    these built-in ignores. A walk that is not recursive searches the start directory alone, which is what a file its
-    format keeps in one place needs.
+    visits `.gitpod.Dockerfile`. These rules read the path relative to the start directory.
+    Directories passed to `--exclude-path` (see `_EXCLUDE_PATHS`) are skipped as well, relative to the scan root. A walk
+    that is not recursive searches the start directory alone, which is what a file its format keeps in one place needs.
     """
-    start = Path.cwd() / file_type.start
-    excluded = _EXCLUDE_PATHS.get()
+    root = Path.cwd()
+    start = root / file_type.start
     for glob_pattern in file_type.patterns:
         hidden_segments = _hidden(PurePath(glob_pattern).parts)
         case_sensitive = file_type.case_sensitivity(glob_pattern)
         walk = start.rglob if file_type.recursive else start.glob
         for path in walk(glob_pattern, case_sensitive=case_sensitive):
-            if not _skipped(path.relative_to(start), hidden_segments, excluded, case_sensitive=case_sensitive):
+            if _is_excluded(path.relative_to(root)):
+                continue
+            if not _is_skipped(path.relative_to(start), hidden_segments, case_sensitive=case_sensitive):
                 yield path
 
 

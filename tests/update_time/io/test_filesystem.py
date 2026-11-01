@@ -9,13 +9,16 @@ if TYPE_CHECKING:
     from unittest.mock import _patch
 
 from update_time.domain.file_type import FileType
+from update_time.io import filesystem as filesystem_module
 from update_time.io.filesystem import _EXCLUDE_PATHS, configure_excluded_paths, glob_for, inside_git_repository
 
 from tests.helpers import patch_environ, patch_pathlib_path
+from tests.mutation import Mutation, kills
 
 # The file types the walk is exercised with: the patterns and the declaration each test needs, and nothing else.
 _TEXT_FILES = FileType("text files", ("*.txt",))
 _TEXT_FILES_IN_EXAMPLE = FileType("text files", ("*.txt",), start="example")
+_TEXT_FILES_IN_HIDDEN_EXAMPLE = FileType("text files", ("*.txt",), start=".example")
 _HIDDEN_TEXT_FILES = FileType("hidden text files", (".*.txt",), case_sensitive=False)
 _YAML_FILES = FileType("YAML files", ("*.yml", "*.yaml"))
 _DEVCONTAINER_IN_FOLDER = FileType("devcontainer configs", (".devcontainer/devcontainer.json",))
@@ -29,15 +32,18 @@ _TEXT_FILES_AT_ROOT = FileType("text files", ("*.txt",), recursive=False)
 class GlobForTest(unittest.TestCase):
     """Unit tests for walking the files a file type declares."""
 
-    def test_one_file(self, mock_glob: Mock):
-        """Test that a file is returned."""
-        mock_glob.return_value = [Path("/file.txt")]
-        self.assertEqual(list(glob_for(_TEXT_FILES)), [Path("/file.txt")])
+    def assert_kept(
+        self, mock_glob: Mock, file_type: FileType, skipped_files: list[str], kept_files: list[str]
+    ) -> None:
+        """Assert that the walk over the skipped and the kept files returns the kept files alone."""
+        mock_glob.return_value = [Path(path) for path in skipped_files + kept_files]
+        self.assertEqual(list(glob_for(file_type)), [Path(path) for path in kept_files])
 
-    def test_multiple_files(self, mock_glob: Mock):
-        """Test that multiple files are returned."""
-        mock_glob.return_value = [Path("/file.txt"), Path("/folder/another_file.txt")]
-        self.assertEqual(list(glob_for(_TEXT_FILES)), [Path("/file.txt"), Path("/folder/another_file.txt")])
+    def test_the_walk_returns_every_file_it_finds(self, mock_glob: Mock):
+        """Test that the walk returns every file the glob finds."""
+        for case, kept_files in (("one file", ["/file.txt"]), ("several files", ["/file.txt", "/folder/b.txt"])):
+            with self.subTest(case):
+                self.assert_kept(mock_glob, _TEXT_FILES, [], kept_files)
 
     def test_case_sensitivity_is_taken_from_the_declaration(self, mock_glob: Mock):
         """Test that the walk asks for the case sensitivity the file type declares, so a `dockerfile` counts."""
@@ -45,13 +51,13 @@ class GlobForTest(unittest.TestCase):
         self.assertEqual(list(glob_for(_CASE_INSENSITIVE_FILES)), [Path("/dockerfile")])
         self.assertEqual([call.kwargs["case_sensitive"] for call in mock_glob.call_args_list], [False])
 
-    def test_start_folder(self, mock_glob: Mock):
+    def test_the_walk_starts_at_the_declared_folder(self, mock_glob: Mock):
         """Test that the walk starts at the folder the file type declares."""
         mock_glob.return_value = [Path("/example/file.txt")]
         self.assertEqual(list(glob_for(_TEXT_FILES_IN_EXAMPLE)), [Path("/example/file.txt")])
         self.assertEqual(mock_glob.call_args.args[0], Path("/example"))
 
-    def test_multiple_patterns(self, mock_glob: Mock):
+    def test_every_declared_pattern_is_walked(self, mock_glob: Mock):
         """Test that every glob pattern the file type declares is walked."""
         mock_glob.side_effect = [[Path("/file.yml")], [Path("/file.yaml")]]
         self.assertEqual(list(glob_for(_YAML_FILES)), [Path("/file.yml"), Path("/file.yaml")])
@@ -67,63 +73,68 @@ class GlobForTest(unittest.TestCase):
                 self.assertEqual(list(glob_for(file_type)), [Path("/file.txt")])
                 self.assertEqual(mock_glob.call_args.args[1], expected)
 
-    def test_ignore_folders(self, mock_glob: Mock):
-        """Test that some folders are ignored, while a file beside them is still returned."""
-        folders_that_should_be_ignored = [
-            "/project/build",
-            "/project/target",
-            "/example/node_modules",
-            "/src/__pycache__",
-            "/.git",
-        ]
-        ignored = [Path(folder) / "file.txt" for folder in folders_that_should_be_ignored]
-        mock_glob.return_value = [*ignored, Path("/src/file.txt")]
-        self.assertEqual(list(glob_for(_TEXT_FILES)), [Path("/src/file.txt")])
+    def test_always_ignored_folders_are_skipped(self, mock_glob: Mock):
+        """Test that the walk skips a file in an always-ignored folder, and returns a file beside it."""
+        ignored_folders = ["/project/build", "/project/target", "/example/node_modules", "/src/__pycache__"]
+        skipped_files = [f"{folder}/file.txt" for folder in ignored_folders]
+        self.assert_kept(mock_glob, _TEXT_FILES, skipped_files, ["/src/file.txt"])
 
-    def test_hidden_folder_named_in_pattern_is_visited(self, mock_glob: Mock):
-        """Test that a hidden folder named literally in the pattern is visited, not skipped as a hidden folder."""
-        files = [Path("/.devcontainer/devcontainer.json"), Path("/pkg/.devcontainer/devcontainer.json")]
-        mock_glob.return_value = files
-        self.assertEqual(list(glob_for(_DEVCONTAINER_IN_FOLDER)), files)
+    @kills(
+        Mutation(
+            filesystem_module.glob_for,
+            "_is_skipped(path.relative_to(start)",
+            "_is_skipped(path.relative_to(root)",
+            "a file under a hidden start folder, such as `.github`, is skipped as hidden",
+        )
+    )
+    def test_hidden_folders_and_files_are_skipped_unless_named(self, mock_glob: Mock):
+        """Test that the walk skips a hidden folder or file, except one the pattern or the start folder names."""
+        cases: tuple[tuple[str, FileType, list[str], list[str]], ...] = (
+            (
+                "a hidden folder the pattern names",
+                _DEVCONTAINER_IN_FOLDER,
+                [],
+                ["/.devcontainer/devcontainer.json", "/pkg/.devcontainer/devcontainer.json"],
+            ),
+            ("a hidden file the pattern names", _DEVCONTAINER_AT_ROOT, [], ["/.devcontainer.json"]),
+            ("a hidden file outside the pattern", _TEXT_FILES, ["/.env.txt"], ["/file.txt"]),
+            ("a hidden file a wildcard matches, in any case", _HIDDEN_TEXT_FILES, [], ["/.NOTES.TXT"]),
+            (
+                "a hidden folder outside the pattern",
+                _DEVCONTAINER_IN_FOLDER,
+                ["/.git/.devcontainer/devcontainer.json"],
+                ["/.devcontainer/devcontainer.json"],
+            ),
+            ("a hidden start folder, such as .github", _TEXT_FILES_IN_HIDDEN_EXAMPLE, [], ["/.example/file.txt"]),
+        )
+        for case, file_type, skipped_files, kept_files in cases:
+            with self.subTest(case):
+                self.assert_kept(mock_glob, file_type, skipped_files, kept_files)
 
-    def test_hidden_file_named_in_pattern_is_visited(self, mock_glob: Mock):
-        """Test that a top-level hidden file named literally in the pattern is visited."""
-        mock_glob.return_value = [Path("/.devcontainer.json")]
-        self.assertEqual(list(glob_for(_DEVCONTAINER_AT_ROOT)), [Path("/.devcontainer.json")])
-
-    def test_hidden_file_not_matched_by_a_hidden_segment_is_skipped(self, mock_glob: Mock):
-        """Test that a hidden file a broad pattern matches is skipped, while a file beside it is returned."""
-        mock_glob.return_value = [Path("/.env.txt"), Path("/file.txt")]
-        self.assertEqual(list(glob_for(_TEXT_FILES)), [Path("/file.txt")])
-
-    def test_hidden_file_matched_by_a_wildcard_in_pattern_is_visited_in_any_case(self, mock_glob: Mock):
-        """Test that a hidden file a wildcard segment of the pattern matches is visited, whatever its case."""
-        mock_glob.return_value = [Path("/.NOTES.TXT")]
-        self.assertEqual(list(glob_for(_HIDDEN_TEXT_FILES)), [Path("/.NOTES.TXT")])
-
-    def test_hidden_folder_not_named_in_pattern_is_still_skipped(self, mock_glob: Mock):
-        """Test that hidden folders the pattern does not name are still skipped, even next to one it does."""
-        visited = Path("/.devcontainer/devcontainer.json")
-        mock_glob.return_value = [Path("/.git/.devcontainer/devcontainer.json"), visited]
-        self.assertEqual(list(glob_for(_DEVCONTAINER_IN_FOLDER)), [visited])
-
-    @patch_environ({_EXCLUDE_PATHS.name: "vendor"})
-    def test_excluded_folder_is_skipped(self, mock_glob: Mock):
-        """Test that files under a directory passed to --exclude-path are skipped."""
-        mock_glob.return_value = [Path("/vendor/file.txt"), Path("/src/file.txt")]
-        self.assertEqual(list(glob_for(_TEXT_FILES)), [Path("/src/file.txt")])
-
-    @patch_environ({_EXCLUDE_PATHS.name: "vendor"})
-    def test_excluded_folder_matches_by_prefix_not_by_name(self, mock_glob: Mock):
-        """Test that --exclude-path matches a relative path prefix, not a folder name anywhere in the tree."""
-        mock_glob.return_value = [Path("/vendor/file.txt"), Path("/src/vendor/file.txt")]
-        self.assertEqual(list(glob_for(_TEXT_FILES)), [Path("/src/vendor/file.txt")])
-
-    @patch_environ({_EXCLUDE_PATHS.name: "vendor,packages/legacy"})
-    def test_multiple_excluded_folders_are_skipped(self, mock_glob: Mock):
-        """Test that every directory in a comma-separated --exclude-path list is skipped."""
-        mock_glob.return_value = [Path("/vendor/a.txt"), Path("/packages/legacy/b.txt"), Path("/packages/kept/c.txt")]
-        self.assertEqual(list(glob_for(_TEXT_FILES)), [Path("/packages/kept/c.txt")])
+    def test_exclude_path_skips_the_directories_it_names_from_the_scan_root(self, mock_glob: Mock):
+        """Test that the walk skips each directory that --exclude-path names, relative to the scan root."""
+        cases: tuple[tuple[str, str, FileType, list[str], list[str]], ...] = (
+            ("a directory", "vendor", _TEXT_FILES, ["/vendor/file.txt"], ["/src/file.txt"]),
+            ("a prefix, not a name", "vendor", _TEXT_FILES, ["/vendor/file.txt"], ["/src/vendor/file.txt"]),
+            (
+                "several directories",
+                "vendor,packages/legacy",
+                _TEXT_FILES,
+                ["/vendor/a.txt", "/packages/legacy/b.txt"],
+                ["/packages/kept/c.txt"],
+            ),
+            (
+                "a directory under the start folder",
+                "example/legacy",
+                _TEXT_FILES_IN_EXAMPLE,
+                ["/example/legacy/file.txt"],
+                ["/example/current/file.txt"],
+            ),
+            ("a namesake under the start folder", "legacy", _TEXT_FILES_IN_EXAMPLE, [], ["/example/legacy/file.txt"]),
+        )
+        for case, exclude_path, file_type, skipped_files, kept_files in cases:
+            with self.subTest(case), patch_environ({_EXCLUDE_PATHS.name: exclude_path}):
+                self.assert_kept(mock_glob, file_type, skipped_files, kept_files)
 
 
 class InsideGitRepositoryTest(unittest.TestCase):
@@ -135,25 +146,22 @@ class InsideGitRepositoryTest(unittest.TestCase):
         git_entries = {git_dir / ".git" for git_dir in git_dirs}
         return patch("pathlib.Path.exists", autospec=True, side_effect=lambda self: self in git_entries)
 
-    def test_no_git_entry_found(self):
-        """Test that a directory with no `.git` up to the filesystem root is not inside a repository."""
-        with self.patch_git_entry():
-            self.assertFalse(inside_git_repository(Path("/home/user/project")))
-
-    def test_git_directory_in_the_directory_itself(self):
-        """Test that a directory containing a `.git` entry is inside a repository."""
-        with self.patch_git_entry(Path("/home/user/project")):
-            self.assertTrue(inside_git_repository(Path("/home/user/project")))
+    def test_a_directory_is_inside_a_repository_where_it_or_a_parent_holds_a_git_entry(self):
+        """Test that the check walks up from the directory to the filesystem root looking for a `.git` entry."""
+        project = Path("/home/user/project")
+        cases = (
+            ("no .git entry up to the root", [], project, False),
+            (".git in the directory itself", [project], project, True),
+            (".git in a parent", [project], project / "src" / "pkg", True),
+        )
+        for case, git_dirs, directory, inside in cases:
+            with self.subTest(case), self.patch_git_entry(*git_dirs):
+                self.assertEqual(inside_git_repository(directory), inside)
 
     def test_git_entry_is_a_file(self):
         """Test that a `.git` *file* (a worktree or submodule pointer) counts, so `.is_dir()` is not required."""
         with self.patch_git_entry(Path("/home/user/project")), patch("pathlib.Path.is_dir", Mock(return_value=False)):
             self.assertTrue(inside_git_repository(Path("/home/user/project")))
-
-    def test_git_directory_in_a_parent(self):
-        """Test that a `.git` entry in a parent directory means a subdirectory is inside the repository."""
-        with self.patch_git_entry(Path("/home/user/project")):
-            self.assertTrue(inside_git_repository(Path("/home/user/project/src/pkg")))
 
     def test_defaults_to_the_working_directory(self):
         """Test that, without an explicit start, the check walks up from the working directory."""
@@ -167,20 +175,16 @@ class InsideGitRepositoryTest(unittest.TestCase):
 class ExcludedPathsTest(unittest.TestCase):
     """Unit tests for reading the excluded paths from the environment."""
 
-    def test_no_excluded_paths(self):
-        """Test that no excluded paths are returned when the environment variable is not set."""
-        with patch_environ():
-            self.assertEqual(_EXCLUDE_PATHS.get(), [])
-
-    def test_empty_excluded_paths(self):
-        """Test that an empty environment variable yields no excluded paths."""
-        with patch_environ({_EXCLUDE_PATHS.name: ""}):
-            self.assertEqual(_EXCLUDE_PATHS.get(), [])
-
-    def test_excluded_paths(self):
-        """Test that the comma-separated excluded paths are parsed into a list of paths."""
-        with patch_environ({_EXCLUDE_PATHS.name: "vendor,packages/legacy"}):
-            self.assertEqual(_EXCLUDE_PATHS.get(), [Path("vendor"), Path("packages/legacy")])
+    def test_the_comma_separated_excluded_paths_are_parsed_into_a_list_of_paths(self):
+        """Test that the environment variable yields a path per comma-separated entry, and none when unset or empty."""
+        cases: tuple[tuple[str, dict[str, str], list[Path]], ...] = (
+            ("not set", {}, []),
+            ("empty", {_EXCLUDE_PATHS.name: ""}, []),
+            ("two paths", {_EXCLUDE_PATHS.name: "vendor,packages/legacy"}, [Path("vendor"), Path("packages/legacy")]),
+        )
+        for case, environment, excluded_paths in cases:
+            with self.subTest(case), patch_environ(environment):
+                self.assertEqual(_EXCLUDE_PATHS.get(), excluded_paths)
 
 
 @patch_environ()
