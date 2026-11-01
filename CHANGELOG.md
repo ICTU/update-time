@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.55 - 2026-11-01
+
 ### Added
 
 - Update the sources of a compiled requirements file, such as its `requirements.in`, and have uv or pip-compile recompile the file, whichever compiled it. Closes [#491](https://github.com/ICTU/update-time/issues/491).
