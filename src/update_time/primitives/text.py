@@ -1,9 +1,19 @@
-"""Locating and rewriting the text a regular expression matched."""
+"""Locating and rewriting the text a regular expression matched, and composing text from parts."""
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import re
+    from collections.abc import Iterable
+
+
+def prose_list(items: Iterable[str]) -> str:
+    """Return the items as a sentence lists them: `a`, `a and b`, or `a, b, and c`."""
+    *rest, last = items
+    if not rest:
+        return last
+    serial_comma = "," if len(rest) > 1 else ""
+    return f"{', '.join(rest)}{serial_comma} and {last}"
 
 
 def line_number(text: str, offset: int) -> int:

@@ -4,7 +4,7 @@ import re
 import unittest
 from typing import cast
 
-from update_time.primitives.text import replace_match, rewrite_match, rewrite_string
+from update_time.primitives.text import prose_list, replace_match, rewrite_match, rewrite_string
 
 
 def _search(pattern: str, text: str) -> re.Match[str]:
@@ -13,6 +13,21 @@ def _search(pattern: str, text: str) -> re.Match[str]:
 
 
 _PATTERN = r"(?P<name>\w+)@(?P<version>[\d.]+)"
+
+
+class ProseListTest(unittest.TestCase):
+    """Unit tests for listing items as a sentence does."""
+
+    def test_the_items_are_listed_as_a_sentence_lists_them(self):
+        """Test that one item stands alone, two take `and`, and three or more take commas and `and` before the last."""
+        cases = {
+            "one item": (["a"], "a"),
+            "two items": (["a", "b"], "a and b"),
+            "three items": (["a", "b", "c"], "a, b, and c"),
+        }
+        for case, (items, expected) in cases.items():
+            with self.subTest(case):
+                self.assertEqual(prose_list(items), expected)
 
 
 class RewriteMatchTest(unittest.TestCase):

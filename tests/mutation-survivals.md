@@ -33,3 +33,4 @@
 - 2026-10-17 `tests.update_time.sources.test_github.GitHubRateLimitTest.test_a_rate_limit_that_is_not_used_up_is_not_reported` — every request GitHub refuses is reported as a used-up rate limit, whatever the reason
 - 2026-10-18 `tests.update_time.updaters.test_update_pom_xml.UpdatePomXmlTest.test_a_goal_failing_for_one_pom_still_runs_maven_over_the_next` — any failed run that reports an error stops Maven for the rest of its reactor
 - 2026-10-20 `tests.update_time.updaters.test_update_dockerfile_base_image.UpdateDockerfileTest.test_stale_scope_on_a_refused_reference_is_reported_as_redundant_because_of_the_refusal` — a refused reference does not say why it is never looked up, so a redundant marker names another reason
+- 2026-10-31 `tests.update_time.package_managers.test_requirements_compiler.RecompileTest.test_a_file_compiled_to_standard_output_does_not_start_a_process` — Update-time recompiles a file pip-compile wrote to standard output

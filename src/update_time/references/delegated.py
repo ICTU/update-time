@@ -105,11 +105,11 @@ def _redundant_update_directives[ReferenceT: SteeredReference](
 ) -> Iterator[tuple[str, RedundancyReason]]:
     """Yield each redundant directive steering the update, with the reason it is redundant.
 
-    An `ignore[update]` holds something back only where the policy freezes the reference's pin. A bound narrows
+    An `ignore[update]` holds something back only where the policy keeps the reference's pin. A bound narrows
     candidates the package manager never offers, so it decides nothing whatever the reference pins, and whatever an
     `ignore[update]` beside it holds back.
     """
-    if reference.marker.ignores(Scope.UPDATE) and not policy.freezes_the_pin(reference):
+    if reference.marker.ignores(Scope.UPDATE) and not policy.keeps_the_pin(reference):
         yield reference.marker.bound_directive, Reason.MANAGER_RESOLVES_THE_VERSION
     if bound := reference.marker.version_bound_directive:
         yield bound, Reason.BOUND_DECIDES_NOTHING
@@ -177,5 +177,15 @@ def warn_about_delegated_checks[ReferenceT: SteeredReference](
     """
     warn_about_projects(served, projects, log)
     pinned = [[reference for reference in references if reference.current_version] for references in served]
+    warn_about_pinned_versions(pinned, log, yank, ecosystem)
+
+
+def warn_about_pinned_versions[ReferenceT: SteeredReference](
+    pinned: Sequence[Sequence[ReferenceT]],
+    log: Logger,
+    yank: Callable[[DependencyName, VersionString], Yank | None],
+    ecosystem: Ecosystem,
+) -> None:
+    """Run the yank and vulnerability checks over the versions the dependencies are pinned to."""
     _warn_about_yanked_dependencies(pinned, pin_resolver(yank), log)
     warn_about_vulnerable_dependencies(pinned, ecosystem, log)

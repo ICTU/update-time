@@ -142,6 +142,15 @@ class RenderTests(TestCase):
         self.assertEqual(Logger._render_field("location", Location(path, 42)), at("docs/requirements.txt:42"))
         self.assertEqual(Logger._render_field("location", Location(path)), at("docs/requirements.txt"))
 
+    def test_several_locations_render_as_a_list(self):
+        """Test that several locations render each wrapped, as a sentence lists them."""
+        locations = (Location(Path.cwd() / "a.in"), Location(Path.cwd() / "b.in"))
+        self.assertEqual(Logger._render_field("sources", locations), f"{at('a.in')} and {at('b.in')}")
+
+    def test_an_empty_tuple_renders_as_it_is(self):
+        """Test that an empty tuple is passed through as it is, since there is no location in it to list."""
+        self.assertEqual(Logger._render_field("sources", ()), ())
+
     @patch("logging.Logger.log")
     def test_a_location_field_is_wrapped_and_a_plain_field_is_not(self, mock_log: Mock):
         """Test that a location passed as a named field is wrapped, while a plain field is passed through as it is."""

@@ -9,6 +9,7 @@ from update_time.manifests.package_json import PackageJson
 from update_time.markers.directive import Reason
 from update_time.package_managers import node
 from update_time.package_managers.policy import report_markers
+from update_time.primitives.text import prose_list
 from update_time.references.delegated import (
     project_resolver,
     warn_about_delegated_checks,
@@ -35,7 +36,7 @@ def update_package_jsons() -> None:
         if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:
             continue
         if (manager := node.SUPPORTED_MANAGERS.get(name := node.manager_name(file))) is None:
-            _LOG.unsupported_package_manager(package_json, name, " and ".join(node.SUPPORTED_MANAGERS))
+            _LOG.unsupported_package_manager(package_json, name, prose_list(node.SUPPORTED_MANAGERS))
             continue
         if file.declares_a_dependency():
             checked_package_json = manager.update_package_json(file)

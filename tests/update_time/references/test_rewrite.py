@@ -533,7 +533,7 @@ class UpdateReferencesTest(unittest.TestCase):
         self.logger.invalid_bracket_item.assert_not_called()
 
     def test_ignore_update_wins_over_allow_floating_pin(self):
-        """Test that a frozen reference is left alone, whatever the floating-pin directive beside it asks for."""
+        """Test that a reference whose update is held back is left alone, whatever the floating-pin directive asks."""
         resolved = DependencyVersion(version="3.15", sha=DIGEST, floating=FloatingPin.RESOLVED)
         get_new_version = Mock(return_value=resolved)
         lines = ["image: python:latest  # update-time: ignore[update] allow[floating-pin]"]
@@ -553,8 +553,8 @@ class UpdateReferencesTest(unittest.TestCase):
         self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)
         self.logger.invalid_bracket_item.assert_called_once_with("python", "@@@", Location(self.path, 2))
 
-    def test_invalid_ignore_specifier_warns_rather_than_freezing(self):
-        """Test that a malformed `ignore` bound warns and leaves the reference unchanged, not silently freezes."""
+    def test_invalid_ignore_specifier_is_warned_about_rather_than_held_back_silently(self):
+        """Test that a malformed `ignore` bound is warned about while the reference is left unchanged."""
         get_new_version = new_version_getter("3.12")
         lines = ["image: python:3.12  # update-time: ignore[update@@@]"]
         self.assertEqual(self.rewrite(lines, IMAGE_REGEXP, get_new_version), lines)

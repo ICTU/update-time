@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, cast
 from update_time.domain.dependency import PinnedDependency
 from update_time.domain.line import Line
 from update_time.formats import xml
-from update_time.markers.marker import Scope, parse_marker
+from update_time.markers.marker import parse_marker
 from update_time.markers.reference import SteeredReference
 from update_time.primitives.iterables import unique
 from update_time.primitives.location import Location
@@ -154,11 +154,6 @@ class Declaration(SteeredReference):
     def maven_updates_the_version(self) -> bool:
         """Return whether Maven updates the version the declaration gives."""
         return self.versioned_by_its_pom and not self.literal_plugin_version
-
-    @property
-    def holds_every_version_back(self) -> bool:
-        """Return whether the marker ignores the update, or carries an item that may have meant to."""
-        return self.marker.ignores(Scope.UPDATE) or self.marker.invalid_item is not None
 
 
 def declarations(path: Path, effective_pom: XmlElement | None = None) -> list[Declaration] | None:

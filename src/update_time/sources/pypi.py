@@ -254,11 +254,12 @@ def yank_state(package: str, version: str) -> Yank | None:
     """Return the version's yank state (PEP 592), or None where the Index API can't be fetched or doesn't list it.
 
     The Index API lists each distribution file's yank state (`false`, `true`, or the reason string); a version is
-    yanked when one of its files is. Files whose name doesn't parse to a version are skipped. The version asked
-    about has to parse as one, since it is compared against the version each filename encodes.
+    yanked when one of its files is. Files whose name doesn't parse to a version are skipped. So the Index API lists
+    only versions that parse.
     """
-    pinned = Version(version)
-    if (metadata := _project_metadata(package)) is None or pinned not in _versions(package):
+    if not is_valid(version) or (metadata := _project_metadata(package)) is None:
+        return None
+    if (pinned := Version(version)) not in _versions(package):
         return None
     for file in metadata.get("files", []):
         yanked = file.get("yanked")

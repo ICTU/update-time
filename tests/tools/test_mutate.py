@@ -132,9 +132,16 @@ class MainTest(unittest.TestCase):
 
     def test_a_stub_that_left_every_test_running(self):
         """Test that a run reporting errors is a kill when it reached every test the restored file runs."""
-        outputs = ("Ran 935 tests\nFAILED (errors=1)\n", "Ran 935 tests\n")
-        self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=outputs), 0)
-        self.assertNotIn("never ran", self.reported.getvalue())
+        cases = {
+            "the total alone": "Ran 935 tests\nFAILED (errors=1)\n",
+            "a shard's report before the total": (
+                "Ran 91 tests in 0.2s\n\nFAILED (errors=1)\nRan 935 tests\n\nFAILED (errors=1)\n"
+            ),
+        }
+        for case, output in cases.items():
+            with self.subTest(case):
+                self.assertEqual(self.probe(mock_path(_ORIGINAL), outputs=(output, "Ran 935 tests\n")), 0)
+                self.assertNotIn("never ran", self.reported.getvalue())
 
     def test_a_command_that_only_failed(self):
         """Test that a run reporting failures alone is left to speak for itself, and is killed."""

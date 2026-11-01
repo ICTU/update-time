@@ -105,8 +105,8 @@ class Declaration(SteeredReference):
     def updatable(self) -> bool:
         """Return whether the declaration's own marker leaves its version to be updated.
 
-        A declaration that pins no exact version has no pin to freeze, so an `ignore[update]` on it holds nothing
-        back.
+        On a declaration that does not pin an exact version, an `ignore[update]` does not keep a pin, so it does not
+        hold anything back.
         """
         return not (self.pins_a_version and self.marker.ignores(Scope.UPDATE))
 

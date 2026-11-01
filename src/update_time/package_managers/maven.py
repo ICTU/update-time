@@ -369,7 +369,7 @@ def range_held_back(declaration: pom_xml_manifest.Declaration) -> str | None:
     The range is empty where the marker does not hold any version back. Where the rule set cannot express a bound,
     the marker holds every version back, so Maven never crosses the bound.
     """
-    if declaration.holds_every_version_back:
+    if declaration.marker.holds_the_update_back:
         return None
     bound = declaration.marker.version_bound
     return "" if bound == NO_BOUND else maven_range(bound, declaration.current_version)

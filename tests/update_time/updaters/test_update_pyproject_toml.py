@@ -169,7 +169,7 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
     def test_a_new_version_is_reported_for_a_dependency_that_pins_no_version(self, run: Mock, get: Mock, glob: Mock):
         """Test that an `ignore[update]` on a dependency that pins no version leaves its new version reported.
 
-        The marker freezes no pin there, and uv resolves the version whatever it says, so the report is all the
+        The marker does not keep a pin there, and uv resolves the version whatever it says, so the report is all the
         reader gets.
         """
         contents = pyproject("package>=1.0", marker="ignore[update]")
@@ -199,13 +199,9 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         Mutation(
             uv._update_dependencies,
             "declarations = _by_name(report_file_markers(file, log))\n"
-            "    outdated = run(uv_tree)\n"
-            "    if not outdated.ok:\n"
-            "        log.uv_dependencies_not_updated(file.path)\n"
+            "    if (outdated := _outdated(uv_tree, file, log)) is None:\n"
             "        return False\n",
-            "outdated = run(uv_tree)\n"
-            "    if not outdated.ok:\n"
-            "        log.uv_dependencies_not_updated(file.path)\n"
+            "if (outdated := _outdated(uv_tree, file, log)) is None:\n"
             "        return False\n"
             "    declarations = _by_name(report_file_markers(file, log))\n",
             "a failed uv tree skips the marker report, so a marker on a pin reads as unrecognised",
@@ -222,16 +218,18 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         self.assert_recognised_marker_logged("package", Location(mock_pyproject_toml, 2), marker)
         self.assert_uv_dependencies_not_updated_logged(mock_pyproject_toml)
 
-    def test_a_marker_freezes_one_declaration_of_a_name_while_the_other_updates(self, run: Mock, get: Mock, glob: Mock):
-        """Test that a name declared twice is frozen on the line its marker steers, and updated on the other."""
-        frozen = '[project]\ndependencies = ["package==1.0"]  # update-time: ignore[update]\n[dependency-groups]\n'
-        mock_pyproject_toml = self.updated_pyproject_toml(run, get, glob, f'{frozen}dev = ["package==1.0"]\n')
-        mock_pyproject_toml.write_text.assert_called_once_with(f'{frozen}dev = ["package==1.1"]\n')
+    def test_a_marker_holds_back_one_declaration_of_a_name_while_the_other_updates(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that a name declared twice is held back on the line its marker steers, and updated on the other."""
+        held_back = '[project]\ndependencies = ["package==1.0"]  # update-time: ignore[update]\n[dependency-groups]\n'
+        mock_pyproject_toml = self.updated_pyproject_toml(run, get, glob, f'{held_back}dev = ["package==1.0"]\n')
+        mock_pyproject_toml.write_text.assert_called_once_with(f'{held_back}dev = ["package==1.1"]\n')
         self.assert_new_version_logged("package", _NEW_VERSION, Location(mock_pyproject_toml, 4))
         self.assert_ignored_logged("package", Location(mock_pyproject_toml, 2), "ignore[update]", among_others=True)
 
     def test_an_invalid_bracket_item_leaves_the_pin_unchanged(self, run: Mock, get: Mock, glob: Mock):
-        """Test that an item the marker language cannot read warns and freezes the pin, reporting no marker."""
+        """Test that an item the marker language cannot read warns and keeps the pin, without reporting the marker."""
         for directive, item in {"ignore[stlae]": "stlae", "ignore[update": "[update"}.items():
             with self.subTest(directive=directive):
                 mock_pyproject_toml, location = self.updated_marked_pin(run, get, glob, directive)
@@ -248,16 +246,16 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
             uv._update_dependencies,
             "if declaration.updatable",
             "if declaration.updatable and not any(one.marker.invalid_item for one in declared)",
-            "an unreadable item freezes every declaration of its name rather than the one carrying it",
+            "an unreadable item holds back every declaration of its name rather than the one carrying it",
         )
     )
-    def test_an_invalid_item_freezes_one_declaration_of_a_name_while_the_other_updates(
+    def test_an_invalid_item_holds_back_one_declaration_of_a_name_while_the_other_updates(
         self, run: Mock, get: Mock, glob: Mock
     ):
-        """Test that a name declared twice is frozen on the line whose item cannot be read, and updated on the other."""
-        frozen = '[project]\ndependencies = ["package==1.0"]  # update-time: ignore[stlae]\n[dependency-groups]\n'
-        mock_pyproject_toml = self.updated_pyproject_toml(run, get, glob, f'{frozen}dev = ["package==1.0"]\n')
-        mock_pyproject_toml.write_text.assert_called_once_with(f'{frozen}dev = ["package==1.1"]\n')
+        """Test that a name declared twice is held back where its item is unreadable, and updated on the other line."""
+        held_back = '[project]\ndependencies = ["package==1.0"]  # update-time: ignore[stlae]\n[dependency-groups]\n'
+        mock_pyproject_toml = self.updated_pyproject_toml(run, get, glob, f'{held_back}dev = ["package==1.0"]\n')
+        mock_pyproject_toml.write_text.assert_called_once_with(f'{held_back}dev = ["package==1.1"]\n')
         self.assert_new_version_logged("package", _NEW_VERSION, Location(mock_pyproject_toml, 4))
         self.assert_invalid_bracket_item_logged("package", Location(mock_pyproject_toml, 2), "stlae")
 
@@ -363,6 +361,26 @@ class UpdatePyprojectTomlsTest(LoggingTestCase):
         get.assert_not_called()
         self.assert_command_stderr_logged(stderr="error: offline")  # only uv tree's stderr is surfaced
         self.assert_uv_dependencies_not_updated_logged(mock_pyproject_toml)
+
+    @kills(
+        Mutation(
+            uv._outdated,
+            "log.uv_not_on_path(file.path)",
+            "log.uv_dependencies_not_updated(file.path)",
+            "a uv missing from the path is reported as a uv tree that failed",
+        )
+    )
+    @patch("shutil.which", Mock(return_value=None))
+    def test_a_uv_missing_from_the_path_is_reported_in_one_line(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a missing uv is reported in one line naming the file, and that Update-time does not run it."""
+        run.side_effect = FileNotFoundError("uv")
+        mock_pyproject_toml = self.create_pyproject_toml(pyproject("package==1.0"))
+        glob.return_value = [mock_pyproject_toml]
+        update_pyproject_tomls()
+        run.assert_not_called()
+        mock_pyproject_toml.write_text.assert_not_called()
+        get.assert_not_called()
+        self.assert_error_logged(message_of(Logger.uv_not_on_path), location=Location(mock_pyproject_toml))
 
     def test_skip_non_uv_tool_section(self, run: Mock, get: Mock, glob: Mock):
         """Test that a pyproject.toml with a non-uv tool section (e.g. [tool.poetry]) is skipped without running uv."""

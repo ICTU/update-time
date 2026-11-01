@@ -37,6 +37,24 @@ def _skipped_as_hidden(relative_path: Path, hidden_segments: list[str], *, case_
     )
 
 
+def _skipped(
+    relative_path: Path, hidden_segments: list[str], excluded: list[Path], *, case_sensitive: bool | None
+) -> bool:
+    """Return whether the path holds a hidden part the pattern does not name, or an ignored or excluded directory."""
+    if _skipped_as_hidden(relative_path, hidden_segments, case_sensitive=case_sensitive):
+        return True
+    if any(part in ALWAYS_IGNORED_DIRECTORIES for part in relative_path.parts):
+        return True
+    return any(relative_path.is_relative_to(excluded_dir) for excluded_dir in excluded)
+
+
+def is_scanned(path: Path) -> bool:
+    """Return whether the scan reaches the file, under the scan root and outside the directories it skips."""
+    root = Path.cwd()
+    excluded = _EXCLUDE_PATHS.get()
+    return path.is_relative_to(root) and not _skipped(path.relative_to(root), [], excluded, case_sensitive=None)
+
+
 def inside_git_repository(start: Path | None = None) -> bool:
     """Return whether the given directory (default: the working directory) sits inside a git repository.
 
@@ -65,14 +83,8 @@ def glob_for(file_type: FileType) -> Iterator[Path]:
         case_sensitive = file_type.case_sensitivity(glob_pattern)
         walk = start.rglob if file_type.recursive else start.glob
         for path in walk(glob_pattern, case_sensitive=case_sensitive):
-            relative_path = path.relative_to(start)
-            if _skipped_as_hidden(relative_path, hidden_segments, case_sensitive=case_sensitive):
-                continue
-            if any(part in ALWAYS_IGNORED_DIRECTORIES for part in relative_path.parts):
-                continue
-            if any(relative_path.is_relative_to(excluded_dir) for excluded_dir in excluded):
-                continue
-            yield path
+            if not _skipped(path.relative_to(start), hidden_segments, excluded, case_sensitive=case_sensitive):
+                yield path
 
 
 def configure_excluded_paths(paths: list[Path], logger: Logger) -> None:

@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 from tests.mutation import CHECKED_TEST, CHECKS_OFF
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Mapping
+    from collections.abc import Callable, Generator, Iterable, Mapping
     from unittest.mock import _patch, _patch_dict
 
 _Decorated = TypeVar("_Decorated", bound="Callable[..., object]")
@@ -108,11 +108,18 @@ def mock_path(content: str, parent: Path | None = None, name: str = "f.py") -> M
 
 
 class FakeFiles:
-    """A file system in memory, which holds the text of each file under the file's path."""
+    """A file system in memory, which holds the text of each file under the file's path, and the directories."""
 
-    def __init__(self, files: Mapping[str | Path, str] | None = None, *, failing_write: OSError | None = None) -> None:
-        """Hold the files, and the error each write raises after leaving half its text behind, if any."""
+    def __init__(
+        self,
+        files: Mapping[str | Path, str] | None = None,
+        *,
+        directories: Iterable[str | Path] = (),
+        failing_write: OSError | None = None,
+    ) -> None:
+        """Hold the files, the directories, and the error each write raises after leaving half its text behind."""
         self.files = {str(path): text for path, text in (files or {}).items()}
+        self._directories = {str(path) for path in directories}
         self._failing_write = failing_write
 
     def __getitem__(self, path: str | Path) -> str:
@@ -126,10 +133,14 @@ class FakeFiles:
             patch.object(Path, "read_text", autospec=True, side_effect=self._read_text),
             patch.object(Path, "write_text", autospec=True, side_effect=self._write_text),
             patch.object(Path, "replace", autospec=True, side_effect=self._replace),
-            patch.object(Path, "exists", autospec=True, side_effect=lambda path: str(path) in self.files),
+            patch.object(Path, "exists", autospec=True, side_effect=self._exists),
+            patch.object(Path, "is_file", autospec=True, side_effect=lambda path: str(path) in self.files),
             patch.object(Path, "mkdir", autospec=True),
         ):
             yield
+
+    def _exists(self, path: Path) -> bool:
+        return str(path) in self.files or str(path) in self._directories
 
     def _read_text(self, path: Path, *_arguments: object, **_options: object) -> str:
         if str(path) not in self.files:

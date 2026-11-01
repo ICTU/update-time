@@ -561,7 +561,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
         marker = self.marker_line("ignore[update,yanked]")
         mock_dockerfile = mock_path(marker + self.reference("python:3.14"))
         self.run_updater(mock_dockerfile)
-        mock_dockerfile.write_text.assert_not_called()  # `ignore[update]` shares the bracket and freezes the image
+        mock_dockerfile.write_text.assert_not_called()  # `ignore[update]` shares the bracket and holds the image back
         self.assert_redundant_directive_logged(
             Reason.NO_YANK_CONCEPT, "python", Location(mock_dockerfile, 2), "ignore[yanked]"
         )
@@ -596,7 +596,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
                 )
 
     def test_redundant_vulnerable_scope_beside_another_ignore_names_the_scope_alone(self):
-        """Test that a `vulnerable` scope is named on its own, without an `ignore` beside it that freezes the image."""
+        """Test that a `vulnerable` scope is named on its own, without an `ignore` beside it holding the image back."""
         for directive in (
             "set[vulnerability-level=none]",
             "ignore[vulnerable=GHSA-2gwj-7jmv-h26r]",
