@@ -117,9 +117,18 @@ def _context(test: unittest.TestCase) -> str:
 
 
 def main() -> int:
-    """Report each registered mutation that other tests kill as well, and fail the run where there is one."""
+    """Report each registered mutation that other tests kill as well, and fail the run where there is one.
+
+    A test module that does not import fails the run before any audit, since its registrations would go unaudited.
+    """
+    loader = unittest.TestLoader()
+    suite = loader.discover(_TESTS, top_level_dir=_TOP_LEVEL)
+    if loader.errors:
+        # typeshed declares the errors as exception types, but the loader records each as the text of a traceback.
+        sys.stdout.writelines(str(error) for error in loader.errors)
+        return 1
     with patch.dict(os.environ, {CHECKS_OFF: "1"}):
-        run = _suite_run(unittest.TestLoader().discover(_TESTS, top_level_dir=_TOP_LEVEL))
+        run = _suite_run(suite)
     discovered = _tests(KillsTestLoader().discover(_TESTS, top_level_dir=_TOP_LEVEL))
     registered = [test for test in discovered if not test.id().startswith(_MUTATION_TESTS)]
     # Each mutation is audited once per test that registers it, however many classes inherit a mixin's test.

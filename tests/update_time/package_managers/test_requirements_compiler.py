@@ -5,6 +5,7 @@ from subprocess import CalledProcessError  # nosec
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, DEFAULT, Mock, patch
 
+from update_time.domain import version_scheme
 from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
 from update_time.manifests import requirements_txt
@@ -607,6 +608,74 @@ class RecompileTest(UvSettingsTestCase):
         source = f"{_UV_MANAGED_BY_COMMENT_LINE}\nflask>=1\n"
         self.recompile({_COMPILED: requirements_compiled_by_uv("base.in") + _TRANSITIVE_PIN, _SOURCE: source})
         self.assert_new_versions_logged(published_version("1.1", PYPI_OLD_UPLOAD), Location(_SOURCE, 2), "flask")
+
+    @kills(
+        Mutation(
+            requirements_compiler.RequirementsCompiler._report_moved_versions,
+            "PEP_440.is_downgrade(old, pin.version)",
+            "False",
+            "the recompile reports a version it moved back as a new version",
+        ),
+        Mutation(
+            requirements_compiler.RequirementsCompiler._recompiled,
+            "self._report_moved_versions(command.executable, declarations)",
+            'self._report_moved_versions("uv", declarations)',
+            "a version pip-compile moved back is reported as moved back by uv",
+        ),
+        Mutation(
+            requirements_compiler.RequirementsCompiler._report_moved_versions,
+            "Reference(pin.name, old, location)",
+            "Reference(pin.name, old, locations[name][0])",
+            "a version moved back is reported at the first line declaring it alone",
+        ),
+    )
+    @patch("requests.Session.get", return_value=pypi_release(PYPI_OLD_UPLOAD))
+    def test_a_version_the_recompile_moves_back_is_reported_as_moved_back_at_each_line_declaring_it(self, get: Mock):
+        """Test that a version the tool moves back is reported so at each line declaring it, without a changelog."""
+        uv_compiled, pip_compiled = requirements_compiled_by_uv, requirements_compiled_by_pip_compile
+        cases = {
+            "uv": (uv_compiled, _UV_MANAGED_BY_COMMENT_LINE, "flask>=1\n", "uv", (2,)),
+            "pip-compile": (pip_compiled, _PIP_MANAGED_BY_COMMENT_LINE, "flask>=1\n", "pip-compile", (2,)),
+            "declared on two lines": (uv_compiled, _UV_MANAGED_BY_COMMENT_LINE, "flask>=1\nflask<2\n", "uv", (2, 3)),
+        }
+        for case, (compiled_by, managed_by_comment_line, requirements, tool, lines) in cases.items():
+            with self.subTest(case):
+                self.have_uv_compile(compiled_by("base.in"))
+                compiled = compiled_by("base.in").replace("flask==1.0", "flask==1.1")
+                self.recompile({_COMPILED: compiled, _SOURCE: f"{managed_by_comment_line}\n{requirements}"})
+                locations = (Location(_SOURCE, line) for line in lines)
+                self.assert_moved_back_logged(tool, "flask", "1.1", "1.0", *locations)
+        get.assert_not_called()
+
+    @kills(
+        Mutation(
+            version_scheme._pep_440_order,
+            "Version(version) if is_valid(version) else None",
+            "Version(version)",
+            "the recompile parses a pin that is not PEP 440, so the run ends with a traceback",
+            raises="packaging.version.InvalidVersion: Invalid version: '2004d'",
+        ),
+        Mutation(
+            requirements_compiler.RequirementsCompiler._report_moved_versions,
+            'before.get(name, "")',
+            'before.get(name, "9")',
+            "the recompile compares a package it pins for the first time with a version the file never pinned",
+        ),
+    )
+    @patch("requests.Session.get", Mock(return_value=pypi_release(PYPI_OLD_UPLOAD)))
+    def test_a_version_the_recompile_pins_is_reported_as_new_where_it_does_not_compare_with_the_pin_before(self):
+        """Test that a pin is reported as new where the file did not pin it, or pinned it to a non-PEP 440 version."""
+        source = f"{_UV_MANAGED_BY_COMMENT_LINE}\nflask>=1\n"
+        cases = {
+            "from a version that is not PEP 440": ("flask==2004d", "1.0"),
+            "from no version": ("werkzeug==3.0", "1.0"),
+        }
+        for case, (pin_before, new) in cases.items():
+            with self.subTest(case):
+                self.have_uv_compile(requirements_compiled_by_uv("base.in").replace("flask==1.0", f"flask=={new}"))
+                compiled = requirements_compiled_by_uv("base.in").replace("flask==1.0", pin_before)
+                self.recompile({_COMPILED: compiled, _SOURCE: source})
+                self.assert_new_versions_logged(published_version(new, PYPI_OLD_UPLOAD), Location(_SOURCE, 2), "flask")
 
     @patch("requests.Session.get", Mock(side_effect=[pypi_release(PYPI_OLD_UPLOAD)]))
     def test_a_version_an_exact_pin_in_the_source_moves_is_not_reported_again(self):

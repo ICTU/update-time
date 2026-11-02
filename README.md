@@ -177,7 +177,7 @@ Update-time logs at four levels. `--log-level` sets the lowest one shown, which 
 | | Level | What is logged |
 | :-: | :---- | :------------- |
 | 🔍 | `DEBUG` | what Update-time is doing: its version and command-line arguments, which [credentials](#increasing-rate-limits) are set, the OS and Python version it runs on, the version of each tool it runs and a warning for a tool that reports none, the proxies and CA bundle it uses, files it checks, [markers](#-controlling-updates-and-warnings-per-reference) it recognises, updates held back, warnings silenced, and more |
-| ℹ️ | `INFO` | what Update-time changed: a version updated, a [hash pinned](#-pinning) |
+| ℹ️ | `INFO` | what Update-time changed: a version updated, a [hash pinned](#-pinning), a version a package manager moved back to honour the [cooldown](#-cooldown) |
 | ⚠️ | `WARNING` | what needs your attention: a [stale](#-stale-dependencies), [yanked](#-yanked-dependencies), [vulnerable](#-vulnerable-dependencies), or [archived](#-archived-dependencies) dependency, [hash drift](#hash-drift), a [Python version outside the project's `requires-python`](#what-versions-are-updated-4), a source it cannot reach, a file it cannot parse, an advisory it cannot read, a marker that is [invalid](#invalid-markers) or [redundant](#redundant-markers) |
 | ❌ | `ERROR` | failures that stop an update, such as a package manager that is not installed or a [GitHub rate limit](#increasing-rate-limits) that is used up, and a signal such as Ctrl-C that stops the run |
 
@@ -357,6 +357,13 @@ DEBUG Holding back version 3.15.0 of python in Dockerfile:2: published 2026-10-0
 ```
 
 Where a package manager applies the cooldown, Update-time hands the value to uv, pip-compile, npm, or pnpm. Each of them takes the value per run rather than per dependency, except uv when it recompiles a requirements file. Each of them also leaves a cooldown your project already configures in place. [Python dependencies](#python-dependencies) and [npm and pnpm dependencies](#npm-and-pnpm-dependencies) describe what that means per dependency type.
+
+A lock file or a compiled requirements file can hold a version younger than the cooldown. That happens, for example, on the first run that applies a cooldown, and on a run with a longer cooldown than the run before. uv, pip-compile, and npm then move that version back to the newest version older than the cooldown, and pnpm refuses to update. Update-time reports a version moved back at `INFO`, except in the `uv.lock` of a `pyproject.toml`:
+
+```console
+INFO uv moved humanize in docs/requirements.in:2 back from 4.16.0 to 4.11.0
+INFO npm moved typescript in package.json:3 back from 5.9.3 to 5.8.3
+```
 
 > [!NOTE]
 > The cooldown holds back updates and the adoption of [hash drift](#hash-drift). Pinning does not change what the reference resolves to, so the cooldown does not hold back a [pin](#-pinning).
@@ -1057,7 +1064,7 @@ Update-time rewrites a dependency's declaration when it pins one exact version w
 
 Update-time leaves every other specifier untouched, so you can pin a maximum version, such as `humanize<5`, to opt a dependency out of automatic updates. A `==` that names a range, such as `humanize==4.15.*`, does not pin an exact version either.
 
-Update-time still reports a new version for a dependency that pins no exact version, both in a `pyproject.toml` and in an inline script metadata block. In a `pyproject.toml` uv also applies it: uv resolves the specifier and records the version it picks in the `uv.lock` file. So `humanize>=4` moves from one release to the next without its line changing. A script has no lock file, so there Update-time reports the new version and nothing more. In a `requirements.txt` it reports no new version, because it resolves none for a requirement that pins no exact version. The source of a file Update-time recompiles is the exception: where the recompile moves the version of a package the source declares without an exact pin, Update-time reports the new version at the source's line.
+Update-time still reports a new version for a dependency that pins no exact version, both in a `pyproject.toml` and in an inline script metadata block. In a `pyproject.toml` uv also applies it: uv resolves the specifier and records the version it picks in the `uv.lock` file. So `humanize>=4` moves from one release to the next without its line changing. A script has no lock file, so there Update-time reports the new version and nothing more. In a `requirements.txt` it reports no new version, because it resolves none for a requirement that pins no exact version. The source of a file Update-time recompiles is the exception: where the recompile moves the version of a package the source declares without an exact pin, Update-time reports the new version at the source's line. Where the recompile moves that version back to honour the [cooldown](#cooldown), Update-time reports it as moved back.
 
 For a `requirements.txt` pin, Update-time reads from PyPI whether each newer release was yanked and when it was published. When PyPI does not serve that for a release, Update-time stays on the version the pin names rather than trying the versions in between. It logs why at `ERROR`:
 
@@ -1096,6 +1103,8 @@ For pip-compile, the line names the `uploaded-prior-to` instead.
 
 While a source carries that line, Update-time keeps the header's cooldown in step with `--cooldown`. Where the sources lack the line, the header keeps the cooldown it records, since that cooldown is yours. Remove the line to take ownership of the cooldown.
 
+Where the compiled file pins a version younger than the cooldown, uv and pip-compile move that pin back. Update-time reports the version moved back for a package a source declares without an exact pin (see [Cooldown](#-cooldown)).
+
 pip-compile takes a cooldown from pip-tools 7.6.0 on, and needs pip 26.1 or later to apply it. With an older pip-tools or pip, the recompile fails, and Update-time reports that at `ERROR`.
 
 Update-time applies no cooldown of its own where uv's or pip's settings hold a cooldown already. uv reads its `exclude-newer` from a `uv.toml` in the project, from your own and the system's `uv.toml`, and from the `UV_EXCLUDE_NEWER` environment variable. pip-compile reads its `uploaded-prior-to` from pip's config files and from the `PIP_UPLOADED_PRIOR_TO` environment variable. Each of these settings belongs to the machine that runs Update-time, except a `uv.toml` in the project. Where only the machine sets a cooldown, the file's header records none, so a recompile on another machine, such as in CI, may have different results. Where Update-time cannot read from the tool's settings whether they hold a cooldown, it warns and applies the cooldown:
@@ -1107,7 +1116,7 @@ WARNING Could not read from pip's settings whether they set an uploaded-prior-to
 
 Where uv recompiles the file, a marker in a source sets the cooldown of its package, such as `set[cooldown=30]`. Update-time drops each package cooldown the header records, so set one you want to keep with a marker. pip-compile takes one cooldown for the whole file. So in its sources, a marker's cooldown reaches only an exact pin, which Update-time updates itself.
 
-For `pyproject.toml` dependencies, Update-time applies the cooldown through uv's `exclude-newer` setting. It writes the setting into the workspace root's `pyproject.toml` under `[tool.uv]`. The value is a relative one such as `exclude-newer = "7 days"`, tagged with a `managed by Update-time` comment. The setting then applies to every uv command in the project (`uv lock`, `uv add`, CI), not just to Update-time.
+For `pyproject.toml` dependencies, Update-time applies the cooldown through uv's `exclude-newer` setting. It writes the setting into the workspace root's `pyproject.toml` under `[tool.uv]`. The value is a relative one such as `exclude-newer = "7 days"`, tagged with a `managed by Update-time` comment. The setting then applies to every uv command in the project (`uv lock`, `uv add`, CI), not just to Update-time. Where the `uv.lock` holds a version younger than the cooldown, uv moves that version back. Update-time does not report that.
 
 Update-time keeps its own tagged value in step with `--cooldown`. An `exclude-newer` without the `managed by Update-time` comment stays as it is. Remove the comment to take ownership of the line. Update-time does not write an `exclude-newer` where uv's settings hold one already, read from the same places as for a compiled file. Where only the machine that runs Update-time sets one, uv on another machine, such as in CI, may have different results. Where Update-time cannot read that from uv's settings, it warns and writes the cooldown, as for a compiled file.
 
@@ -1169,7 +1178,7 @@ Update-time delegates updating Node dependencies to the package manager that man
 
 #### What versions are updated?
 
-Because Update-time delegates updating Node dependencies to a package manager, that package manager also chooses the version. Both npm and pnpm update a dependency to the newest version that satisfies the range declared in the `package.json`. So a dependency declared as `"react": "^17.0.0"` receives `17.x` updates, but never moves to `18`, and one pinned to an exact version stays where it is. Update-time reports a new version for each dependency whose version in the lock file moved.
+Because Update-time delegates updating Node dependencies to a package manager, that package manager also chooses the version. Both npm and pnpm update a dependency to the newest version that satisfies the range declared in the `package.json`. So a dependency declared as `"react": "^17.0.0"` receives `17.x` updates, but never moves to `18`, and one pinned to an exact version stays where it is. Update-time reports a new version for each dependency whose version in the lock file moved up. It reports a version npm moved back to honour the [cooldown](#cooldown-1) as moved back.
 
 Both managers also write the version they resolve into the declared range, and sort the keys of each section. They do so whether or not the version in the lock file moved. Where the version in the lock file did not move, Update-time reports the rewritten range at `INFO`. Where the lock file did not record a version before the run, the line says so:
 
@@ -1189,6 +1198,8 @@ Update-time adds no hash pin to an npm or pnpm dependency. The integrity hash of
 For npm, Update-time passes the cooldown via npm's `min-release-age` option, also measured in days, which npm added in 11.10.0. Older npm versions ignore the option, so updates still run but without a cooldown. If your project already configures a cooldown in its `.npmrc` (`min-release-age` or `before`), Update-time leaves that in place instead of overriding it. For a member of an npm workspace, the `.npmrc` that counts is the workspace root's, since npm reads that one for the member.
 
 For pnpm, Update-time passes the cooldown via pnpm's `minimumReleaseAge` setting, converting the value to minutes (pnpm measures the age in minutes rather than days). If your project already configures `minimumReleaseAge` (in `pnpm-workspace.yaml`), Update-time leaves that in place instead of overriding it.
+
+Where the lock file holds a version younger than the cooldown, npm moves that version back, and rewrites the range in the `package.json` to it. Update-time reports the version moved back (see [Cooldown](#-cooldown)). pnpm refuses to update instead, and Update-time logs pnpm's error at `WARNING`. The error names each version pnpm rejects.
 
 #### Stale dependencies
 

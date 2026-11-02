@@ -12,6 +12,7 @@ from packaging.version import InvalidVersion, Version
 from update_time.domain.cooldown import COOLDOWN
 from update_time.domain.dependency import DependencyVersion, normalized_python_name
 from update_time.domain.reference import Reference
+from update_time.domain.version_scheme import PEP_440
 from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
 from update_time.manifests import requirements_txt
@@ -90,7 +91,7 @@ class RequirementsCompiler(ABC):
         if cooldown and not commented:
             requirements_txt.prepend_line(compiled.first_source, line)
             self.log.managed_by_comment_written(compiled.first_source, compiled.path, cooldown, self.setting)
-        self._report_moved_versions(declarations)
+        self._report_moved_versions(command.executable, declarations)
         return True
 
     def _managed_cutoff(self, command: Command, *, commented: bool) -> tuple[Command, str | None]:
@@ -123,8 +124,8 @@ class RequirementsCompiler(ABC):
             word for name, days in cooldowns if days is not None for word in (option, f"{name}={self.duration(days)}")
         ]
 
-    def _report_moved_versions(self, declarations: Iterable[SteeredReference]) -> None:
-        """Report where the recompile moved a version: at each line in the sources declaring the package.
+    def _report_moved_versions(self, executable: str, declarations: Iterable[SteeredReference]) -> None:
+        """Report where the recompile moved a version, up or back: at each line in the sources declaring the package.
 
         A requirement pinning an exact version is left out, since its version moved in the source and was reported
         there.
@@ -136,7 +137,12 @@ class RequirementsCompiler(ABC):
                 locations.setdefault(normalized_python_name(declaration.dependency), []).append(declaration.location)
         for pin in requirements_txt.CompiledRequirementsTxt.read(self.compiled.path).pins:
             name = normalized_python_name(pin.name)
-            if name in locations and before.get(name) != pin.version:
+            if name not in locations or (old := before.get(name, "")) == pin.version:
+                continue
+            if PEP_440.is_downgrade(old, pin.version):
+                for location in locations[name]:
+                    self.log.version_moved_back(executable, Reference(pin.name, old, location), pin.version)
+            else:
                 log_new_pypi_version(self.log, pin.name, pin.version, locations[name])
 
     def _upgrades(self, declarations: _ByPackage) -> list[str]:

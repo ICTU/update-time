@@ -167,6 +167,25 @@ class MainTest(unittest.TestCase):
             "registrations other tests kill as well: 1\n",
         )
 
+    @kills(
+        Mutation(
+            audit_module.main,
+            "if loader.errors:",
+            "if False:",
+            "the audit passes over a test module that fails to import, leaving its registrations unaudited",
+        )
+    )
+    def test_a_test_module_that_fails_to_import_fails_the_run_unaudited(self):
+        """Test that a test module discovery cannot import is reported, and fails the run before any audit."""
+
+        def discover(loader: unittest.TestLoader, *_args: object, **_kwargs: object) -> unittest.TestSuite:
+            return loader.loadTestsFromName("tests.no_such_module")
+
+        with patch.object(unittest.TestLoader, "discover", autospec=True, side_effect=discover):
+            self.assertEqual(self.report([]), 1)
+        self.assertIn("Failed to import test module: no_such_module", self.written.getvalue())
+        self.audited.assert_not_called()
+
     def test_the_registrations_are_audited_against_the_contexts_of_one_run(self):
         """Test that each registration is audited against the contexts the run records, and a clean audit passes."""
         self.assertEqual(self.report([]), 0)

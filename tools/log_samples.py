@@ -469,6 +469,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_uv_dependencies_not_updated(log, capture),
         **_manifests_without_dependencies(log, capture),
         **_range_rewrites(log, capture),
+        **_versions_moved_back(log, capture),
         **_requires_python_reports(log, capture),
         **_uv_cooldown_not_set(log, capture),
         **_compiled_requirements_files(log, capture),
@@ -531,6 +532,13 @@ def _range_rewrites(log: Logger, capture: _Capture) -> dict[str, str]:
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.1.2"), "^3.1.5", "3.1.5")
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.0.0"), "^3.1.5", "")
     return {"@@RANGE_REWRITES@@": capture.take()}
+
+
+def _versions_moved_back(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that uv and npm moved a version back, and pair the lines."""
+    log.version_moved_back("uv", reference("humanize", Location(Path("docs/requirements.in"), 2), "4.16.0"), "4.11.0")
+    log.version_moved_back("npm", reference("typescript", Location(Path("package.json"), 3), "5.9.3"), "5.8.3")
+    return {"@@VERSIONS_MOVED_BACK@@": capture.take()}
 
 
 def _requires_python_reports(log: Logger, capture: _Capture) -> dict[str, str]:
