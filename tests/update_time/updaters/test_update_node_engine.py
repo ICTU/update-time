@@ -1,7 +1,6 @@
 """Unit tests for the Node engine update script."""
 
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from update_time.io.log import Logger
@@ -15,7 +14,7 @@ from update_time.updaters.update_node_engine import update_node_engines
 from tests.helpers import mock_path, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST
-from tests.update_time.helpers import LoggingTestCase, docker_hub_version, docker_tag, message_of
+from tests.update_time.helpers import SCAN_ROOT, LoggingTestCase, docker_hub_version, docker_tag, message_of
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
 from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
@@ -52,7 +51,7 @@ def _compact_package_json(node: str = "18") -> str:
 
 
 @mock_docker_hub_auth
-@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     """Unit tests for the update Node engines function."""
 
@@ -61,7 +60,7 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     ) -> Mock:
         """Update the Node engine of a package.json holding these contents, and return the mock file."""
         self.requests.side_effect = mock_docker_registry(*(docker_tag(tag, DIGEST) for tag in latest))
-        mock_package_json = mock_path(contents, parent=Path("/"))
+        mock_package_json = mock_path(contents, parent=SCAN_ROOT)
         mock_glob.return_value = [mock_package_json]
         update_node_engines()
         return mock_package_json
@@ -85,8 +84,8 @@ class UpdateNodeEnginesTest(RegistryRequestsMixin, LoggingTestCase):
     def test_a_package_json_that_does_not_parse_is_warned_about_and_passed_over(self, mock_glob: Mock):
         """Test that a package.json that does not parse is warned about, and the one after it still gets updated."""
         self.requests.side_effect = mock_docker_registry(docker_tag("19", DIGEST))
-        unreadable = mock_path("{", parent=Path("/fixtures"))
-        mock_package_json = mock_path(_PACKAGE_JSON, parent=Path("/"))
+        unreadable = mock_path("{", parent=SCAN_ROOT / "fixtures")
+        mock_package_json = mock_path(_PACKAGE_JSON, parent=SCAN_ROOT)
         mock_glob.return_value = [unreadable, mock_package_json]
         update_node_engines()
         mock_package_json.write_text.assert_called_once_with('{"engines": {"node": "19" }}\n')

@@ -40,6 +40,8 @@ def update_pyproject_tomls() -> None:
     # Persist the cooldown into config before running uv, so `uv tree`/`uv lock` read it and the lockfile they
     # produce stays reproducible with a plain `uv sync --locked` (see `uv.configure_cooldown`).
     uv.configure_cooldown([pyproject_toml.path for pyproject_toml in projects_with_dependencies])
+    # Read the locked versions before `uv tree` runs, since `uv tree` may lock again.
+    locked = {pyproject_toml: uv.locked_versions(pyproject_toml) for pyproject_toml in projects_with_dependencies}
     # Update every pyproject.toml first, then lock (a uv workspace shares one lockfile, so all member manifests
     # must be bumped before locking). Skip the lockfile update for files whose `uv tree` failed: it would fail too.
     updated = [
@@ -48,7 +50,7 @@ def update_pyproject_tomls() -> None:
         if uv.update_pyproject_toml(pyproject_toml, _LOG)
     ]
     for pyproject_toml in updated:
-        uv.update_uv_lock(pyproject_toml.path)
+        uv.update_uv_lock(pyproject_toml, locked[pyproject_toml])
     warn_about_pins(uv_projects, _LOG)
 
 

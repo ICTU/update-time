@@ -12,6 +12,10 @@ from tools.usages import _ROOTS, Position, _LanguageServerError, _python_files, 
 
 from tests.helpers import mock_path, patch_pathlib_path
 
+# The module that defines the name the tests look up, and a module that uses it.
+_DEFINING_MODULE = Path("src/pkg/mod.py")
+_USING_MODULE = Path("src/pkg/user.py")
+
 
 def _framed(*messages: dict) -> bytes:
     """Return the messages as the language server writes them, each behind the headers that frame it."""
@@ -67,8 +71,8 @@ class UsagesTest(unittest.TestCase):
         server_input.write.side_effect = written.append
         server = MagicMock(stdin=server_input, stdout=io.BytesIO(output))
         with patch("subprocess.Popen", Mock(return_value=MagicMock(__enter__=Mock(return_value=server)))):
-            found = _usages(Position(Path("src/pkg/mod.py"), 0, 4))
-        self.assertEqual(found, [Position(Path("src/pkg/user.py"), 2, 4)])
+            found = _usages(Position(_DEFINING_MODULE, 0, 4))
+        self.assertEqual(found, [Position(_USING_MODULE, 2, 4)])
         sent = _unframed(b"".join(written))
         asked = next(message for message in sent if message.get("method") == "textDocument/references")
         self.assertEqual(asked["params"]["position"], {"line": 0, "character": 4})
@@ -93,16 +97,16 @@ class UsagesTest(unittest.TestCase):
                 if isinstance(behaviour, OSError):
                     popen.side_effect = behaviour
                 with patch("subprocess.Popen", popen), self.assertRaisesRegex(_LanguageServerError, reason):
-                    _usages(Position(Path("src/pkg/mod.py"), 0, 4))
+                    _usages(Position(_DEFINING_MODULE, 0, 4))
 
 
 class MainTest(unittest.TestCase):
     """Unit tests for the report the command line writes."""
 
-    def report(self, name: str, sources: dict[str, str], usages: list[Position] | Exception) -> int:
+    def report(self, name: str, sources: dict[Path, str], usages: list[Position] | Exception) -> int:
         """Report the usages of the name over files holding the sources, the server answering or failing as given."""
         self.written, self.reported = io.StringIO(), io.StringIO()
-        files = [mock_path(source, name=path) for path, source in sources.items()]
+        files = [mock_path(source, name=str(path)) for path, source in sources.items()]
         self.requested = Mock(side_effect=usages) if isinstance(usages, Exception) else Mock(return_value=usages)
         with (
             patch.object(sys, "argv", ["usages.py", name]),
@@ -116,14 +120,14 @@ class MainTest(unittest.TestCase):
     def test_the_usages_of_a_function(self):
         """Test that a function, named qualified or bare, is looked up at its definition, its usages counted."""
         sources = {
-            "src/pkg/mod.py": "def target():\n    pass\n\ntarget()\n",
-            "src/pkg/user.py": "from pkg import mod\n\nmod.target()\n",
+            _DEFINING_MODULE: "def target():\n    pass\n\ntarget()\n",
+            _USING_MODULE: "from pkg import mod\n\nmod.target()\n",
         }
-        usages = [Position(Path("src/pkg/mod.py"), 3, 0), Position(Path("src/pkg/user.py"), 2, 4)]
+        usages = [Position(_DEFINING_MODULE, 3, 0), Position(_USING_MODULE, 2, 4)]
         for case, name in {"qualified": "pkg.mod.target", "bare": "target"}.items():
             with self.subTest(case):
                 self.assertEqual(self.report(name, sources, usages), 0)
-                self.requested.assert_called_once_with(Position(Path("src/pkg/mod.py"), 0, 4))
+                self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 0, 4))
                 self.assertEqual(
                     self.written.getvalue(),
                     "src/pkg/mod.py:4: target()\nsrc/pkg/user.py:3: mod.target()\nusages: 2\n",
@@ -131,7 +135,7 @@ class MainTest(unittest.TestCase):
 
     def test_a_bare_name_several_definitions_hold(self):
         """Test that a bare name several files define fails the run, naming each, without asking the server."""
-        sources = {"src/pkg/mod.py": "def target():\n    pass\n", "src/pkg/other.py": "def target():\n    pass\n"}
+        sources = {_DEFINING_MODULE: "def target():\n    pass\n", Path("src/pkg/other.py"): "def target():\n    pass\n"}
         self.assertEqual(self.report("target", sources, []), 1)
         self.assertIn("pkg.mod.target", self.reported.getvalue())
         self.assertIn("pkg.other.target", self.reported.getvalue())
@@ -140,26 +144,26 @@ class MainTest(unittest.TestCase):
     def test_a_server_that_fails(self):
         """Test that a language server that fails stops the run, saying why."""
         failure = _LanguageServerError("the language server stopped answering")
-        self.assertEqual(self.report("pkg.mod.target", {"src/pkg/mod.py": "def target():\n    pass\n"}, failure), 1)
+        self.assertEqual(self.report("pkg.mod.target", {_DEFINING_MODULE: "def target():\n    pass\n"}, failure), 1)
         self.assertIn("the language server stopped answering", self.reported.getvalue())
 
     def test_a_name_nothing_defines(self):
         """Test that a name no file defines fails the run, without asking the language server."""
-        self.assertEqual(self.report("pkg.mod.missing", {"src/pkg/mod.py": "def target():\n    pass\n"}, []), 1)
+        self.assertEqual(self.report("pkg.mod.missing", {_DEFINING_MODULE: "def target():\n    pass\n"}, []), 1)
         self.assertIn("nothing defines pkg.mod.missing", self.reported.getvalue())
         self.requested.assert_not_called()
 
     def test_the_usages_of_a_qualified_method(self):
         """Test that a qualified method is looked up inside its class, its usages on self and an instance reported."""
         sources = {
-            "src/pkg/mod.py": (
+            _DEFINING_MODULE: (
                 "class Holder:\n    def target(self):\n        pass\n\n    def other(self):\n        self.target()\n"
             ),
-            "src/pkg/user.py": "from pkg.mod import Holder\n\nHolder().target()\n",
+            _USING_MODULE: "from pkg.mod import Holder\n\nHolder().target()\n",
         }
-        usages = [Position(Path("src/pkg/mod.py"), 5, 13), Position(Path("src/pkg/user.py"), 2, 9)]
+        usages = [Position(_DEFINING_MODULE, 5, 13), Position(_USING_MODULE, 2, 9)]
         self.assertEqual(self.report("pkg.mod.Holder.target", sources, usages), 0)
-        self.requested.assert_called_once_with(Position(Path("src/pkg/mod.py"), 1, 8))
+        self.requested.assert_called_once_with(Position(_DEFINING_MODULE, 1, 8))
         self.assertEqual(
             self.written.getvalue(),
             "src/pkg/mod.py:6: self.target()\nsrc/pkg/user.py:3: Holder().target()\nusages: 2\n",

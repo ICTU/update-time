@@ -18,7 +18,7 @@ from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
-from tests.update_time.helpers import docker_hub_version, docker_tag, message_of
+from tests.update_time.helpers import SCAN_ROOT, docker_hub_version, docker_tag, message_of
 from tests.update_time.registry import mock_docker_registry
 from tests.update_time.updaters.helpers import mock_docker_hub_auth
 
@@ -627,7 +627,7 @@ def _scanned_dockerfiles(*tree: str) -> list[str]:
     def glob(self: Path, pattern: str, *, case_sensitive: bool | None = None, **_: object) -> list[Path]:
         return [self / path for path in tree if PurePath(path).full_match(pattern, case_sensitive=case_sensitive)]
 
-    with patch("pathlib.Path.cwd", return_value=Path("/")), patch("pathlib.Path.glob", autospec=True, side_effect=glob):
+    with patch("pathlib.Path.cwd", return_value=SCAN_ROOT), patch("pathlib.Path.glob", autospec=True, side_effect=glob):
         return [str(path.relative_to("/")) for path in glob_for(file_type.DOCKERFILES)]
 
 

@@ -9,7 +9,7 @@ from update_time.domain.dependency import DependencyVersion, Project
 
 from tests.helpers import mock_response
 from tests.update_time.fixtures import COMMIT_SHA, COMMIT_SHA2, FRESH_DATE
-from tests.update_time.helpers import vulnerability
+from tests.update_time.helpers import SCAN_ROOT, vulnerability
 from tests.update_time.sources.helpers import (
     PYPI_OLD_UPLOAD,
     github_commits_json,
@@ -29,6 +29,9 @@ if TYPE_CHECKING:
 # when DOCKER_HUB_USERNAME/DOCKER_HUB_TOKEN are set, so the image updater tests never make a real network call.
 mock_docker_hub_auth = patch("requests.Session.post", Mock(return_value=mock_response({"access_token": "token"})))  # nosec
 
+
+# The pyproject.toml at the root of the scan.
+PYPROJECT_TOML = SCAN_ROOT / "pyproject.toml"
 
 # The default project for the versions a test builds without one.
 _NO_PROJECT = Project()

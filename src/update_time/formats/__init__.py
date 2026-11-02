@@ -1,1 +1,1 @@
-"""Read, write, and rewrite the text formats a manifest is written in, dependencies and all."""
+"""Read, write, and rewrite the text formats Update-time reads, such as the format of a manifest or a changelog."""

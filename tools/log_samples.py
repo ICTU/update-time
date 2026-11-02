@@ -30,7 +30,7 @@ from update_time.domain.reference import DriftedPin, RefKind
 from update_time.domain.staleness import STALE_AFTER
 from update_time.io.console import undelimited
 from update_time.io.log import Logger
-from update_time.manifests.requirements_txt import Unrecompilable
+from update_time.lock_files.compiled_requirements_txt import Unrecompilable
 from update_time.markers.directive import Consequence, ImageNotLookedUpReason, Reason
 from update_time.markers.marker import Marker, Scope, Threshold, parse_directives
 from update_time.primitives.location import Location

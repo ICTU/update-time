@@ -1,6 +1,5 @@
 """Unit tests for the Python version file update script."""
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from update_time.io.log import Logger
@@ -14,17 +13,18 @@ from update_time.updaters.update_python_version_file import update_python_versio
 from tests.helpers import FakeFiles, mock_path, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import DIGEST, PAST_COOLDOWN_DATE, STALE_DATE
-from tests.update_time.helpers import LoggingTestCase, docker_hub_version, docker_tag, message_of
+from tests.update_time.helpers import SCAN_ROOT, LoggingTestCase, docker_hub_version, docker_tag, message_of
 from tests.update_time.registry import RegistryRequestsMixin, mock_docker_registry
-from tests.update_time.updaters.helpers import mock_docker_hub_auth
+from tests.update_time.updaters.helpers import PYPROJECT_TOML, mock_docker_hub_auth
 
 if TYPE_CHECKING:
     from datetime import datetime
+    from pathlib import Path
     from unittest.mock import Mock
 
 
 @mock_docker_hub_auth
-@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
     """Unit tests for the update Python version files function."""
 
@@ -36,16 +36,16 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
 
     def write_pyproject_toml(self, requires_python: str) -> None:
         """Write a pyproject.toml with this `requires-python` into the root directory."""
-        self.files.files["/pyproject.toml"] = f'[project]\nrequires-python = "{requires_python}"\n'
+        self.files[PYPROJECT_TOML] = f'[project]\nrequires-python = "{requires_python}"\n'
 
     def write_workspace(self, members: dict[str, str], *, exclude: str = "") -> None:
         """Write a uv workspace whose root allows `>=3.10`, with a member under `packages/` per `requires-python`."""
         excluded = f'exclude = ["packages/{exclude}"]\n' if exclude else ""
-        self.files.files["/pyproject.toml"] = (
+        self.files[PYPROJECT_TOML] = (
             f'[project]\nrequires-python = ">=3.10"\n\n[tool.uv.workspace]\nmembers = ["packages/*"]\n{excluded}'
         )
         for member, requires_python in members.items():
-            self.files.files[f"/packages/{member}/pyproject.toml"] = (
+            self.files[SCAN_ROOT / f"packages/{member}/pyproject.toml"] = (
                 f'[project]\nrequires-python = "{requires_python}"\n'
             )
 
@@ -56,7 +56,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         *,
         latest: tuple[str, ...] = ("3.13.2",),
         pushed: datetime = PAST_COOLDOWN_DATE,
-        directory: Path = Path("/"),
+        directory: Path = SCAN_ROOT,
     ) -> Mock:
         """Update the Python version in a version file holding these contents in the directory, and return the file."""
         self.requests.side_effect = mock_docker_registry(
@@ -100,7 +100,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
             dependency="python",
             location=Location(version_file, 1),
             requires_python=">=3.10,<3.12",
-            pyproject_toml=Location(Path("/pyproject.toml"), 2),
+            pyproject_toml=Location(PYPROJECT_TOML, 2),
         )
         self.assert_no_warnings_logged()
 
@@ -131,7 +131,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         """Test that the `requires-python` of the nearest `pyproject.toml` above the file bounds the entry's update."""
         self.write_pyproject_toml(">=3.10,<3.12")
         version_file = self.update_version_file(
-            mock_glob, "3.10\n", latest=("3.11.9", "3.15.1"), directory=Path("/src/lib")
+            mock_glob, "3.10\n", latest=("3.11.9", "3.15.1"), directory=SCAN_ROOT / "src/lib"
         )
         version_file.write_text.assert_called_once_with("3.11.9\n")
 
@@ -153,7 +153,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         """Test that the `requires-python` of one workspace member bounds the `.python-version` of another."""
         self.write_workspace({"a": ">=3.10,<3.13", "b": ">=3.10,<3.12"})
         version_file = self.update_version_file(
-            mock_glob, "3.10\n", latest=("3.11.9", "3.12.5", "3.15.1"), directory=Path("/packages/a")
+            mock_glob, "3.10\n", latest=("3.11.9", "3.12.5", "3.15.1"), directory=SCAN_ROOT / "packages/a"
         )
         version_file.write_text.assert_called_once_with("3.11.9\n")
 
@@ -182,7 +182,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
     def test_a_member_glob_matching_a_directory_without_a_pyproject_toml_passes_it_over(self, mock_glob: Mock):
         """Test that a member glob passes over a directory that does not hold a `pyproject.toml`."""
         self.write_workspace({"b": ">=3.10,<3.12"})
-        self.files.files["/packages/docs/README.md"] = "notes\n"
+        self.files[SCAN_ROOT / "packages/docs/README.md"] = "notes\n"
         version_file = self.update_version_file(mock_glob, "3.10\n", latest=("3.11.9", "3.15.1"))
         version_file.write_text.assert_called_once_with("3.11.9\n")
         self.assert_no_warnings_logged()
@@ -194,16 +194,16 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         version_file.write_text.assert_called_once_with("3.11.9\n")
         held_back = message_of(Logger.held_back_by_requires_python)
         self.assertEqual(len(self.records_of(held_back)), 2)
-        member_files = {member: Location(Path(f"/packages/{member}/pyproject.toml"), 2) for member in ("a", "b")}
+        member_files = {member: Location(SCAN_ROOT / f"packages/{member}/pyproject.toml", 2) for member in ("a", "b")}
         lines = {member: len(self.records_of(held_back, pyproject_toml=file)) for member, file in member_files.items()}
         self.assertEqual(lines, {"a": 1, "b": 1})
 
     def test_the_nearest_pyproject_toml_decides_even_without_requires_python(self, mock_glob: Mock):
         """Test that a `requires-python` above the nearest `pyproject.toml` does not bound the entry's update."""
         self.write_pyproject_toml(">=3.10,<3.12")
-        self.files.files["/src/lib/pyproject.toml"] = "[project]\n"
+        self.files[SCAN_ROOT / "src/lib/pyproject.toml"] = "[project]\n"
         version_file = self.update_version_file(
-            mock_glob, "3.10\n", latest=("3.11.9", "3.15.1"), directory=Path("/src/lib")
+            mock_glob, "3.10\n", latest=("3.11.9", "3.15.1"), directory=SCAN_ROOT / "src/lib"
         )
         version_file.write_text.assert_called_once_with("3.15.1\n")
 
@@ -231,15 +231,15 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
                     location=Location(version_file, 1),
                     version="3.13.2",
                     requires_python=">=3.10,<3.12",
-                    pyproject_toml=Location(Path("/pyproject.toml"), 2),
+                    pyproject_toml=Location(PYPROJECT_TOML, 2),
                 )
 
     def test_a_requires_python_that_is_not_a_version_specifier_is_warned_about(self, mock_glob: Mock):
         """Test that a `requires-python` that is not a version specifier is warned about and ignored."""
-        self.files.files["/pyproject.toml"] = "[project]\nrequires-python = 3.10\n"
+        self.files[PYPROJECT_TOML] = "[project]\nrequires-python = 3.10\n"
         version_file = self.update_version_file(mock_glob, "3.10\n", latest=("3.11.9", "3.15.1"))
         version_file.write_text.assert_called_once_with("3.15.1\n")
-        self.assert_logged(message_of(Logger.invalid_requires_python), location=Location(Path("/pyproject.toml"), 2))
+        self.assert_logged(message_of(Logger.invalid_requires_python), location=Location(PYPROJECT_TOML, 2))
 
     @kills(
         Mutation(
@@ -267,16 +267,16 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
         """Test that a `pyproject.toml` that cannot be read is warned about, and the entry updates as without it."""
         self.write_pyproject_toml(">=3.10,<3.12")
         for case, error in (
-            ("a file it may not read", PermissionError(13, "Permission denied", "/pyproject.toml")),
+            ("a file it may not read", PermissionError(13, "Permission denied", str(PYPROJECT_TOML))),
             ("a file that is not UTF-8", UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")),
         ):
             with self.subTest(case):
-                self.files.read_errors["/pyproject.toml"] = error
+                self.files.read_errors[PYPROJECT_TOML] = error
                 version_file = self.update_version_file(mock_glob, "3.10\n", latest=("3.11.9", "3.15.1"))
                 version_file.write_text.assert_called_once_with("3.15.1\n")
                 self.assert_logged(
                     message_of(Logger.unreadable_requires_python),
-                    location=Location(Path("/pyproject.toml")),
+                    location=Location(PYPROJECT_TOML),
                     error=str(error),
                 )
 
@@ -291,7 +291,7 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
     )
     def test_a_pyproject_toml_whose_project_is_not_a_table_bounds_nothing(self, mock_glob: Mock):
         """Test that a `pyproject.toml` whose `project` is not a table leaves the entry to update as without it."""
-        self.files.files["/pyproject.toml"] = 'project = "x"\n'
+        self.files[PYPROJECT_TOML] = 'project = "x"\n'
         version_file = self.update_version_file(mock_glob, "3.10\n", latest=("3.11.9", "3.15.1"))
         version_file.write_text.assert_called_once_with("3.15.1\n")
         self.assert_no_warnings_logged()
@@ -306,13 +306,13 @@ class UpdatePythonVersionFilesTest(RegistryRequestsMixin, LoggingTestCase):
     )
     def test_a_pyproject_toml_several_version_files_share_is_warned_about_once(self, mock_glob: Mock):
         """Test that a `requires-python` two `.python-version` files share is warned about once, not once per file."""
-        self.files.files["/pyproject.toml"] = "[project]\nrequires-python = 3.10\n"
+        self.files[PYPROJECT_TOML] = "[project]\nrequires-python = 3.10\n"
         self.requests.side_effect = mock_docker_registry(
             docker_tag("3.15.1", DIGEST, tag_last_pushed=PAST_COOLDOWN_DATE)
         )
-        mock_glob.return_value = [mock_path("3.10\n", parent=Path(f"/{name}")) for name in ("a", "b")]
+        mock_glob.return_value = [mock_path("3.10\n", parent=SCAN_ROOT / name) for name in ("a", "b")]
         update_python_version_files()
-        self.assert_logged(message_of(Logger.invalid_requires_python), location=Location(Path("/pyproject.toml"), 2))
+        self.assert_logged(message_of(Logger.invalid_requires_python), location=Location(PYPROJECT_TOML, 2))
 
     def test_requires_python_and_the_marker_bound_both_bound_the_update(self, mock_glob: Mock):
         """Test that a marker bound tighter than the `requires-python` holds the entry below the marker's bound."""

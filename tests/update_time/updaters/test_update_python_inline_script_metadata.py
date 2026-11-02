@@ -1,17 +1,18 @@
 """Unit tests for the inline-script-metadata updater (discovery and orchestration of the uv package manager)."""
 
 import subprocess  # nosec
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
+from update_time.manifests import python_dependency_toml as python_dependency_toml_manifest
 from update_time.manifests.inline_script import InlineScript
 from update_time.primitives.location import Location
 from update_time.updaters.update_python_inline_script_metadata import update_python_inline_script_metadatas
 
 from tests.helpers import mock_path, mock_response, patch_pathlib_path
+from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import CHANGELOG
-from tests.update_time.helpers import LoggingTestCase, published_version
+from tests.update_time.helpers import SCAN_ROOT, LoggingTestCase, published_version
 from tests.update_time.manifests.helpers import script
 from tests.update_time.updaters.helpers import (
     UPLOAD_TIME_WITH_CHANGELOG,
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
 
 def _discovered_script(glob: Mock, spec: str) -> Mock:
     """Return the single mock .py file the scan discovers, its inline block pinning the given dependency."""
-    script_file = mock_path(script(spec), parent=Path("/"))
+    script_file = mock_path(script(spec), parent=SCAN_ROOT)
     glob.return_value = [script_file]
     return script_file
 
@@ -35,7 +36,7 @@ def _discovered_script(glob: Mock, spec: str) -> Mock:
 # check makes registry requests of its own, and what they report is `test_uv_pins.py`'s to pin, while being handed
 # the scripts found is `CheckedInlineScriptPinsTest`'s below.
 @patch("update_time.updaters.update_python_inline_script_metadata.warn_about_pins", Mock())
-@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("requests.Session.get")
 @patch("subprocess.run")
 class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
@@ -54,7 +55,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
 
     def create_script(self, contents: str) -> Mock:
         """Create a mock .py file with inline script metadata."""
-        return mock_path(contents, parent=Path("/"))
+        return mock_path(contents, parent=SCAN_ROOT)
 
     def mock_update_on_stdout(self, package: str, latest: str = "") -> Mock:
         """Mock `uv tree --script` stdout for a top-level dependency, with an optional available update.
@@ -82,18 +83,31 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         )
         self.assert_no_warnings_logged()
 
-    def test_update_of_a_dependency_without_an_exact_pin(self, run: Mock, get: Mock, glob: Mock):
-        """Test that a dependency the block doesn't `==`-pin has its new version logged at its own line."""
-        run.return_value = self.mock_update_on_stdout("package", "v1.1")
-        get.return_value = mock_response(pypi_metadata_without_changelog())
-        mock_script = self.create_script(script("package>=1.0"))
-        glob.return_value = [mock_script]
-        update_python_inline_script_metadatas()
-        mock_script.write_text.assert_not_called()
-        self.assert_new_version_logged(
-            "package", published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG), Location(mock_script, 4)
+    @kills(
+        Mutation(
+            python_dependency_toml_manifest.Declaration.updatable,
+            "return not (self.pins_a_version and self.marker.ignores(Scope.UPDATE))",
+            "return not self.marker.ignores(Scope.UPDATE)",
+            "an `ignore[update]` holds back a dependency that does not pin a version, whose version uv resolves "
+            "whatever the marker says, so the new version reaches nobody",
         )
-        self.assert_no_warnings_logged()
+    )
+    def test_update_of_a_dependency_without_an_exact_pin(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a dependency the block doesn't `==`-pin has its new version logged at its line, marked or not."""
+        unmarked = script("package>=1.0")
+        marked = unmarked.replace('"package>=1.0",\n', '"package>=1.0",  # update-time: ignore[update]\n')
+        for case, contents in {"without a marker": unmarked, "with an ignore[update]": marked}.items():
+            with self.subTest(case):
+                run.return_value = self.mock_update_on_stdout("package", "v1.1")
+                get.return_value = mock_response(pypi_metadata_without_changelog())
+                mock_script = self.create_script(contents)
+                glob.return_value = [mock_script]
+                update_python_inline_script_metadatas()
+                mock_script.write_text.assert_not_called()
+                self.assert_new_version_logged(
+                    "package", published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG), Location(mock_script, 4)
+                )
+                self.assert_no_warnings_logged()
 
     def test_update_with_changelog(self, run: Mock, get: Mock, glob: Mock):
         """Test bumping an exact pin whose new version has a changelog, which is logged."""
@@ -169,7 +183,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         self.assert_no_new_version_logged()
 
 
-@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("requests.Session.get")
 @patch("subprocess.run")
 class CheckedInlineScriptPinsTest(LoggingTestCase):

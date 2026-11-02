@@ -1,6 +1,5 @@
 """Unit tests for the checks the updaters that delegate to uv run over the dependencies their files declare."""
 
-from pathlib import Path
 from typing import ClassVar
 from unittest.mock import Mock, patch
 
@@ -18,6 +17,7 @@ from update_time.updaters.uv_pins import warn_about_pins
 from tests.helpers import mock_path, requested_urls
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
+    SCAN_ROOT,
     LoggingTestCase,
     message_of,
     pyproject,
@@ -68,7 +68,7 @@ class PythonDependencyTomlTestCase(LoggingTestCase):
 
     def file_holding(self, contents: str) -> PyprojectToml:
         """Return a mock file holding the contents, whichever way they declare their dependencies."""
-        return PyprojectToml(mock_path(contents, parent=Path("/")))
+        return PyprojectToml(mock_path(contents, parent=SCAN_ROOT))
 
 
 @no_vulnerabilities
@@ -103,7 +103,7 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
         }
         for case, block in cases.items():
             with self.subTest(case=case):
-                malformed = InlineScript(mock_path(f"# /// script\n{block}# ///\n", parent=Path("/")))
+                malformed = InlineScript(mock_path(f"# /// script\n{block}# ///\n", parent=SCAN_ROOT))
                 file = self.dependency_toml_file("package>=1.0")
                 warn_about_pins([malformed, file], _LOG)
                 self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
@@ -252,7 +252,7 @@ class VulnerablePinTest(PythonDependencyTomlTestCase):
         file = PyprojectToml(
             mock_path(
                 '[project]\ndependencies = ["django==3.2.0"]\n[dependency-groups]\ndev = ["django==4.2.0"]\n',
-                parent=Path("/"),
+                parent=SCAN_ROOT,
             )
         )
         self.check_pins(file, DJANGO_ADVISORY)
@@ -538,7 +538,7 @@ class UvSourcedDependencyTest(PythonDependencyTomlTestCase):
             '[project]\ndependencies = ["local==1.0", "django==3.2.0"]\n'
             '[tool.uv.sources]\nlocal = {path = "../local"}\n'
         )
-        file = PyprojectToml(mock_path(contents, parent=Path("/")))
+        file = PyprojectToml(mock_path(contents, parent=SCAN_ROOT))
         get.return_value = dated_pypi_index("3.2.0", upload_time=PYPI_RECENT_UPLOAD)
         with osv(DJANGO_ADVISORY) as mock_post:
             warn_about_pins([file], _LOG)

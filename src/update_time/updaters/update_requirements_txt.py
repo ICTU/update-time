@@ -2,7 +2,7 @@
 
 A requirements file uv or pip-compile compiled is recompiled once the pins in its sources are updated.
 
-An exact pin is bumped to its latest PyPI version, with the extras, environment markers and inline comments on its
+An exact pin is bumped to its latest version on PyPI, with the extras, environment markers and inline comments on its
 line preserved, since only the version substring is replaced. A requirement without an exact pin stays as it is.
 Update-time checks its project instead, and checks the version a compiled file pins for it.
 """
@@ -15,8 +15,8 @@ from update_time.domain.file_type import REQUIREMENTS_TXT
 from update_time.domain.reference import Reference
 from update_time.io.filesystem import glob_for, is_scanned
 from update_time.io.log import get_logger
+from update_time.lock_files.compiled_requirements_txt import CompiledBy, CompiledRequirementsTxt, is_compiled
 from update_time.manifests import requirements_txt as requirements_txt_manifest
-from update_time.manifests.requirements_txt import CompiledBy, CompiledRequirementsTxt
 from update_time.markers.directive import WARNING_DIRECTIVES, Reason
 from update_time.markers.marker import Scope
 from update_time.package_managers.pip_tools import PipCompile
@@ -114,7 +114,7 @@ def _sources(compiled: CompiledRequirementsTxt) -> tuple[list[Path], list[str]]:
             missing.append(source_name)
         else:
             sources.append(source)
-    if compiled_source := next((source for source in sources if requirements_txt_manifest.is_compiled(source)), None):
+    if compiled_source := next((source for source in sources if is_compiled(source)), None):
         _LOG.compiled_source_unsupported(compiled.path, compiled_source)
         return [], missing
     if sources and (reason := compiled.unrecompilable) is not None:
@@ -148,7 +148,7 @@ def update_requirements_txts() -> None:
     compiled_files: list[CompiledRequirementsTxt] = []
     pins_from_missing_sources: list[SteeredReference] = []
     for requirements_txt in set(glob_for(REQUIREMENTS_TXT)):
-        if not requirements_txt_manifest.is_compiled(requirements_txt):
+        if not is_compiled(requirements_txt):
             plain_files[requirements_txt] = None
             continue
         compiled = CompiledRequirementsTxt.read(requirements_txt)

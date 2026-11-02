@@ -54,7 +54,6 @@ A mutation is applied in memory, so no file on disk is touched and an interrupte
 A name a file declares twice is steered per declaration, so a marker steers the line it sits on and leaves the other line alone.
 A name mapped to None is an entry with no file to fetch, as a directory is.
 A non-PEP 440 boundary (e.g. an arbitrary-equality `===` clause) has no version to probe.
-A package the file declares nowhere is reported at the file rather than at a line guessed from elsewhere.
 A path the user named on the command line stays a plain `Path` instead (see `_render_field`).
 A pinned reference as a file records it: a dependency, the version it is pinned to, and the line it sits on.
 A printf-style interpolation, such as a log message's ``: a value rather than prose.
@@ -79,7 +78,6 @@ A request to a host name is refused at the lookup, before it reaches the resolve
 A rule every module has to remember is duplication too, so state it once, where nobody can forget it.
 A run that sets no DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN leaves the requests anonymous.
 A score below the `low` band means the advisory reports no risk at all, which is no level to name.
-A script has no lock file, so there Update-time reports the new version and nothing more.
 A script has no lockfile, so — unlike the pyproject.toml path, which persists the cooldown into `[tool.uv]` — the cooldown is passed to uv on the command line as an `--exclude-newer` cutoff.
 A script's direct dependencies carry no tree prefix (each is its own tree root), so the line is just `package v<current>[ (latest: v<latest>)]` — the exact shape the updater parses.
 A second decorator on the same test fails it, as does one given no mutation at all.
@@ -154,7 +152,6 @@ For example, if `python:3.12.1` is the current version pin and `python:3.13` is 
 GitHub publishes no reason beside the flag, so the warning gives none.
 GitHub serves its sponsorship pages under this path, which it reserves, so no owner can go by this name.
 Given no titles, the chapter documents every declared dependency type, so `_problems` reports nothing.
-In a `requirements.txt` it reports no new version, because it resolves none for a requirement that pins no exact version.
 In a file that can hold no comment, the directives are the value of an `update-time` field instead.
 Inside a block, a run of fence characters closes it, since code holds no headings to underline.
 It checks a requirement that pins no exact version as well, wherever the file declares it.
@@ -179,7 +176,6 @@ No newer version; the pin's own release is yanked.
 No newer version; the pin's release is vulnerable.
 Null for an entry that is no file to fetch, such as a directory: pip's root keeps its `news` fragments in one.
 One spec packaging rejects outright, the other names a range no version parses from.
-One whose every declaration is held back has no line left to report at, so it is not reported at all.
 Only the spans the regex captured are rewritten, so the same value occurring elsewhere within the match is left alone.
 Parse the tag name into its prefix, version, and suffix once, or None when the tag has no version.
 Passing no hash models a listing that doesn't mention the referenced file at all, so no hash can be resolved.
@@ -345,7 +341,6 @@ Test that advisories sharing no identifier are read as one vulnerability when a 
 Test that an `"image"` naming no tag is pinned to the version and digest `latest` serves.
 Test that an `ignore[update]` on a dependency that pins no version is not reported as holding it back.
 Test that an `ignore[update]` on a dependency that pins no version is reported, since uv resolves it.
-Test that an `ignore[update]` on a dependency that pins no version leaves its new version reported.
 Test that an `image:` naming no tag is pinned to the version and digest `latest` serves.
 Test that an action in the repository itself names no GitHub repository, so none is asked about.
 Test that an advisory giving no summary is rendered without a quotation, rather than with an empty one.
@@ -429,7 +424,6 @@ The dependency types every table has to answer for, in the order the tables have
 The deprecation npm reports for clipboard 2.0.11: the reason the registry states, and the yank it becomes.
 The directory a monorepo builds the package from.
 The endpoint a package's versions and release dates are read from; `queried_packages` reads its name back off it.
-The extension a changelog file carries, and the media type a source reports for it, when it is written in Markdown.
 The file is part of the reference rather than of the dependency, and the `NewVersionGetter` contract leaves no room for it, so each reference closes over its own.
 The file type each updater scans, and the function that scans it.
 The first cooldown probe (min-release-age) returns a value, so Update-time adds no cooldown of its own:.
@@ -524,7 +518,6 @@ Update-time checks the version the run leaves the reference on.
 Update-time does not check an image, because OSV has no ecosystem for container images.
 Update-time does not check an image, because no OCI registry publishes an archival signal.
 Update-time reads it for each dependency a Python file declares, whether or not the dependency pins an exact version.
-Update-time still reports a new version for a dependency that pins no exact version, both in a `pyproject.toml` and in an inline script metadata block.
 Usable as a decorator on a test method or class (like `unittest.mock.patch`, by stacking one patch per method); it adds no mock argument.
 Warn about a `cooldown` marker on a reference whose source reports no publication date to measure a cooldown against, instead of accepting it in silence.
 Warn about a `stale` marker on a reference whose source reports no publication date to measure staleness against, instead of accepting it in silence.
@@ -598,7 +591,6 @@ a traceback the probe passes over.
 a version a space and a comma follow still ends its specifier, so a requirement combining two of them is rewritten into one no version satisfies.
 a version that is no `.0` release reports the changes of the release one component shorter.
 a version the registry dates nowhere in its time map ends the run with a traceback.
-an `ignore[update]` holds back a dependency that pins no version, whose version uv resolves whatever the marker says, so the new version reaches nobody.
 an unknown tag reaches no constructor, so a Compose override file reads as unparsable.
 every mutation the test did not kill is reported with the first one's regression.
 it names the empty base image Docker builds from, which no registry serves.

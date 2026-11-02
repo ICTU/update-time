@@ -8,8 +8,9 @@ from unittest.mock import ANY, Mock, patch
 from update_time.domain.vulnerability import IGNORE_VULNERABILITIES, VULNERABILITY_LEVEL
 from update_time.io.filesystem import _EXCLUDE_PATHS
 from update_time.io.log import Logger
+from update_time.lock_files import compiled_requirements_txt
+from update_time.lock_files.compiled_requirements_txt import Unrecompilable
 from update_time.manifests import requirements_txt as requirements_txt_manifest
-from update_time.manifests.requirements_txt import Unrecompilable
 from update_time.markers import directive as directive_module
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold, parse_directives
@@ -85,7 +86,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         self,
         rglob: Mock,
         get: Mock,
-        files: Mapping[str | Path, str],
+        files: Mapping[Path, str],
         *,
         discovered: Iterable[Path] = (_COMPILED,),
         directories: Iterable[Path] = (),
@@ -1153,7 +1154,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     ):
         """Test that a requirement two compiled files pin at different versions is checked at both."""
         other = _ROOT / "requirements-py312.txt"
-        files: dict[str | Path, str] = {
+        files: dict[Path, str] = {
             _COMPILED: requirements_compiled_by_uv("base.in").replace("flask==1.0", "django==3.2.0"),
             other: requirements_compiled_by_uv("base.in", output=other.name).replace("flask==1.0", "django==4.0.0"),
             _SOURCE: "django>=3\n",
@@ -1195,7 +1196,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             "the pins of a missing source go unchecked",
         ),
         Mutation(
-            requirements_txt_manifest.CompiledRequirementsTxt.pins_from,
+            compiled_requirements_txt.CompiledRequirementsTxt.pins_from,
             "if sources & names]",
             "if names]",
             "Update-time checks the transitive pins of a compiled file whose source is missing",
@@ -1368,7 +1369,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
             with self.subTest(case):
                 files = self.run_update(mock_rglob, mock_get, {_COMPILED: contents})
                 self.mock_recompile.assert_not_called()
-                self.assertEqual(files.files, {str(_COMPILED): contents})
+                self.assertEqual(dict(files), {_COMPILED: contents})
                 self.assert_logged(
                     message_of(Logger.source_not_found), location=Location(_COMPILED), source=Location(_SOURCE)
                 )
@@ -1388,7 +1389,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
     def test_a_source_is_updated_once(self, mock_rglob: Mock, mock_get: Mock):
         """Test that a source two compiled files name, or that the scan finds as well, is read and bumped once."""
         dev, base_txt = _ROOT / "dev-requirements.txt", _ROOT / "requirements-base.txt"
-        cases: dict[str, tuple[Path, dict[str | Path, str]]] = {
+        cases: dict[str, tuple[Path, dict[Path, str]]] = {
             "two compiled files": (
                 _SOURCE,
                 {
@@ -1419,13 +1420,13 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
         }
         for case, (source_name, source, contents) in cases.items():
             with self.subTest(case):
-                files: dict[str | Path, str] = {_COMPILED: requirements_compiled_by_uv(source_name)}
+                files: dict[Path, str] = {_COMPILED: requirements_compiled_by_uv(source_name)}
                 if contents is not None:
                     files[source] = contents
                 fake_files = self.run_update(mock_rglob, mock_get, files)
                 mock_get.assert_not_called()
                 self.mock_recompile.assert_not_called()
-                self.assertEqual(fake_files.files.get(str(source)), contents)
+                self.assertEqual(fake_files.get(source), contents)
                 self.assert_logged(
                     message_of(Logger.source_outside_the_scan), location=Location(_COMPILED), source=Location(source)
                 )

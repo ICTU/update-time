@@ -27,7 +27,7 @@ from update_time.updaters.update_package_json import update_package_jsons
 from tests.helpers import FakeFiles, mock_path, mock_response, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import FRESH_DATE, STALE_DATE
-from tests.update_time.helpers import LoggingTestCase, message_of, published_version, staleness_disabled
+from tests.update_time.helpers import SCAN_ROOT, LoggingTestCase, message_of, published_version, staleness_disabled
 from tests.update_time.sources.helpers import github_release_json, npm_registry
 from tests.update_time.updaters.fixtures import ADVISORY, VULNERABILITY
 from tests.update_time.updaters.helpers import assert_osv_asked_about, no_vulnerabilities, osv
@@ -151,7 +151,7 @@ _NOT_AN_OBJECT_ERROR = ValueError("the JSON is not an object")
 
 def _discover_package_json(glob: Mock, contents: str) -> Mock:
     """Return a mock package.json holding the contents, as the only one the glob finds."""
-    package_json = mock_path(contents, parent=Path("/"))
+    package_json = mock_path(contents, parent=SCAN_ROOT)
     glob.return_value = [package_json]
     return package_json
 
@@ -176,7 +176,7 @@ def _pnpm_runs(*results: object) -> list:
     return [Mock(stdout=_PNPM_UNSET), *results]
 
 
-def _assert_manager_called(mock_run: Mock, locked: Command, update: Command, directory: Path = Path("/")) -> None:
+def _assert_manager_called(mock_run: Mock, locked: Command, update: Command, directory: Path = SCAN_ROOT) -> None:
     """Assert the manager listed the locked versions, updated, and listed them again, each in the directory."""
     run_kwargs = {**_RUN_KWARGS, "cwd": directory}
     mock_run.assert_has_calls((call(locked, **run_kwargs), call(update, **run_kwargs), call(locked, **run_kwargs)))
@@ -217,10 +217,10 @@ class _PackageJsonFilesTestCase(LoggingTestCase):
         self.files = FakeFiles()
         self.enterContext(self.files.patched())
 
-    def write_package_json(self, contents: str, directory: Path = Path("/")) -> Path:
+    def write_package_json(self, contents: str, directory: Path = SCAN_ROOT) -> Path:
         """Write a package.json with the contents in the directory, and return its path."""
         path = directory / "package.json"
-        self.files.files[str(path)] = contents
+        self.files[path] = contents
         return path
 
     def assert_range_rewrite_logged(self, **fields: object) -> None:
@@ -243,7 +243,7 @@ class _PackageJsonFilesTestCase(LoggingTestCase):
         def run(command: Command, **_kwargs: object) -> Mock:
             """Answer the next run, raising an error as the run's answer, and save the package.json on an update."""
             if command[1] == "update":
-                self.files.files[str(package_json)] = saved
+                self.files[package_json] = saved
             if isinstance(answer := next(answers), BaseException):
                 raise answer
             return answer
@@ -253,7 +253,7 @@ class _PackageJsonFilesTestCase(LoggingTestCase):
 
 # Staleness makes its own npm registry requests; it is disabled here and covered by StaleDependencyTest below.
 @staleness_disabled
-@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("subprocess.run")
 class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
     """Unit tests for updating an npm-managed package.json."""
@@ -262,7 +262,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         """Create a package.json in the root directory."""
         return self.write_package_json(contents)
 
-    def assert_npm_called(self, mock_run: Mock, *, cooldown: bool = True, directory: Path = Path("/")) -> None:
+    def assert_npm_called(self, mock_run: Mock, *, cooldown: bool = True, directory: Path = SCAN_ROOT) -> None:
         """Assert npm list, update, and list were called in the directory (with the cooldown option when expected)."""
         cooldown_option = [_NPM_COOLDOWN_OPTION] if cooldown else []
         _assert_manager_called(
@@ -283,27 +283,27 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         """Test that a package.json naming npm, or one in a directory between, wins over a pnpm workspace above."""
         npm_project = json.dumps({"packageManager": "npm@11.0.0", **_GIT_DEPENDENCY})
         cases = {
-            "the package.json's own field": {"/a/b/package.json": npm_project},
+            "the package.json's own field": {SCAN_ROOT / "a/b/package.json": npm_project},
             "a package.json in a directory between": {
-                "/a/package.json": npm_project,
-                "/a/b/package.json": json.dumps(_GIT_DEPENDENCY),
+                SCAN_ROOT / "a/package.json": npm_project,
+                SCAN_ROOT / "a/b/package.json": json.dumps(_GIT_DEPENDENCY),
             },
         }
         for case, files in cases.items():
             with self.subTest(case):
-                self.files.files = {"/pnpm-workspace.yaml": "packages:\n  - a/b\n", **files}
-                mock_glob.return_value = [Path("/a/b/package.json")]
+                self.files.replace_all({SCAN_ROOT / "pnpm-workspace.yaml": "packages:\n  - a/b\n", **files})
+                mock_glob.return_value = [SCAN_ROOT / "a/b/package.json"]
                 mock_run.side_effect = _npm_runs(*_npm_no_update())
                 update_package_jsons()
-                self.assert_npm_called(mock_run, directory=Path("/a/b"))
+                self.assert_npm_called(mock_run, directory=SCAN_ROOT / "a/b")
 
     def run_below_package_json(self, mock_run: Mock, mock_glob: Mock, contents: str) -> None:
         """Run on a member in /a, below a /package.json holding the contents, and assert npm ran for the member."""
-        self.files.files = {"/package.json": contents}
-        mock_glob.return_value = [self.write_package_json(json.dumps(_GIT_DEPENDENCY), Path("/a"))]
+        self.files.replace_all({SCAN_ROOT / "package.json": contents})
+        mock_glob.return_value = [self.write_package_json(json.dumps(_GIT_DEPENDENCY), SCAN_ROOT / "a")]
         mock_run.side_effect = _npm_runs(*_npm_no_update())
         update_package_jsons()
-        self.assert_npm_called(mock_run, directory=Path("/a"))
+        self.assert_npm_called(mock_run, directory=SCAN_ROOT / "a")
 
     def test_invalid_package_json_above_is_warned_about_and_passed_over(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json above that does not parse is warned about, and passed over."""
@@ -313,7 +313,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                 self.run_below_package_json(mock_run, mock_glob, contents)
                 self.assert_logged(
                     message_of(Logger.unreadable_manager_declaration),
-                    location=Location(Path("/package.json")),
+                    location=Location(SCAN_ROOT / "package.json"),
                     error=str(error),
                 )
 
@@ -324,7 +324,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
             with self.subTest(case):
                 mock_run.reset_mock()
                 root = self.write_package_json(json.dumps(_GIT_DEPENDENCY))
-                fixture = self.write_package_json(contents, Path("/fixtures"))
+                fixture = self.write_package_json(contents, SCAN_ROOT / "fixtures")
                 mock_glob.return_value = [root, fixture]
                 mock_run.side_effect = _npm_runs(*_npm_no_update())
                 update_package_jsons()
@@ -611,19 +611,19 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
 
     def test_cooldown_of_a_workspace_member_read_in_the_workspace_root(self, mock_run: Mock, mock_glob: Mock):
         """Test that the cooldown of a workspace member is read in the workspace root that npm reports."""
-        mock_glob.return_value = [self.write_package_json(json.dumps(_GIT_DEPENDENCY), Path("/ws/a"))]
+        mock_glob.return_value = [self.write_package_json(json.dumps(_GIT_DEPENDENCY), SCAN_ROOT / "ws/a")]
         mock_run.side_effect = _npm_runs(*_npm_no_update(), prefix=Mock(stdout="/ws\n"))
         update_package_jsons()
-        mock_run.assert_any_call(_NPM_COOLDOWN_PROBE, **_RUN_KWARGS, cwd=Path("/ws"))
+        mock_run.assert_any_call(_NPM_COOLDOWN_PROBE, **_RUN_KWARGS, cwd=SCAN_ROOT / "ws")
         update = Command("npm", "update", "--save", "--include=dev", "--silent", _NPM_COOLDOWN_OPTION)
-        mock_run.assert_any_call(update, **_RUN_KWARGS, cwd=Path("/ws/a"))
+        mock_run.assert_any_call(update, **_RUN_KWARGS, cwd=SCAN_ROOT / "ws/a")
 
     @_publishing_version_1_1
     def test_new_version_of_a_workspace_member_dependency_is_logged(self, mock_run: Mock, mock_glob: Mock):
         """Test that a dependency of a member has its new version logged, and one of another member not."""
         for case, (name, directory) in _MEMBERS.items():
             with self.subTest(case):
-                package_json = self.write_package_json(_member_contents(name), Path("/ws", directory))
+                package_json = self.write_package_json(_member_contents(name), SCAN_ROOT / "ws" / directory)
                 mock_glob.return_value = [package_json]
                 mock_run.side_effect = _npm_runs(
                     _npm_workspace_lock(
@@ -653,7 +653,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         for case, prefix in prefixes.items():
             with self.subTest(case):
                 contents = '{\n  "dependencies": {\n    "package": "^1.0.0"\n  }\n}\n'
-                package_json = self.write_package_json(contents, Path("/link/app"))
+                package_json = self.write_package_json(contents, SCAN_ROOT / "link/app")
                 mock_glob.return_value = [package_json]
                 mock_run.side_effect = _npm_runs(
                     _npm_lock(package="1.0"), Mock(stdout=""), _npm_lock(package="1.1"), prefix=prefix
@@ -671,7 +671,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         root = self.write_package_json(_WORKSPACE_ROOT_CONTENTS)
         for case, (name, directory) in _MEMBERS.items():
             with self.subTest(case):
-                member = self.write_package_json(_member_contents(name), Path("/", directory))
+                member = self.write_package_json(_member_contents(name), SCAN_ROOT / directory)
                 mock_glob.return_value = [root, member]
                 before = _npm_workspace_lock(_npm_member(name, directory, package="1.0"))
                 after = _npm_workspace_lock(_npm_member(name, directory, package="1.1"))
@@ -686,14 +686,14 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
     def test_workspace_root_is_updated_before_its_members(self, mock_run: Mock, mock_glob: Mock):
         """Test that npm updates a workspace root before its members, whichever the glob finds first."""
         root = self.write_package_json(_WORKSPACE_ROOT_CONTENTS)
-        member = self.write_package_json(_member_contents("a"), Path("/packages/a"))
+        member = self.write_package_json(_member_contents("a"), SCAN_ROOT / "packages/a")
         mock_glob.return_value = [member, root]
         mock_run.side_effect = [*_npm_runs(*_npm_no_update()), *_npm_runs(*_npm_no_update())]
         update_package_jsons()
         updated_directories = [
             kwargs["cwd"] for command, kwargs in mock_run.call_args_list if command[0][:2] == ("npm", "update")
         ]
-        self.assertEqual(updated_directories, [Path("/"), Path("/packages/a")])
+        self.assertEqual(updated_directories, [SCAN_ROOT, SCAN_ROOT / "packages/a"])
 
     def test_range_of_a_workspace_member_the_root_rewrote_is_logged_at_the_member(
         self, mock_run: Mock, mock_glob: Mock
@@ -702,7 +702,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         root = self.write_package_json(_WORKSPACE_ROOT_CONTENTS)
         name, directory = _MEMBERS["unscoped"]
         original = _member_contents(name)
-        member = self.write_package_json(original, Path("/", directory))
+        member = self.write_package_json(original, SCAN_ROOT / directory)
         mock_glob.return_value = [root]
         locked = _npm_workspace_lock(_npm_member(name, directory, package="1.1"))
         saved = original.replace("^1.0.0", "^1.1.0")
@@ -722,8 +722,8 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         self, mock_run: Mock, mock_glob: Mock
     ):
         """Test that an unreadable member package.json is warned about, and its new versions logged at the file."""
-        root, member = Path("/package.json"), Path("/packages/a/package.json")
-        cases: dict[str, tuple[dict[str | Path, str], Exception]] = {
+        root, member = SCAN_ROOT / "package.json", SCAN_ROOT / "packages/a/package.json"
+        cases: dict[str, tuple[dict[Path, str], Exception]] = {
             "missing": ({}, FileNotFoundError(2, "No such file or directory", str(member))),
             "invalid JSON": ({member: _UNREADABLE}, _UNREADABLE_ERROR),
         }
@@ -735,9 +735,7 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
                     Mock(stdout=""),
                     _npm_workspace_lock(_npm_member("a", "packages/a", package="1.1")),
                 )
-                self.files.files = {
-                    str(path): text for path, text in {root: _WORKSPACE_ROOT_CONTENTS, **member_files}.items()
-                }
+                self.files.replace_all({root: _WORKSPACE_ROOT_CONTENTS, **member_files})
                 update_package_jsons()
                 self.assert_unreadable_package_json_warned(member, error)
                 published = published_version("1.1", _PUBLICATION_TIME)
@@ -767,11 +765,11 @@ class UpdateNpmPackageJsonTest(_PackageJsonFilesTestCase):
         mock_run.side_effect = _npm_runs(*_npm_no_update(), prefix=prefix_failed)
         update_package_jsons()
         self.assert_npm_called(mock_run)
-        mock_run.assert_any_call(_NPM_COOLDOWN_PROBE, **_RUN_KWARGS, cwd=Path("/"))
+        mock_run.assert_any_call(_NPM_COOLDOWN_PROBE, **_RUN_KWARGS, cwd=SCAN_ROOT)
 
 
 @staleness_disabled
-@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("subprocess.run")
 class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
     """Unit tests for updating a pnpm-managed package.json (detected via the corepack `packageManager` field)."""
@@ -782,7 +780,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         """Create a package.json in the root directory, declaring pnpm as its package manager."""
         return self.write_package_json(contents)
 
-    def assert_pnpm_called(self, mock_run: Mock, *, cooldown: bool = True, directory: Path = Path("/")) -> None:
+    def assert_pnpm_called(self, mock_run: Mock, *, cooldown: bool = True, directory: Path = SCAN_ROOT) -> None:
         """Assert pnpm list, update, and list were called in the directory (with the cooldown option when expected)."""
         cooldown_option = [_PNPM_COOLDOWN_OPTION] if cooldown else []
         _assert_manager_called(
@@ -867,19 +865,19 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
     def test_pnpm_detected_above_a_workspace_member(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json without a signal of its own uses pnpm when a directory above signals pnpm."""
         cases = {
-            "a pnpm-workspace.yaml": {"/pnpm-workspace.yaml": "packages:\n  - a\n"},
-            "a pnpm-lock.yaml": {"/pnpm-lock.yaml": "lockfileVersion: '9.0'\n"},
-            "a packageManager field": {"/package.json": '{"packageManager": "pnpm@9.15.0"}'},
+            "a pnpm-workspace.yaml": {SCAN_ROOT / "pnpm-workspace.yaml": "packages:\n  - a\n"},
+            "a pnpm-lock.yaml": {SCAN_ROOT / "pnpm-lock.yaml": "lockfileVersion: '9.0'\n"},
+            "a packageManager field": {SCAN_ROOT / "package.json": '{"packageManager": "pnpm@9.15.0"}'},
         }
         contents = json.dumps(_GIT_DEPENDENCY)
         for case, files in cases.items():
             with self.subTest(case):
-                self.files.files = dict(files)
-                member = self.write_package_json(contents, Path("/a"))
+                self.files.replace_all(files)
+                member = self.write_package_json(contents, SCAN_ROOT / "a")
                 mock_glob.return_value = [member]
                 mock_run.side_effect = _pnpm_runs(Mock(stdout="[]"), Mock(stdout=""), Mock(stdout="[]"))
                 update_package_jsons()
-                self.assert_pnpm_called(mock_run, directory=Path("/a"))
+                self.assert_pnpm_called(mock_run, directory=SCAN_ROOT / "a")
 
     def test_project_cooldown_respected(self, mock_run: Mock, mock_glob: Mock):
         """Test that no cooldown option is added when the project's pnpm config already sets minimumReleaseAge."""
@@ -893,7 +891,7 @@ class UpdatePnpmPackageJsonTest(_PackageJsonFilesTestCase):
         self.assert_no_warnings_logged()
 
 
-@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("subprocess.run")
 class SkipUnsupportedPackageManagerTest(LoggingTestCase):
     """Unit tests for skipping package.json files managed by an unsupported package manager (yarn, bun)."""
@@ -909,13 +907,13 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
 
     def test_skip_unsupported_lockfile(self, mock_run: Mock, mock_glob: Mock):
         """Test that a package.json with an unsupported lockfile (e.g. yarn.lock) is skipped without running it."""
-        cases = {"beside the package.json": Path("/"), "in a directory above": Path("/a")}
+        cases = {"beside the package.json": SCAN_ROOT, "in a directory above": SCAN_ROOT / "a"}
         for case, directory in cases.items():
             with self.subTest(case):
                 mock_package_json = mock_path("{}", parent=directory)
                 mock_glob.return_value = [mock_package_json]
                 # Only /yarn.lock exists (no pnpm-lock.yaml), so yarn is detected and the file skipped:
-                with patch("pathlib.Path.exists", lambda self: str(self) == "/yarn.lock"):
+                with patch("pathlib.Path.exists", lambda self: self == SCAN_ROOT / "yarn.lock"):
                     update_package_jsons()
                 mock_run.assert_not_called()
                 mock_package_json.write_text.assert_not_called()
@@ -923,7 +921,7 @@ class SkipUnsupportedPackageManagerTest(LoggingTestCase):
                 self.assert_no_new_version_logged()
 
 
-@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("subprocess.run")
 class SkipPackageJsonWithoutDependenciesTest(LoggingTestCase):
     """Unit tests for a package.json that declares nothing for its package manager to update."""
@@ -987,7 +985,7 @@ class NoUpdateTestCase(LoggingTestCase):
 
 @_no_deprecations
 @staleness_disabled
-@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("subprocess.run")
 class VulnerableDependencyTest(NoUpdateTestCase):
     """Unit tests for the package.json vulnerability check, which looks up each dependency pinned to a version."""
@@ -1038,7 +1036,7 @@ class VulnerableDependencyTest(NoUpdateTestCase):
 
 @no_vulnerabilities
 @staleness_disabled
-@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("subprocess.run")
 @patch("requests.Session.get")
 class YankedDependencyTest(NoUpdateTestCase):
@@ -1066,7 +1064,7 @@ class YankedDependencyTest(NoUpdateTestCase):
         self.assert_could_not_fetch_logged(url, status=503, reason="Service Unavailable")
 
 
-@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("subprocess.run")
 class StaleDependencyTest(NoUpdateTestCase):
     """Unit tests for the package.json staleness check, which makes its own npm registry pass over the deps."""
@@ -1124,7 +1122,7 @@ class StaleDependencyTest(NoUpdateTestCase):
 
 
 @no_vulnerabilities
-@patch_pathlib_path("rglob", cwd=Path("/"))
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("subprocess.run")
 @patch("requests.Session.get")
 class MarkerTest(NoUpdateTestCase):

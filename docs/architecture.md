@@ -10,6 +10,11 @@ flowchart TD
   io --> domain
   io --> markers
   io --> primitives
+  lock_files --> domain
+  lock_files --> formats
+  lock_files --> manifests
+  lock_files --> markers
+  lock_files --> primitives
   manifests --> domain
   manifests --> formats
   manifests --> markers
@@ -19,6 +24,7 @@ flowchart TD
   package_managers --> domain
   package_managers --> formats
   package_managers --> io
+  package_managers --> lock_files
   package_managers --> manifests
   package_managers --> markers
   package_managers --> primitives
@@ -38,6 +44,7 @@ flowchart TD
   updaters --> domain
   updaters --> formats
   updaters --> io
+  updaters --> lock_files
   updaters --> manifests
   updaters --> markers
   updaters --> package_managers

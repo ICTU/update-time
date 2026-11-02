@@ -31,6 +31,7 @@ _RANKS = (
     ("markers",),
     ("io",),
     ("manifests",),
+    ("lock_files",),
     ("sources",),
     ("package_managers",),
     ("references",),
@@ -198,12 +199,16 @@ class LayeringTest(unittest.TestCase):
     A layer may use the ones before it. It may use neither a sibling sharing its rank nor a layer after it:
     - `primitives` are project-agnostic building blocks, like a typed environment variable, that even the pure core may
       reach for.
-    - `formats` read, write, and rewrite the text formats a manifest is written in, knowing nothing of dependencies.
+    - `formats` read, write, and rewrite the text formats Update-time reads, such as the format of a manifest or a
+      changelog, knowing nothing of dependencies.
     - `domain` is the pure, I/O-free core.
     - `markers` parse the `# update-time:` language and decide what each directive steers.
     - `io` wraps file, process, log, network, and command-line I/O.
     - `manifests` read, write, and parse the files that declare dependencies. They rank before `sources` because a
       registry serves such a file too: Maven Central serves the pom an artefact was published with.
+    - `lock_files` read the files that record which versions a package manager resolved the dependencies to. They rank
+      after `manifests` because a compiled requirements file is written in the format of the manifest it was compiled
+      from.
     - `sources` are the backends the outer layers ask about a dependency.
     - `package_managers` drive the external managers, uv, npm, and pnpm, using manifests and sources, and say which
       directives a manager's dependencies can be steered by.

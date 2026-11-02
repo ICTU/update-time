@@ -31,6 +31,7 @@ from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import VULNERABILITY_LEVEL_NONE
 from tests.update_time.helpers import (
     GUAVA,
+    SCAN_ROOT,
     LoggingTestCase,
     bound,
     days_ago,
@@ -75,9 +76,9 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
 
-# The tests discover each pom in this directory or in one below it. The scan runs in `/`, so a Maven run in the wrong
-# directory shows.
-_PROJECT = Path("/project")
+# The tests discover each pom in this directory or in one below it. The scan runs in `SCAN_ROOT`, so a Maven run in
+# the wrong directory shows.
+_PROJECT = SCAN_ROOT / "project"
 
 # The rule set file these tests hand Update-time, standing in for the temporary file a real run writes.
 _RULES = Path("/rules.xml")
@@ -369,7 +370,7 @@ _CHILDS_EFFECTIVE_POM_LISTING_A_PROFILE = effective_pom_declaring(
 @patch.object(maven_central_module, "get_changes", Mock(return_value=NO_CHANGES))
 @patch.object(maven_central_module, "publication", Mock(return_value=UNDATED))
 @patch.object(maven_central_module, "versions_held_back", Mock(return_value=()))
-@patch_pathlib_path("rglob", cwd=Path("/"), exists=False)
+@patch_pathlib_path("rglob", cwd=SCAN_ROOT, exists=False)
 @patch("subprocess.run")
 class UpdatePomXmlTest(LoggingTestCase):
     """Unit tests for finding the pom.xml files and running Maven over each of them."""
@@ -1252,7 +1253,7 @@ class UpdatePomXmlTest(LoggingTestCase):
                     update_pom_xmls()
                 if failure:
                     self.assert_command_failed_logged(_maven_command(), failure)
-                mock_read_bytes.assert_called_once_with(Path("/project/target/effective-pom.xml"))
+                mock_read_bytes.assert_called_once_with(_PROJECT / "target/effective-pom.xml")
                 _assert_osv_asked_about_maven(mock_post, (GUAVA, "33.0.0-jre"))
                 self.assert_no_warnings_logged()
 

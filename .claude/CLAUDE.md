@@ -52,9 +52,11 @@ Review code against these criteria, whether on its own or in the TDD refactor st
 
 Develop test-first, in small steps, so I can steer.
 
-Keep a numbered list of candidate tests (T1, T2, …) with the status of each: todo, pass, or fail, and whether they drive new code or pin behavior. Every other list you put to me is numbered too, each with a prefix of its own: R for refactorings, F for findings, E for proposed edits, O for options. When you refer back to an item, say what it is rather than only its label: quote the line or the sentence it is about. Drop a test from the list only once every test on it passes, or when I tell you to drop it. Every other item, a refactoring or a finding, stays on a list you show me at each step until it is done or I drop it.
+Keep a numbered list of candidate tests (T1, T2, …) with the status of each: todo, pass, or fail, and whether they drive new code or pin behavior. Every other list you put to me is numbered too, each with a prefix of its own: R for refactorings, F for findings, E for proposed edits, O for options. When you refer back to an item, say what it is rather than only its label: quote the line or the sentence it is about. Drop a test from the list only once every test on it passes, or when I tell you to drop it. Every other item stays on a list you show me at each step until it is done or I drop it.
 
-Where the issue specifies little, offer to write a specification first. If accepted, write the specification as a markdown file in the repo root. Prepare a cycle by adding candidate tests to the list, then let me choose where to start. This holds for a feature, a bug fix, a task, and an increment alike. Before listing candidate tests for a bug, look for the same bug wherever the code does the same thing for another case.
+Where the issue specifies little, offer to write a specification first. If accepted, write the specification as a markdown file in the repo root.
+
+Prepare a cycle by adding candidate tests to the list, then let me choose where to start. This holds for a feature, a bug fix, a task, and an increment alike. Before listing candidate tests for a bug, look for the same bug wherever the code does the same thing for another case. Before listing candidate tests, identify refactorings that will make the tests easier to implement, and insert the refactorings at the top of the list.
 
 Some work changes no behaviour, so no test drives it. Prepare that as a numbered list of refactorings instead, each of which ends green, and let me choose where to start.
 

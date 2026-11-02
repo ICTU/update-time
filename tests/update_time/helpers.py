@@ -842,6 +842,9 @@ def published_version(version: str, published: str | datetime) -> str:
     return str(DependencyVersion(version, publication=LookedUp(timestamp)))
 
 
+# The tests scan this directory, and patch it in as the working directory.
+SCAN_ROOT = pathlib.Path("/")
+
 # The artefact most Maven tests declare.
 GUAVA = "com.google.guava:guava"
 
