@@ -159,6 +159,11 @@ class PythonDependencyToml:
         """Write the contents to the file."""
         self.path.write_text(contents)
 
+    def restore(self, contents: str) -> None:
+        """Write the contents back where the file now holds other contents."""
+        if self.read() != contents:
+            self.write(contents)
+
     def toml(self, contents: str) -> str:
         """Return the TOML the contents declare the dependencies in."""
         raise NotImplementedError

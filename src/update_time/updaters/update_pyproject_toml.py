@@ -18,6 +18,7 @@ def update_pyproject_tomls() -> None:
 
     uv runs only for a pyproject.toml that declares a dependency for it to resolve, since `uv lock` writes a uv.lock
     beside any pyproject.toml it runs for. Update-time checks the pins of every uv-managed pyproject.toml.
+    Where uv cannot lock a workspace's new pins, each pyproject.toml the run rewrote gets back the text it held before.
     """
     uv_projects: list[PyprojectToml] = []
     projects_with_dependencies: list[PyprojectToml] = []
@@ -38,19 +39,23 @@ def update_pyproject_tomls() -> None:
                 _LOG.no_dependencies(path, "uv", "resolve")
                 uv.report_file_markers(pyproject_toml, _LOG)
     # Persist the cooldown into config before running uv, so `uv tree`/`uv lock` read it and the lockfile they
-    # produce stays reproducible with a plain `uv sync --locked` (see `uv.configure_cooldown`).
-    uv.configure_cooldown([pyproject_toml.path for pyproject_toml in projects_with_dependencies])
-    # Read the locked versions before `uv tree` runs, since `uv tree` may lock again.
-    locked = {pyproject_toml: uv.locked_versions(pyproject_toml) for pyproject_toml in projects_with_dependencies}
-    # Update every pyproject.toml first, then lock (a uv workspace shares one lockfile, so all member manifests
-    # must be bumped before locking). Skip the lockfile update for files whose `uv tree` failed: it would fail too.
+    # produce stays reproducible with a plain `uv sync --locked` (see `uv.configure_cooldown`). Then read each workspace
+    # before `uv tree` runs, since `uv tree` locks it again, with the pins already rewritten in other members.
+    uv.configure_cooldown(projects_with_dependencies)
+    workspaces = uv.read_workspaces(projects_with_dependencies)
+    # Update every pyproject.toml first, then lock each workspace once (a uv workspace shares one lockfile, so all
+    # member manifests must be bumped before locking). A workspace none of whose members `uv tree` succeeded for is not
+    # locked, since the lock would fail too.
     updated = [
         pyproject_toml
         for pyproject_toml in projects_with_dependencies
         if uv.update_pyproject_toml(pyproject_toml, _LOG)
     ]
-    for pyproject_toml in updated:
-        uv.update_uv_lock(pyproject_toml, locked[pyproject_toml])
+    for root, members in uv.by_workspace(updated).items():
+        if not workspaces[root].lock(members):
+            workspaces[root].restore()
+            continue
+        workspaces[root].report_moved_versions(members)
     warn_about_pins(uv_projects, _LOG)
 
 

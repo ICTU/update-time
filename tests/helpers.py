@@ -121,6 +121,7 @@ class FakeFiles(MutableMapping[Path, str]):
         """Hold the files, the directories, and the error each write raises after leaving half its text behind."""
         self._files = dict(files or {})
         self.read_errors: dict[Path, Exception] = {}  # The error reading a file raises, by the file's path.
+        self.write_errors: dict[Path, Exception] = {}  # The error writing a file raises, by the file's path.
         self._directories = set(directories)
         self._failing_write = failing_write
 
@@ -150,11 +151,12 @@ class FakeFiles(MutableMapping[Path, str]):
 
     @contextlib.contextmanager
     def patched(self) -> Generator[None]:
-        """Stand in for the `Path` methods that look up, glob, read, write, replace, and make files and folders."""
+        """Stand in for the `Path` methods that find, read, write, replace, and remove files, and make folders."""
         with (
             patch.object(Path, "read_text", autospec=True, side_effect=self._read_text),
             patch.object(Path, "write_text", autospec=True, side_effect=self._write_text),
             patch.object(Path, "replace", autospec=True, side_effect=self._replace),
+            patch.object(Path, "unlink", autospec=True, side_effect=self._unlink),
             patch.object(Path, "exists", autospec=True, side_effect=self._exists),
             patch.object(Path, "is_file", autospec=True, side_effect=lambda path: path in self._files),
             patch.object(Path, "mkdir", autospec=True),
@@ -178,6 +180,8 @@ class FakeFiles(MutableMapping[Path, str]):
         return self._files[path]
 
     def _write_text(self, path: Path, text: str, *_arguments: object, **_options: object) -> int:
+        if (error := self.write_errors.get(path)) is not None:
+            raise error
         if self._failing_write is not None:
             self._files[path] = text[: len(text) // 2]
             raise self._failing_write
@@ -187,3 +191,6 @@ class FakeFiles(MutableMapping[Path, str]):
     def _replace(self, path: Path, target: Path) -> Path:
         self._files[target] = self._files.pop(path)
         return target
+
+    def _unlink(self, path: Path, **_options: object) -> None:
+        self._files.pop(path, None)

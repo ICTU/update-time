@@ -159,7 +159,7 @@ class ConfigureCooldownTest(unittest.TestCase):
         root = Path("/ws/pyproject.toml")
         workspace_root.return_value = root  # Every member resolves to the same root.
         members = [Path("/ws/packages/a/pyproject.toml"), Path("/ws/packages/b/pyproject.toml"), root]
-        configure_cooldown(members)
+        configure_cooldown([PyprojectToml(member) for member in members])
         persist.assert_called_once_with(root)
 
     @patch("update_time.package_managers.uv._persist_exclude_newer")
@@ -168,14 +168,14 @@ class ConfigureCooldownTest(unittest.TestCase):
         """Test that standalone projects (each its own root) are all persisted."""
         workspace_root.side_effect = lambda pyproject_toml: pyproject_toml
         first, second = Path("/a/pyproject.toml"), Path("/b/pyproject.toml")
-        configure_cooldown([first, second])
+        configure_cooldown([PyprojectToml(first), PyprojectToml(second)])
         self.assertEqual(persist.call_args_list, [call(first), call(second)])
 
     @patch("update_time.package_managers.uv._persist_exclude_newer")
     @patch_environ({"UV_EXCLUDE_NEWER": "2024-01-01"})
     def test_environment_override_writes_nothing(self, persist: Mock):
         """Test that nothing is persisted when the user sets the UV_EXCLUDE_NEWER environment variable."""
-        configure_cooldown([Path("/proj/pyproject.toml")])
+        configure_cooldown([PyprojectToml(Path("/proj/pyproject.toml"))])
         persist.assert_not_called()
 
 

@@ -988,10 +988,15 @@ class Logger:
         """Warn that pip does not list its settings, which say whether they set an `uploaded-prior-to` for the file."""
         return self._file_fields(path, reason=reason)
 
-    @_error("Could not update the dependencies in %(location)s: uv tree failed")
-    def uv_dependencies_not_updated(self, path: Path) -> dict[str, object]:
-        """Log that `uv tree` failed for a file."""
-        return self._file_fields(path)
+    @_error("Could not update the dependencies in %(location)s: %(tool)s failed")
+    def uv_dependencies_not_updated(self, path: Path, tool: str) -> dict[str, object]:
+        """Log that a uv command failed for a file."""
+        return self._file_fields(path, tool=tool)
+
+    @_error("Could not give %(location)s back the text it held before the run (%(error)s)")
+    def file_not_restored(self, path: Path, error: OSError) -> dict[str, object]:
+        """Log that a file the run rewrote cannot be given back its text."""
+        return self._file_fields(path, error=str(error))
 
     @_error("Could not update the dependencies in %(location)s: uv is not on the path")
     def uv_not_on_path(self, path: Path) -> dict[str, object]:

@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Keep a `.python-version` entry within the `requires-python` of the project's `pyproject.toml`, so uv still runs for the project, and warn about an entry outside it. Closes [#509](https://github.com/ICTU/update-time/issues/509).
 - Match each directory `--exclude-path` names relative to the scan root, also for the YAML files under `.github/`, CircleCI configs, Helm charts, and the Sphinx config. Closes [#504](https://github.com/ICTU/update-time/issues/504).
 - Report a `pyproject.toml` dependency without an exact pin at the version its `uv.lock` moves to, and a version the cooldown moves back as moved back, rather than at the newest release past its own specifier. See [#508](https://github.com/ICTU/update-time/issues/508).
+- Where `uv lock` fails on the new pins, give each `pyproject.toml` the run rewrote, and the `uv.lock`, back the text they held before, and report the failure, and a file it cannot write back, at `ERROR`. See [#508](https://github.com/ICTU/update-time/issues/508).
 
 ## 0.0.55 - 2026-11-01
 

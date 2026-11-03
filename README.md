@@ -1072,10 +1072,12 @@ For a `requirements.txt` pin, Update-time reads from PyPI whether each newer rel
 ERROR Could not fetch from PyPI the metadata of humanize 4.16.0 (HTTP 503), so its yank state and publication date are unknown; humanize stays on 4.15.0 rather than trying the versions in between
 ```
 
-Update-time updates none of the dependencies in a `pyproject.toml` or an inline script metadata block that uv fails to resolve. Two dependency groups pinning conflicting versions are such a case, and so is a registry uv cannot reach. Update-time logs uv's error at `WARNING`, and reports at `ERROR` which file's dependencies it did not update. Where uv is not on the path, Update-time does not run it, and says so in that report:
+Update-time updates none of the dependencies in a `pyproject.toml` or an inline script metadata block that uv fails to resolve. Two dependency groups pinning conflicting versions are such a case, and so is a registry uv cannot reach. Update-time rewrites the pins of every `pyproject.toml` before uv locks the project, or the workspace the project belongs to. Where that lock fails, for example because two new pins contradict each other, Update-time gives each file it rewrote back the text it held before the run, and leaves the `uv.lock` as it was. Where it cannot write a file back, it reports that at `ERROR` and goes on with the other files. Update-time logs uv's error at `WARNING`, and reports at `ERROR` which file's dependencies it did not update. Where uv is not on the path, Update-time does not run it, and says so in that report:
 
 ```console
 ERROR Could not update the dependencies in pyproject.toml: uv tree failed
+ERROR Could not update the dependencies in pyproject.toml: uv lock failed
+ERROR Could not give uv.lock back the text it held before the run ([Errno 13] Permission denied: 'uv.lock')
 ERROR Could not update the dependencies in pyproject.toml: uv is not on the path
 ```
 

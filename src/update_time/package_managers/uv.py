@@ -8,8 +8,10 @@ way and are both resolved through uv. See https://github.com/astral-sh/uv/issues
 
 import os
 import re
+from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, ClassVar, override
+from typing import TYPE_CHECKING, ClassVar, Self, override
 
 from update_time.domain.archival import archival_reporting
 from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
@@ -76,7 +78,7 @@ def manager_name(pyproject_toml: Path, config: dict) -> str:
     return "uv"
 
 
-def configure_cooldown(pyproject_tomls: list[Path]) -> None:
+def configure_cooldown(pyproject_tomls: Iterable[PyprojectToml]) -> None:
     """Persist Update-time's cooldown into the `[tool.uv] exclude-newer` of each involved workspace root.
 
     uv's `exclude-newer` is a publish-date cutoff that works as a cooldown (it accepts a relative duration such as
@@ -88,11 +90,7 @@ def configure_cooldown(pyproject_tomls: list[Path]) -> None:
     """
     if os.environ.get("UV_EXCLUDE_NEWER"):
         return
-    roots: list[Path] = []
-    for pyproject_toml in pyproject_tomls:
-        if (root := _workspace_root(pyproject_toml)) not in roots:
-            roots.append(root)
-    for root in roots:
+    for root in by_workspace(pyproject_tomls):
         _persist_exclude_newer(root)
 
 
@@ -243,7 +241,7 @@ def _outdated(uv_tree: Command, file: PythonDependencyToml, log: Logger) -> str 
         return None
     outdated = run(uv_tree)
     if not outdated.ok:
-        log.uv_dependencies_not_updated(file.path)
+        log.uv_dependencies_not_updated(file.path, uv_tree.name)
         return None
     return outdated.stdout
 
@@ -282,11 +280,7 @@ def _update_dependencies(
 
 
 def update_pyproject_toml(pyproject_toml: PyprojectToml, log: Logger) -> bool:
-    """Update the pyproject.toml with the latest dependency versions; return whether `uv tree` succeeded.
-
-    When `uv tree` fails (e.g. the registry is unreachable) nothing can be determined to update, and re-locking
-    would fail the same way, so the caller skips the lockfile update for this file rather than trying it in vain.
-    """
+    """Update the pyproject.toml with the latest dependency versions; return whether `uv tree` succeeded."""
     # The cooldown lives in `[tool.uv] exclude-newer` (see `configure_cooldown`), which uv reads for `tree` as well.
     # `--frozen` is omitted because `uv tree --outdated` only honors that cooldown when it is free to re-resolve.
     uv_tree = Command(
@@ -349,36 +343,86 @@ def pypi_projects(declarations: Iterable[Declaration]) -> Iterable[SteeredResolv
         yield SteeredResolvedReference.from_reference(declaration, release=release)
 
 
-def locked_versions(pyproject_toml: PyprojectToml) -> list[PinnedDependency] | None:
-    """Return the lowest version the uv.lock of the workspace root records for each of the project's dependencies.
-
-    Return None where there is no uv.lock to read.
-    """
-    path = pyproject_toml.path
-    root = _workspace_root(path).parent
-    if (lock := UvLock.read(root / "uv.lock")) is None:
-        return None
-    return lock.locked_versions(path.parent.relative_to(root).as_posix())
+def by_workspace(pyproject_tomls: Iterable[PyprojectToml]) -> dict[Path, list[PyprojectToml]]:
+    """Return the projects, grouped by the pyproject.toml of the uv workspace root governing each."""
+    workspaces: dict[Path, list[PyprojectToml]] = {}
+    for pyproject_toml in pyproject_tomls:
+        workspaces.setdefault(_workspace_root(pyproject_toml.path), []).append(pyproject_toml)
+    return workspaces
 
 
-def update_uv_lock(pyproject_toml: PyprojectToml, locked_before: Iterable[PinnedDependency] | None) -> None:
-    """Update the uv.lock file for the pyproject.toml, and log where it moved each dependency without an exact pin.
+@dataclass(frozen=True)
+class Workspace:
+    """A uv workspace, with what its pyproject.tomls and its uv.lock held before the run rewrote them."""
 
-    Without a uv.lock before, no version is logged.
-    """
-    path = pyproject_toml.path
-    _LOG.path(_workspace_root(path).parent / "uv.lock")
-    uv_lock = Command("uv", "lock", "--directory", str(path.parent), "--upgrade", "--quiet", "--no-progress")
-    run(uv_lock)
-    if locked_before is None:
-        return
-    locked_after = locked_versions(pyproject_toml) or []
-    inherited = _workspace_sources(path)
-    declarations = pypi_served(pyproject_toml.declarations())
-    reported = [
-        declaration for declaration in declarations if normalized_python_name(declaration.dependency) not in inherited
-    ]
-    log_moved_versions(_LOG, "uv", locked_before, locked_after, reported)
+    root: Path
+    uv_lock: UvLock
+    pyproject_toml_texts: dict[PyprojectToml, str]
+    uv_lock_text: str | None
+    locked_before: dict[PyprojectToml, list[PinnedDependency] | None]
+
+    @classmethod
+    def read(cls, root: Path, pyproject_tomls: Iterable[PyprojectToml]) -> Self:
+        """Read the texts of the pyproject.tomls and of the uv.lock, and the versions the uv.lock records."""
+        members = list(pyproject_tomls)
+        uv_lock = UvLock(root.parent / "uv.lock")
+        workspace = cls(root, uv_lock, {member: member.read() for member in members}, uv_lock.read(), {})
+        return replace(workspace, locked_before={member: workspace._locked_versions(member) for member in members})
+
+    def _locked_versions(self, pyproject_toml: PyprojectToml) -> list[PinnedDependency] | None:
+        """Return the lowest version the uv.lock records for each of the project's dependencies.
+
+        Return None where there is no uv.lock to read.
+        """
+        return self.uv_lock.locked_versions(pyproject_toml.path.parent.relative_to(self.root.parent).as_posix())
+
+    def lock(self, pyproject_tomls: Iterable[PyprojectToml]) -> bool:
+        """Update the uv.lock, and return whether uv locked.
+
+        A failure is logged at error for each of the pyproject.tomls.
+        """
+        _LOG.path(self.uv_lock.path)
+        uv_lock = Command("uv", "lock", "--directory", str(self.root.parent), "--upgrade", "--quiet", "--no-progress")
+        if run(uv_lock).succeeded:
+            return True
+        for pyproject_toml in pyproject_tomls:
+            _LOG.uv_dependencies_not_updated(pyproject_toml.path, uv_lock.name)
+        return False
+
+    def restore(self) -> None:
+        """Give the uv.lock and the pyproject.tomls back the text they held, and log each one that cannot get it."""
+        restores = [
+            (self.uv_lock.path, partial(self.uv_lock.restore, self.uv_lock_text)),
+            *((file.path, partial(file.restore, text)) for file, text in self.pyproject_toml_texts.items()),
+        ]
+        for path, restore in restores:
+            try:
+                restore()
+            except OSError as error:
+                _LOG.file_not_restored(path, error)
+
+    def report_moved_versions(self, pyproject_tomls: Iterable[PyprojectToml]) -> None:
+        """Log where the uv.lock moved each dependency of the pyproject.tomls without an exact pin.
+
+        Without a uv.lock before the run, no version is logged.
+        """
+        for pyproject_toml in pyproject_tomls:
+            if (locked_before := self.locked_before[pyproject_toml]) is None:
+                continue
+            locked_after = self._locked_versions(pyproject_toml) or []
+            inherited = _workspace_sources(pyproject_toml.path)
+            declarations = pypi_served(pyproject_toml.declarations())
+            reported = [
+                declaration
+                for declaration in declarations
+                if normalized_python_name(declaration.dependency) not in inherited
+            ]
+            log_moved_versions(_LOG, "uv", locked_before, locked_after, reported)
+
+
+def read_workspaces(pyproject_tomls: Iterable[PyprojectToml]) -> dict[Path, Workspace]:
+    """Return the uv workspace of each of the projects, by the pyproject.toml of its root."""
+    return {root: Workspace.read(root, members) for root, members in by_workspace(pyproject_tomls).items()}
 
 
 def _workspace_sources(pyproject_toml: Path) -> set[DependencyName]:

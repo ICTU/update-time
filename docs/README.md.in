@@ -915,7 +915,7 @@ For a `requirements.txt` pin, Update-time reads from PyPI whether each newer rel
 @@NO_RELEASE_METADATA@@
 ```
 
-Update-time updates none of the dependencies in a `pyproject.toml` or an inline script metadata block that uv fails to resolve. Two dependency groups pinning conflicting versions are such a case, and so is a registry uv cannot reach. Update-time logs uv's error at `WARNING`, and reports at `ERROR` which file's dependencies it did not update. Where uv is not on the path, Update-time does not run it, and says so in that report:
+Update-time updates none of the dependencies in a `pyproject.toml` or an inline script metadata block that uv fails to resolve. Two dependency groups pinning conflicting versions are such a case, and so is a registry uv cannot reach. Update-time rewrites the pins of every `pyproject.toml` before uv locks the project, or the workspace the project belongs to. Where that lock fails, for example because two new pins contradict each other, Update-time gives each file it rewrote back the text it held before the run, and leaves the `uv.lock` as it was. Where it cannot write a file back, it reports that at `ERROR` and goes on with the other files. Update-time logs uv's error at `WARNING`, and reports at `ERROR` which file's dependencies it did not update. Where uv is not on the path, Update-time does not run it, and says so in that report:
 
 ```console
 @@UV_DEPENDENCIES_NOT_UPDATED@@
