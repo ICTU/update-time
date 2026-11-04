@@ -211,13 +211,13 @@ class GetLatestTagTest(RegistryRequestsMixin, LoggingTestCase):
         self.assertEqual(latest.version, "1.1")
         self.assertEqual(DIGEST, latest.sha)
         self.assertIsNone(latest.publication.value)  # No push date (and so no cooldown) outside Docker Hub.
-        self.assertTrue(any("registry.gitlab.com" in call.args[0] for call in self.requests.call_args_list))
+        self.assertTrue(any("registry.gitlab.com" in url for url in requested_urls(self.requests)))
 
     def test_other_registry_repository_path_excludes_host(self):
         """Test that the API repository path drops the registry host (a strict registry 404s on a host-prefixed one)."""
         self.requests.side_effect = mock_docker_registry(docker_tag("1.1", DIGEST))
         get_latest_tag("mcr.microsoft.com/devcontainers/typescript-node", "1.0")
-        tags_list_urls = [call.args[0] for call in self.requests.call_args_list if "/tags/list" in call.args[0]]
+        tags_list_urls = [url for url in requested_urls(self.requests) if "/tags/list" in url]
         self.assertTrue(tags_list_urls)
         for url in tags_list_urls:
             with self.subTest(url=url):

@@ -126,7 +126,6 @@ Assert that a repository GitHub declares archived was warned about, GitHub publi
 Assert that of the two constants a module assigns, only the one the reader leaves alone is reported.
 Assert that the lines below the message sit in a box, and that the box holds these lines and no others.
 Assert that the run reported no archival, having asked the given URLs and GitHub nothing.
-Assert uv tree/lock carry no `--exclude-newer` flag (the cooldown lives in config), nor `--frozen`.
 Both name a version of a runtime rather than a release of a package, which is not something OSV matches an advisory against.
 Both npm and pnpm update a dependency to the newest version that satisfies the range declared in the `package.json`.
 Cannot pin in : the URL is declared as a bare string, so it has no attribute dictionary to hold an integrity hash.
@@ -183,7 +182,6 @@ Pin a jsDelivr URL that declares no Subresource Integrity hash, by inserting one
 Pin an image reference that names no tag, such as a Dockerfile's `FROM python` or a Docker Compose `image: redis`, to the version and digest its `latest` tag serves, instead of passing it over in silence.
 Pre-releases, invalid versions, versions the bound rules out, and versions the npm registry has no publication date for (e.g. present on jsDelivr but not yet mirrored) are skipped.
 PyPI answers null for a package that declares no project URLs.
-PyPI answers with metadata naming no changelog, so the log renders an available new version as `_NEW_VERSION`.
 PyPI serves the status under `status`, where PEP 792's text spells it `state`, so a response spelling it the PEP's way declares no status to read.
 Read the files it touched end to end rather than its diff: a finding can span cycles and show up in no single one, such as a helper the second cycle duplicated, a module head grown long with constants, or a name that restates the line beside it.
 Record the subject the capability is asked about, and answer that this resolver reports none.
@@ -292,7 +290,6 @@ Test that a floating tag whose digest no concrete tag serves is left as it is.
 Test that a heading above or below the levels asked for gets no entry.
 Test that a kills decorator given no mutation fails the test, rather than leaving it checking nothing.
 Test that a machine-executor image naming no tag is left unchanged and looked up nowhere.
-Test that a marker is reported as recognised and as holding the update back, with no update available.
 Test that a marker-wrapped dependency name is styled as `repr.dependency` and the markers leave no trace.
 Test that a network error probing the registry yields no token (anonymous) instead of crashing.
 Test that a new version for a dependency that resolves to no registry release is logged at the file.
@@ -601,7 +598,6 @@ npm normalizes specs such as `git+https://...` URLs to the `github:` shorthand w
 on disk but registered for no dependency type.
 one pin's marker steers every pin the file declares, rather than the one carrying it.
 only the first of the mutations a registration holds is checked.
-scripts have no lockfile.
 standard input holds no line separating the snippet from its replacement.
 the Markdown parser traces every block rule it tries, burying the run's own debug output.
 the changelog file of a package a monorepo builds from a directory is looked for in the root.

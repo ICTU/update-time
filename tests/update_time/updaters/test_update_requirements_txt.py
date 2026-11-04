@@ -21,7 +21,7 @@ from update_time.sources import pypi as pypi_module
 from update_time.updaters import update_requirements_txt
 from update_time.updaters.update_requirements_txt import update_requirements_txts
 
-from tests.helpers import FakeFiles, patch_environ
+from tests.helpers import FakeFiles, patch_environ, requested_urls
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import (
     LoggingTestCase,
@@ -113,7 +113,7 @@ class UpdateRequirementsTxtTest(LoggingTestCase):
 
     def queried_packages(self, mock_get: Mock) -> list[str]:
         """Return the packages whose PyPI index was fetched, in the order they were fetched."""
-        urls = [call.args[0] for call in mock_get.call_args_list if call.args[0].startswith(_PYPI_INDEX_URL)]
+        urls = [url for url in requested_urls(mock_get) if url.startswith(_PYPI_INDEX_URL)]
         return [url.removeprefix(_PYPI_INDEX_URL).removesuffix("/") for url in urls]
 
     def stale_pypi(self, *versions: str, upload_time: str = PYPI_OLD_UPLOAD, archived: bool = False) -> list[Mock]:

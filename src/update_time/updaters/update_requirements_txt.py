@@ -20,7 +20,7 @@ from update_time.manifests import requirements_txt as requirements_txt_manifest
 from update_time.markers.directive import WARNING_DIRECTIVES, Reason
 from update_time.markers.marker import Scope
 from update_time.package_managers.pip_tools import PipCompile
-from update_time.package_managers.uv import UvPipCompile
+from update_time.package_managers.uv.uv import UvPipCompile
 from update_time.references.delegated import warn_about_pinned_versions
 from update_time.references.file import update_file
 from update_time.references.match import reference_matches

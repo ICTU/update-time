@@ -8,9 +8,13 @@ from tests.helpers import mock_path
 from tests.update_time.helpers import GUAVA
 
 
-def script(*specs: str, requires_python: str = ">=3.11") -> str:
-    """Return a minimal .py file with a PEP 723 `# /// script` block declaring the given dependencies."""
-    dependencies = "".join(f'#     "{spec}",\n' for spec in specs)
+def script(*specs: str, requires_python: str = ">=3.11", marker: str = "") -> str:
+    """Return a minimal .py file with a PEP 723 `# /// script` block declaring the given dependencies.
+
+    `marker` goes in an `# update-time:` comment on each dependency's line, so it steers every dependency.
+    """
+    comment = f"  # update-time: {marker}" if marker else ""
+    dependencies = "".join(f'#     "{spec}",{comment}\n' for spec in specs)
     return (
         "# /// script\n"
         f'# requires-python = "{requires_python}"\n'

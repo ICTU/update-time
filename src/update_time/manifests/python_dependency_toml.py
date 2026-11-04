@@ -19,7 +19,7 @@ from update_time.primitives.location import Location
 from update_time.primitives.text import line_number
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, MutableSequence
+    from collections.abc import Callable, Iterable, Mapping, MutableSequence
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName, VersionString
@@ -114,12 +114,16 @@ class Declaration(SteeredReference):
 
     `uv_sourced` says the file names this dependency in its `[tool.uv] sources` table, so uv resolves it from a
     path, a workspace member, a git repository, or an index of its own. `direct_url` says the declaration points
-    at a URL or a git repository rather than at a release.
+    at a URL or a git repository rather than at a release. `build_requirement` says the declaration sits in the
+    `[build-system] requires` array, which uv does not lock. `environment_marker` is the condition after the `;`,
+    such as `python_version < "3.13"`, or the empty string where the declaration has none.
     `position` says which spec of the file this declaration is, counting from one.
     """
 
     uv_sourced: bool
     direct_url: bool
+    build_requirement: bool
+    environment_marker: str
     position: _DeclarationPosition
 
     @property
@@ -180,7 +184,10 @@ class PythonDependencyToml:
         too. A spec that does not parse is left out, without shifting the positions of the declarations after it.
         """
         contents = self.read()
-        sourced = _uv_source_names(parsed_config(self.toml(contents)) or {})
+        config = parsed_config(self.toml(contents)) or {}
+        sourced = _uv_source_names(config)
+        # The arrays uv resolves come before the build requirements, so the specs in them take the first positions.
+        uv_resolved = sum(isinstance(spec, str) for array in uv_dependency_arrays(config) for spec in array)
         specs: dict[_DeclarationPosition, str] = {}
 
         def place(position: _DeclarationPosition, spec: str) -> str:
@@ -205,6 +212,8 @@ class PythonDependencyToml:
                 locations[position],
                 uv_sourced=normalized_python_name(requirement.name) in sourced,
                 direct_url=bool(requirement.url),
+                build_requirement=position > uv_resolved,
+                environment_marker=str(requirement.marker or ""),
                 position=position,
                 marker=_marker(lines, position, locations[position]),
             )
@@ -212,21 +221,36 @@ class PythonDependencyToml:
         ]
 
     def rewrite_pinned_versions(self, versions: dict[Declaration, VersionString]) -> None:
-        """Rewrite each declaration to the version `versions` holds for it; write the file if changed.
+        """Rewrite each declaration to the version `versions` holds for it; write the file if changed."""
+        contents = self.read()
+        if (rewritten_contents := self.with_pinned_versions(contents, versions)) != contents:
+            self.write(rewritten_contents)
+
+    def with_pinned_versions(self, contents: str, versions: dict[Declaration, VersionString]) -> str:
+        """Return the contents with each declaration rewritten to the version `versions` holds for it."""
+        return self._with_rewritten_pins(contents, "==", versions)
+
+    def with_relaxed_pins(self, contents: str, declarations: Iterable[Declaration]) -> str:
+        """Return the contents with the exact pin of each declaration relaxed from `==version` to `>=version`."""
+        return self._with_rewritten_pins(
+            contents, ">=", {declaration: declaration.current_version for declaration in declarations}
+        )
+
+    def _with_rewritten_pins(self, contents: str, operator: str, versions: dict[Declaration, VersionString]) -> str:
+        """Return the contents with the exact pin of each declaration rewritten to the operator and its version.
 
         One declaration of a name is rewritten while another declaration of that name keeps its pinned version. Each
-        declaration is one that `declarations` read from this file.
+        declaration is one that `declarations` read from the contents.
         """
         by_position = {declaration.position: declaration for declaration in versions}
 
         def new_spec(position: _DeclarationPosition, spec: str) -> str | None:
             if (declaration := by_position.get(position)) is None:
                 return None
-            rewritten = _rewritten_spec(spec, declaration, versions[declaration])
+            rewritten = _rewritten_spec(spec, declaration, operator, versions[declaration])
             return rewritten if rewritten != spec else None
 
-        if (rewritten_contents := self._replaced_specs(self.read(), new_spec)) is not None:
-            self.write(rewritten_contents)
+        return self._replaced_specs(contents, new_spec) or contents
 
     def _replaced_specs(self, contents: str, replace: Callable[[_DeclarationPosition, str], str | None]) -> str | None:
         """Return the file's text with each declared spec `replace` gives a replacement for, or None when it gives none.
@@ -289,12 +313,12 @@ def _pinned_version(requirement: Requirement) -> VersionString:
     return ""
 
 
-def _rewritten_spec(spec: str, declaration: Declaration, new_version: VersionString) -> str:
-    """Return the spec with the version the declaration pins replaced by the new one.
+def _rewritten_spec(spec: str, declaration: Declaration, operator: str, new_version: VersionString) -> str:
+    """Return the spec with the exact pin the declaration holds replaced by the operator and the new version.
 
-    A declaration pinning no exact version has none to replace, so its spec comes back as it was. Only the version
-    is replaced, so whatever the declaration spells around it stays as it is.
+    A declaration pinning no exact version has none to replace, so its spec comes back as it was. Only the operator
+    and the version are replaced, so whatever the declaration spells around them stays as it is.
     """
     if not (current := declaration.current_version):
         return spec
-    return re.sub(rf"(==\s*){re.escape(current)}", lambda match: match[1] + new_version, spec, count=1)
+    return re.sub(rf"==(\s*){re.escape(current)}", lambda match: operator + match[1] + new_version, spec, count=1)

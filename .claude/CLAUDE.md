@@ -60,7 +60,7 @@ Prepare a cycle by adding candidate tests to the list, then let me choose where 
 
 Some work changes no behaviour, so no test drives it. Prepare that as a numbered list of refactorings instead, each of which ends green, and let me choose where to start.
 
-A cleanup that follows from a tool's findings (SonarCloud, a linter) or from a review is a task like any other. Group the findings, say which of them change behaviour, and let me choose which ones a test has to drive. The list of findings is the increment, however many cycles it takes, so propose the increment review once the list is done, not after each finding.
+A cleanup that follows from a tool's findings (SonarCloud, a linter) or from a review is a task like any other. Group the findings and say which of them change behaviour. The list of findings is the increment, however many cycles it takes, so propose the increment review once the list is done, not after each finding.
 
 Before starting an increment, warn me if the branch needs rebasing or is dirty. Don't mention an up-to-date branch.
 
@@ -125,7 +125,7 @@ A few rules that keep the cycle honest:
    - So is the reason you give for an option you put to me, because I choose on that reason.
    - Measure a challenged claim. Don't argue it.
 9. Add a missing candidate test to the list as soon as you find one, at whatever step you are in.
-10. A refactor that changes behaviour is not a refactor, however unreachable the changed case looks. A change that only *adds* behaviour counts as well: a decorator that fills in methods the class was missing changes what calling them does. Say so before you make the change, not after, and let me decide whether a test has to drive it first.
+10. A refactor that changes behaviour is not a refactor, however unreachable the changed case looks. A change that only *adds* behaviour counts as well: a decorator that fills in methods the class was missing changes what calling them does. Say so before you make the change, not after.
 11. A problem you hit and fixed yourself needs no narration, at whatever step it happens: a probe that misfired, a rewrite that overreached, a formatter that undid an edit. That holds for the cycle's report and for the session's edits as much as for the work itself. Note it, and bring it to the session's evaluation if it still matters.
 12. An answer of mine may admit more than one reading. Name the readings you see and ask, rather than implementing the one you would pick: a message costs less than the cycle that undoes a guess. When I push back on one passage twice, we are working from different assumptions. Name yours and ask for mine, rather than rewriting the passage again. A question I leave unanswered next to your recommendation is answered by the recommendation.
 

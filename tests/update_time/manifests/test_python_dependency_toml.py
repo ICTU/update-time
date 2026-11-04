@@ -7,7 +7,6 @@ from update_time.manifests import python_dependency_toml
 from update_time.manifests.inline_script import InlineScript
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.markers.marker import Marker, Scope
-from update_time.primitives.location import Location
 
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
@@ -46,8 +45,9 @@ class RewritePinnedVersionsTest(unittest.TestCase):
     @kills(
         Mutation(
             python_dependency_toml._rewritten_spec,
-            'return re.sub(rf"(==\\s*){re.escape(current)}", lambda match: match[1] + new_version, spec, count=1)',
-            'return f"{declaration.dependency}=={new_version}"',
+            'return re.sub(rf"==(\\s*){re.escape(current)}", '
+            "lambda match: operator + match[1] + new_version, spec, count=1)",
+            'return f"{declaration.dependency}{operator}{new_version}"',
             "a rewrite replaces the whole declaration, dropping the extra, environment marker, and spaces around "
             "the pin",
         )
@@ -150,7 +150,7 @@ class DeclarationsTest(unittest.TestCase):
                 declaration("sphinx", "", path, 4, 4),
                 declaration("ruff", "", path, 6, 5),
                 declaration("mypy", "", path, 8, 6),
-                declaration("uv-build", "", path, 10, 7),
+                declaration("uv-build", "", path, 10, 7, build_requirement=True),
             ],
         )
 
@@ -213,12 +213,8 @@ class DeclarationsTest(unittest.TestCase):
         self.assertEqual(
             self.references(path),
             [
-                python_dependency_toml.Declaration(
-                    "local", "", Location(path, 2), uv_sourced=True, direct_url=False, position=1
-                ),
-                python_dependency_toml.Declaration(
-                    "pkg", "", Location(path, 2), uv_sourced=False, direct_url=True, position=2
-                ),
+                declaration("local", "", path, 2, 1, uv_sourced=True),
+                declaration("pkg", "", path, 2, 2, direct_url=True),
                 declaration("other", "", path, 2, 3),
             ],
         )
@@ -227,10 +223,7 @@ class DeclarationsTest(unittest.TestCase):
         """Test that a pin uv resolves from a source of its own is read, since uv can resolve an update for it."""
         contents = '[project]\ndependencies = ["local==1.0"]\n[tool.uv.sources]\nlocal = {path = "../local"}\n'
         path = mock_path(contents)
-        expected = python_dependency_toml.Declaration(
-            "local", "1.0", Location(path, 2), uv_sourced=True, direct_url=False, position=1
-        )
-        self.assertEqual(self.references(path), [expected])
+        self.assertEqual(self.references(path), [declaration("local", "1.0", path, 2, 1, uv_sourced=True)])
 
     @kills(
         Mutation(
@@ -261,11 +254,7 @@ class DeclarationsTest(unittest.TestCase):
                     f'[tool.uv.sources]\n{sourced} = {{path = "../local"}}\n'
                 )
                 path = mock_path(contents)
-                location = Location(path, 2)
-                expected = python_dependency_toml.Declaration(
-                    declared, "1.0", location, uv_sourced=True, direct_url=False, position=1
-                )
-                self.assertEqual(self.references(path), [expected])
+                self.assertEqual(self.references(path), [declaration(declared, "1.0", path, 2, 1, uv_sourced=True)])
 
     def test_a_declaration_that_does_not_parse(self):
         """Test that a spec that does not parse is left out, and the declarations after it keep their position."""
@@ -307,15 +296,6 @@ class DeclarationsTest(unittest.TestCase):
         contents = '[project]\nname = "a\u2028b"\ndependencies = ["pkg==1.0"]  # update-time: ignore[update]\n'
         self.assertEqual(self.markers(contents), [Marker(ignored_scopes=Scope.UPDATE)])
 
-    @kills(
-        Mutation(
-            python_dependency_toml.PythonDependencyToml.declarations,
-            "self.toml(placed)",
-            "placed",
-            "a marker's lines come from the file, so every line of a `# /// script` block reads as a comment and "
-            "an inline marker there steers the declaration below it too",
-        )
-    )
     def test_reads_a_marker_in_an_inline_script_metadata_block(self):
         """Test that a marker written with a `#` of its own inside the block is read, in both its placements."""
         contents = (
@@ -389,7 +369,7 @@ class PinnedDeclarationsTest(unittest.TestCase):
             self.pins(path),
             [
                 declaration("package", "1.0", path, 3, 1),
-                declaration("marked", "2.0", path, 4, 2),
+                declaration("marked", "2.0", path, 4, 2, environment_marker='python_version < "3.13"'),
                 declaration("spaced", "3.0", path, 5, 3),
             ],
         )

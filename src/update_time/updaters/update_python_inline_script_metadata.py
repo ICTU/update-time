@@ -4,7 +4,7 @@ from update_time.domain.file_type import INLINE_SCRIPT_METADATA
 from update_time.io.filesystem import glob_for
 from update_time.io.log import get_logger
 from update_time.manifests.inline_script import InlineScript
-from update_time.package_managers import uv
+from update_time.package_managers.uv import script as uv_script
 from update_time.updaters.uv_pins import warn_about_pins
 
 _LOG = get_logger("python inline script metadata")
@@ -16,7 +16,7 @@ def update_python_inline_script_metadatas() -> None:
         script for path in glob_for(INLINE_SCRIPT_METADATA) if (script := InlineScript(path)).has_metadata_block()
     ]
     for script in scripts:
-        uv.update_python_inline_script_metadata(script, _LOG)
+        uv_script.update_python_inline_script_metadata(script, _LOG)
     warn_about_pins(scripts, _LOG)
 
 

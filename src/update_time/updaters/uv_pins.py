@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.package_managers import uv
+from update_time.package_managers.uv import uv
 from update_time.references.delegated import warn_about_delegated_checks, warn_about_redundant_directives
 from update_time.sources.osv import Ecosystem
 from update_time.sources.pypi import yank_state

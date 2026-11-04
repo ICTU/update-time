@@ -14,7 +14,7 @@ from update_time.primitives.location import Location
 from update_time.updaters import update_dockerfile_base_image
 from update_time.updaters.update_dockerfile_base_image import update_dockerfiles
 
-from tests.helpers import mock_path
+from tests.helpers import mock_path, requested_urls
 from tests.mutation import Mutation, kills
 from tests.update_time import registry
 from tests.update_time.fixtures import DIGEST, DIGEST1, DIGEST2
@@ -83,7 +83,7 @@ class UpdateDockerfileTest(registry.ImageUpdaterTestMixin):
                 self.run_updater(mock_dockerfile)
                 expected = f"{indentation}FROM python:3.14.7@{DIGEST} AS deps\nFROM deps\n"
                 mock_dockerfile.write_text.assert_called_once_with(expected)
-                requested = "".join(call.args[0] for call in self.requests.call_args_list)
+                requested = "".join(requested_urls(self.requests))
                 self.assertNotIn("deps", requested)
                 location = Location(mock_dockerfile, 2)
                 self.assert_image_not_looked_up_logged("deps", "", location, ImageNotLookedUp.BUILD_STAGE)

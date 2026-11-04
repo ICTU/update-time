@@ -38,3 +38,4 @@
 - 2026-11-02 `tests.update_time.updaters.test_update_pyproject_toml.UpdatePyprojectTomlsTest.test_a_dependency_the_lock_records_no_version_for_is_passed_over` — a newly locked dependency without a version is reported, so the run asks PyPI about a version of None
 - 2026-11-02 `tests.update_time.updaters.test_update_pyproject_toml.UpdatePyprojectTomlsTest.test_a_dependency_uv_sources_from_elsewhere_than_pypi_is_not_reported` — a workspace member's locked version is reported, and its changelog asked of PyPI
 - 2026-11-03 `tests.update_time.updaters.test_update_pyproject_toml.UpdatePyprojectTomlsTest.test_a_version_uv_tree_moves_back_is_not_reported_once_uv_lock_fails` — a failed uv lock is followed by reports of versions the lock did not move
+- 2026-11-04 `tests.update_time.updaters.test_update_pyproject_toml.UpdatePyprojectTomlsTest.test_a_failed_uv_lock_writes_the_files_the_run_rewrote_back` — a failed uv lock leaves a uv.lock behind where the project had none

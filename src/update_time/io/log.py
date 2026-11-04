@@ -998,6 +998,18 @@ class Logger:
         """Log that a file the run rewrote cannot be given back its text."""
         return self._file_fields(path, error=str(error))
 
+    @_info(
+        "Leaving %(dependency)s in %(location)s as it is: Update-time does not update a pin with an environment marker"
+    )
+    def pin_with_environment_marker_left_as_is(self, reference: Reference) -> dict[str, object]:
+        """Log that Update-time leaves an exact pin with an environment marker, such as `; python_version < '3.13'`."""
+        return self._reference_fields(reference)
+
+    @_error("Could not write %(location)s (%(error)s), so the dependencies of its uv workspace are not updated")
+    def file_not_written(self, path: Path, error: OSError) -> dict[str, object]:
+        """Log that a pyproject.toml cannot be written, so its workspace keeps the dependencies it had."""
+        return self._file_fields(path, error=str(error))
+
     @_error("Could not update the dependencies in %(location)s: uv is not on the path")
     def uv_not_on_path(self, path: Path) -> dict[str, object]:
         """Log that uv, which updates a file's dependencies, is not on the path."""

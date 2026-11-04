@@ -14,8 +14,9 @@ from update_time.io.log import Logger, LogMessage
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
-from update_time.package_managers import maven as maven_module
-from update_time.package_managers import maven_range as maven_range_module
+from update_time.package_managers.maven import maven as maven_module
+from update_time.package_managers.maven import range as maven_range_module
+from update_time.package_managers.maven import reactor as reactor_module
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.sources import maven_central as maven_central_module
@@ -400,7 +401,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             self.rule_sets.append(rule_set)
             yield _RULES
 
-        self.enterContext(patch.object(maven_module, "_effective_pom_file", effective_pom_file))
+        self.enterContext(patch.object(reactor_module, "_effective_pom_file", effective_pom_file))
         self.enterContext(patch.object(maven_module, "_rule_set_file", rule_set_file))
         return poms
 
@@ -1150,7 +1151,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule._run_goals_writing_effective_pom,
+            reactor_module._ReactorModule._run_goals_writing_effective_pom,
             "_LOG.effective_pom_unreadable(self.pom_xml)",
             "pass",
             "Update-time says nothing when it cannot read the effective pom, so the unchecked versions go unnoticed",
@@ -1164,7 +1165,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule._run_goals_writing_effective_pom,
+            reactor_module._ReactorModule._run_goals_writing_effective_pom,
             "_LOG.effective_pom_without_input_locations(self.pom_xml)",
             "pass",
             "an effective pom without input locations resolves nothing, and Update-time says nothing about it",
@@ -1195,7 +1196,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule._run_goals_writing_effective_pom,
+            reactor_module._ReactorModule._run_goals_writing_effective_pom,
             "effective_pom = xml.read(output)",
             "effective_pom = xml.read(output) if result.succeeded else None",
             "a failed run discards the effective pom it wrote, so the versions the parent declares go unchecked",
@@ -1218,13 +1219,13 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule._run_goals_writing_effective_pom,
+            reactor_module._ReactorModule._run_goals_writing_effective_pom,
             "effective_pom = _effective_pom_written_elsewhere(result.stdout)",
             "effective_pom = None",
             "the effective pom of a project configuring the help plugin's output goes unread",
         ),
         Mutation(
-            maven_module._ReactorModule._run_goals_writing_effective_pom,
+            reactor_module._ReactorModule._run_goals_writing_effective_pom,
             "_effective_pom_written_elsewhere(result.stdout)",
             "_effective_pom_written_elsewhere(result.stdout) if result.succeeded else None",
             "a failed run discards the effective pom it wrote elsewhere, so what the parent declares goes unchecked",
@@ -1583,7 +1584,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             "Maven Central is asked for the changes and the date of coordinates holding an unresolved property",
         ),
         Mutation(
-            maven_module._ReactorModule.update,
+            reactor_module._ReactorModule.update,
             "if result.succeeded:",
             "if effective_pom is not None:",
             "Update-time skips the updates wherever it cannot read the effective pom, although the run succeeded",
@@ -1676,15 +1677,15 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule.update,
-            "self._run_goals(options, _VERSIONS_GOALS)",
-            "self._run_goals(_VERSIONS_OPTIONS, _VERSIONS_GOALS)",
+            reactor_module._ReactorModule.update,
+            "self._run_goals(options, VERSIONS_GOALS)",
+            "self._run_goals(options[:-1], VERSIONS_GOALS)",
             "the rule set stays out of the versions run, so a group the parent declares escapes the cooldown",
         ),
         Mutation(
-            maven_module._ReactorModule.update,
-            "self._run_goals(options, _VERSIONS_GOALS)",
-            "self._run_goals_writing_effective_pom(options, _VERSIONS_GOALS)",
+            reactor_module._ReactorModule.update,
+            "self._run_goals(options, VERSIONS_GOALS)",
+            "self._run_goals_writing_effective_pom(options, VERSIONS_GOALS)",
             "the updates write the effective pom again, costing a goal per pom that the first run already paid for",
         ),
     )
@@ -1724,7 +1725,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule.update,
+            reactor_module._ReactorModule.update,
             "if result.succeeded:",
             "if True:",
             "the updates run on a model Maven could not build, so its failure is reported a second time",
@@ -2043,7 +2044,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._ReactorModule._run_goals,
+            reactor_module._ReactorModule._run_goals,
             " and result.stdout:",
             ":",
             "a missing Maven is reported twice: once by `run`, and again as a failed run that wrote nothing",
@@ -2060,19 +2061,19 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._maven,
+            reactor_module._maven,
             'f"./{_WRAPPER}" if (directory / _WRAPPER).exists() else "mvn"',
             '"mvn"',
             "a project's own Maven wrapper is passed over, so another Maven than it builds with updates it",
         ),
         Mutation(
-            maven_module._maven,
+            reactor_module._maven,
             "(directory / _WRAPPER).exists()",
             "Path(_WRAPPER).exists()",
             "the wrapper is looked for in the directory the scan runs in, so a reactor's own wrapper goes unused",
         ),
         Mutation(
-            maven_module._ReactorModule._run_goals,
+            reactor_module._ReactorModule._run_goals,
             "_maven(self.root)",
             "_maven(self.pom_xml.parent)",
             "the wrapper is looked for beside the module, so a module's run from the reactor root passes it over",
@@ -2127,7 +2128,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module,
+            reactor_module,
             r"\d+ projects?",
             "1 project",
             "a reactor holding more than one pom Maven cannot read is taken for a readable one",
@@ -2166,13 +2167,13 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module.Reactor.update,
+            reactor_module.Reactor.update,
             "else None",
             "else self._changed_pom",
             "the error blames an update that a later run read the reactor after",
         ),
         Mutation(
-            maven_module.Reactor._report_unreadable,
+            reactor_module.Reactor._report_unreadable,
             "and self._first_run",
             "and True",
             "the error says the scan found the reactor unreadable, although an earlier run read it",
@@ -2221,7 +2222,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module,
+            reactor_module,
             r'"The build could not read \d+ projects?"',
             r'"\[ERROR\]"',
             "any failed run that reports an error stops Maven for the rest of its reactor",

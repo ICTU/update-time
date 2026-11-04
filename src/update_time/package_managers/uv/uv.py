@@ -1,45 +1,33 @@
-"""Update uv-managed Python dependencies (work-around for the missing `uv update` command), and uv's marker policy.
+"""uv's cooldown setting, the layout of a uv workspace, and uv's marker policy.
 
 uv also recompiles a requirements file it compiled, as `UvPipCompile`.
-
-Covers both pyproject.toml projects and PEP 723 inline script metadata, which declare their dependencies the same
-way and are both resolved through uv. See https://github.com/astral-sh/uv/issues/6794.
 """
 
 import os
 import re
-from dataclasses import dataclass, replace
-from functools import partial
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, ClassVar, Self, override
+from typing import TYPE_CHECKING, ClassVar, override
 
 from update_time.domain.archival import archival_reporting
-from update_time.domain.cooldown import COOLDOWN, cooldown_cutoff
-from update_time.domain.dependency import DependencyVersion, PinnedDependency, normalized_python_name
+from update_time.domain.cooldown import COOLDOWN
+from update_time.domain.dependency import DependencyVersion, normalized_python_name
 from update_time.formats import toml
 from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
-from update_time.lock_files.uv_lock import UvLock
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.manifests.python_dependency_toml import is_well_formed
 from update_time.markers.directive import Reason
 from update_time.markers.reference import SteeredResolvedReference
 from update_time.package_managers.policy import ManagerPolicy, report_markers
-from update_time.package_managers.requirements_compiler import (
-    RequirementsCompiler,
-    by_package,
-    log_moved_versions,
-    log_new_version,
-)
+from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.primitives.command import Command
 from update_time.sources.pypi import project
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from update_time.domain.dependency import DependencyName, VersionString
+    from update_time.domain.dependency import DependencyName
     from update_time.io.log import Logger
-    from update_time.manifests.inline_script import InlineScript
     from update_time.manifests.python_dependency_toml import (
         Declaration,
         PythonDependencyToml,
@@ -56,7 +44,7 @@ _NON_UV_LOCKFILES = {"poetry.lock": "poetry", "pdm.lock": "pdm"}
 # there by the lower-cased `update-time` word, so the prose can change.
 _MANAGED_BY_COMMENT = "managed by Update-time — remove this comment to set exclude-newer yourself"
 _MANAGED_BY_COMMENT_WORD = "update-time"
-_EXCLUDE_NEWER_OPTION = "--exclude-newer"
+EXCLUDE_NEWER_OPTION = "--exclude-newer"
 # What `--show-settings` prints about `exclude-newer`: `Some(…)` where the project's config, the user's config, or
 # `UV_EXCLUDE_NEWER` sets one, and `None` where none of them does.
 _SETTINGS_EXCLUDE_NEWER = re.compile(r"exclude_newer: ExcludeNewer \{\s*global: (?P<value>None|Some)\b")
@@ -145,7 +133,7 @@ class UvPipCompile(RequirementsCompiler):
 
     tool: ClassVar[str] = "uv pip compile"
     setting: ClassVar[str] = "uv exclude-newer"
-    cutoff_option: ClassVar[str] = _EXCLUDE_NEWER_OPTION
+    cutoff_option: ClassVar[str] = EXCLUDE_NEWER_OPTION
     package_cooldown_option: ClassVar[str | None] = "--exclude-newer-package"
 
     @override
@@ -217,105 +205,9 @@ def _workspace_includes(root_dir: Path, workspace: dict, project_dir: Path) -> b
     return any(relative.full_match(pattern) for pattern in workspace.get("members", []))
 
 
-# uv prefixes each dependency in a package tree with box-drawing glyphs (`├── `, `└── `, `│   `), but a script's
-# top-level dependencies get none (for a `uv tree --script` each is its own tree root). Stripping any such prefix
-# leaves the package name as the first field, so one parser handles both `uv tree` invocations.
-_TREE_PREFIX = re.compile(r"^[\s│├└─|]*")
-
-
-def _parse_line_with_update(line: str) -> tuple[DependencyName, VersionString]:
-    """Parse the package name and latest version from a `uv tree --outdated` line, e.g. '├── package (latest: v1.1)'."""
-    fields = _TREE_PREFIX.sub("", line).split()
-    return fields[0], fields[-1].lstrip("v").rstrip(")")
-
-
 def report_file_markers(file: PythonDependencyToml, log: Logger) -> list[Declaration]:
     """Report each declaration's marker, and return the declarations, each with the directives Update-time acts on."""
     return report_markers(file.declarations(), log, POLICY)
-
-
-def _outdated(uv_tree: Command, file: PythonDependencyToml, log: Logger) -> str | None:
-    """Return what `uv tree --outdated` reports for the file, or None after logging why uv reported nothing."""
-    if not is_installed(uv_tree.executable):
-        log.uv_not_on_path(file.path)
-        return None
-    outdated = run(uv_tree)
-    if not outdated.ok:
-        log.uv_dependencies_not_updated(file.path, uv_tree.name)
-        return None
-    return outdated.stdout
-
-
-def _update_dependencies(
-    uv_tree: Command, file: PythonDependencyToml, log: Logger, *, reports_unpinned: bool = True
-) -> bool:
-    """Run `uv tree --outdated`, log every new version no marker holds back, and rewrite the file's exact `==` pins.
-
-    With `reports_unpinned` off, Update-time logs a new version only for a declaration that pins an exact version.
-
-    Shared by the pyproject.toml and inline-script-metadata updaters: both read outdated dependencies from uv and
-    rewrite the pins their dependency arrays declare, so only the uv command, the file, the logger, and
-    `reports_unpinned` differ. Returns whether `uv tree` produced usable output; when it didn't (e.g. an unreachable
-    registry) nothing can be determined to update, so the file's dependencies are reported as not updated and the
-    caller can skip any follow-up work that would fail the same way.
-    """
-    log.path(file.path)
-    declarations = by_package(report_file_markers(file, log))
-    if (outdated := _outdated(uv_tree, file, log)) is None:
-        return False
-    lines_with_updates = [line for line in outdated.splitlines() if " (latest: " in line]
-    latest_versions: dict[Declaration, VersionString] = {}
-    for line in lines_with_updates:
-        package, version = _parse_line_with_update(line)
-        declared = declarations.get(normalized_python_name(package), [])
-        updatable = [declaration for declaration in declared if declaration.updatable]
-        # Only an exact pin names a version in the file to rewrite; a looser declaration is left as it stands.
-        latest_versions.update({reference: version for reference in updatable if reference.pins_a_version})
-        # A package with no declaration left to report at, such as one the file declares nowhere, is not reported.
-        reported = [reference for reference in updatable if reference.pins_a_version or reports_unpinned]
-        if locations := [reference.location for reference in reported]:
-            log_new_version(log, package, version, locations)
-    file.rewrite_pinned_versions(latest_versions)
-    return True
-
-
-def update_pyproject_toml(pyproject_toml: PyprojectToml, log: Logger) -> bool:
-    """Update the pyproject.toml with the latest dependency versions; return whether `uv tree` succeeded."""
-    # The cooldown lives in `[tool.uv] exclude-newer` (see `configure_cooldown`), which uv reads for `tree` as well.
-    # `--frozen` is omitted because `uv tree --outdated` only honors that cooldown when it is free to re-resolve.
-    uv_tree = Command(
-        "uv",
-        "tree",
-        "--directory",
-        str(pyproject_toml.path.parent),
-        "--quiet",
-        "--depth=1",
-        "--all-groups",
-        "--outdated",
-    )
-    return _update_dependencies(uv_tree, pyproject_toml, log, reports_unpinned=False)
-
-
-def update_python_inline_script_metadata(script: InlineScript, log: Logger) -> bool:
-    """Update a .py file's PEP 723 inline `# /// script` dependencies to their latest versions; return uv's success.
-
-    A script has no lockfile, so — unlike the pyproject.toml path, which persists the cooldown into `[tool.uv]` —
-    the cooldown is passed to uv on the command line as an `--exclude-newer` cutoff. `--depth=0` limits the report
-    to the script's own dependencies: for a script each is its own tree root, so a deeper depth would pull in
-    transitive packages that aren't pinned in the block.
-    """
-    uv_tree = Command(
-        "uv",
-        "tree",
-        "--script",
-        str(script.path),
-        "--quiet",
-        "--depth=0",
-        "--outdated",
-        _EXCLUDE_NEWER_OPTION,
-        cooldown_cutoff(COOLDOWN.get()),
-    )
-    return _update_dependencies(uv_tree, script, log)
 
 
 def _unchecked_scopes(declaration: Declaration) -> dict[Scope, Reason]:
@@ -351,81 +243,7 @@ def by_workspace(pyproject_tomls: Iterable[PyprojectToml]) -> dict[Path, list[Py
     return workspaces
 
 
-@dataclass(frozen=True)
-class Workspace:
-    """A uv workspace, with what its pyproject.tomls and its uv.lock held before the run rewrote them."""
-
-    root: Path
-    uv_lock: UvLock
-    pyproject_toml_texts: dict[PyprojectToml, str]
-    uv_lock_text: str | None
-    locked_before: dict[PyprojectToml, list[PinnedDependency] | None]
-
-    @classmethod
-    def read(cls, root: Path, pyproject_tomls: Iterable[PyprojectToml]) -> Self:
-        """Read the texts of the pyproject.tomls and of the uv.lock, and the versions the uv.lock records."""
-        members = list(pyproject_tomls)
-        uv_lock = UvLock(root.parent / "uv.lock")
-        workspace = cls(root, uv_lock, {member: member.read() for member in members}, uv_lock.read(), {})
-        return replace(workspace, locked_before={member: workspace._locked_versions(member) for member in members})
-
-    def _locked_versions(self, pyproject_toml: PyprojectToml) -> list[PinnedDependency] | None:
-        """Return the lowest version the uv.lock records for each of the project's dependencies.
-
-        Return None where there is no uv.lock to read.
-        """
-        return self.uv_lock.locked_versions(pyproject_toml.path.parent.relative_to(self.root.parent).as_posix())
-
-    def lock(self, pyproject_tomls: Iterable[PyprojectToml]) -> bool:
-        """Update the uv.lock, and return whether uv locked.
-
-        A failure is logged at error for each of the pyproject.tomls.
-        """
-        _LOG.path(self.uv_lock.path)
-        uv_lock = Command("uv", "lock", "--directory", str(self.root.parent), "--upgrade", "--quiet", "--no-progress")
-        if run(uv_lock).succeeded:
-            return True
-        for pyproject_toml in pyproject_tomls:
-            _LOG.uv_dependencies_not_updated(pyproject_toml.path, uv_lock.name)
-        return False
-
-    def restore(self) -> None:
-        """Give the uv.lock and the pyproject.tomls back the text they held, and log each one that cannot get it."""
-        restores = [
-            (self.uv_lock.path, partial(self.uv_lock.restore, self.uv_lock_text)),
-            *((file.path, partial(file.restore, text)) for file, text in self.pyproject_toml_texts.items()),
-        ]
-        for path, restore in restores:
-            try:
-                restore()
-            except OSError as error:
-                _LOG.file_not_restored(path, error)
-
-    def report_moved_versions(self, pyproject_tomls: Iterable[PyprojectToml]) -> None:
-        """Log where the uv.lock moved each dependency of the pyproject.tomls without an exact pin.
-
-        Without a uv.lock before the run, no version is logged.
-        """
-        for pyproject_toml in pyproject_tomls:
-            if (locked_before := self.locked_before[pyproject_toml]) is None:
-                continue
-            locked_after = self._locked_versions(pyproject_toml) or []
-            inherited = _workspace_sources(pyproject_toml.path)
-            declarations = pypi_served(pyproject_toml.declarations())
-            reported = [
-                declaration
-                for declaration in declarations
-                if normalized_python_name(declaration.dependency) not in inherited
-            ]
-            log_moved_versions(_LOG, "uv", locked_before, locked_after, reported)
-
-
-def read_workspaces(pyproject_tomls: Iterable[PyprojectToml]) -> dict[Path, Workspace]:
-    """Return the uv workspace of each of the projects, by the pyproject.toml of its root."""
-    return {root: Workspace.read(root, members) for root, members in by_workspace(pyproject_tomls).items()}
-
-
-def _workspace_sources(pyproject_toml: Path) -> set[DependencyName]:
+def workspace_sources(pyproject_toml: Path) -> set[DependencyName]:
     """Return the names of the dependencies that the `[tool.uv] sources` of the workspace root resolve.
 
     A workspace member inherits these sources from the root.

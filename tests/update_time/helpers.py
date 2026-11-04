@@ -46,9 +46,29 @@ if TYPE_CHECKING:
     from update_time.markers.directive import RedundancyReason
 
 
-def declaration(dependency: str, version: str, path: Mock, line: int, position: int) -> Declaration:
-    """Return the declaration a file makes at the line, of a dependency PyPI serves a release for."""
-    return Declaration(dependency, version, Location(path, line), uv_sourced=False, direct_url=False, position=position)
+def declaration(  # noqa: PLR0913 — a declaration is that many facts
+    dependency: str,
+    version: str,
+    path: Mock,
+    line: int,
+    position: int,
+    *,
+    uv_sourced: bool = False,
+    direct_url: bool = False,
+    build_requirement: bool = False,
+    environment_marker: str = "",
+) -> Declaration:
+    """Return the declaration a file makes at the line, by default of a dependency PyPI serves a release for."""
+    return Declaration(
+        dependency,
+        version,
+        Location(path, line),
+        uv_sourced=uv_sourced,
+        direct_url=direct_url,
+        build_requirement=build_requirement,
+        environment_marker=environment_marker,
+        position=position,
+    )
 
 
 @cache

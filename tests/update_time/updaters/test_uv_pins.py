@@ -9,7 +9,7 @@ from update_time.io.log import Logger, get_logger
 from update_time.manifests.inline_script import InlineScript
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.markers.directive import Reason
-from update_time.package_managers import uv as uv_module
+from update_time.package_managers.uv import uv as uv_module
 from update_time.primitives.location import Location
 from update_time.references import delegated as delegated_module
 from update_time.updaters.uv_pins import warn_about_pins

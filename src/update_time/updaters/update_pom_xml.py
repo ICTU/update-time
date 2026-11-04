@@ -9,7 +9,8 @@ from update_time.io.log import get_logger
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Scope
-from update_time.package_managers import maven
+from update_time.package_managers.maven import maven
+from update_time.package_managers.maven.reactor import reactors
 from update_time.references.delegated import project_resolver, warn_about_projects
 from update_time.references.resolve import warn_if_the_opt_in_is_redundant
 from update_time.references.vulnerability import warn_about_vulnerable_dependencies
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
+    from update_time.package_managers.maven.reactor import Reactor
+
 
 _LOG = get_logger("pom.xml")
 
@@ -28,13 +31,13 @@ def update_pom_xmls() -> None:
     """Update each pom.xml the scan finds, running Maven over it as a module of its reactor."""
     pom_xmls = list(glob_for(POM_XML))
     scanned_poms = {name: pom_xml for pom_xml in pom_xmls if (name := pom_xml_manifest.pom_name(pom_xml))}
-    reactors = maven.reactors(pom_xmls)
+    reactor_by_pom = reactors(pom_xmls)
     for pom_xml in pom_xmls:
         _LOG.path(pom_xml)
-        _update_pom_xml(pom_xml, scanned_poms, reactors[pom_xml])
+        _update_pom_xml(pom_xml, scanned_poms, reactor_by_pom[pom_xml])
 
 
-def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path], reactor: maven.Reactor) -> None:
+def _update_pom_xml(pom_xml: Path, scanned_poms: Mapping[str, Path], reactor: Reactor) -> None:
     """Update the dependencies and plugins the pom declares, and report the ones Maven moved.
 
     Which those are is read off the pom before and after the run, rather than from Maven's own report, which names

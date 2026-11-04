@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from update_time.io.log import Logger
 from update_time.manifests import python_dependency_toml
 from update_time.markers.directive import Reason
-from update_time.package_managers import uv
+from update_time.package_managers.uv import uv
 from update_time.primitives.location import Location
 from update_time.updaters import update_python_version_file
 from update_time.updaters.update_python_version_file import update_python_version_files

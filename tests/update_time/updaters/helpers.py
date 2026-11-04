@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from unittest.mock import _patch
 
     from update_time.domain.vulnerability import Vulnerability
+    from update_time.primitives.command import Command
     from update_time.sources.pypi import ReleaseMetadata
 
 # Reusable class decorator that mocks the Docker Hub auth token request made by sources.docker_hub.api_headers
@@ -39,6 +40,11 @@ _NO_PROJECT = Project()
 # The upload times of the PyPI release metadata the uv updater tests answer with, with a changelog URL and without one.
 UPLOAD_TIME_WITH_CHANGELOG = "2026-05-30T12:07:03.123456Z"
 UPLOAD_TIME_WITHOUT_CHANGELOG = "2026-05-30T12:08:53.123321Z"
+
+
+def executed_commands(run: Mock) -> list[Command]:
+    """Return the command of each call the mock of `subprocess.run` received, in the order of the calls."""
+    return [call.args[0] for call in run.call_args_list]
 
 
 def pypi_metadata_without_changelog() -> ReleaseMetadata:

@@ -4,24 +4,27 @@ import subprocess  # nosec
 from typing import TYPE_CHECKING
 from unittest.mock import ANY, Mock, patch
 
+from update_time.io.log import Logger
 from update_time.manifests import python_dependency_toml as python_dependency_toml_manifest
 from update_time.manifests.inline_script import InlineScript
+from update_time.markers.marker import Marker, Scope
+from update_time.package_managers.uv import script as uv_script
 from update_time.primitives.location import Location
 from update_time.updaters.update_python_inline_script_metadata import update_python_inline_script_metadatas
 
 from tests.helpers import mock_path, mock_response, patch_pathlib_path
 from tests.mutation import Mutation, kills
 from tests.update_time.fixtures import CHANGELOG
-from tests.update_time.helpers import SCAN_ROOT, LoggingTestCase, published_version
+from tests.update_time.helpers import SCAN_ROOT, LoggingTestCase, message_of, published_version
 from tests.update_time.manifests.helpers import script
 from tests.update_time.updaters.helpers import (
     UPLOAD_TIME_WITH_CHANGELOG,
     UPLOAD_TIME_WITHOUT_CHANGELOG,
+    executed_commands,
     pypi_metadata_without_changelog,
 )
 
 if TYPE_CHECKING:
-    from update_time.primitives.command import Command
     from update_time.sources.pypi import ReleaseMetadata
 
 
@@ -66,10 +69,6 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         update = f" (latest: {latest})" if latest else ""
         return Mock(stdout=f"{package} v1.0{update}\n")
 
-    def uv_commands(self, run: Mock) -> list[Command]:
-        """Return the argv of every command run() invoked."""
-        return [call.args[0] for call in run.call_args_list]
-
     def test_update(self, run: Mock, get: Mock, glob: Mock):
         """Test bumping an exact pin in an inline `# /// script` block."""
         run.return_value = self.mock_update_on_stdout("package", "v1.1")
@@ -95,7 +94,7 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
     def test_update_of_a_dependency_without_an_exact_pin(self, run: Mock, get: Mock, glob: Mock):
         """Test that a dependency the block doesn't `==`-pin has its new version logged at its line, marked or not."""
         unmarked = script("package>=1.0")
-        marked = unmarked.replace('"package>=1.0",\n', '"package>=1.0",  # update-time: ignore[update]\n')
+        marked = script("package>=1.0", marker="ignore[update]")
         for case, contents in {"without a marker": unmarked, "with an ignore[update]": marked}.items():
             with self.subTest(case):
                 run.return_value = self.mock_update_on_stdout("package", "v1.1")
@@ -108,6 +107,54 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
                     "package", published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG), Location(mock_script, 4)
                 )
                 self.assert_no_warnings_logged()
+
+    def test_a_marker_holds_the_update_back(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a pin whose marker holds its update back keeps its version, and its new version is not logged."""
+        run.return_value = self.mock_update_on_stdout("package", "v1.1")
+        get.return_value = mock_response(pypi_metadata_without_changelog())
+        mock_script = self.create_script(script("package==1.0", marker="ignore[update]"))
+        glob.return_value = [mock_script]
+        update_python_inline_script_metadatas()
+        mock_script.write_text.assert_not_called()
+        get.assert_not_called()
+        self.assert_no_new_version_logged()
+
+    @kills(
+        Mutation(
+            uv_script._update_dependencies,
+            "declarations = by_package(report_file_markers(file, log))\n"
+            "    if (outdated := _outdated(uv_tree, file, log)) is None:\n"
+            "        return\n",
+            "if (outdated := _outdated(uv_tree, file, log)) is None:\n"
+            "        return\n"
+            "    declarations = by_package(report_file_markers(file, log))\n",
+            "a failed uv tree skips the marker report, so a marker on a pin reads as unrecognised",
+        )
+    )
+    def test_a_marker_is_reported_when_uv_tree_fails(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a pin's marker is reported as recognised, though uv tree fails."""
+        run.side_effect = subprocess.CalledProcessError(cmd="", returncode=2, output="", stderr="offline")
+        mock_script = self.create_script(script("package==1.0", marker="ignore[update]"))
+        glob.return_value = [mock_script]
+        update_python_inline_script_metadatas()
+        get.assert_not_called()
+        marker = Marker(ignored_scopes=Scope.UPDATE)
+        self.assert_recognised_marker_logged("package", Location(mock_script, 4), marker)
+        self.assert_uv_dependencies_not_updated_logged(mock_script)
+
+    def test_an_invalid_item_holds_back_one_declaration_of_a_name_while_the_other_updates(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that a name declared twice is held back where its item is unreadable, and updated on the other line."""
+        run.return_value = self.mock_update_on_stdout("package", "v1.1")
+        get.return_value = mock_response(pypi_metadata_without_changelog())
+        held_back = script("package==1.0", marker="ignore[stlae]")
+        contents = held_back.replace("# ]\n", '#     "package==1.0",\n# ]\n')
+        mock_script = self.create_script(contents)
+        glob.return_value = [mock_script]
+        update_python_inline_script_metadatas()
+        mock_script.write_text.assert_called_once_with(held_back.replace("# ]\n", '#     "package==1.1",\n# ]\n'))
+        self.assert_invalid_bracket_item_logged("package", Location(mock_script, 4), "stlae")
 
     def test_update_with_changelog(self, run: Mock, get: Mock, glob: Mock):
         """Test bumping an exact pin whose new version has a changelog, which is logged."""
@@ -135,11 +182,12 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         glob.return_value = [script_file]
         update_python_inline_script_metadatas()
         get.assert_not_called()  # nothing outdated, so no changelog is fetched
-        command = self.uv_commands(run)[0]
+        command = executed_commands(run)[0]
         self.assertEqual(command[:4], ("uv", "tree", "--script", str(script_file)))
         self.assertIn("--depth=0", command)
         self.assertTrue(command[command.index("--exclude-newer") + 1])  # a non-empty cutoff follows the flag
-        self.assertNotIn(("uv", "lock"), [command[:2] for command in self.uv_commands(run)])  # scripts have no lockfile
+        # A script does not have a lockfile, so uv lock does not run.
+        self.assertNotIn(("uv", "lock"), [command[:2] for command in executed_commands(run)])
 
     def test_a_failed_uv_tree_reports_the_dependencies_not_updated(self, run: Mock, get: Mock, glob: Mock):
         """Test that a failed uv tree leaves the script as it is, and is reported at error."""
@@ -150,6 +198,24 @@ class UpdatePythonInlineScriptMetadatasTest(LoggingTestCase):
         get.assert_not_called()
         self.assert_command_stderr_logged(stderr="error: No solution")
         self.assert_uv_dependencies_not_updated_logged(mock_script)
+
+    @kills(
+        Mutation(
+            uv_script._outdated,
+            "log.uv_not_on_path(file.path)",
+            "log.uv_dependencies_not_updated(file.path, uv_tree.name)",
+            "a uv missing from the path is reported as a uv tree that failed",
+        )
+    )
+    @patch("shutil.which", Mock(return_value=None))
+    def test_a_uv_missing_from_the_path_is_reported_in_one_line(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a missing uv is reported in one line naming the script, and that Update-time does not run it."""
+        mock_script = _discovered_script(glob, "package==1.0")
+        update_python_inline_script_metadatas()
+        run.assert_not_called()
+        mock_script.write_text.assert_not_called()
+        get.assert_not_called()
+        self.assert_error_logged(message_of(Logger.uv_not_on_path), location=Location(mock_script))
 
     def test_only_outdated_pin_is_rewritten(self, run: Mock, get: Mock, glob: Mock):
         """Test that only the dependency uv reports as outdated is rewritten; the rest of the block is preserved."""

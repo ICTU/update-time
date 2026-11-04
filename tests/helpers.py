@@ -122,6 +122,7 @@ class FakeFiles(MutableMapping[Path, str]):
         self._files = dict(files or {})
         self.read_errors: dict[Path, Exception] = {}  # The error reading a file raises, by the file's path.
         self.write_errors: dict[Path, Exception] = {}  # The error writing a file raises, by the file's path.
+        self.written_paths: list[Path] = []  # The paths of the files written to, in the order of the writes.
         self._directories = set(directories)
         self._failing_write = failing_write
 
@@ -182,6 +183,7 @@ class FakeFiles(MutableMapping[Path, str]):
     def _write_text(self, path: Path, text: str, *_arguments: object, **_options: object) -> int:
         if (error := self.write_errors.get(path)) is not None:
             raise error
+        self.written_paths.append(path)
         if self._failing_write is not None:
             self._files[path] = text[: len(text) // 2]
             raise self._failing_write

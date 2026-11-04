@@ -470,6 +470,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         **_manifests_without_dependencies(log, capture),
         **_range_rewrites(log, capture),
         **_versions_moved_back(log, capture),
+        **_pin_with_environment_marker(log, capture),
         **_requires_python_reports(log, capture),
         **_uv_cooldown_not_set(log, capture),
         **_compiled_requirements_files(log, capture),
@@ -532,6 +533,12 @@ def _range_rewrites(log: Logger, capture: _Capture) -> dict[str, str]:
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.1.2"), "^3.1.5", "3.1.5")
     log.range_rewrite("npm", reference("minimatch", package_json, "^3.0.0"), "^3.1.5", "")
     return {"@@RANGE_REWRITES@@": capture.take()}
+
+
+def _pin_with_environment_marker(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that a pin with an environment marker is left as it is, and pair the line."""
+    log.pin_with_environment_marker_left_as_is(reference("humanize", Location(Path("pyproject.toml"), 3), "4.15.0"))
+    return {"@@PIN_WITH_ENVIRONMENT_MARKER@@": capture.take()}
 
 
 def _versions_moved_back(log: Logger, capture: _Capture) -> dict[str, str]:
@@ -601,9 +608,10 @@ def _property_moved_for_other_artefacts(log: Logger, capture: _Capture) -> dict[
 
 
 def _uv_dependencies_not_updated(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that a pyproject.toml's dependencies are not updated, and that a file cannot get its text back."""
-    log.uv_dependencies_not_updated(Path("pyproject.toml"), "uv tree")
+    """Log that a file's dependencies are not updated, and that a file cannot get its text back."""
+    log.uv_dependencies_not_updated(Path("tool.py"), "uv tree")
     log.uv_dependencies_not_updated(Path("pyproject.toml"), "uv lock")
+    log.file_not_written(Path("pyproject.toml"), PermissionError(13, "Permission denied", "pyproject.toml"))
     log.file_not_restored(Path("uv.lock"), PermissionError(13, "Permission denied", "uv.lock"))
     log.uv_not_on_path(Path("pyproject.toml"))
     return {"@@UV_DEPENDENCIES_NOT_UPDATED@@": capture.take()}

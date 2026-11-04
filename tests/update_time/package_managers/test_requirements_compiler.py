@@ -10,7 +10,8 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
 from update_time.lock_files import compiled_requirements_txt
 from update_time.lock_files.compiled_requirements_txt import CompiledRequirementsTxt
-from update_time.package_managers import pip_tools, requirements_compiler, uv
+from update_time.package_managers import pip_tools, requirements_compiler
+from update_time.package_managers.uv import uv
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.updaters.update_requirements_txt import _compiler_for
