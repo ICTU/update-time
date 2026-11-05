@@ -17,10 +17,8 @@ from update_time.io.log import Logger
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
 from update_time.package_managers import node as node_module
-from update_time.package_managers import policy as policy_module
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
-from update_time.references import delegated as delegated_module
 from update_time.updaters import update_package_json as update_package_json_module
 from update_time.updaters.update_package_json import update_package_jsons
 
@@ -1140,15 +1138,6 @@ class MarkerTest(NoUpdateTestCase):
         )
         return self.run_on_package_json(get, mock_run, glob, contents)
 
-    @kills(
-        Mutation(
-            delegated_module._redundant_update_directives,
-            "not policy.keeps_the_pin(reference)",
-            "not reference.current_version",
-            "an `ignore[update]` on an exact pin reads as keeping it, though npm and pnpm leave such a pin where it "
-            "is whatever the marker says",
-        )
-    )
     def test_a_directive_deciding_nothing_is_reported(self, get: Mock, mock_run: Mock, glob: Mock):
         """Test that each directive that decides nothing for a `package.json` dependency is reported, saying why."""
         cases = {
@@ -1281,14 +1270,6 @@ class MarkerTest(NoUpdateTestCase):
         self.assert_stale_dependency_logged("clipboard", "2.0.11", Location(package_json, 6))
         self.assert_no_staleness_warning_logged("clipboard", Location(package_json, 3))
 
-    @kills(
-        Mutation(
-            policy_module._report_reference_marker,
-            "policy.keeps_the_pin(reference) and",
-            "bool(reference.current_version) and",
-            "an `ignore[update]` on an exact pin reads as holding its update back, though npm decides the update",
-        )
-    )
     def test_an_ignore_update_on_an_exact_pin_is_not_reported_as_holding_the_update_back(
         self, get: Mock, mock_run: Mock, glob: Mock
     ):

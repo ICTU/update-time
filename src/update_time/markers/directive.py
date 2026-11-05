@@ -28,6 +28,12 @@ class Reason(StrEnum):
     NO_ARCHIVAL_SIGNAL = "this dependency's source does not publish an archival signal"
     NO_VERSION_TO_UPDATE = "this requirement does not pin a version to update"
     BOUND_DECIDES_NOTHING = "the package manager resolves this dependency's version, so a bound decides nothing"
+    BUILD_REQUIREMENT_NOT_LOCKED = "uv does not lock a build requirement, so a bound decides nothing"
+    URL_RATHER_THAN_VERSION = "this requirement names a URL rather than a version, so a bound decides nothing"
+    ENVIRONMENT_MARKER_PIN_KEPT = (
+        "Update-time leaves a pin with an environment marker as it is, so a bound decides nothing"
+    )
+    BOUND_ON_A_HELD_BACK_UPDATE = "this reference's update is held back, so a bound decides nothing"
     FOLLOWS_A_BRANCH = (
         "this reference follows a branch or a floating tag rather than a version, so a bound decides nothing"
     )
@@ -37,6 +43,8 @@ class Reason(StrEnum):
     NO_HASH_PIN = "this reference does not carry a hash pin that could drift"
     INTEGRITY_MISMATCH_NEVER_ADOPTED = "Update-time never adopts an integrity hash mismatch"
     MANAGER_RESOLVES_THE_VERSION = "the package manager resolves this dependency's version"
+    NO_LOCKED_VERSION = "the lock file does not record a version for this dependency"
+    SEVERAL_LOCKED_VERSIONS = "the lock file records more than one version of this dependency"
     COOLDOWN_PER_RUN = "the package manager applies the cooldown per run rather than per dependency"
     NO_PYPI_RELEASE = "PyPI does not serve a release for this dependency"
     NO_NPM_RELEASE = "the npm registry does not serve a release for this dependency"

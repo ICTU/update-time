@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+### Added
+
+- Narrow the versions uv locks for a `pyproject.toml` dependency by the bound of its marker, and hold a dependency without an exact pin on the version uv locks for the file as written where its marker says `ignore[update]`. See [#508](https://github.com/ICTU/update-time/issues/508).
+
 ### Fixed
 
 - Report a version that npm, or uv or pip-compile recompiling a requirements file, moves back to honour the cooldown as moved back, rather than as a new version with the older version's changelog. Closes [#505](https://github.com/ICTU/update-time/issues/505).

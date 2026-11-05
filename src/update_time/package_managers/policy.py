@@ -19,11 +19,14 @@ if TYPE_CHECKING:
 class ManagerPolicy[ReferenceT: SteeredReference]:
     """Which directives steer the dependencies a package manager updates.
 
-    `keeps_held_back_pins` says whether an `ignore[update]` keeps a pinned version where it is. `unchecked_scopes` names
-    the warning scopes that Update-time leaves unchecked for a reference, each with the reason.
+    `hold_back_redundancy` gives the reason an `ignore[update]` keeps nothing for a reference, or None where it keeps
+    the reference's version where it is. `bound_redundancy` gives the reason a bound decides nothing for a reference,
+    or None where it narrows the versions the package manager updates the reference to. `unchecked_scopes` names the
+    warning scopes that Update-time leaves unchecked for a reference, each with the reason.
     """
 
-    keeps_held_back_pins: bool
+    hold_back_redundancy: Callable[[ReferenceT], Reason | None]
+    bound_redundancy: Callable[[ReferenceT], Reason | None]
     unchecked_scopes: Callable[[ReferenceT], Mapping[Scope, Reason]]
 
     @staticmethod
@@ -31,9 +34,9 @@ class ManagerPolicy[ReferenceT: SteeredReference]:
         """Return every warning scope, each left unchecked for the reason."""
         return {directive.scope: reason for directive in WARNING_DIRECTIVES}
 
-    def keeps_the_pin(self, reference: ReferenceT) -> bool:
-        """Return whether an `ignore[update]` keeps the version the reference pins where it is."""
-        return self.keeps_held_back_pins and bool(reference.current_version)
+    def keeps_the_version(self, reference: ReferenceT) -> bool:
+        """Return whether the reference's marker carries an `ignore[update]` that keeps its version where it is."""
+        return reference.marker.ignores(Scope.UPDATE) and self.hold_back_redundancy(reference) is None
 
 
 def report_markers[ReferenceT: SteeredReference](
@@ -47,7 +50,9 @@ def _report_reference_marker[ReferenceT: SteeredReference](
     reference: ReferenceT, log: Logger, policy: ManagerPolicy[ReferenceT]
 ) -> Marker:
     """Report the reference's marker, and return the directives Update-time acts on."""
-    holds_the_update_back = policy.keeps_the_pin(reference) and reference.marker.ignores(Scope.UPDATE)
     return log.report_marker(
-        reference.dependency, reference.marker, reference.location, holds_the_update_back=holds_the_update_back
+        reference.dependency,
+        reference.marker,
+        reference.location,
+        holds_the_update_back=policy.keeps_the_version(reference),
     )

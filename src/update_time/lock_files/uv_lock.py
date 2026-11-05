@@ -9,6 +9,7 @@ from update_time.domain.version_scheme import PEP_440
 from update_time.formats import toml
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName, VersionString
@@ -34,6 +35,15 @@ class UvLock:
     def locked_versions(self, source: str) -> list[PinnedDependency] | None:
         """Return the lowest version the lock records for each dependency of the project at the source.
 
+        Return None where there is no uv.lock to read.
+        """
+        if (recorded := self.recorded_versions(source)) is None:
+            return None
+        return [PinnedDependency(name, _lowest(versions)) for name, versions in recorded.items()]
+
+    def recorded_versions(self, source: str) -> dict[DependencyName, list[VersionString]] | None:
+        """Return each version the lock records for each dependency of the project at the source, in the lock's order.
+
         The source is the project's directory relative to the lock's. uv names a version beside a dependency where it
         locks several for the project, one per Python version or platform. Return None where there is no uv.lock to
         read.
@@ -45,14 +55,21 @@ class UvLock:
         entries = (package for package in packages if source in package.get("source", {}).values())
         entry: dict = next(entries, lock.get("manifest", {}))
         locked = {package["name"]: package["version"] for package in packages if "version" in package}
-        versions: dict[DependencyName, VersionString] = {}
+        versions: dict[DependencyName, list[VersionString]] = {}
         for dependency in _project_dependencies(entry):
             name = dependency["name"]
-            if (version := dependency.get("version", locked.get(name))) is None:
-                continue
-            if name not in versions or PEP_440.is_downgrade(versions[name], version):
-                versions[name] = version
-        return [PinnedDependency(name, version) for name, version in versions.items()]
+            if (version := dependency.get("version", locked.get(name))) is not None:
+                versions.setdefault(name, []).append(version)
+        return versions
+
+
+def _lowest(versions: Sequence[VersionString]) -> VersionString:
+    """Return the lowest of the versions, the first where PEP 440 does not order them."""
+    lowest, *others = versions
+    for version in others:
+        if PEP_440.is_downgrade(lowest, version):
+            lowest = version
+    return lowest
 
 
 def _project_dependencies(entry: dict) -> list[dict]:

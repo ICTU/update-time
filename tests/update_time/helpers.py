@@ -851,6 +851,11 @@ def pyproject(*specs: str, marker: str = "") -> str:
     return f"[project]\ndependencies = [{dependencies}]{comment}\n"
 
 
+def uv_path_source(dependency: str) -> str:
+    """Return the `[tool.uv] sources` table that has uv resolve the dependency from a path rather than from PyPI."""
+    return f'[tool.uv.sources]\n{dependency} = {{path = "../{dependency}"}}\n'
+
+
 def days_ago(days: int) -> datetime:
     """Return the instant the given number of days ago."""
     return datetime.now(UTC) - timedelta(days=days)

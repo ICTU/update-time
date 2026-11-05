@@ -1,5 +1,7 @@
 """Find uv-managed pyproject.toml files and update their dependencies and lockfiles."""
 
+from typing import TYPE_CHECKING
+
 from update_time.domain.file_type import PYPROJECT_TOML
 from update_time.formats import toml
 from update_time.io.filesystem import glob_for
@@ -10,6 +12,10 @@ from update_time.manifests.python_dependency_toml import is_well_formed
 from update_time.package_managers.uv import uv
 from update_time.package_managers.uv.workspace import read_workspaces
 from update_time.updaters.uv_pins import warn_about_pins
+
+if TYPE_CHECKING:
+    from update_time.manifests.python_dependency_toml import Declaration, PythonDependencyToml
+    from update_time.package_managers.policy import ManagerPolicy
 
 _LOG = get_logger("pyproject.toml")
 
@@ -44,9 +50,10 @@ def update_pyproject_tomls() -> None:
     # get the text they hold now back where uv cannot lock.
     uv.configure_cooldown(projects_with_dependencies)
     workspaces = read_workspaces(projects_with_dependencies)
+    policies: dict[PythonDependencyToml, ManagerPolicy[Declaration]] = {}
     for workspace in workspaces:
-        workspace.update()
-    warn_about_pins(uv_projects, _LOG)
+        policies.update(workspace.update())
+    warn_about_pins(uv_projects, _LOG, policies)
 
 
 def main() -> None:  # pragma: no cover

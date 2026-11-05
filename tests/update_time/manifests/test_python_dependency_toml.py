@@ -10,7 +10,7 @@ from update_time.markers.marker import Marker, Scope
 
 from tests.helpers import mock_path
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import declaration
+from tests.update_time.helpers import declaration, uv_path_source
 from tests.update_time.manifests.helpers import script
 
 if TYPE_CHECKING:
@@ -20,8 +20,8 @@ if TYPE_CHECKING:
 _UNCLOSED_BLOCK = '# /// script\ndependencies = ["pkg=={0}"]\n'
 
 
-class RewritePinnedVersionsTest(unittest.TestCase):
-    """Unit tests for rewriting pinned dependency versions."""
+class RewriteDeclarationsTest(unittest.TestCase):
+    """Unit tests for rewriting the declarations: pinning a new version, and narrowing the requirement uv locks."""
 
     def rewrite(
         self,
@@ -45,9 +45,8 @@ class RewritePinnedVersionsTest(unittest.TestCase):
     @kills(
         Mutation(
             python_dependency_toml._rewritten_spec,
-            'return re.sub(rf"==(\\s*){re.escape(current)}", '
-            "lambda match: operator + match[1] + new_version, spec, count=1)",
-            'return f"{declaration.dependency}{operator}{new_version}"',
+            'return re.sub(rf"(==\\s*){re.escape(current)}", lambda match: match[1] + new_version, spec, count=1)',
+            'return f"{declaration.dependency}=={new_version}"',
             "a rewrite replaces the whole declaration, dropping the extra, environment marker, and spaces around "
             "the pin",
         )
@@ -62,6 +61,16 @@ class RewritePinnedVersionsTest(unittest.TestCase):
         self.assertEqual(
             pyproject_file.write_text.call_args.args[0],
             "[project]\ndependencies = [\n" + declarations.format("1.1", "2.1", "3.1") + "]\n",
+        )
+
+    def test_narrows_a_requirement_and_keeps_its_extra_and_environment_marker(self):
+        """Test that the requirement uv locks keeps the extra and the environment marker of the declaration."""
+        contents = '[project]\ndependencies = ["package[extra]==1.0", "marked>=2.0; python_version < \'3.13\'"]\n'
+        file = PyprojectToml(mock_path(contents))
+        pinned, marked = file.declarations()
+        self.assertEqual(
+            file.with_locked_requirements(contents, {pinned: "<2", marked: "<3"}),
+            '[project]\ndependencies = ["package[extra]<2,>=1.0", "marked<3,>=2.0; python_version < \\"3.13\\""]\n',
         )
 
     def test_leaves_a_matching_string_outside_the_dependency_arrays(self):
@@ -207,7 +216,7 @@ class DeclarationsTest(unittest.TestCase):
         """Test that a dependency uv resolves from a source of its own, or from a URL, is read like any other."""
         contents = (
             '[project]\ndependencies = ["local", "pkg @ git+https://github.com/org/repo.git", "other>=2.0"]\n'
-            '[tool.uv.sources]\nlocal = {path = "../local"}\n'
+            + uv_path_source("local")
         )
         path = mock_path(contents)
         self.assertEqual(
@@ -221,7 +230,7 @@ class DeclarationsTest(unittest.TestCase):
 
     def test_a_pin_with_a_uv_source_is_read(self):
         """Test that a pin uv resolves from a source of its own is read, since uv can resolve an update for it."""
-        contents = '[project]\ndependencies = ["local==1.0"]\n[tool.uv.sources]\nlocal = {path = "../local"}\n'
+        contents = '[project]\ndependencies = ["local==1.0"]\n' + uv_path_source("local")
         path = mock_path(contents)
         self.assertEqual(self.references(path), [declaration("local", "1.0", path, 2, 1, uv_sourced=True)])
 

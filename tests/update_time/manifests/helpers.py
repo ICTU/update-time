@@ -8,19 +8,22 @@ from tests.helpers import mock_path
 from tests.update_time.helpers import GUAVA
 
 
-def script(*specs: str, requires_python: str = ">=3.11", marker: str = "") -> str:
+def script(*specs: str, requires_python: str = ">=3.11", marker: str = "", toml: str = "") -> str:
     """Return a minimal .py file with a PEP 723 `# /// script` block declaring the given dependencies.
 
-    `marker` goes in an `# update-time:` comment on each dependency's line, so it steers every dependency.
+    `marker` goes in an `# update-time:` comment on each dependency's line, so it steers every dependency. `toml` goes
+    after the dependencies, commented out as the rest of the block is.
     """
     comment = f"  # update-time: {marker}" if marker else ""
     dependencies = "".join(f'#     "{spec}",{comment}\n' for spec in specs)
+    tables = "".join(f"# {line}\n" for line in toml.splitlines())
     return (
         "# /// script\n"
         f'# requires-python = "{requires_python}"\n'
         "# dependencies = [\n"
         f"{dependencies}"
         "# ]\n"
+        f"{tables}"
         "# ///\n"
         'print("hi")\n'
     )

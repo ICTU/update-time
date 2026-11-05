@@ -7,10 +7,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, ClassVar
 
-from packaging.version import InvalidVersion, Version
-
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion, normalized_python_name
+from update_time.domain.dependency import DependencyVersion, is_valid, normalized_python_name
 from update_time.domain.reference import Reference
 from update_time.domain.version_scheme import PEP_440
 from update_time.io.log import get_logger
@@ -141,14 +139,12 @@ class RequirementsCompiler(ABC):
         """
         upgrades: list[str] = []
         for pin in self.compiled.pins:
-            try:
-                version = Version(pin.version)
-            except InvalidVersion:
+            if not is_valid(pin.version):
                 self.log.pinned_version_unreadable(self.compiled.path, pin.name, pin.version)
                 continue
             for declaration in declarations.get(normalized_python_name(pin.name), ()):
                 self._warn_if_the_bound_is_redundant(declaration, pin)
-            if upgrade := _upgrade(pin, version, _marker_of(pin, declarations)):
+            if upgrade := _upgrade(pin, _marker_of(pin, declarations)):
                 upgrades.extend(("--upgrade-package", upgrade))
         return upgrades
 
@@ -181,16 +177,9 @@ def by_package[ReferenceT: SteeredReference](
     return grouped
 
 
-def _upgrade(pin: PinnedDependency, version: Version, marker: Marker) -> str:
-    """Return the pin's package as `--upgrade-package` takes it, narrowed by the marker's bound, or "" to hold it back.
-
-    A bound leaving out the pinned version holds the package back, since the tool would move the pin down into the
-    bound.
-    """
-    bound = marker.version_bound
-    if marker.holds_the_update_back or not bound.keeps(version, pin.version):
-        return ""
-    specifier = bound.specifier_in_allow_form(pin.version)
+def _upgrade(pin: PinnedDependency, marker: Marker) -> str:
+    """Return the pin's package as `--upgrade-package` takes it, narrowed by its bound, or "" to hold it back."""
+    specifier = marker.update_specifier(pin.version)
     return "" if specifier is None else f"{pin.name}{specifier}"
 
 

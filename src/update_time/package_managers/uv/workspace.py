@@ -1,6 +1,6 @@
 """Move the exact pins of a uv workspace's pyproject.tomls to the versions uv locks, and report the new versions."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING, Self
 
@@ -9,30 +9,70 @@ from update_time.domain.version_scheme import PEP_440
 from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
 from update_time.lock_files.uv_lock import UvLock
+from update_time.markers.directive import Reason
+from update_time.package_managers.policy import ManagerPolicy, report_markers
 from update_time.package_managers.requirements_compiler import log_moved_versions, log_new_version
-from update_time.package_managers.uv.uv import by_workspace, pypi_served, report_file_markers, workspace_sources
+from update_time.package_managers.uv.uv import by_workspace, marker_policy, pypi_served, workspace_sources
 from update_time.primitives.command import Command
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Callable, Iterable, Mapping, Sequence
     from pathlib import Path
 
+    from update_time.domain.dependency import DependencyName, VersionString
     from update_time.manifests.pyproject_toml import PyprojectToml
-    from update_time.manifests.python_dependency_toml import Declaration
+    from update_time.manifests.python_dependency_toml import Declaration, PythonDependencyToml
     from update_time.primitives.location import Location
+
+type _RecordedVersions = Mapping[DependencyName, Sequence[VersionString]]
 
 _LOG = get_logger("pyproject.toml")
 
 
 @dataclass(frozen=True)
-class _Member:
+class _MemberSnapshot:
     """A member of a uv workspace, with what its pyproject.toml held and the uv.lock recorded for it before uv ran."""
+
+    pyproject_toml: PyprojectToml
+    source: str  # The member's directory relative to the workspace root, as the uv.lock names it.
+    text: str
+    locked_before: list[PinnedDependency] | None
+
+    def steered_member(self, locked_as_written: _RecordedVersions | None) -> _Member:
+        """Report the path and the markers of the pyproject.toml, and return the member with the markers it acts on.
+
+        A declaration without an exact pin takes its current version from what uv locks for the files as written.
+        """
+        member_policy = _member_policy(self.pyproject_toml, locked_as_written)
+        declarations = _report_path_and_markers(self.pyproject_toml, member_policy)
+        member = _Member(
+            self.pyproject_toml,
+            self.source,
+            self.text,
+            declarations,
+            self.locked_before,
+            locked_as_written,
+            member_policy,
+        )
+        member.warn_about_redundant_bounds()
+        return member
+
+
+@dataclass(frozen=True)
+class _Member:
+    """A member of a uv workspace, with its declarations and the policy their markers are judged by.
+
+    The versions locked before the run are what the report of new and moved versions compares with. The versions uv
+    locks for the files as written give a declaration without an exact pin its current version.
+    """
 
     pyproject_toml: PyprojectToml
     source: str  # The member's directory relative to the workspace root, as the uv.lock names it.
     text: str
     declarations: list[Declaration]
     locked_before: list[PinnedDependency] | None
+    locked_as_written: _RecordedVersions | None
+    policy: ManagerPolicy[Declaration]
 
     @property
     def lockable_pins(self) -> list[Declaration]:
@@ -50,7 +90,34 @@ class _Member:
         uv can lock a package at another version for each Python. A pin without an environment marker takes the lowest
         of them. A pin with one would need the version uv locked for its own Pythons, and that need not be the lowest.
         """
-        return [declaration for declaration in self.lockable_pins if not declaration.environment_marker]
+        return [declaration for declaration in self.narrowable_declarations if declaration.pins_a_version]
+
+    @property
+    def narrowable_declarations(self) -> list[Declaration]:
+        """Return the declarations whose requirement a bound narrows while uv locks."""
+        return [declaration for declaration in self.declarations if declaration.narrowable]
+
+    def warn_about_redundant_bounds(self) -> None:
+        """Warn about each bound that never has an effect, or blocks every update, at its declaration's version."""
+        for declaration in self.narrowable_declarations:
+            if current_version := _current_version(declaration, self.locked_as_written):
+                _LOG.warn_if_redundant_bound(replace(declaration, current_version=current_version), declaration.marker)
+
+    @property
+    def bounds(self) -> dict[Declaration, str]:
+        """Return the specifier of the bound each narrowable declaration's marker sets."""
+        return {declaration: self._bound_specifier(declaration) for declaration in self.narrowable_declarations}
+
+    def _bound_specifier(self, declaration: Declaration) -> str:
+        """Return the specifier of the bound the declaration's marker sets, anchored at the declaration's version.
+
+        Where the marker holds the update back, the specifier keeps the declaration on that version, where there is one.
+        """
+        current_version = _current_version(declaration, self.locked_as_written)
+        if not current_version:
+            return declaration.marker.version_bound.specifier_in_allow_form(current_version) or ""
+        specifier = declaration.marker.update_specifier(current_version)
+        return f"=={current_version}" if specifier is None else specifier
 
     def reportable_declarations(self) -> list[Declaration]:
         """Return the declarations uv locks in the pyproject.toml that PyPI serves a release for.
@@ -67,36 +134,68 @@ class _Member:
 
 
 @dataclass(frozen=True)
-class Workspace:
+class _WorkspaceSnapshot:
     """A uv workspace, with what its members and its uv.lock held before uv ran."""
+
+    root: Path
+    uv_lock: UvLock
+    uv_lock_text: str | None
+    members: list[_MemberSnapshot]
+
+    @classmethod
+    def read(cls, root: Path, pyproject_tomls: Iterable[PyprojectToml]) -> Self:
+        """Read the pyproject.tomls, the uv.lock, and the versions the uv.lock records."""
+        uv_lock = UvLock(root.parent / "uv.lock")
+        members = []
+        for pyproject_toml in pyproject_tomls:
+            source = pyproject_toml.path.parent.relative_to(root.parent).as_posix()
+            members.append(
+                _MemberSnapshot(pyproject_toml, source, pyproject_toml.read(), uv_lock.locked_versions(source))
+            )
+        return cls(root, uv_lock, uv_lock.read(), members)
+
+    def update(self) -> dict[PythonDependencyToml, ManagerPolicy[Declaration]]:
+        """Lock the files as written, report the markers, and update the workspace where uv locked the files.
+
+        Return the policy each member's markers are judged by.
+        """
+        locked = self._lock_as_written()
+        # Where uv did not lock the files as written, the uv.lock is as it was before the run.
+        members = [member.steered_member(self.uv_lock.recorded_versions(member.source)) for member in self.members]
+        workspace = Workspace(self.root, self.uv_lock, self.uv_lock_text, members)
+        if locked:
+            workspace.update()
+        return workspace.policies
+
+    def _lock_as_written(self) -> bool:
+        """Lock the files as written, and return whether uv locked them.
+
+        Without uv on the path, and where uv fails to lock, each pyproject.toml gets an error.
+        """
+        pyproject_tomls = [member.pyproject_toml for member in self.members]
+        if not is_installed("uv"):
+            for pyproject_toml in pyproject_tomls:
+                _LOG.uv_not_on_path(pyproject_toml.path)
+            return False
+        return _locked(self.root, pyproject_tomls)
+
+
+@dataclass(frozen=True)
+class Workspace:
+    """A uv workspace, with the members whose markers were reported, and what its uv.lock held before the run."""
 
     root: Path
     uv_lock: UvLock
     uv_lock_text: str | None
     members: list[_Member]
 
-    @classmethod
-    def read(cls, root: Path, pyproject_tomls: Iterable[PyprojectToml]) -> Self:
-        """Read the pyproject.tomls, the uv.lock, and the versions the uv.lock records, and report the markers."""
-        uv_lock = UvLock(root.parent / "uv.lock")
-        members = []
-        for pyproject_toml in pyproject_tomls:
-            source = pyproject_toml.path.parent.relative_to(root.parent).as_posix()
-            declarations = _report_path_and_markers(pyproject_toml)
-            members.append(
-                _Member(pyproject_toml, source, pyproject_toml.read(), declarations, uv_lock.locked_versions(source))
-            )
-        return cls(root, uv_lock, uv_lock.read(), members)
+    @property
+    def policies(self) -> dict[PythonDependencyToml, ManagerPolicy[Declaration]]:
+        """Return the policy each member's markers are judged by."""
+        return {member.pyproject_toml: member.policy for member in self.members}
 
     def update(self) -> None:
-        """Update the exact pins to the versions uv locks and report the new versions, or give the files back.
-
-        Without uv on the path, each pyproject.toml gets an error.
-        """
-        if not is_installed("uv"):
-            for member in self.members:
-                _LOG.uv_not_on_path(member.pyproject_toml.path)
-            return
+        """Update the exact pins to the versions uv locks and report the new versions, or give the files back."""
         _LOG.path(self.uv_lock.path)
         self._report_pins_with_environment_markers()
         if not self._update_pins():
@@ -107,7 +206,7 @@ class Workspace:
 
     def _update_pins(self) -> bool:
         """Move the exact pins of the pyproject.tomls to the versions uv locks; return whether uv locked them."""
-        if not self._relax_pins() or not self._lock("--upgrade"):
+        if not self._write_locked_requirements() or not self._lock("--upgrade"):
             return False
         return self._pin_locked_versions() and self._lock()
 
@@ -119,16 +218,8 @@ class Workspace:
         return self.uv_lock.locked_versions(member.source)
 
     def _lock(self, *options: str) -> bool:
-        """Lock the workspace with the uv options, and return whether uv locked.
-
-        A failure is logged at error for each of the pyproject.tomls.
-        """
-        uv_lock = Command("uv", "lock", "--directory", str(self.root.parent), *options, "--quiet", "--no-progress")
-        if run(uv_lock).succeeded:
-            return True
-        for member in self.members:
-            _LOG.uv_dependencies_not_updated(member.pyproject_toml.path, uv_lock.name)
-        return False
+        """Lock the workspace with the uv options, and return whether uv locked."""
+        return _locked(self.root, [member.pyproject_toml for member in self.members], *options)
 
     def _restore(self) -> None:
         """Give the uv.lock and the pyproject.tomls back the text they held, and log each one that cannot get it."""
@@ -145,13 +236,13 @@ class Workspace:
             except OSError as error:
                 _LOG.file_not_restored(path, error)
 
-    def _relax_pins(self) -> bool:
-        """Relax the updatable exact pins of the pyproject.tomls from `==version` to `>=version`."""
+    def _write_locked_requirements(self) -> bool:
+        """Write the requirements for uv to lock, each narrowed by the bound of its declaration's marker."""
 
-        def relaxed(member: _Member) -> str:
-            return member.pyproject_toml.with_relaxed_pins(member.text, member.updatable_pins)
+        def text_to_lock(member: _Member) -> str:
+            return member.pyproject_toml.with_locked_requirements(member.text, member.bounds)
 
-        return self._rewrite(relaxed)
+        return self._rewrite(text_to_lock)
 
     def _pin_locked_versions(self) -> bool:
         """Pin the updatable exact pins of the pyproject.tomls to the versions the uv.lock records."""
@@ -214,6 +305,19 @@ class Workspace:
             log_moved_versions(_LOG, "uv", member.locked_before, locked_after, member.reportable_declarations())
 
 
+def _locked(root: Path, pyproject_tomls: Iterable[PyprojectToml], *options: str) -> bool:
+    """Lock the uv workspace with the root pyproject.toml, with the uv options, and return whether uv locked.
+
+    A failure is logged at error for each of the pyproject.tomls.
+    """
+    uv_lock = Command("uv", "lock", "--directory", str(root.parent), *options, "--quiet", "--no-progress")
+    if run(uv_lock).succeeded:
+        return True
+    for pyproject_toml in pyproject_tomls:
+        _LOG.uv_dependencies_not_updated(pyproject_toml.path, uv_lock.name)
+    return False
+
+
 def _log_new_pins(moved_pins: Mapping[Declaration, PinnedDependency]) -> None:
     """Log each new version of the moved pins, at the declarations that pin it."""
     locations: dict[PinnedDependency, list[Location]] = {}
@@ -223,12 +327,61 @@ def _log_new_pins(moved_pins: Mapping[Declaration, PinnedDependency]) -> None:
         log_new_version(_LOG, pin.name, pin.version, pin_locations)
 
 
-def _report_path_and_markers(pyproject_toml: PyprojectToml) -> list[Declaration]:
+def _member_policy(
+    pyproject_toml: PyprojectToml, locked_as_written: _RecordedVersions | None
+) -> ManagerPolicy[Declaration]:
+    """Return the policy for the markers of the workspace member's pyproject.toml.
+
+    An `ignore[update]` keeps a declaration where it has a version to keep: an exact pin, or the version uv locks for a
+    narrowable declaration as written. A level bound needs that version to anchor at.
+    """
+    file_policy = marker_policy(pyproject_toml)
+
+    def hold_back_redundancy(declaration: Declaration) -> Reason | None:
+        if declaration.pins_a_version or not declaration.narrowable:
+            return file_policy.hold_back_redundancy(declaration)
+        return _current_version_redundancy(declaration, locked_as_written)
+
+    def bound_redundancy(declaration: Declaration) -> Reason | None:
+        if reason := file_policy.bound_redundancy(declaration):
+            return reason
+        if declaration.marker.version_bound.level is None:
+            return None
+        return _current_version_redundancy(declaration, locked_as_written)
+
+    return replace(file_policy, hold_back_redundancy=hold_back_redundancy, bound_redundancy=bound_redundancy)
+
+
+def _report_path_and_markers(
+    pyproject_toml: PyprojectToml, member_policy: ManagerPolicy[Declaration]
+) -> list[Declaration]:
     """Log the path and the markers of the pyproject.toml, and return its declarations with the effective markers."""
     _LOG.path(pyproject_toml.path)
-    return report_file_markers(pyproject_toml, _LOG)
+    return report_markers(pyproject_toml.declarations(), _LOG, member_policy)
 
 
-def read_workspaces(pyproject_tomls: Iterable[PyprojectToml]) -> list[Workspace]:
-    """Return the uv workspaces of the projects."""
-    return [Workspace.read(root, members) for root, members in by_workspace(pyproject_tomls).items()]
+def _current_version(declaration: Declaration, locked_as_written: _RecordedVersions | None) -> VersionString:
+    """Return the version the declaration pins, or else the one version uv locks for it as written, if it locks one."""
+    if declaration.current_version:
+        return declaration.current_version
+    versions = _versions_locked_for(declaration, locked_as_written)
+    return versions.pop() if len(versions) == 1 else ""
+
+
+def _current_version_redundancy(declaration: Declaration, locked_as_written: _RecordedVersions | None) -> Reason | None:
+    """Return why a directive needing the declaration's current version does not have one, or None where it has one."""
+    if _current_version(declaration, locked_as_written):
+        return None
+    several = len(_versions_locked_for(declaration, locked_as_written)) > 1
+    return Reason.SEVERAL_LOCKED_VERSIONS if several else Reason.NO_LOCKED_VERSION
+
+
+def _versions_locked_for(declaration: Declaration, locked_as_written: _RecordedVersions | None) -> set[VersionString]:
+    """Return the versions uv locks for the declaration's dependency as written."""
+    by_name = {normalized_python_name(name): versions for name, versions in (locked_as_written or {}).items()}
+    return set(by_name.get(normalized_python_name(declaration.dependency), []))
+
+
+def read_workspaces(pyproject_tomls: Iterable[PyprojectToml]) -> list[_WorkspaceSnapshot]:
+    """Return the uv workspaces of the projects, as they are before uv runs."""
+    return [_WorkspaceSnapshot.read(root, members) for root, members in by_workspace(pyproject_tomls).items()]

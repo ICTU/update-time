@@ -236,17 +236,29 @@ def _redundant_for_the_dependency_type(
     log.redundant_directive(commit, "allow[hash-drift]", Reason.NO_DRIFT_FOR_A_COMMIT)
     drift = capture.take()
 
-    log.redundant_directive(managed, "allow[update<5]", Reason.BOUND_DECIDES_NOTHING)
-    log.redundant_directive(managed, "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION)
+    script = reference("humanize", Location(Path("tool.py"), 4))
+    log.redundant_directive(script, "allow[update<5]", Reason.BOUND_DECIDES_NOTHING)
+    log.redundant_directive(script, "ignore[update]", Reason.MANAGER_RESOLVES_THE_VERSION)
+    build_requirement = reference("hatchling", Location(Path("pyproject.toml"), 3))
+    log.redundant_directive(build_requirement, "allow[update<2]", Reason.BUILD_REQUIREMENT_NOT_LOCKED)
+    url = reference("internal-lib", Location(Path("pyproject.toml"), 9))
+    log.redundant_directive(url, "allow[update<2]", Reason.URL_RATHER_THAN_VERSION)
+    log.redundant_directive(managed, "allow[update<5]", Reason.ENVIRONMENT_MARKER_PIN_KEPT)
+    log.redundant_directive(managed, "allow[update<5]", Reason.BOUND_ON_A_HELD_BACK_UPDATE)
     log.redundant_directive(loose, "allow[update<5]", Reason.NO_VERSION_TO_UPDATE)
     log.redundant_directive(commit, "allow[update<5]", Reason.PINS_A_COMMIT)
     log.redundant_directive(branch, "allow[update<6]", Reason.FOLLOWS_A_BRANCH)
     log.redundant_directive(held_elsewhere, "ignore[major-update]", Reason.VERSION_HELD_ELSEWHERE)
     log.redundant_directive(plugin, "allow[update<4]", Reason.PLUGIN_NOT_UPDATED)
+    bounds = capture.take()
+
+    log.redundant_directive(managed, "ignore[update]", Reason.NO_LOCKED_VERSION)
+    log.redundant_directive(managed, "ignore[update]", Reason.SEVERAL_LOCKED_VERSIONS)
     return {
         "@@REDUNDANT_COOLDOWN_WARNINGS@@": cooldowns,
         "@@REDUNDANT_HASH_DRIFT_WARNINGS@@": drift,
-        "@@REDUNDANT_BOUND_WARNINGS@@": capture.take(),
+        "@@REDUNDANT_BOUND_WARNINGS@@": bounds,
+        "@@REDUNDANT_UNANCHORED_WARNINGS@@": capture.take(),
     }
 
 

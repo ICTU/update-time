@@ -7,6 +7,7 @@ from functools import reduce
 from typing import TYPE_CHECKING
 
 from packaging.specifiers import InvalidSpecifier
+from packaging.version import Version
 
 from update_time.domain.bound import BLOCK_ALL_UPDATES, NO_BOUND, Verb, keeping_each
 from update_time.domain.vulnerability import NO_RISK_LEVEL, RISK_LEVELS
@@ -163,6 +164,17 @@ class Marker:
     def holds_the_update_back(self) -> bool:
         """Return whether the marker ignores the update, or carries an item that may have meant to."""
         return self.effective_directives.ignores(Scope.UPDATE)
+
+    def update_specifier(self, current_version: VersionString) -> str | None:
+        """Return the specifier keeping an update within the marker's bound, or None where the marker holds it back.
+
+        A bound that leaves the current version out holds the update back, since the update would move into the bound.
+        So does a bound that a specifier cannot carry.
+        """
+        bound = self.version_bound
+        if self.holds_the_update_back or not bound.keeps(Version(current_version), current_version):
+            return None
+        return bound.specifier_in_allow_form(current_version)
 
     @property
     def cooldown_directive(self) -> str:

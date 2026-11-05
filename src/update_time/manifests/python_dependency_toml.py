@@ -9,17 +9,19 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import SpecifierSet
 
 from update_time.domain.dependency import is_valid, normalized_python_name
 from update_time.domain.line import Line, located_lines
 from update_time.formats import toml
+from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, parse_marker
 from update_time.markers.reference import SteeredReference
 from update_time.primitives.location import Location
 from update_time.primitives.text import line_number
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping, MutableSequence
+    from collections.abc import Callable, Mapping, MutableSequence
     from pathlib import Path
 
     from update_time.domain.dependency import DependencyName, VersionString
@@ -137,11 +139,28 @@ class Declaration(SteeredReference):
         return not (self.direct_url or self.uv_sourced)
 
     @property
-    def updatable(self) -> bool:
-        """Return whether the declaration's own marker leaves its version to be updated.
+    def narrowable(self) -> bool:
+        """Return whether Update-time narrows the requirement uv locks for the declaration by its marker's bound."""
+        return self.unnarrowable_reason is None
 
-        On a declaration that does not pin an exact version, an `ignore[update]` does not keep a pin, so it does not
-        hold anything back.
+    @property
+    def unnarrowable_reason(self) -> Reason | None:
+        """Return why Update-time does not narrow the requirement uv locks for the declaration, if it does not."""
+        if self.build_requirement:
+            return Reason.BUILD_REQUIREMENT_NOT_LOCKED
+        if self.direct_url:
+            return Reason.URL_RATHER_THAN_VERSION
+        if not self.pins_a_version:
+            return None
+        if self.environment_marker:
+            return Reason.ENVIRONMENT_MARKER_PIN_KEPT
+        return None if self.updatable else Reason.BOUND_ON_A_HELD_BACK_UPDATE
+
+    @property
+    def updatable(self) -> bool:
+        """Return whether the declaration's own marker leaves the version it pins to be updated.
+
+        A declaration that does not pin an exact version counts as updatable, whatever its marker says.
         """
         return not (self.pins_a_version and self.marker.ignores(Scope.UPDATE))
 
@@ -226,18 +245,8 @@ class PythonDependencyToml:
         if (rewritten_contents := self.with_pinned_versions(contents, versions)) != contents:
             self.write(rewritten_contents)
 
-    def with_pinned_versions(self, contents: str, versions: dict[Declaration, VersionString]) -> str:
-        """Return the contents with each declaration rewritten to the version `versions` holds for it."""
-        return self._with_rewritten_pins(contents, "==", versions)
-
-    def with_relaxed_pins(self, contents: str, declarations: Iterable[Declaration]) -> str:
-        """Return the contents with the exact pin of each declaration relaxed from `==version` to `>=version`."""
-        return self._with_rewritten_pins(
-            contents, ">=", {declaration: declaration.current_version for declaration in declarations}
-        )
-
-    def _with_rewritten_pins(self, contents: str, operator: str, versions: dict[Declaration, VersionString]) -> str:
-        """Return the contents with the exact pin of each declaration rewritten to the operator and its version.
+    def with_pinned_versions(self, contents: str, versions: Mapping[Declaration, VersionString]) -> str:
+        """Return the contents with the exact pin of each declaration rewritten to the version `versions` holds for it.
 
         One declaration of a name is rewritten while another declaration of that name keeps its pinned version. Each
         declaration is one that `declarations` read from the contents.
@@ -247,8 +256,27 @@ class PythonDependencyToml:
         def new_spec(position: _DeclarationPosition, spec: str) -> str | None:
             if (declaration := by_position.get(position)) is None:
                 return None
-            rewritten = _rewritten_spec(spec, declaration, operator, versions[declaration])
+            rewritten = _rewritten_spec(spec, declaration, versions[declaration])
             return rewritten if rewritten != spec else None
+
+        return self._replaced_specs(contents, new_spec) or contents
+
+    def with_locked_requirements(self, contents: str, bounds: Mapping[Declaration, str]) -> str:
+        """Return the contents with the requirement of each declaration narrowed by the specifier `bounds` holds for it.
+
+        An exact pin is relaxed from `==version` to `>=version` first. The name, the extras, and the environment marker
+        stay, spelled the way `packaging` spells a requirement.
+        """
+        by_position = {declaration.position: declaration for declaration in bounds}
+
+        def new_spec(position: _DeclarationPosition, spec: str) -> str | None:
+            if (declaration := by_position.get(position)) is None:
+                return None
+            requirement = Requirement(spec)
+            if current_version := declaration.current_version:
+                requirement.specifier = SpecifierSet(f">={current_version}")
+            requirement.specifier &= SpecifierSet(bounds[declaration])
+            return str(requirement)
 
         return self._replaced_specs(contents, new_spec) or contents
 
@@ -313,12 +341,12 @@ def _pinned_version(requirement: Requirement) -> VersionString:
     return ""
 
 
-def _rewritten_spec(spec: str, declaration: Declaration, operator: str, new_version: VersionString) -> str:
-    """Return the spec with the exact pin the declaration holds replaced by the operator and the new version.
+def _rewritten_spec(spec: str, declaration: Declaration, new_version: VersionString) -> str:
+    """Return the spec with the version the declaration pins exactly replaced by the new version.
 
-    A declaration pinning no exact version has none to replace, so its spec comes back as it was. Only the operator
-    and the version are replaced, so whatever the declaration spells around them stays as it is.
+    A declaration pinning no exact version has none to replace, so its spec comes back as it was. Only the version is
+    replaced, so whatever the declaration spells around it stays as it is.
     """
     if not (current := declaration.current_version):
         return spec
-    return re.sub(rf"==(\s*){re.escape(current)}", lambda match: operator + match[1] + new_version, spec, count=1)
+    return re.sub(rf"(==\s*){re.escape(current)}", lambda match: match[1] + new_version, spec, count=1)

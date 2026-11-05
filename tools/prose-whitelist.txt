@@ -51,7 +51,6 @@ A marker that holds a scope back carries no text, because the scope has one spel
 A mock records every argument it was called with, and Update-time passes its credentials to `requests` as arguments, so a failing assertion about a mocked request would print them.
 A moderate vulnerability the advisory item does not name.
 A mutation is applied in memory, so no file on disk is touched and an interrupted run cannot leave a source file broken.
-A name a file declares twice is steered per declaration, so a marker steers the line it sits on and leaves the other line alone.
 A name mapped to None is an entry with no file to fetch, as a directory is.
 A non-PEP 440 boundary (e.g. an arbitrary-equality `===` clause) has no version to probe.
 A path the user named on the command line stays a plain `Path` instead (see `_render_field`).
@@ -336,8 +335,6 @@ Test that a version whose referenced file has no listed hash is left unchanged, 
 Test that a yank the maintainer gave no reason for renders as `reason not specified`.
 Test that advisories sharing no identifier are read as one vulnerability when a third names both.
 Test that an `"image"` naming no tag is pinned to the version and digest `latest` serves.
-Test that an `ignore[update]` on a dependency that pins no version is not reported as holding it back.
-Test that an `ignore[update]` on a dependency that pins no version is reported, since uv resolves it.
 Test that an `image:` naming no tag is pinned to the version and digest `latest` serves.
 Test that an action in the repository itself names no GitHub repository, so none is asked about.
 Test that an advisory giving no summary is rendered without a quotation, rather than with an empty one.
