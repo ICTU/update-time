@@ -765,7 +765,7 @@ class LoggingTestCase(CacheClearingTestCase):
         """Assert that a single 'command wrote to stderr' warning was logged, optionally for a given command/stderr."""
         self.assert_logged(message_of(Logger.command_stderr), command=command, stderr=stderr)
 
-    def assert_uv_dependencies_not_updated_logged(self, path: Path, tool: str = "uv tree") -> None:
+    def assert_uv_dependencies_not_updated_logged(self, path: Path, tool: str) -> None:
         """Assert that the file's dependencies were reported as not updated, because the uv command failed."""
         self.assert_error_logged(message_of(Logger.uv_dependencies_not_updated), location=Location(path), tool=tool)
 

@@ -25,12 +25,12 @@ def warn_about_pins(
     Each file's declarations are read once and walked by every pass, so they are a list rather than a generator,
     which the passes after the first would find empty. A dependency PyPI serves no release for takes no check, and
     its marker is reported all the same, since a redundant directive is what the reader has to hear about. A file's
-    markers are judged by the policy `policies` holds for it, or else by the policy for its kind of file.
+    markers are judged by the policy `policies` holds for it, or else by uv's marker policy.
     """
     declared: list[list[Declaration]] = []
     for file in files:
         declarations = file.declarations()
-        policy = (policies or {}).get(file, uv.marker_policy(file))
+        policy = (policies or {}).get(file, uv.MARKER_POLICY)
         warn_about_redundant_directives([declarations], log, policy)
         declared.append(declarations)
     served = [uv.pypi_served(declarations) for declarations in declared]

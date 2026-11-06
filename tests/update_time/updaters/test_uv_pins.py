@@ -24,7 +24,6 @@ from tests.update_time.helpers import (
     staleness_disabled,
     uv_path_source,
 )
-from tests.update_time.manifests.helpers import script
 from tests.update_time.sources.helpers import PYPI_OLD_UPLOAD, pypi_index, pypi_release, yanked_file
 from tests.update_time.updaters.fixtures import (
     ADVISORY,
@@ -71,10 +70,6 @@ class PythonDependencyTomlTestCase(LoggingTestCase):
     def file_holding(self, contents: str) -> PyprojectToml:
         """Return a mock file holding the contents, whichever way they declare their dependencies."""
         return PyprojectToml(mock_path(contents, parent=SCAN_ROOT))
-
-    def script_file(self, *specs: str, marker: str = "", toml: str = "") -> InlineScript:
-        """Return a mock script declaring the specs as its dependencies in its inline script metadata."""
-        return InlineScript(mock_path(script(*specs, marker=marker, toml=toml), parent=SCAN_ROOT))
 
 
 @no_vulnerabilities
@@ -429,12 +424,12 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
                     Reason.COOLDOWN_PER_RUN, "package", Location(file.path, 2), "set[cooldown=30]"
                 )
 
-    def test_an_ignore_update_in_a_script_is_reported_when_it_keeps_no_pin(self, get: Mock):
-        """Test that an `ignore[update]` on a script's dependency that does not pin a version is reported."""
-        file = self.script_file("package>=1.0", marker="ignore[update]")
+    def test_an_ignore_update_is_reported_when_it_keeps_no_pin(self, get: Mock):
+        """Test that an `ignore[update]` on a dependency that does not pin a version is reported."""
+        file = self.dependency_toml_file("package>=1.0", marker="ignore[update]")
         self.check_dependencies(get, file)
         self.assert_redundant_directive_logged(
-            Reason.MANAGER_RESOLVES_THE_VERSION, "package", Location(file.path, 4), "ignore[update]"
+            Reason.MANAGER_RESOLVES_THE_VERSION, "package", Location(file.path, 2), "ignore[update]"
         )
 
     @staticmethod
@@ -445,12 +440,14 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
             "direct URL": pyproject("local @ https://example.com/local-1.0.tar.gz", marker=directive),
         }
 
-    def test_an_ignore_update_in_a_script_keeping_an_unserved_pin_is_not_reported(self, get: Mock):
-        """Test that a script's `ignore[update]` on two dependencies is reported for the one not pinning a version."""
-        file = self.script_file("local==1.0", "other>=1.0", marker="ignore[update]", toml=uv_path_source("local"))
+    def test_an_ignore_update_keeping_an_unserved_pin_is_not_reported(self, get: Mock):
+        """Test that an `ignore[update]` on two dependencies is reported for the one not pinning a version."""
+        file = self.file_holding(
+            pyproject("local==1.0", "other>=1.0", marker="ignore[update]") + uv_path_source("local")
+        )
         self.check_dependencies(get, file)
         self.assert_redundant_directive_logged(
-            Reason.MANAGER_RESOLVES_THE_VERSION, "other", Location(file.path, 5), "ignore[update]"
+            Reason.MANAGER_RESOLVES_THE_VERSION, "other", Location(file.path, 2), "ignore[update]"
         )
 
     @kills(
@@ -473,33 +470,6 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
                         Reason.NO_PYPI_RELEASE, "local", Location(file.path, 2), directive
                     )
 
-    def test_a_bound_in_a_script_is_reported_as_deciding_nothing(self, get: Mock):
-        """Test that a bound in inline script metadata is reported for either spec, in whichever form it is set."""
-        for spec in ("package==1.0", "package>=1.0"):
-            for bound in ("allow[update<5]", "ignore[minor-update]"):
-                with self.subTest(spec=spec, bound=bound):
-                    file = self.script_file(spec, marker=bound)
-                    self.check_dependencies(get, file)
-                    self.assert_redundant_directive_logged(
-                        Reason.BOUND_DECIDES_NOTHING, "package", Location(file.path, 4), bound
-                    )
-
-    @kills(
-        Mutation(
-            delegated_module._redundant_update_directives,
-            "if (bound := reference.marker.version_bound_directive) and",
-            "if not reference.marker.ignores(Scope.UPDATE) and (bound := reference.marker.version_bound_directive) and",
-            "the `ignore[update]` beside a bound hides it, so the directive that decides nothing goes unreported",
-        )
-    )
-    def test_a_bound_beside_an_ignore_update_is_reported(self, get: Mock):
-        """Test that a bound on a script's pin is reported, though the `ignore[update]` beside it does keep that pin."""
-        file = self.script_file("package==1.0", marker="ignore[update] allow[update<5]")
-        self.check_dependencies(get, file)
-        self.assert_redundant_directive_logged(
-            Reason.BOUND_DECIDES_NOTHING, "package", Location(file.path, 4), "allow[update<5]"
-        )
-
     def test_an_opt_in_directive_is_reported(self, get: Mock):
         """Test that each opt-in is reported for the reason it decides nothing, on an exact pin and on a range."""
         cases = {
@@ -514,11 +484,11 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
                 self.assert_redundant_directive_logged(reason, "package", Location(file.path, 2), directive)
 
     def test_a_hash_drift_directive_beside_an_ignore_update_that_holds_nothing_back(self, get: Mock):
-        """Test that an `allow[hash-drift]` on a script's range keeps its own reason beside an `ignore[update]`."""
-        file = self.script_file("package>=1.0", marker="ignore[update] allow[hash-drift]")
+        """Test that an `allow[hash-drift]` on a range keeps its own reason beside an `ignore[update]`."""
+        file = self.dependency_toml_file("package>=1.0", marker="ignore[update] allow[hash-drift]")
         self.check_dependencies(get, file)
         redundant = message_of(Logger.redundant_directive)
-        fields = {"dependency": "package", "location": Location(file.path, 4)}
+        fields = {"dependency": "package", "location": Location(file.path, 2)}
         self.assert_logged_among_others(redundant, directive="allow[hash-drift]", reason=Reason.NO_HASH_PIN, **fields)
         self.assert_logged_among_others(
             redundant, directive="ignore[update]", reason=Reason.MANAGER_RESOLVES_THE_VERSION, **fields

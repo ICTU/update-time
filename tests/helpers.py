@@ -122,6 +122,7 @@ class FakeFiles(MutableMapping[Path, str]):
         self._files = dict(files or {})
         self.read_errors: dict[Path, Exception] = {}  # The error reading a file raises, by the file's path.
         self.write_errors: dict[Path, Exception] = {}  # The error writing a file raises, by the file's path.
+        self.remove_errors: dict[Path, Exception] = {}  # The error removing a file raises, by the file's path.
         self.written_paths: list[Path] = []  # The paths of the files written to, in the order of the writes.
         self._directories = set(directories)
         self._failing_write = failing_write
@@ -195,4 +196,6 @@ class FakeFiles(MutableMapping[Path, str]):
         return target
 
     def _unlink(self, path: Path, **_options: object) -> None:
+        if (error := self.remove_errors.get(path)) is not None:
+            raise error
         self._files.pop(path, None)

@@ -998,6 +998,11 @@ class Logger:
         """Log that a file the run rewrote cannot be given back its text."""
         return self._file_fields(path, error=str(error))
 
+    @_error("Could not remove %(location)s, which the run created (%(error)s)")
+    def lock_not_removed(self, path: Path, error: OSError) -> dict[str, object]:
+        """Log that a lock the run created cannot be removed."""
+        return self._file_fields(path, error=str(error))
+
     @_info(
         "Leaving %(dependency)s in %(location)s as it is: Update-time does not update a pin with an environment marker"
     )

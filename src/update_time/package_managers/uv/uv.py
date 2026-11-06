@@ -207,7 +207,7 @@ def _workspace_includes(root_dir: Path, workspace: dict, project_dir: Path) -> b
 
 def report_file_markers(file: PythonDependencyToml, log: Logger) -> list[Declaration]:
     """Report each declaration's marker, and return the declarations, each with the directives Update-time acts on."""
-    return report_markers(file.declarations(), log, marker_policy(file))
+    return report_markers(file.declarations(), log, MARKER_POLICY)
 
 
 def _unchecked_scopes(declaration: Declaration) -> dict[Scope, Reason]:
@@ -223,23 +223,13 @@ def _hold_back_redundancy(declaration: Declaration) -> Reason | None:
     return None if declaration.pins_a_version else Reason.MANAGER_RESOLVES_THE_VERSION
 
 
-# uv resolves the version an exact pin names, so a pin Update-time leaves as the file writes it stays where it is. A
-# bound narrows what uv locks for a pyproject.toml, and `uv tree` reports one version per package for a script.
-_PYPROJECT_TOML_POLICY = ManagerPolicy(
+# The policy for the markers of a pyproject.toml and of an inline script metadata block alike. uv resolves the version
+# an exact pin names, so a pin Update-time leaves as the file writes it stays where it is. A bound narrows the lock.
+MARKER_POLICY = ManagerPolicy(
     hold_back_redundancy=_hold_back_redundancy,
     bound_redundancy=lambda declaration: declaration.unnarrowable_reason,
     unchecked_scopes=_unchecked_scopes,
 )
-_INLINE_SCRIPT_POLICY = ManagerPolicy(
-    hold_back_redundancy=_hold_back_redundancy,
-    bound_redundancy=lambda _declaration: Reason.BOUND_DECIDES_NOTHING,
-    unchecked_scopes=_unchecked_scopes,
-)
-
-
-def marker_policy(file: PythonDependencyToml) -> ManagerPolicy[Declaration]:
-    """Return the policy for the markers of the file: a pyproject.toml's, or an inline script metadata block's."""
-    return _PYPROJECT_TOML_POLICY if isinstance(file, PyprojectToml) else _INLINE_SCRIPT_POLICY
 
 
 def pypi_served(declarations: Iterable[Declaration]) -> list[Declaration]:

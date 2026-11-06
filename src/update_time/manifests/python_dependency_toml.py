@@ -158,11 +158,8 @@ class Declaration(SteeredReference):
 
     @property
     def updatable(self) -> bool:
-        """Return whether the declaration's own marker leaves the version it pins to be updated.
-
-        A declaration that does not pin an exact version counts as updatable, whatever its marker says.
-        """
-        return not (self.pins_a_version and self.marker.ignores(Scope.UPDATE))
+        """Return whether the declaration's own marker leaves the version it pins to be updated."""
+        return not self.marker.ignores(Scope.UPDATE)
 
 
 @dataclass(frozen=True)
@@ -238,12 +235,6 @@ class PythonDependencyToml:
             )
             for position, requirement in requirements.items()
         ]
-
-    def rewrite_pinned_versions(self, versions: dict[Declaration, VersionString]) -> None:
-        """Rewrite each declaration to the version `versions` holds for it; write the file if changed."""
-        contents = self.read()
-        if (rewritten_contents := self.with_pinned_versions(contents, versions)) != contents:
-            self.write(rewritten_contents)
 
     def with_pinned_versions(self, contents: str, versions: Mapping[Declaration, VersionString]) -> str:
         """Return the contents with the exact pin of each declaration rewritten to the version `versions` holds for it.

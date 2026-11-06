@@ -28,19 +28,17 @@ class RewriteDeclarationsTest(unittest.TestCase):
         contents: str,
         versions: dict[int, str],
         kind: type[python_dependency_toml.PythonDependencyToml] = PyprojectToml,
-    ) -> Mock:
-        """Rewrite the declaration at each of the positions to the version given, and return the mock file."""
-        pyproject_file = mock_path(contents)
-        file = kind(pyproject_file)
+    ) -> str:
+        """Return the contents with the declaration at each of the positions rewritten to the version given."""
+        file = kind(mock_path(contents))
         declared = {declaration.position: declaration for declaration in file.declarations()}
         pins = {declared[position]: version for position, version in versions.items()}
-        file.rewrite_pinned_versions(pins)
-        return pyproject_file
+        return file.with_pinned_versions(contents, pins)
 
     def test_bumps_known_versions(self):
         """Test that a pin with a known newer version is rewritten."""
-        pyproject_file = self.rewrite('dependencies = ["pkg==1.0"]\n', {1: "1.1"})
-        self.assertEqual(pyproject_file.write_text.call_args.args[0], 'dependencies = ["pkg==1.1"]\n')
+        rewritten = self.rewrite('dependencies = ["pkg==1.0"]\n', {1: "1.1"})
+        self.assertEqual(rewritten, 'dependencies = ["pkg==1.1"]\n')
 
     @kills(
         Mutation(
@@ -57,9 +55,9 @@ class RewriteDeclarationsTest(unittest.TestCase):
             '    "package[extra]=={0}",\n    "marked=={1}; python_version < \'3.13\'",\n    "spaced == {2}",\n'
         )
         contents = "[project]\ndependencies = [\n" + declarations.format("1.0", "2.0", "3.0") + "]\n"
-        pyproject_file = self.rewrite(contents, {1: "1.1", 2: "2.1", 3: "3.1"})
+        rewritten = self.rewrite(contents, {1: "1.1", 2: "2.1", 3: "3.1"})
         self.assertEqual(
-            pyproject_file.write_text.call_args.args[0],
+            rewritten,
             "[project]\ndependencies = [\n" + declarations.format("1.1", "2.1", "3.1") + "]\n",
         )
 
@@ -76,10 +74,8 @@ class RewriteDeclarationsTest(unittest.TestCase):
     def test_leaves_a_matching_string_outside_the_dependency_arrays(self):
         """Test that a spec spelled the same way outside a dependency array is left as the file wrote it."""
         outside = 'keywords = ["pkg==1.0"]\n[tool.uv]\nconstraint-dependencies = ["pkg==1.0"]\n'
-        pyproject_file = self.rewrite(f'[project]\ndependencies = ["pkg==1.0"]\n{outside}', {1: "1.1"})
-        self.assertEqual(
-            pyproject_file.write_text.call_args.args[0], f'[project]\ndependencies = ["pkg==1.1"]\n{outside}'
-        )
+        rewritten = self.rewrite(f'[project]\ndependencies = ["pkg==1.0"]\n{outside}', {1: "1.1"})
+        self.assertEqual(rewritten, f'[project]\ndependencies = ["pkg==1.1"]\n{outside}')
 
     @kills(
         Mutation(
@@ -93,35 +89,35 @@ class RewriteDeclarationsTest(unittest.TestCase):
         """Test that the quoting, comment, and indentation of a rewritten declaration come back as the file had them."""
         declaration = "    'pkg=={0}',  # keep\n"
         contents = f"[project]\ndependencies = [\n{declaration.format('1.0')}]\n\n# trailing note\n"
-        pyproject_file = self.rewrite(contents, {1: "1.1"})
+        rewritten = self.rewrite(contents, {1: "1.1"})
         self.assertEqual(
-            pyproject_file.write_text.call_args.args[0],
+            rewritten,
             f"[project]\ndependencies = [\n{declaration.format('1.1')}]\n\n# trailing note\n",
         )
 
     def test_rewrites_a_block_that_is_never_closed_as_toml_throughout(self):
         """Test that a block without its closing `# ///` is rewritten as the TOML the file is, not as a block."""
-        pyproject_file = self.rewrite(_UNCLOSED_BLOCK.format("1.0"), {1: "1.1"}, InlineScript)
-        self.assertEqual(pyproject_file.write_text.call_args.args[0], _UNCLOSED_BLOCK.format("1.1"))
+        rewritten = self.rewrite(_UNCLOSED_BLOCK.format("1.0"), {1: "1.1"}, InlineScript)
+        self.assertEqual(rewritten, _UNCLOSED_BLOCK.format("1.1"))
 
     def test_leaves_a_declaration_that_pins_no_exact_version(self):
         """Test that a declaration pinning no exact version is left alone."""
-        pyproject_file = self.rewrite('dependencies = ["pkg>=1.0"]\n', {1: "1.1"})
-        pyproject_file.write_text.assert_not_called()
+        rewritten = self.rewrite('dependencies = ["pkg>=1.0"]\n', {1: "1.1"})
+        self.assertEqual(rewritten, 'dependencies = ["pkg>=1.0"]\n')
 
     def test_rewrites_one_declaration_of_a_name_and_leaves_the_other(self):
         """Test that one declaration of a name is rewritten while another declaration of that name is left alone."""
         contents = '[project]\ndependencies = ["pkg==1.0"]\n[dependency-groups]\ndev = ["pkg==1.0"]\n'
-        pyproject_file = self.rewrite(contents, {2: "1.1"})
+        rewritten = self.rewrite(contents, {2: "1.1"})
         self.assertEqual(
-            pyproject_file.write_text.call_args.args[0],
+            rewritten,
             '[project]\ndependencies = ["pkg==1.0"]\n[dependency-groups]\ndev = ["pkg==1.1"]\n',
         )
 
-    def test_leaves_a_declaration_the_mapping_does_not_hold_and_writes_nothing(self):
-        """Test that a declaration the mapping holds no version for is left alone, so the file is not written."""
-        pyproject_file = self.rewrite('dependencies = ["pkg==1.0"]\n', {})
-        pyproject_file.write_text.assert_not_called()
+    def test_leaves_a_declaration_the_mapping_does_not_hold(self):
+        """Test that a declaration is left alone where the mapping does not hold a version for it."""
+        rewritten = self.rewrite('dependencies = ["pkg==1.0"]\n', {})
+        self.assertEqual(rewritten, 'dependencies = ["pkg==1.0"]\n')
 
 
 class DeclarationsTest(unittest.TestCase):

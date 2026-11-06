@@ -620,11 +620,12 @@ def _property_moved_for_other_artefacts(log: Logger, capture: _Capture) -> dict[
 
 
 def _uv_dependencies_not_updated(log: Logger, capture: _Capture) -> dict[str, str]:
-    """Log that a file's dependencies are not updated, and that a file cannot get its text back."""
-    log.uv_dependencies_not_updated(Path("tool.py"), "uv tree")
+    """Log that a file's dependencies are not updated, a file cannot be written or given back, or a lock removed."""
+    log.uv_dependencies_not_updated(Path("tool.py"), "uv lock")
     log.uv_dependencies_not_updated(Path("pyproject.toml"), "uv lock")
     log.file_not_written(Path("pyproject.toml"), PermissionError(13, "Permission denied", "pyproject.toml"))
     log.file_not_restored(Path("uv.lock"), PermissionError(13, "Permission denied", "uv.lock"))
+    log.lock_not_removed(Path("tool.py.lock"), PermissionError(13, "Permission denied", "tool.py.lock"))
     log.uv_not_on_path(Path("pyproject.toml"))
     return {"@@UV_DEPENDENCIES_NOT_UPDATED@@": capture.take()}
 

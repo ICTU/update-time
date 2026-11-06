@@ -410,7 +410,7 @@ A marker wins over the command-line option that sets the same thing, whatever th
 
 An `ignore[update]` wins over any directive beside it that would change the reference: a [bound](#bounding-an-update), an [`allow[hash-drift]`](#adopting-hash-drift), or an [`allow[floating-pin]`](#keeping-a-pin-floating). Update-time leaves the reference untouched.
 
-Update-time reports an `ignore[update]` as [redundant](#a-bound) where it holds nothing back. npm and pnpm move a `package.json` dependency within the range the file declares, whatever its marker says. It holds nothing back either on a `requirements.txt`, `pyproject.toml`, or inline script metadata dependency that does not pin an exact version, or on a `pom.xml` declaration whose version Maven does not update. The source of a file Update-time recompiles is the exception, since there the `ignore[update]` keeps uv or pip-compile from upgrading the package. So is a `pyproject.toml` dependency other than a build requirement or a direct URL, since there the `ignore[update]` keeps uv on the version it locks for the file as written (see [Python dependencies](#markers)).
+Update-time reports an `ignore[update]` as [redundant](#a-bound) where it holds nothing back. npm and pnpm move a `package.json` dependency within the range the file declares, whatever its marker says. It holds nothing back either on a `requirements.txt`, `pyproject.toml`, or inline script metadata dependency that does not pin an exact version, or on a `pom.xml` declaration whose version Maven does not update. The source of a file Update-time recompiles is the exception, since there the `ignore[update]` keeps uv or pip-compile from upgrading the package. So is a `pyproject.toml` dependency other than a build requirement or a direct URL, and such a dependency of a script that has a lock, since there the `ignore[update]` keeps uv on the version it locks for the file as written (see [Python dependencies](#markers)).
 
 ### Silencing a warning
 
@@ -568,7 +568,7 @@ FROM python:3.12.1-bookworm-slim
 
 The levels are positional, not semantic: they refer to the component's position in the version, not to the project's compatibility promises. Projects may ship breaking changes in releases that bump the *second* component. So "stay on Python 3.12" is `ignore[minor-update]`, although Python 3.13 shipped breaking changes: it removed 19 legacy modules from the standard library. The same caution applies to projects using calendar versioning.
 
-A level bound reads the current version up to the first character that is neither a digit nor a dot. So Jetty's `9.4.53.v20231009` anchors at `9.4.53`, leaving out the date. For a Docker tag, those numbers are its main version, as with specifier bounds, so `python3.12-slim` anchors at `3.12`. The bound does not affect a version embedded in the suffix, such as the `3.23` in `alpine3.23`. A component the current version doesn't have counts as zero, so `ignore[minor-update]` on `node:22` blocks `22.1`. A `pyproject.toml` dependency that does not pin an exact version does not hold its current version in the file, so its level bound anchors at the version uv locks for the file as written (see [Python dependencies](#markers)).
+A level bound reads the current version up to the first character that is neither a digit nor a dot. So Jetty's `9.4.53.v20231009` anchors at `9.4.53`, leaving out the date. For a Docker tag, those numbers are its main version, as with specifier bounds, so `python3.12-slim` anchors at `3.12`. The bound does not affect a version embedded in the suffix, such as the `3.23` in `alpine3.23`. A component the current version doesn't have counts as zero, so `ignore[minor-update]` on `node:22` blocks `22.1`. A `pyproject.toml` dependency that does not pin an exact version does not hold its current version in the file, and neither does such a dependency of a script that has a lock. Its level bound anchors at the version uv locks for the file as written (see [Python dependencies](#markers)).
 
 ### Writing a marker
 
@@ -809,16 +809,16 @@ Update-time reports the two as:
 @@BOUNDS_DECIDING_NOTHING@@
 ```
 
-Update-time also reports every bound as redundant in these cases. In the first three, it reports an `ignore[update]` as redundant as well:
+Update-time also reports every bound as redundant in these cases. In the first four, it reports an `ignore[update]` as redundant as well:
 
 - Update-time does not resolve an update for a `requirements.txt` requirement that does not pin an exact version. The source of a file Update-time recompiles is the exception, since there the marker steers the recompile (see [Python dependencies](#markers)).
 - npm and pnpm move a `package.json` dependency within the range the file declares, whatever its marker says.
 - Maven does not update the version of some `pom.xml` dependencies and plugins (see [What dependencies are updated?](#what-dependencies-are-updated-2)).
-- uv answers with one version for an inline script metadata dependency, rather than the candidates a bound would narrow. An `ignore[update]` is redundant there only where the dependency does not pin an exact version.
+- A script without a lock before the run has none after it, so uv resolves a dependency without an exact pin afresh on every run.
 - uv does not lock a `pyproject.toml` build requirement. An `ignore[update]` is redundant there only where the requirement does not pin an exact version.
 - A `pyproject.toml` dependency given as a direct URL names a URL rather than a version. An `ignore[update]` is redundant there as well.
-- Update-time leaves a `pyproject.toml` pin with an environment marker as it is.
-- An `ignore[update]` beside the bound holds a `pyproject.toml` pin where it is.
+- Update-time leaves a `pyproject.toml` or inline script metadata pin with an environment marker as it is.
+- An `ignore[update]` beside the bound holds a `pyproject.toml` or inline script metadata pin where it is.
 - A GitHub Action or pre-commit hook that names a branch, a tag such as `stable-2024`, or a commit SHA does not name a version to bound. In the run that pins such a reference to a version tag, Update-time judges the bound at that version. Update-time never pins a full SHA, so a bound on one is always redundant.
 
 Update-time reports those bounds as:
@@ -827,7 +827,7 @@ Update-time reports those bounds as:
 @@REDUNDANT_BOUND_WARNINGS@@
 ```
 
-A `pyproject.toml` dependency without an exact pin takes its current version from the version uv locks for the files as written. Where the `uv.lock` does not record a version for the dependency, or records more than one, a level bound does not have a version to anchor at. An `ignore[update]` does not have a version to hold the dependency on either. Update-time reports both as redundant:
+A `pyproject.toml` or inline script metadata dependency without an exact pin takes its current version from the version uv locks for the files as written. Where the lock does not record a version for the dependency, or records more than one, a level bound does not have a version to anchor at. An `ignore[update]` does not have a version to hold the dependency on either. Update-time reports both as redundant:
 
 ```console
 @@REDUNDANT_UNANCHORED_WARNINGS@@
@@ -875,6 +875,8 @@ Update-time discovers Python files containing requirements by name, case-sensiti
 
 Update-time also updates any `*.py` file that carries a [PEP 723](https://peps.python.org/pep-0723/) inline script metadata block. That is a `# /// script … # ///` comment block declaring the standalone script's dependencies. A `*.py` file without such a block stays untouched and never invokes uv.
 
+Update-time locks a script with `uv lock --script`. A script keeps the lock it had before the run, up to date with its new pins. Where it had none, Update-time removes the lock the run created, so the run changes the script's pins alone.
+
 Update-time never rewrites a pin in a compiled or hash-pinned requirements file, such as a `requirements.txt` generated by [pip-tools](https://github.com/jazzband/pip-tools) or `uv pip compile`. Bumping a single pin without recompiling its transitive dependencies and hashes would corrupt the file. Update-time recognises such a file by its contents, an autogenerated header or `--hash=` lines. It also recognises one by a sibling `.in` file.
 
 Update-time updates the sources of a compiled file instead, such as its `requirements.in`. It finds them in the `# via -r` annotations of the compiled file, or, where an old pip-compile wrote none, in the header's command. Update-time looks for a source relative to the directory the file was compiled in. Update-time updates the exact pins in a source as it updates those in a `requirements.txt`.
@@ -917,7 +919,7 @@ In a PEP 723 inline script metadata block, Update-time updates only the pins in 
 
 Update-time rewrites a dependency's declaration when it pins one exact version with `==`, and keeps an extra or an environment marker as written. So it rewrites `django[argon2]==3.2.0` and `humanize==4.15.0; python_version < "3.13"` each to the new version.
 
-In a `pyproject.toml`, the new version is the newest that installs together with the other dependencies of the project, and of the uv workspace the project belongs to. uv can lock a package at one version for an older Python and at another for a newer one. The pin then takes the lower version, which installs on every Python the project supports. Update-time leaves a pin with an environment marker as it is, and reports that at `INFO`:
+In a `pyproject.toml`, the new version is the newest that installs together with the other dependencies of the project, and of the uv workspace the project belongs to. In inline script metadata, it is the newest that installs together with the script's other dependencies. uv can lock a package at one version for an older Python and at another for a newer one. The pin then takes the lower version, which installs on every Python the project or script supports. Update-time leaves a pin with an environment marker as it is, and reports that at `INFO`:
 
 ```console
 @@PIN_WITH_ENVIRONMENT_MARKER@@
@@ -925,7 +927,7 @@ In a `pyproject.toml`, the new version is the newest that installs together with
 
 Update-time leaves every other specifier untouched, so you can pin a maximum version, such as `humanize<5`, to opt a dependency out of automatic updates. A `==` that names a range, such as `humanize==4.15.*`, does not pin an exact version either.
 
-Update-time also reports a new version for a dependency that does not pin an exact version. In a `pyproject.toml`, uv records the version it resolves in the `uv.lock` file, so `humanize>=4` moves from one release to the next without its line changing. At the dependency's line, Update-time reports where the `uv.lock` moves the version, up or back. Where a project lists its dependencies as `dynamic`, the build backend declares them. The file does not have a line for them, so Update-time does not report them. A script does not have a lock file, so there Update-time reports the newest release uv finds for the dependency. In a `requirements.txt`, Update-time reports such a version only in the source of a file it recompiles, where the recompile moves the version up or back.
+Update-time also reports a new version for a dependency that does not pin an exact version. In a `pyproject.toml`, uv records the version it resolves in the `uv.lock` file, so `humanize>=4` moves from one release to the next without its line changing. At the dependency's line, Update-time reports where the `uv.lock` moves the version, up or back. Where a project lists its dependencies as `dynamic`, the build backend declares them. The file does not have a line for them, so Update-time does not report them. A script has a lock where uv has locked it before, such as `tool.py.lock` beside `tool.py`. Where it had one before the run, Update-time reports where that lock moves the version, as for a `pyproject.toml`. In a `requirements.txt`, Update-time reports such a version only in the source of a file it recompiles, where the recompile moves the version up or back.
 
 For a `requirements.txt` pin, Update-time reads from PyPI whether each newer release was yanked and when it was published. When PyPI does not serve that for a release, Update-time stays on the version the pin names rather than trying the versions in between. It logs why at `ERROR`:
 
@@ -933,7 +935,7 @@ For a `requirements.txt` pin, Update-time reads from PyPI whether each newer rel
 @@NO_RELEASE_METADATA@@
 ```
 
-Update-time updates none of the dependencies in a `pyproject.toml` or an inline script metadata block that uv fails to resolve. A registry uv cannot reach is such a case, and so is a pin on a version younger than the [cooldown](#cooldown). Where uv cannot lock a `pyproject.toml`, Update-time leaves the pins of each `pyproject.toml` of the project, or of the workspace it belongs to, as they were, and the `uv.lock` too. Where it cannot write a file back, it reports that at `ERROR` and goes on with the other files. Where it cannot write a `pyproject.toml` at all, it reports that at `ERROR` too, and leaves the dependencies of the file's workspace as they were. Update-time logs uv's error at `WARNING`, and reports at `ERROR` which file's dependencies it did not update. Where uv is not on the path, Update-time does not run it, and says so in that report:
+Update-time updates none of the dependencies in a `pyproject.toml` or an inline script metadata block that uv fails to resolve. A registry uv cannot reach is such a case, and so is a pin on a version younger than the [cooldown](#cooldown). Where uv cannot lock a `pyproject.toml`, Update-time leaves the pins of each `pyproject.toml` of the project, or of the workspace it belongs to, as they were, and the `uv.lock` too. Where uv cannot lock a script, Update-time leaves the script's pins as they were, and its lock too. Where it cannot write a file back, or remove a lock it created, it reports that at `ERROR` and goes on with the other files. Where it cannot write a `pyproject.toml` at all, it reports that at `ERROR` too, and leaves the dependencies of the file's workspace as they were. Update-time logs uv's error at `WARNING`, and reports at `ERROR` which file's dependencies it did not update. Where uv is not on the path, Update-time does not run it, and says so in that report:
 
 ```console
 @@UV_DEPENDENCIES_NOT_UPDATED@@
@@ -986,7 +988,7 @@ A TOML inline table cannot hold a comment. So where the `pyproject.toml` writes 
 @@UV_COOLDOWN_NOT_SET@@
 ```
 
-For inline script metadata, Update-time also applies the cooldown through uv's `exclude-newer`. It passes the value to `uv tree` on the command line rather than persisting it, since a standalone script does not have a lock file to keep reproducible. Update-time derives the cutoff from `--cooldown` on every run, so, unlike `pyproject.toml`, it writes nothing into the `# /// script` block.
+For inline script metadata, Update-time also applies the cooldown through uv's `exclude-newer`. It passes the value on the command line to the `uv lock` runs that resolve the script's versions. The last `uv lock`, which records the new pins, runs without it, so a lock the script keeps does not record the cutoff. Update-time derives the cutoff from `--cooldown` on every run, so, unlike `pyproject.toml`, it writes nothing into the `# /// script` block.
 
 #### Stale dependencies
 
@@ -1010,9 +1012,9 @@ PyPI publishes a project status. Update-time reads it for each dependency a Pyth
 
 Write a marker for a pin in a `requirements.txt`, or in the source of a compiled file such as `requirements.in`, inline, on the pin's own line. Write it in the source rather than in the compiled file, since recompiling drops every comment in the compiled file. A `pyproject.toml` dependency and an inline script metadata dependency take one in either placement. See [Controlling updates and warnings per reference](#-controlling-updates-and-warnings-per-reference) for the directives and where they go.
 
-An `ignore[update]` holds the dependency's update back, so Update-time leaves that pin as the file wrote it and reports no new version for it. The pin is what constrains uv, so a pin Update-time declines to rewrite is the version uv keeps resolving. On a `pyproject.toml` dependency that does not pin an exact version, an `ignore[update]` keeps the version uv locks for the file as written. In inline script metadata, it keeps nothing on such a dependency, since a script does not have a lock file to record a version in. A marker steers each declaration of a name apart, so it rewrites the line it sits on and leaves the text of the other declarations of that name alone.
+An `ignore[update]` holds the dependency's update back, so Update-time leaves that pin as the file wrote it and reports no new version for it. The pin is what constrains uv, so a pin Update-time declines to rewrite is the version uv keeps resolving. On a `pyproject.toml` or inline script metadata dependency that does not pin an exact version, an `ignore[update]` keeps the version uv locks for the file as written. In a script without a lock, it keeps nothing, since the lock the run creates goes again once the run ends. A marker steers each declaration of a name apart, so it rewrites the line it sits on and leaves the text of the other declarations of that name alone.
 
-In a `pyproject.toml`, a bound narrows the versions uv locks, whether or not its dependency pins an exact version. So `humanize>=4  # update-time: allow[update<5]` keeps humanize below 5, and `humanize==4.10.0  # update-time: ignore[major-update]` moves the pin to the newest 4.x. A bound that leaves out the version, such as `allow[update<4]` on `humanize==4.10.0`, keeps the dependency on that version. A level bound on a dependency without an exact pin anchors at the version uv locks for the file as written. Update-time runs `uv lock` on the files before it upgrades, so a `uv.lock` that has fallen behind the file catches up first, and a missing one is created. uv locks one version of a name for the whole workspace, so a marker that holds one declaration of a name back holds every declaration of that name. The file does not hold the bound, so a `uv lock --upgrade` you run yourself moves a dependency without an exact pin past it.
+In a `pyproject.toml` and in inline script metadata, a bound narrows the versions uv locks, whether or not its dependency pins an exact version. So `humanize>=4  # update-time: allow[update<5]` keeps humanize below 5, and `humanize==4.10.0  # update-time: ignore[major-update]` moves the pin to the newest 4.x. A bound that leaves out the version, such as `allow[update<4]` on `humanize==4.10.0`, keeps the dependency on that version. A level bound on a dependency without an exact pin anchors at the version uv locks for the file as written. Update-time runs `uv lock` on the files before it upgrades, so a lock that has fallen behind the file catches up first, and a missing one is created. A script's new lock goes again once the run ends, so there a bound on a dependency without an exact pin holds nothing back past the run. uv locks one version of a name for the whole workspace or script, so a marker that holds one declaration of a name back holds every declaration of that name. The file does not hold the bound, so a `uv lock --upgrade` you run yourself moves a dependency without an exact pin past it.
 
 Update-time checks a requirement that does not pin an exact version for staleness and archival, so such a requirement can carry a marker as well: `humanize>=4  # update-time: set[stale-after=1095]` warns as soon as the package's newest release is more than three years old. In the source of a compiled file, such a requirement is checked for yanks and vulnerabilities as well, at the version the compiled file pins, so the `yanked` and `vulnerable` scopes apply to it too.
 

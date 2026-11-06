@@ -77,8 +77,6 @@ A request to a host name is refused at the lookup, before it reaches the resolve
 A rule every module has to remember is duplication too, so state it once, where nobody can forget it.
 A run that sets no DOCKER_HUB_USERNAME and DOCKER_HUB_TOKEN leaves the requests anonymous.
 A score below the `low` band means the advisory reports no risk at all, which is no level to name.
-A script has no lockfile, so — unlike the pyproject.toml path, which persists the cooldown into `[tool.uv]` — the cooldown is passed to uv on the command line as an `--exclude-newer` cutoff.
-A script's direct dependencies carry no tree prefix (each is its own tree root), so the line is just `package v<current>[ (latest: v<latest>)]` — the exact shape the updater parses.
 A second decorator on the same test fails it, as does one given no mutation at all.
 A section whose version is named in prose sits under no heading, so any heading ends it.
 A severity an advisory reports, as a CVSS vector string of the named version.
@@ -225,7 +223,6 @@ Return the version for a reference that pins no version, carrying its source's r
 Return the version parsed, or the lowest there is when the source spells it as no version at all.
 Return whether the pinned image's versions carry a date, which they do not when no registry is asked.
 Rich SVG has no viewBox to size the <img> from.
-Run `uv tree --outdated`, log every new version no marker holds back, and rewrite the file's exact `==` pins.
 Run every script with `just py`, which puts the package on the path, or with `uv run` where no recipe fits.
 Run the updater over no files, and return the mocks standing in for its two passes.
 Running this again finds nothing left to scrub, so the patch it then starts changes nothing, and needs no guard of the kind the refusal above has.
@@ -267,7 +264,6 @@ Test that a changelog that does not name the version yields no changes.
 Test that a command that exits cleanly is ok, even with no output.
 Test that a dated snapshot the registry lists no newer one of keeps its tag and is pinned to its digest.
 Test that a declaration pinning no exact version is left alone.
-Test that a declaration the mapping holds no version for is left alone, so the file is not written.
 Test that a declared dependency the registry has no release for is skipped without warning or crashing.
 Test that a delimited path:line is one `repr.filename` span, delimiters stripped and no stray number span.
 Test that a dependency given as a URL is left out, since it resolves to no release on PyPI.
@@ -590,7 +586,6 @@ every mutation the test did not kill is reported with the first one's regression
 it names the empty base image Docker builds from, which no registry serves.
 nltk ships no `py.typed` marker, so mypy has no types to resolve for it.
 noqa: FBT003 # `isfinal` is positional: pyexpat takes no keyword.
-nothing outdated, so no changelog is fetched.
 npm normalizes specs such as `git+https://...` URLs to the `github:` shorthand whenever it saves the manifest, which previously produced a spurious diff even when no version changed; the original file is now restored unless a registry version was actually updated.
 on disk but registered for no dependency type.
 one pin's marker steers every pin the file declares, rather than the one carrying it.

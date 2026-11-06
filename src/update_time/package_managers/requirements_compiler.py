@@ -76,7 +76,7 @@ class RequirementsCompiler(ABC):
         declarations = [
             declaration for source in compiled.sources for declaration in requirements_txt.declarations(source)
         ]
-        steering = by_package(declarations)
+        steering = _by_package(declarations)
         if option := self.package_cooldown_option:
             command = command.without_option(option)
         command, cooldown = self._managed_cutoff(command, commented=commented)
@@ -163,7 +163,7 @@ def _marker_of(pin: PinnedDependency, declarations: _ByPackage) -> Marker:
     return Marker.combined(markers, pin.version, COOLDOWN.get())
 
 
-def by_package[ReferenceT: SteeredReference](
+def _by_package[ReferenceT: SteeredReference](
     declarations: Iterable[ReferenceT],
 ) -> dict[DependencyName, list[ReferenceT]]:
     """Return the declarations, each with its marker, grouped by the normalized name of their package.
@@ -195,7 +195,7 @@ def log_moved_versions(
     A package without a version before is reported as new.
     """
     versions_before = {normalized_python_name(pin.name): pin.version for pin in before}
-    unpinned = by_package(declaration for declaration in declarations if not declaration.current_version)
+    unpinned = _by_package(declaration for declaration in declarations if not declaration.current_version)
     locations = {name: [declaration.location for declaration in group] for name, group in unpinned.items()}
     for pin in after:
         name = normalized_python_name(pin.name)

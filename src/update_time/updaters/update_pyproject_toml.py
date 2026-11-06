@@ -10,7 +10,7 @@ from update_time.manifests import pyproject_toml as pyproject_toml_manifest
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.manifests.python_dependency_toml import is_well_formed
 from update_time.package_managers.uv import uv
-from update_time.package_managers.uv.workspace import read_workspaces
+from update_time.package_managers.uv.lock import read_workspaces
 from update_time.updaters.uv_pins import warn_about_pins
 
 if TYPE_CHECKING:
@@ -49,7 +49,7 @@ def update_pyproject_tomls() -> None:
     # reproducible with a plain `uv sync --locked` (see `uv.configure_cooldown`). Then read each workspace, so the files
     # get the text they hold now back where uv cannot lock.
     uv.configure_cooldown(projects_with_dependencies)
-    workspaces = read_workspaces(projects_with_dependencies)
+    workspaces = read_workspaces(projects_with_dependencies, _LOG)
     policies: dict[PythonDependencyToml, ManagerPolicy[Declaration]] = {}
     for workspace in workspaces:
         policies.update(workspace.update())
