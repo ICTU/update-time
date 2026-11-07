@@ -1,33 +1,26 @@
-"""Recompile a requirements file that a tool compiled, steered by the markers in its sources.
-
-The module also logs each version of a Python dependency that a package manager resolves or moves.
-"""
+"""Recompile a requirements file that a tool compiled, steered by the markers in its sources."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, ClassVar
 
 from update_time.domain.cooldown import COOLDOWN
-from update_time.domain.dependency import DependencyVersion, is_valid, normalized_python_name
-from update_time.domain.reference import Reference
-from update_time.domain.version_scheme import PEP_440
+from update_time.domain.dependency import is_valid, normalized_python_name
 from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
 from update_time.lock_files import compiled_requirements_txt
 from update_time.manifests import requirements_txt
 from update_time.markers.marker import Marker
+from update_time.package_managers.moved_versions import by_package, log_moved_versions
 from update_time.primitives.command import Command
-from update_time.primitives.lookup import LookedUp
-from update_time.sources.pypi import get_changes, get_publication_datetime
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
-    from update_time.domain.dependency import DependencyName, PinnedDependency, VersionString
+    from update_time.domain.dependency import DependencyName, PinnedDependency
     from update_time.io.log import Logger
     from update_time.lock_files.compiled_requirements_txt import CompiledRequirementsTxt
     from update_time.markers.reference import SteeredReference
-    from update_time.primitives.location import Location
 
 type _ByPackage = Mapping[DependencyName, Sequence[SteeredReference]]
 
@@ -76,7 +69,7 @@ class RequirementsCompiler(ABC):
         declarations = [
             declaration for source in compiled.sources for declaration in requirements_txt.declarations(source)
         ]
-        steering = _by_package(declarations)
+        steering = by_package(declarations)
         if option := self.package_cooldown_option:
             command = command.without_option(option)
         command, cooldown = self._managed_cutoff(command, commented=commented)
@@ -163,62 +156,7 @@ def _marker_of(pin: PinnedDependency, declarations: _ByPackage) -> Marker:
     return Marker.combined(markers, pin.version, COOLDOWN.get())
 
 
-def _by_package[ReferenceT: SteeredReference](
-    declarations: Iterable[ReferenceT],
-) -> dict[DependencyName, list[ReferenceT]]:
-    """Return the declarations, each with its marker, grouped by the normalized name of their package.
-
-    A name uv or PyPI reports finds every declaration of its package, whichever of the spellings that normalize to
-    that name each declaration uses.
-    """
-    grouped: dict[DependencyName, list[ReferenceT]] = {}
-    for declaration in declarations:
-        grouped.setdefault(normalized_python_name(declaration.dependency), []).append(declaration)
-    return grouped
-
-
 def _upgrade(pin: PinnedDependency, marker: Marker) -> str:
     """Return the pin's package as `--upgrade-package` takes it, narrowed by its bound, or "" to hold it back."""
     specifier = marker.update_specifier(pin.version)
     return "" if specifier is None else f"{pin.name}{specifier}"
-
-
-def log_moved_versions(
-    log: Logger,
-    manager: str,
-    before: Iterable[PinnedDependency],
-    after: Iterable[PinnedDependency],
-    declarations: Iterable[SteeredReference],
-) -> None:
-    """Log each version that moved, up or back, at each declaration of its package that does not pin an exact version.
-
-    A package without a version before is reported as new.
-    """
-    versions_before = {normalized_python_name(pin.name): pin.version for pin in before}
-    unpinned = _by_package(declaration for declaration in declarations if not declaration.current_version)
-    locations = {name: [declaration.location for declaration in group] for name, group in unpinned.items()}
-    for pin in after:
-        name = normalized_python_name(pin.name)
-        if name not in locations or (old := versions_before.get(name, "")) == pin.version:
-            continue
-        if PEP_440.is_downgrade(old, pin.version):
-            for location in locations[name]:
-                log.version_moved_back(manager, Reference(pin.name, old, location), pin.version)
-        else:
-            log_new_version(log, pin.name, pin.version, locations[name])
-
-
-def log_new_version(
-    log: Logger, package: DependencyName, version: VersionString, locations: Sequence[Location]
-) -> None:
-    """Log that a new version is available for the PyPI package, at each of the locations declaring it.
-
-    The package is named as the package manager reports it, so one package is named one way however each line spells it.
-    The changelog and publication date are fetched once, whichever locations the version is reported at.
-    """
-    changes = get_changes(package, version)
-    published = get_publication_datetime(package, version)
-    dependency_version = DependencyVersion(version, changes, publication=LookedUp(published))
-    for location in locations:
-        # This message renders no version the reference is pinned to, so the reference names none.
-        log.new_version(Reference(package, "", location), dependency_version)

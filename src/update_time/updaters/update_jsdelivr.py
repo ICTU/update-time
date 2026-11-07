@@ -22,7 +22,7 @@ from update_time.markers.marker import Scope
 from update_time.primitives.text import rewrite_string
 from update_time.references.file import rewrite_file
 from update_time.references.match import matched_reference
-from update_time.references.resolve import latest_version, warn_if_the_opt_in_is_redundant
+from update_time.references.resolve import latest_version
 from update_time.references.rewrite import apply_marker
 from update_time.references.vulnerability import warn_about_vulnerable_references
 from update_time.sources.jsdelivr import integrity_hash, version_getter
@@ -109,10 +109,9 @@ class _Rewriter:
         the hash of the resolved version is left to the dictionary line, which the pass reaches next.
         """
         reference = matched_reference(match, location)
-        warn_if_the_opt_in_is_redundant(
+        _LOG.warn_if_the_opt_in_is_redundant(
             reference,
             marker,
-            _LOG,
             Scope.HASH_DRIFT,
             Reason.INTEGRITY_MISMATCH_NEVER_ADOPTED,
             update_held_back=marker.ignores(Scope.UPDATE),

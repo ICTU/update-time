@@ -46,7 +46,7 @@ UPLOAD_TIME_WITH_CHANGELOG = "2026-05-30T12:07:03.123456Z"
 UPLOAD_TIME_WITHOUT_CHANGELOG = "2026-05-30T12:08:53.123321Z"
 
 
-def executed_commands(run: Mock) -> list[Command]:
+def _executed_commands(run: Mock) -> list[Command]:
     """Return the command of each call the mock of `subprocess.run` received, in the order of the calls."""
     return [call.args[0] for call in run.call_args_list]
 
@@ -165,7 +165,7 @@ def github_refs_whose_commits_were_listed() -> list[str]:
     return [ref for query in github_commit_listing_queries() for ref in query["sha"]]
 
 
-# The lock after that `UvLockTestCase.updated_lock` takes for a uv lock that fails.
+# The lock after that `UvLockTestCase.files_after_update` takes for a uv lock that fails.
 LOCK_FAILS = None
 
 # What uv lock writes to stderr where the pins contradict each other.
@@ -179,10 +179,10 @@ def locked_package(package: str, version: str) -> str:
 
 def uv_locks(run: Mock) -> list[Command]:
     """Return the uv lock commands the mock of `subprocess.run` received, in the order of the calls."""
-    return [command for command in executed_commands(run) if command[:2] == ("uv", "lock")]
+    return [command for command in _executed_commands(run) if command[:2] == ("uv", "lock")]
 
 
-def failing_uv_lock(*_arguments: object, **_options: object) -> NoReturn:
+def _failing_uv_lock(*_arguments: object, **_options: object) -> NoReturn:
     """Fail `uv lock` with the error uv gives for pins that contradict each other."""
     raise subprocess.CalledProcessError(cmd="", returncode=1, output="", stderr=NO_SOLUTION)
 
@@ -202,7 +202,7 @@ class UvLockTestCase(LoggingTestCase):
         """Run the updater."""
         raise NotImplementedError
 
-    def updated_lock(  # noqa: PLR0913 — the patched mocks travel with the fixtures they are given
+    def files_after_update(  # noqa: PLR0913 — the patched mocks travel with the fixtures they are given
         self,
         run: Mock,
         get: Mock,
@@ -216,7 +216,7 @@ class UvLockTestCase(LoggingTestCase):
         """Update the files that the scan discovers, the manifest where the test names none, and return the files.
 
         The uv lock of the files as written writes the lock as written. Where the test gives none, it leaves the lock
-        as it is, as uv does with a lock that is current with the files. Each uv lock after it writes the lock after, or
+        as it is, or absent where there was none. Each uv lock after it writes the lock after, or
         fails for `LOCK_FAILS`. A tuple gives the lock after of each of those in turn. uv writes past the write errors
         the files hold, since it is a process of its own. PyPI does not name a changelog for a version.
         """
@@ -232,7 +232,7 @@ class UvLockTestCase(LoggingTestCase):
                     fake_files[self.lock_file] = lock_as_written
                 return DEFAULT
             if (lock := next(locks_after)) is None:
-                failing_uv_lock()
+                _failing_uv_lock()
             fake_files[self.lock_file] = lock
             return DEFAULT
 
@@ -243,6 +243,15 @@ class UvLockTestCase(LoggingTestCase):
         with fake_files.patched():
             self.update()
         return fake_files
+
+    def updated_with_failing_lock(self, run: Mock, glob: Mock, contents: str) -> FakeFiles:
+        """Update the manifest holding the contents, with every uv lock failing, and return the files."""
+        files = FakeFiles({self.manifest: contents})
+        run.side_effect = _failing_uv_lock
+        glob.return_value = [self.manifest]
+        with files.patched():
+            self.update()
+        return files
 
     def text_locked_with_upgrade(self) -> str:
         """Return the text the manifest held when the last update ran `uv lock --upgrade`."""

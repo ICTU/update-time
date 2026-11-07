@@ -1,4 +1,4 @@
-"""The goals Update-time has Maven run, their options and rule sets, and the report of what Maven moved."""
+"""The goals of the versions plugin, their options and rule sets, and the report of what the plugin moved."""
 
 import re
 import tempfile
@@ -15,7 +15,8 @@ from update_time.io.log import get_logger
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.markers.cooldown import cooldown_days
 from update_time.markers.directive import Reason
-from update_time.package_managers.maven.range import maven_range
+from update_time.package_managers.maven.plugins import VERSIONS_PLUGIN
+from update_time.package_managers.maven.version_range import maven_range
 from update_time.primitives.iterables import unique
 from update_time.sources import maven_central
 
@@ -25,24 +26,6 @@ if TYPE_CHECKING:
     from update_time.domain.dependency import DependencyName, VersionString
 
 _LOG = get_logger("pom.xml")
-
-# The plugin releases Update-time runs, read from the pom it ships beside this module. Update-time names these
-# versions in each goal below, so the scanned project cannot decide which plugin release runs. An older plugin
-# release drops the options Update-time passes to its goals without saying so.
-_POM = Path(__file__).parent / "pom.xml"
-
-
-def _declared_plugin_version(version_property: str) -> str:
-    """Return the plugin release the shipped pom declares in the property."""
-    declared = pom_xml_manifest.properties(_POM).get(version_property)
-    if declared is None:
-        message = f"{_POM} does not declare {version_property}, so there is no plugin release to run"
-        raise RuntimeError(message)
-    return declared
-
-
-_HELP_PLUGIN = f"org.apache.maven.plugins:maven-help-plugin:{_declared_plugin_version('help.plugin.version')}"
-_VERSIONS_PLUGIN = f"org.codehaus.mojo:versions-maven-plugin:{_declared_plugin_version('versions.plugin.version')}"
 
 # Numbers separated by dots, such as the `2.4.0` a version starts with. The versions plugin reads the patterns built
 # from it as Java regexes. Python's `\d` matches any Unicode digit and Java's matches 0 to 9 alone, so `[0-9]` keeps
@@ -97,14 +80,11 @@ def _variant_pattern(version: VersionString) -> str:
 # beside the one it rewrites.
 _VERSIONS_OPTIONS = ("-DgenerateBackupPoms=false", f"-Dmaven.version.ignore={_PRE_RELEASES}")
 
-# `effective-pom` writes the pom as Maven builds it, before any other goal of the same run rewrites it.
-EFFECTIVE_POM_GOAL = f"{_HELP_PLUGIN}:effective-pom"
-
 # `use-latest-releases` advances the version in a dependency's `<version>` element, `update-properties` the property a
 # `<version>` element names.
 VERSIONS_GOALS = (
-    f"{_VERSIONS_PLUGIN}:use-latest-releases",
-    f"{_VERSIONS_PLUGIN}:update-properties",
+    f"{VERSIONS_PLUGIN}:use-latest-releases",
+    f"{VERSIONS_PLUGIN}:update-properties",
 )
 
 # The rule set the versions plugin reads, which holds a rule per artefact. The plugin filters releases neither by age

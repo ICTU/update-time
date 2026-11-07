@@ -210,8 +210,8 @@ class LayeringTest(unittest.TestCase):
       after `manifests` because a compiled requirements file is written in the format of the manifest it was compiled
       from.
     - `sources` are the backends the outer layers ask about a dependency.
-    - `package_managers` drive the external managers, uv, npm, and pnpm, using manifests and sources, and say which
-      directives a manager's dependencies can be steered by.
+    - `package_managers` drive the external managers, such as uv, npm, and Maven, using manifests and sources, and say
+      which directives a manager's dependencies can be steered by.
     - `references` decide which version a pinned reference should update to, and rewrite the reference accordingly.
       They rank after `package_managers` because the checks a manager's dependencies get follow its policy.
     - `updaters` wire everything together.

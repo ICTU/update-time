@@ -254,10 +254,7 @@ class DeclarationsTest(unittest.TestCase):
         """
         for declared, sourced in (("local-pkg", "local_pkg"), ("local_pkg", "local-pkg")):
             with self.subTest(declared=declared, sourced=sourced):
-                contents = (
-                    f'[project]\ndependencies = ["{declared}==1.0"]\n'
-                    f'[tool.uv.sources]\n{sourced} = {{path = "../local"}}\n'
-                )
+                contents = f'[project]\ndependencies = ["{declared}==1.0"]\n' + uv_path_source(sourced)
                 path = mock_path(contents)
                 self.assertEqual(self.references(path), [declaration(declared, "1.0", path, 2, 1, uv_sourced=True)])
 

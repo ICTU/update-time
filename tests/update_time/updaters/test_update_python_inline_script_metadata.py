@@ -1,18 +1,19 @@
 """Unit tests for the inline-script-metadata updater (discovery and orchestration of the uv package manager)."""
 
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import Mock, patch
 
+from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
-from update_time.manifests.inline_script import InlineScript
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope
-from update_time.package_managers.uv import lock
+from update_time.package_managers.uv import lock, marker_policy
+from update_time.package_managers.uv import uv as uv_module
 from update_time.primitives.location import Location
-from update_time.updaters.update_python_inline_script_metadata import update_python_inline_script_metadatas
+from update_time.updaters import update_python_inline_script_metadata
 
 from tests.helpers import FakeFiles, patch_pathlib_path
 from tests.mutation import Mutation, kills
-from tests.update_time.helpers import SCAN_ROOT, LoggingTestCase, message_of, published_version, uv_path_source
+from tests.update_time.helpers import SCAN_ROOT, message_of, published_version, uv_path_source
 from tests.update_time.manifests.helpers import script
 from tests.update_time.updaters.helpers import (
     LOCK_FAILS,
@@ -20,7 +21,6 @@ from tests.update_time.updaters.helpers import (
     PYPROJECT_TOML,
     UPLOAD_TIME_WITHOUT_CHANGELOG,
     UvLockTestCase,
-    failing_uv_lock,
     locked_package,
     no_vulnerabilities,
     pypi_answer,
@@ -50,12 +50,12 @@ class _ScriptLockTestCase(UvLockTestCase):
 
     def update(self) -> None:
         """Run the inline script metadata updater."""
-        update_python_inline_script_metadatas()
+        update_python_inline_script_metadata.update_python_inline_script_metadatas()
 
 
 # The checks over the settled pins are stubbed out so these tests focus on the update flow: each check makes registry
-# requests of its own, and what they report is `test_uv_pins.py`'s to pin, while being handed the scripts found is
-# `CheckedInlineScriptPinsTest`'s below.
+# requests of its own, and what they report is `test_uv_pins.py`'s to pin, while `ScriptRedundantDirectiveTest` below
+# runs them.
 @patch("update_time.updaters.update_python_inline_script_metadata.warn_about_pins", Mock())
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT)
 @patch("requests.Session.get")
@@ -63,32 +63,27 @@ class _ScriptLockTestCase(UvLockTestCase):
 class ScriptLockTest(_ScriptLockTestCase):
     """Unit tests for the exact pins of a script, which take the versions uv locks for the script."""
 
-    def updated_pin(self, run: Mock, get: Mock, glob: Mock, *, marker: str = "", latest: str = "1.1") -> FakeFiles:
-        """Update a script whose only dependency pins the package on 1.0, which uv lock moves to the latest."""
-        return self.updated_lock(run, get, glob, {_SCRIPT: script("package==1.0", marker=marker)}, _script_lock(latest))
-
-    def updated_with_failing_lock(self, run: Mock, glob: Mock, contents: str) -> FakeFiles:
-        """Update the script holding the contents, with every uv lock failing, and return the files."""
-        files = FakeFiles({_SCRIPT: contents})
-        run.side_effect = failing_uv_lock
-        glob.return_value = [_SCRIPT]
-        with files.patched():
-            self.update()
-        return files
-
     @kills(
         Mutation(
             lock._LockUpdate.update,
-            "if self.target.keeps_the_lock:\n            self.log.path(self.target.uv_lock.path)",
-            "self.log.path(self.target.uv_lock.path)",
+            "if self.before.target.keeps_the_lock:\n            self.before.log.path(self.before.target.uv_lock.path)",
+            "self.before.log.path(self.before.target.uv_lock.path)",
             "the run reports checking a lock it removes again, which the user never sees",
-        )
+        ),
+        Mutation(
+            lock._LockTarget.script,
+            "cooldown_cutoff(COOLDOWN.get())",
+            "cooldown_cutoff(0)",
+            "uv locks a script without the cooldown `--cooldown` sets",
+        ),
     )
     def test_a_script_without_a_lock_takes_the_locked_versions_and_is_left_without_a_lock(
         self, run: Mock, get: Mock, glob: Mock
     ):
         """Test that an exact pin moves to the version uv locks, with the cooldown passed to uv, and the lock goes."""
-        left = self.updated_pin(run, get, glob)
+        with patch("update_time.package_managers.uv.lock.cooldown_cutoff", Mock(return_value="cutoff")) as cutoff:
+            left = self.files_after_update(run, get, glob, {_SCRIPT: script("package==1.0")}, _script_lock("1.1"))
+        cutoff.assert_called_once_with(COOLDOWN.get())
         self.assertEqual(left[_SCRIPT], script("package==1.1"))
         self.assertEqual(self.text_locked_with_upgrade(), script("package>=1.0"))
         self.assertNotIn(_SCRIPT_LOCK, left)
@@ -98,7 +93,8 @@ class ScriptLockTest(_ScriptLockTestCase):
             [command[:4] for command in (as_written, upgrade)], [("uv", "lock", "--script", str(_SCRIPT))] * 2
         )
         self.assertEqual(["--upgrade" in command for command in (as_written, upgrade)], [False, True])
-        self.assertEqual(["--exclude-newer" in command for command in (as_written, upgrade)], [True, True])
+        cutoffs = [command[command.index("--exclude-newer") + 1] for command in (as_written, upgrade)]
+        self.assertEqual(cutoffs, ["cutoff", "cutoff"])
         published = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
         self.assert_new_version_logged("package", published, Location(_SCRIPT, 4))
         self.assert_no_warnings_logged()
@@ -108,7 +104,7 @@ class ScriptLockTest(_ScriptLockTestCase):
     ):
         """Test that the lock a script had before the run is locked again on the new pins, without the cutoff."""
         files = {_SCRIPT: script("package==1.0"), _SCRIPT_LOCK: _script_lock("1.0")}
-        left = self.updated_lock(run, get, glob, files, _script_lock("1.1"))
+        left = self.files_after_update(run, get, glob, files, _script_lock("1.1"))
         self.assertEqual(left[_SCRIPT], script("package==1.1"))
         self.assertEqual(left[_SCRIPT_LOCK], _script_lock("1.1"))
         self.assert_path_logged(_SCRIPT_LOCK)
@@ -121,26 +117,33 @@ class ScriptLockTest(_ScriptLockTestCase):
         self, run: Mock, get: Mock, glob: Mock
     ):
         """Test that a pin moves to the lowest version uv locks for the script, where it locks several."""
-        left = self.updated_lock(run, get, glob, {_SCRIPT: script("package==1.0")}, _script_lock("1.1", "1.2"))
-        self.assertEqual(left[_SCRIPT], script("package==1.1"))
-        published = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
-        self.assert_new_version_logged("package", published, Location(_SCRIPT, 4))
+        for case, versions in {
+            "the lower version listed first": ("1.1", "1.2"),
+            "the higher version listed first": ("1.2", "1.1"),
+        }.items():
+            with self.subTest(case):
+                left = self.files_after_update(
+                    run, get, glob, {_SCRIPT: script("package==1.0")}, _script_lock(*versions)
+                )
+                self.assertEqual(left[_SCRIPT], script("package==1.1"))
+                published = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
+                self.assert_new_version_logged("package", published, Location(_SCRIPT, 4))
 
     def test_the_version_an_earlier_lock_moves_for_a_dependency_without_an_exact_pin_is_reported(
         self, run: Mock, get: Mock, glob: Mock
     ):
         """Test that where a script had a lock, the version it moves for a dependency without a pin is reported."""
         files = {_SCRIPT: script("package>=1.0"), _SCRIPT_LOCK: _script_lock("1.0")}
-        left = self.updated_lock(run, get, glob, files, _script_lock("1.1"))
+        left = self.files_after_update(run, get, glob, files, _script_lock("1.1"))
         self.assertEqual(left[_SCRIPT], script("package>=1.0"))
         published = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
         self.assert_new_version_logged("package", published, Location(_SCRIPT, 4))
 
     @kills(
         Mutation(
-            lock._LockTarget.script,
-            "uv_lock,\n            set(),",
-            "uv_lock,\n            workspace_sources(path),",
+            uv_module.declarations_of,
+            "if isinstance(file, PyprojectToml) else set()",
+            "",
             "a script takes on the sources of a workspace root above it, which `uv lock --script` ignores",
         )
     )
@@ -148,7 +151,7 @@ class ScriptLockTest(_ScriptLockTestCase):
         """Test that a pin moves and is reported, though a workspace root beside the script sources its package."""
         root = "[tool.uv.workspace]\nmembers = []\n" + uv_path_source("package")
         files = {_SCRIPT: script("package==1.0"), PYPROJECT_TOML: root}
-        left = self.updated_lock(run, get, glob, files, _script_lock("1.1"))
+        left = self.files_after_update(run, get, glob, files, _script_lock("1.1"))
         self.assertEqual(left[_SCRIPT], script("package==1.1"))
         published = published_version("1.1", UPLOAD_TIME_WITHOUT_CHANGELOG)
         self.assert_new_version_logged("package", published, Location(_SCRIPT, 4))
@@ -156,8 +159,8 @@ class ScriptLockTest(_ScriptLockTestCase):
     @kills(
         Mutation(
             lock._LockUpdate._restore_lock,
-            "failure = self.log.lock_not_removed if self.target.uv_lock_text is None else self.log.file_not_restored",
-            "failure = self.log.file_not_restored",
+            "failure = log.lock_not_removed if target.uv_lock_text is None else log.file_not_restored",
+            "failure = log.file_not_restored",
             "the run reports a lock it cannot remove as one it cannot give back the text it held before the run",
         ),
     )
@@ -166,50 +169,68 @@ class ScriptLockTest(_ScriptLockTestCase):
         files = FakeFiles({_SCRIPT: script("package==1.0")})
         error = PermissionError(13, "Permission denied", str(_SCRIPT_LOCK))
         files.remove_errors[_SCRIPT_LOCK] = error
-        left = self.updated_lock(run, get, glob, files, _script_lock("1.1"))
+        left = self.files_after_update(run, get, glob, files, _script_lock("1.1"))
         self.assertEqual(left[_SCRIPT], script("package==1.1"))
         self.assert_error_logged(message_of(Logger.lock_not_removed), location=Location(_SCRIPT_LOCK), error=str(error))
 
-    def test_a_pin_uv_lock_keeps_leaves_the_script_as_it_was(self, run: Mock, get: Mock, glob: Mock):
-        """Test that a pin uv lock keeps on its version leaves the script as it was, and Update-time does not log it."""
-        left = self.updated_pin(run, get, glob, latest="1.0")
-        self.assertEqual(left[_SCRIPT], script("package==1.0"))
-        get.assert_not_called()
-        self.assert_no_new_version_logged()
-        self.assert_no_warnings_logged()
+    def test_a_lock_that_cannot_be_read_is_reported_and_its_script_is_left_as_it_is(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that a script's lock the run cannot read is reported, and that uv locks the other scripts alone."""
+        other = SCAN_ROOT / "other.py"
+        other_lock = SCAN_ROOT / "other.py.lock"
+        contents = script("package==1.0")
+        files = FakeFiles({_SCRIPT: contents, other: contents, other_lock: _script_lock("1.0")})
+        error = PermissionError(13, "Permission denied", str(other_lock))
+        files.read_errors[other_lock] = error
+        left = self.files_after_update(run, get, glob, files, _script_lock("1.1"), discovered=[_SCRIPT, other])
+        self.assertEqual(left[_SCRIPT], script("package==1.1"))
+        self.assertEqual(left[other], contents)
+        self.assertEqual({command[3] for command in uv_locks(run)}, {str(_SCRIPT)})
+        self.assert_errors_logged(
+            (message_of(Logger.lock_not_read), {"location": Location(other_lock), "error": str(error)})
+        )
+
+    @kills(
+        Mutation(
+            update_python_inline_script_metadata._scripts,
+            "except (OSError, UnicodeDecodeError) as error:",
+            "except OSError as error:",
+            "a .py file that is not UTF-8 stops the update of every script",
+            raises="UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+        ),
+        Mutation(
+            update_python_inline_script_metadata._scripts,
+            "_LOG.unreadable_script(path, error)",
+            "_ = error",
+            "the run skips an unreadable .py file without a word",
+        ),
+    )
+    def test_a_py_file_that_cannot_be_read_is_reported_and_skipped(self, run: Mock, get: Mock, glob: Mock):
+        """Test that a .py file the run cannot read is reported, and that uv locks the other scripts alone."""
+        other = SCAN_ROOT / "other.py"
+        for case, error in {
+            "a .py file without read permission": PermissionError(13, "Permission denied", str(other)),
+            "a .py file that is not UTF-8": UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+        }.items():
+            with self.subTest(case):
+                run.reset_mock()
+                files = FakeFiles({other: script("package==1.0"), _SCRIPT: script("package==1.0")})
+                files.read_errors[other] = error
+                left = self.files_after_update(run, get, glob, files, _script_lock("1.1"), discovered=[other, _SCRIPT])
+                self.assertEqual(left[_SCRIPT], script("package==1.1"))
+                self.assertEqual({command[3] for command in uv_locks(run)}, {str(_SCRIPT)})
+                self.assert_logged(message_of(Logger.unreadable_script), location=Location(other), error=str(error))
 
     def test_without_an_earlier_lock_a_dependency_without_an_exact_pin_gets_no_new_version(
         self, run: Mock, get: Mock, glob: Mock
     ):
         """Test that a dependency without an exact pin is left as it is, and its locked version is not reported."""
-        left = self.updated_lock(run, get, glob, {_SCRIPT: script("package>=1.0")}, _script_lock("1.1"))
+        left = self.files_after_update(run, get, glob, {_SCRIPT: script("package>=1.0")}, _script_lock("1.1"))
         self.assertEqual(left[_SCRIPT], script("package>=1.0"))
         get.assert_not_called()
         self.assert_no_new_version_logged()
         self.assert_no_warnings_logged()
-
-    def test_a_marker_holds_the_update_back(self, run: Mock, get: Mock, glob: Mock):
-        """Test that a pin whose marker holds its update back keeps its version, and is reported as held back."""
-        left = self.updated_pin(run, get, glob, marker="ignore[update]")
-        location = Location(_SCRIPT, 4)
-        self.assertNotIn(_SCRIPT, left.written_paths)
-        get.assert_not_called()
-        self.assert_no_new_version_logged()
-        self.assert_recognised_marker_logged("package", location, Marker(ignored_scopes=Scope.UPDATE))
-        self.assert_ignored_logged("package", location, "ignore[update]", among_others=True)
-
-    def test_a_name_declared_twice_and_held_back_once_stays_on_the_held_back_version(
-        self, run: Mock, get: Mock, glob: Mock
-    ):
-        """Test that a name declared twice is relaxed on the line its marker leaves, and stays where uv locks it."""
-        held_back = script("package==1.0", marker="ignore[stlae]")
-        contents = held_back.replace("# ]\n", '#     "package==1.0",\n# ]\n')
-        # uv locks the name at the version the held-back pin names, since the held-back line allows that version alone.
-        left = self.updated_lock(run, get, glob, {_SCRIPT: contents}, _script_lock("1.0"))
-        self.assertEqual(self.text_locked_with_upgrade(), held_back.replace("# ]\n", '#     "package>=1.0",\n# ]\n'))
-        self.assertEqual(left[_SCRIPT], contents)
-        self.assert_no_new_version_logged()
-        self.assert_invalid_bracket_item_logged("package", Location(_SCRIPT, 4), "stlae")
 
     def test_a_failed_uv_lock_of_the_script_as_written_is_reported_at_error_and_nothing_locks_after_it(
         self, run: Mock, get: Mock, glob: Mock
@@ -224,19 +245,10 @@ class ScriptLockTest(_ScriptLockTestCase):
         self.assert_uv_dependencies_not_updated_logged(_SCRIPT, "uv lock")
         self.assert_recognised_marker_logged("package", Location(_SCRIPT, 4), Marker(ignored_scopes=Scope.UPDATE))
 
-    @patch("shutil.which", Mock(return_value=None))
-    def test_a_uv_missing_from_the_path_is_reported_in_one_line(self, run: Mock, get: Mock, glob: Mock):
-        """Test that a missing uv is reported in one line naming the script, and that Update-time does not run it."""
-        left = self.updated_lock(run, get, glob, {_SCRIPT: script("package==1.0")}, LOCK_FAILS)
-        run.assert_not_called()
-        self.assertEqual(left[_SCRIPT], script("package==1.0"))
-        get.assert_not_called()
-        self.assert_error_logged(message_of(Logger.uv_not_on_path), location=Location(_SCRIPT))
-
     def test_skip_py_file_without_script_block(self, run: Mock, get: Mock, glob: Mock):
         """Test that a .py file without a `# /// script` block is left untouched and does not invoke uv."""
         contents = "import os\n\nprint(os.getcwd())\n"
-        left = self.updated_lock(run, get, glob, {_SCRIPT: contents}, LOCK_FAILS)
+        left = self.files_after_update(run, get, glob, {_SCRIPT: contents}, LOCK_FAILS)
         run.assert_not_called()
         get.assert_not_called()
         self.assertEqual(left[_SCRIPT], contents)
@@ -245,73 +257,63 @@ class ScriptLockTest(_ScriptLockTestCase):
 
 @no_vulnerabilities
 @patch_pathlib_path("rglob", cwd=SCAN_ROOT)
-@patch("requests.Session.get")
+@patch("requests.Session.get", side_effect=pypi_answer)
 @patch("subprocess.run")
 class ScriptRedundantDirectiveTest(_ScriptLockTestCase):
     """Unit tests for the directives a run reports as redundant in a script that uv locks."""
 
     def test_a_directive_steering_the_lock_is_not_reported_as_redundant(self, run: Mock, get: Mock, glob: Mock):
         """Test that an `ignore[update]` on a range in a script that has a lock goes unreported."""
-        get.side_effect = pypi_answer
-        files = {_SCRIPT: script("package>=0.9", marker="ignore[update]"), _SCRIPT_LOCK: _script_lock("1.0")}
-        self.updated_lock(run, get, glob, files, _script_lock("1.0"))
-        self.assert_none_logged(message_of(Logger.redundant_directive), "redundant directive")
+        files = {
+            _SCRIPT: script("package>=0.9", marker="ignore[update] set[cooldown=30]"),
+            _SCRIPT_LOCK: _script_lock("1.0"),
+        }
+        self.files_after_update(run, get, glob, files, _script_lock("1.0"))
+        self.assert_redundant_directive_logged(
+            Reason.COOLDOWN_PER_RUN, "package", Location(_SCRIPT, 4), "set[cooldown=30]"
+        )
 
     def test_an_ignore_update_on_a_dependency_without_an_exact_pin_is_reported_where_the_script_had_no_lock(
         self, run: Mock, get: Mock, glob: Mock
     ):
         """Test that the `ignore[update]` is reported, since the run removes the lock that would keep the version."""
-        get.side_effect = pypi_answer
         contents = script("package>=0.9", marker="ignore[update]")
-        self.updated_lock(run, get, glob, {_SCRIPT: contents}, _script_lock("1.0"), lock_as_written=_script_lock("1.0"))
+        self.files_after_update(
+            run, get, glob, {_SCRIPT: contents}, _script_lock("1.0"), lock_as_written=_script_lock("1.0")
+        )
         self.assert_redundant_directive_logged(
             Reason.MANAGER_RESOLVES_THE_VERSION, "package", Location(_SCRIPT, 4), "ignore[update]"
         )
 
     @kills(
         Mutation(
-            lock._unkept_lock_bound_redundancy,
+            marker_policy._unkept_lock_bound_redundancy,
             "return None if declaration.pins_a_version else Reason.BOUND_DECIDES_NOTHING",
             "return None",
             "a bound on a range in a script without a lock goes unreported, though the run removes its lock",
         ),
         Mutation(
-            lock._unkept_lock_bound_redundancy,
-            "if reason := declaration.unnarrowable_reason:\n        return reason",
-            "pass",
-            "a bound Update-time does not narrow by is reported as one uv resolves past",
+            lock._Member.bounded_declarations,
+            "if self.policy.bound_redundancy(declaration) is None]",
+            "if declaration.narrowable]",
+            "a bound on a range narrows the lock the run removes, and is judged at the version that lock records",
         ),
     )
-    def test_a_bound_on_a_dependency_without_an_exact_pin_is_reported_where_the_script_had_no_lock(
+    def test_a_bound_on_a_dependency_without_an_exact_pin_narrows_nothing_and_is_reported_where_the_script_had_no_lock(
         self, run: Mock, get: Mock, glob: Mock
     ):
-        """Test that a bound on a range is reported, since the run removes the lock the bound narrows."""
+        """Test that a bound on a range narrows nothing, and is reported as deciding nothing alone, as the lock goes."""
         url = "other @ https://example.com/other-1.0.tar.gz"
         cases = {
-            "specifier bound": ("package>=0.9", "allow[update<2]", "package", Reason.BOUND_DECIDES_NOTHING),
+            "specifier bound": ("package>=0.9", "allow[update>=1]", "package", Reason.BOUND_DECIDES_NOTHING),
             "bound on a direct URL": (url, "allow[update<2]", "other", Reason.URL_RATHER_THAN_VERSION),
         }
         for case, (spec, bound, dependency, reason) in cases.items():
             with self.subTest(case):
-                get.side_effect = pypi_answer
                 contents = script(spec, marker=bound)
                 lock_after = _script_lock("1.0")
-                self.updated_lock(run, get, glob, {_SCRIPT: contents}, lock_after, lock_as_written=_script_lock("1.0"))
+                self.files_after_update(
+                    run, get, glob, {_SCRIPT: contents}, lock_after, lock_as_written=_script_lock("1.0")
+                )
+                self.assertEqual(self.text_locked_with_upgrade(), contents)
                 self.assert_redundant_directive_logged(reason, dependency, Location(_SCRIPT, 4), bound)
-
-
-@patch_pathlib_path("rglob", cwd=SCAN_ROOT)
-@patch("requests.Session.get")
-@patch("subprocess.run")
-class CheckedInlineScriptPinsTest(LoggingTestCase):
-    """Unit test for handing the discovered scripts to the checks uv-delegated updaters share."""
-
-    @patch("update_time.updaters.update_python_inline_script_metadata.warn_about_pins")
-    def test_the_discovered_scripts_are_checked(self, warn: Mock, run: Mock, get: Mock, glob: Mock):
-        """Test that the checks are handed every script the scan found, whether uv updated it or not."""
-        run.return_value = Mock(stdout="", stderr="")
-        glob.return_value = [_SCRIPT]
-        with FakeFiles({_SCRIPT: script("django==3.2.0")}).patched():
-            update_python_inline_script_metadatas()
-        get.assert_not_called()
-        warn.assert_called_once_with([InlineScript(_SCRIPT)], ANY, ANY)

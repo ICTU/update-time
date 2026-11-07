@@ -21,7 +21,7 @@ from update_time.markers.marker import Scope, parse_marker
 from update_time.primitives.text import rewrite_string
 from update_time.references.drift import adopts_drift
 from update_time.references.match import matched_dependency, matched_reference
-from update_time.references.resolve import latest_version, warn_if_the_opt_in_is_redundant
+from update_time.references.resolve import latest_version
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -67,10 +67,9 @@ class _Rewriter:
         """
         reference = matched_reference(match, location, self.dependency)
         latest = latest_version(reference, self.get_new_version, marker, self.logger)
-        warn_if_the_opt_in_is_redundant(
+        self.logger.warn_if_the_opt_in_is_redundant(
             reference,
             marker,
-            self.logger,
             Scope.HASH_DRIFT,
             self._why_drift_is_never_adopted(match, latest),
             update_held_back=marker.ignores(Scope.UPDATE),

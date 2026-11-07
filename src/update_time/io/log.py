@@ -19,7 +19,7 @@ from update_time.domain.staleness import STALE_AFTER, stale_release
 from update_time.domain.vulnerability import VULNERABILITY_LEVEL
 from update_time.io.console import CHANGES, LOG_THEME, NOTE, configure_logging, delimit_dependency, delimit_location
 from update_time.markers.bound import spell
-from update_time.markers.directive import Reason
+from update_time.markers.directive import Reason, opt_in_redundancy
 from update_time.markers.marker import Scope
 from update_time.primitives.environment import EnvVar
 from update_time.primitives.location import Location
@@ -838,6 +838,19 @@ class Logger:
             self.ignored(dependency, marker, location)
         return marker
 
+    def warn_if_the_opt_in_is_redundant(
+        self,
+        reference: Reference,
+        marker: Marker,
+        scope: Scope,
+        reason: RedundancyReason | None,
+        *,
+        update_held_back: bool,
+    ) -> None:
+        """Warn when the marker's opt-in to the scope is redundant, saying why (see `opt_in_redundancy`)."""
+        if (redundancy := opt_in_redundancy(marker, scope, reason, update_held_back=update_held_back)) is not None:
+            self.redundant_directive(reference, marker.allow_directive(scope), redundancy)
+
     @_warning(_redundant_directive("this bound %(redundancy)s at version %(version)s"))
     def warn_if_redundant_bound(self, reference: Reference, marker: Marker) -> dict[str, object] | None:
         """Warn when the marker's version bound is redundant for the current version.
@@ -998,6 +1011,11 @@ class Logger:
         """Log that a file the run rewrote cannot be given back its text."""
         return self._file_fields(path, error=str(error))
 
+    @_error("Could not read %(location)s (%(error)s), so the dependencies it locks are not updated")
+    def lock_not_read(self, path: Path, error: OSError | UnicodeDecodeError) -> dict[str, object]:
+        """Log that a lock cannot be read, so the files it locks keep the dependencies they had."""
+        return self._file_fields(path, error=str(error))
+
     @_error("Could not remove %(location)s, which the run created (%(error)s)")
     def lock_not_removed(self, path: Path, error: OSError) -> dict[str, object]:
         """Log that a lock the run created cannot be removed."""
@@ -1010,9 +1028,9 @@ class Logger:
         """Log that Update-time leaves an exact pin with an environment marker, such as `; python_version < '3.13'`."""
         return self._reference_fields(reference)
 
-    @_error("Could not write %(location)s (%(error)s), so the dependencies of its uv workspace are not updated")
+    @_error("Could not write %(location)s (%(error)s), so the dependencies uv locks together with it are not updated")
     def file_not_written(self, path: Path, error: OSError) -> dict[str, object]:
-        """Log that a pyproject.toml cannot be written, so its workspace keeps the dependencies it had."""
+        """Log that a file uv locks cannot be written, so the files uv locks together keep the dependencies they had."""
         return self._file_fields(path, error=str(error))
 
     @_error("Could not update the dependencies in %(location)s: uv is not on the path")
@@ -1063,6 +1081,11 @@ class Logger:
     @_warning("Could not read %(location)s to find the Node engine it declares (%(error)s)")
     def unreadable_node_engine(self, path: Path, error: OSError | ValueError) -> dict[str, object]:
         """Warn that a package.json can't be read, so the Node engine it may declare goes unread."""
+        return self._file_fields(path, error=str(error))
+
+    @_warning("Could not read %(location)s to find the inline script metadata it carries (%(error)s)")
+    def unreadable_script(self, path: Path, error: OSError | UnicodeDecodeError) -> dict[str, object]:
+        """Warn that a .py file can't be read, so the inline script metadata it may carry goes unread."""
         return self._file_fields(path, error=str(error))
 
     @_warning("Could not read %(location)s to find the requires-python it declares (%(error)s)")

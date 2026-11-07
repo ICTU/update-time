@@ -1,7 +1,6 @@
 """An external command, and the outcome of running it."""
 
 from dataclasses import dataclass
-from itertools import takewhile
 from json import loads
 from typing import Self
 
@@ -27,11 +26,6 @@ class Command(tuple[str, ...]):
         """Return the executable the command runs, the first of its words."""
         return self[0]
 
-    @property
-    def name(self) -> str:
-        """Return the executable and the subcommands before the first option, such as `uv tree`."""
-        return " ".join(takewhile(_is_not_an_option, self))
-
     def has_option(self, option: str) -> bool:
         """Return whether the command holds the option, written `--option value` or `--option=value`."""
         return any(word == option or word.startswith(f"{option}=") for word in self)
@@ -46,11 +40,6 @@ class Command(tuple[str, ...]):
             elif not word.startswith(f"{option}="):
                 words.append(word)
         return Command(*words)
-
-
-def _is_not_an_option(word: str) -> bool:
-    """Return whether the word of a command is something other than an option."""
-    return not word.startswith("-")
 
 
 @dataclass(frozen=True)

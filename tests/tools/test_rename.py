@@ -188,6 +188,76 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.rename(_DEFINES, old="file0.old", new="new"), 0)
         self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call("def new():\n    pass\n")])
 
+    @kills(
+        Mutation(
+            rename_module._ReferenceFinder._bound_locally,
+            "return True",
+            "return False",
+            "a parameter or a local of the renamed name reads as the module-level name left behind",
+        ),
+        Mutation(
+            rename_module._ReferenceFinder._bound_locally,
+            "scope = scope.parent",
+            "break",
+            "the rename stops where a nested function reads a local of the function around it",
+        ),
+        Mutation(
+            rename_module.main,
+            "for line in _surviving_references(name, source)]",
+            "for line in surviving_occurrences(name, source)]",
+            "a rename stops wherever a file spells the renamed name, whatever that name refers to there",
+        ),
+    )
+    def test_a_parameter_and_a_local_of_the_name_do_not_stop_the_rename(self):
+        """Test that a module-level name is renamed where a function's parameter and local share its name."""
+        defines = (
+            "def {}():\n    pass\n\n\ndef use(old):\n    return old\n\n\n"
+            "def count():\n    old = 1\n\n    def nested():\n        return old\n\n    return nested\n"
+        )
+        self.assertEqual(self.rename(defines.format("old"), old="file0.old", new="new"), 0)
+        self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call(defines.format("new"))])
+
+    @kills(
+        Mutation(
+            rename_module._ReferenceFinder.visit_Name,
+            "refers = self._read_through_an_import(parent)",
+            "refers = True",
+            "a method of the renamed name on another object reads as the module-level name left behind",
+        ),
+        Mutation(
+            rename_module._ReferenceFinder._read_through_an_import,
+            "return False",
+            "return True",
+            "a method of the renamed name on what a call returns reads as the module-level name left behind",
+        ),
+    )
+    def test_a_method_of_the_name_on_another_object_does_not_stop_the_rename(self):
+        """Test that a module-level name is renamed where a call on another object reads a method of that name."""
+        for case, other in {"a parameter": "item", "a call's result": "item()"}.items():
+            with self.subTest(case):
+                uses = f"from m import {{0}}\n\n\ndef use(item):\n    {{0}}()\n    return {other}.old()\n"
+                self.assertEqual(self.rename(uses.format("old")), 0)
+                self.assertEqual(self.paths["file0.py"].write_text.call_args_list, [call(uses.format("new"))])
+
+    @kills(
+        Mutation(
+            rename_module._ReferenceFinder._read_through_an_import,
+            "return any(isinstance(assignment, ImportAssignment) for assignment in scope[root.value])",
+            "return False",
+            "a reference read through an imported module goes unnoticed, so a rename that missed it is written",
+        ),
+        Mutation(
+            rename_module._ReferenceFinder._read_through_an_import,
+            "root = root.value",
+            "break",
+            "a reference read through an imported package goes unnoticed, so a rename that missed it is written",
+        ),
+    )
+    def test_a_reference_through_a_package_the_rename_cannot_reach_stops_the_rename(self):
+        """Test that a reference reading the old name through an imported package stops the rename."""
+        self.assertEqual(self.rename(_IMPORTS_AND_CALLS, "import pkg\n\npkg.m.old()\n"), 1)
+        self.assertIn("file1.py:3", self.reported.getvalue())
+
     def test_a_method_named_by_its_class_is_renamed_at_its_definition_and_calls(self):
         """Test that a name given as `module.Class.method` renames the method's definition and every call to it."""
         defines = "class Helper:\n    def old(self):\n        return self.old()\n"

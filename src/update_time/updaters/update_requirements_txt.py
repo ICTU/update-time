@@ -24,7 +24,7 @@ from update_time.package_managers.uv.uv import UvPipCompile
 from update_time.references.delegated import warn_about_pinned_versions
 from update_time.references.file import update_file
 from update_time.references.match import reference_matches
-from update_time.references.resolve import report_project_checks, warn_if_the_opt_in_is_redundant
+from update_time.references.resolve import report_project_checks
 from update_time.references.vulnerability import warn_about_vulnerable_references
 from update_time.sources.osv import Ecosystem
 from update_time.sources.pypi import get_latest_version, project, yank_state
@@ -56,11 +56,11 @@ def _warn_about_items_that_decide_nothing(
         _LOG.redundant_directive(reference, cooldown, Reason.COOLDOWN_PER_RUN)
     # Update-time never pins a requirement that does not pin a version, and the requirement does not carry a hash pin.
     # So each opt-in is redundant, whether or not the update is held back.
-    warn_if_the_opt_in_is_redundant(
-        reference, marker, _LOG, Scope.FLOATING_PIN, Reason.RANGE_NEVER_PINNED, update_held_back=False
+    _LOG.warn_if_the_opt_in_is_redundant(
+        reference, marker, Scope.FLOATING_PIN, Reason.RANGE_NEVER_PINNED, update_held_back=False
     )
-    warn_if_the_opt_in_is_redundant(
-        reference, marker, _LOG, Scope.HASH_DRIFT, Reason.NO_HASH_PIN, update_held_back=False
+    _LOG.warn_if_the_opt_in_is_redundant(
+        reference, marker, Scope.HASH_DRIFT, Reason.NO_HASH_PIN, update_held_back=False
     )
 
 

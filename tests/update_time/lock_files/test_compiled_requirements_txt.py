@@ -7,7 +7,8 @@ from update_time.lock_files import compiled_requirements_txt
 from update_time.primitives.command import Command
 
 from tests.mutation import Mutation, kills
-from tests.update_time.manifests.helpers import requirements_compiled_by_uv, requirements_file
+from tests.update_time.lock_files.helpers import requirements_compiled_by_uv
+from tests.update_time.manifests.helpers import requirements_file
 
 
 class IsCompiledTest(unittest.TestCase):

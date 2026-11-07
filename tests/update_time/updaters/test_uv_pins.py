@@ -83,7 +83,7 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
         for spec in ("package==1.0", "package>=1.0"):
             with self.subTest(spec=spec):
                 file = self.dependency_toml_file(spec)
-                warn_about_pins([file], _LOG)
+                warn_about_pins([file], _LOG, {})
                 self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
 
     @kills(
@@ -106,20 +106,20 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
             with self.subTest(case=case):
                 malformed = InlineScript(mock_path(f"# /// script\n{block}# ///\n", parent=SCAN_ROOT))
                 file = self.dependency_toml_file("package>=1.0")
-                warn_about_pins([malformed, file], _LOG)
+                warn_about_pins([malformed, file], _LOG, {})
                 self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
 
     def test_dependency_without_an_exact_pin_the_index_lists_no_release_for(self, get: Mock):
         """Test that a dependency whose package the index lists no release for is not warned about."""
         get.return_value = pypi_index()
-        warn_about_pins([self.dependency_toml_file("package>=1.0")], _LOG)
+        warn_about_pins([self.dependency_toml_file("package>=1.0")], _LOG, {})
         self.assert_no_warnings_logged()
 
     def test_stale_pin_a_marker_silences_not_warned(self, get: Mock):
         """Test that a `set[stale-after=0]` marker silences the staleness warning, and is reported as silencing it."""
         get.return_value = dated_pypi_index("1.0")
         file = self.dependency_toml_file("package==1.0", marker="set[stale-after=0]")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_no_warnings_logged()
         self.assert_ignored_staleness_logged("package", Location(file.path, 2), "set[stale-after=0]")
 
@@ -127,7 +127,7 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
         """Test that a marker on one declaration's line leaves the dependency declared below it warned about."""
         get.return_value = dated_pypi_index("1.0")
         file = self.file_holding(pyproject_per_line("package==1.0", "other==1.0", marker="set[stale-after=0]"))
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_stale_dependency_logged("other", "1.0", Location(file.path, 4))
         self.assert_no_staleness_warning_logged("package", Location(file.path, 3))
 
@@ -139,13 +139,13 @@ class StaleDependencyTest(PythonDependencyTomlTestCase):
         """
         get.return_value = dated_pypi_index("1.0", upload_time=PYPI_PAST_COOLDOWN_UPLOAD)
         file = self.dependency_toml_file("package==1.0", marker="set[stale-after=90]")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2))
 
     def test_recent_pin_not_warned(self, get: Mock):
         """Test that a pin whose newest release is recent is not warned about as stale."""
         get.return_value = dated_pypi_index("1.0", upload_time=PYPI_RECENT_UPLOAD)
-        warn_about_pins([self.dependency_toml_file("package==1.0")], _LOG)
+        warn_about_pins([self.dependency_toml_file("package==1.0")], _LOG, {})
         self.assert_no_warnings_logged()
 
 
@@ -165,7 +165,7 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         """Run the checks over a file declaring one pin, on a release its maintainer yanked, and return the file."""
         get.return_value = self.yanked_simple_api("1.0")
         file = self.dependency_toml_file("package==1.0", marker=marker)
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         return file
 
     def test_yanked_pin_warned(self, get: Mock):
@@ -178,7 +178,7 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         """Test that a pin left on a yanked release is warned about although PyPI has a newer release to move to."""
         get.side_effect = [self.yanked_simple_api("1.0", "2.0"), pypi_release(PYPI_OLD_UPLOAD)]
         file = self.dependency_toml_file("package==1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_yanked_dependency_logged("package", "1.0", Location(file.path, 2))
 
     def test_makes_no_pypi_request_of_its_own(self, get: Mock):
@@ -194,7 +194,7 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         """
         get.return_value = self.yanked_simple_api("1.0")
         file = self.dependency_toml_file("broken==nightly", "wild==1.0.*", "package==1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_yanked_dependency_logged("package", "1.0", Location(file.path, 2))
 
     def test_a_marker_silences_the_yank_warning(self, get: Mock):
@@ -215,7 +215,7 @@ class YankedPinTest(PythonDependencyTomlTestCase):
         """Test that a marker on one pin's line leaves the pin declared below it warned about."""
         get.return_value = self.yanked_simple_api("1.0")
         file = self.file_holding(pyproject_per_line("package==1.0", "other==1.0", marker="ignore[yanked]"))
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_yanked_dependency_logged("other", "1.0", Location(file.path, 4))
         self.assert_ignored_yank_logged("package", Location(file.path, 3))
 
@@ -239,7 +239,7 @@ class VulnerablePinTest(PythonDependencyTomlTestCase):
     def check_pins(self, file: PyprojectToml, *advisories: dict[str, object]) -> Mock:
         """Run the checks over the file, with OSV answering the advisories, and return the mocked OSV endpoint."""
         with osv(*advisories) as mock_post:
-            warn_about_pins([file], _LOG)
+            warn_about_pins([file], _LOG, {})
         return mock_post
 
     def test_vulnerable_pin_warned(self):
@@ -318,14 +318,14 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         """Test that a dependency declared without an exact pin is warned about, at the line declaring it."""
         get.return_value = dated_pypi_index("1.0", upload_time=PYPI_RECENT_UPLOAD, archived=True)
         file = self.dependency_toml_file("package>=1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_archived_dependency_logged("package", Location(file.path, 2))
 
     def test_archived_dependency_a_marker_silences_not_warned(self, get: Mock):
         """Test that an `ignore[archived]` marker silences the archival warning, and is reported as silencing it."""
         get.return_value = dated_pypi_index("1.0", upload_time=PYPI_RECENT_UPLOAD, archived=True)
         file = self.dependency_toml_file("package==1.0", marker="ignore[archived]")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_no_warnings_logged()
         self.assert_ignored_archival_logged("package", Location(file.path, 2))
 
@@ -338,14 +338,14 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         for marker, index in cases.items():
             with self.subTest(marker=marker):
                 get.return_value = index
-                warn_about_pins([self.dependency_toml_file("package>=1.0", marker=marker)], _LOG)
+                warn_about_pins([self.dependency_toml_file("package>=1.0", marker=marker)], _LOG, {})
                 self.assert_no_warnings_logged()
 
     def test_stale_and_archived_dependency_warned_about_on_both_counts(self, get: Mock):
         """Test that a project whose newest release is old and that PyPI declares archived gets both warnings."""
         get.return_value = dated_pypi_index("1.0", archived=True)
         file = self.dependency_toml_file("package==1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_stale_dependency_logged("package", "1.0", Location(file.path, 2), among_others=True)
         self.assert_archived_dependency_logged("package", Location(file.path, 2), among_others=True)
 
@@ -362,14 +362,14 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         """Test that an archived project is warned about when the staleness check is switched off."""
         get.return_value = dated_pypi_index("1.0", archived=True)
         file = self.dependency_toml_file("package==1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_archived_dependency_logged("package", Location(file.path, 2))
 
     def test_archived_pin_warned_at_the_cost_of_one_request(self, get: Mock):
         """Test that a pin on an archived project is warned about, reading the index the staleness check fetched."""
         get.return_value = dated_pypi_index("1.0", upload_time=PYPI_RECENT_UPLOAD, archived=True)
         file = self.dependency_toml_file("package==1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_archived_dependency_logged("package", Location(file.path, 2))
         self.assertEqual(get.call_count, 1)
 
@@ -386,7 +386,7 @@ class ArchivedDependencyTest(PythonDependencyTomlTestCase):
         """Test that an archived project is warned about although the index lists no release for it."""
         get.return_value = pypi_index(archived=True)
         file = self.dependency_toml_file("package>=1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
         self.assert_archived_dependency_logged("package", Location(file.path, 2))
 
 
@@ -398,7 +398,7 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
     def check_dependencies(self, get: Mock, file: PythonDependencyToml) -> None:
         """Run the checks over the file, with PyPI listing an undated release, so nothing is warned about as stale."""
         get.return_value = pypi_index("1.0")
-        warn_about_pins([file], _LOG)
+        warn_about_pins([file], _LOG, {})
 
     def test_a_scope_needing_a_version_is_redundant_without_an_exact_pin(self, get: Mock):
         """Test that a scope whose check needs a version reports that the dependency pins none."""
@@ -450,15 +450,6 @@ class RedundantDirectiveTest(PythonDependencyTomlTestCase):
             Reason.MANAGER_RESOLVES_THE_VERSION, "other", Location(file.path, 2), "ignore[update]"
         )
 
-    @kills(
-        Mutation(
-            uv_module._unchecked_scopes,
-            "return {} if declaration.names_a_release else ManagerPolicy.every_warning_scope(Reason.NO_PYPI_RELEASE)",
-            "return {}",
-            "a dependency PyPI serves no release for is judged as if it did, so a warning scope on it is reported "
-            "in the wrong words or not at all",
-        )
-    )
     def test_a_scope_is_reported_for_a_dependency_pypi_serves_no_release_for(self, get: Mock):
         """Test that each warning scope is reported for a dependency PyPI is asked about nowhere."""
         for directive in ("set[stale-after=0]", "ignore[yanked]", "set[vulnerability-level=none]", "ignore[archived]"):
@@ -510,11 +501,10 @@ class UvSourcedDependencyTest(PythonDependencyTomlTestCase):
 
     def test_a_pin_with_a_uv_source_is_asked_about_nowhere(self, get: Mock):
         """Test that a pin uv resolves from a source of its own is looked up at neither PyPI nor OSV."""
-        contents = '[project]\ndependencies = ["local==1.0", "django==3.2.0"]\n' + uv_path_source("local")
-        file = PyprojectToml(mock_path(contents, parent=SCAN_ROOT))
+        file = self.file_holding(pyproject("local==1.0", "django==3.2.0") + uv_path_source("local"))
         get.return_value = dated_pypi_index("3.2.0", upload_time=PYPI_RECENT_UPLOAD)
         with osv(DJANGO_ADVISORY) as mock_post:
-            warn_about_pins([file], _LOG)
+            warn_about_pins([file], _LOG, {})
         self.assertEqual(requested_urls(get), ["https://pypi.org/simple/django/"])
         # The first request batches every pin the check looks up; the ones after it follow from what it answered.
         self.assertEqual(mock_post.call_args_list[0].kwargs["json"], osv_queries(("django", "3.2.0")))

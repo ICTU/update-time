@@ -1,0 +1,91 @@
+"""Which directives on a pom's dependencies and plugins decide nothing, and the report of their markers.
+
+Update-time applies Maven's cooldown per artefact, a bound can hold back every version, and the scanned poms and Maven
+Central decide which scopes are redundant. So these are functions over a pom's declarations, not a `ManagerPolicy`.
+"""
+
+from typing import TYPE_CHECKING
+
+from update_time.io.log import get_logger
+from update_time.markers.directive import Reason
+from update_time.markers.marker import Scope
+from update_time.package_managers.maven import versions_plugin
+from update_time.sources import maven_central
+
+if TYPE_CHECKING:
+    from update_time.manifests import pom_xml as pom_xml_manifest
+
+_LOG = get_logger("pom.xml")
+
+
+def report_markers(declared: list[pom_xml_manifest.Declaration]) -> None:
+    """Report the marker of each dependency and plugin, named as Maven resolves it, and the range a bound holds back."""
+    for declaration in declared:
+        held_back = versions_plugin.range_held_back(declaration) if declaration.maven_updates_the_version else ""
+        _LOG.report_marker(
+            declaration.dependency,
+            declaration.marker,
+            declaration.location,
+            holds_the_update_back=held_back is None,
+        )
+        if held_back:
+            _LOG.holding_back_range(declaration, held_back, declaration.marker.version_bound_directive)
+        _report_redundant_directives(declaration)
+
+
+def _report_redundant_directives(declaration: pom_xml_manifest.Declaration) -> None:
+    """Report as redundant each directive that decides nothing for the declaration."""
+    marker = declaration.marker
+    if reason := versions_plugin.reason_maven_leaves_the_version(declaration):
+        for steering in filter(None, (marker.bound_directive, marker.cooldown_directive)):
+            _LOG.redundant_directive(declaration, steering, reason)
+    else:
+        _LOG.warn_if_redundant_bound(declaration, marker)
+    if yanked := marker.directive_for(Scope.YANKED):
+        _LOG.redundant_directive(declaration, yanked, Reason.NO_YANK_CONCEPT)
+    _LOG.warn_if_the_opt_in_is_redundant(
+        declaration, marker, Scope.FLOATING_PIN, Reason.PIN_NOT_FLOATING, update_held_back=False
+    )
+    _LOG.warn_if_the_opt_in_is_redundant(
+        declaration, marker, Scope.HASH_DRIFT, Reason.NO_HASH_PIN, update_held_back=False
+    )
+
+
+def _report_scopes_checked_at_the_managing_declaration(left_to_another: list[pom_xml_manifest.Declaration]) -> None:
+    """Report the `stale`, `archived`, and `vulnerable` scopes of each declaration as redundant."""
+    for declaration in left_to_another:
+        for scope in (Scope.STALE, Scope.ARCHIVED, Scope.VULNERABLE):
+            if directive := declaration.marker.directive_for(scope):
+                _LOG.redundant_directive(declaration, directive, Reason.CHECKED_AT_THE_MANAGING_DECLARATION)
+
+
+def _report_scopes_on_artefacts_maven_central_does_not_serve(declared: list[pom_xml_manifest.Declaration]) -> None:
+    """Report as redundant each `cooldown`, `stale`, and `archived` scope on an artefact Maven Central does not serve.
+
+    A `cooldown` counts only where Maven updates the version.
+    """
+    for declaration in declared:
+        cooldown = declaration.marker.cooldown_directive if declaration.maven_updates_the_version else ""
+        stale = declaration.marker.directive_for(Scope.STALE)
+        archived = declaration.marker.directive_for(Scope.ARCHIVED)
+        directives = list(filter(None, (cooldown, stale, archived)))
+        if directives and not maven_central.serves(declaration.dependency):
+            for directive in directives:
+                _LOG.redundant_directive(declaration, directive, Reason.NOT_ON_MAVEN_CENTRAL)
+
+
+def _report_archived_scopes_without_a_github_repository(declared: list[pom_xml_manifest.Declaration]) -> None:
+    """Report as redundant each `archived` scope on an artefact whose poms do not name a GitHub repository."""
+    for declaration in declared:
+        archived = declaration.marker.directive_for(Scope.ARCHIVED)
+        if archived and maven_central.lacks_a_github_repository(declaration.dependency):
+            _LOG.redundant_directive(declaration, archived, Reason.NO_GITHUB_REPOSITORY)
+
+
+def report_redundant_scopes(
+    declared: list[pom_xml_manifest.Declaration], left_to_another: list[pom_xml_manifest.Declaration]
+) -> None:
+    """Report the scopes that decide nothing: on a declaration leaving its version to another, and on an artefact."""
+    _report_scopes_checked_at_the_managing_declaration(left_to_another)
+    _report_scopes_on_artefacts_maven_central_does_not_serve(declared)
+    _report_archived_scopes_without_a_github_repository(declared)

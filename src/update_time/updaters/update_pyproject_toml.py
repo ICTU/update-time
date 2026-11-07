@@ -1,7 +1,5 @@
 """Find uv-managed pyproject.toml files and update their dependencies and lockfiles."""
 
-from typing import TYPE_CHECKING
-
 from update_time.domain.file_type import PYPROJECT_TOML
 from update_time.formats import toml
 from update_time.io.filesystem import glob_for
@@ -9,13 +7,9 @@ from update_time.io.log import get_logger
 from update_time.manifests import pyproject_toml as pyproject_toml_manifest
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.manifests.python_dependency_toml import is_well_formed
-from update_time.package_managers.uv import uv
-from update_time.package_managers.uv.lock import read_workspaces
+from update_time.package_managers.uv import marker_policy, uv
+from update_time.package_managers.uv.lock import update_workspaces
 from update_time.updaters.uv_pins import warn_about_pins
-
-if TYPE_CHECKING:
-    from update_time.manifests.python_dependency_toml import Declaration, PythonDependencyToml
-    from update_time.package_managers.policy import ManagerPolicy
 
 _LOG = get_logger("pyproject.toml")
 
@@ -44,16 +38,12 @@ def update_pyproject_tomls() -> None:
                 projects_with_dependencies.append(pyproject_toml)
             else:
                 _LOG.no_dependencies(path, "uv", "resolve")
-                uv.report_file_markers(pyproject_toml, _LOG)
+                marker_policy.report_file_markers(pyproject_toml, _LOG, marker_policy.MARKER_POLICY)
     # Persist the cooldown into config before running uv, so `uv lock` reads it and the lockfile it produces stays
-    # reproducible with a plain `uv sync --locked` (see `uv.configure_cooldown`). Then read each workspace, so the files
-    # get the text they hold now back where uv cannot lock.
+    # reproducible with a plain `uv sync --locked` (see `uv.configure_cooldown`). Then update each workspace, so the
+    # files get the text they hold now back where uv cannot lock.
     uv.configure_cooldown(projects_with_dependencies)
-    workspaces = read_workspaces(projects_with_dependencies, _LOG)
-    policies: dict[PythonDependencyToml, ManagerPolicy[Declaration]] = {}
-    for workspace in workspaces:
-        policies.update(workspace.update())
-    warn_about_pins(uv_projects, _LOG, policies)
+    warn_about_pins(uv_projects, _LOG, update_workspaces(projects_with_dependencies, _LOG))
 
 
 def main() -> None:  # pragma: no cover

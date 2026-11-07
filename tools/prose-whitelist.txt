@@ -542,7 +542,6 @@ a declaration whose package the index lists no release for is dropped, archival 
 a decorated test carries no registration, so a second one on it goes undetected.
 a decorated test reports under the wrapper's name, so a failing run names no test.
 a decorated test the checked test reaches stands aside too, so its mutations go unchecked.
-a dependency PyPI serves no release for is judged as if it did, so a warning scope on it is reported in the wrong words or not at all.
 a dependency spelled another way than its `sources` key reads as one PyPI serves, so PyPI is asked about a name it has no release for.
 a dependency type that declares no file goes unnoticed, and the help stops naming its files.
 a digest the file records beside a built image's tag survives into the match, so the image is looked up.

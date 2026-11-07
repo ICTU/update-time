@@ -179,8 +179,8 @@ class PythonDependencyToml:
         """Write the contents to the file."""
         self.path.write_text(contents)
 
-    def restore(self, contents: str) -> None:
-        """Write the contents back where the file now holds other contents."""
+    def write_if_changed(self, contents: str) -> None:
+        """Write the contents to the file, where it holds other contents."""
         if self.read() != contents:
             self.write(contents)
 

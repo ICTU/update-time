@@ -16,7 +16,7 @@ from update_time.domain.dependency import DependencyName, DependencyVersion
 from update_time.domain.image_lookup import why_image_not_looked_up
 from update_time.domain.staleness import STALE_AFTER, release_judged_alike, stale_release, staleness_is_checked
 from update_time.markers.cooldown import cooldown_days
-from update_time.markers.directive import DIRECTIVES, HELD_BACK_OPT_INS, Consequence, ImageNotLookedUpReason, Reason
+from update_time.markers.directive import DIRECTIVES, Consequence, ImageNotLookedUpReason, Reason
 from update_time.markers.marker import Scope
 from update_time.markers.reference import SteeredResolvedReference
 
@@ -41,35 +41,6 @@ def report_directives_the_source_cannot_apply(
             log.redundant_directive(reference, written, directive.reason_given(image_not_looked_up))
 
 
-def _opt_in_redundancy(
-    marker: Marker, scope: Scope, reason: RedundancyReason | None, *, update_held_back: bool
-) -> RedundancyReason | None:
-    """Return why the marker's opt-in to the scope is redundant, or None where the opt-in decides something.
-
-    The reference's own `reason` wins, so removing a hold-back never changes it. Without one, the opt-in is redundant
-    only where the update is held back.
-    """
-    if not marker.allows(scope):
-        return None
-    if reason is not None or not update_held_back:
-        return reason
-    return HELD_BACK_OPT_INS[scope]
-
-
-def warn_if_the_opt_in_is_redundant(  # noqa: PLR0913 — whether the update is held back is the caller's to decide
-    reference: Reference,
-    marker: Marker,
-    log: Logger,
-    scope: Scope,
-    reason: RedundancyReason | None,
-    *,
-    update_held_back: bool,
-) -> None:
-    """Warn when the marker's opt-in to the scope is redundant, saying why (see `_opt_in_redundancy`)."""
-    if (redundancy := _opt_in_redundancy(marker, scope, reason, update_held_back=update_held_back)) is not None:
-        log.redundant_directive(reference, marker.allow_directive(scope), redundancy)
-
-
 def _why_the_pin_never_floats(latest: DependencyVersion) -> RedundancyReason | None:
     """Return why the reference's pin never floats, or None where it may float."""
     if latest.image_not_looked_up is not None:
@@ -82,8 +53,8 @@ def _warn_if_the_floating_pin_is_redundant(
 ) -> None:
     """Warn when the marker's directive to keep the pin floating is redundant, saying why."""
     reason = _why_the_pin_never_floats(latest)
-    warn_if_the_opt_in_is_redundant(
-        reference, marker, log, Scope.FLOATING_PIN, reason, update_held_back=marker.ignores(Scope.UPDATE)
+    log.warn_if_the_opt_in_is_redundant(
+        reference, marker, Scope.FLOATING_PIN, reason, update_held_back=marker.ignores(Scope.UPDATE)
     )
 
 

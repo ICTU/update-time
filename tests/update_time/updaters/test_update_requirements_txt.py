@@ -29,11 +29,8 @@ from tests.update_time.helpers import (
     published_version,
     staleness_disabled,
 )
-from tests.update_time.manifests.helpers import (
-    requirements_compiled_by_pip_compile,
-    requirements_compiled_by_uv,
-    requirements_file,
-)
+from tests.update_time.lock_files.helpers import requirements_compiled_by_pip_compile, requirements_compiled_by_uv
+from tests.update_time.manifests.helpers import requirements_file
 from tests.update_time.sources.helpers import PYPI_OLD_UPLOAD, osv_advisory, pypi_index, pypi_release, yanked_file
 from tests.update_time.updaters.fixtures import (
     DJANGO_ADVISORY,

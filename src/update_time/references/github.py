@@ -24,7 +24,6 @@ from update_time.references.resolve import (
     latest_version,
     report_directives_the_source_cannot_apply,
     report_project_checks,
-    warn_if_the_opt_in_is_redundant,
 )
 from update_time.sources.github import (
     commit_date,
@@ -146,8 +145,8 @@ class _PinResolver:
         if not current_sha:
             reference = replace(reference, current_version=version_at_tag(reference.dependency, current_version))
         latest = latest_version(reference, self.source, self.marker, self.log)
-        warn_if_the_opt_in_is_redundant(
-            reference, self.marker, self.log, Scope.HASH_DRIFT, None, update_held_back=self.marker.ignores(Scope.UPDATE)
+        self.log.warn_if_the_opt_in_is_redundant(
+            reference, self.marker, Scope.HASH_DRIFT, None, update_held_back=self.marker.ignores(Scope.UPDATE)
         )
         if latest is not None and latest.unserved is Unserved.RELEASES:
             self.log.no_release_tagged(reference)
@@ -183,10 +182,9 @@ class _PinResolver:
         report_directives_the_source_cannot_apply(marker, self.source, reference, log)
         report_project_checks(reference, marker, log, project)
         pin_does_not_float = Reason.PIN_NOT_FLOATING if names_a_commit else None
-        warn_if_the_opt_in_is_redundant(
+        log.warn_if_the_opt_in_is_redundant(
             reference,
             marker,
-            log,
             Scope.FLOATING_PIN,
             pin_does_not_float,
             update_held_back=marker.ignores(Scope.UPDATE),
@@ -214,8 +212,8 @@ class _PinResolver:
         if names_a_commit and (cooldown := marker.cooldown_directive):
             log.redundant_directive(reference, cooldown, Reason.NO_COOLDOWN_FOR_A_COMMIT)
         no_drift = Reason.NO_DRIFT_FOR_A_COMMIT if names_a_commit else None
-        warn_if_the_opt_in_is_redundant(
-            reference, marker, log, Scope.HASH_DRIFT, no_drift, update_held_back=marker.ignores(Scope.UPDATE)
+        log.warn_if_the_opt_in_is_redundant(
+            reference, marker, Scope.HASH_DRIFT, no_drift, update_held_back=marker.ignores(Scope.UPDATE)
         )
         if bound := marker.version_bound_directive:
             reason = Reason.PINS_A_COMMIT if names_a_commit else Reason.FOLLOWS_A_BRANCH

@@ -35,19 +35,19 @@ class UvLock:
         else:
             self.path.write_text(text)
 
-    def locked_versions(self, source: str | None) -> list[PinnedDependency] | None:
-        """Return the lowest version the lock records for each dependency of the project at the source.
+    def locked_versions(self, project_directory: str | None) -> list[PinnedDependency] | None:
+        """Return the lowest version the lock records for each dependency of the project in the directory.
 
         Return None where there is no lock to read.
         """
-        if (recorded := self.recorded_versions(source)) is None:
+        if (recorded := self.recorded_versions(project_directory)) is None:
             return None
         return [PinnedDependency(name, _lowest(versions)) for name, versions in recorded.items()]
 
-    def recorded_versions(self, source: str | None) -> RecordedVersions | None:
-        """Return each version the lock records for each dependency of the project at the source, in the lock's order.
+    def recorded_versions(self, project_directory: str | None) -> RecordedVersions | None:
+        """Return each version the lock records for each dependency of the project in the directory, in lock order.
 
-        The source is the project's directory relative to the lock's, or None for a script, whose lock lists its
+        The directory is the project's relative to the lock's, or None for a script, whose lock lists its
         dependencies in `[manifest]`. uv names a version beside a dependency where the lock holds several versions of
         its package, one per Python version or platform. A dependency without one takes each version the lock holds,
         as a script's dependency does where uv forks its resolution. Return None where there is no lock to read.
@@ -57,7 +57,9 @@ class UvLock:
         packages: list[dict] = lock.get("package", [])
         # The lock lists the dependency groups of a workspace root without `[project]` in `[manifest]`.
         entries = (
-            package for package in packages if source is not None and source in package.get("source", {}).values()
+            package
+            for package in packages
+            if project_directory is not None and project_directory in package.get("source", {}).values()
         )
         entry: dict = next(entries, lock.get("manifest", {}))
         locked = _grouped(

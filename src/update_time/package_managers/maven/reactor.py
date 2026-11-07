@@ -11,7 +11,8 @@ from update_time.formats import xml
 from update_time.io.log import get_logger
 from update_time.io.process import run
 from update_time.manifests import pom_xml as pom_xml_manifest
-from update_time.package_managers.maven.maven import EFFECTIVE_POM_GOAL, VERSIONS_GOALS, versions_options
+from update_time.package_managers.maven.plugins import HELP_PLUGIN
+from update_time.package_managers.maven.versions_plugin import VERSIONS_GOALS, versions_options
 from update_time.primitives.command import Command
 
 if TYPE_CHECKING:
@@ -24,6 +25,9 @@ _LOG = get_logger("pom.xml")
 
 # Every Maven run takes these options, whichever goals it runs.
 _OPTIONS = ("--batch-mode", "--no-transfer-progress")
+
+# `effective-pom` writes the pom as Maven builds it, before any other goal of the same run rewrites it.
+_EFFECTIVE_POM_GOAL = f"{HELP_PLUGIN}:effective-pom"
 
 
 # `verbose` writes the input location of each element of the effective pom after it: the pom and the line declaring
@@ -73,7 +77,7 @@ class _ReactorModule:
         """Run Maven over the pom, the effective pom's goal first, and return the run's result and the effective pom."""
         with _effective_pom_file() as output:
             effective_pom_options = (_EFFECTIVE_POM_OPTION, f"-Doutput={output}")
-            result = self._run_goals((*options, *effective_pom_options), (EFFECTIVE_POM_GOAL, *goals))
+            result = self._run_goals((*options, *effective_pom_options), (_EFFECTIVE_POM_GOAL, *goals))
             # Maven builds the model before any goal runs, so the effective pom holds even when a later goal fails.
             effective_pom = xml.read(output)
         if effective_pom is None:

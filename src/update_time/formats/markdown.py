@@ -1,4 +1,4 @@
-"""What says a text is written in Markdown, and what its markup says about its lines."""
+"""How a file name or a content type marks a text as Markdown, and what Markdown markup says about a line."""
 
 import re
 from urllib.parse import urlparse

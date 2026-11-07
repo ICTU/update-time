@@ -195,7 +195,9 @@ class FakeFiles(MutableMapping[Path, str]):
         self._files[target] = self._files.pop(path)
         return target
 
-    def _unlink(self, path: Path, **_options: object) -> None:
+    def _unlink(self, path: Path, *, missing_ok: bool = False) -> None:
         if (error := self.remove_errors.get(path)) is not None:
             raise error
+        if path not in self._files and not missing_ok:
+            raise FileNotFoundError(2, "No such file or directory", str(path))
         self._files.pop(path, None)

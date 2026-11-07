@@ -10,7 +10,7 @@ from update_time.domain.cooldown import COOLDOWN
 from update_time.io.log import Logger
 from update_time.lock_files import compiled_requirements_txt
 from update_time.lock_files.compiled_requirements_txt import CompiledRequirementsTxt
-from update_time.package_managers import pip_tools, requirements_compiler
+from update_time.package_managers import moved_versions, pip_tools, requirements_compiler
 from update_time.package_managers.uv import uv
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
@@ -19,7 +19,7 @@ from update_time.updaters.update_requirements_txt import _compiler_for
 from tests.helpers import FakeFiles, patch_environ
 from tests.mutation import Mutation, kills
 from tests.update_time.helpers import message_of, published_version
-from tests.update_time.manifests.helpers import requirements_compiled_by_pip_compile, requirements_compiled_by_uv
+from tests.update_time.lock_files.helpers import requirements_compiled_by_pip_compile, requirements_compiled_by_uv
 from tests.update_time.package_managers.helpers import (
     CONFIGURED_EXCLUDE_NEWER,
     UNREADABLE_SETTINGS,
@@ -618,7 +618,7 @@ class RecompileTest(UvSettingsTestCase):
             "a version pip-compile moved back is reported as moved back by uv",
         ),
         Mutation(
-            requirements_compiler.log_moved_versions,
+            moved_versions.log_moved_versions,
             "Reference(pin.name, old, location)",
             "Reference(pin.name, old, locations[name][0])",
             "a version moved back is reported at the first line declaring it alone",
@@ -651,7 +651,7 @@ class RecompileTest(UvSettingsTestCase):
             raises="packaging.version.InvalidVersion: Invalid version: '2004d'",
         ),
         Mutation(
-            requirements_compiler.log_moved_versions,
+            moved_versions.log_moved_versions,
             'versions_before.get(name, "")',
             'versions_before.get(name, "9")',
             "the recompile compares a package it pins for the first time with a version the file never pinned",

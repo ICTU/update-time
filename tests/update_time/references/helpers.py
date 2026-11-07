@@ -15,9 +15,10 @@ if TYPE_CHECKING:
 
 
 def mock_logger() -> Mock:
-    """Return a mock logger that reports a marker as a logger does, through the mock's own log methods."""
+    """Return a mock logger that reports a marker and a redundant opt-in as a logger does, through its own methods."""
     logger = Mock()
     logger.report_marker.side_effect = partial(Logger.report_marker, logger)
+    logger.warn_if_the_opt_in_is_redundant.side_effect = partial(Logger.warn_if_the_opt_in_is_redundant, logger)
     return logger
 
 

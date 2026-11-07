@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from update_time.package_managers.uv import uv
+from update_time.package_managers.uv import marker_policy, uv
 from update_time.references.delegated import warn_about_delegated_checks, warn_about_redundant_directives
 from update_time.sources.osv import Ecosystem
 from update_time.sources.pypi import yank_state
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 def warn_about_pins(
     files: Iterable[PythonDependencyToml],
     log: Logger,
-    policies: Mapping[PythonDependencyToml, ManagerPolicy[Declaration]] | None = None,
+    policies: Mapping[PythonDependencyToml, ManagerPolicy[Declaration]],
 ) -> None:
     """Run every check over the dependencies PyPI serves a release for, and report every marker over them all.
 
@@ -29,8 +29,8 @@ def warn_about_pins(
     """
     declared: list[list[Declaration]] = []
     for file in files:
-        declarations = file.declarations()
-        policy = (policies or {}).get(file, uv.MARKER_POLICY)
+        declarations = uv.declarations_of(file)
+        policy = policies.get(file, marker_policy.MARKER_POLICY)
         warn_about_redundant_directives([declarations], log, policy)
         declared.append(declarations)
     served = [uv.pypi_served(declarations) for declarations in declared]

@@ -14,9 +14,9 @@ from update_time.io.log import Logger, LogMessage
 from update_time.manifests import pom_xml as pom_xml_manifest
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
-from update_time.package_managers.maven import maven as maven_module
-from update_time.package_managers.maven import range as maven_range_module
+from update_time.package_managers.maven import marker_policy as maven_marker_policy
 from update_time.package_managers.maven import reactor as reactor_module
+from update_time.package_managers.maven import version_range, versions_plugin
 from update_time.primitives.command import Command
 from update_time.primitives.location import Location
 from update_time.sources import maven_central as maven_central_module
@@ -106,7 +106,7 @@ def _stale_release(version: str = "33.0.0-jre") -> Generator[None]:
 
 def _plugin_version(plugin: str) -> str:
     """Return the release of the plugin that the pom Update-time ships declares, read off that pom's own text."""
-    pom = (Path(maven_module.__file__).parent / "pom.xml").read_text()
+    pom = (Path(versions_plugin.__file__).parent / "pom.xml").read_text()
     declared = re.search(rf"<{plugin}\.plugin\.version>(?P<version>[^<]+)</{plugin}\.plugin\.version>", pom)
     return declared["version"] if declared else ""
 
@@ -123,7 +123,7 @@ def _exact_version_element(version: str) -> str:
 
 def _variant_element(*currents: str) -> str:
     """Return the `<ignoreVersion>` element matching every version on another variant than the current versions."""
-    return f'<ignoreVersion type="regex">{maven_module._other_variants(*currents)}</ignoreVersion>'
+    return f'<ignoreVersion type="regex">{versions_plugin._other_variants(*currents)}</ignoreVersion>'
 
 
 def _rule_ignoring(group: str, artifact: str, *ignore_versions: str) -> str:
@@ -185,7 +185,7 @@ _VERSIONS_GOALS = (
 def _versions_options(rules: Path | None, properties: str = "") -> tuple[str, ...]:
     """Return the options the versions plugin's goals take, naming the rule set file where a run holds versions back."""
     rule_set = (f"-Dmaven.version.rules={rules.as_uri()}",) if rules else ()
-    pre_releases = f"-Dmaven.version.ignore={maven_module._PRE_RELEASES}"
+    pre_releases = f"-Dmaven.version.ignore={versions_plugin._PRE_RELEASES}"
     return ("-DgenerateBackupPoms=false", pre_releases, f"-DincludeProperties={properties}", *rule_set)
 
 
@@ -402,7 +402,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             yield _RULES
 
         self.enterContext(patch.object(reactor_module, "_effective_pom_file", effective_pom_file))
-        self.enterContext(patch.object(maven_module, "_rule_set_file", rule_set_file))
+        self.enterContext(patch.object(versions_plugin, "_rule_set_file", rule_set_file))
         return poms
 
     def find_pom(
@@ -623,8 +623,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "_report_markers(distinct)",
-            "_report_markers(resolved)",
+            "marker_policy.report_markers(distinct)",
+            "marker_policy.report_markers(resolved)",
             "the marker on a property two declarations of one artefact name is reported once per declaration",
         )
     )
@@ -657,7 +657,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module._report_scopes_on_artefacts_maven_central_does_not_serve,
+            maven_marker_policy._report_scopes_on_artefacts_maven_central_does_not_serve,
             'declaration.marker.cooldown_directive if declaration.maven_updates_the_version else ""',
             "declaration.marker.cooldown_directive",
             "a `cooldown` on a version Maven does not update is reported twice, once for each reason",
@@ -742,7 +742,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module._report_redundant_directives,
+            maven_marker_policy._report_redundant_directives,
             "declaration, yanked, Reason",
             "declaration, declaration.marker.raw, Reason",
             "the warning quotes every item of the marker, so it calls an `ignore[update]` beside the yank redundant",
@@ -810,13 +810,13 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            update_pom_xml_module._report_scopes_on_artefacts_maven_central_does_not_serve,
+            maven_marker_policy._report_scopes_on_artefacts_maven_central_does_not_serve,
             "if directives and not maven_central.serves",
             "if not maven_central.serves",
             "Maven Central is asked whether it serves every artefact, whatever its marker carries",
         ),
         Mutation(
-            update_pom_xml_module._report_archived_scopes_without_a_github_repository,
+            maven_marker_policy._report_archived_scopes_without_a_github_repository,
             "if archived and maven_central.lacks_a_github_repository",
             "if maven_central.lacks_a_github_repository",
             "Maven Central's poms are read for every artefact, whether or not its marker carries an `archived` scope",
@@ -1065,8 +1065,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "_report_scopes_on_artefacts_maven_central_does_not_serve(declared)",
-            "_report_scopes_on_artefacts_maven_central_does_not_serve(resolvable)",
+            "marker_policy.report_redundant_scopes(declared,",
+            "marker_policy.report_redundant_scopes(resolvable,",
             "a scope checked at the managing declaration is reported twice, once for each reason",
         )
     )
@@ -1288,7 +1288,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._artefact_rule,
+            versions_plugin._artefact_rule,
             'return _rule(artefact, *ignored) if ignored else ""',
             "return _rule(artefact, *ignored)",
             "a pom holding nothing back gets a rule set holding an empty rule",
@@ -1379,7 +1379,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_range_module._tighter,
+            version_range._tighter,
             "return other if boundary.included else boundary",
             "return boundary",
             "two clauses ending at one version keep the first one's end, so `===34.1` holds 34.1 back despite `!=34.1`",
@@ -1398,7 +1398,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_range_module._Boundary.lower_end,
+            version_range._Boundary.lower_end,
             "'[' if self.included else '('",
             "'['",
             "a range starting past a version starts at it, so `allow[update===34.1]` holds 34.1 back",
@@ -1485,31 +1485,31 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._artefact_rule,
+            versions_plugin._artefact_rule,
             "max(cooldown_days(declaration.marker) for declaration in declarations)",
             "cooldown_days(declarations[-1].marker)",
             "the last declaration of an artefact sets its cooldown, so a shorter one undoes a longer one before it",
         ),
         Mutation(
-            maven_module._artefact_rule,
+            versions_plugin._artefact_rule,
             "max(cooldown_days(declaration.marker) for declaration in declarations)",
             "cooldown_days(declarations[0].marker)",
             "the first declaration of an artefact sets its cooldown, so a shorter one undoes a longer one after it",
         ),
         Mutation(
-            maven_module._artefact_rule,
+            versions_plugin._artefact_rule,
             "for declaration in declarations if",
             "for declaration in declarations[-1:] if",
             "the last declaration's bound replaces the ones before it, so Maven crosses an earlier declaration's bound",
         ),
         Mutation(
-            maven_module._artefact_rule,
+            versions_plugin._artefact_rule,
             "ignored = unique(",
             "ignored = (",
             "two declarations setting one bound name its range twice in the artefact's rule",
         ),
         Mutation(
-            maven_module._variant_versions,
+            versions_plugin._variant_versions,
             "_other_variants(*(declaration.current_version for declaration in declarations))",
             "_other_variants(declarations[0].current_version)",
             "the first declaration of an artefact sets its variant, so the second declaration's variant is held back",
@@ -1578,7 +1578,7 @@ class UpdatePomXmlTest(LoggingTestCase):
             "a pom inheriting a group from its parent is asked about coordinates that resolve to nothing",
         ),
         Mutation(
-            maven_module._new_version,
+            versions_plugin._new_version,
             "if not pom_xml_manifest.fully_resolved(update.effective.pinned):",
             "if False:",
             "Maven Central is asked for the changes and the date of coordinates holding an unresolved property",
@@ -1744,7 +1744,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._cooldown_versions,
+            versions_plugin._cooldown_versions,
             "days <= 0",
             "days < 0",
             "a cooldown of zero days asks the repository about the artefact and ignores the answer",
@@ -1783,8 +1783,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "maven.report_new_versions(before, after, resolved)",
-            "maven.report_new_versions(before, after, after)",
+            "versions_plugin.report_new_versions(before, after, resolved)",
+            "versions_plugin.report_new_versions(before, after, after)",
             "the report names a dependency as the pom spells it, so a group the parent declares stays a property",
         ),
     )
@@ -1901,7 +1901,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module._unreportable_updates,
+            versions_plugin._unreportable_updates,
             "update.new.version_property in properties_on_central",
             "properties_on_central",
             "an unserved artefact goes unreported whenever a served artefact moved, whatever property each names",
@@ -1937,7 +1937,7 @@ class UpdatePomXmlTest(LoggingTestCase):
 
     @kills(
         Mutation(
-            maven_module.report_new_versions,
+            versions_plugin.report_new_versions,
             "in unique(zip(before, after, resolved, strict=True))",
             "in zip(before, after, resolved, strict=True)",
             "a property two declarations of one artefact name is reported as moved once per declaration, at one line",
@@ -1966,8 +1966,8 @@ class UpdatePomXmlTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pom_xml_module._update_pom_xml,
-            "maven.report_new_versions(before, after, resolved)",
-            "maven.report_new_versions(before, resolved, resolved)",
+            "versions_plugin.report_new_versions(before, after, resolved)",
+            "versions_plugin.report_new_versions(before, resolved, resolved)",
             "Update-time reports a move from the parent's property to the version it holds, though Maven moved nothing",
         ),
     )

@@ -1,10 +1,11 @@
-"""uv's cooldown setting, the layout of a uv workspace, and uv's marker policy.
+"""uv's cooldown setting, the layout of a uv workspace, and the sources of the dependencies uv resolves.
 
 uv also recompiles a requirements file it compiled, as `UvPipCompile`.
 """
 
 import os
 import re
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, ClassVar, override
 
@@ -16,9 +17,7 @@ from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.manifests.python_dependency_toml import is_well_formed
-from update_time.markers.directive import Reason
 from update_time.markers.reference import SteeredResolvedReference
-from update_time.package_managers.policy import ManagerPolicy, report_markers
 from update_time.package_managers.requirements_compiler import RequirementsCompiler
 from update_time.primitives.command import Command
 from update_time.sources.pypi import project
@@ -32,7 +31,6 @@ if TYPE_CHECKING:
         Declaration,
         PythonDependencyToml,
     )
-    from update_time.markers.marker import Scope
 
 _LOG = get_logger("pyproject.toml")
 # Signals that a pyproject.toml is managed by a tool other than uv. Running uv on such a project would mishandle it
@@ -205,33 +203,6 @@ def _workspace_includes(root_dir: Path, workspace: dict, project_dir: Path) -> b
     return any(relative.full_match(pattern) for pattern in workspace.get("members", []))
 
 
-def report_file_markers(file: PythonDependencyToml, log: Logger) -> list[Declaration]:
-    """Report each declaration's marker, and return the declarations, each with the directives Update-time acts on."""
-    return report_markers(file.declarations(), log, MARKER_POLICY)
-
-
-def _unchecked_scopes(declaration: Declaration) -> dict[Scope, Reason]:
-    """Return each warning scope that Update-time leaves unchecked for the declaration, with the reason.
-
-    Where PyPI does not serve a release for the declaration, Update-time leaves every warning scope unchecked.
-    """
-    return {} if declaration.names_a_release else ManagerPolicy.every_warning_scope(Reason.NO_PYPI_RELEASE)
-
-
-def _hold_back_redundancy(declaration: Declaration) -> Reason | None:
-    """Return why an `ignore[update]` keeps nothing for the declaration: uv resolves a version it does not pin."""
-    return None if declaration.pins_a_version else Reason.MANAGER_RESOLVES_THE_VERSION
-
-
-# The policy for the markers of a pyproject.toml and of an inline script metadata block alike. uv resolves the version
-# an exact pin names, so a pin Update-time leaves as the file writes it stays where it is. A bound narrows the lock.
-MARKER_POLICY = ManagerPolicy(
-    hold_back_redundancy=_hold_back_redundancy,
-    bound_redundancy=lambda declaration: declaration.unnarrowable_reason,
-    unchecked_scopes=_unchecked_scopes,
-)
-
-
 def pypi_served(declarations: Iterable[Declaration]) -> list[Declaration]:
     """Return each of the declarations that PyPI serves a release for."""
     return [declaration for declaration in declarations if declaration.names_a_release]
@@ -253,7 +224,21 @@ def by_workspace(pyproject_tomls: Iterable[PyprojectToml]) -> dict[Path, list[Py
     return workspaces
 
 
-def workspace_sources(pyproject_toml: Path) -> set[DependencyName]:
+def declarations_of(file: PythonDependencyToml) -> list[Declaration]:
+    """Return the file's declarations, each uv-sourced where the file, or the root of its uv workspace, sources it.
+
+    `uv lock --script` locks a script on its own, so a script does not inherit the sources of a workspace root.
+    """
+    inherited = _workspace_sources(file.path) if isinstance(file, PyprojectToml) else set()
+    return [
+        replace(declaration, uv_sourced=True)
+        if normalized_python_name(declaration.dependency) in inherited
+        else declaration
+        for declaration in file.declarations()
+    ]
+
+
+def _workspace_sources(pyproject_toml: Path) -> set[DependencyName]:
     """Return the names of the dependencies that the `[tool.uv] sources` of the workspace root resolve.
 
     A workspace member inherits these sources from the root.
