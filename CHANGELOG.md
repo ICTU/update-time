@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Unreleased]
 
+No changes yet.
+
+## 0.0.56 - 2026-11-07
+
 ### Added
 
 - Narrow the versions uv locks for a `pyproject.toml` or inline script metadata dependency by the bound of its marker, and keep a dependency without an exact pin on its locked version where its marker says `ignore[update]`, in a `pyproject.toml` and in a script that has a lock. See [#508](https://github.com/ICTU/update-time/issues/508).
