@@ -127,7 +127,6 @@ class _PackageManager:
         The update moves the dependencies of the package.json's project, and those of the workspace members below.
         """
         path = package_json.path
-        _LOG.path(path)
         directory = path.parent
         workspace_root = self._workspace_root(directory)
         project = PurePosixPath(os.path.relpath(directory.resolve(), workspace_root.resolve()))

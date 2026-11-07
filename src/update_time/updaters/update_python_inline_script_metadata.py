@@ -17,7 +17,7 @@ def update_python_inline_script_metadatas() -> None:
 
 
 def _scripts() -> list[InlineScript]:
-    """Return the .py files that carry a `# /// script` block, and warn about each .py file that cannot be read."""
+    """Return the .py files carrying a `# /// script` block, each logged as checked, and warn about unreadable ones."""
     scripts = []
     for path in glob_for(INLINE_SCRIPT_METADATA):
         script = InlineScript(path)
@@ -27,6 +27,7 @@ def _scripts() -> list[InlineScript]:
             _LOG.unreadable_script(path, error)
             continue
         if carries_a_block:
+            _LOG.path(path)
             scripts.append(script)
     return scripts
 

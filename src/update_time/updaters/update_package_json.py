@@ -33,6 +33,7 @@ def update_package_jsons() -> None:
     supported = []
     # npm rewrites the ranges of a workspace's members as it updates the root, so the root runs first and logs them:
     for package_json in sorted(glob_for(PACKAGE_JSON), key=lambda path: len(path.parts)):
+        _LOG.path(package_json)
         if (file := PackageJson.readable(package_json, _LOG.unreadable_package_json)) is None:
             continue
         if (manager := node.SUPPORTED_MANAGERS.get(name := node.manager_name(file))) is None:

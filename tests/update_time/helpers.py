@@ -211,13 +211,32 @@ class LoggingTestCase(CacheClearingTestCase):
         if not self._error_expected:
             self.assertEqual(self.records(ERROR), [])
 
+    def _records_in_order(self) -> list[tuple[int, _Call]]:
+        """Return each record logged, in order, with its level, as the message and the fields it carries."""
+        return [
+            (args[0], call(args[1], args[2] | kwargs.get("extra", {}))) for args, kwargs in self.mock_log.call_args_list
+        ]
+
     def records(self, level: int) -> list[_Call]:
         """Return the records logged at the level, each as the message and the fields it carries, changes folded in."""
-        return [
-            call(args[1], args[2] | kwargs.get("extra", {}))
-            for args, kwargs in self.mock_log.call_args_list
-            if args[0] == level
-        ]
+        return [record for record_level, record in self._records_in_order() if record_level == level]
+
+    def _checked_call(self, path: Path) -> _Call:
+        """Return the call the logger makes for the line saying the path is checked."""
+        return self._expected_call(message_of(Logger.path), {"location": Location(path)})
+
+    def assert_path_logged_first(self, path: Path) -> None:
+        """Assert that the first record at the path's location says it is checked, and is the only one saying so."""
+        checked_line = self._checked_call(path)
+        location = checked_line.args[1]["location"]
+        records = [record for _, record in self._records_in_order() if record.args[1].get("location") == location]
+        self.assertEqual(records[:1], [checked_line])
+        self.assertEqual(records.count(checked_line), 1)
+
+    def assert_debug_logged_after_path(self, path: Path, message: LogMessage, **fields: object) -> None:
+        """Assert that the path was logged as checked, and then the message about it, as the only records at DEBUG."""
+        message_record = self._expected_call(message, {"location": Location(path), **fields})
+        self.assertEqual(self.records(DEBUG), [self._checked_call(path), message_record])
 
     @staticmethod
     def _expected_call(message: LogMessage, fields: dict[str, object]) -> _Call:
@@ -615,7 +634,7 @@ class LoggingTestCase(CacheClearingTestCase):
 
     def assert_path_logged(self, path: Path) -> None:
         """Assert that the path being checked for updates was logged."""
-        self._assert_last_logged(message_of(Logger.path), location=Location(path))
+        self.assertEqual(self.records(DEBUG)[-1:], [self._checked_call(path)])
 
     def assert_no_debug_logged(self) -> None:
         """Assert that nothing was logged at DEBUG."""
@@ -742,10 +761,6 @@ class LoggingTestCase(CacheClearingTestCase):
             manager=manager,
             supported=supported,
         )
-
-    def assert_no_dependencies_logged(self, path: Path, manager: str, verb: str) -> None:
-        """Assert that the package manager was logged as not running for a file that declares nothing to update."""
-        self.assert_logged(message_of(Logger.no_dependencies), location=Location(path), manager=manager, verb=verb)
 
     def assert_invalid_file_logged(self, path: Path, file_format: str) -> None:
         """Assert that a file that does not parse was logged for the file, naming its format."""
