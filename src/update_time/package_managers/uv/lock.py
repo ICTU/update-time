@@ -140,7 +140,7 @@ class _LockTarget:
         directory = root.parent
         return cls._read(
             Command(*_UV_LOCK, "--directory", str(directory)),
-            UvLock(directory / "uv.lock"),
+            UvLock.beside(root),
             cooldown_options=(),
             keeps_a_new_lock=True,
             log=log,

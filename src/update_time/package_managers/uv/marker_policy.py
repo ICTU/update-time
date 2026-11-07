@@ -46,11 +46,23 @@ def _hold_back_redundancy(declaration: Declaration) -> Reason | None:
 
 # The policy for the markers of a pyproject.toml and of an inline script metadata block, judged without a lock. uv
 # resolves the version an exact pin names, so a pin Update-time leaves as the file writes it stays where it is. A bound
-# narrows the lock. The policies for a run that keeps the lock and for one that removes it build on this one.
+# narrows the lock. The policies for a run that keeps the lock, for one that removes it, and for a file uv does not
+# manage build on this one.
 MARKER_POLICY = ManagerPolicy(
     hold_back_redundancy=_hold_back_redundancy,
     bound_redundancy=lambda declaration: declaration.unnarrowable_reason,
+    cooldown_redundancy=Reason.COOLDOWN_PER_RUN,
     unchecked_scopes=_unchecked_scopes,
+)
+
+
+# The policy for the markers of a pyproject.toml that uv does not manage. Update-time leaves its dependencies as the
+# file writes them, so an `ignore[update]`, a bound, and a cooldown each decide nothing.
+UNMANAGED_FILE_POLICY = replace(
+    MARKER_POLICY,
+    hold_back_redundancy=lambda _declaration: Reason.UNMANAGED_FILE_LEFT,
+    bound_redundancy=lambda _declaration: Reason.UNMANAGED_FILE_KEPT,
+    cooldown_redundancy=Reason.UNMANAGED_FILE_LEFT,
 )
 
 

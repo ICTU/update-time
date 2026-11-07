@@ -1,4 +1,4 @@
-"""Find uv-managed pyproject.toml files and update their dependencies and lockfiles."""
+"""Find pyproject.toml files, check their dependencies, and update those of the files uv manages."""
 
 from update_time.domain.file_type import PYPROJECT_TOML
 from update_time.formats import toml
@@ -15,35 +15,41 @@ _LOG = get_logger("pyproject.toml")
 
 
 def update_pyproject_tomls() -> None:
-    """Find all uv-managed pyproject.toml files, and update their exact pins and their uv.lock files.
+    """Find the pyproject.toml files, check their pins, and update the pins and the uv.lock of each that uv manages.
 
-    uv runs only for a pyproject.toml that declares a dependency for it to resolve, since `uv lock` writes a uv.lock
-    beside any pyproject.toml it runs for. Update-time checks the pins of every uv-managed pyproject.toml.
-    Where uv cannot lock a workspace's new pins, each pyproject.toml the run rewrote gets back the pins it held before.
+    uv runs only for a pyproject.toml that uv manages and that declares a dependency for it to resolve, since `uv lock`
+    writes a uv.lock beside any pyproject.toml it runs for. Where uv cannot lock a workspace's new pins, each
+    pyproject.toml the run rewrote gets back the pins it held before.
     """
-    uv_projects: list[PyprojectToml] = []
-    projects_with_dependencies: list[PyprojectToml] = []
+    pyproject_tomls: list[PyprojectToml] = []
+    projects_for_uv: list[PyprojectToml] = []
+    unmanaged_projects: list[PyprojectToml] = []
     for path in glob_for(PYPROJECT_TOML):
         config = toml.read(path)
         if config is None:
             _LOG.invalid_file(path, toml.FORMAT)  # Exists but isn't valid TOML: skip rather than crash on it.
         elif not is_well_formed(config):
             _LOG.invalid_file(path, pyproject_toml_manifest.FORMAT)
-        elif (name := uv.manager_name(path, config)) != "uv":
+        elif (name := uv.other_manager(path, config)) is not None:
             _LOG.unsupported_package_manager(path, name, "uv")
         else:
             pyproject_toml = PyprojectToml(path)
-            uv_projects.append(pyproject_toml)
-            if pyproject_toml.declares_a_dependency(config):
-                projects_with_dependencies.append(pyproject_toml)
-            else:
+            pyproject_tomls.append(pyproject_toml)
+            if not pyproject_toml.declares_a_dependency(config):
                 _LOG.no_dependencies(path, "uv", "resolve")
                 marker_policy.report_file_markers(pyproject_toml, _LOG, marker_policy.MARKER_POLICY)
+            elif uv.manages(path, config):
+                projects_for_uv.append(pyproject_toml)
+            else:
+                unmanaged_projects.append(pyproject_toml)
+                marker_policy.report_file_markers(pyproject_toml, _LOG, marker_policy.UNMANAGED_FILE_POLICY)
     # Persist the cooldown into config before running uv, so `uv lock` reads it and the lockfile it produces stays
     # reproducible with a plain `uv sync --locked` (see `uv.configure_cooldown`). Then update each workspace, so the
     # files get the text they hold now back where uv cannot lock.
-    uv.configure_cooldown(projects_with_dependencies)
-    warn_about_pins(uv_projects, _LOG, update_workspaces(projects_with_dependencies, _LOG))
+    uv.configure_cooldown(projects_for_uv)
+    policies = update_workspaces(projects_for_uv, _LOG)
+    policies.update(dict.fromkeys(unmanaged_projects, marker_policy.UNMANAGED_FILE_POLICY))
+    warn_about_pins(pyproject_tomls, _LOG, policies)
 
 
 def main() -> None:  # pragma: no cover

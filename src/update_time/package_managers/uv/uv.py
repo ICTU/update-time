@@ -15,6 +15,7 @@ from update_time.domain.dependency import DependencyVersion, normalized_python_n
 from update_time.formats import toml
 from update_time.io.log import get_logger
 from update_time.io.process import is_installed, run
+from update_time.lock_files.uv_lock import UvLock
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.manifests.python_dependency_toml import is_well_formed
 from update_time.markers.reference import SteeredResolvedReference
@@ -48,8 +49,8 @@ EXCLUDE_NEWER_OPTION = "--exclude-newer"
 _SETTINGS_EXCLUDE_NEWER = re.compile(r"exclude_newer: ExcludeNewer \{\s*global: (?P<value>None|Some)\b")
 
 
-def manager_name(pyproject_toml: Path, config: dict) -> str:
-    """Return the project's Python dependency manager (uv, poetry, pdm), defaulting to uv.
+def other_manager(pyproject_toml: Path, config: dict) -> str | None:
+    """Return the Python dependency manager other than uv that the project signals (poetry, pdm), if any.
 
     A `[tool.poetry]`/`[tool.pdm]` section is authoritative; otherwise a sibling lockfile is used as a fallback. The
     already-parsed `config` is passed in so the file isn't read again.
@@ -61,7 +62,25 @@ def manager_name(pyproject_toml: Path, config: dict) -> str:
     for lockfile, manager in _NON_UV_LOCKFILES.items():
         if (pyproject_toml.parent / lockfile).exists():
             return manager
-    return "uv"
+    return None
+
+
+def manages(pyproject_toml: Path, config: dict) -> bool:
+    """Return whether uv manages the project, and log why not where it does not.
+
+    uv manages a project whose workspace root has a uv.lock beside it or a `[tool.uv]` table, unless that table sets
+    `managed = false`. The project's own `config`, already parsed, serves where the project is its own workspace root.
+    """
+    root = _workspace_root(pyproject_toml)
+    root_config = config if root == pyproject_toml else toml.read(root) or {}
+    if root_config.get("tool", {}).get("uv", {}).get("managed") is False:
+        _LOG.project_marked_unmanaged(pyproject_toml, root)
+        return False
+    lock = UvLock.beside(root)
+    if lock.path.exists() or "uv" in root_config.get("tool", {}):
+        return True
+    _LOG.not_a_uv_project(pyproject_toml, lock.path)
+    return False
 
 
 def configure_cooldown(pyproject_tomls: Iterable[PyprojectToml]) -> None:

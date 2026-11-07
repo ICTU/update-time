@@ -210,12 +210,14 @@ def _redundant_for_the_dependency_type(
 ) -> dict[str, str]:
     """Log a sample per redundant cooldown, drift opt-in, and bound, paired with the block's placeholder."""
     managed = reference("humanize", Location(Path("pyproject.toml"), 12))
+    unmanaged = reference("humanize", Location(Path("legacy/pyproject.toml"), 4))
     loose = reference("humanize", requirements)
     commit = reference("actions/checkout", workflow)
     branch = reference("actions/setup-python", Location(Path(".github/workflows/ci.yml"), 18))
     held_elsewhere = reference("commons-io:commons-io", Location(Path("child/pom.xml"), 5))
     plugin = reference("org.apache.maven.plugins:maven-surefire-plugin", Location(Path("pom.xml"), 30))
     log.redundant_directive(managed, "set[cooldown=30]", Reason.COOLDOWN_PER_RUN)
+    log.redundant_directive(unmanaged, "set[cooldown=30]", Reason.UNMANAGED_FILE_LEFT)
     log.redundant_directive(loose, "set[cooldown=30]", Reason.NO_VERSION_TO_UPDATE)
     log.redundant_directive(commit, "set[cooldown=30]", Reason.NO_COOLDOWN_FOR_A_COMMIT)
     log.redundant_directive(held_elsewhere, "set[cooldown=30]", Reason.VERSION_HELD_ELSEWHERE)
@@ -246,6 +248,8 @@ def _redundant_for_the_dependency_type(
     log.redundant_directive(url, "allow[update<2]", Reason.URL_RATHER_THAN_VERSION)
     log.redundant_directive(managed, "allow[update<5]", Reason.ENVIRONMENT_MARKER_PIN_KEPT)
     log.redundant_directive(managed, "ignore[update]", Reason.ENVIRONMENT_MARKER_PIN_LEFT)
+    log.redundant_directive(unmanaged, "allow[update<5]", Reason.UNMANAGED_FILE_KEPT)
+    log.redundant_directive(unmanaged, "ignore[update]", Reason.UNMANAGED_FILE_LEFT)
     log.redundant_directive(managed, "allow[update<5]", Reason.BOUND_ON_A_HELD_BACK_UPDATE)
     log.redundant_directive(loose, "allow[update<5]", Reason.NO_VERSION_TO_UPDATE)
     log.redundant_directive(commit, "allow[update<5]", Reason.PINS_A_COMMIT)
@@ -482,6 +486,7 @@ def _blocks(log: Logger, capture: _Capture) -> dict[str, str]:
         "@@NO_RELEASE_METADATA@@": no_release_metadata,
         **_uv_dependencies_not_updated(log, capture),
         **_manifests_without_dependencies(log, capture),
+        **_not_a_uv_project(log, capture),
         **_range_rewrites(log, capture),
         **_versions_moved_back(log, capture),
         **_pin_with_environment_marker(log, capture),
@@ -540,6 +545,13 @@ def _manifests_without_dependencies(log: Logger, capture: _Capture) -> dict[str,
     package_json = capture.take()
     log.no_dependencies(Path("pyproject.toml"), "uv", "resolve")
     return {"@@NO_NODE_DEPENDENCIES@@": package_json, "@@NO_PYTHON_DEPENDENCIES@@": capture.take()}
+
+
+def _not_a_uv_project(log: Logger, capture: _Capture) -> dict[str, str]:
+    """Log that uv does not run for a pyproject.toml that uv does not manage, and pair the lines."""
+    log.not_a_uv_project(Path("legacy/pyproject.toml"), Path("legacy/uv.lock"))
+    log.project_marked_unmanaged(Path("vendored/pyproject.toml"), Path("vendored/pyproject.toml"))
+    return {"@@NOT_A_UV_PROJECT@@": capture.take()}
 
 
 def _range_rewrites(log: Logger, capture: _Capture) -> dict[str, str]:

@@ -114,10 +114,12 @@ def _redundant_update_directives[ReferenceT: SteeredReference](
         yield bound, reason
 
 
-def _redundant_cooldown_directive(reference: SteeredReference) -> Iterator[tuple[str, RedundancyReason]]:
-    """Yield the cooldown the marker sets, which the package manager applies per run rather than per reference."""
+def _redundant_cooldown_directive(
+    reference: SteeredReference, reason: Reason
+) -> Iterator[tuple[str, RedundancyReason]]:
+    """Yield the cooldown the marker sets, with the reason it holds nothing back."""
     if cooldown := reference.marker.cooldown_directive:
-        yield cooldown, Reason.COOLDOWN_PER_RUN
+        yield cooldown, reason
 
 
 def _redundant_floating_pin_directive(reference: SteeredReference) -> Iterator[tuple[str, RedundancyReason]]:
@@ -138,7 +140,7 @@ def _redundant_directives[ReferenceT: SteeredReference](
 ) -> Iterator[tuple[str, RedundancyReason]]:
     """Yield each redundant directive of the reference's marker, with the reason it is redundant."""
     yield from _redundant_update_directives(reference, policy)
-    yield from _redundant_cooldown_directive(reference)
+    yield from _redundant_cooldown_directive(reference, policy.cooldown_redundancy)
     yield from _redundant_floating_pin_directive(reference)
     yield from _redundant_hash_drift_directive(reference)
     yield from _redundant_warning_directives(reference, policy.unchecked_scopes(reference))

@@ -21,12 +21,14 @@ class ManagerPolicy[ReferenceT: SteeredReference]:
 
     `hold_back_redundancy` gives the reason an `ignore[update]` keeps nothing for a reference, or None where it keeps
     the reference's version where it is. `bound_redundancy` gives the reason a bound decides nothing for a reference,
-    or None where it narrows the versions the package manager updates the reference to. `unchecked_scopes` names the
-    warning scopes that Update-time leaves unchecked for a reference, each with the reason.
+    or None where it narrows the versions the package manager updates the reference to. `cooldown_redundancy` gives the
+    reason a marker's cooldown holds nothing back. `unchecked_scopes` names the warning scopes that Update-time
+    leaves unchecked for a reference, each with the reason.
     """
 
     hold_back_redundancy: Callable[[ReferenceT], Reason | None]
     bound_redundancy: Callable[[ReferenceT], Reason | None]
+    cooldown_redundancy: Reason
     unchecked_scopes: Callable[[ReferenceT], Mapping[Scope, Reason]]
 
     @staticmethod

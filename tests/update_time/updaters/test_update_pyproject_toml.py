@@ -11,8 +11,9 @@ from update_time.manifests import python_dependency_toml as python_dependency_to
 from update_time.manifests.pyproject_toml import PyprojectToml
 from update_time.markers.directive import Reason
 from update_time.markers.marker import Marker, Scope, Threshold
-from update_time.package_managers.uv import lock, marker_policy
+from update_time.package_managers.uv import lock, marker_policy, uv
 from update_time.primitives.location import Location
+from update_time.references import delegated
 from update_time.updaters import uv_pins
 from update_time.updaters.update_pyproject_toml import update_pyproject_tomls
 
@@ -69,6 +70,9 @@ _CHECKED_TABLES = (
 # A pyproject.toml that declares build requirements alone, which uv neither resolves nor locks.
 _BUILD_REQUIREMENTS_ALONE = '[build-system]\nrequires = ["hatchling==1.20.0"]\n'
 
+# An empty `[tool.uv]` table, which marks a pyproject.toml without a uv.lock beside it as a uv project.
+_UV_TABLE = "[tool.uv]\n"
+
 
 # The uv.lock beside the pyproject.toml at the root of the scan.
 _UV_LOCK = SCAN_ROOT / "uv.lock"
@@ -86,8 +90,8 @@ _EXTRA = ("optional-dependencies", "cli")
 _GROUP = ("dev-dependencies", "dev")
 
 # The run writes the cooldown into the pyproject.tomls, and then updates each workspace, so uv locks with the cooldown.
-_COOLDOWN = "uv.configure_cooldown(projects_with_dependencies)"
-_UPDATE = "warn_about_pins(uv_projects, _LOG, update_workspaces(projects_with_dependencies, _LOG))"
+_COOLDOWN = "uv.configure_cooldown(projects_for_uv)"
+_UPDATE = "policies = update_workspaces(projects_for_uv, _LOG)"
 
 
 def _uv_lock(
@@ -596,11 +600,11 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         }.items():
             with self.subTest(case):
                 contents = pyproject("package==1.0")
-                files = FakeFiles({PYPROJECT_TOML: contents, other: contents, other_lock: _uv_lock("1.0")})
+                files = FakeFiles({PYPROJECT_TOML: contents + _UV_TABLE, other: contents, other_lock: _uv_lock("1.0")})
                 files.read_errors[other_lock] = error
                 discovered = [PYPROJECT_TOML, other]
                 left = self.files_after_update(run, get, glob, files, _uv_lock("1.1"), discovered=discovered)
-                self.assertEqual(left[PYPROJECT_TOML], pyproject("package==1.1"))
+                self.assertEqual(left[PYPROJECT_TOML], pyproject("package==1.1") + _UV_TABLE)
                 self.assertEqual(left[other], contents)
                 directories = {command[command.index("--directory") + 1] for command in uv_locks(run)}
                 self.assertEqual(directories, {str(SCAN_ROOT)})
@@ -653,8 +657,8 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
     )
     def test_a_failed_uv_lock_keeps_the_cooldown_the_run_wrote(self, run: Mock, get: Mock, glob: Mock):
         """Test that uv locks the pyproject.toml with the cooldown the run wrote, and a failed lock leaves it there."""
-        contents = pyproject("package==1.0")
-        cooldown = '[tool.uv]\nexclude-newer = "7 days"\n'
+        contents = pyproject("package==1.0") + _UV_TABLE
+        cooldown = 'exclude-newer = "7 days"\n'
 
         def configure_cooldown(pyproject_tomls: list[PyprojectToml]) -> None:
             for pyproject_toml in pyproject_tomls:
@@ -673,6 +677,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         """Test that a run without an earlier uv.lock keeps the one uv writes, and reports the exact pin's version."""
         pyproject_toml_contents = (
             '[project]\nname = "a"\ndependencies = ["package>=1.0"]\n[dependency-groups]\ndev = ["package==1.0"]\n'
+            + _UV_TABLE
         )
         left = self.files_after_update(run, get, glob, {PYPROJECT_TOML: pyproject_toml_contents}, _uv_lock("1.2"))
         self.assertEqual(left[_UV_LOCK], _uv_lock("1.2"))
@@ -701,7 +706,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 [SCAN_ROOT],
             ),
             "two projects": (
-                {PYPROJECT_TOML: pyproject("package>=1.0"), other: pyproject("package>=1.0")},
+                {PYPROJECT_TOML: pyproject("package>=1.0") + _UV_TABLE, other: pyproject("package>=1.0") + _UV_TABLE},
                 [SCAN_ROOT, other.parent],
             ),
         }
@@ -875,7 +880,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         self, run: Mock, get: Mock, glob: Mock
     ):
         """Test that where uv cannot lock the file as written, the run reports that at error and stops there."""
-        left = self.updated_with_failing_lock(run, glob, pyproject("package>=1.0"))
+        left = self.updated_with_failing_lock(run, glob, pyproject("package>=1.0") + _UV_TABLE)
         self.assertEqual(["--upgrade" in command for command in uv_locks(run)], [False])
         self.assertNotIn(PYPROJECT_TOML, left.written_paths)
         get.assert_not_called()
@@ -905,7 +910,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
     def test_a_uv_missing_from_the_path_is_reported_in_one_line(self, run: Mock, get: Mock, glob: Mock):
         """Test that a missing uv is reported in one line naming the file, and that Update-time does not run it."""
         run.side_effect = FileNotFoundError("uv")
-        mock_pyproject_toml = _discovered_pyproject_toml(glob, pyproject("package==1.0"))
+        mock_pyproject_toml = _discovered_pyproject_toml(glob, pyproject("package==1.0") + _UV_TABLE)
         update_pyproject_tomls()
         run.assert_not_called()
         mock_pyproject_toml.write_text.assert_not_called()
@@ -1012,15 +1017,69 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
                 mock_pyproject_toml.write_text.assert_not_called()
                 self.assert_no_dependencies_logged(mock_pyproject_toml, "uv", "resolve")
 
+    @kills(
+        Mutation(
+            uv.manages,
+            "_LOG.not_a_uv_project(pyproject_toml, lock.path)",
+            "pass",
+            "a pyproject.toml that uv does not run for, though it declares dependencies, goes unreported",
+        ),
+        Mutation(
+            uv.manages,
+            'if root_config.get("tool", {}).get("uv", {}).get("managed") is False:',
+            "if False:",
+            "uv runs for a pyproject.toml whose `[tool.uv]` table sets managed = false",
+        ),
+    )
+    def test_uv_not_run_for_a_file_uv_does_not_manage(self, run: Mock, get: Mock, glob: Mock):
+        """Test that uv does not run, nor get its cooldown, for a pyproject.toml that uv does not manage."""
+        marked_unmanaged = pyproject("package==1.0") + "[tool.uv]\nmanaged = false\n"
+        cases = {
+            "neither a uv.lock nor a [tool.uv] table": (
+                {PYPROJECT_TOML: pyproject("package==1.0")},
+                message_of(Logger.not_a_uv_project),
+                {"lock": Location(_UV_LOCK)},
+            ),
+            "a [tool.uv] table that sets managed = false": (
+                {PYPROJECT_TOML: marked_unmanaged, _UV_LOCK: _uv_lock("1.0")},
+                message_of(Logger.project_marked_unmanaged),
+                {"root": Location(PYPROJECT_TOML)},
+            ),
+        }
+        for case, (files, message, fields) in cases.items():
+            with self.subTest(case):
+                run.reset_mock()
+                with patch("update_time.package_managers.uv.uv.configure_cooldown") as configure_cooldown:
+                    left = self.files_after_update(run, get, glob, files, _uv_lock("1.1"))
+                run.assert_not_called()
+                get.assert_not_called()
+                configure_cooldown.assert_called_once_with([])
+                self.assertEqual(dict(left), files)
+                self.assert_logged(message, location=Location(PYPROJECT_TOML), table="[tool.uv]", **fields)
+
+    @kills(
+        Mutation(
+            update_pyproject_tomls,
+            "marker_policy.report_file_markers(pyproject_toml, _LOG, marker_policy.UNMANAGED_FILE_POLICY)",
+            "pass",
+            "the markers of a pyproject.toml uv does not manage go unreported",
+        )
+    )
     def test_a_marker_in_a_file_uv_does_not_run_for_is_recognised(self, run: Mock, get: Mock, glob: Mock):
-        """Test that the marker on a build requirement of a pyproject.toml that uv does not run for is reported."""
-        contents = '[build-system]\nrequires = ["hatchling==1.20.0"]  # update-time: set[stale-after=0]\n'
-        mock_pyproject_toml = _discovered_pyproject_toml(glob, contents)
-        update_pyproject_tomls()
-        run.assert_not_called()
-        get.assert_not_called()
-        marker = Marker(stale=Threshold(value=0))
-        self.assert_recognised_marker_logged("hatchling", Location(mock_pyproject_toml, 2), marker)
+        """Test that the marker on a dependency of a pyproject.toml that uv does not run for is reported."""
+        build_requirement = '[build-system]\nrequires = ["hatchling==1.20.0"]  # update-time: set[stale-after=0]\n'
+        cases = {
+            "build requirements alone": (build_requirement, "hatchling"),
+            "a file uv does not manage": (pyproject("package==1.0", marker="set[stale-after=0]"), "package"),
+        }
+        for case, (contents, dependency) in cases.items():
+            with self.subTest(case):
+                mock_pyproject_toml = _discovered_pyproject_toml(glob, contents)
+                update_pyproject_tomls()
+                run.assert_not_called()
+                get.assert_not_called()
+                marker = Marker(stale=Threshold(value=0))
+                self.assert_recognised_marker_logged(dependency, Location(mock_pyproject_toml, 2), marker)
 
     @kills(
         Mutation(
@@ -1042,7 +1101,8 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
         for case, contents in cases.items():
             with self.subTest(case):
                 run.reset_mock()
-                self.files_after_update(run, get, glob, {PYPROJECT_TOML: contents}, _uv_lock("1.0"))
+                files = {PYPROJECT_TOML: contents, _UV_LOCK: _uv_lock("1.0")}
+                self.files_after_update(run, get, glob, files, _uv_lock("1.0"))
                 self.assertTrue(uv_locks(run))
 
 
@@ -1052,7 +1112,7 @@ class UpdatePyprojectTomlsTest(_PyprojectTomlLockTestCase):
 @patch("requests.Session.get", side_effect=pypi_answer)
 @patch("subprocess.run")
 class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
-    """Unit tests for the directives a run reports as redundant in a pyproject.toml that uv locks."""
+    """Unit tests for the directives a run reports as redundant in a pyproject.toml."""
 
     def test_a_directive_steering_the_lock_is_not_reported_as_redundant(self, run: Mock, get: Mock, glob: Mock):
         """Test that an `ignore[update]` and a bound on a dependency without an exact pin go unreported."""
@@ -1119,6 +1179,55 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
                 self.assert_redundant_directive_logged(
                     reason, dependency, Location(PYPROJECT_TOML, line), "allow[update<2]"
                 )
+
+    @kills(
+        Mutation(
+            marker_policy,
+            "hold_back_redundancy=lambda _declaration: Reason.UNMANAGED_FILE_LEFT,",
+            "hold_back_redundancy=MARKER_POLICY.hold_back_redundancy,",
+            "an `ignore[update]` on a pin in a file uv does not manage reads as holding the update back",
+        ),
+        Mutation(
+            marker_policy,
+            "bound_redundancy=lambda _declaration: Reason.UNMANAGED_FILE_KEPT,",
+            "bound_redundancy=MARKER_POLICY.bound_redundancy,",
+            "a bound on a pin in a file uv does not manage reads as narrowing the update",
+        ),
+        Mutation(
+            update_pyproject_tomls,
+            "marker_policy.report_file_markers(pyproject_toml, _LOG, marker_policy.UNMANAGED_FILE_POLICY)",
+            "marker_policy.report_file_markers(pyproject_toml, _LOG, marker_policy.MARKER_POLICY)",
+            "an `ignore[update]` in a file uv does not manage is logged as holding the update back",
+        ),
+        Mutation(
+            marker_policy,
+            "cooldown_redundancy=Reason.UNMANAGED_FILE_LEFT,",
+            "cooldown_redundancy=Reason.COOLDOWN_PER_RUN,",
+            "a cooldown in a file uv does not manage is reported as one uv applies per run",
+        ),
+        Mutation(
+            delegated._redundant_cooldown_directive,
+            "yield cooldown, reason",
+            "yield cooldown, Reason.COOLDOWN_PER_RUN",
+            "a cooldown is reported as one the package manager applies per run, whatever the policy says",
+        ),
+    )
+    def test_a_directive_steering_the_update_in_a_file_uv_does_not_manage_is_reported(
+        self, run: Mock, get: Mock, glob: Mock
+    ):
+        """Test that an `ignore[update]`, a bound, and a cooldown in a file uv does not manage are reported."""
+        cases = {
+            "ignore[update]": Reason.UNMANAGED_FILE_LEFT,
+            "allow[update<2]": Reason.UNMANAGED_FILE_KEPT,
+            "set[cooldown=30]": Reason.UNMANAGED_FILE_LEFT,
+        }
+        for directive, reason in cases.items():
+            with self.subTest(directive=directive):
+                contents = pyproject("package==1.0", marker=directive)
+                left = self.files_after_update(run, get, glob, {PYPROJECT_TOML: contents}, None)
+                self.assertEqual(dict(left), {PYPROJECT_TOML: contents})
+                self.assert_redundant_directive_logged(reason, "package", Location(PYPROJECT_TOML, 2), directive)
+                self.assert_none_logged(message_of(Logger.ignored), "update held back by a marker")
 
     @kills(
         Mutation(
@@ -1259,7 +1368,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         for directive, locked_spec in locked_specs.items():
             for lock_case, lock_before in _LOCKS_WITHOUT_THE_PACKAGE.items():
                 with self.subTest(directive=directive, lock=lock_case):
-                    contents = pyproject("package>=0.9", marker=f"{directive} set[cooldown=30]")
+                    contents = pyproject("package>=0.9", marker=f"{directive} set[cooldown=30]") + _UV_TABLE
                     files = {PYPROJECT_TOML: contents, **lock_before}
                     self.files_after_update(run, get, glob, files, _uv_lock("1.0"), lock_as_written=_uv_lock("1.0"))
                     self.assertEqual(self.text_locked_with_upgrade(), contents.replace("package>=0.9", locked_spec))
@@ -1351,7 +1460,7 @@ class RedundantDirectiveTest(_PyprojectTomlLockTestCase):
         for directive in ("ignore[update]", "ignore[minor-update]", "ignore[update] allow[update<2]"):
             for lock_case, lock_before in _LOCKS_WITHOUT_THE_PACKAGE.items():
                 with self.subTest(directive=directive, lock=lock_case):
-                    contents = pyproject("package>=0.9", marker=f"{directive} set[cooldown=30]")
+                    contents = pyproject("package>=0.9", marker=f"{directive} set[cooldown=30]") + _UV_TABLE
                     self.files_after_update(run, get, glob, {PYPROJECT_TOML: contents, **lock_before}, _uv_lock("1.0"))
                     self.assert_redundant_directive_logged(
                         Reason.COOLDOWN_PER_RUN, "package", Location(PYPROJECT_TOML, 2), "set[cooldown=30]"
@@ -1369,17 +1478,19 @@ class CheckedPinsTest(LoggingTestCase):
     @kills(
         Mutation(
             update_pyproject_tomls,
-            "warn_about_pins(uv_projects,",
-            "warn_about_pins(projects_with_dependencies,",
+            "warn_about_pins(pyproject_tomls,",
+            "warn_about_pins(projects_for_uv,",
             "a pyproject.toml that uv does not run for is not checked either",
         )
     )
     @patch("update_time.updaters.update_pyproject_toml.warn_about_pins")
     def test_the_discovered_manifests_are_checked(self, warn: Mock, _run: Mock, get: Mock, glob: Mock):
-        """Test that the checks are handed every manifest the scan found, whether uv ran for it or not."""
-        pyproject_toml = _discovered_pyproject_toml(glob, pyproject("django==3.2.0"))
+        """Test that the checks are handed every manifest the scan found, whether uv manages and runs for it or not."""
+        pyproject_toml = _discovered_pyproject_toml(glob, pyproject("django==3.2.0") + _UV_TABLE)
         build_requirements_alone = mock_path(_BUILD_REQUIREMENTS_ALONE, parent=SCAN_ROOT)
-        glob.return_value.append(build_requirements_alone)
+        not_a_uv_project = mock_path(pyproject("django==3.2.0"), parent=SCAN_ROOT)
+        glob.return_value.extend([build_requirements_alone, not_a_uv_project])
         update_pyproject_tomls()
         get.assert_not_called()
-        warn.assert_called_once_with([PyprojectToml(pyproject_toml), PyprojectToml(build_requirements_alone)], ANY, ANY)
+        checked = [PyprojectToml(path) for path in (pyproject_toml, build_requirements_alone, not_a_uv_project)]
+        warn.assert_called_once_with(checked, ANY, ANY)

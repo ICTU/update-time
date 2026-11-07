@@ -281,6 +281,7 @@ def _unchecked_scopes(declaration: Declaration) -> dict[Scope, Reason]:
 MARKER_POLICY = ManagerPolicy(
     hold_back_redundancy=lambda _declaration: Reason.MANAGER_RESOLVES_THE_VERSION,
     bound_redundancy=lambda _declaration: Reason.BOUND_DECIDES_NOTHING,
+    cooldown_redundancy=Reason.COOLDOWN_PER_RUN,
     unchecked_scopes=_unchecked_scopes,
 )
 
